@@ -30,6 +30,7 @@ import { notify } from '@/lib/notify'
 import { retryOnPoolBusy } from '../lib/app-error'
 import { parseIndentedMarkdown } from '../lib/block-clipboard'
 import { computeIndentedBlocks, findPrevSiblingAt, planSplit } from '../lib/block-tree-ops'
+import { recordGraphStructureChange } from '../lib/graph-structure-events'
 import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import type { BlockRow, CreateBlockSpec } from '../lib/tauri'
@@ -171,9 +172,24 @@ export interface PageBlockState {
   appendBlock: (row: BlockRow) => void
 }
 
-/** Notify the undo store that a new action occurred on the given page. */
+/**
+ * Notify the undo store that a new action occurred on the given page, and bump
+ * the graph-structure mutation signal.
+ *
+ * #1530: every local block/link/page CRUD op (`createBelow`, `edit`, `remove`,
+ * `reorder`, `moveToParent`, `moveBlocks`, `indent`, `dedent`, `moveUp`,
+ * `moveDown`, `splitBlock`, `pasteBlocks`) funnels through here after a
+ * successful write, so it is the single funnel for "this page's block/link
+ * structure just changed locally." `edit` is included deliberately — editing a
+ * block's text can add or remove a `[[link]]`, which is a graph EDGE. Bumping
+ * the structure counter here invalidates `GraphView`'s cache so the next graph
+ * read reflects the new nodes/edges instead of stale data until the TTL. The
+ * `appendBlock` path bumps it separately because that path does not call this
+ * helper (its caller owns the undo notification).
+ */
 function notifyUndoNewAction(rootParentId: string | null): void {
   if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
+  recordGraphStructureChange()
 }
 
 /**
@@ -1511,6 +1527,10 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         blocks: [...state.blocks, newBlock],
         blocksById: cloneBlocksByIdWith(state.blocksById, [newBlock]),
       }))
+      // #1530 — this path does NOT route through `notifyUndoNewAction` (the
+      // calling create path owns undo), so bump the graph-structure signal
+      // directly: appending a block can change the page-link graph topology.
+      recordGraphStructureChange()
     },
   }))
 

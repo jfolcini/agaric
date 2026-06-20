@@ -546,6 +546,9 @@ mod snapshot;
 /// Sync-update generation + inbound-blob inspection (#792 / #1054).
 mod sync;
 
+/// Process-global observability for cycle-rejected reparents (#1541).
+pub mod cycle_rejected_metrics;
+
 impl Default for LoroEngine {
     fn default() -> Self {
         Self::new()
@@ -1913,6 +1916,100 @@ mod tree_tests {
         assert_eq!(x.content, "v2");
         assert_eq!(e.count_alive_blocks().unwrap(), 2);
         assert_eq!(e.list_children_walk("P").unwrap(), vec!["X".to_string()]);
+    }
+
+    /// #1527: re-applying a `CreateBlock` for an already-existing node whose
+    /// requested parent is *transiently absent* from the engine must NOT yank
+    /// the node to root — it keeps its current parent (mirroring the move
+    /// path's pending-parent handling). Before the fix, `resolve_parent`
+    /// resolved the absent parent to root and `mov_to(node, Root, slot)`
+    /// detached the already-correctly-parented subtree.
+    #[test]
+    fn reapply_create_with_absent_parent_keeps_current_parent() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block("P", "page", "p", None, 0).unwrap();
+        e.apply_create_block("X", "content", "v1", Some("P"), 1)
+            .unwrap();
+        assert_eq!(e.read_parent("X").unwrap().as_deref(), Some("P"));
+
+        // Re-apply CreateBlock for X naming a parent ("GHOST") that has not
+        // yet arrived in the engine (e.g. out-of-order replay / sync catch-up).
+        e.apply_create_block("X", "content", "v2", Some("GHOST"), 1)
+            .unwrap();
+
+        // X must stay under P (NOT be detached to root); content still heals.
+        assert_eq!(
+            e.read_parent("X").unwrap().as_deref(),
+            Some("P"),
+            "re-apply with an absent parent must keep X under its current parent, not move it to root",
+        );
+        let x = e.read_block("X").unwrap().unwrap();
+        assert_eq!(x.content, "v2");
+        assert_eq!(e.list_children_walk("P").unwrap(), vec!["X".to_string()]);
+
+        // The pending intent is recorded: once GHOST appears, X re-attaches.
+        e.apply_create_block("GHOST", "content", "g", None, 0)
+            .unwrap();
+        assert_eq!(
+            e.read_parent("X").unwrap().as_deref(),
+            Some("GHOST"),
+            "once the pending parent arrives, X re-attaches under it",
+        );
+    }
+
+    /// #1527: a *normal* re-apply (parent present) is unaffected — the node is
+    /// still re-placed under the requested, now-present parent.
+    #[test]
+    fn reapply_create_with_present_parent_reparents_as_before() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block("P", "page", "p", None, 0).unwrap();
+        e.apply_create_block("Q", "page", "q", None, 1).unwrap();
+        e.apply_create_block("X", "content", "v1", Some("P"), 0)
+            .unwrap();
+        assert_eq!(e.read_parent("X").unwrap().as_deref(), Some("P"));
+
+        // Re-apply naming Q, which IS present — X moves under Q.
+        e.apply_create_block("X", "content", "v2", Some("Q"), 0)
+            .unwrap();
+        assert_eq!(e.read_parent("X").unwrap().as_deref(), Some("Q"));
+        assert_eq!(e.list_children_walk("P").unwrap(), Vec::<String>::new());
+        assert_eq!(e.list_children_walk("Q").unwrap(), vec!["X".to_string()]);
+    }
+
+    /// #1541: a cycle-forming reparent reaching the engine is skipped (the
+    /// node keeps its old parent) AND the skip is recorded in the
+    /// process-global cycle-rejected counter, so a cross-peer spike is
+    /// observable rather than buried in log noise.
+    #[test]
+    fn cycle_move_skip_is_counted() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block("A", "content", "", None, 0).unwrap();
+        e.apply_create_block("B", "content", "", Some("A"), 0)
+            .unwrap();
+
+        // Relative before/after so the assertion is robust when other tests
+        // record cycle rejections concurrently under nextest parallelism.
+        let before = cycle_rejected_metrics::count();
+        // Move A under B (B is A's child) — forms a cycle, must be skipped.
+        e.apply_move_block("A", Some("B"), 0).unwrap();
+
+        // Skip behaviour intact: tree unchanged.
+        assert_eq!(e.read_parent("A").unwrap(), None);
+        assert_eq!(e.read_parent("B").unwrap().as_deref(), Some("A"));
+
+        // Observability: the rejection bumped the global counter and the last
+        // occurrence names the rejected block.
+        let after = cycle_rejected_metrics::count();
+        assert!(
+            after > before,
+            "a cycle-rejected reparent must increment the counter (before={before}, after={after})",
+        );
+        let last = cycle_rejected_metrics::last()
+            .expect("a cycle-rejected occurrence must now be recorded");
+        assert_eq!(
+            last.block_id, "A",
+            "the captured block_id must be the rejected node",
+        );
     }
     /// Two devices concurrently reparent the same node to different
     /// parents; after exchanging snapshots both converge on the **same**

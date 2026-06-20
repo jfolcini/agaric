@@ -30,6 +30,7 @@ import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { IconButton } from '@/components/ui/icon-button'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useGraphSimulation } from '@/hooks/useGraphSimulation'
+import { useGraphStructureEvents } from '@/hooks/useGraphStructureEvents'
 import { applyGraphFilters, type GraphFilter } from '@/lib/graph-filters'
 import {
   computeLocalGraph,
@@ -49,14 +50,21 @@ export interface GraphCache {
   nodes: GraphNode[]
   edges: GraphEdge[]
   timestamp: number
-  // #1818: the module-level block-property invalidation counter at the time
-  // this entry was fetched. A later mount compares it against the *current*
-  // counter: if a block/link mutation fired since (even while GraphView was
-  // unmounted), the entry is stale and must be refetched regardless of TTL.
-  // Storing the key on the entry (rather than a per-instance ref) is what makes
-  // invalidation survive unmount — the per-instance `lastInvalidationRef`
-  // initializes to the current key on every mount, so it alone can never detect
-  // a mutation that happened while no instance was mounted.
+  // #1818 / #1530: the combined mutation counter at the time this entry was
+  // fetched. It folds two module-level signals: the block-PROPERTY counter
+  // (#1818, `block:properties-changed`) and the graph-STRUCTURE counter (#1530,
+  // bumped on local block/link/page CRUD via `page-blocks.ts` and on
+  // `sync:complete`). The structure counter is the one that actually tracks the
+  // graph's axis (nodes = pages, edges = `[[links]]`): page creation, a text
+  // edit that adds/removes a `[[link]]`, and block insert/delete/move all bump
+  // it but never fire the property event. A later mount compares this against
+  // the *current* combined counter: if either mutation fired since (even while
+  // GraphView was unmounted), the entry is stale and must be refetched
+  // regardless of TTL. Storing the key on the entry (rather than a per-instance
+  // ref) is what makes invalidation survive unmount — the per-instance
+  // `lastInvalidationRef` initializes to the current key on every mount, so it
+  // alone can never detect a mutation that happened while no instance was
+  // mounted.
   invalidationKey: number
 }
 
@@ -136,13 +144,25 @@ const EMPTY_TAG_IDS: string[] = []
 
 export function GraphView(): React.ReactElement {
   const { t } = useTranslation()
-  const { invalidationKey } = useBlockPropertyEvents()
+  // #1530: combine TWO module-level mutation signals into one effective
+  // invalidation key. The block-PROPERTY counter (#1818) fires only on property
+  // commands; the graph-STRUCTURE counter (#1530) fires on the mutations that
+  // actually change the page-link graph — local block/link/page CRUD (via
+  // `page-blocks.ts`) and applied remote ops (`sync:complete`). Summing them
+  // keeps the existing property-driven invalidation as a backstop while adding
+  // the correct structure axis; either bump advances the combined key, so the
+  // downstream `mutated` / `cacheStaleByMutation` machinery refetches on either.
+  const { invalidationKey: propertyKey } = useBlockPropertyEvents()
+  const { structureKey } = useGraphStructureEvents()
+  const invalidationKey = propertyKey + structureKey
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const svgRef = useRef<SVGSVGElement>(null)
-  // #1530: remember the last `invalidationKey` applied to a fetch so a block/
-  // link mutation can force a stale-while-revalidate refetch (bypass the
-  // fresh-cache early-exit) without changing the cache key, TTL, or eviction.
+  // #1530: remember the last combined `invalidationKey` applied to a fetch so a
+  // graph-structure mutation (page/`[[link]]` create, block edit/insert/delete/
+  // move) — or a property change — can force a stale-while-revalidate refetch
+  // (bypass the fresh-cache early-exit) without changing the cache key, TTL, or
+  // eviction.
   const lastInvalidationRef = useRef(invalidationKey)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -198,8 +218,9 @@ export function GraphView(): React.ReactElement {
 
     const graphCache = getGraphCacheEntry(tagCacheKey)
 
-    // #1530: a block/link mutation (e.g. creating a page or a [[link]]) bumps
-    // `invalidationKey`. When it changed since the last fetch, force a
+    // #1530: a graph-structure mutation (e.g. creating a page or a [[link]], or
+    // an applied remote sync batch) — or a block-property change — bumps the
+    // combined `invalidationKey`. When it changed since the last fetch, force a
     // refetch — but keep serving the cached nodes/edges immediately
     // (stale-while-revalidate). Record the new value so subsequent renders
     // for the same mutation don't keep bypassing the freshness guard.
@@ -259,8 +280,9 @@ export function GraphView(): React.ReactElement {
     return () => {
       cancelled = true
     }
-    // #1530: `invalidationKey` is a real dependency — the `mutated` check above
-    // reads it to bypass the fresh-cache early-exit so block/link mutations
+    // #1530: the combined `invalidationKey` (property + structure counters) is a
+    // real dependency — the `mutated` check above reads it to bypass the
+    // fresh-cache early-exit so graph-structure mutations (and property changes)
     // refetch the graph (stale-while-revalidate).
   }, [t, tagCacheKey, tagFilterIds, currentSpaceId, invalidationKey])
 

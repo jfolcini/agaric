@@ -73,8 +73,16 @@ impl LoroEngine {
     ) -> Result<(), AppError> {
         // Re-apply path: node exists — update meta + content, reparent to slot.
         if let Some(node) = self.node_for(block_id) {
-            let parent = self.resolve_parent(block_id, parent_id);
+            // Mirror the move path (#1527): when the requested parent is not
+            // yet in the engine (a re-applied `CreateBlock` arriving while its
+            // parent is transiently absent), DON'T resolve it to root — that
+            // would yank an already-correctly-parented subtree to the root.
+            // `resolve_move_target` returns `None` in that case (and records
+            // the pending intent), so we keep the node's CURRENT tree parent
+            // and only re-place it within those siblings.
+            let target = self.resolve_move_target(block_id, parent_id);
             let tree = self.tree();
+            let parent = target.unwrap_or_else(|| tree.parent(node).unwrap_or(TreeParentId::Root));
             let meta = tree.get_meta(node).map_err(|e| {
                 AppError::Validation(format!("loro: re-create block {block_id}: get_meta: {e}"))
             })?;
@@ -415,6 +423,13 @@ impl LoroEngine {
     /// is not yet present — the legacy position / pending intent was already
     /// recorded, so just commit and return. Cycle-forming reparents are logged
     /// and skipped (deterministic CRDT behaviour), matching the prior `mov`.
+    ///
+    /// A cycle rejection here is *expected* on the sync path: locally-authored
+    /// cycles are blocked by the command-layer guard, so a rejection almost
+    /// always means two peers concurrently reparented across each other and the
+    /// merge produced a transient cycle that one side must drop. The skip is
+    /// counted in [`super::cycle_rejected_metrics`] (#1541) so a *spike* in
+    /// cross-peer rejections is observable rather than buried in log noise.
     pub(super) fn move_block_impl(
         &mut self,
         block_id: &str,
@@ -440,8 +455,14 @@ impl LoroEngine {
         match self.tree().mov_to(node, target, slot) {
             Ok(()) => {}
             Err(e) if is_cyclic_move(&e) => {
+                // Observability only (#1541): keep the skip (correct CRDT
+                // behaviour — the node stays under its old parent), but count
+                // it so a cross-peer spike is distinguishable from log noise.
+                super::cycle_rejected_metrics::record(block_id);
                 tracing::warn!(
-                    block_id, error = %e,
+                    block_id,
+                    error = %e,
+                    cycle_rejected_count = super::cycle_rejected_metrics::count(),
                     "move block: cycle-forming reparent rejected by LoroTree; skipping reparent",
                 );
             }

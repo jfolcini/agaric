@@ -94,6 +94,26 @@ async fn read_apply_cursor(pool: &SqlitePool) -> Result<i64, AppError> {
     // SQL-review H-4: sanity-check against MAX(op_log.seq). The op_log
     // is append-only per AGENTS.md invariant #1, so MAX(seq) is the
     // strict upper bound for any legitimate cursor value.
+    //
+    // #1538 (scope note): `materialized_through_seq` is a SINGLE GLOBAL
+    // scalar (table `materializer_apply_cursor`, one `id = 1` row, no
+    // `device_id`), while `op_log.seq` is a PER-DEVICE counter (PK
+    // `(device_id, seq)`). `advance_apply_cursor` bumps the global cursor
+    // via `MAX(materialized_through_seq, seq)` for *every* applied op
+    // regardless of device, so the cursor's legitimate ceiling is the
+    // GLOBAL `MAX(seq)` across all devices — which is exactly what we
+    // compare against here. Crucially, this means the ceiling must NOT be
+    // narrowed to a per-device `MAX(seq) WHERE device_id = ?`: with the
+    // current global cursor that would lower the bound below seqs the
+    // cursor legitimately reached on other devices and FALSE-flag a valid
+    // cursor. The per-device fix belongs to the per-device cursor
+    // partitioning (#412), which adds a `device_id` to the cursor row and
+    // a `WHERE device_id = ?` replay walk; only then does a per-device
+    // ceiling become correct. Until #412 lands this check intentionally
+    // assumes a single-device op_log (the multi-device hard-abort guard in
+    // `replay_unmaterialized_ops` enforces that downstream), so it is NOT
+    // multi-device-safe in any sense beyond "the global ceiling is still
+    // the right ceiling for a global cursor".
     let max_seq: Option<i64> =
         sqlx::query_scalar!(r#"SELECT MAX(seq) as "max_seq: i64" FROM op_log"#,)
             .fetch_one(pool)
