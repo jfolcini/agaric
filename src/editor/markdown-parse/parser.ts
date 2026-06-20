@@ -351,20 +351,68 @@ export function parseHorizontalRule(lines: readonly string[], i: number): BlockP
   return { blocks: [block], consumed: 1 }
 }
 
-/** Ordered list: consecutive `N. item` lines. */
+const ORDERED_ITEM_RE = /^(\d+)\. (.*)$/
+
+/**
+ * Number of leading spaces on a line (its indentation). A line with no leading
+ * space (an item marker at this list's level) has indent 0; nested content
+ * lines emitted by the serializer are indented further (see LIST_NEST_INDENT
+ * in markdown-serialize.ts).
+ */
+function leadingIndent(line: string): number {
+  const m = line.match(/^ +/)
+  return m ? m[0].length : 0
+}
+
+/**
+ * Collect the lines belonging to one list item that begins at `lines[start]`:
+ * the marker line itself plus all subsequent more-indented (nested) lines.
+ * Returns the inline text after the marker, the dedented nested lines, and the
+ * index just past the item. `markerRe` must capture the item text in group 1
+ * for bullets and group 2 for ordered items (selected via `textGroup`).
+ */
+function collectListItem(
+  lines: readonly string[],
+  start: number,
+  markerRe: RegExp,
+  textGroup: number,
+): { text: string; nested: string[]; next: number } | null {
+  const itemMatch = (lines[start] as string).match(markerRe)
+  if (!itemMatch) return null
+  const text = (itemMatch[textGroup] ?? '') as string
+  const nestedRaw: string[] = []
+  let j = start + 1
+  while (j < lines.length && leadingIndent(lines[j] as string) > 0) {
+    nestedRaw.push(lines[j] as string)
+    j++
+  }
+  // Dedent the nested block by its own minimum indentation so the recursive
+  // parse sees the nested list at column 0 (round-trips the serializer's
+  // per-level indentation; #1513).
+  const minIndent = nestedRaw.reduce(
+    (min, line) => Math.min(min, leadingIndent(line)),
+    Number.POSITIVE_INFINITY,
+  )
+  const nested = Number.isFinite(minIndent)
+    ? nestedRaw.map((line) => line.slice(minIndent))
+    : nestedRaw
+  return { text, nested, next: j }
+}
+
+/** Ordered list: consecutive `N. item` lines, with nested (indented) lists. */
 export function parseOrderedList(
   lines: readonly string[],
   i: number,
   depth: number,
 ): BlockParseResult | null {
-  if (!/^\d+\. /.test(lines[i] as string)) return null
+  if (!ORDERED_ITEM_RE.test(lines[i] as string)) return null
   const items: ListItemNode[] = []
   let j = i
   while (j < lines.length) {
-    const itemMatch = (lines[j] as string).match(/^(\d+)\. (.*)$/)
-    if (!itemMatch) break
-    items.push(buildListItem(itemMatch[2] as string, depth))
-    j++
+    const collected = collectListItem(lines, j, ORDERED_ITEM_RE, 2)
+    if (!collected) break
+    items.push(buildListItem(collected.text, collected.nested, depth))
+    j = collected.next
   }
   const consumed = j - i
   if (items.length === 0) return { blocks: [], consumed }
@@ -401,10 +449,10 @@ export function parseBulletList(
   while (j < lines.length) {
     const line = lines[j] as string
     if (BULLET_TASK_RE.test(line)) break
-    const itemMatch = line.match(BULLET_ITEM_RE)
-    if (!itemMatch) break
-    items.push(buildListItem(itemMatch[1] as string, depth))
-    j++
+    const collected = collectListItem(lines, j, BULLET_ITEM_RE, 1)
+    if (!collected) break
+    items.push(buildListItem(collected.text, collected.nested, depth))
+    j = collected.next
   }
   const consumed = j - i
   if (items.length === 0) return { blocks: [], consumed }
@@ -412,13 +460,30 @@ export function parseBulletList(
   return { blocks: [block], consumed }
 }
 
-function buildListItem(itemText: string, depth: number): ListItemNode {
+/**
+ * Build a list item from its marker text and any nested (dedented) lines. The
+ * leading paragraph is always present; nested lines are recursively parsed and
+ * any resulting `bulletList`/`orderedList` blocks are appended so that
+ * `Tab`/`sinkListItem` nesting round-trips without loss (#1513).
+ */
+function buildListItem(itemText: string, nested: string[], depth: number): ListItemNode {
   const inlineContent = parseLine(itemText, depth)
   const paragraph: ParagraphNode =
     inlineContent.length === 0
       ? { type: 'paragraph' }
       : { type: 'paragraph', content: inlineContent }
-  return { type: 'listItem', content: [paragraph] }
+  if (nested.length === 0) {
+    return { type: 'listItem', content: [paragraph] }
+  }
+  const nestedDoc = parse(nested.join('\n'), depth + 1)
+  const nestedBlocks = nestedDoc.content ?? []
+  const content: (ParagraphNode | OrderedListNode | BulletListNode)[] = [paragraph]
+  for (const block of nestedBlocks) {
+    if (block.type === 'bulletList' || block.type === 'orderedList') {
+      content.push(block)
+    }
+  }
+  return { type: 'listItem', content }
 }
 
 /**

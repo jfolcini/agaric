@@ -182,9 +182,16 @@ export interface TableNode {
   readonly content?: readonly TableRowNode[]
 }
 
+/**
+ * A list item holds a leading paragraph and may hold one or more nested lists
+ * (the structure `Tab`/`sinkListItem` produces: the sunk items become a
+ * `bulletList`/`orderedList` sibling of the item's paragraph). The serializer
+ * and parser preserve this nesting so indented lists round-trip without loss
+ * (#1513).
+ */
 export interface ListItemNode {
   readonly type: 'listItem'
-  readonly content?: readonly ParagraphNode[]
+  readonly content?: readonly (ParagraphNode | OrderedListNode | BulletListNode)[]
 }
 
 export interface OrderedListNode {

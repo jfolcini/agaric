@@ -681,32 +681,61 @@ function serializeTable(node: TableNode, onUnknownNode?: (type: string) => void)
   return [header, separator, ...dataRows].join('\n')
 }
 
+// Nested lists (created by `Tab`/`sinkListItem`) are indented by this many
+// spaces per level. The parser dedents by the same width, so indented lists
+// round-trip without loss (#1513). Two spaces is the bullet-marker width and
+// is enough for the parser to recognize a continuation line.
+const LIST_NEST_INDENT = '  '
+
+/** Prefix every line of `text` with `indent`. */
+function indentLines(text: string, indent: string): string {
+  return text
+    .split('\n')
+    .map((line) => indent + line)
+    .join('\n')
+}
+
+/**
+ * Serialize one list item: its leading paragraph(s) followed by any nested
+ * `bulletList`/`orderedList` children, each indented one level. The item's
+ * marker (e.g. `- ` or `3. `) is supplied by the caller and prefixed to the
+ * first line; nested lines are indented one level so they round-trip back into
+ * the same nested structure (#1513).
+ */
+function serializeListItem(
+  item: ListItemNode,
+  marker: string,
+  onUnknownNode?: (type: string) => void,
+): string {
+  const lines: string[] = []
+  for (const child of item.content ?? []) {
+    if (child.type === 'orderedList') {
+      lines.push(indentLines(serializeOrderedList(child, onUnknownNode), LIST_NEST_INDENT))
+    } else if (child.type === 'bulletList') {
+      lines.push(indentLines(serializeBulletList(child, onUnknownNode), LIST_NEST_INDENT))
+    } else {
+      lines.push(serializeParagraph(child, onUnknownNode))
+    }
+  }
+  return `${marker}${lines.join('\n')}`
+}
+
 function serializeOrderedList(
   node: OrderedListNode,
   onUnknownNode?: (type: string) => void,
 ): string {
   if (!node.content || node.content.length === 0) return ''
   return node.content
-    .map((item: ListItemNode, idx: number) => {
-      const inner =
-        item.content && item.content.length > 0
-          ? item.content.map((p) => serializeParagraph(p, onUnknownNode)).join('\n')
-          : ''
-      return `${idx + 1}. ${inner}`
-    })
+    .map((item: ListItemNode, idx: number) =>
+      serializeListItem(item, `${idx + 1}. `, onUnknownNode),
+    )
     .join('\n')
 }
 
 function serializeBulletList(node: BulletListNode, onUnknownNode?: (type: string) => void): string {
   if (!node.content || node.content.length === 0) return ''
   return node.content
-    .map((item: ListItemNode) => {
-      const inner =
-        item.content && item.content.length > 0
-          ? item.content.map((p) => serializeParagraph(p, onUnknownNode)).join('\n')
-          : ''
-      return `- ${inner}`
-    })
+    .map((item: ListItemNode) => serializeListItem(item, '- ', onUnknownNode))
     .join('\n')
 }
 

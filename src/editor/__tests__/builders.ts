@@ -141,9 +141,11 @@ export function doc(...blocks: BlockLevelNode[]): DocNode {
   return { type: 'doc', content: blocks }
 }
 
-export function listItem(...paragraphs: ParagraphNode[]): ListItemNode {
-  if (paragraphs.length === 0) return { type: 'listItem' }
-  return { type: 'listItem', content: paragraphs }
+export function listItem(
+  ...children: (ParagraphNode | OrderedListNode | BulletListNode)[]
+): ListItemNode {
+  if (children.length === 0) return { type: 'listItem' }
+  return { type: 'listItem', content: children }
 }
 
 export function orderedList(...items: ListItemNode[]): OrderedListNode {
