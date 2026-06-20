@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { GraphFilterBar } from '@/components/graph/GraphFilterBar'
+import { canonicalToGraphFilters, type FilterPredicate } from '@/lib/filters/model'
 import type { GraphFilter } from '@/lib/graph-filters'
 import { t } from '@/lib/i18n'
 import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
@@ -499,8 +500,15 @@ describe('GraphFilterBar', () => {
       await waitFor(() => {
         const raw = localStorage.getItem(STORAGE_KEY)
         expect(raw).not.toBeNull()
-        const parsed = JSON.parse(raw ?? '[]') as GraphFilter[]
-        expect(parsed).toEqual([{ type: 'status', values: ['TODO'] }])
+        // #1646 — the persisted shape is now the CANONICAL `FilterPredicate[]`
+        // model, not the surface-local `GraphFilter[]`. Assert through the
+        // canonical → graph projection so the test pins the round-trip contract
+        // rather than the storage encoding.
+        const parsed = JSON.parse(raw ?? '[]') as FilterPredicate[]
+        expect(parsed).toEqual([
+          { kind: 'status', values: ['TODO'], isNull: false, exclude: false },
+        ])
+        expect(canonicalToGraphFilters(parsed)).toEqual([{ type: 'status', values: ['TODO'] }])
       })
     })
 
