@@ -497,6 +497,171 @@ describe('delete_block', () => {
     }
     expect(result.items).toHaveLength(0)
   })
+
+  // #1775 — single-op cascade. Build Home > A > A1 > A1a and assert a single
+  // delete_block on A tombstones the WHOLE active descendant chain with the
+  // SAME `deleted_at` cohort marker, matching the backend's
+  // `descendants_cte_active` cascade.
+  it('cascades over the whole active descendant subtree', () => {
+    const home = invoke('create_block', { blockType: 'page', content: 'Home' }) as Record<
+      string,
+      unknown
+    >
+    const homeId = home['id'] as string
+    const a = invoke('create_block', {
+      blockType: 'content',
+      content: 'A',
+      parentId: homeId,
+    }) as Record<string, unknown>
+    const aId = a['id'] as string
+    const a1 = invoke('create_block', {
+      blockType: 'content',
+      content: 'A1',
+      parentId: aId,
+    }) as Record<string, unknown>
+    const a1Id = a1['id'] as string
+    const a1a = invoke('create_block', {
+      blockType: 'content',
+      content: 'A1a',
+      parentId: a1Id,
+    }) as Record<string, unknown>
+    const a1aId = a1a['id'] as string
+
+    const result = invoke('delete_block', { blockId: aId }) as Record<string, unknown>
+
+    // descendants_affected mirrors the backend's `rows_affected()`: the count of
+    // ALL rows tombstoned, target INCLUDED (A + A1 + A1a = 3).
+    expect(result['descendants_affected']).toBe(3)
+    const cohort = result['deleted_at'] as string
+
+    const getBlock = (id: string) => invoke('get_block', { blockId: id }) as Record<string, unknown>
+    // A, A1, A1a all tombstoned with the SAME cohort timestamp.
+    expect(getBlock(aId)['deleted_at']).toBe(cohort)
+    expect(getBlock(a1Id)['deleted_at']).toBe(cohort)
+    expect(getBlock(a1aId)['deleted_at']).toBe(cohort)
+    // Home (the live ancestor) stays live.
+    expect(getBlock(homeId)['deleted_at']).toBeNull()
+  })
+
+  it('leaves an already-deleted descendant (and its subtree) untouched', () => {
+    const a = invoke('create_block', { blockType: 'page', content: 'A' }) as Record<string, unknown>
+    const aId = a['id'] as string
+    const a1 = invoke('create_block', {
+      blockType: 'content',
+      content: 'A1',
+      parentId: aId,
+    }) as Record<string, unknown>
+    const a1Id = a1['id'] as string
+    const a1a = invoke('create_block', {
+      blockType: 'content',
+      content: 'A1a',
+      parentId: a1Id,
+    }) as Record<string, unknown>
+    const a1aId = a1a['id'] as string
+
+    // Independently delete A1 first (its own earlier cohort).
+    const first = invoke('delete_block', { blockId: a1Id }) as Record<string, unknown>
+    const earlierCohort = first['deleted_at'] as string
+    // A1 cascaded onto A1a, so both already carry the earlier cohort.
+    // rows_affected = A1 + A1a (target-inclusive) = 2.
+    expect(first['descendants_affected']).toBe(2)
+
+    // Advance the clock so a subsequent delete gets a distinct timestamp.
+    vi.advanceTimersByTime(1000)
+
+    // Now delete A. The active cascade descends into A only — A1 is already
+    // deleted, so it (and A1a below it) are skipped, keeping the earlier cohort.
+    const second = invoke('delete_block', { blockId: aId }) as Record<string, unknown>
+    const laterCohort = second['deleted_at'] as string
+    // Only A is tombstoned here (A1/A1a are already deleted boundaries).
+    // rows_affected = A alone (target-inclusive) = 1.
+    expect(second['descendants_affected']).toBe(1)
+    expect(laterCohort).not.toBe(earlierCohort)
+
+    const getBlock = (id: string) => invoke('get_block', { blockId: id }) as Record<string, unknown>
+    expect(getBlock(aId)['deleted_at']).toBe(laterCohort)
+    // A1 / A1a keep their independent, earlier tombstone — NOT re-stamped.
+    expect(getBlock(a1Id)['deleted_at']).toBe(earlierCohort)
+    expect(getBlock(a1aId)['deleted_at']).toBe(earlierCohort)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// restore_block (cohort restore — #1775)
+// ---------------------------------------------------------------------------
+
+describe('restore_block cohort cascade', () => {
+  it('restores only the same-cohort chain, leaving an independently-deleted descendant deleted', () => {
+    // Home > A > A1 > A1a.
+    const home = invoke('create_block', { blockType: 'page', content: 'Home' }) as Record<
+      string,
+      unknown
+    >
+    const homeId = home['id'] as string
+    const a = invoke('create_block', {
+      blockType: 'content',
+      content: 'A',
+      parentId: homeId,
+    }) as Record<string, unknown>
+    const aId = a['id'] as string
+    const a1 = invoke('create_block', {
+      blockType: 'content',
+      content: 'A1',
+      parentId: aId,
+    }) as Record<string, unknown>
+    const a1Id = a1['id'] as string
+    const a1a = invoke('create_block', {
+      blockType: 'content',
+      content: 'A1a',
+      parentId: a1Id,
+    }) as Record<string, unknown>
+    const a1aId = a1a['id'] as string
+
+    // (1) Independently delete A1a first — its own earlier cohort.
+    const first = invoke('delete_block', { blockId: a1aId }) as Record<string, unknown>
+    const a1aCohort = first['deleted_at'] as string
+
+    vi.advanceTimersByTime(1000)
+
+    // (2) Delete A — active cascade tombstones A + A1 (A1a already deleted, so
+    // it is skipped and keeps its earlier cohort).
+    const second = invoke('delete_block', { blockId: aId }) as Record<string, unknown>
+    const aCohort = second['deleted_at'] as string
+    // rows_affected = A + A1 (target-inclusive; A1a is an already-deleted
+    // boundary and is skipped) = 2.
+    expect(second['descendants_affected']).toBe(2)
+    expect(aCohort).not.toBe(a1aCohort)
+
+    // (3) Restore A — cohort restore clears exactly A + A1 (same cohort) but
+    // stops at A1a, whose tombstone belongs to a different, earlier cohort.
+    const restored = invoke('restore_block', { blockId: aId }) as Record<string, unknown>
+    expect(restored['restored_count']).toBe(2)
+
+    const getBlock = (id: string) => invoke('get_block', { blockId: id }) as Record<string, unknown>
+    expect(getBlock(aId)['deleted_at']).toBeNull()
+    expect(getBlock(a1Id)['deleted_at']).toBeNull()
+    // A1a STAYS deleted — its independent tombstone wins.
+    expect(getBlock(a1aId)['deleted_at']).toBe(a1aCohort)
+  })
+
+  it('restores the full cohort when the whole subtree was deleted together', () => {
+    const a = invoke('create_block', { blockType: 'page', content: 'A' }) as Record<string, unknown>
+    const aId = a['id'] as string
+    const a1 = invoke('create_block', {
+      blockType: 'content',
+      content: 'A1',
+      parentId: aId,
+    }) as Record<string, unknown>
+    const a1Id = a1['id'] as string
+
+    invoke('delete_block', { blockId: aId })
+    const restored = invoke('restore_block', { blockId: aId }) as Record<string, unknown>
+    expect(restored['restored_count']).toBe(2)
+
+    const getBlock = (id: string) => invoke('get_block', { blockId: id }) as Record<string, unknown>
+    expect(getBlock(aId)['deleted_at']).toBeNull()
+    expect(getBlock(a1Id)['deleted_at']).toBeNull()
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -819,13 +984,16 @@ describe('restore_block', () => {
     expect(restored['deleted_at']).toBeNull()
   })
 
-  it('is idempotent — restoring a non-deleted block still works', () => {
+  it('is a no-op when restoring a non-deleted block (restores nothing)', () => {
+    // #1775: a live target has no cohort to restore, so the cohort walk clears
+    // nothing — `restored_count` is 0, mirroring the backend projection's
+    // `WHERE deleted_at = ?` matching no rows. The block stays live.
     const result = invoke('restore_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<
       string,
       unknown
     >
     expect(result['block_id']).toBe(SEED_IDS.BLOCK_GS_1)
-    expect(result['restored_count']).toBe(1)
+    expect(result['restored_count']).toBe(0)
 
     const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
     expect(block['deleted_at']).toBeNull()

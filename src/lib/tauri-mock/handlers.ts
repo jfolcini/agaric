@@ -32,6 +32,25 @@ import {
 
 type Handler = (args: unknown) => unknown
 
+// #1775 — distinct soft-delete cohort markers. The backend keys restore on a
+// delete op's `created_at` (epoch-ms); two ops in the same ms can collide on
+// the raw clock value, but total ordering (and thus cohort identity) is
+// established by the composite `(created_at, seq)` key. We mirror that here by
+// folding a monotonic counter into each delete op's `deleted_at`, so two
+// distinct `delete_block` ops NEVER share a cohort marker even when issued in
+// the same wall-clock millisecond (a real possibility under fake timers / fast
+// synchronous test/e2e dispatch). The conformance snapshot normalizes any
+// non-null `deleted_at` to `"DELETED"`, so the exact string is irrelevant to
+// callers — only that distinct cohorts get distinct markers, which the cohort
+// restore walk depends on to leave an independently-deleted descendant deleted.
+let cohortSeq = 0
+function nextCohortMarker(): string {
+  cohortSeq += 1
+  // ISO-shaped + monotonic suffix → sortable, distinct, and still a truthy
+  // string the rest of the mock treats as "deleted".
+  return `${new Date().toISOString()}#${cohortSeq.toString().padStart(6, '0')}`
+}
+
 // Stub return shapes used by handlers that don't need behaviour beyond a
 // type-correct empty payload. `list_projected_agenda` is cursor-paginated
 // (M-25) and returns a `PageResponse<T>` shape, NOT a bare array — using
@@ -1143,15 +1162,62 @@ export const HANDLERS: Record<string, Handler> = {
     return b
   },
 
+  // #1775 — single-op soft-delete cascade, mirroring the backend's
+  // `project_delete_block_to_sql` / `descendants_cte_active`. Tombstone the
+  // target AND its whole ACTIVE descendant subtree, stamping the SAME
+  // `deleted_at` cohort marker on every block actually tombstoned. The
+  // recursive walk only descends into children whose `deleted_at` is NULL
+  // (active), so an already-deleted descendant — and the subtree beneath it —
+  // is left untouched, exactly like the SQL CTE's `b.deleted_at IS NULL` arm.
+  // `descendants_affected` counts the descendants tombstoned (the target
+  // itself is excluded, matching the backend's command return).
   delete_block: (args) => {
     const a = args as Record<string, unknown>
-    const b = blocks.get(a['blockId'] as string)
-    if (b) b['deleted_at'] = new Date().toISOString()
-    pushOp('delete_block', { block_id: a['blockId'] })
+    const blockId = a['blockId'] as string
+    const target = blocks.get(blockId)
+    const now = nextCohortMarker()
+    let descendantsAffected = 0
+    // Only cascade for a live target; a missing / already-deleted target is a
+    // no-op cascade (mirrors the CTE seed `WHERE deleted_at IS NULL` filter on
+    // the UPDATE). The seed row itself is still re-stamped to `now` if live.
+    if (target && !target['deleted_at']) {
+      // BFS over the ACTIVE descendant subtree. Descend only into children
+      // whose `deleted_at` is NULL — an already-deleted descendant boundary
+      // (and everything below it) is skipped.
+      const stack: string[] = [blockId]
+      const seen = new Set<string>()
+      while (stack.length > 0) {
+        const id = stack.pop()
+        if (id == null) break
+        if (seen.has(id)) continue
+        seen.add(id)
+        const node = blocks.get(id)
+        if (!node || node['deleted_at']) continue
+        node['deleted_at'] = now
+        // `descendants_affected` mirrors the backend's `rows_affected()` from
+        // the `descendants_cte_active` UPDATE, whose `descendants` CTE includes
+        // the SEED (target) at depth 0. So the count is the TOTAL number of
+        // rows tombstoned — target INCLUDED — not just the strict descendants.
+        // (The field name is the backend's; its value is target-inclusive, as
+        // the `snapshot_delete_block_response` fixture proves: a lone block
+        // delete returns `descendants_affected: 1`.)
+        descendantsAffected++
+        for (const child of blocks.values()) {
+          if (
+            child['parent_id'] === id &&
+            !child['deleted_at'] &&
+            !seen.has(child['id'] as string)
+          ) {
+            stack.push(child['id'] as string)
+          }
+        }
+      }
+    }
+    pushOp('delete_block', { block_id: blockId })
     return {
-      block_id: a['blockId'],
-      deleted_at: new Date().toISOString(),
-      descendants_affected: 0,
+      block_id: blockId,
+      deleted_at: now,
+      descendants_affected: descendantsAffected,
     }
   },
 
@@ -1202,12 +1268,46 @@ export const HANDLERS: Record<string, Handler> = {
     return count
   },
 
+  // #1775 — single-op cohort restore, mirroring the backend's
+  // `project_restore_block_to_sql` / `descendants_cte_cohort`. Restore the
+  // target AND only the descendants that share the target's `deleted_at`
+  // cohort marker (`deleted_at_ref`), reached via a CONTIGUOUS same-cohort
+  // walk from the seed. The recursive arm only descends into a child whose
+  // `deleted_at` equals the seed's `deleted_at`, so the walk stops at the
+  // first boundary block of a DIFFERENT cohort (e.g. an independently-deleted
+  // nested subtree) — leaving that descendant deleted, exactly like the SQL
+  // cohort CTE. `restored_count` is the number of blocks actually restored.
   restore_block: (args) => {
     const a = args as Record<string, unknown>
-    const b = blocks.get(a['blockId'] as string)
-    if (b) b['deleted_at'] = null
-    pushOp('restore_block', { block_id: a['blockId'] })
-    return { block_id: a['blockId'], restored_count: 1 }
+    const blockId = a['blockId'] as string
+    const target = blocks.get(blockId)
+    const cohort = target?.['deleted_at'] as string | null | undefined
+    let restoredCount = 0
+    // A live (non-deleted) or missing target yields no cohort to restore.
+    if (target && cohort) {
+      const stack: string[] = [blockId]
+      const seen = new Set<string>()
+      while (stack.length > 0) {
+        const id = stack.pop()
+        if (id == null) break
+        if (seen.has(id)) continue
+        seen.add(id)
+        const node = blocks.get(id)
+        // Only same-cohort blocks are restored; a block whose `deleted_at`
+        // differs from the seed's marker is a boundary — skip it and the
+        // subtree below it (we never enqueue its children).
+        if (!node || node['deleted_at'] !== cohort) continue
+        node['deleted_at'] = null
+        restoredCount++
+        for (const child of blocks.values()) {
+          if (child['deleted_at'] === cohort && !seen.has(child['id'] as string)) {
+            if (child['parent_id'] === id) stack.push(child['id'] as string)
+          }
+        }
+      }
+    }
+    pushOp('restore_block', { block_id: blockId })
+    return { block_id: blockId, restored_count: restoredCount }
   },
 
   purge_block: (args) => {
