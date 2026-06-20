@@ -23,12 +23,13 @@
  *  - Empty state
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
+import { STATE_FILTER_VALUES } from '@/components/filters/forms/stateVocabulary'
 
 import type { BacklinkFilter } from '../../lib/tauri'
 import { listTagsByPrefix } from '../../lib/tauri'
@@ -140,6 +141,56 @@ describe('BacklinkFilterBuilder', () => {
       expect(onFiltersChange).toHaveBeenCalledWith([
         expect.objectContaining({ type: 'PropertyText', key: 'todo', op: 'Eq', value: 'DONE' }),
       ])
+    })
+
+    // Issue #1647 follow-up — `none` is a SENTINEL ("no state set"), NOT a
+    // literal value. On the search side `state:none` resolves to
+    // `todo_state IS NULL` (src-tauri/src/fts/metadata_filter.rs). The
+    // backlink Status `none` must therefore emit the "property absent"
+    // filter (`PropertyIsEmpty`), not a literal `PropertyText Eq 'none'`
+    // (which would match blocks whose `todo` property is the string "none").
+    it('emits PropertyIsEmpty for the `none` sentinel (not a literal Eq match)', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'status')
+      await user.selectOptions(screen.getByLabelText('Status value'), 'none')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(onFiltersChange).toHaveBeenCalledWith([
+        expect.objectContaining({ type: 'PropertyIsEmpty', key: 'todo' }),
+      ])
+      // Must NOT be a literal text match on the string "none".
+      expect(onFiltersChange).not.toHaveBeenCalledWith([
+        expect.objectContaining({ type: 'PropertyText', value: 'none' }),
+      ])
+    })
+
+    // Issue #1647 follow-up — the maintainer UNIFIED the search "State" and
+    // backlink "Status" vocabularies into one canonical set. The backlink
+    // Status form now offers the FULL set (TODO/DOING/DONE/WAITING/
+    // CANCELLED/none) sourced from the shared `STATE_FILTER_VALUES`, exactly
+    // like the search State form. (Previously this was a TODO/DOING/DONE
+    // shortlist.)
+    it('offers the full unified state vocabulary (same as search State)', async () => {
+      const user = userEvent.setup()
+      renderBuilder()
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'status')
+
+      const statusSelect = screen.getByLabelText('Status value') as HTMLSelectElement
+      const values = within(statusSelect)
+        .getAllByRole('option')
+        .map((o) => (o as HTMLOptionElement).value)
+      // The full unified set — sourced from the single canonical vocabulary.
+      expect(values).toEqual([...STATE_FILTER_VALUES])
+      // Values that used to be search-only are now present on this surface.
+      expect(values).toContain('WAITING')
+      expect(values).toContain('CANCELLED')
+      expect(values).toContain('none')
     })
 
     it('adds a Priority filter', async () => {

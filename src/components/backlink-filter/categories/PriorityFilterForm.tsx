@@ -1,19 +1,17 @@
 /**
  * PriorityFilterForm — priority selector for the `priority` filter
  * category.  Shortcut for `PropertyText` with key `priority`.
+ *
+ * Issue #1647 — the value control is the shared `FilterValueSelect`, but
+ * the vocabulary is THIS surface's fixed 1/2/3 shortlist (with translated
+ * high/medium/low labels), NOT the search `usePriorityLevels()` vocab.
  */
 
 import type React from 'react'
 import { useImperativeHandle, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { FilterValueSelect } from '@/components/filters/forms/FilterValueSelect'
 
 import type { FilterFormHandle } from './types'
 
@@ -28,15 +26,15 @@ export function PriorityFilterForm({ ref }: PriorityFilterFormProps): React.Reac
   useImperativeHandle(ref, () => ({ getState: () => ({ priorityValue }) }), [priorityValue])
 
   return (
-    <Select value={priorityValue} onValueChange={(val) => setPriorityValue(val)}>
-      <SelectTrigger size="sm" aria-label={t('backlink.priorityValueLabel')}>
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="1">{t('backlink.highPriority')}</SelectItem>
-        <SelectItem value="2">{t('backlink.mediumPriority')}</SelectItem>
-        <SelectItem value="3">{t('backlink.lowPriority')}</SelectItem>
-      </SelectContent>
-    </Select>
+    <FilterValueSelect
+      options={[
+        { value: '1', label: t('backlink.highPriority') },
+        { value: '2', label: t('backlink.mediumPriority') },
+        { value: '3', label: t('backlink.lowPriority') },
+      ]}
+      value={priorityValue}
+      onValueChange={setPriorityValue}
+      ariaLabel={t('backlink.priorityValueLabel')}
+    />
   )
 }

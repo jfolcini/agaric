@@ -11,14 +11,8 @@ import type React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { FilterValueSelect } from '@/components/filters/forms/FilterValueSelect'
 import { Button } from '@/components/ui/button'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { usePriorityLevels } from '@/hooks/usePriorityLevels'
 import type { FilterToken } from '@/lib/search-query'
 
@@ -69,22 +63,13 @@ export function PriorityFilterForm({
           includeLabel={t('search.filterHelper.include')}
           excludeLabel={t('search.filterHelper.exclude')}
         />
-        <Select value={value} onValueChange={setValue}>
-          <SelectTrigger
-            ref={triggerRef}
-            size="sm"
-            aria-label={t('search.filterHelper.priorityValueLabel')}
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {priorityValues.map((p) => (
-              <SelectItem key={p} value={p}>
-                {p}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <FilterValueSelect
+          options={priorityValues.map((p) => ({ value: p }))}
+          value={value}
+          onValueChange={setValue}
+          triggerRef={triggerRef}
+          ariaLabel={t('search.filterHelper.priorityValueLabel')}
+        />
       </div>
       <div className="mt-2 flex gap-2 justify-end">
         <Button type="button" variant="outline" size="sm" onClick={onBack}>
