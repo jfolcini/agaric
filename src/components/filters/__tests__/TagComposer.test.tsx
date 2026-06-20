@@ -10,7 +10,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { TagComposer } from '@/components/filters/TagComposer'
+import { TagComposer, type TagComposerCallbacks } from '@/components/filters/TagComposer'
 import { t } from '@/lib/i18n'
 import { emptyTagBuilder } from '@/lib/tagExpr'
 
@@ -18,14 +18,15 @@ const mockedInvoke = vi.mocked(invoke)
 
 function renderComposer() {
   const onAddTag = vi.fn()
-  const props = {
-    builder: emptyTagBuilder(),
+  const callbacks: TagComposerCallbacks = {
     onAddTag,
     onAddPrefix: vi.fn(),
-    onRemoveLeaf: vi.fn(),
-    onSetMode: vi.fn(),
+    onAddGroup: vi.fn(),
+    onRemoveNode: vi.fn(),
+    onSetOp: vi.fn(),
+    onToggleNegated: vi.fn(),
   }
-  const utils = render(<TagComposer {...props} />)
+  const utils = render(<TagComposer root={emptyTagBuilder()} callbacks={callbacks} />)
   return { ...utils, onAddTag }
 }
 

@@ -22,12 +22,13 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '@/hooks/usePaginatedQuery'
+import type { TagExpr } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { compileTagBuilder, tagBuilderHasLeaves } from '@/lib/tagExpr'
-import type { BlockRow } from '@/lib/tauri'
-import { batchResolve, getBlock, listTagsByPrefix, queryByTags } from '@/lib/tauri'
+import { type TagQueryParams, compileTagExpr, tagBuilderHasLeaves } from '@/lib/tagExpr'
+import type { BlockRow, PageResponse } from '@/lib/tauri'
+import { batchResolve, getBlock, listTagsByPrefix, queryByTagExpr, queryByTags } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
@@ -130,6 +131,68 @@ function PrefixPillBar({
   )
 }
 
+/** Flat simple-mode All/Any/None toggle (3 tooltip buttons over the IPC `mode`). */
+function FlatModeToggle({
+  mode,
+  onSetMode,
+}: {
+  mode: 'and' | 'or' | 'not'
+  onSetMode: (mode: 'and' | 'or' | 'not') => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  const options: { value: 'and' | 'or' | 'not'; label: string; tooltip: string }[] = [
+    { value: 'and', label: t('tagFilter.andMode'), tooltip: t('tagFilter.andModeTooltip') },
+    { value: 'or', label: t('tagFilter.orMode'), tooltip: t('tagFilter.orModeTooltip') },
+    { value: 'not', label: t('tagFilter.notMode'), tooltip: t('tagFilter.notModeTooltip') },
+  ]
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-sm text-muted-foreground">{t('tagFilter.modeLabel')}</span>
+      {options.map(({ value, label, tooltip }) => (
+        <Tooltip key={value}>
+          <TooltipTrigger asChild>
+            <Button
+              variant={mode === value ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => onSetMode(value)}
+              aria-pressed={mode === value}
+            >
+              {label}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>{tooltip}</p>
+          </TooltipContent>
+        </Tooltip>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * #1426 — run the active tag query. When `tagExpr` is set (the nested composer
+ * is open and non-empty) it runs over the #1472 `query_by_tag_expr` IPC; else
+ * the flat simple-mode `query_by_tags` runs. Extracted so the panel body stays
+ * declarative.
+ */
+function runTagQuery(
+  tagExpr: TagExpr | null,
+  flatParams: TagQueryParams,
+  spaceId: string | null,
+  cursor?: string,
+): Promise<PageResponse<BlockRow>> {
+  const paging = { ...(cursor != null && { cursor }), limit: PAGINATION_LIMIT, spaceId }
+  if (tagExpr != null) {
+    return queryByTagExpr({ expr: tagExpr, ...paging })
+  }
+  return queryByTags({
+    tagIds: flatParams.tagIds,
+    prefixes: flatParams.prefixes,
+    mode: flatParams.mode,
+    ...paging,
+  })
+}
+
 export function TagFilterPanel(): React.ReactElement {
   const { t } = useTranslation()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
@@ -140,15 +203,14 @@ export function TagFilterPanel(): React.ReactElement {
   // #1426 — tag-prefix search pills, surfaced into the query (the panel used to
   // hardcode `prefixes: []`). Each pill compiles to a `TagExpr::Prefix` leaf.
   const [prefixPills, setPrefixPills] = useState<string[]>([])
-  // #1426 — opt-in single-level All/Any/None composer (mixes resolved-tag and
-  // name-prefix leaves under one combinator). When `builder` is `null` the panel
-  // runs the flat default (selected tags + prefix pills under `mode`), so
-  // nothing regresses for users who never open the composer. When set, the
-  // compiled builder params drive the query instead. The builder is constrained
-  // to exactly what the flat `query_by_tags` IPC can execute — no deep nesting
-  // or per-leaf negation, which the IPC cannot represent.
+  // #1426 — opt-in NESTED And/Or/Not composer (#1472 IPC). When `root` is `null`
+  // the panel runs the flat simple-mode default (selected tags + prefix pills
+  // under one `mode`), so nothing regresses for users who never open it. When
+  // set, the composer compiles its group tree to a `TagExpr` and drives the
+  // query via `queryByTagExpr` — arbitrary nesting + per-node negation that the
+  // flat `query_by_tags` IPC cannot express.
   const {
-    builder: composer,
+    root: composer,
     callbacks: composerCallbacks,
     toggle: toggleComposer,
   } = useTagComposerState()
@@ -194,31 +256,24 @@ export function TagFilterPanel(): React.ReactElement {
     debounced.schedule(value)
   }
 
-  // #1426 — the active query params: the compiled composer params when the
-  // composer is open and non-empty, otherwise the flat default (selected tags +
-  // prefix pills under the single `mode`). `compileTagBuilder` lowers the
-  // single-level builder LOSSLESSLY onto the flat `query_by_tags` IPC — the
-  // builder only models what the IPC can faithfully run.
-  const composerActive = composer != null && tagBuilderHasLeaves(composer)
-  const queryParams = composerActive
-    ? compileTagBuilder(composer)
-    : { tagIds: selectedTags.map((tg) => tg.id), prefixes: prefixPills, mode }
-  const hasQuery = queryParams.tagIds.length > 0 || queryParams.prefixes.length > 0
+  // #1426 — the active query. When the composer is open and carries a leaf, its
+  // group tree compiles to a nested `TagExpr` that runs over the #1472
+  // `query_by_tag_expr` IPC (`(A AND B) OR (NOT C)`, per-node negation). Else
+  // the flat simple-mode default runs over `query_by_tags` (selected tags +
+  // prefix pills under one `mode`). `compileTagExpr` is lossless — the tree on
+  // screen is exactly the tree the resolver evaluates.
+  const tagExpr =
+    composer != null && tagBuilderHasLeaves(composer) ? compileTagExpr(composer) : null
+  const flatParams = { tagIds: selectedTags.map((tg) => tg.id), prefixes: prefixPills, mode }
+  const hasQuery = tagExpr != null || flatParams.tagIds.length > 0 || flatParams.prefixes.length > 0
 
-  // Block results via usePaginatedQuery
+  // Block results via usePaginatedQuery. `runTagQuery` selects the IPC (nested
+  // `queryByTagExpr` when the composer is active, flat `queryByTags` otherwise).
   const blockQueryFn = useCallback(
-    (cursor?: string) =>
-      queryByTags({
-        tagIds: queryParams.tagIds,
-        prefixes: queryParams.prefixes,
-        mode: queryParams.mode,
-        ...(cursor != null && { cursor }),
-        limit: PAGINATION_LIMIT,
-        spaceId: currentSpaceId,
-      }),
-    // Re-key on the serialized params so a composer/pill edit re-runs the query.
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- queryParams is derived; the JSON key captures every input
-    [JSON.stringify(queryParams), currentSpaceId],
+    (cursor?: string) => runTagQuery(tagExpr, flatParams, currentSpaceId, cursor),
+    // Re-key on the serialized query so a composer/pill edit re-runs it.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- query is derived; the JSON keys capture every input
+    [JSON.stringify(tagExpr), JSON.stringify(flatParams), currentSpaceId],
   )
 
   const {
@@ -425,9 +480,9 @@ export function TagFilterPanel(): React.ReactElement {
       {/* #1426 — prefix-search pills */}
       <PrefixPillBar prefixes={prefixPills} onRemove={handleRemovePrefixPill} />
 
-      {/* #1426 — single-level All/Any/None composer (opt-in). Replaces the flat
+      {/* #1426 — nested And/Or/Not composer (opt-in). Replaces the flat
           selected-tags + mode controls while open. */}
-      {composer != null && <TagComposer builder={composer} {...composerCallbacks} />}
+      {composer != null && <TagComposer root={composer} callbacks={composerCallbacks} />}
 
       {/* Selected tags */}
       {composer == null && selectedTags.length > 0 && (
@@ -447,56 +502,7 @@ export function TagFilterPanel(): React.ReactElement {
       )}
 
       {/* AND/OR/NOT mode toggle (flat default; hidden while the composer is open) */}
-      {composer == null && (
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">{t('tagFilter.modeLabel')}</span>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant={mode === 'and' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setMode('and')}
-                aria-pressed={mode === 'and'}
-              >
-                {t('tagFilter.andMode')}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{t('tagFilter.andModeTooltip')}</p>
-            </TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant={mode === 'or' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setMode('or')}
-                aria-pressed={mode === 'or'}
-              >
-                {t('tagFilter.orMode')}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{t('tagFilter.orModeTooltip')}</p>
-            </TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant={mode === 'not' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setMode('not')}
-                aria-pressed={mode === 'not'}
-              >
-                {t('tagFilter.notMode')}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{t('tagFilter.notModeTooltip')}</p>
-            </TooltipContent>
-          </Tooltip>
-        </div>
-      )}
+      {composer == null && <FlatModeToggle mode={mode} onSetMode={setMode} />}
 
       {/* Filter feedback summary */}
       <FilterFeedback
