@@ -52,7 +52,7 @@ describe('patchGraphSelections — edge z-order (#758 item 4)', () => {
     ]
     patchGraphSelections(
       rendered.g,
-      nodes.map((n) => ({ ...n })),
+      nodes.map((n) => Object.assign({}, n)),
       patchedEdges,
       () => {},
     )

@@ -4,13 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createSuggestionRenderer } from '../suggestion-renderer'
 
 const { mockReactRenderer } = vi.hoisted(() => {
-  const mockReactRenderer = vi.fn().mockImplementation(function (this: any) {
+  const reactRenderer = vi.fn().mockImplementation(function (this: any) {
     this.element = document.createElement('div')
     this.ref = null
     this.updateProps = vi.fn()
     this.destroy = vi.fn()
   })
-  return { mockReactRenderer }
+  return { mockReactRenderer: reactRenderer }
 })
 
 vi.mock('@tiptap/react', () => ({

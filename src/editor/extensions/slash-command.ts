@@ -62,8 +62,8 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
         allowedPrefixes: [' ', '\u00A0', '\n'],
         editor,
         items: (query) => extensionOptions.items(query),
-        command: ({ editor, range, props }) => {
-          editor.chain().focus().deleteRange(range).run()
+        command: ({ editor: cmdEditor, range, props }) => {
+          cmdEditor.chain().focus().deleteRange(range).run()
           extensionOptions.onCommand(props as PickerItem)
         },
         render: () => createSuggestionRenderer('Slash commands', slashCommandPluginKey, '/'),

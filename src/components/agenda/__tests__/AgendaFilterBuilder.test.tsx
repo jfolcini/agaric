@@ -326,7 +326,7 @@ describe('AgendaFilterBuilder', () => {
         return [
           { tag_id: 'TAG_1', name: 'work', usage_count: 5 },
           { tag_id: 'TAG_2', name: 'workout', usage_count: 2 },
-        ].filter((t) => t.name.toLowerCase().startsWith(prefix))
+        ].filter((tag) => tag.name.toLowerCase().startsWith(prefix))
       }
       return []
     })

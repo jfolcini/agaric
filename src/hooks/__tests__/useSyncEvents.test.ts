@@ -22,8 +22,8 @@ const {
   mockPreload,
   mockReanchorUndo,
 } = vi.hoisted(() => {
-  const mockUnlisten = vi.fn()
-  const mockListen = vi.fn().mockResolvedValue(mockUnlisten)
+  const unlisten = vi.fn()
+  const listen = vi.fn().mockResolvedValue(unlisten)
 
   const mock: ReturnType<typeof vi.fn> & {
     error: ReturnType<typeof vi.fn>
@@ -31,53 +31,53 @@ const {
     warning: ReturnType<typeof vi.fn>
   } = Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn(), warning: vi.fn() })
 
-  const mockSetState = vi.fn()
-  const mockSetOpsReceived = vi.fn()
-  const mockSetOpsSent = vi.fn()
-  const mockUpdateLastSynced = vi.fn()
-  const mockLoad = vi.fn().mockResolvedValue(undefined)
+  const setState = vi.fn()
+  const setOpsReceived = vi.fn()
+  const setOpsSent = vi.fn()
+  const updateLastSynced = vi.fn()
+  const load = vi.fn().mockResolvedValue(undefined)
   // #1071 — a SECOND mounted page store so targeted-vs-fallback tests can
   // assert that only the changed page reloads (PAGE_1) while the untouched
   // one (PAGE_2) is skipped, and that the fallback reloads BOTH.
-  const mockLoad2 = vi.fn().mockResolvedValue(undefined)
+  const load2 = vi.fn().mockResolvedValue(undefined)
 
   const mockPageBlockRegistry = new Map()
   mockPageBlockRegistry.set('PAGE_1', {
     getState: () => ({
-      load: mockLoad,
+      load,
       rootParentId: 'PAGE_1',
     }),
   })
   mockPageBlockRegistry.set('PAGE_2', {
     getState: () => ({
-      load: mockLoad2,
+      load: load2,
       rootParentId: 'PAGE_2',
     }),
   })
   // #1075 — useSyncEvents now fans out via `forEachPageStore` (single source
   // of truth) instead of iterating the registry Map directly.
-  const mockForEachPageStore = vi.fn(
+  const forEachPageStore = vi.fn(
     (fn: (pageId: string, store: { getState: () => unknown }) => void) => {
       for (const [pageId, store] of mockPageBlockRegistry) fn(pageId, store)
     },
   )
 
-  const mockPreload = vi.fn().mockResolvedValue(undefined)
-  const mockReanchorUndo = vi.fn()
+  const preload = vi.fn().mockResolvedValue(undefined)
+  const reanchorUndo = vi.fn()
 
   return {
-    mockUnlisten,
-    mockListen,
+    mockUnlisten: unlisten,
+    mockListen: listen,
     toastMock: mock,
-    mockSetState,
-    mockSetOpsReceived,
-    mockSetOpsSent,
-    mockUpdateLastSynced,
-    mockLoad,
-    mockLoad2,
-    mockForEachPageStore,
-    mockPreload,
-    mockReanchorUndo,
+    mockSetState: setState,
+    mockSetOpsReceived: setOpsReceived,
+    mockSetOpsSent: setOpsSent,
+    mockUpdateLastSynced: updateLastSynced,
+    mockLoad: load,
+    mockLoad2: load2,
+    mockForEachPageStore: forEachPageStore,
+    mockPreload: preload,
+    mockReanchorUndo: reanchorUndo,
   }
 })
 

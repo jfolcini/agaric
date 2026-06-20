@@ -331,7 +331,7 @@ describe('ConfirmDialog', () => {
   // ─── mobile path renders as a Sheet ────────────────────────────
 
   describe('mobile path (Sheet, side="bottom")', () => {
-    const defaultProps = {
+    const mobileProps = {
       open: true,
       onOpenChange: vi.fn(),
       title: 'Confirm action?',
@@ -346,14 +346,14 @@ describe('ConfirmDialog', () => {
     })
 
     it('renders as a Sheet (data-slot="sheet-content") instead of an alert dialog', () => {
-      const { container } = render(<ConfirmDialog {...defaultProps} />)
+      const { container } = render(<ConfirmDialog {...mobileProps} />)
 
       expect(container.ownerDocument.querySelector('[data-slot="sheet-content"]')).toBeTruthy()
       expect(container.ownerDocument.querySelector('[data-slot="alert-dialog-content"]')).toBeNull()
     })
 
     it('Sheet content uses side="bottom" (anchored to viewport bottom)', () => {
-      const { container } = render(<ConfirmDialog {...defaultProps} />)
+      const { container } = render(<ConfirmDialog {...mobileProps} />)
 
       const content = container.ownerDocument.querySelector('[data-slot="sheet-content"]')
       expect(content).toBeTruthy()
@@ -362,7 +362,7 @@ describe('ConfirmDialog', () => {
     })
 
     it('renders title, description, and both buttons', () => {
-      render(<ConfirmDialog {...defaultProps} />)
+      render(<ConfirmDialog {...mobileProps} />)
 
       expect(screen.getByText('Confirm action?')).toBeInTheDocument()
       expect(screen.getByText('This will do something important.')).toBeInTheDocument()
@@ -375,7 +375,7 @@ describe('ConfirmDialog', () => {
       const onConfirm = vi.fn()
       const onOpenChange = vi.fn()
 
-      render(<ConfirmDialog {...defaultProps} onConfirm={onConfirm} onOpenChange={onOpenChange} />)
+      render(<ConfirmDialog {...mobileProps} onConfirm={onConfirm} onOpenChange={onOpenChange} />)
 
       await user.click(screen.getByRole('button', { name: /Confirm/ }))
 
@@ -388,7 +388,7 @@ describe('ConfirmDialog', () => {
       const user = userEvent.setup()
       const onOpenChange = vi.fn()
 
-      render(<ConfirmDialog {...defaultProps} onOpenChange={onOpenChange} />)
+      render(<ConfirmDialog {...mobileProps} onOpenChange={onOpenChange} />)
 
       await user.click(screen.getByRole('button', { name: /Cancel/ }))
 
@@ -396,7 +396,7 @@ describe('ConfirmDialog', () => {
     })
 
     it('disables buttons and shows spinner when loading', () => {
-      render(<ConfirmDialog {...defaultProps} loading />)
+      render(<ConfirmDialog {...mobileProps} loading />)
 
       const actionBtn = screen.getByRole('button', { name: /Confirm/ })
       const cancelBtn = screen.getByRole('button', { name: /Cancel/ })
@@ -408,7 +408,7 @@ describe('ConfirmDialog', () => {
 
     it('renders children slot content', () => {
       render(
-        <ConfirmDialog {...defaultProps}>
+        <ConfirmDialog {...mobileProps}>
           <input
             aria-label="Extra content"
             data-testid="custom-input"
@@ -421,7 +421,7 @@ describe('ConfirmDialog', () => {
     })
 
     it('focuses the action button on open (non-destructive)', () => {
-      render(<ConfirmDialog {...defaultProps} />)
+      render(<ConfirmDialog {...mobileProps} />)
 
       expect(screen.getByRole('button', { name: /Confirm/ })).toHaveFocus()
     })
@@ -430,7 +430,7 @@ describe('ConfirmDialog', () => {
       const user = userEvent.setup()
       const onOpenChange = vi.fn()
 
-      render(<ConfirmDialog {...defaultProps} onOpenChange={onOpenChange} />)
+      render(<ConfirmDialog {...mobileProps} onOpenChange={onOpenChange} />)
 
       await user.keyboard('{Escape}')
 
@@ -438,7 +438,7 @@ describe('ConfirmDialog', () => {
     })
 
     it('forwards contentTestId to the Sheet content', () => {
-      const { container } = render(<ConfirmDialog {...defaultProps} contentTestId="my-confirm" />)
+      const { container } = render(<ConfirmDialog {...mobileProps} contentTestId="my-confirm" />)
 
       const content = container.ownerDocument.querySelector('[data-testid="my-confirm"]')
       expect(content).toBeTruthy()
@@ -446,14 +446,14 @@ describe('ConfirmDialog', () => {
     })
 
     it('forwards cancelTestId and actionTestId to the Sheet buttons', () => {
-      render(<ConfirmDialog {...defaultProps} cancelTestId="my-cancel" actionTestId="my-action" />)
+      render(<ConfirmDialog {...mobileProps} cancelTestId="my-cancel" actionTestId="my-action" />)
 
       expect(screen.getByTestId('my-cancel')).toBeInTheDocument()
       expect(screen.getByTestId('my-action')).toBeInTheDocument()
     })
 
     it('action buttons meet the touch-target size on coarse pointers (≥ 44 px)', () => {
-      render(<ConfirmDialog {...defaultProps} />)
+      render(<ConfirmDialog {...mobileProps} />)
 
       const actionBtn = screen.getByRole('button', { name: /Confirm/ })
       const cancelBtn = screen.getByRole('button', { name: /Cancel/ })
@@ -465,7 +465,7 @@ describe('ConfirmDialog', () => {
     })
 
     it('has no a11y violations on the mobile path', async () => {
-      const { container } = render(<ConfirmDialog {...defaultProps} />)
+      const { container } = render(<ConfirmDialog {...mobileProps} />)
 
       await waitFor(async () => {
         const results = await axe(container)
@@ -480,7 +480,7 @@ describe('ConfirmDialog', () => {
 
       render(
         <ConfirmDialog
-          {...defaultProps}
+          {...mobileProps}
           variant="destructive"
           onConfirm={onConfirm}
           onOpenChange={onOpenChange}
@@ -503,7 +503,7 @@ describe('ConfirmDialog', () => {
 
       render(
         <ConfirmDialog
-          {...defaultProps}
+          {...mobileProps}
           variant="destructive"
           onConfirm={onConfirm}
           onOpenChange={onOpenChange}
@@ -517,7 +517,7 @@ describe('ConfirmDialog', () => {
     })
 
     it('has no a11y violations in destructive variant on mobile', async () => {
-      const { container } = render(<ConfirmDialog {...defaultProps} variant="destructive" />)
+      const { container } = render(<ConfirmDialog {...mobileProps} variant="destructive" />)
 
       await waitFor(async () => {
         const results = await axe(container)

@@ -14,10 +14,10 @@ import {
 // -- Hoisted mocks ------------------------------------------------------------
 
 const { mockUnlisten, mockListen, mockGetRecoveryStatus } = vi.hoisted(() => {
-  const mockUnlisten = vi.fn()
-  const mockListen = vi.fn().mockResolvedValue(mockUnlisten)
-  const mockGetRecoveryStatus = vi.fn()
-  return { mockUnlisten, mockListen, mockGetRecoveryStatus }
+  const unlisten = vi.fn()
+  const listen = vi.fn().mockResolvedValue(unlisten)
+  const getRecoveryStatus = vi.fn()
+  return { mockUnlisten: unlisten, mockListen: listen, mockGetRecoveryStatus: getRecoveryStatus }
 })
 
 vi.mock('@tauri-apps/api/event', () => ({

@@ -27,7 +27,7 @@
  */
 
 import type React from 'react'
-import { createContext, useCallback, useContext, useState } from 'react'
+import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 
 import { cn } from '@/lib/utils'
 
@@ -60,7 +60,10 @@ export function ViewHeaderOutletProvider({
   const stableSetOutlet = useCallback((el: HTMLElement | null) => {
     setOutlet(el)
   }, [])
-  const value: ViewHeaderOutletContextValue = { outlet, setOutlet: stableSetOutlet }
+  const value: ViewHeaderOutletContextValue = useMemo(
+    () => ({ outlet, setOutlet: stableSetOutlet }),
+    [outlet, stableSetOutlet],
+  )
   return (
     <ViewHeaderOutletContext.Provider value={value}>{children}</ViewHeaderOutletContext.Provider>
   )

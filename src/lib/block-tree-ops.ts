@@ -115,11 +115,11 @@ export function computeIndentedBlocks(
 
   const movedItems: FlatBlock[] = arr
     .filter((b) => movedSet.has(b.id))
-    .map((b) => ({
-      ...b,
-      depth: b.depth + 1,
-      ...(b.id === blockId ? { parent_id: prevSibling.id, position: 1 } : {}),
-    }))
+    .map((b) =>
+      b.id === blockId
+        ? Object.assign({}, b, { depth: b.depth + 1, parent_id: prevSibling.id, position: 1 })
+        : Object.assign({}, b, { depth: b.depth + 1 }),
+    )
 
   const remaining = arr.filter((b) => !movedSet.has(b.id))
   const prevSibDescendants = getDragDescendants(remaining, prevSibling.id)

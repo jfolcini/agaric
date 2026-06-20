@@ -33,13 +33,13 @@ async function addMockAttachment(
   content?: string,
 ) {
   await page.evaluate(
-    ({ blockId, filename, mimeType, sizeBytes, content }) => {
+    (args) => {
       ;(window as unknown as MockAttachmentWindow).__addMockAttachment?.(
-        blockId,
-        filename,
-        mimeType,
-        sizeBytes,
-        content,
+        args.blockId,
+        args.filename,
+        args.mimeType,
+        args.sizeBytes,
+        args.content,
       )
     },
     { blockId, filename, mimeType, sizeBytes, content },

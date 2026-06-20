@@ -23,21 +23,21 @@ const {
   mockGetCurrentDeepLink,
   mockGetBlock,
 } = vi.hoisted(() => {
-  const mockUnlisten = vi.fn()
-  const mockListen = vi.fn().mockResolvedValue(mockUnlisten)
-  const mockNavigateToPage = vi.fn()
-  const mockSetView = vi.fn()
-  const mockSetPendingSettingsTab = vi.fn()
-  const mockGetCurrentDeepLink = vi.fn().mockResolvedValue(null)
-  const mockGetBlock = vi.fn()
+  const unlisten = vi.fn()
+  const listen = vi.fn().mockResolvedValue(unlisten)
+  const navigateToPage = vi.fn()
+  const setView = vi.fn()
+  const setPendingSettingsTab = vi.fn()
+  const getCurrentDeepLink = vi.fn().mockResolvedValue(null)
+  const getBlock = vi.fn()
   return {
-    mockUnlisten,
-    mockListen,
-    mockNavigateToPage,
-    mockSetView,
-    mockSetPendingSettingsTab,
-    mockGetCurrentDeepLink,
-    mockGetBlock,
+    mockUnlisten: unlisten,
+    mockListen: listen,
+    mockNavigateToPage: navigateToPage,
+    mockSetView: setView,
+    mockSetPendingSettingsTab: setPendingSettingsTab,
+    mockGetCurrentDeepLink: getCurrentDeepLink,
+    mockGetBlock: getBlock,
   }
 })
 

@@ -108,7 +108,7 @@ export function TablePicker({ editor, onClose }: TablePickerProps): React.ReactE
               role="row"
               className="flex gap-0.5"
             >
-              {Array.from({ length: MAX_COLS }, (_, ci) => {
+              {Array.from({ length: MAX_COLS }, (__, ci) => {
                 const c = ci + 1
                 const active = r <= rows && c <= cols
                 return (

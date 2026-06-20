@@ -163,13 +163,13 @@ describe('TaskPaste handlePaste (#1481)', () => {
     })
   }
 
-  function paste(editor: Editor, text: string): boolean {
+  function paste(ed: Editor, text: string): boolean {
     const data = new DataTransfer()
     data.setData('text/plain', text)
     const event = new ClipboardEvent('paste', { clipboardData: data })
     return (
-      editor.view.someProp('handlePaste', (fn) =>
-        fn(editor.view, event, editor.view.state.selection.content()),
+      ed.view.someProp('handlePaste', (fn) =>
+        fn(ed.view, event, ed.view.state.selection.content()),
       ) ?? false
     )
   }

@@ -132,7 +132,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         // before purging" and the tag survives (BUG session 679).
         await deleteBlock(tagId)
         await purgeBlock(tagId)
-        setTags((prev) => prev.filter((t) => t.tag_id !== tagId))
+        setTags((prev) => prev.filter((tag) => tag.tag_id !== tagId))
         useResolveStore.getState().set(tagId, '(deleted)', true)
       } catch (error) {
         logger.error('TagList', 'failed to delete tag', { tagId }, error)

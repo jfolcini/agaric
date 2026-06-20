@@ -65,8 +65,8 @@ self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => 
 
         const { nodes, edges, width, height } = msg
 
-        simNodes = nodes.map((n) => ({ ...n }))
-        const simEdges: SimEdge[] = edges.map((e) => ({ ...e }))
+        simNodes = nodes.map((n) => Object.assign({}, n))
+        const simEdges: SimEdge[] = edges.map((e) => Object.assign({}, e))
 
         simulation = forceSimulation<SimNode, SimEdge>(simNodes)
           .force(

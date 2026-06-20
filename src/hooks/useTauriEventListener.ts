@@ -84,9 +84,9 @@ export function useTauriEventListener<T = unknown>(
         }
       })
       .catch((err: unknown) => {
-        const handler = onErrorRef.current
-        if (handler) {
-          handler(err)
+        const errorHandler = onErrorRef.current
+        if (errorHandler) {
+          errorHandler(err)
         } else {
           logger.warn('useTauriEventListener', `Failed to listen to ${eventName}`, undefined, err)
         }

@@ -239,14 +239,14 @@ export function InPageFind({
     // position away. Preserve it instead, clamped to the still-growing
     // match list (matches append in document order, so indices are stable).
     let publishedIndex: number | null = null
-    const indexFor = (totalMatches: number): number => {
-      if (totalMatches === 0) return -1
+    const indexFor = (matchCount: number): number => {
+      if (matchCount === 0) return -1
       const storeIndex = useInPageFindStore.getState().currentIndex
       const desired =
         publishedIndex !== null && storeIndex !== publishedIndex
           ? storeIndex // user navigated since our last publish — keep it
           : (publishedIndex ?? 0) // fresh walk → first match; else hold position
-      const next = Math.min(Math.max(desired, 0), totalMatches - 1)
+      const next = Math.min(Math.max(desired, 0), matchCount - 1)
       publishedIndex = next
       return next
     }

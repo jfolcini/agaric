@@ -794,7 +794,7 @@ describe('HistoryListItem', () => {
 //   - In-panel Restore is dialog-free; the parent's toast-with-Undo
 //     is the safety net.
 describe('BlockHistoryItem', () => {
-  function makeEntry(
+  function makeBlockEntry(
     seq: number,
     opType: string,
     payload: Record<string, unknown>,
@@ -815,7 +815,7 @@ describe('BlockHistoryItem', () => {
   ): BlockHistoryItemProps {
     return {
       blockId: 'BLOCK01',
-      entry: makeEntry(1, 'edit_block', { to_text: 'Hello world' }),
+      entry: makeBlockEntry(1, 'edit_block', { to_text: 'Hello world' }),
       index: 0,
       isExpanded: false,
       isLoadingDiff: false,
@@ -869,7 +869,9 @@ describe('BlockHistoryItem', () => {
   })
 
   it('does not expose the row as a button for non-edit_block entries', () => {
-    renderInList(blockDefaultProps({ entry: makeEntry(1, 'create_block', { content: 'new' }) }))
+    renderInList(
+      blockDefaultProps({ entry: makeBlockEntry(1, 'create_block', { content: 'new' }) }),
+    )
     // No `aria-expanded` button means the row is non-restorable; only
     // the parent <ul> remains in the a11y tree.
     expect(screen.queryByRole('button', { expanded: false })).not.toBeInTheDocument()
@@ -881,7 +883,9 @@ describe('BlockHistoryItem', () => {
     // user has no explanation for why the row doesn't respond to clicks.
     // The lock affordance + visible label mirrors the legacy
     // `HistoryListItem` rendering at lines ~330-344.
-    renderInList(blockDefaultProps({ entry: makeEntry(1, 'create_block', { content: 'new' }) }))
+    renderInList(
+      blockDefaultProps({ entry: makeBlockEntry(1, 'create_block', { content: 'new' }) }),
+    )
     expect(screen.getByText('Non-reversible action')).toBeInTheDocument()
   })
 
@@ -892,7 +896,9 @@ describe('BlockHistoryItem', () => {
   // is non-restorable, so this was the single largest contributor to
   // "crowded row" in the narrow Sheet.
   it('non-restorable rows render the lock chip in a `flex-col` wrapper, not inline with the metadata', () => {
-    renderInList(blockDefaultProps({ entry: makeEntry(1, 'create_block', { content: 'new' }) }))
+    renderInList(
+      blockDefaultProps({ entry: makeBlockEntry(1, 'create_block', { content: 'new' }) }),
+    )
     const lockLabel = screen.getByText('Non-reversible action')
     const wrapper = lockLabel.closest('[data-testid="block-history-row-0"]')
     expect(wrapper).not.toBeNull()
@@ -911,7 +917,7 @@ describe('BlockHistoryItem', () => {
   it('row click calls onExpandToggle(entry, true) when collapsed', async () => {
     const user = userEvent.setup()
     const onExpandToggle = vi.fn()
-    const entry = makeEntry(1, 'edit_block', { to_text: 'content' })
+    const entry = makeBlockEntry(1, 'edit_block', { to_text: 'content' })
     renderInList(blockDefaultProps({ entry, onExpandToggle }))
     await user.click(screen.getByRole('button', { expanded: false }))
     expect(onExpandToggle).toHaveBeenCalledWith(entry, true)
@@ -920,7 +926,7 @@ describe('BlockHistoryItem', () => {
   it('row click calls onExpandToggle(entry, false) when already expanded', async () => {
     const user = userEvent.setup()
     const onExpandToggle = vi.fn()
-    const entry = makeEntry(1, 'edit_block', { to_text: 'content' })
+    const entry = makeBlockEntry(1, 'edit_block', { to_text: 'content' })
     renderInList(blockDefaultProps({ entry, isExpanded: true, onExpandToggle }))
     // Click on the row header (the aria-expanded button) — clicks
     // inside the panel itself shouldn't double-toggle (regression
@@ -949,7 +955,7 @@ describe('BlockHistoryItem', () => {
   it('clicking "Restore this version" triggers onRestore directly (no ConfirmDialog)', async () => {
     const user = userEvent.setup()
     const onRestore = vi.fn()
-    const entry = makeEntry(1, 'edit_block', { to_text: 'historical' })
+    const entry = makeBlockEntry(1, 'edit_block', { to_text: 'historical' })
     renderInList(blockDefaultProps({ entry, isExpanded: true, onRestore }))
     await user.click(screen.getByTestId('block-history-restore-0'))
     expect(onRestore).toHaveBeenCalledWith(entry)
@@ -962,7 +968,7 @@ describe('BlockHistoryItem', () => {
   it('expanded panel renders the historical content preview', () => {
     renderInList(
       blockDefaultProps({
-        entry: makeEntry(1, 'edit_block', { to_text: 'historical content' }),
+        entry: makeBlockEntry(1, 'edit_block', { to_text: 'historical content' }),
         isExpanded: true,
       }),
     )
@@ -1035,7 +1041,7 @@ describe('BlockHistoryItem', () => {
 
   it('renders content preview with line-clamp-2 in collapsed state', () => {
     renderInList(
-      blockDefaultProps({ entry: makeEntry(1, 'edit_block', { to_text: 'Hello world' }) }),
+      blockDefaultProps({ entry: makeBlockEntry(1, 'edit_block', { to_text: 'Hello world' }) }),
     )
     const preview = screen.getByText('Hello world').closest('.history-item-preview')
     expect(preview).toHaveClass('line-clamp-2')
@@ -1044,7 +1050,7 @@ describe('BlockHistoryItem', () => {
   it('renders property payload display', () => {
     renderInList(
       blockDefaultProps({
-        entry: makeEntry(1, 'set_property', { key: 'due_date', value: '2026-04-15' }),
+        entry: makeBlockEntry(1, 'set_property', { key: 'due_date', value: '2026-04-15' }),
       }),
     )
     expect(screen.getByText(/Due Date/)).toBeInTheDocument()

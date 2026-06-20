@@ -124,13 +124,13 @@ export function TemplatesView(): React.ReactElement {
       // call leaked unscoped templates that disappeared from the
       // PageBrowser list (and the Templates list once filtered by
       // space).
-      const currentSpaceId = useSpaceStore.getState().currentSpaceId
-      if (currentSpaceId == null) {
+      const activeSpaceId = useSpaceStore.getState().currentSpaceId
+      if (activeSpaceId == null) {
         notify.error(t('templates.createFailed'))
         setIsCreating(false)
         return
       }
-      const newId = await createPageInSpace({ content: name, spaceId: currentSpaceId })
+      const newId = await createPageInSpace({ content: name, spaceId: activeSpaceId })
       await setProperty({ blockId: newId, key: 'template', valueText: 'true' })
       setTemplates((prev) => [
         { id: newId, content: name, preview: null, isJournalTemplate: false },

@@ -170,7 +170,7 @@ export function LinkedReferences({
     listTagsByPrefix({ prefix: '' })
       .then((result) => {
         if (cancelled) return
-        setTags((result ?? []).map((t) => ({ id: t.tag_id, name: t.name })))
+        setTags((result ?? []).map((tag) => ({ id: tag.tag_id, name: tag.name })))
       })
       .catch((e) => {
         if (cancelled) return

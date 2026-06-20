@@ -672,18 +672,18 @@ describe('keyboard-config', () => {
     })
 
     it('openDatePicker defaults to Ctrl + Shift + D', () => {
-      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'openDatePicker')
+      const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'openDatePicker')
       expect(s?.keys).toBe('Ctrl + Shift + D')
     })
 
     it('openPropertiesDrawer defaults to Ctrl + Shift + P', () => {
-      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'openPropertiesDrawer')
+      const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'openPropertiesDrawer')
       expect(s?.keys).toBe('Ctrl + Shift + P')
     })
 
     it('heading1-6 default to Ctrl + 1 through Ctrl + 6', () => {
       for (let level = 1; level <= 6; level++) {
-        const s = DEFAULT_SHORTCUTS.find((s) => s.id === `heading${level}`)
+        const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === `heading${level}`)
         expect(s?.keys).toBe(`Ctrl + ${level}`)
       }
     })
@@ -694,7 +694,7 @@ describe('keyboard-config', () => {
   // those chords are collision-free against every other catalog entry.
   describe('Duplicate / Turn into block shortcuts (#976 items 13/14)', () => {
     it('duplicateBlock defaults to Ctrl + Shift + J under blockTree', () => {
-      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'duplicateBlock')
+      const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'duplicateBlock')
       expect(s).toBeDefined()
       expect(s?.keys).toBe('Ctrl + Shift + J')
       expect(s?.category).toBe('keyboard.category.blockTree')
@@ -702,7 +702,7 @@ describe('keyboard-config', () => {
     })
 
     it('turnIntoBlock defaults to Ctrl + Shift + T under blockTree', () => {
-      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'turnIntoBlock')
+      const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'turnIntoBlock')
       expect(s).toBeDefined()
       expect(s?.keys).toBe('Ctrl + Shift + T')
       expect(s?.category).toBe('keyboard.category.blockTree')
@@ -818,20 +818,20 @@ describe('keyboard-config', () => {
     })
 
     it('listToggleSelection defaults to Space', () => {
-      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'listToggleSelection')
+      const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'listToggleSelection')
       expect(s?.keys).toBe('Space')
       expect(s?.description).toBe('keyboard.listToggleSelection')
       expect(s?.condition).toBe('keyboard.condition.listItemFocused')
     })
 
     it('listSelectAll defaults to Ctrl + A', () => {
-      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'listSelectAll')
+      const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'listSelectAll')
       expect(s?.keys).toBe('Ctrl + A')
       expect(s?.description).toBe('keyboard.listSelectAll')
     })
 
     it('listClearSelection defaults to Escape', () => {
-      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'listClearSelection')
+      const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'listClearSelection')
       expect(s?.keys).toBe('Escape')
       expect(s?.description).toBe('keyboard.listClearSelection')
       expect(s?.condition).toBe('keyboard.condition.hasSelection')
@@ -976,7 +976,7 @@ describe('keyboard-config', () => {
     })
 
     it('inlineCode defaults to Ctrl + E', () => {
-      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'inlineCode')
+      const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'inlineCode')
       expect(s?.keys).toBe('Ctrl + E')
     })
 
@@ -985,42 +985,42 @@ describe('keyboard-config', () => {
       // `Ctrl+Shift+S`. `StrikeWithShortcut` keeps `Ctrl+Shift+X` as a
       // hardcoded legacy alias for one release, so the old chord still works
       // even though the catalog (display + tooltip) now advertises `S`.
-      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'strikethrough')
+      const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'strikethrough')
       expect(s?.keys).toBe('Ctrl + Shift + S')
     })
 
     it('highlight defaults to Ctrl + Shift + H', () => {
-      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'highlight')
+      const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'highlight')
       expect(s?.keys).toBe('Ctrl + Shift + H')
     })
 
     it('codeBlock defaults to Ctrl + Shift + C', () => {
-      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'codeBlock')
+      const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'codeBlock')
       expect(s?.keys).toBe('Ctrl + Shift + C')
     })
 
     it('priority1 defaults to Ctrl + Shift + 1', () => {
-      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'priority1')
+      const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'priority1')
       expect(s?.keys).toBe('Ctrl + Shift + 1')
     })
 
     it('priority2 defaults to Ctrl + Shift + 2', () => {
-      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'priority2')
+      const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'priority2')
       expect(s?.keys).toBe('Ctrl + Shift + 2')
     })
 
     it('priority3 defaults to Ctrl + Shift + 3', () => {
-      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'priority3')
+      const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'priority3')
       expect(s?.keys).toBe('Ctrl + Shift + 3')
     })
 
     it('linkPopover defaults to Ctrl + K', () => {
-      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'linkPopover')
+      const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'linkPopover')
       expect(s?.keys).toBe('Ctrl + K')
     })
 
     it('backspaceChip defaults to Backspace with afterChip condition', () => {
-      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'backspaceChip')
+      const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'backspaceChip')
       expect(s?.keys).toBe('Backspace')
       expect(s?.condition).toBe('keyboard.condition.afterChip')
     })
@@ -1039,17 +1039,17 @@ describe('keyboard-config', () => {
     })
 
     it('suggestionClose defaults to Escape', () => {
-      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'suggestionClose')
+      const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'suggestionClose')
       expect(s?.keys).toBe('Escape')
     })
 
     it('suggestionPassSpace defaults to Space', () => {
-      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'suggestionPassSpace')
+      const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'suggestionPassSpace')
       expect(s?.keys).toBe('Space')
     })
 
     it('suggestionAutocomplete defaults to Tab', () => {
-      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'suggestionAutocomplete')
+      const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'suggestionAutocomplete')
       expect(s?.keys).toBe('Tab')
     })
   })
@@ -1137,7 +1137,7 @@ describe('keyboard-config', () => {
 
   describe('Graph zoom shortcuts', () => {
     it('graphZoomIn exists with `+ / =` default in global category', () => {
-      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'graphZoomIn')
+      const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'graphZoomIn')
       expect(s).toBeDefined()
       expect(s?.keys).toBe('+ / =')
       expect(s?.category).toBe('keyboard.category.global')
@@ -1145,7 +1145,7 @@ describe('keyboard-config', () => {
     })
 
     it('graphZoomOut exists with `-` default in global category', () => {
-      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'graphZoomOut')
+      const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'graphZoomOut')
       expect(s).toBeDefined()
       expect(s?.keys).toBe('-')
       expect(s?.category).toBe('keyboard.category.global')
@@ -1153,7 +1153,7 @@ describe('keyboard-config', () => {
     })
 
     it('graphZoomReset exists with `0` default in global category', () => {
-      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'graphZoomReset')
+      const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'graphZoomReset')
       expect(s).toBeDefined()
       expect(s?.keys).toBe('0')
       expect(s?.category).toBe('keyboard.category.global')

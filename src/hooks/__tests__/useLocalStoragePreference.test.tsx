@@ -222,7 +222,7 @@ describe('useLocalStoragePreference', () => {
       let groupByCaptured: string | null = null
 
       const allowedSorts = new Set(['date', 'priority', 'created'])
-      const allowedGroups = ['none', 'priority', 'status', 'tag']
+      const allowedGroups = new Set(['none', 'priority', 'status', 'tag'])
 
       render(
         <>
@@ -245,7 +245,7 @@ describe('useLocalStoragePreference', () => {
             defaultValue="none"
             options={{
               parse: (raw) => {
-                if (allowedGroups.includes(raw)) return raw
+                if (allowedGroups.has(raw)) return raw
                 throw new Error(`invalid groupBy: ${raw}`)
               },
               serialize: (v) => v,

@@ -15,14 +15,14 @@ const { toastMock, mockUndo, mockRedo, mockLoad, mockReplacePage, mockGetBlock, 
       { error: vi.fn() },
     )
 
-    const mockUndo = vi.fn().mockResolvedValue(null)
-    const mockRedo = vi.fn().mockResolvedValue(null)
-    const mockLoad = vi.fn().mockResolvedValue(undefined)
-    const mockReplacePage = vi.fn()
-    const mockGetBlock = vi.fn().mockResolvedValue(null)
+    const undoFn = vi.fn().mockResolvedValue(null)
+    const redoFn = vi.fn().mockResolvedValue(null)
+    const loadFn = vi.fn().mockResolvedValue(undefined)
+    const replacePageFn = vi.fn()
+    const getBlockFn = vi.fn().mockResolvedValue(null)
 
     const mockPageBlockStoreState = {
-      load: mockLoad,
+      load: loadFn,
       rootParentId: 'PAGE_1',
     }
     // #1075 — production code now resolves stores via `getPageStore(pageId)`
@@ -32,16 +32,16 @@ const { toastMock, mockUndo, mockRedo, mockLoad, mockReplacePage, mockGetBlock, 
     mockPageBlockRegistry.set('PAGE_3', {
       getState: () => ({ ...mockPageBlockStoreState, rootParentId: 'PAGE_3' }),
     })
-    const mockGetPageStore = vi.fn((pageId: string) => mockPageBlockRegistry.get(pageId))
+    const getPageStoreFn = vi.fn((pageId: string) => mockPageBlockRegistry.get(pageId))
 
     return {
       toastMock: mock,
-      mockUndo,
-      mockRedo,
-      mockLoad,
-      mockReplacePage,
-      mockGetBlock,
-      mockGetPageStore,
+      mockUndo: undoFn,
+      mockRedo: redoFn,
+      mockLoad: loadFn,
+      mockReplacePage: replacePageFn,
+      mockGetBlock: getBlockFn,
+      mockGetPageStore: getPageStoreFn,
     }
   })
 

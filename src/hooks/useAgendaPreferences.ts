@@ -12,7 +12,7 @@ const GROUP_BY_KEY = 'agaric:agenda:groupBy'
 const SORT_BY_KEY = 'agaric:agenda:sortBy'
 
 const VALID_GROUP_BY: ReadonlySet<string> = new Set(['date', 'priority', 'state', 'page', 'none'])
-const VALID_SORT_BY: readonly string[] = ['date', 'priority', 'state', 'page']
+const VALID_SORT_BY: ReadonlySet<string> = new Set(['date', 'priority', 'state', 'page'])
 
 export interface AgendaPreferences {
   groupBy: AgendaGroupBy
@@ -34,7 +34,7 @@ const groupByOptions = {
 
 const sortByOptions = {
   parse: (raw: string): AgendaSortBy => {
-    if (VALID_SORT_BY.includes(raw)) return raw as AgendaSortBy
+    if (VALID_SORT_BY.has(raw)) return raw as AgendaSortBy
     throw new Error('invalid sortBy')
   },
   serialize: (v: AgendaSortBy): string => v,

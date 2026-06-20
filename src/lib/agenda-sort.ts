@@ -114,9 +114,9 @@ export function groupByDate(blocks: BlockRow[]): AgendaGroup[] {
       const kb = sortKeyFor(b)
       return ka < kb ? -1 : ka > kb ? 1 : 0
     })
-    .map(([key, blocks]) => ({
+    .map(([key, groupBlocks]) => ({
       label: key in SPECIAL_SORT_KEY ? key : formatGroupDate(key),
-      blocks,
+      blocks: groupBlocks,
       className:
         key === 'Overdue'
           ? 'text-destructive'

@@ -165,9 +165,9 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
       // moved" feedback gap on short diffs that already fit on screen.
       const ancestor = findScrollableAncestor(el)
       if (ancestor) {
-        const t = el.getBoundingClientRect()
-        const a = ancestor.getBoundingClientRect()
-        if (t.top >= a.top && t.bottom <= a.bottom) return
+        const elRect = el.getBoundingClientRect()
+        const ancestorRect = ancestor.getBoundingClientRect()
+        if (elRect.top >= ancestorRect.top && elRect.bottom <= ancestorRect.bottom) return
       }
       el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
     },

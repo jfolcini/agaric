@@ -202,8 +202,8 @@ export function BlockHistoryItem({
   const activeSpans =
     diffMode === 'comparedToCurrent'
       ? (comparedDiff?.map((s) => {
-          if (s.tag === 'Insert') return { ...s, tag: 'Delete' as const }
-          if (s.tag === 'Delete') return { ...s, tag: 'Insert' as const }
+          if (s.tag === 'Insert') return { tag: 'Delete' as const, value: s.value }
+          if (s.tag === 'Delete') return { tag: 'Insert' as const, value: s.value }
           return s
         }) ?? undefined)
       : diffSpans

@@ -667,7 +667,7 @@ describe('TabBar', () => {
       // and the remaining rows are re-rendered.
 
       expect(useTabsStore.getState().tabs).toHaveLength(2)
-      expect(useTabsStore.getState().tabs.map((t) => t.label)).toEqual(['Page 1', 'Page 3'])
+      expect(useTabsStore.getState().tabs.map((tab) => tab.label)).toEqual(['Page 1', 'Page 3'])
       expect(screen.getByRole('menu')).toBeInTheDocument()
     })
 
@@ -1049,8 +1049,8 @@ describe('TabBar', () => {
  * post-close effect so `queryByRole` can flicker — this helper polls.
  */
 async function waitForMenuClosed(): Promise<void> {
-  const { waitFor } = await import('@testing-library/react')
-  await waitFor(() => {
+  const { waitFor: waitForFn } = await import('@testing-library/react')
+  await waitForFn(() => {
     expect(screen.queryByRole('menu')).toBeNull()
   })
 }
