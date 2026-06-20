@@ -11,14 +11,17 @@ import { describe, expect, it } from 'vitest'
 
 import type { BacklinkFilter, FilterPrimitive } from '@/lib/bindings'
 import type { GraphFilter } from '@/lib/graph-filters'
+import type { AstFilterProjection } from '@/lib/search-query'
 
 import {
   backlinkFilterToCanonical,
   canonicalToGraphFilters,
+  canonicalToSearchProjection,
   FILTER_SURFACE_ALLOWLIST,
   type FilterPredicate,
   filterPrimitiveToCanonical,
   graphFiltersToCanonical,
+  searchProjectionToCanonical,
   surfaceSupports,
 } from '../model'
 
@@ -310,6 +313,148 @@ describe('FilterPrimitive vocabulary → canonical (lossless leaves)', () => {
         spec: { maxTokens: 16, leftMarker: '[', rightMarker: ']' },
       }),
     ).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Search surface — lossless ROUND TRIP (projection ⇄ canonical), Issue #1646
+// step 1. Every category the search query-string AST can produce must
+// round-trip search → canonical → search exactly, so `astFilterParams` emits a
+// byte-identical IPC bundle through the adapter.
+// ---------------------------------------------------------------------------
+
+function emptySearchProjection(): AstFilterProjection {
+  return {
+    tagNames: [],
+    includePageGlobs: [],
+    excludePageGlobs: [],
+    stateFilter: [],
+    priorityFilter: [],
+    excludedStateFilter: [],
+    excludedPriorityFilter: [],
+    dueFilter: null,
+    scheduledFilter: null,
+    propertyFilters: [],
+    excludedPropertyFilters: [],
+  }
+}
+
+describe('search surface round-trip (projection ⇄ canonical)', () => {
+  const cases: { name: string; projection: AstFilterProjection }[] = [
+    { name: 'empty', projection: emptySearchProjection() },
+    {
+      name: 'tag (by name)',
+      projection: { ...emptySearchProjection(), tagNames: ['work', 'urgent'] },
+    },
+    {
+      name: 'path include + exclude globs',
+      projection: {
+        ...emptySearchProjection(),
+        includePageGlobs: ['Projects/*', 'Notes/*'],
+        excludePageGlobs: ['Archive/*'],
+      },
+    },
+    {
+      name: 'state + not-state',
+      projection: {
+        ...emptySearchProjection(),
+        stateFilter: ['TODO', 'DOING'],
+        excludedStateFilter: ['DONE'],
+      },
+    },
+    {
+      // #1647 — `state:none` must stay the literal value string `'none'` so the
+      // backend `todo_state IS NULL` sentinel path is preserved; never collapse
+      // it to the canonical `isNull` flag in the search adapter.
+      name: 'state:none + not-state:none (null sentinel preserved)',
+      projection: {
+        ...emptySearchProjection(),
+        stateFilter: ['none'],
+        excludedStateFilter: ['none'],
+      },
+    },
+    {
+      name: 'priority + not-priority',
+      projection: {
+        ...emptySearchProjection(),
+        priorityFilter: ['A', 'B'],
+        excludedPriorityFilter: ['C'],
+      },
+    },
+    {
+      name: 'due named bucket + scheduled op',
+      projection: {
+        ...emptySearchProjection(),
+        dueFilter: { kind: 'named', name: 'today' },
+        scheduledFilter: { kind: 'op', op: '>=', date: '2026-01-01' },
+      },
+    },
+    {
+      name: 'due:none named sentinel',
+      projection: {
+        ...emptySearchProjection(),
+        dueFilter: { kind: 'named', name: 'none' },
+      },
+    },
+    {
+      name: 'every date comparison op',
+      projection: {
+        ...emptySearchProjection(),
+        dueFilter: { kind: 'op', op: '<', date: '2026-03-01' },
+        scheduledFilter: { kind: 'op', op: '=', date: '2026-04-01' },
+      },
+    },
+    {
+      name: 'prop + not-prop',
+      projection: {
+        ...emptySearchProjection(),
+        propertyFilters: [{ key: 'owner', value: 'me' }],
+        excludedPropertyFilters: [{ key: 'archived', value: 'true' }],
+      },
+    },
+    {
+      name: 'mixed bag (all categories)',
+      projection: {
+        tagNames: ['work'],
+        includePageGlobs: ['Projects/*'],
+        excludePageGlobs: ['Archive/*'],
+        stateFilter: ['TODO', 'none'],
+        priorityFilter: ['A'],
+        excludedStateFilter: ['DONE'],
+        excludedPriorityFilter: ['C'],
+        dueFilter: { kind: 'named', name: 'overdue' },
+        scheduledFilter: { kind: 'op', op: '<=', date: '2026-05-01' },
+        propertyFilters: [{ key: 'owner', value: 'me' }],
+        excludedPropertyFilters: [{ key: 'archived', value: 'true' }],
+      },
+    },
+  ]
+
+  for (const { name, projection } of cases) {
+    it(`round-trips ${name}`, () => {
+      const canonical = searchProjectionToCanonical(projection)
+      const back = canonicalToSearchProjection(canonical)
+      expect(back).toEqual(projection)
+    })
+  }
+
+  it('produces canonical predicates that all pass the search allow-list', () => {
+    const canonical = searchProjectionToCanonical({
+      tagNames: ['work'],
+      includePageGlobs: ['Projects/*'],
+      excludePageGlobs: ['Archive/*'],
+      stateFilter: ['TODO'],
+      priorityFilter: ['A'],
+      excludedStateFilter: ['DONE'],
+      excludedPriorityFilter: ['C'],
+      dueFilter: { kind: 'named', name: 'today' },
+      scheduledFilter: { kind: 'op', op: '>=', date: '2026-01-01' },
+      propertyFilters: [{ key: 'owner', value: 'me' }],
+      excludedPropertyFilters: [{ key: 'archived', value: 'true' }],
+    })
+    for (const p of canonical) {
+      expect(surfaceSupports('search', p.kind)).toBe(true)
+    }
   })
 })
 
