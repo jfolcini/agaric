@@ -13,7 +13,7 @@ members = [".", "diagnostics"]
 
 [package]
 name = "agaric"
-version = "0.6.5"
+version = "0.6.6"
 edition = "2024"
 # #640: MSRV documentation — keep in lockstep with rust-toolchain.toml and
 # the `toolchain:` inputs in .github/workflows/{ci,release,_validate}.yml.
