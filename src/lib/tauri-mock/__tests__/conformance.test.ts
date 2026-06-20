@@ -90,6 +90,36 @@ function loadSeed(fixture: Fixture): void {
     )
     blocks.set(id, row)
   }
+  // #1775: `makeBlock` stamps a non-page block's `page_id` with its IMMEDIATE
+  // parent, but the backend's `page_id` is the ROOT page of the parent chain.
+  // Resolve every seeded block's `page_id` to its root page so nested-subtree
+  // fixtures match the backend-authored snapshot (the move handler already does
+  // this for moved subtrees via `refreshDescendantPageIds`; the seed loader did
+  // not, so a never-moved nested block kept a stale immediate-parent page_id).
+  for (const b of fixture.seed.blocks) {
+    const id = seedLabelToId(b['id'] as string)
+    const row = blocks.get(id)
+    if (!row) continue
+    if (row['block_type'] === 'page') {
+      row['page_id'] = id
+      continue
+    }
+    // Walk parent_id to the root; the page root's id is the page_id.
+    let cursor: string | null = (row['parent_id'] as string | null) ?? null
+    let pageId: string | null = null
+    const guard = new Set<string>()
+    while (cursor != null && !guard.has(cursor)) {
+      guard.add(cursor)
+      const parent = blocks.get(cursor)
+      if (!parent) break
+      if (parent['block_type'] === 'page') {
+        pageId = parent['id'] as string
+        break
+      }
+      cursor = (parent['parent_id'] as string | null) ?? null
+    }
+    row['page_id'] = pageId
+  }
   for (const p of fixture.seed.properties) {
     const blockId = seedLabelToId(p['block_id'] as string)
     const key = p['key'] as string
@@ -166,24 +196,14 @@ const DRIFT_SKIP = new Set<string>([
   // path (dense-reproject positions) instead of the SQL-only fallback (gapped
   // provisional positions). `position_reproject_drift` now MATCHES the mock's
   // dense renumber, so it is no longer skipped.
-
-  // DRIFT(#763 / #1690): the mock's SINGLE-OP `delete_block` and `restore_block`
-  // handlers (handlers.ts) only touch the one target block — `delete_block` sets
-  // `deleted_at` on the block alone (`descendants_affected: 0`) and
-  // `restore_block` clears it unconditionally. The real backend's `delete_block`
-  // op CASCADES over the active descendant subtree (`descendants_cte_active`) and
-  // `restore_block` restores the SAME-COHORT descendant chain
-  // (`descendants_cte_cohort`, deleted_at_ref-keyed), preserving an
-  // independently-deleted descendant. These two fixtures exercise exactly that
-  // multi-level cascade / cohort-restore behaviour, which the mock does NOT
-  // mirror, so the mock snapshot diverges from the backend-authored `expected`.
-  // Mirroring the backend's recursive cascade/cohort walk in the single-op mock
-  // handlers is a non-trivial change to the 3.5k-line tauri-mock; per the #763
-  // policy the backend stays the source of truth and these are skipped on the
-  // mock side pending a mock-cascade fix (tracked in #1775). The Rust
-  // conformance runner still asserts the backend behaviour for both fixtures.
-  'cascade_delete_subtree',
-  'restore_after_cascade_independent_child',
+  // #1775 RESOLVED: the mock's single-op `delete_block` / `restore_block`
+  // handlers now mirror the backend's cascade — `delete_block` tombstones the
+  // whole ACTIVE descendant subtree (`descendants_cte_active`) and
+  // `restore_block` restores the SAME-COHORT contiguous chain
+  // (`descendants_cte_cohort`, `deleted_at_ref`-keyed), preserving an
+  // independently-deleted descendant. The `cascade_delete_subtree` and
+  // `restore_after_cascade_independent_child` fixtures are therefore no longer
+  // skipped and now assert mock == backend.
 ])
 
 describe('tauri-mock ⇄ backend conformance (#763)', () => {
