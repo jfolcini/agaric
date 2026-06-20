@@ -293,6 +293,36 @@ pub async fn add_attachment_with_bytes_inner(
     }
 }
 
+/// Read an attachment's metadata row by ID (#1490 export).
+///
+/// The markdown export carries inline images as opaque `attachment:<id>`
+/// refs; the graph-export ZIP builder needs the attachment's original
+/// `filename` (and `mime_type`) to emit a portable `assets/<filename>` path
+/// alongside the bytes from [`read_attachment_inner`]. This is a metadata-only
+/// lookup (no file read), so a missing on-disk file does not fail it — the
+/// caller surfaces a byte-read failure separately and skips that asset.
+///
+/// # Errors
+///
+/// - [`AppError::NotFound`] — attachment row does not exist
+#[instrument(skip(pool), err)]
+pub async fn read_attachment_meta_inner(
+    pool: &SqlitePool,
+    attachment_id: AttachmentId,
+) -> Result<AttachmentRow, AppError> {
+    let attachment_id_str = attachment_id.as_str();
+    let row = sqlx::query_as!(
+        AttachmentRow,
+        "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at, content_hash \
+         FROM attachments WHERE id = ?",
+        attachment_id_str
+    )
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("attachment '{attachment_id}'")))?;
+    Ok(row)
+}
+
 /// Read an attachment's raw bytes by ID (PEND-76 F2).
 ///
 /// The render path calls this and wraps the bytes in a `blob:` URL (the CSP
@@ -660,6 +690,21 @@ pub async fn read_attachment(
         .app_data_dir()
         .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
     read_attachment_inner(&pool.0, &app_data_dir, attachment_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: read an attachment's metadata row (filename, mime, etc.).
+/// Delegates to [`read_attachment_meta_inner`]. Used by the graph-export ZIP
+/// builder (#1490) to resolve an inline-image `attachment:<id>` ref to a
+/// portable `assets/<filename>` path.
+#[tauri::command]
+#[specta::specta]
+pub async fn read_attachment_meta(
+    pool: State<'_, ReadPool>,
+    attachment_id: AttachmentId,
+) -> Result<AttachmentRow, AppError> {
+    read_attachment_meta_inner(&pool.0, attachment_id)
         .await
         .map_err(sanitize_internal_error)
 }

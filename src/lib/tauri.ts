@@ -2119,6 +2119,15 @@ export async function readAttachment(attachmentId: string): Promise<Uint8Array> 
   return Uint8Array.from(unwrap(await commands.readAttachment(attachmentId)))
 }
 
+/**
+ * Read an attachment's metadata row (filename, mime, …) by ID (#1490).
+ * Used by the graph export to resolve an inline-image `attachment:<id>` ref to
+ * a portable `assets/<filename>` path. Metadata-only: does not read the file.
+ */
+export async function readAttachmentMeta(attachmentId: string): Promise<AttachmentRow> {
+  return unwrap(await commands.readAttachmentMeta(attachmentId))
+}
+
 /** Delete an attachment by ID. */
 export async function deleteAttachment(attachmentId: string): Promise<void> {
   unwrap(await commands.deleteAttachment(attachmentId))

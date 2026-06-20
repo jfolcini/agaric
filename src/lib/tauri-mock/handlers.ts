@@ -3329,6 +3329,13 @@ export const HANDLERS: Record<string, Handler> = {
     return attachmentBytes.get(a['attachmentId'] as string) ?? []
   },
 
+  // #1490 — metadata-only read used by the graph export to resolve an inline
+  // `attachment:<id>` ref to a portable `assets/<filename>` path.
+  read_attachment_meta: (args) => {
+    const a = args as Record<string, unknown>
+    return attachments.get(a['attachmentId'] as string) ?? null
+  },
+
   delete_attachment: (args) => {
     const a = args as Record<string, unknown>
     const id = a['attachmentId'] as string

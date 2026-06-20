@@ -509,6 +509,13 @@ export const commands = {
 	 *  [`read_attachment_inner`].
 	 */
 	readAttachment: (attachmentId: BlockId) => typedError<number[], AppError>(__TAURI_INVOKE("read_attachment", { attachmentId })),
+	/**
+	 *  Tauri command: read an attachment's metadata row (filename, mime, etc.).
+	 *  Delegates to [`read_attachment_meta_inner`]. Used by the graph-export ZIP
+	 *  builder (#1490) to resolve an inline-image `attachment:<id>` ref to a
+	 *  portable `assets/<filename>` path.
+	 */
+	readAttachmentMeta: (attachmentId: BlockId) => typedError<AttachmentRow, AppError>(__TAURI_INVOKE("read_attachment_meta", { attachmentId })),
 	/**  Tauri command: delete an attachment. Delegates to [`delete_attachment_inner`]. */
 	deleteAttachment: (attachmentId: BlockId) => typedError<null, AppError>(__TAURI_INVOKE("delete_attachment", { attachmentId })),
 	/**  Tauri command: rename an attachment. Delegates to [`rename_attachment_inner`]. */

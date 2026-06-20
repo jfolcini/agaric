@@ -4830,3 +4830,278 @@ async fn export_aliases_tags_and_properties_coexist_1433() {
         "frontmatter order must be aliases, tags, then properties, got:\n{md}"
     );
 }
+
+// ======================================================================
+// #1446 Part B — import wiki-link resolution + folder → namespace
+// ======================================================================
+
+/// #1446 — `folder_path_to_namespace_title`: a folder-relative import path
+/// maps to the namespaced page title (inverse of the namespaced export), a
+/// bare basename strips only `.md`, and stray/empty segments are dropped.
+#[test]
+fn folder_path_to_namespace_title_maps_folders_to_namespace_1446() {
+    use crate::commands::pages::markdown::folder_path_to_namespace_title;
+    assert_eq!(
+        folder_path_to_namespace_title("Project/Backend/API.md"),
+        "Project/Backend/API"
+    );
+    assert_eq!(folder_path_to_namespace_title("API.md"), "API");
+    // Backslash separators (Windows-authored vaults) normalise to `/`.
+    assert_eq!(folder_path_to_namespace_title("a\\b\\c.md"), "a/b/c");
+    // Leading/trailing/doubled separators yield no blank namespace segments.
+    assert_eq!(
+        folder_path_to_namespace_title("/Project//Backend/API.md"),
+        "Project/Backend/API"
+    );
+    assert_eq!(folder_path_to_namespace_title("///.md"), "");
+}
+
+/// #1446 Part B — importing a `.md` whose body cites `[[Existing Page]]` must
+/// resolve that wiki-link to the existing page's ULID (not store literal text).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_resolves_existing_wikilink_to_ulid_1446() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    const TARGET: &str = "01AAAAAAAAAAAAAAAAAAATARGT";
+    insert_block(&pool, TARGET, "page", "Other Page", None, Some(1)).await;
+    assign_to_space(&pool, TARGET, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = "- see [[Other Page]] for details";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        md.into(),
+        Some("Notes.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.page_title, "Notes");
+
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND content LIKE '%see%'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        content,
+        format!("see [[{TARGET}]] for details"),
+        "existing wiki-link must resolve to the target ULID, not stay literal"
+    );
+
+    mat.shutdown();
+}
+
+/// #1446 Part B — `[[New Page]]` for a title that does not exist creates the
+/// page (in the import's space) AND rewrites the link to the new ULID.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_creates_missing_wikilink_target_and_links_1446() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = "- linking to [[Brand New]] here";
+    import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        md.into(),
+        Some("Notes.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+
+    // The missing target page was created in the import's space.
+    let new_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Brand New' AND space_id = ?",
+    )
+    .bind(TEST_SPACE_ID)
+    .fetch_one(&pool)
+    .await
+    .expect("missing wiki-link target must be created as a page");
+
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND content LIKE '%linking%'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        content,
+        format!("linking to [[{new_id}]] here"),
+        "new wiki-link must rewrite to the freshly-created page ULID"
+    );
+
+    mat.shutdown();
+}
+
+/// #1446 Part B — an ambiguous `[[Name]]` (two same-space pages share the
+/// title) is left as plain text (never guess) and warns.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_ambiguous_wikilink_left_plain_1446() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    const DUP1: &str = "01AAAAAAAAAAAAAAAAAAADUP01";
+    const DUP2: &str = "01AAAAAAAAAAAAAAAAAAADUP02";
+    insert_block(&pool, DUP1, "page", "Dup Title", None, Some(1)).await;
+    insert_block(&pool, DUP2, "page", "Dup Title", None, Some(1)).await;
+    assign_to_space(&pool, DUP1, TEST_SPACE_ID).await;
+    assign_to_space(&pool, DUP2, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = "- ref to [[Dup Title]] stays plain";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        md.into(),
+        Some("Notes.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND content LIKE '%ref to%'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        content, "ref to [[Dup Title]] stays plain",
+        "ambiguous wiki-link must stay literal text"
+    );
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("Dup Title") && w.contains("multiple")),
+        "ambiguous wiki-link must surface a warning; got {:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
+
+/// #1446 Part B — a folder-relative import path maps to the page's namespace
+/// title (`Project/Backend/API.md` → page title `Project/Backend/API`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_folder_path_maps_to_namespace_title_1446() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        "- body".into(),
+        Some("Project/Backend/API.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        result.page_title, "Project/Backend/API",
+        "folder path must map to the namespaced page title"
+    );
+
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND content = 'Project/Backend/API'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        exists, 1,
+        "namespaced page must be created with the full title"
+    );
+
+    mat.shutdown();
+}
+
+/// #1446 round-trip — a namespaced page that links to another page exports to a
+/// `[[Title]]` + namespace heading, and re-importing (with the folder path
+/// restored, as Part A's nested-folder ZIP would yield) restores BOTH the
+/// namespace title and the resolved wiki-link.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_export_namespace_and_wikilink_round_trip_1446() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    const SRC: &str = "01AAAAAAAAAAAAAAAAAAARTSRC";
+    const LINK_TARGET: &str = "01AAAAAAAAAAAAAAAAAAARTTGT";
+    // A namespaced source page whose body links to another page by ULID.
+    insert_block(&pool, SRC, "page", "Project/Backend/API", None, Some(1)).await;
+    insert_block(&pool, LINK_TARGET, "page", "Helpers", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "01AAAAAAAAAAAAAAAAAAARTBLK",
+        "content",
+        &format!("uses [[{LINK_TARGET}]] helper"),
+        Some(SRC),
+        Some(1),
+    )
+    .await;
+    assign_to_space(&pool, SRC, TEST_SPACE_ID).await;
+    assign_to_space(&pool, LINK_TARGET, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    // Export → the ULID link becomes the human `[[Helpers]]` form.
+    let md = export_page_markdown_inner(&pool, SRC).await.unwrap();
+    assert!(
+        md.contains("[[Helpers]]"),
+        "export must humanise the wiki-link; got:\n{md}"
+    );
+
+    // Re-import with the folder path Part A's ZIP would produce.
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        md,
+        Some("Project/Backend/API.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        result.page_title, "Project/Backend/API",
+        "namespace must be restored on re-import"
+    );
+
+    // The re-imported body must re-resolve `[[Helpers]]` to the existing
+    // target's ULID (the round-trip closes).
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND content LIKE '%uses%' \
+         ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    // (The exported `# Heading` line may newline-merge into this first block on
+    // re-import; the round-trip claim is that the wiki-link re-resolves to the
+    // SAME target ULID, so assert on the resolved token, not exact block text.)
+    assert!(
+        content.contains(&format!("uses [[{LINK_TARGET}]] helper")),
+        "wiki-link must reverse-resolve to the same target ULID after round-trip; got {content:?}"
+    );
+
+    mat.shutdown();
+}
