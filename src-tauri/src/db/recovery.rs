@@ -324,7 +324,16 @@ async fn recover_blocks_from_op_log(
                             .map(crate::pagination::index_to_provisional_position)
                     });
 
-                sqlx::query(
+                // #1536: keep `OR IGNORE` so recovery is idempotent (a re-run,
+                // or a row already materialized by an earlier op in this same
+                // replay, must not abort). But unlike the keyed UPDATE/DELETE
+                // arms, a silently-ignored create is invisible: ULIDs make a
+                // real id collision impossible, so `rows_affected == 0` means
+                // the op_log carried two `create_block` ops for the same id —
+                // i.e. corruption. The first create wins and is preserved
+                // (success behaviour unchanged); we only surface the drop so a
+                // corrupted log is observable rather than silently flattened.
+                let result = sqlx::query(
                     "INSERT OR IGNORE INTO blocks \
                      (id, block_type, content, parent_id, position, deleted_at, \
                       todo_state, priority, due_date, scheduled_date, page_id) \
@@ -337,6 +346,14 @@ async fn recover_blocks_from_op_log(
                 .bind(position)
                 .execute(&mut *executor)
                 .await?;
+                if result.rows_affected() == 0 {
+                    tracing::warn!(
+                        block_id,
+                        "duplicate create_block skipped during recovery — \
+                         op_log carries two create ops for the same id \
+                         (first wins); possible op_log corruption"
+                    );
+                }
             }
             "edit_block" => {
                 let block_id = payload["block_id"].as_str().unwrap_or("");
@@ -1332,5 +1349,104 @@ mod tests {
             ccc < bbb,
             "create-index order must be preserved (ccc@idx0 before bbb@idx1), got {order:?}"
         );
+    }
+
+    /// #1536: a corrupted op_log carrying two `create_block` ops for the SAME
+    /// id must not silently flatten. ULIDs make a real collision impossible, so
+    /// the duplicate is corruption. Recovery stays idempotent — `OR IGNORE`
+    /// tolerates the second create (no abort, first row intact) — but the
+    /// `rows_affected == 0` arm logs a warn so the drop is observable. This
+    /// asserts the recovery completes and the FIRST create wins (its content is
+    /// preserved, the colliding second is ignored).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_duplicate_create_block_keeps_first_and_does_not_abort() {
+        let (pool, _dir) = test_pool().await;
+
+        // Two create_block ops sharing id "dup", distinct content. The second
+        // is the corrupting duplicate; under OR IGNORE it is dropped.
+        let seed_create = |content: &'static str, seq: i64| {
+            let pool = pool.clone();
+            async move {
+                let payload = serde_json::json!({
+                    "block_id": "dup",
+                    "block_type": "content",
+                    "index": 0,
+                    "content": content,
+                })
+                .to_string();
+                sqlx::query(
+                    "INSERT INTO op_log \
+                     (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                     VALUES ('dev', ?, NULL, ?, 'create_block', ?, ?)",
+                )
+                .bind(seq)
+                .bind(format!("h{seq}"))
+                .bind(&payload)
+                .bind(1_767_225_600_000_i64 + seq)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+        seed_create("first-wins", 1).await;
+        seed_create("second-ignored", 2).await;
+
+        // Recovery must NOT abort on the duplicate (idempotent OR IGNORE).
+        let mut conn = pool.acquire().await.unwrap();
+        recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        // Exactly one row, and the FIRST create's content is intact.
+        let rows: Vec<String> =
+            sqlx::query_scalar::<_, String>("SELECT content FROM blocks WHERE id = 'dup'")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            rows,
+            vec!["first-wins".to_string()],
+            "duplicate create_block must leave exactly the first row intact (#1536)"
+        );
+    }
+
+    /// #1536 control: a single, non-colliding `create_block` recovers cleanly —
+    /// the `rows_affected == 0` warn arm is NOT taken (the insert affects one
+    /// row), and the block materializes as expected.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_single_create_block_no_duplicate_warn() {
+        let (pool, _dir) = test_pool().await;
+
+        let payload = serde_json::json!({
+            "block_id": "solo",
+            "block_type": "content",
+            "index": 0,
+            "content": "hello",
+        })
+        .to_string();
+        sqlx::query(
+            "INSERT INTO op_log \
+             (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+             VALUES ('dev', 1, NULL, 'h1', 'create_block', ?, ?)",
+        )
+        .bind(&payload)
+        .bind(1_767_225_600_001_i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut conn = pool.acquire().await.unwrap();
+        recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        let content: String =
+            sqlx::query_scalar::<_, String>("SELECT content FROM blocks WHERE id = 'solo'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(content, "hello", "single create_block must recover cleanly");
     }
 }
