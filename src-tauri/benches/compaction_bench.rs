@@ -95,7 +95,7 @@ fn bench_get_compaction_status(c: &mut Criterion) {
                     async move {
                         get_compaction_status_inner(&pool).await.unwrap();
                     }
-                })
+                });
             },
         );
     }
@@ -144,7 +144,7 @@ fn bench_compact_op_log(c: &mut Criterion) {
                         pool.close().await;
                     }
                     total
-                })
+                });
             },
         );
     }

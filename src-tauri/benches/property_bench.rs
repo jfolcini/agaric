@@ -124,7 +124,7 @@ fn bench_set_property(c: &mut Criterion) {
                         .await
                         .unwrap()
                     }
-                })
+                });
             },
         );
 
@@ -159,7 +159,7 @@ fn bench_get_properties(c: &mut Criterion) {
                     let pool = pool.clone();
                     let target_id = target_id.clone();
                     async move { get_properties_inner(&pool, target_id.into()).await.unwrap() }
-                })
+                });
             },
         );
 
@@ -235,7 +235,7 @@ fn bench_delete_property(c: &mut Criterion) {
                         }
                         start.elapsed()
                     }
-                })
+                });
             },
         );
 
@@ -280,7 +280,7 @@ fn bench_set_todo_state(c: &mut Criterion) {
                         .await
                         .unwrap()
                     }
-                })
+                });
             },
         );
 
@@ -325,7 +325,7 @@ fn bench_set_priority(c: &mut Criterion) {
                         .await
                         .unwrap()
                     }
-                })
+                });
             },
         );
 
@@ -370,7 +370,7 @@ fn bench_set_due_date(c: &mut Criterion) {
                         .await
                         .unwrap()
                     }
-                })
+                });
             },
         );
 
@@ -415,7 +415,7 @@ fn bench_set_scheduled_date(c: &mut Criterion) {
                         .await
                         .unwrap()
                     }
-                })
+                });
             },
         );
 

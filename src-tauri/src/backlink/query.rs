@@ -402,8 +402,7 @@ async fn eval_property_sort_materialised(
         sorted_ids
             .iter()
             .position(|s| s.as_str() == after_id)
-            .map(|i| i + 1)
-            .unwrap_or(sorted_ids.len())
+            .map_or(sorted_ids.len(), |i| i + 1)
     } else {
         0
     };

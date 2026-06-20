@@ -825,7 +825,9 @@ async fn filter_contains_empty_query() {
     let (pool, _dir) = test_pool().await;
     setup_backlinks(&pool).await;
 
-    let filter = BacklinkFilter::Contains { query: "".into() };
+    let filter = BacklinkFilter::Contains {
+        query: String::new(),
+    };
     let set = resolve_filter(&pool, &filter, 0).await.unwrap();
     assert!(set.is_empty(), "empty query should return no results");
 }

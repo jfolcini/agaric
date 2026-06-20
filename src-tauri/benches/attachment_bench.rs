@@ -126,7 +126,7 @@ fn bench_add_attachment(c: &mut Criterion) {
                         .await
                         .unwrap();
                     }
-                })
+                });
             },
         );
 
@@ -222,7 +222,7 @@ fn bench_delete_attachment(c: &mut Criterion) {
                         }
                         start.elapsed()
                     }
-                })
+                });
             },
         );
 
@@ -266,7 +266,7 @@ fn bench_list_attachments(c: &mut Criterion) {
                             .unwrap();
                         assert_eq!(rows.len(), 10);
                     }
-                })
+                });
             },
         );
     }

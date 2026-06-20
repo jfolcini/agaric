@@ -91,7 +91,7 @@ fn bench_create_snapshot(c: &mut Criterion) {
                     async move {
                         create_snapshot(&pool, DEV_BENCH).await.unwrap();
                     }
-                })
+                });
             },
         );
 
@@ -149,7 +149,7 @@ fn bench_apply_snapshot(c: &mut Criterion) {
                     async move {
                         apply_snapshot(&pool, &mat, &data[..]).await.unwrap();
                     }
-                })
+                });
             },
         );
 

@@ -98,32 +98,28 @@ pub(crate) fn engine_apply(
             // position path converges engine sibling order toward ULID order
             // on re-apply (#603).
             match p.index {
-                Some(index) => engine
-                    .apply_create_block_at(
-                        p.block_id.as_str(),
-                        &p.block_type,
-                        &p.content,
-                        parent,
-                        usize::try_from(index.max(0)).unwrap_or(usize::MAX),
-                    )
-                    .map(|_| ()),
-                None => engine
-                    .apply_create_block(
-                        p.block_id.as_str(),
-                        &p.block_type,
-                        &p.content,
-                        parent,
-                        p.position.unwrap_or(i64::MAX), // None ⇒ sort last (append)
-                    )
-                    .map(|_| ()),
+                Some(index) => engine.apply_create_block_at(
+                    p.block_id.as_str(),
+                    &p.block_type,
+                    &p.content,
+                    parent,
+                    usize::try_from(index.max(0)).unwrap_or(usize::MAX),
+                ),
+                None => engine.apply_create_block(
+                    p.block_id.as_str(),
+                    &p.block_type,
+                    &p.content,
+                    parent,
+                    p.position.unwrap_or(i64::MAX), // None ⇒ sort last (append)
+                ),
             }
         }
-        crate::op::OpPayload::EditBlock(p) => engine
-            .apply_edit_via_diff_splice(p.block_id.as_str(), &p.to_text)
-            .map(|_| ()),
-        crate::op::OpPayload::DeleteBlock(p) => engine
-            .apply_delete_block(p.block_id.as_str(), op_created_at)
-            .map(|_| ()),
+        crate::op::OpPayload::EditBlock(p) => {
+            engine.apply_edit_via_diff_splice(p.block_id.as_str(), &p.to_text)
+        }
+        crate::op::OpPayload::DeleteBlock(p) => {
+            engine.apply_delete_block(p.block_id.as_str(), op_created_at)
+        }
         crate::op::OpPayload::MoveBlock(p) => {
             let parent = p.new_parent_id.as_ref().map(crate::ulid::BlockId::as_str);
             // #400/#603 routing — MUST mirror
@@ -131,16 +127,12 @@ pub(crate) fn engine_apply(
             // route on `new_index` when present (new-scheme op), else the
             // legacy sparse `new_position`.
             match p.new_index {
-                Some(index) => engine
-                    .apply_move_block_to(
-                        p.block_id.as_str(),
-                        parent,
-                        usize::try_from(index.max(0)).unwrap_or(usize::MAX),
-                    )
-                    .map(|_| ()),
-                None => engine
-                    .apply_move_block(p.block_id.as_str(), parent, p.new_position)
-                    .map(|_| ()),
+                Some(index) => engine.apply_move_block_to(
+                    p.block_id.as_str(),
+                    parent,
+                    usize::try_from(index.max(0)).unwrap_or(usize::MAX),
+                ),
+                None => engine.apply_move_block(p.block_id.as_str(), parent, p.new_position),
             }
         }
         crate::op::OpPayload::SetProperty(p) => {
@@ -170,25 +162,19 @@ pub(crate) fn engine_apply(
             } else {
                 PropertyValue::Null
             };
-            engine
-                .apply_set_property_typed(p.block_id.as_str(), &p.key, &value)
-                .map(|_| ())
+            engine.apply_set_property_typed(p.block_id.as_str(), &p.key, &value)
         }
-        crate::op::OpPayload::AddTag(p) => engine
-            .apply_add_tag(p.block_id.as_str(), p.tag_id.as_str())
-            .map(|_| ()),
-        crate::op::OpPayload::RemoveTag(p) => engine
-            .apply_remove_tag(p.block_id.as_str(), p.tag_id.as_str())
-            .map(|_| ()),
-        crate::op::OpPayload::RestoreBlock(p) => {
-            engine.apply_restore_block(p.block_id.as_str()).map(|_| ())
+        crate::op::OpPayload::AddTag(p) => {
+            engine.apply_add_tag(p.block_id.as_str(), p.tag_id.as_str())
         }
-        crate::op::OpPayload::PurgeBlock(p) => {
-            engine.apply_purge_block(p.block_id.as_str()).map(|_| ())
+        crate::op::OpPayload::RemoveTag(p) => {
+            engine.apply_remove_tag(p.block_id.as_str(), p.tag_id.as_str())
         }
-        crate::op::OpPayload::DeleteProperty(p) => engine
-            .apply_delete_property(p.block_id.as_str(), &p.key)
-            .map(|_| ()),
+        crate::op::OpPayload::RestoreBlock(p) => engine.apply_restore_block(p.block_id.as_str()),
+        crate::op::OpPayload::PurgeBlock(p) => engine.apply_purge_block(p.block_id.as_str()),
+        crate::op::OpPayload::DeleteProperty(p) => {
+            engine.apply_delete_property(p.block_id.as_str(), &p.key)
+        }
         // AddAttachment / DeleteAttachment are out of scope:
         // attachments are file-blobs that live outside CRDT state —
         // the file body sits on disk under `app_data_dir`, not inside

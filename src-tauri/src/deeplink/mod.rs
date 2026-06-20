@@ -284,7 +284,7 @@ fn dispatch_url<R: Runtime>(app: &AppHandle<R>, raw: &str) {
             },
         ),
         Ok(DeepLinkRoute::Settings(tab)) => {
-            emit_event(app, EVENT_OPEN_SETTINGS, &OpenSettingsPayload { tab })
+            emit_event(app, EVENT_OPEN_SETTINGS, &OpenSettingsPayload { tab });
         }
         Err(e) => {
             tracing::warn!(

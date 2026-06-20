@@ -757,12 +757,10 @@ impl Materializer {
     fn check_queue_pressure(&self) {
         let fg_depth = self
             .fg_sender()
-            .map(|tx| FOREGROUND_CAPACITY - tx.capacity())
-            .unwrap_or(0);
+            .map_or(0, |tx| FOREGROUND_CAPACITY - tx.capacity());
         let bg_depth = self
             .bg_sender()
-            .map(|tx| BACKGROUND_CAPACITY - tx.capacity())
-            .unwrap_or(0);
+            .map_or(0, |tx| BACKGROUND_CAPACITY - tx.capacity());
         if fg_depth > FOREGROUND_CAPACITY * QUEUE_PRESSURE_NUMERATOR / QUEUE_PRESSURE_DENOMINATOR {
             tracing::warn!(
                 depth = fg_depth,
@@ -862,12 +860,10 @@ impl Materializer {
     ) -> StatusInfo {
         let fg_depth = self
             .fg_sender()
-            .map(|tx| FOREGROUND_CAPACITY - tx.capacity())
-            .unwrap_or(0);
+            .map_or(0, |tx| FOREGROUND_CAPACITY - tx.capacity());
         let bg_depth = self
             .bg_sender()
-            .map(|tx| BACKGROUND_CAPACITY - tx.capacity())
-            .unwrap_or(0);
+            .map_or(0, |tx| BACKGROUND_CAPACITY - tx.capacity());
 
         // Convert the raw epoch-ms atomic to RFC 3339 and derive
         // "seconds since last batch". last_materialize_ms==0 means "no
@@ -913,7 +909,7 @@ impl Materializer {
                         error = %e,
                         query = "retry_queue_pending",
                         "materializer status query failed"
-                    )
+                    );
                 })
                 .ok();
 

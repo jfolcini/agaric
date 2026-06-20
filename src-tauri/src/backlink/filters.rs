@@ -32,7 +32,7 @@ pub(crate) fn ulid_to_ms(ulid: &str) -> Option<u64> {
     let mut value: u64 = 0;
     for ch in ts_part.chars() {
         let digit = crockford_decode_char(ch)?;
-        value = value.checked_mul(32)?.checked_add(digit as u64)?;
+        value = value.checked_mul(32)?.checked_add(u64::from(digit))?;
     }
     Some(value)
 }

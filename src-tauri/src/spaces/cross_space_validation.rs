@@ -265,7 +265,7 @@ mod tests {
         seed_content(&pool, &target, &page, "").await;
 
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-        let content = format!("see [[{}]] for details", target);
+        let content = format!("see [[{target}]] for details");
         let result =
             validate_content_cross_space_refs(&mut tx, &BlockId::from_trusted(&blk), &content)
                 .await;
@@ -290,7 +290,7 @@ mod tests {
         seed_content(&pool, &target, &page_w, "").await;
 
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-        let content = format!("see [[{}]] for details", target);
+        let content = format!("see [[{target}]] for details");
         let result =
             validate_content_cross_space_refs(&mut tx, &BlockId::from_trusted(&blk), &content)
                 .await;
@@ -316,7 +316,7 @@ mod tests {
         seed_content(&pool, &orphan, &orphan, "").await; // orphan: no space prop
 
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-        let content = format!("ref [[{}]]", target);
+        let content = format!("ref [[{target}]]");
         let result =
             validate_content_cross_space_refs(&mut tx, &BlockId::from_trusted(&orphan), &content)
                 .await;
@@ -341,7 +341,7 @@ mod tests {
         seed_content(&pool, &orphan_target, &orphan_target, "").await;
 
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-        let content = format!("ref [[{}]]", orphan_target);
+        let content = format!("ref [[{orphan_target}]]");
         let result =
             validate_content_cross_space_refs(&mut tx, &BlockId::from_trusted(&blk), &content)
                 .await;
@@ -365,7 +365,7 @@ mod tests {
             .execute(&pool).await.unwrap();
 
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-        let content = format!("tagged with #[{}]", tag);
+        let content = format!("tagged with #[{tag}]");
         let result =
             validate_content_cross_space_refs(&mut tx, &BlockId::from_trusted(&blk), &content)
                 .await;
@@ -389,7 +389,7 @@ mod tests {
             .execute(&pool).await.unwrap();
 
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-        let content = format!("tagged with #[{}]", tag);
+        let content = format!("tagged with #[{tag}]");
         let result =
             validate_content_cross_space_refs(&mut tx, &BlockId::from_trusted(&blk), &content)
                 .await;

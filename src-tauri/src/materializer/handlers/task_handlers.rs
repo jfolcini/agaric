@@ -345,9 +345,10 @@ pub(crate) async fn handle_background_task(
             .await
         }
         MaterializeTask::FtsOptimize => fts::fts_optimize(pool).await,
-        MaterializeTask::CleanupOrphanedAttachments => match app_data_dir {
-            Some(dir) => cleanup_orphaned_attachments(pool, read_pool, dir).await,
-            None => {
+        MaterializeTask::CleanupOrphanedAttachments => {
+            if let Some(dir) = app_data_dir {
+                cleanup_orphaned_attachments(pool, read_pool, dir).await
+            } else {
                 // C-3c — without `app_data_dir` we cannot locate the
                 // `attachments/` subtree. This is the expected state in
                 // unit tests that use `Materializer::new(pool)` without
@@ -358,7 +359,7 @@ pub(crate) async fn handle_background_task(
                 );
                 Ok(())
             }
-        },
+        }
         MaterializeTask::RebuildTagInheritanceCache => {
             dispatch_split_or_single(
                 pool,

@@ -380,7 +380,7 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
                 && let Some(content) = row.content.as_deref()
             {
                 let stripped = strip_for_fts_with_maps(&row.id, content, &tag_names, &page_titles);
-                to_insert.push((row.id.to_owned(), stripped));
+                to_insert.push((row.id.clone(), stripped));
             }
         }
         insert_fts_rows_tx(&mut tx, &to_insert).await?;

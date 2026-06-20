@@ -60,7 +60,7 @@ fn test_space_filter() -> SearchFilter {
 async fn search_blocks_inner_empty_query_returns_empty() {
     let (pool, _dir) = test_pool().await;
     assign_all_to_test_space(&pool).await;
-    let result = search_blocks_inner(&pool, "".into(), None, None, test_space_filter(), None)
+    let result = search_blocks_inner(&pool, String::new(), None, None, test_space_filter(), None)
         .await
         .unwrap();
     assert_eq!(
@@ -441,7 +441,7 @@ async fn query_by_tags_inner_rejects_oversized_tag_ids() {
     // `Err` proves the guard fired before any expression was built.
     let (pool, _dir) = test_pool().await;
 
-    let over_cap: Vec<String> = (0..(crate::commands::tags::MAX_FILTER_TAG_IDS + 1))
+    let over_cap: Vec<String> = (0..=crate::commands::tags::MAX_FILTER_TAG_IDS)
         .map(|i| format!("TAG_{i:05}"))
         .collect();
     let err = query_by_tags_inner(
@@ -633,7 +633,7 @@ async fn query_by_property_empty_key_returns_validation_error() {
 
     let result = query_by_property_inner(
         &pool,
-        "".into(),
+        String::new(),
         None,
         None,
         None,
@@ -4073,7 +4073,7 @@ async fn get_blocks_rejects_empty_oversize() {
         "empty input must reject with Validation"
     );
 
-    let oversize: Vec<String> = (0..(crate::commands::MAX_BATCH_BLOCK_IDS + 1))
+    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let big = get_blocks_inner(
@@ -4107,7 +4107,7 @@ async fn first_child_for_blocks_rejects_oversize() {
     assert!(under.is_empty(), "under-cap input must not error");
 
     // Over-cap: one more than the shared cap rejects with Validation.
-    let oversize: Vec<String> = (0..(crate::commands::MAX_BATCH_BLOCK_IDS + 1))
+    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let big = first_child_for_blocks_inner(
@@ -4138,7 +4138,7 @@ async fn batch_resolve_rejects_oversize() {
     assert!(under.is_empty(), "under-cap input must not error");
 
     // Over-cap: one more than the shared cap rejects with Validation.
-    let oversize: Vec<String> = (0..(crate::commands::MAX_BATCH_BLOCK_IDS + 1))
+    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let big = batch_resolve_inner(
@@ -4173,7 +4173,7 @@ async fn trash_descendant_counts_rejects_oversize() {
     assert!(under.is_empty(), "under-cap input must not error");
 
     // Over-cap: one more than the shared cap rejects with Validation.
-    let oversize: Vec<String> = (0..(crate::commands::MAX_BATCH_BLOCK_IDS + 1))
+    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let big = trash_descendant_counts_inner(&pool, oversize).await;
@@ -4344,7 +4344,7 @@ async fn filtered_blocks_query_silent_cap_regression() {
     // the one the old shape would silently drop because it sorts
     // past the noise sub-query's 200-row cap.
     for i in 0..249 {
-        let id = format!("01FBQCAP{:018}", i);
+        let id = format!("01FBQCAP{i:018}");
         insert_block(&pool, &id, "content", "noise", None, Some(i64::from(i))).await;
         insert_property(&pool, &id, "noise", "on").await;
     }
@@ -4431,7 +4431,7 @@ async fn filtered_blocks_query_cursor_pagination() {
     // 5 blocks all carrying `kind:taggable`. Paginate across with limit=2
     // and assert the cursor walks the filtered set in id-asc order.
     for i in 0..5 {
-        let id = format!("FBQPAG{:020}", i);
+        let id = format!("FBQPAG{i:020}");
         insert_block(&pool, &id, "content", "row", None, Some(i64::from(i))).await;
         insert_property(&pool, &id, "kind", "taggable").await;
     }
@@ -4497,7 +4497,7 @@ async fn filtered_blocks_query_cursor_pagination() {
         walked.extend(r.items.iter().map(|b| b.id.as_str()));
     }
     let mut sorted = walked.clone();
-    sorted.sort();
+    sorted.sort_unstable();
     assert_eq!(
         walked, sorted,
         "pagination must yield ids in ascending order"

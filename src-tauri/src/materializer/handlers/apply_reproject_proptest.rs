@@ -230,8 +230,7 @@ impl ChainDriver {
                 c.block_id.as_str().to_owned(),
                 c.parent_id
                     .as_ref()
-                    .map(|p| p.as_str().to_owned())
-                    .unwrap_or_else(|| PAGE_ID.to_owned()),
+                    .map_or_else(|| PAGE_ID.to_owned(), |p| p.as_str().to_owned()),
             )),
             _ => None,
         };

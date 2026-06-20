@@ -446,8 +446,7 @@ mod tests {
             baseline_rows
                 .iter()
                 .find(|(p, _, _)| p == id)
-                .map(|(_, _, t)| *t)
-                .unwrap_or_else(|| panic!("missing baseline row for {id}"))
+                .map_or_else(|| panic!("missing baseline row for {id}"), |(_, _, t)| *t)
         };
         let ts_changed_before = ts_for("PAGEAAAA");
         let ts_same_before = ts_for("PAGEBBBB");
@@ -488,11 +487,10 @@ mod tests {
         // (b) updated_at semantics: refreshed ONLY for the title-changed row.
         let after = snapshot_with_ts(&pool).await;
         let ts_after_for = |id: &str| -> i64 {
-            after
-                .iter()
-                .find(|(p, _, _)| p == id)
-                .map(|(_, _, t)| *t)
-                .unwrap_or_else(|| panic!("missing post-rebuild row for {id}"))
+            after.iter().find(|(p, _, _)| p == id).map_or_else(
+                || panic!("missing post-rebuild row for {id}"),
+                |(_, _, t)| *t,
+            )
         };
 
         assert_ne!(

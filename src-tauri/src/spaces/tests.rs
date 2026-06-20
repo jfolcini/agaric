@@ -59,7 +59,7 @@ async fn count_space_blocks(pool: &SqlitePool) -> i64 {
 }
 
 async fn count_rows(pool: &SqlitePool, table: &str) -> i64 {
-    let sql = format!("SELECT COUNT(*) FROM {}", table);
+    let sql = format!("SELECT COUNT(*) FROM {table}");
     sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql.as_str()))
         .fetch_one(pool)
         .await
@@ -391,12 +391,12 @@ async fn count_set_property_ops_for_block_and_key(
     block_id: &str,
     key: &str,
 ) -> i64 {
-    let pattern = format!("%\"key\":\"{}\"%", key);
+    let pattern = format!("%\"key\":\"{key}\"%");
     sqlx::query_scalar::<_, i64>(
-        r#"SELECT COUNT(*) FROM op_log
+        r"SELECT COUNT(*) FROM op_log
            WHERE op_type = 'set_property'
              AND block_id = ?
-             AND payload LIKE ?"#,
+             AND payload LIKE ?",
     )
     .bind(block_id)
     .bind(pattern)
@@ -418,16 +418,14 @@ async fn bootstrap_seeds_default_accent_colors_for_personal_and_work() {
             .await
             .as_deref(),
         Some(SPACE_PERSONAL_DEFAULT_ACCENT),
-        "Personal must seed accent_color = '{}'",
-        SPACE_PERSONAL_DEFAULT_ACCENT
+        "Personal must seed accent_color = '{SPACE_PERSONAL_DEFAULT_ACCENT}'"
     );
     assert_eq!(
         accent_color_property(&pool, SPACE_WORK_ULID)
             .await
             .as_deref(),
         Some(SPACE_WORK_DEFAULT_ACCENT),
-        "Work must seed accent_color = '{}'",
-        SPACE_WORK_DEFAULT_ACCENT
+        "Work must seed accent_color = '{SPACE_WORK_DEFAULT_ACCENT}'"
     );
 
     // Sanity check that bootstrap is operating in a valid steady state
@@ -625,7 +623,7 @@ async fn bootstrap_batched_migrator_handles_more_than_one_chunk() {
         // 26-char Crockford-base32 ULID: `01JABCDE` (8) +
         // `0000000000000` (13) + `{:05}` (5) — all chars are valid
         // Crockford (no I/L/O/U). Indices 00000..00199.
-        let id = format!("01JABCDE0000000000000{:05}", i);
+        let id = format!("01JABCDE0000000000000{i:05}");
         debug_assert_eq!(id.len(), 26, "test fixture must produce a 26-char ULID");
         insert_page(&pool, &id, "page").await;
     }
@@ -636,7 +634,7 @@ async fn bootstrap_batched_migrator_handles_more_than_one_chunk() {
     // landed (a regression where the second chunk's binding loop was
     // wrong would leave pages 167..200 unscoped).
     for i in 0..N {
-        let id = format!("01JABCDE0000000000000{:05}", i);
+        let id = format!("01JABCDE0000000000000{i:05}");
         assert_eq!(
             space_property(&pool, &id).await.as_deref(),
             Some(SPACE_PERSONAL_ULID),

@@ -106,8 +106,7 @@ async fn compact_op_log_cmd_deletes_old_ops() {
         .bind(DEV)
         .bind(i)
         .bind(format!(
-            r#"{{"block_id":"{}","block_type":"content","content":"old block {}","parent_id":null,"position":{}}}"#,
-            block_id, i, i
+            r#"{{"block_id":"{block_id}","block_type":"content","content":"old block {i}","parent_id":null,"position":{i}}}"#
         ))
         .bind(i)
         .bind(old_ts)
@@ -135,8 +134,7 @@ async fn compact_op_log_cmd_deletes_old_ops() {
     .bind(DEV)
     .bind(6)
     .bind(format!(
-        r#"{{"block_id":"{}","block_type":"content","content":"recent block","parent_id":null,"position":6}}"#,
-        recent_block_id
+        r#"{{"block_id":"{recent_block_id}","block_type":"content","content":"recent block","parent_id":null,"position":6}}"#
     ))
     .bind(recent_ts)
     .execute(&pool)
@@ -258,8 +256,7 @@ async fn compact_op_log_returns_real_deleted_count_l42() {
         .bind(DEV)
         .bind(i)
         .bind(format!(
-            r#"{{"block_id":"{}","block_type":"content","content":"old block {}","parent_id":null,"position":{}}}"#,
-            block_id, i, i
+            r#"{{"block_id":"{block_id}","block_type":"content","content":"old block {i}","parent_id":null,"position":{i}}}"#
         ))
         .bind(i)
         .bind(old_ts)

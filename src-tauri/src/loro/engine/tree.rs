@@ -69,8 +69,7 @@ impl LoroEngine {
                 .get_meta(child)
                 .ok()
                 .and_then(|m| read_deleted_at_meta(&m, "child").ok())
-                .map(|d| d.is_none())
-                .unwrap_or(true);
+                .is_none_or(|d| d.is_none());
             if is_live {
                 live_seen += 1;
             }
@@ -223,17 +222,16 @@ impl LoroEngine {
     ) -> TreeParentId {
         match parent_id {
             None => TreeParentId::Root,
-            Some(pid) => match self.node_for(pid) {
-                Some(parent_node) => {
+            Some(pid) => {
+                if let Some(parent_node) = self.node_for(pid) {
                     self.pending_parent.remove(block_id);
                     TreeParentId::Node(parent_node)
-                }
-                None => {
+                } else {
                     self.pending_parent
                         .insert(block_id.to_string(), pid.to_string());
                     TreeParentId::Root
                 }
-            },
+            }
         }
     }
     /// After a node for `parent_block_id` becomes available, re-parent any

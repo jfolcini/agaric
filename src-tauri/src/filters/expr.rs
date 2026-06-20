@@ -353,7 +353,7 @@ mod tests {
     #[test]
     fn validate_depth_rejects_deep_and_chain() {
         let mut e = tag("A");
-        for _ in 0..(FilterExpr::MAX_DEPTH + 1) {
+        for _ in 0..=FilterExpr::MAX_DEPTH {
             e = FilterExpr::And { children: vec![e] };
         }
         assert!(e.validate_depth().is_err());

@@ -374,7 +374,7 @@ async fn seed_m85_tags(pool: &SqlitePool, count: usize) -> Vec<String> {
     let mut ids = Vec::with_capacity(count);
     for i in 0..count {
         // Stable ASCII-letter suffix so ordering is bytes-lex == numeric.
-        let suffix = format!("{:03}", i);
+        let suffix = format!("{i:03}");
         let id = format!("TAG_M85_{suffix}");
         let name = format!("tag-m85-{suffix}");
         insert_block(pool, &id, "tag", &name, None, None).await;
@@ -687,7 +687,7 @@ async fn query_by_tag_expr_rejects_over_max_depth() {
 
     // Wrap a leaf in MAX_DEPTH + 1 Nots -> first rejected depth.
     let mut expr = TagExpr::Tag("QTE_DEEP".into());
-    for _ in 0..(TagExpr::MAX_DEPTH + 1) {
+    for _ in 0..=TagExpr::MAX_DEPTH {
         expr = TagExpr::Not(Box::new(expr));
     }
 
@@ -933,7 +933,7 @@ async fn add_tags_by_ids_rejects_oversize_list() {
     let mat = Materializer::new(pool.clone());
     insert_block(&pool, "ABI5_TAG", "tag", "urgent", None, None).await;
 
-    let oversize: Vec<BlockId> = (0..(crate::commands::MAX_BATCH_BLOCK_IDS + 1))
+    let oversize: Vec<BlockId> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
         .map(|i| BlockId::from(format!("ABI5_{i:026}")))
         .collect();
     let result = add_tags_by_ids_inner(&pool, DEV, &mat, oversize, "ABI5_TAG".into()).await;

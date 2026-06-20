@@ -525,9 +525,10 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
         // sync-protocol bug let through a bad value; either way we warn
         // before falling through, so the silent skip is observable.
         let until_date = match block.repeat_until.as_deref() {
-            Some(d) => match chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d") {
-                Ok(parsed) => Some(parsed),
-                Err(_) => {
+            Some(d) => {
+                if let Ok(parsed) = chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d") {
+                    Some(parsed)
+                } else {
                     tracing::warn!(
                         block_id = %block.id,
                         source = "repeat-until",
@@ -536,7 +537,7 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
                     );
                     continue;
                 }
-            },
+            }
             None => None,
         };
 

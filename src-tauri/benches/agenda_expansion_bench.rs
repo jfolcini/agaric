@@ -153,7 +153,7 @@ fn bench_agenda_expansion(c: &mut Criterion) {
                         .await
                         .unwrap()
                     }
-                })
+                });
             },
         );
 

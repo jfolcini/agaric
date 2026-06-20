@@ -793,12 +793,12 @@ async fn regex_mode_query(
     let limit = page.limit.clamp(1, super::search::MAX_SEARCH_RESULTS + 1);
 
     let mut sql = String::from(
-        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
+        r"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                   b.deleted_at, b.todo_state, b.priority, b.due_date,
                   b.scheduled_date, b.page_id
            FROM blocks b
            WHERE b.deleted_at IS NULL
-             AND b.content IS NOT NULL"#,
+             AND b.content IS NOT NULL",
     );
 
     // M2 (#348) — `StructuralFilterBuilder` owns the dynamic fragment,
@@ -1052,11 +1052,11 @@ async fn filter_only_scan(
     // which has no such clause. Drop it so tag/prop filters see every matching
     // block regardless of whether it carries text content.
     let mut sql = format!(
-        r#"SELECT b.id, b.block_type, {content_select}, b.parent_id, b.position,
+        r"SELECT b.id, b.block_type, {content_select}, b.parent_id, b.position,
                   b.deleted_at, b.todo_state, b.priority, b.due_date,
                   b.scheduled_date, b.page_id
            FROM blocks b
-           WHERE b.deleted_at IS NULL"#,
+           WHERE b.deleted_at IS NULL",
     );
 
     // M2 (#348) — same `StructuralFilterBuilder` as `regex_mode_query`,

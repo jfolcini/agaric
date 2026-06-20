@@ -50,9 +50,10 @@ where
         if predicate() {
             return;
         }
-        if start.elapsed() >= timeout {
-            panic!("wait_for({label}) timed out after {:?}", timeout);
-        }
+        assert!(
+            start.elapsed() < timeout,
+            "wait_for({label}) timed out after {timeout:?}"
+        );
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 }
@@ -708,7 +709,7 @@ fn verify_peer_cert_empty_cn_string_is_mismatch() {
         result,
         CertVerifyResult::CnMismatch {
             remote_id: "device-A".into(),
-            cert_cn: "".into(),
+            cert_cn: String::new(),
         },
         "empty CN string must trigger CnMismatch"
     );
@@ -865,7 +866,7 @@ async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
                 "remote_device_id must match peer"
             );
         }
-        other => panic!("expected Progress event, got {:?}", other),
+        other => panic!("expected Progress event, got {other:?}"),
     }
 
     // Second event: Error — `SyncEvent::Error.message` is unstructured `String`,
@@ -3971,7 +3972,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     let reset: SyncMessage = client_conn.recv_json().await.unwrap();
     match reset {
         SyncMessage::ResetRequired { .. } => {}
-        other => panic!("expected ResetRequired, got {:?}", other),
+        other => panic!("expected ResetRequired, got {other:?}"),
     }
 
     // Now emulate what `run_sync_session` does after seeing
@@ -4000,7 +4001,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
             );
             up_to_hash
         }
-        other => panic!("expected Applied, got {:?}", other),
+        other => panic!("expected Applied, got {other:?}"),
     };
 
     // Let the server task finish cleanly.

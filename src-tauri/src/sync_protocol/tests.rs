@@ -579,7 +579,7 @@ async fn orchestrator_start_returns_head_exchange() {
         SyncMessage::HeadExchange { heads, .. } => {
             assert!(heads.is_empty(), "empty DB should produce empty heads");
         }
-        other => panic!("expected HeadExchange, got {:?}", other),
+        other => panic!("expected HeadExchange, got {other:?}"),
     }
 
     materializer.shutdown();
@@ -1688,7 +1688,7 @@ fn serde_roundtrip_many_heads() {
     let heads: Vec<DeviceHead> = (0..100)
         .map(|i| DeviceHead {
             device_id: format!("device-{i:03}"),
-            seq: i as i64 * 10,
+            seq: i64::from(i) * 10,
             hash: format!("hash_{i:03}"),
         })
         .collect();

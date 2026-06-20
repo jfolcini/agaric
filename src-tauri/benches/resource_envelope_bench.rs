@@ -171,13 +171,9 @@ async fn seed_vault(pool: &SqlitePool, n: usize) {
 
 /// Sum the on-disk size of the SQLite DB and its WAL/SHM sidecars.
 fn db_disk_size(db_path: &Path) -> u64 {
-    let main = std::fs::metadata(db_path).map(|m| m.len()).unwrap_or(0);
-    let wal = std::fs::metadata(format!("{}-wal", db_path.display()))
-        .map(|m| m.len())
-        .unwrap_or(0);
-    let shm = std::fs::metadata(format!("{}-shm", db_path.display()))
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let main = std::fs::metadata(db_path).map_or(0, |m| m.len());
+    let wal = std::fs::metadata(format!("{}-wal", db_path.display())).map_or(0, |m| m.len());
+    let shm = std::fs::metadata(format!("{}-shm", db_path.display())).map_or(0, |m| m.len());
     main + wal + shm
 }
 

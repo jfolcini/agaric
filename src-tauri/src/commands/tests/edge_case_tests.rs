@@ -109,7 +109,8 @@ async fn f13_empty_block_type_returns_validation_error() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let result = create_block_inner(&pool, DEV, &mat, "".into(), "hello".into(), None, None).await;
+    let result =
+        create_block_inner(&pool, DEV, &mat, String::new(), "hello".into(), None, None).await;
 
     assert!(
         matches!(result, Err(AppError::Validation(_))),

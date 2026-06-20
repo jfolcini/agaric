@@ -202,7 +202,7 @@ async fn set_property_inner_with_empty_key_returns_validation() {
         block.id.as_str().into(),
         // Empty key — fails the `1-64 characters` check in
         // `op::validate_set_property` *before* any DB write happens.
-        "".into(),
+        String::new(),
         Some("any".into()),
         None,
         None,
@@ -1132,7 +1132,7 @@ async fn delete_property_def_removes_row() {
 #[tokio::test]
 async fn create_property_def_empty_key_returns_validation() {
     let (pool, _dir) = test_pool().await;
-    let result = create_property_def_inner(&pool, "".into(), "text".into(), None).await;
+    let result = create_property_def_inner(&pool, String::new(), "text".into(), None).await;
     assert!(
         matches!(result, Err(AppError::Validation(_))),
         "empty key must return Validation error"
@@ -1576,7 +1576,7 @@ async fn seed_m85_property_defs(pool: &sqlx::SqlitePool, count: usize) -> Vec<St
         .unwrap();
     let mut keys = Vec::with_capacity(count);
     for i in 0..count {
-        let key = format!("m85_def_{:03}", i);
+        let key = format!("m85_def_{i:03}");
         create_property_def_inner(pool, key.clone(), "text".into(), None)
             .await
             .unwrap();

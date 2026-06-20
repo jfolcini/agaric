@@ -1052,8 +1052,7 @@ pub async fn restore_block_inner(
                 && *actual_deleted_at != deleted_at_ref
             {
                 return Err(AppError::InvalidOperation(format!(
-                    "block '{block_id}' deleted_at mismatch: expected '{}', got '{}'",
-                    deleted_at_ref, actual_deleted_at
+                    "block '{block_id}' deleted_at mismatch: expected '{deleted_at_ref}', got '{actual_deleted_at}'"
                 )));
             }
         }

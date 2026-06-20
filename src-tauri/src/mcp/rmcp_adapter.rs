@@ -251,11 +251,10 @@ impl<R: ToolRegistry> ServerHandler for RmcpAdapter<R> {
         // call. Cap + control-strip it ONCE here at the trust boundary so
         // the cleaned value flows through `Actor::Agent` → `origin_tag()`
         // → durable state; downstream code never sees the raw string.
-        let agent_name = context
-            .peer
-            .peer_info()
-            .map(|info| sanitize_agent_name(&info.client_info.name))
-            .unwrap_or_else(|| AGENT_NAME_PLACEHOLDER.to_string());
+        let agent_name = context.peer.peer_info().map_or_else(
+            || AGENT_NAME_PLACEHOLDER.to_string(),
+            |info| sanitize_agent_name(&info.client_info.name),
+        );
 
         // #1545 — the activity feed keeps the bare `agent_name` for display
         // (it already carries the per-connection `session_id` separately),
@@ -276,7 +275,7 @@ impl<R: ToolRegistry> ServerHandler for RmcpAdapter<R> {
         let scoped_ctx = actor_ctx.clone();
         let call_ctx = actor_ctx;
 
-        let args = request.arguments.map(Value::Object).unwrap_or(Value::Null);
+        let args = request.arguments.map_or(Value::Null, Value::Object);
         let args_for_summary = args.clone();
 
         let registry = self.registry.clone();

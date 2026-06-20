@@ -81,8 +81,8 @@ async fn set_page_aliases_skips_empty_and_duplicates() {
         &pool,
         "PAGE-3",
         vec![
-            "  ".into(), // whitespace only — skipped
-            "".into(),   // empty — skipped
+            "  ".into(),   // whitespace only — skipped
+            String::new(), // empty — skipped
             "Valid".into(),
             "Valid".into(), // duplicate — second insert is ignored
             "  Trimmed  ".into(),
@@ -1982,7 +1982,7 @@ async fn import_markdown_empty_content() {
         &pool,
         DEV,
         &mat,
-        "".into(),
+        String::new(),
         Some("Empty.md".into()),
         TEST_SPACE_ID.into(),
     )
@@ -2106,7 +2106,7 @@ async fn import_markdown_progress_empty_file_started_then_complete() {
         &pool,
         DEV,
         &mat,
-        "".into(),
+        String::new(),
         Some("Empty.md".into()),
         TEST_SPACE_ID.into(),
         Some(&sink),
@@ -4353,7 +4353,7 @@ async fn list_all_pages_in_space_rejects_oversized_tag_filter() {
     // before the query.
     let (pool, _dir) = test_pool().await;
 
-    let over_cap: Vec<String> = (0..(crate::commands::tags::MAX_FILTER_TAG_IDS + 1))
+    let over_cap: Vec<String> = (0..=crate::commands::tags::MAX_FILTER_TAG_IDS)
         .map(|i| format!("TAG_{i:05}"))
         .collect();
     let err = list_all_pages_in_space_inner(&pool, TEST_SPACE_ID, Some(&over_cap))
@@ -4498,7 +4498,7 @@ async fn load_page_subtree_returns_active_descendants_excluding_root() {
         .await
         .unwrap();
     let mut ids: Vec<&str> = subtree.blocks.iter().map(|r| r.id.as_str()).collect();
-    ids.sort();
+    ids.sort_unstable();
     assert_eq!(
         ids,
         vec![

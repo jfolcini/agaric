@@ -345,9 +345,7 @@ fn resolve_named_range(range: NamedDateRange, today: NaiveDate) -> DatePredicate
             } else {
                 (today.year(), today.month() + 1)
             };
-            let last = NaiveDate::from_ymd_opt(ny, nm, 1)
-                .map(|d| d - Duration::days(1))
-                .unwrap_or(today);
+            let last = NaiveDate::from_ymd_opt(ny, nm, 1).map_or(today, |d| d - Duration::days(1));
             DatePredicate::Range {
                 from: to_iso(first),
                 to: to_iso(last),

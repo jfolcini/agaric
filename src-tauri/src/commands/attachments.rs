@@ -56,17 +56,15 @@ pub async fn add_attachment_inner(
     // F-11 validation: size limit
     if size_bytes > MAX_ATTACHMENT_SIZE {
         return Err(AppError::Validation(format!(
-            "attachment size {} bytes exceeds maximum {} bytes (50 MB)",
-            size_bytes, MAX_ATTACHMENT_SIZE
+            "attachment size {size_bytes} bytes exceeds maximum {MAX_ATTACHMENT_SIZE} bytes (50 MB)"
         )));
     }
 
     // F-11 validation: MIME type allow-list
     if !is_mime_allowed(&mime_type) {
         return Err(AppError::Validation(format!(
-            "MIME type '{}' is not allowed; permitted: image/*, application/pdf, text/*, \
-             application/json, application/zip, application/x-tar",
-            mime_type
+            "MIME type '{mime_type}' is not allowed; permitted: image/*, application/pdf, text/*, \
+             application/json, application/zip, application/x-tar"
         )));
     }
 
@@ -229,15 +227,13 @@ pub async fn add_attachment_with_bytes_inner(
     // never touches the disk. `add_attachment_inner` re-checks (cheap).
     if size_bytes > MAX_ATTACHMENT_SIZE {
         return Err(AppError::Validation(format!(
-            "attachment size {} bytes exceeds maximum {} bytes (50 MB)",
-            size_bytes, MAX_ATTACHMENT_SIZE
+            "attachment size {size_bytes} bytes exceeds maximum {MAX_ATTACHMENT_SIZE} bytes (50 MB)"
         )));
     }
     if !is_mime_allowed(&mime_type) {
         return Err(AppError::Validation(format!(
-            "MIME type '{}' is not allowed; permitted: image/*, application/pdf, text/*, \
-             application/json, application/zip, application/x-tar",
-            mime_type
+            "MIME type '{mime_type}' is not allowed; permitted: image/*, application/pdf, text/*, \
+             application/json, application/zip, application/x-tar"
         )));
     }
 

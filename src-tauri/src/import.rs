@@ -494,8 +494,7 @@ fn parse_frontmatter(yaml: &str, warnings: &mut Vec<String>) -> Vec<(String, Str
                     raw[raw
                         .char_indices()
                         .nth(content_indent)
-                        .map(|(i, _)| i)
-                        .unwrap_or(raw.len())..]
+                        .map_or(raw.len(), |(i, _)| i)..]
                         .to_string()
                 } else {
                     String::new()

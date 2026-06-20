@@ -2251,7 +2251,7 @@ async fn cleanup_old_snapshots_keeps_n_most_recent() {
             &pool,
             dev,
             &format!("blk-c{i}"),
-            1_735_689_600_000 + (i as i64) * 86_400_000,
+            1_735_689_600_000 + i64::from(i) * 86_400_000,
         )
         .await;
         create_snapshot(&pool, dev).await.unwrap();
@@ -2305,7 +2305,7 @@ async fn cleanup_old_snapshots_deletes_pending_snapshots() {
             &pool,
             dev,
             &format!("blk-p{i}"),
-            1_735_689_600_000 + (i as i64) * 86_400_000,
+            1_735_689_600_000 + i64::from(i) * 86_400_000,
         )
         .await;
         create_snapshot(&pool, dev).await.unwrap();
@@ -2371,7 +2371,7 @@ async fn cleanup_old_snapshots_mixed_pending_and_complete() {
             &pool,
             dev,
             &format!("blk-m{i}"),
-            1_735_689_600_000 + (i as i64) * 86_400_000,
+            1_735_689_600_000 + i64::from(i) * 86_400_000,
         )
         .await;
         create_snapshot(&pool, dev).await.unwrap();
@@ -2499,7 +2499,7 @@ async fn cleanup_old_snapshots_with_zero_keep_is_noop() {
             &pool,
             dev,
             &format!("blk-z{i}"),
-            1_735_689_600_000 + (i as i64) * 86_400_000,
+            1_735_689_600_000 + i64::from(i) * 86_400_000,
         )
         .await;
         create_snapshot(&pool, dev).await.unwrap();
@@ -3787,7 +3787,7 @@ mod proptest_tests {
             ),
             proptest::option::of(Just("2025-01-01".to_string())),
             proptest::option::of(Just("ref-id".to_string())),
-            proptest::option::of(proptest::bool::ANY.prop_map(|b| if b { 1i64 } else { 0i64 })),
+            proptest::option::of(proptest::bool::ANY.prop_map(i64::from)),
         )
             .prop_map(
                 |(block_id, key, value_text, value_num, value_date, value_ref, value_bool)| {

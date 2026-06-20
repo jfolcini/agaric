@@ -578,11 +578,7 @@ mod tests {
             } else {
                 format!("tag-{i:04}")
             };
-            let usage_count: i64 = if i < 50 || (50..60).contains(&i) {
-                1
-            } else {
-                0
-            };
+            let usage_count: i64 = i64::from(i < 50 || (50..60).contains(&i));
             expected.push((id, name, usage_count));
         }
         for i in 100..105 {

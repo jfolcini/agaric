@@ -274,7 +274,7 @@ pub(crate) async fn daemon_loop(
             // inside `try_sync_with_peer` via `scheduler.try_lock_peer`,
             // so simultaneous dispatch is safe — any contender returns
             // immediately without running a session.
-            _ = scheduler.wait_for_debounced_change() => {
+            () = scheduler.wait_for_debounced_change() => {
                 let refs = list_peer_refs_or_empty(&pool, "debounced_change").await;
                 let mut join_set = tokio::task::JoinSet::new();
                 for peer_ref in &refs {
@@ -425,12 +425,12 @@ pub(crate) async fn daemon_loop(
             // on any peers that became due while backgrounded. The body
             // itself runs on the next tick iteration — we don't inline
             // the work here because Branch C already handles it.
-            _ = lifecycle.wake.notified() => {
+            () = lifecycle.wake.notified() => {
                 resync_interval.reset_immediately();
             }
 
             // Branch E: shutdown signal
-            _ = shutdown_notify.notified() => {
+            () = shutdown_notify.notified() => {
                 break;
             }
         }
@@ -797,7 +797,7 @@ pub(crate) async fn try_sync_with_peer(
         ctx.materializer.clone(),
     )
     .with_event_sink(event_sink_box)
-    .with_expected_remote_id(peer_id.to_string());
+    .with_expected_remote_id(peer_id.clone());
 
     match run_sync_session(
         &mut orch,
@@ -964,28 +964,25 @@ pub(crate) async fn run_sync_session(
                     HANDSHAKE_TIMEOUT.as_secs()
                 ))
             })??;
-        match response {
-            Some(response) => {
-                wire::send_sync_message(conn, &response).await?;
-                // Drain any pending op batches (B-3)
-                while let Some(batch) = orch.next_message() {
-                    wire::send_sync_message(conn, &batch).await?;
-                }
+        if let Some(response) = response {
+            wire::send_sync_message(conn, &response).await?;
+            // Drain any pending op batches (B-3)
+            while let Some(batch) = orch.next_message() {
+                wire::send_sync_message(conn, &batch).await?;
             }
-            None => {
-                let state = &orch.session().state;
-                if matches!(state, SyncState::Failed(_)) {
-                    return Err(AppError::InvalidOperation(format!(
-                        "sync ended in terminal state: {state:?}"
-                    )));
-                }
-                // `ResetRequired` is no longer a terminal failure —
-                // break out of the delta-sync loop and attempt snapshot
-                // catch-up below. Any other `None` branch falls through
-                // and the loop re-checks `is_terminal()`.
-                if matches!(state, SyncState::ResetRequired) {
-                    break;
-                }
+        } else {
+            let state = &orch.session().state;
+            if matches!(state, SyncState::Failed(_)) {
+                return Err(AppError::InvalidOperation(format!(
+                    "sync ended in terminal state: {state:?}"
+                )));
+            }
+            // `ResetRequired` is no longer a terminal failure —
+            // break out of the delta-sync loop and attempt snapshot
+            // catch-up below. Any other `None` branch falls through
+            // and the loop re-checks `is_terminal()`.
+            if matches!(state, SyncState::ResetRequired) {
+                break;
             }
         }
     }

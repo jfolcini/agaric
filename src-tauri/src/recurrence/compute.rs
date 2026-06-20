@@ -822,7 +822,7 @@ mod tests_h17_m77 {
         // successful call. Pre-fix, racing reads against writes could
         // also wedge two siblings into the same position slot — that
         // collision is what we explicitly assert against below.
-        let succeeded = r_a.is_ok() as usize + r_b.is_ok() as usize;
+        let succeeded = usize::from(r_a.is_ok()) + usize::from(r_b.is_ok());
         assert!(
             siblings.len() <= succeeded,
             "sibling count ({}) must not exceed number of successful concurrent calls ({succeeded})",

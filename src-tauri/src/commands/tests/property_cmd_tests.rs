@@ -113,7 +113,7 @@ async fn set_property_validates_key() {
         DEV,
         &mat,
         block.id.as_str().into(),
-        "".into(),
+        String::new(),
         Some("val".into()),
         None,
         None,
@@ -1388,8 +1388,14 @@ async fn set_todo_state_rejects_empty_string() {
 
     mat.flush_background().await.unwrap();
 
-    let result =
-        set_todo_state_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("".into())).await;
+    let result = set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.as_str().into(),
+        Some(String::new()),
+    )
+    .await;
 
     assert!(
         matches!(result, Err(AppError::Validation(_))),
@@ -5095,7 +5101,7 @@ async fn m20_set_priority_accepts_user_extended_options() {
     let bad =
         set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("Z".into())).await;
     assert!(
-        matches!(bad, Err(AppError::Validation(ref msg)) if msg.contains("Z") && msg.contains("allowed options")),
+        matches!(bad, Err(AppError::Validation(ref msg)) if msg.contains('Z') && msg.contains("allowed options")),
         "value not in user-extended options must still be rejected, got: {bad:?}"
     );
 
@@ -5139,7 +5145,7 @@ async fn m20_set_priority_fallback_when_definition_deleted() {
     let result =
         set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("9".into())).await;
     assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("9") && msg.contains("allowed options")),
+        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains('9') && msg.contains("allowed options")),
         "without definition row, priority must fall back to built-in defaults and reject unknown values, got: {result:?}"
     );
 
@@ -6044,7 +6050,7 @@ async fn set_todo_state_batch_rejects_oversize_list() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let oversize: Vec<String> = (0..(crate::commands::MAX_BATCH_BLOCK_IDS + 1))
+    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let result = set_todo_state_batch_inner(

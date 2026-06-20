@@ -265,7 +265,7 @@ async fn concurrent_appends_same_device_serialize_correctly() {
     for h in handles {
         seqs.push(h.await.unwrap().seq);
     }
-    seqs.sort();
+    seqs.sort_unstable();
     assert_eq!(
         seqs,
         (1..=10).collect::<Vec<i64>>(),

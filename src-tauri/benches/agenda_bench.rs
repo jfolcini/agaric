@@ -144,7 +144,7 @@ fn bench_count_agenda_batch(c: &mut Criterion) {
                             .await
                             .unwrap()
                     }
-                })
+                });
             },
         );
 
@@ -190,7 +190,7 @@ fn bench_count_agenda_batch_by_source(c: &mut Criterion) {
                             .await
                             .unwrap()
                     }
-                })
+                });
             },
         );
 
@@ -234,7 +234,7 @@ fn bench_list_projected_agenda(c: &mut Criterion) {
                         .await
                         .unwrap()
                     }
-                })
+                });
             },
         );
 

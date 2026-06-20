@@ -331,7 +331,7 @@ fn bench_compute_reverse_100k_ops(c: &mut Criterion) {
                     .await
                     .unwrap()
             }
-        })
+        });
     });
 }
 
@@ -356,7 +356,7 @@ fn bench_list_page_history_100k_ops(c: &mut Criterion) {
                     .await
                     .unwrap()
             }
-        })
+        });
     });
 }
 
@@ -384,7 +384,7 @@ fn bench_list_page_history_deep_nesting(c: &mut Criterion) {
                     .await
                     .unwrap()
             }
-        })
+        });
     });
 }
 
@@ -424,7 +424,7 @@ fn bench_undo_page_op_various_depths(c: &mut Criterion) {
                         .await
                         .unwrap()
                 }
-            })
+            });
         });
 
         rt.block_on(async { materializer.shutdown() });
@@ -469,7 +469,7 @@ fn bench_revert_ops_batch_50(c: &mut Criterion) {
                     .await
                     .unwrap()
             }
-        })
+        });
     });
 
     rt.block_on(async { materializer.shutdown() });
@@ -654,7 +654,7 @@ fn bench_redo_page_op(c: &mut Criterion) {
                         .await
                         .unwrap()
                     }
-                })
+                });
             },
         );
 
@@ -779,7 +779,7 @@ fn bench_compute_edit_diff(c: &mut Criterion) {
                         .await
                         .unwrap()
                 }
-            })
+            });
         });
     }
     group.finish();

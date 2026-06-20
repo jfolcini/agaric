@@ -97,7 +97,7 @@ fn bench_export_page_markdown(c: &mut Criterion) {
                             .await
                             .unwrap()
                     }
-                })
+                });
             },
         );
     }

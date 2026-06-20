@@ -146,7 +146,7 @@ fn bench_load_page_subtree(c: &mut Criterion) {
                             .await
                             .unwrap()
                     }
-                })
+                });
             },
         );
     }
@@ -186,7 +186,7 @@ fn bench_get_blocks(c: &mut Criterion) {
                     let pool = pool.clone();
                     let ids = ids.clone();
                     async move { get_blocks_inner(&pool, ids).await.unwrap() }
-                })
+                });
             },
         );
     }

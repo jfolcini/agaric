@@ -49,19 +49,19 @@ pub(crate) fn log_frontend_inner(
 ) {
     match level {
         "error" => {
-            tracing::error!(target: "frontend", module = %module, stack = stack.unwrap_or(""), context = context.unwrap_or(""), data = data.unwrap_or(""), "{message}")
+            tracing::error!(target: "frontend", module = %module, stack = stack.unwrap_or(""), context = context.unwrap_or(""), data = data.unwrap_or(""), "{message}");
         }
         "warn" => {
-            tracing::warn!(target: "frontend", module = %module, stack = stack.unwrap_or(""), context = context.unwrap_or(""), data = data.unwrap_or(""), "{message}")
+            tracing::warn!(target: "frontend", module = %module, stack = stack.unwrap_or(""), context = context.unwrap_or(""), data = data.unwrap_or(""), "{message}");
         }
         "info" => {
-            tracing::info!(target: "frontend", module = %module, data = data.unwrap_or(""), "{message}")
+            tracing::info!(target: "frontend", module = %module, data = data.unwrap_or(""), "{message}");
         }
         "debug" => {
-            tracing::debug!(target: "frontend", module = %module, data = data.unwrap_or(""), "{message}")
+            tracing::debug!(target: "frontend", module = %module, data = data.unwrap_or(""), "{message}");
         }
         _ => {
-            tracing::info!(target: "frontend", module = %module, data = data.unwrap_or(""), "{message}")
+            tracing::info!(target: "frontend", module = %module, data = data.unwrap_or(""), "{message}");
         }
     }
 }

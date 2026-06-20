@@ -156,13 +156,21 @@ async fn create_block_with_empty_content_succeeds() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
-    let resp = create_block_inner(&pool, DEV, &mat, "content".into(), "".into(), None, None)
-        .await
-        .unwrap();
+    let resp = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        String::new(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         resp.content,
-        Some("".into()),
+        Some(String::new()),
         "empty content must be stored as-is"
     );
 }
@@ -321,7 +329,7 @@ async fn create_multiple_blocks_rapidly_all_get_unique_ids() {
             "content".into(),
             format!("block {i}"),
             None,
-            Some((i + 1) as i64),
+            Some(i64::from(i + 1)),
         )
         .await
         .unwrap();
@@ -466,13 +474,13 @@ async fn edit_block_with_empty_string_succeeds() {
     .await
     .unwrap();
 
-    let edited = edit_block_inner(&pool, DEV, &mat, created.id.clone(), "".into())
+    let edited = edit_block_inner(&pool, DEV, &mat, created.id.clone(), String::new())
         .await
         .unwrap();
 
     assert_eq!(
         edited.content,
-        Some("".into()),
+        Some(String::new()),
         "edit to empty string must succeed"
     );
 }
@@ -1612,7 +1620,7 @@ async fn pagination_walk_all_pages_no_duplicates() {
             "content".into(),
             format!("block {i}"),
             None,
-            Some((i + 1) as i64),
+            Some(i64::from(i + 1)),
         )
         .await
         .unwrap();

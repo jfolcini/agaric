@@ -181,10 +181,8 @@ async fn concurrent_fg_bg() {
     assert!(
         content
             .as_deref()
-            .map(|c| valid_values.iter().any(|v| v == c))
-            .unwrap_or(false),
-        "STRESS_01 content must be one of v0..v19, got {:?}",
-        content,
+            .is_some_and(|c| valid_values.iter().any(|v| v == c)),
+        "STRESS_01 content must be one of v0..v19, got {content:?}",
     );
     assert_eq!(
         mat.metrics().fg_errors.load(AtomicOrdering::Relaxed),

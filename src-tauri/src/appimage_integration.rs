@@ -80,9 +80,7 @@ fn integrate(appimage: &str, appdir: &Path, data_home: &Path) -> std::io::Result
     // Rewrite when missing or drifted (e.g. the user kept a newer AppImage at
     // a different path — last-launched wins). A byte compare keeps the common
     // re-launch path a cheap no-op.
-    let needs_write = std::fs::read_to_string(&desktop_path)
-        .map(|cur| cur != want)
-        .unwrap_or(true);
+    let needs_write = std::fs::read_to_string(&desktop_path).map_or(true, |cur| cur != want);
     if needs_write {
         std::fs::create_dir_all(&apps_dir)?;
         std::fs::write(&desktop_path, &want)?;

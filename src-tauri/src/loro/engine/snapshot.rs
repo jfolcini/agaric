@@ -41,12 +41,12 @@ impl LoroEngine {
     /// constant is a `u32` but Loro scalars are `i64`, so it is stored widened.
     pub(super) fn stamp_format_version(&self) {
         let meta: LoroMap = self.doc.get_map(ENGINE_META_ROOT);
-        if Self::read_format_version(&meta) == Some(ENGINE_FORMAT_VERSION as i64) {
+        if Self::read_format_version(&meta) == Some(i64::from(ENGINE_FORMAT_VERSION)) {
             return;
         }
         if let Err(e) = meta.insert(
             FIELD_FORMAT_VERSION,
-            LoroValue::from(ENGINE_FORMAT_VERSION as i64),
+            LoroValue::from(i64::from(ENGINE_FORMAT_VERSION)),
         ) {
             tracing::warn!(error = %e, "failed to stamp engine format_version marker");
         }

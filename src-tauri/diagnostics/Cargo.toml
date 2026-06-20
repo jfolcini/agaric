@@ -40,6 +40,24 @@ default_trait_access = "warn"
 cloned_instead_of_copied = "warn"
 flat_map_option = "warn"
 
+uninlined_format_args = "warn"
+semicolon_if_nothing_returned = "warn"
+map_unwrap_or = "warn"
+cast_lossless = "warn"
+manual_string_new = "warn"
+single_match_else = "warn"
+needless_raw_string_hashes = "warn"
+range_plus_one = "warn"
+manual_assert = "warn"
+unnested_or_patterns = "warn"
+stable_sort_primitive = "warn"
+single_char_pattern = "warn"
+implicit_clone = "warn"
+bool_to_int_with_if = "warn"
+ignored_unit_patterns = "warn"
+explicit_iter_loop = "warn"
+if_not_else = "warn"
+
 [dependencies]
 # Path dep on the app crate — the lib target is named `agaric_lib`, so the
 # bins keep their `agaric_lib::…` paths verbatim. No default features are

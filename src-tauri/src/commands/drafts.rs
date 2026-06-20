@@ -597,7 +597,7 @@ mod tests_h12 {
         // exactly which row must survive (the last one).
         let total: i64 = 1001;
         for i in 0..total {
-            let block_id = format!("01HZM3CAP{:017}", i);
+            let block_id = format!("01HZM3CAP{i:017}");
             sqlx::query(
                 "INSERT INTO blocks (id, block_type, content, parent_id, position) \
                  VALUES (?, 'content', 'initial', NULL, 1)",

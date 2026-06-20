@@ -270,13 +270,21 @@ async fn create_block_with_empty_content_succeeds() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let resp = create_block_inner(&pool, DEV, &mat, "content".into(), "".into(), None, None)
-        .await
-        .unwrap();
+    let resp = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        String::new(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         resp.content,
-        Some("".into()),
+        Some(String::new()),
         "empty content should be stored as-is"
     );
 }
@@ -1011,13 +1019,13 @@ async fn edit_block_with_empty_to_text() {
     .await
     .unwrap();
 
-    let edited = edit_block_inner(&pool, DEV, &mat, created.id.clone(), "".into())
+    let edited = edit_block_inner(&pool, DEV, &mat, created.id.clone(), String::new())
         .await
         .unwrap();
 
     assert_eq!(
         edited.content,
-        Some("".into()),
+        Some(String::new()),
         "editing to empty string must succeed and store empty content"
     );
 
@@ -1028,7 +1036,7 @@ async fn edit_block_with_empty_to_text() {
         .unwrap();
     assert_eq!(
         row.content,
-        Some("".into()),
+        Some(String::new()),
         "empty string must be persisted in DB"
     );
 }
@@ -2053,7 +2061,7 @@ async fn restore_blocks_by_ids_rejects_oversize_list() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let oversize: Vec<String> = (0..(crate::commands::MAX_BATCH_BLOCK_IDS + 1))
+    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let result = restore_blocks_by_ids_inner(
@@ -4148,7 +4156,7 @@ async fn list_attachments_batch_returns_full_lists_per_block() {
         .map(|r| (r.created_at, r.id.as_str()))
         .collect();
     let mut sorted = returned.clone();
-    sorted.sort();
+    sorted.sort_unstable();
     assert_eq!(
         returned, sorted,
         "block_a's attachments must be returned sorted by (created_at, id)"
@@ -4164,8 +4172,7 @@ async fn list_attachments_batch_returns_full_lists_per_block() {
         a_rows
             .iter()
             .find(|r| r.filename == name)
-            .map(|r| r.mime_type.as_str())
-            .unwrap_or("<missing>")
+            .map_or("<missing>", |r| r.mime_type.as_str())
     };
     assert_eq!(mime_for("a1.png"), "image/png");
     assert_eq!(mime_for("a2.pdf"), "application/pdf");
@@ -5505,7 +5512,7 @@ async fn delete_blocks_by_ids_rejects_oversize_list() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let oversize: Vec<String> = (0..(crate::commands::MAX_BATCH_BLOCK_IDS + 1))
+    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let result = delete_blocks_by_ids_inner(
@@ -5903,7 +5910,7 @@ async fn move_blocks_to_space_rejects_oversize_list() {
     let mat = Materializer::new(pool.clone());
     seed_space(&pool, "MBS6_SPACE").await;
 
-    let oversize: Vec<String> = (0..(crate::commands::MAX_BATCH_BLOCK_IDS + 1))
+    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("MBS6_{i:026}"))
         .collect();
     let result = move_blocks_to_space_inner(
@@ -6127,7 +6134,7 @@ async fn create_blocks_batch_rejects_empty_oversize() {
     );
 
     let oversize: Vec<crate::commands::CreateBlockSpec> = (0
-        ..(crate::commands::MAX_BATCH_BLOCK_IDS + 1))
+        ..=crate::commands::MAX_BATCH_BLOCK_IDS)
         .map(|i| crate::commands::CreateBlockSpec {
             block_type: "content".into(),
             content: format!("c{i}"),
@@ -6550,7 +6557,5 @@ async fn read_attachment_missing_id_is_not_found() {
 /// True iff `<app_data_dir>/attachments` exists and contains at least one entry.
 fn attachments_dir_has_files(app_data_dir: &std::path::Path) -> bool {
     let dir = app_data_dir.join("attachments");
-    std::fs::read_dir(&dir)
-        .map(|mut entries| entries.next().is_some())
-        .unwrap_or(false)
+    std::fs::read_dir(&dir).is_ok_and(|mut entries| entries.next().is_some())
 }
