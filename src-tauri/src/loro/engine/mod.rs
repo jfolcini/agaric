@@ -339,10 +339,30 @@ impl PropertyValue {
             LoroValue::Null => Ok(PropertyValue::Null),
             LoroValue::String(s) => Ok(PropertyValue::Str((*s).clone())),
             LoroValue::Double(n) => Ok(PropertyValue::Num(n)),
-            // NOTE: large i64 values (> 2^53) lose precision when cast to f64.
-            // Safe for the date-ms / priority integers actually stored, but not
-            // contractually guaranteed for arbitrary i64 payloads.
-            LoroValue::I64(i) => Ok(PropertyValue::Num(i as f64)),
+            // `PropertyValue` has no integer variant — i64 payloads are stored
+            // as `Num(f64)`. This is exact for every integer in the f64-safe
+            // range `[-(2^53), 2^53]`, which covers the date-ms / priority ints
+            // actually written today. Larger magnitudes (a future nanosecond
+            // timestamp, 64-bit id, or large counter) silently lose precision
+            // in the cast, so guard with a loud warning to make the truncation
+            // observable rather than corrupting data invisibly. Reworking this
+            // into a lossless `PropertyValue::Int(i64)` variant (the eventual
+            // fix) touches every match arm, the SQL projection, and the wire
+            // types, so it is deliberately left as future work (issue #1542).
+            LoroValue::I64(i) => {
+                // 2^53 is the largest magnitude for which every integer is
+                // representable exactly as f64; `unsigned_abs` avoids the
+                // `i64::MIN` overflow that plain `abs()` would hit.
+                if i.unsigned_abs() > (1u64 << 53) {
+                    tracing::warn!(
+                        value = i,
+                        "loro: i64 property value exceeds the f64-exact integer \
+                         range (|i| > 2^53); precision is lost converting to \
+                         PropertyValue::Num (see #1542)"
+                    );
+                }
+                Ok(PropertyValue::Num(i as f64))
+            }
             LoroValue::Bool(b) => Ok(PropertyValue::Bool(b)),
             other => Err(AppError::Validation(format!(
                 "loro: property value expected scalar, got {other:?}"
@@ -759,6 +779,82 @@ mod tests {
                 .find(|(k, _)| k == "note"),
             Some(("note".to_string(), PropertyValue::Str("x".to_string())))
         );
+    }
+
+    // #1542: `from_loro` casts `LoroValue::I64` to `Num(f64)`, which is exact
+    // only inside the f64-safe integer range `[-(2^53), 2^53]`. The conversion
+    // is kept (a lossless `Int` variant is future work), but magnitudes beyond
+    // that range must emit a loud `warn!` so the precision loss is observable
+    // instead of silent. The in-range value below also pins that ordinary
+    // date-ms / priority ints stay quiet.
+    #[test]
+    fn from_loro_i64_warns_only_beyond_f64_exact_range() {
+        use super::{AppError, LoroValue, PropertyValue};
+        use tracing_subscriber::layer::SubscriberExt;
+
+        #[derive(Clone, Default)]
+        struct LogBufWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for LogBufWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBufWriter {
+            type Writer = LogBufWriter;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let capture = |v: LoroValue| -> (Result<PropertyValue, AppError>, String) {
+            let writer = LogBufWriter::default();
+            let subscriber = tracing_subscriber::registry().with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(writer.clone())
+                    .with_ansi(false)
+                    .with_level(true)
+                    .with_target(false),
+            );
+            let result = {
+                let _guard = tracing::subscriber::set_default(subscriber);
+                PropertyValue::from_loro(v)
+            };
+            let logs = String::from_utf8_lossy(&writer.0.lock().unwrap()).into_owned();
+            (result, logs)
+        };
+
+        // Just past the boundary: 2^53 + 1 cannot be represented exactly as
+        // f64 — the guard must fire a WARN and the value still maps to `Num`.
+        let big = (1i64 << 53) + 1;
+        let (result, logs) = capture(LoroValue::I64(big));
+        assert_eq!(result.unwrap(), PropertyValue::Num(big as f64));
+        assert!(
+            logs.contains("WARN") && logs.contains("2^53"),
+            "i64 beyond the f64-exact range must emit a precision-loss WARN, captured: {logs:?}"
+        );
+
+        // Negative side of the boundary likewise warns (and `i64::MIN`, which
+        // plain `abs()` could not handle, must not panic).
+        let (_, neg_logs) = capture(LoroValue::I64(i64::MIN));
+        assert!(
+            neg_logs.contains("WARN"),
+            "large-magnitude negative i64 must also warn, captured: {neg_logs:?}"
+        );
+
+        // A representative in-range date-ms value (and the exact +/-2^53
+        // boundary, which IS f64-exact) must convert silently — no WARN.
+        for in_range in [1_750_000_000_000i64, 1i64 << 53, -(1i64 << 53), 3] {
+            let (result, logs) = capture(LoroValue::I64(in_range));
+            assert_eq!(result.unwrap(), PropertyValue::Num(in_range as f64));
+            assert!(
+                !logs.contains("WARN"),
+                "in-range i64 {in_range} must convert without a WARN, captured: {logs:?}"
+            );
+        }
     }
 
     #[test]

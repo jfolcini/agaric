@@ -113,6 +113,37 @@ fn sanitize_agent_name(raw: &str) -> String {
     }
 }
 
+/// #1545 — derive the durable `op_log.origin` agent label for a connection.
+///
+/// A *named* client (any `sanitized` name other than the
+/// [`AGENT_NAME_PLACEHOLDER`]) is returned unchanged, so the common case
+/// keeps the plain `agent:<name>` origin with no behaviour change.
+///
+/// An *anonymous* connection — one whose `clientInfo.name` was absent, or
+/// empty / control-only after [`sanitize_agent_name`] — would otherwise
+/// collapse every distinct connection to the single literal `agent:unknown`
+/// origin, making the durable, append-only attribution column unable to
+/// tell two simultaneous anonymous agents apart for any origin-keyed
+/// undo / bulk-revert UX. To keep them distinguishable we fold the stable
+/// per-connection session ULID (`super::server::ConnectionState::session_id`,
+/// mirrored on this adapter as `self.session_id`) into the label, yielding
+/// `unknown:<session-ulid>` → `origin_tag()` → `agent:unknown:<session-ulid>`.
+///
+/// The session ULID is **reused**, never minted here, so the durable origin
+/// matches the `sessionId` already stamped on the connection's
+/// [`super::activity::ActivityEntry`]. The result still begins with the
+/// `agent:` prefix, so the activity-feed `LIKE 'agent:%'` filter and every
+/// other prefix-based consumer of `op_log.origin` keep working — origins are
+/// stored and consumed as opaque strings, so the extra `:<ulid>` suffix
+/// changes nothing for parsing.
+fn durable_agent_name(sanitized: &str, session_id: &str) -> String {
+    if sanitized == AGENT_NAME_PLACEHOLDER {
+        format!("{AGENT_NAME_PLACEHOLDER}:{session_id}")
+    } else {
+        sanitized.to_string()
+    }
+}
+
 /// Production adapter that exposes a tool registry through `rmcp`'s
 /// [`ServerHandler`] trait.
 ///
@@ -226,9 +257,17 @@ impl<R: ToolRegistry> ServerHandler for RmcpAdapter<R> {
             .map(|info| sanitize_agent_name(&info.client_info.name))
             .unwrap_or_else(|| AGENT_NAME_PLACEHOLDER.to_string());
 
+        // #1545 — the activity feed keeps the bare `agent_name` for display
+        // (it already carries the per-connection `session_id` separately),
+        // but the durable `op_log.origin` folds the session ULID into the
+        // label for anonymous connections so two simultaneous unnamed agents
+        // don't collapse to the same `agent:unknown` origin. Named clients
+        // are returned unchanged.
+        let origin_agent_name = durable_agent_name(&agent_name, &self.session_id);
+
         let actor_ctx = ActorContext {
             actor: Actor::Agent {
-                name: agent_name.clone(),
+                name: origin_agent_name,
             },
             request_id: Ulid::new().to_string(),
         };
@@ -1097,5 +1136,72 @@ mod tests {
         .origin_tag();
         assert_eq!(origin, format!("agent:{AGENT_NAME_PLACEHOLDER}"));
         assert_ne!(origin, "agent:");
+    }
+
+    /// #1545 — a *named* client's durable origin is unchanged: the session
+    /// ULID is never folded in, so the common case keeps `agent:<name>`.
+    #[test]
+    fn durable_agent_name_named_client_is_unchanged() {
+        let session = Ulid::new().to_string();
+        assert_eq!(
+            durable_agent_name("claude-desktop", &session),
+            "claude-desktop"
+        );
+        // Even a name that merely *contains* the placeholder substring keeps
+        // its full value — only the exact placeholder is treated as anonymous.
+        assert_eq!(
+            durable_agent_name("unknown-agent", &session),
+            "unknown-agent"
+        );
+        // And the resulting origin is the plain `agent:<name>` form.
+        let origin = Actor::Agent {
+            name: durable_agent_name("claude-desktop", &session),
+        }
+        .origin_tag();
+        assert_eq!(origin, "agent:claude-desktop");
+    }
+
+    /// #1545 — two anonymous connections (no / empty `clientInfo.name`, each
+    /// with its own per-connection session ULID) must produce DISTINCT durable
+    /// `op_log.origin` values, so the append-only attribution column can tell
+    /// them apart. Both are still `agent:unknown:<ulid>` (prefix preserved),
+    /// but differ in the folded session ULID.
+    #[test]
+    fn durable_agent_name_anonymous_connections_get_distinct_origins() {
+        // Each connection mints exactly one session ULID (reused, not
+        // re-minted by `durable_agent_name`).
+        let session_a = Ulid::new().to_string();
+        let session_b = Ulid::new().to_string();
+        assert_ne!(
+            session_a, session_b,
+            "distinct connections → distinct ULIDs"
+        );
+
+        // The anonymous fallback is `AGENT_NAME_PLACEHOLDER` regardless of
+        // whether `peer_info()` was absent or the name sanitized to empty.
+        let anon = AGENT_NAME_PLACEHOLDER;
+        let origin_a = Actor::Agent {
+            name: durable_agent_name(anon, &session_a),
+        }
+        .origin_tag();
+        let origin_b = Actor::Agent {
+            name: durable_agent_name(anon, &session_b),
+        }
+        .origin_tag();
+
+        // Both keep the `agent:` prefix (so `LIKE 'agent:%'` still matches)
+        // and the `unknown` discriminant, but the session ULID makes them
+        // distinguishable in the durable column.
+        assert_eq!(origin_a, format!("agent:{anon}:{session_a}"));
+        assert_eq!(origin_b, format!("agent:{anon}:{session_b}"));
+        assert!(origin_a.starts_with("agent:"));
+        assert!(origin_b.starts_with("agent:"));
+        assert_ne!(
+            origin_a, origin_b,
+            "two anonymous connections must NOT collapse to the same origin"
+        );
+        // Neither collapses to the old, indistinguishable `agent:unknown`.
+        assert_ne!(origin_a, format!("agent:{anon}"));
+        assert_ne!(origin_b, format!("agent:{anon}"));
     }
 }

@@ -621,14 +621,57 @@ fn is_mime_allowed(mime: &str) -> bool {
     for pattern in ALLOWED_MIME_PATTERNS {
         if pattern.ends_with("/*") {
             let prefix = &pattern[..pattern.len() - 1]; // e.g. "image/"
-            if mime.starts_with(prefix) {
-                return true;
+            if let Some(subtype) = mime.strip_prefix(prefix) {
+                // Require a non-empty subtype with no further '/', so
+                // "image/" (empty) and "image/../x" (multi-segment) are
+                // rejected rather than accepted by a bare prefix match.
+                if !subtype.is_empty() && !subtype.contains('/') {
+                    return true;
+                }
             }
         } else if *pattern == mime {
             return true;
         }
     }
     false
+}
+
+#[cfg(test)]
+mod is_mime_allowed_tests {
+    use super::is_mime_allowed;
+
+    #[test]
+    fn wildcard_accepts_valid_subtype() {
+        assert!(is_mime_allowed("image/png"));
+        assert!(is_mime_allowed("image/jpeg"));
+        assert!(is_mime_allowed("text/plain"));
+    }
+
+    #[test]
+    fn wildcard_rejects_empty_subtype() {
+        assert!(!is_mime_allowed("image/"));
+        assert!(!is_mime_allowed("text/"));
+    }
+
+    #[test]
+    fn wildcard_rejects_multi_segment_subtype() {
+        assert!(!is_mime_allowed("image/../x"));
+        assert!(!is_mime_allowed("image/png/extra"));
+    }
+
+    #[test]
+    fn exact_match_still_works() {
+        assert!(is_mime_allowed("application/pdf"));
+        assert!(is_mime_allowed("application/json"));
+        assert!(is_mime_allowed("application/zip"));
+    }
+
+    #[test]
+    fn non_matching_type_rejected() {
+        assert!(!is_mime_allowed("video/mp4"));
+        assert!(!is_mime_allowed("application/octet-stream"));
+        assert!(!is_mime_allowed("image"));
+    }
 }
 
 /// A property definition from the schema registry.
