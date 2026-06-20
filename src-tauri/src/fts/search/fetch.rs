@@ -289,10 +289,14 @@ pub(super) async fn fts_fetch_rows(
 
     // PEND-70 — race the SQL fetch against the cancellation signal so
     // the in-flight Rust future drops cleanly when the client
-    // unsubscribed. Dropping the `fetch_all` future cancels the
-    // underlying SQLite statement at the next yield point — typical
-    // cancellation latency is one row-batch boundary (≤ 50 ms),
-    // worst-case is the SQLite step granularity (≤ 200 ms).
+    // unsubscribed. When the signal wins this `select!`, we return
+    // immediately, which drops `conn` and releases the read-pool slot
+    // at the `fetch_all` `select!` boundary — NOT literally between
+    // row batches. Dropping the `fetch_all` future cancels the
+    // underlying SQLite statement at its next step yield point, so the
+    // pool slot is freed within one SQLite step granularity (≤ 200 ms),
+    // bounding how long a cancelled (detached partitioned) task can
+    // keep occupying its connection.
     let fetch_future = db_query.fetch_all(&mut *conn);
     let result = match cancel {
         Some(mut token) => {

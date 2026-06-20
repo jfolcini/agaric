@@ -513,6 +513,44 @@ describe('PropertyDefinitionsList', () => {
       expect(locked).toHaveTextContent(t('propertiesView.optionsLocked'))
     })
 
+    // #1431: the task-state cycle is fixed by design (none → TODO → DOING →
+    // DONE → CANCELLED → none, UX-202). The locked indicator carries a lock
+    // icon with an explicit accessible label/title so screen-reader and
+    // mouse-hover users learn the property is not editable.
+    it('lock indicator exposes an accessible "fixed and not editable" label', async () => {
+      mockedInvoke.mockResolvedValueOnce(
+        pageOf([makePropDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]')]),
+      )
+
+      render(<PropertyDefinitionsList />)
+
+      const locked = await screen.findByTestId('locked-options-todo_state')
+      // The wrapper carries the title attribute (native tooltip).
+      expect(locked).toHaveAttribute('title', t('propertiesView.optionsLockedTitle'))
+      // The lock icon itself is reachable by its accessible label.
+      expect(screen.getByLabelText(t('propertiesView.optionsLockedTitle'))).toBeInTheDocument()
+    })
+
+    it('does NOT render the lock indicator on non-locked properties', async () => {
+      mockedInvoke.mockResolvedValueOnce(
+        pageOf([
+          makePropDef('priority', 'select', '["1","2","3"]'),
+          makePropDef('effort', 'select', '["15m","30m"]'),
+          makePropDef('custom-field', 'text'),
+        ]),
+      )
+
+      render(<PropertyDefinitionsList />)
+
+      await screen.findByText('Priority')
+      expect(screen.queryByTestId('locked-options-priority')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('locked-options-effort')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('locked-options-custom-field')).not.toBeInTheDocument()
+      expect(
+        screen.queryByLabelText(t('propertiesView.optionsLockedTitle')),
+      ).not.toBeInTheDocument()
+    })
+
     it('priority (not locked yet, UX-201b) still shows the Edit options button', async () => {
       mockedInvoke.mockResolvedValueOnce(
         pageOf([makePropDef('priority', 'select', '["1","2","3"]')]),

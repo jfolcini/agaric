@@ -144,14 +144,14 @@
 
 | Capability | Logseq | Agaric | Status |
 | --- | --- | --- | --- |
-| Task markers | Two flavors: `LATER`/`NOW`/`DONE` (default) or `TODO`/`DOING`/`DONE`. Additional: `CANCELLED`, `IN-PROGRESS`, `WAIT`/`WAITING` | Configurable task keywords via localStorage + PropertiesView settings UI. Default: TODO/DOING/DONE. Click to cycle, `Ctrl+Enter`. Visual icons (Circle/CircleDot/CheckCircle2) | Done |
+| Task markers | Two flavors: `LATER`/`NOW`/`DONE` (default) or `TODO`/`DOING`/`DONE`. Additional: `CANCELLED`, `IN-PROGRESS`, `WAIT`/`WAITING` | Fixed task-state cycle (UX-202): `none → TODO → DOING → DONE → CANCELLED → none`, locked by design (not user-editable). Click to cycle, `Ctrl+Enter`. Visual icons (Circle/CircleDot/CheckCircle2). The cycle is locked in code (`TASK_CYCLE` in `useBlockProperties.ts`, `todo_state ∈ LOCKED_PROPERTY_OPTIONS` in `property-save-utils.ts`); the Properties settings show a lock indicator on the task-state row | Done |
 | Priority levels | `[#A]`, `[#B]`, `[#C]` via `/A`, `/B`, `/C` commands | Priority A/B/C: slash commands, `Ctrl+Shift+1/2/3`, click-to-cycle badge. Color-coded: A=red, B=amber, C=blue | Done |
 | Due dates | `DEADLINE: <2025-01-15 Wed>` — Org-mode syntax. `/Deadline` command with date picker | `due_date` column on blocks. `/due` slash command, date picker. Agenda filter: Today, This week, Overdue, Next 7/14/30 days | Done |
 | Scheduled dates | `SCHEDULED: <2025-01-15 Wed>` — Org-mode syntax. `/Scheduled` command. Configurable future-days display via `:scheduled/future-days` | `scheduled_date` column. `/schedule` slash command, date picker. Agenda filter: same presets. Hide-before toggle | Done |
 | Task cycling | `Ctrl+Enter` cycles through workflow markers | Click marker or `Ctrl+Enter` cycles TODO -> DOING -> DONE -> none | Done |
 | Recurring tasks | **Native.** Repeater in DEADLINE/SCHEDULED syntax: `.+` (from completion), `++` (catch-up/same day), `+` (from original). Intervals: `Nd`, `Nw`, `Nm`. Date picker "Add repeater" button | Native recurrence via `repeat` property. 3 modes: default, from-completion (`.+`), catch-up (`++`). End conditions: repeat-until, repeat-count. Agenda projection of future occurrences. On DONE: creates sibling with shifted dates | Better |
 | Task dashboard | Journal pages show upcoming SCHEDULED/DEADLINE blocks automatically. Custom views require Datalog queries | Agenda mode: collapsible TODO/DOING/DONE sections with priority sorting, paginated. DonePanel: completed tasks grouped by source page. DuePanel: overdue accumulation. Sort/group toolbar | Better |
-| Custom task keywords | Configurable in `config.edn` — two built-in flavors + direct typing of CANCELLED, etc. | Configurable via localStorage, PropertiesView settings UI | Done |
+| Custom task keywords | Configurable in `config.edn` — two built-in flavors + direct typing of CANCELLED, etc. | Fixed by design (UX-202): the task-state cycle `none → TODO → DOING → DONE → CANCELLED → none` is locked, not user-editable. The Properties settings surface a lock indicator on the task-state row to signal this | Gap |
 | Effort tracking | No native effort tracking. Available via custom properties | `/effort` slash command, `effort` property definition (seeded) | Better |
 | Time tracking | Built-in time tracker: logs time between task state transitions. Toggleable via settings | Not implemented | Gap |
 | Overdue task accumulation | Via embedded queries on journal pages | DuePanel shows overdue tasks on today's view | Done |
@@ -367,7 +367,7 @@ Logseq is undergoing a fundamental architectural shift from file-based storage t
 
 **Logseq:** `TODO`/`LATER` markers on journal blocks -> `[#A]` priority + `SCHEDULED`/`DEADLINE` dates -> repeater syntax for recurrence -> SCHEDULED/DEADLINE blocks appear on future journal pages -> custom Datalog queries for task aggregation.
 
-**Agaric:** Configurable task keywords (click or `Ctrl+Enter`) -> priority A/B/C (slash commands, shortcuts, badges) -> due/scheduled dates -> recurrence (3 modes + end conditions + future projection) -> scheduling semantics (overdue accumulation, hide-before, deadline warnings) -> agenda dashboard with TODO/DOING/DONE sections, DonePanel, DuePanel -> sort/group toolbar (date/priority/state).
+**Agaric:** Fixed task-state cycle (click or `Ctrl+Enter`; `none → TODO → DOING → DONE → CANCELLED → none`, locked by design) -> priority A/B/C (slash commands, shortcuts, badges) -> due/scheduled dates -> recurrence (3 modes + end conditions + future projection) -> scheduling semantics (overdue accumulation, hide-before, deadline warnings) -> agenda dashboard with TODO/DOING/DONE sections, DonePanel, DuePanel -> sort/group toolbar (date/priority/state).
 
 **Logseq advantage:** Built-in time tracking between state transitions. More task keyword variants (CANCELLED, IN-PROGRESS, WAIT/WAITING) out of the box.
 
