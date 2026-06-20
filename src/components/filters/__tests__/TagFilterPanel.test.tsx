@@ -14,7 +14,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -1134,8 +1134,8 @@ describe('TagFilterPanel', () => {
 
 /**
  * Route the shared `invoke` mock by command name so `list_tags_by_prefix`
- * (typeahead) and `query_by_tags` (results) resolve independently. Returns the
- * last `query_by_tags` payload via the captured array for convenient assertion.
+ * (typeahead), `query_by_tags` (flat results) and `query_by_tag_expr` (nested
+ * composer results) resolve independently.
  */
 function routeInvoke(opts: {
   tags?: { tag_id: string; name: string; usage_count: number }[]
@@ -1144,15 +1144,22 @@ function routeInvoke(opts: {
   mockedInvoke.mockImplementation((cmd: string) => {
     if (cmd === 'list_tags_by_prefix') return Promise.resolve(opts.tags ?? [])
     if (cmd === 'query_by_tags') return Promise.resolve(opts.page ?? emptyPage)
+    if (cmd === 'query_by_tag_expr') return Promise.resolve(opts.page ?? emptyPage)
     if (cmd === 'batch_resolve') return Promise.resolve([])
     return Promise.resolve(emptyPage)
   })
 }
 
-/** Pull the args of the most recent `query_by_tags` invoke. */
+/** Pull the args of the most recent `query_by_tags` invoke (flat mode). */
 function lastTagQuery(): Record<string, unknown> | undefined {
   const calls = mockedInvoke.mock.calls.filter((c) => c[0] === 'query_by_tags')
   return calls.at(-1)?.[1] as Record<string, unknown> | undefined
+}
+
+/** Pull the compiled `expr` of the most recent `query_by_tag_expr` invoke. */
+function lastTagExpr(): unknown {
+  const calls = mockedInvoke.mock.calls.filter((c) => c[0] === 'query_by_tag_expr')
+  return (calls.at(-1)?.[1] as { expr?: unknown } | undefined)?.expr
 }
 
 describe('TagFilterPanel — prefix pills (#1426)', () => {
@@ -1196,7 +1203,55 @@ describe('TagFilterPanel — prefix pills (#1426)', () => {
 })
 
 describe('TagFilterPanel — nested composer (#1426)', () => {
-  it('keeps the flat default working (no composer opened)', async () => {
+  /** Open the advanced (nested) composer. */
+  async function openComposer(): Promise<void> {
+    await user.click(screen.getByTestId('tag-filter-composer-toggle'))
+    await vi.advanceTimersByTimeAsync(0)
+  }
+
+  /**
+   * The button with the given accessible name that belongs DIRECTLY to `group`
+   * (its nearest `tag-composer-group` ancestor is `group`), not to a nested
+   * sub-group. Needed because `within(group)` also matches descendant groups'
+   * identically-labelled add buttons.
+   */
+  function directButton(group: HTMLElement, name: string): HTMLElement {
+    const btn = within(group)
+      .getAllByRole('button', { name })
+      .find((b) => b.closest('[data-testid="tag-composer-group"]') === group)
+    if (!btn) throw new Error(`no direct "${name}" button in group`)
+    return btn
+  }
+
+  /** Add a resolved tag leaf directly to `group` via its typeahead popover. */
+  async function addTagLeaf(group: HTMLElement, name: string): Promise<void> {
+    await user.click(directButton(group, t('tagFilter.composer.addTag')))
+    const search = screen.getByLabelText(t('tagFilter.composer.searchLabel'))
+    fireEvent.change(search, { target: { value: name } })
+    await vi.advanceTimersByTimeAsync(0)
+    await user.click(await screen.findByText(name))
+    await vi.advanceTimersByTimeAsync(0)
+  }
+
+  /** Add a free-text prefix leaf directly to `group`. */
+  async function addPrefixLeaf(group: HTMLElement, prefix: string): Promise<void> {
+    await user.click(directButton(group, t('tagFilter.composer.addTag')))
+    const search = screen.getByLabelText(t('tagFilter.composer.searchLabel'))
+    fireEvent.change(search, { target: { value: prefix } })
+    await vi.advanceTimersByTimeAsync(0)
+    await user.click(
+      screen.getByRole('button', { name: t('tagFilter.composer.addPrefixOption', { prefix }) }),
+    )
+    await vi.advanceTimersByTimeAsync(0)
+  }
+
+  /** Add a sub-group directly to `group`. */
+  async function addSubGroup(group: HTMLElement): Promise<void> {
+    await user.click(directButton(group, t('tagFilter.composer.addGroup')))
+    await vi.advanceTimersByTimeAsync(0)
+  }
+
+  it('keeps the flat default working (no composer opened) — back-compat', async () => {
     routeInvoke({ tags: [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })] })
     render(<TagFilterPanel />)
 
@@ -1205,86 +1260,161 @@ describe('TagFilterPanel — nested composer (#1426)', () => {
     await user.click(screen.getByRole('button', { name: /Add$/i }))
     await vi.advanceTimersByTimeAsync(0)
 
+    // Flat mode runs over query_by_tags, NOT query_by_tag_expr.
     await waitFor(() => {
       expect(lastTagQuery()).toMatchObject({ tagIds: ['T1'], prefixes: [], mode: 'and' })
     })
+    expect(lastTagExpr()).toBeUndefined()
   })
 
   it('opening the composer reveals the recursive builder root group', async () => {
     routeInvoke({})
     render(<TagFilterPanel />)
 
-    await user.click(screen.getByTestId('tag-filter-composer-toggle'))
-    await vi.advanceTimersByTimeAsync(0)
+    await openComposer()
 
     expect(screen.getByTestId('tag-composer-group')).toBeInTheDocument()
     expect(screen.getByLabelText(t('tagFilter.composer.rootLabel'))).toBeInTheDocument()
   })
 
-  it('composing a tag + prefix under the Any combinator compiles to mode "or"', async () => {
+  it('a single resolved tag compiles to a bare Tag leaf over queryByTagExpr', async () => {
     routeInvoke({ tags: [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })] })
     render(<TagFilterPanel />)
 
-    await user.click(screen.getByTestId('tag-filter-composer-toggle'))
-    await vi.advanceTimersByTimeAsync(0)
+    await openComposer()
+    await addTagLeaf(screen.getByTestId('tag-composer-group'), 'work')
 
-    // Switch the combinator to Any (Or).
-    await user.click(screen.getByRole('radio', { name: t('tagFilter.composer.opOr') }))
-
-    // Add a resolved tag via the typeahead popover.
-    await user.click(screen.getByRole('button', { name: t('tagFilter.composer.addTag') }))
-    const search = screen.getByLabelText(t('tagFilter.composer.searchLabel'))
-    fireEvent.change(search, { target: { value: 'work' } })
-    await vi.advanceTimersByTimeAsync(0)
-    await user.click(await screen.findByText('work'))
-    await vi.advanceTimersByTimeAsync(0)
-
-    // Add a prefix leaf via the same popover.
-    await user.click(screen.getByRole('button', { name: t('tagFilter.composer.addTag') }))
-    const search2 = screen.getByLabelText(t('tagFilter.composer.searchLabel'))
-    fireEvent.change(search2, { target: { value: 'proj' } })
-    await vi.advanceTimersByTimeAsync(0)
-    await user.click(
-      screen.getByRole('button', {
-        name: t('tagFilter.composer.addPrefixOption', { prefix: 'proj' }),
-      }),
-    )
-    await vi.advanceTimersByTimeAsync(0)
-
-    // The compiled params are EXACTLY what the IPC runs (no flattening): an Or
-    // over the tag + prefix the user composed.
     await waitFor(() => {
-      expect(lastTagQuery()).toMatchObject({
-        tagIds: ['T1'],
-        prefixes: ['proj'],
-        mode: 'or',
+      expect(lastTagExpr()).toEqual({ type: 'Tag', value: 'T1' })
+    })
+  })
+
+  it('a tag + prefix under the Any combinator compiles to Or([Tag, Prefix])', async () => {
+    routeInvoke({ tags: [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })] })
+    render(<TagFilterPanel />)
+
+    await openComposer()
+    const root = screen.getByTestId('tag-composer-group')
+
+    // Switch the root combinator to Any (Or).
+    await user.click(within(root).getByRole('radio', { name: t('tagFilter.composer.opOr') }))
+    await addTagLeaf(root, 'work')
+    await addPrefixLeaf(root, 'proj')
+
+    // The compiled TagExpr is EXACTLY what the resolver runs (no flattening).
+    await waitFor(() => {
+      expect(lastTagExpr()).toEqual({
+        type: 'Or',
+        value: [
+          { type: 'Tag', value: 'T1' },
+          { type: 'Prefix', value: 'proj' },
+        ],
       })
     })
   })
 
-  it('the None combinator compiles to mode "not"', async () => {
+  it('negating a leaf wraps it in Not(..)', async () => {
     routeInvoke({ tags: [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })] })
     render(<TagFilterPanel />)
 
-    await user.click(screen.getByTestId('tag-filter-composer-toggle'))
-    await vi.advanceTimersByTimeAsync(0)
+    await openComposer()
+    const root = screen.getByTestId('tag-composer-group')
+    await addTagLeaf(root, 'work')
 
-    // Add a tag leaf.
-    await user.click(screen.getByRole('button', { name: t('tagFilter.composer.addTag') }))
-    fireEvent.change(screen.getByLabelText(t('tagFilter.composer.searchLabel')), {
-      target: { value: 'work' },
-    })
-    await vi.advanceTimersByTimeAsync(0)
-    await user.click(await screen.findByText('work'))
-    await vi.advanceTimersByTimeAsync(0)
-
-    // Switch the combinator to None.
-    await user.click(screen.getByRole('radio', { name: t('tagFilter.composer.opNot') }))
+    // Toggle the leaf's NOT.
+    await user.click(screen.getByLabelText(t('tagFilter.composer.negateLeaf', { label: 'work' })))
     await vi.advanceTimersByTimeAsync(0)
 
     await waitFor(() => {
-      expect(lastTagQuery()).toMatchObject({ tagIds: ['T1'], prefixes: [], mode: 'not' })
+      expect(lastTagExpr()).toEqual({ type: 'Not', value: { type: 'Tag', value: 'T1' } })
     })
+  })
+
+  // The headline #1426 capability: a deep, mixed-combinator, partially-negated
+  // tree the flat query_by_tags IPC could never express — built entirely from
+  // the UI and asserted EXACTLY as the tree handed to queryByTagExpr.
+  it('builds (A AND B) OR (NOT C) and passes the exact TagExpr tree to queryByTagExpr', async () => {
+    routeInvoke({
+      tags: [
+        makeTag({ tag_id: 'A', name: 'alpha', usage_count: 1 }),
+        makeTag({ tag_id: 'B', name: 'beta', usage_count: 1 }),
+        makeTag({ tag_id: 'C', name: 'gamma', usage_count: 1 }),
+      ],
+      page: {
+        items: [makeBlock({ id: 'HIT', content: 'matched block' })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      },
+    })
+    // Route each typeahead search to ONLY the tag the helper typed, so
+    // findByText(name) is unambiguous.
+    mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
+      if (cmd === 'list_tags_by_prefix') {
+        const prefix = ((args as { prefix?: string } | undefined)?.prefix ?? '').toLowerCase()
+        const all = [
+          { tag_id: 'A', name: 'alpha', usage_count: 1 },
+          { tag_id: 'B', name: 'beta', usage_count: 1 },
+          { tag_id: 'C', name: 'gamma', usage_count: 1 },
+        ]
+        return Promise.resolve(all.filter((tg) => tg.name.startsWith(prefix)))
+      }
+      if (cmd === 'query_by_tag_expr') {
+        return Promise.resolve({
+          items: [makeBlock({ id: 'HIT', content: 'matched block' })],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        })
+      }
+      if (cmd === 'batch_resolve') return Promise.resolve([])
+      return Promise.resolve(emptyPage)
+    })
+
+    render(<TagFilterPanel />)
+    await openComposer()
+
+    const root = screen.getByTestId('tag-composer-group')
+
+    // Root combinator → Any (Or). (Unambiguous: no sub-groups exist yet.)
+    await user.click(within(root).getByRole('radio', { name: t('tagFilter.composer.opOr') }))
+
+    // Sub-group 1: (A AND B). It is added as the root's first child group.
+    await addSubGroup(root)
+    let groups = screen.getAllByTestId('tag-composer-group')
+    const groupAB = groups[1] as HTMLElement // [0] = root, [1] = first sub-group
+    await addTagLeaf(groupAB, 'alpha')
+    await addTagLeaf(groupAB, 'beta')
+
+    // Sub-group 2: (NOT C). Added as the root's second child group.
+    await addSubGroup(root)
+    groups = screen.getAllByTestId('tag-composer-group')
+    const groupC = groups[2] as HTMLElement
+    await addTagLeaf(groupC, 'gamma')
+    // Negate the C leaf → Not(Tag C). A single-child group collapses to its
+    // child, so this yields Not(Tag(C)) at the root's Or.
+    await user.click(screen.getByLabelText(t('tagFilter.composer.negateLeaf', { label: 'gamma' })))
+    await vi.advanceTimersByTimeAsync(0)
+
+    // EXACT tree: Or([ And([Tag A, Tag B]), Not(Tag C) ]).
+    await waitFor(() => {
+      expect(lastTagExpr()).toEqual({
+        type: 'Or',
+        value: [
+          {
+            type: 'And',
+            value: [
+              { type: 'Tag', value: 'A' },
+              { type: 'Tag', value: 'B' },
+            ],
+          },
+          { type: 'Not', value: { type: 'Tag', value: 'C' } },
+        ],
+      })
+    })
+
+    // …and the mocked resolver result renders.
+    expect(screen.getByText('matched block')).toBeInTheDocument()
   })
 
   it('has no a11y violations with the composer open', async () => {
