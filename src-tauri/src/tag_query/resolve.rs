@@ -144,7 +144,186 @@ pub(crate) async fn resolve_tag_prefix_leaves(
     }
 }
 
+/// #1622 — bare id-set subquery (no `b.id IN (...)` wrapper) for a single
+/// `TagExpr::Tag` leaf, suitable for composition under SQLite set
+/// operators (`INTERSECT`/`UNION`/`EXCEPT`). Mirrors
+/// [`resolve_tag_leaves`] EXACTLY — `block_tags` ∪ `block_tag_refs`
+/// (∪ `block_tag_inherited` when inherited), each arm joining `blocks`
+/// and filtering `b.deleted_at IS NULL`. `tag_id` is bound once per arm
+/// (the compiler pushes 2 non-inherited / 3 inherited binds, in order).
+///
+/// Returns a column named `block_id` so the same shape composes whether
+/// it is the only term or one term of a larger set expression.
+fn tag_leaf_subquery_body(include_inherited: bool) -> &'static str {
+    if include_inherited {
+        "SELECT bt.block_id \
+         FROM block_tags bt JOIN blocks b ON b.id = bt.block_id \
+         WHERE bt.tag_id = ? AND b.deleted_at IS NULL \
+         UNION \
+         SELECT btr.source_id \
+         FROM block_tag_refs btr JOIN blocks b ON b.id = btr.source_id \
+         WHERE btr.tag_id = ? AND b.deleted_at IS NULL \
+         UNION \
+         SELECT bti.block_id \
+         FROM block_tag_inherited bti JOIN blocks b ON b.id = bti.block_id \
+         WHERE bti.tag_id = ? AND b.deleted_at IS NULL"
+    } else {
+        "SELECT bt.block_id \
+         FROM block_tags bt JOIN blocks b ON b.id = bt.block_id \
+         WHERE bt.tag_id = ? AND b.deleted_at IS NULL \
+         UNION \
+         SELECT btr.source_id \
+         FROM block_tag_refs btr JOIN blocks b ON b.id = btr.source_id \
+         WHERE btr.tag_id = ? AND b.deleted_at IS NULL"
+    }
+}
+
+/// #1622 — bare id-set subquery for a single `TagExpr::Prefix` leaf.
+/// Mirrors [`resolve_tag_prefix_leaves`] EXACTLY: same UNION shape as the
+/// tag leaf but joining `tags_cache tc` with `tc.name LIKE ? ESCAPE '\'`
+/// and `SELECT DISTINCT`. The LIKE pattern is bound once per arm.
+fn prefix_leaf_subquery_body(include_inherited: bool) -> &'static str {
+    if include_inherited {
+        "SELECT DISTINCT bt.block_id \
+         FROM tags_cache tc \
+         JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = bt.block_id \
+         WHERE tc.name LIKE ? ESCAPE '\\' AND b.deleted_at IS NULL \
+         UNION \
+         SELECT DISTINCT btr.source_id \
+         FROM tags_cache tc \
+         JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = btr.source_id \
+         WHERE tc.name LIKE ? ESCAPE '\\' AND b.deleted_at IS NULL \
+         UNION \
+         SELECT DISTINCT bti.block_id \
+         FROM tags_cache tc \
+         JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = bti.block_id \
+         WHERE tc.name LIKE ? ESCAPE '\\' AND b.deleted_at IS NULL"
+    } else {
+        "SELECT DISTINCT bt.block_id \
+         FROM tags_cache tc \
+         JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = bt.block_id \
+         WHERE tc.name LIKE ? ESCAPE '\\' AND b.deleted_at IS NULL \
+         UNION \
+         SELECT DISTINCT btr.source_id \
+         FROM tags_cache tc \
+         JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = btr.source_id \
+         WHERE tc.name LIKE ? ESCAPE '\\' AND b.deleted_at IS NULL"
+    }
+}
+
+/// #1622 — recursively compile a `TagExpr` boolean tree into a SINGLE
+/// id-set subquery (the SELECT body, no surrounding parentheses) plus the
+/// ordered list of bind values for its leaf placeholders.
+///
+/// The returned subquery yields exactly the id set that `resolve_expr`
+/// would compute for the same expression, expressed entirely in SQL so
+/// that the caller can wrap it as `b.id IN (<subquery>)` and let SQLite
+/// apply the cursor/`LIMIT` keyset without ever materialising the full
+/// set into Rust + JSON. The compilation scheme is:
+///
+///   * `Tag` / `Prefix`  → the leaf UNION body (`tag_leaf_subquery_body` /
+///     `prefix_leaf_subquery_body`).
+///   * `And(children)`   → `<c0> INTERSECT <c1> INTERSECT …` — each child
+///     wrapped as `SELECT block_id FROM (<child>)` so SQLite's flat,
+///     equal-precedence, left-associative compound-SELECT grammar cannot
+///     mis-associate a child that is itself a compound (e.g. an inner
+///     `Or`). An empty `And` resolves to the EMPTY set (matches
+///     `resolve_expr`).
+///   * `Or(children)`    → `<c0> UNION <c1> UNION …` (same wrapping). An
+///     empty `Or` resolves to the EMPTY set.
+///   * `Not(inner)`      → `SELECT id AS block_id FROM blocks WHERE
+///     b.deleted_at IS NULL AND id NOT IN (<inner>)` — the complement
+///     universe is precisely "all non-deleted blocks", byte-identical to
+///     `resolve_expr`'s `Not` (including the empty-inner case, where
+///     `NOT IN (<empty>)` is true for every row → the whole universe).
+///     `blocks.id` and every leaf id column are NOT NULL, so the
+///     `NOT IN`/NULL footgun cannot arise.
+///
+/// All leaf values (`tag_id`, the LIKE pattern) are BOUND positionally in
+/// traversal order — never string-interpolated — so the assembled SQL is
+/// injection-safe. The caller MUST bind `binds` in the returned order
+/// before the shared projection binds.
+pub(crate) fn compile_candidate_subquery(
+    expr: &TagExpr,
+    include_inherited: bool,
+) -> (String, Vec<String>) {
+    let mut binds: Vec<String> = Vec::new();
+    let sql = build_subquery(expr, include_inherited, &mut binds);
+    (sql, binds)
+}
+
+/// The empty id-set subquery (zero rows). Used for empty `And`/`Or`,
+/// which `resolve_expr` resolves to the empty set.
+const EMPTY_SUBQUERY: &str = "SELECT block_id FROM (SELECT NULL AS block_id) WHERE 0";
+
+fn build_subquery(expr: &TagExpr, include_inherited: bool, binds: &mut Vec<String>) -> String {
+    match expr {
+        TagExpr::Tag(tag_id) => {
+            let arms = if include_inherited { 3 } else { 2 };
+            for _ in 0..arms {
+                binds.push(tag_id.clone());
+            }
+            tag_leaf_subquery_body(include_inherited).to_string()
+        }
+        TagExpr::Prefix(prefix) => {
+            let escaped = format!("{}%", escape_like(prefix));
+            let arms = if include_inherited { 3 } else { 2 };
+            for _ in 0..arms {
+                binds.push(escaped.clone());
+            }
+            prefix_leaf_subquery_body(include_inherited).to_string()
+        }
+        TagExpr::And(children) => compose_set_op(children, include_inherited, binds, "INTERSECT"),
+        TagExpr::Or(children) => compose_set_op(children, include_inherited, binds, "UNION"),
+        TagExpr::Not(inner) => {
+            // The inner ids are EXCLUDED from the full non-deleted block
+            // universe. Wrapping `inner` as `(<inner>)` keeps a compound
+            // inner (e.g. `Or`) correctly scoped inside `NOT IN`.
+            let inner_sql = build_subquery(inner, include_inherited, binds);
+            format!(
+                "SELECT b.id AS block_id FROM blocks b \
+                 WHERE b.deleted_at IS NULL \
+                 AND b.id NOT IN ({inner_sql})"
+            )
+        }
+    }
+}
+
+/// Compose a list of child subqueries with a SQLite set operator,
+/// wrapping each child as `SELECT block_id FROM (<child>)` so that a
+/// child which is itself a compound SELECT associates correctly under
+/// SQLite's flat compound-SELECT grammar.
+fn compose_set_op(
+    children: &[TagExpr],
+    include_inherited: bool,
+    binds: &mut Vec<String>,
+    op: &str,
+) -> String {
+    if children.is_empty() {
+        return EMPTY_SUBQUERY.to_string();
+    }
+    let mut parts: Vec<String> = Vec::with_capacity(children.len());
+    for child in children {
+        let child_sql = build_subquery(child, include_inherited, binds);
+        parts.push(format!("SELECT block_id FROM ({child_sql})"));
+    }
+    parts.join(&format!(" {op} "))
+}
+
 /// Resolve a `TagExpr` into the set of matching `block_id`s.
+///
+/// #1622 — `eval_tag_query` now compiles shallow boolean trees
+/// (`depth <= TagExpr::MAX_PUSHDOWN_DEPTH`) to a single pushed-down
+/// candidate subquery via [`compile_candidate_subquery`], so the full set
+/// is never materialised in Rust for those. This resolver remains the
+/// canonical SEMANTICS, the FALLBACK for trees too deep to express safely
+/// as nested SQL (SQLite's `SQLITE_MAX_EXPR_DEPTH`), and the
+/// differential-test ORACLE the pushed-down path is proven identical to.
 pub fn resolve_expr<'a>(
     pool: &'a SqlitePool,
     expr: &'a TagExpr,

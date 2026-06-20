@@ -3,7 +3,7 @@
 use rustc_hash::FxHashSet;
 use sqlx::SqlitePool;
 
-use super::resolve::resolve_expr;
+use super::resolve::{compile_candidate_subquery, resolve_expr};
 use super::{TagCacheRow, TagExpr};
 use crate::error::AppError;
 use crate::pagination::{ActiveBlockRow, Cursor, PageRequest, PageResponse};
@@ -61,30 +61,53 @@ pub async fn eval_tag_query(
             (build_projection_sql(candidate_clause), binds)
         }
         TagExpr::And(_) | TagExpr::Or(_) | TagExpr::Not(_) => {
-            // #1597 — reject pathologically deep trees before `resolve_expr`
-            // kicks off its unbounded `Box::pin` + `try_join_all` recursion,
+            // #1597 — reject pathologically deep trees before either the
+            // recursive candidate-subquery compiler or `resolve_expr`'s
+            // `Box::pin` fan-out walks the (otherwise unbounded) tree,
             // mirroring `FilterExpr::validate_depth`.
             expr.validate_depth()?;
-            let block_ids: FxHashSet<String> = resolve_expr(pool, expr, include_inherited).await?;
-            if block_ids.is_empty() {
-                return Ok(PageResponse {
-                    items: vec![],
-                    next_cursor: None,
-                    has_more: false,
-                    total_count: None,
-                });
+            if expr.depth() <= TagExpr::MAX_PUSHDOWN_DEPTH {
+                // #1622 — compile the whole boolean tree to a SINGLE id-set
+                // subquery (And→INTERSECT, Or→UNION, Not→`b.id NOT IN
+                // (<inner>)` against the non-deleted universe) and push it
+                // down as `b.id IN (<subquery>)`. SQLite then applies the
+                // cursor/`LIMIT` keyset directly — instead of materialising
+                // the FULL `FxHashSet` of every matching id into Rust,
+                // serialising it to a multi-hundred-KB JSON string, and
+                // re-parsing it via `json_each(?)` on EVERY page (and, for
+                // `not`, computing the entire `all-blocks-minus-matched`
+                // complement up front). All leaf values are BOUND
+                // positionally; there is no interpolation.
+                let (subquery, binds) = compile_candidate_subquery(expr, include_inherited);
+                (
+                    build_projection_sql(&format!("b.id IN ({subquery})")),
+                    binds,
+                )
+            } else {
+                // #1622 — fallback for trees deeper than the safe SQL
+                // expression-nesting bound (SQLite's
+                // `SQLITE_MAX_EXPR_DEPTH = 1000` would otherwise reject the
+                // nested subquery). Such trees are pathological and never
+                // produced by the real `commands::tags` caller; preserve the
+                // legacy materialise-then-`json_each(?)` semantics verbatim
+                // so the result stays byte-identical.
+                let block_ids: FxHashSet<String> =
+                    resolve_expr(pool, expr, include_inherited).await?;
+                if block_ids.is_empty() {
+                    return Ok(PageResponse {
+                        items: vec![],
+                        next_cursor: None,
+                        has_more: false,
+                        total_count: None,
+                    });
+                }
+                let id_vec: Vec<&str> = block_ids.iter().map(String::as_str).collect();
+                let json_ids = serde_json::to_string(&id_vec)?;
+                (
+                    build_projection_sql("b.id IN (SELECT value FROM json_each(?))"),
+                    vec![json_ids],
+                )
             }
-            // Issue #112 sub-item 1 — push the candidate-ID sort + cursor
-            // walk down into SQL. The resolver hands us an `FxHashSet`, so
-            // we hand SQLite a JSON-array of the IDs via `json_each(?)`,
-            // and let the database do the ordering, cursor filter
-            // (`id > ?`), and limit in one paginated read.
-            let id_vec: Vec<&str> = block_ids.iter().map(String::as_str).collect();
-            let json_ids = serde_json::to_string(&id_vec)?;
-            (
-                build_projection_sql("b.id IN (SELECT value FROM json_each(?))"),
-                vec![json_ids],
-            )
         }
     };
 
@@ -1328,6 +1351,21 @@ mod tests {
         .unwrap();
         insert_tag_assoc(pool, "DEL_BLK", "TAG_DIFF").await;
 
+        // #1622 — a SECOND tag with a deliberately PARTIAL overlap with
+        // TAG_DIFF so And (INTERSECT) and Or (UNION) are non-trivial:
+        //   - DBLK_A, DBLK_B carry BOTH tags  → in the And result.
+        //   - OBLK_X, OBLK_Y carry ONLY TAG_OTHER → only in Or / in Not(TAG_DIFF).
+        //   - DBLK_C/D/E, refs, inherited carry ONLY TAG_DIFF.
+        insert_block(pool, "TAG_OTHER", "tag", "proj/alpha").await;
+        insert_tag_cache(pool, "TAG_OTHER", "proj/alpha", 0).await;
+        insert_tag_assoc(pool, "DBLK_A", "TAG_OTHER").await;
+        insert_tag_assoc(pool, "DBLK_B", "TAG_OTHER").await;
+        for suffix in &["X", "Y"] {
+            let id = format!("OBLK_{suffix}");
+            insert_block(pool, &id, "content", &format!("other {suffix}")).await;
+            insert_tag_assoc(pool, &id, "TAG_OTHER").await;
+        }
+
         space.to_string()
     }
 
@@ -1338,10 +1376,34 @@ mod tests {
 
         let tag = TagExpr::Tag("TAG_DIFF".into());
         let prefix = TagExpr::Prefix("work/".into());
+        // #1622 — boolean arms composed to INTERSECT/UNION/EXCEPT.
+        let and = TagExpr::And(vec![
+            TagExpr::Tag("TAG_DIFF".into()),
+            TagExpr::Tag("TAG_OTHER".into()),
+        ]);
+        let or = TagExpr::Or(vec![
+            TagExpr::Tag("TAG_DIFF".into()),
+            TagExpr::Tag("TAG_OTHER".into()),
+        ]);
+        let not = TagExpr::Not(Box::new(TagExpr::Tag("TAG_DIFF".into())));
+        // The production "not" mode shape: Not(Or(...)).
+        let not_or = TagExpr::Not(Box::new(TagExpr::Or(vec![
+            TagExpr::Tag("TAG_DIFF".into()),
+            TagExpr::Tag("TAG_OTHER".into()),
+        ])));
+        // Nested combo mixing every operator + a Prefix leaf.
+        let nested = TagExpr::And(vec![
+            TagExpr::Or(vec![
+                TagExpr::Tag("TAG_OTHER".into()),
+                TagExpr::Prefix("work/".into()),
+            ]),
+            TagExpr::Not(Box::new(TagExpr::Tag("TAG_OTHER".into()))),
+        ]);
 
-        // {Tag, Prefix} × {inherited} × {space} × {block_type} × pages.
-        // Page sizes 1, 2, 3 force multi-page walks over the ~13-row set.
-        for expr in [&tag, &prefix] {
+        // {Tag, Prefix, And, Or, Not, Not(Or), nested} ×
+        // {inherited} × {space} × {block_type} × pages.
+        // Page sizes 1, 2, 3 force multi-page walks over the set.
+        for expr in [&tag, &prefix, &and, &or, &not, &not_or, &nested] {
             for inherited in [false, true] {
                 for space_id in [None, Some(space.as_str())] {
                     for block_type in [None, Some("content")] {
@@ -1355,6 +1417,173 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// #1622 — `not` complement semantics: `Not(Tag)` (and the production
+    /// `Not(Or(...))` shape) must return EXACTLY the non-deleted blocks
+    /// that do NOT carry the tag(s), with the soft-deleted block excluded.
+    /// Asserted directly against a hand-computed expected set (not just the
+    /// oracle) to pin the complement universe.
+    #[tokio::test]
+    async fn not_complement_excludes_matched_and_deleted() {
+        let (pool, _dir) = test_pool().await;
+        let _space = seed_differential_dataset(&pool).await;
+
+        // Collect every non-deleted block id from the universe.
+        let all_active: FxHashSet<String> =
+            sqlx::query_scalar::<_, String>("SELECT id FROM blocks WHERE deleted_at IS NULL")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+                .into_iter()
+                .collect();
+        // Blocks carrying TAG_DIFF (direct path, no inheritance).
+        let matched: FxHashSet<String> =
+            resolve_expr(&pool, &TagExpr::Tag("TAG_DIFF".into()), false)
+                .await
+                .unwrap();
+        let mut expected: Vec<String> = all_active.difference(&matched).cloned().collect();
+        expected.sort();
+
+        let expr = TagExpr::Not(Box::new(TagExpr::Tag("TAG_DIFF".into())));
+        // Page through the whole complement with a small page.
+        let mut got: Vec<String> = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let page = PageRequest::new(cursor.clone(), Some(3)).unwrap();
+            let resp = eval_tag_query(&pool, &expr, &page, false, None, None)
+                .await
+                .unwrap();
+            got.extend(resp.items.iter().map(|r| r.id.as_str().to_string()));
+            if !resp.has_more {
+                break;
+            }
+            cursor = resp.next_cursor;
+        }
+        got.sort();
+        assert_eq!(
+            got, expected,
+            "Not(Tag) must equal all-non-deleted MINUS the matched set"
+        );
+        // The soft-deleted block must never appear.
+        assert!(
+            !got.iter().any(|id| id == "DEL_BLK"),
+            "soft-deleted block must be excluded from the complement"
+        );
+        // A block carrying ONLY the other tag must be present.
+        assert!(
+            got.iter().any(|id| id == "OBLK_X"),
+            "a block without TAG_DIFF must be in the complement"
+        );
+    }
+
+    /// #1622 — pagination over a LARGE complement must not depend on
+    /// materialising the universe: walk `Not(Tag)` over many blocks with a
+    /// tiny page size and assert each page matches the oracle and the
+    /// concatenation is complete (the production "not" mode pushes the
+    /// whole complement through one keyset-paginated SQL read now).
+    #[tokio::test]
+    async fn not_paginates_large_universe_without_materialization() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "TAG_BIG", "tag", "big").await;
+        insert_tag_cache(&pool, "TAG_BIG", "big", 0).await;
+        // 200 untagged blocks + 50 tagged ones. The complement of TAG_BIG
+        // is the 200 untagged blocks; a page size of 7 forces ~29 pages.
+        for i in 0..200 {
+            let id = format!("UBLK_{i:04}");
+            insert_block(&pool, &id, "content", "untagged").await;
+        }
+        for i in 0..50 {
+            let id = format!("TBLK_{i:04}");
+            insert_block(&pool, &id, "content", "tagged").await;
+            insert_tag_assoc(&pool, &id, "TAG_BIG").await;
+        }
+        let expr = TagExpr::Not(Box::new(TagExpr::Tag("TAG_BIG".into())));
+        // Reference: the full set the old resolver would produce.
+        let reference: FxHashSet<String> = resolve_expr(&pool, &expr, false).await.unwrap();
+        let mut expected: Vec<String> = reference.into_iter().collect();
+        expected.sort();
+
+        let mut got: Vec<String> = Vec::new();
+        let mut cursor: Option<String> = None;
+        let mut pages = 0;
+        loop {
+            let page = PageRequest::new(cursor.clone(), Some(7)).unwrap();
+            let resp = eval_tag_query(&pool, &expr, &page, false, None, None)
+                .await
+                .unwrap();
+            // Each page is bounded by the requested limit.
+            assert!(resp.items.len() <= 7, "page exceeded the limit");
+            got.extend(resp.items.iter().map(|r| r.id.as_str().to_string()));
+            pages += 1;
+            if !resp.has_more {
+                break;
+            }
+            cursor = resp.next_cursor;
+            assert!(pages < 1000, "runaway pagination");
+        }
+        got.sort();
+        assert_eq!(
+            got, expected,
+            "paginated complement must equal the full set"
+        );
+        // 200 untagged content blocks + the TAG_BIG tag block itself (which
+        // does not carry TAG_BIG) = 201 non-deleted blocks in the complement.
+        assert_eq!(
+            got.len(),
+            201,
+            "complement is every non-deleted block sans TAG_BIG"
+        );
+        assert!(
+            pages >= 28,
+            "small page size must force many pages, got {pages}"
+        );
+    }
+
+    /// #1622 — the depth-cutover is correct on BOTH sides: a tree at
+    /// exactly `MAX_PUSHDOWN_DEPTH` (pushed down to nested SQL) and a tree
+    /// one level deeper (the legacy `resolve_expr` materialisation
+    /// fallback) must each equal the oracle across paginated pages. This
+    /// proves the fallback boundary does not change results, and that a
+    /// deep tree the pushed-down SQL could not express is still answered
+    /// correctly.
+    #[tokio::test]
+    async fn depth_cutover_both_paths_match_reference() {
+        let (pool, _dir) = test_pool().await;
+        let _space = seed_differential_dataset(&pool).await;
+
+        // `Not(Not(... Tag ...))` chains. Even depth resolves to the tagged
+        // set; odd depth to the complement. Use even depths so we exercise
+        // a non-trivial result on both sides of the boundary.
+        let at_cap = TagExpr::MAX_PUSHDOWN_DEPTH; // 15 (odd → complement)
+        let just_over = TagExpr::MAX_PUSHDOWN_DEPTH + 1; // 16 (even → tagged set)
+        assert!(
+            nested_not("TAG_DIFF", at_cap).depth() == at_cap
+                && nested_not("TAG_DIFF", just_over).depth() == just_over,
+            "depth() must equal the Not-chain length"
+        );
+
+        // Pushed-down path (depth <= cap) vs oracle.
+        assert_fast_path_matches_reference(
+            &pool,
+            &nested_not("TAG_DIFF", at_cap),
+            false,
+            None,
+            None,
+            2,
+        )
+        .await;
+        // Fallback path (depth > cap) vs oracle — same oracle, different
+        // production code path inside eval_tag_query.
+        assert_fast_path_matches_reference(
+            &pool,
+            &nested_not("TAG_DIFF", just_over),
+            false,
+            None,
+            None,
+            2,
+        )
+        .await;
     }
 
     /// A block associated to the tag ONLY via `block_tag_refs` (inline
