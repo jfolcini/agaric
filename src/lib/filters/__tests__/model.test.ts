@@ -15,6 +15,7 @@ import type { AstFilterProjection } from '@/lib/search-query'
 
 import {
   backlinkFilterToCanonical,
+  canonicalToBacklinkFilter,
   canonicalToGraphFilters,
   canonicalToSearchProjection,
   FILTER_SURFACE_ALLOWLIST,
@@ -189,6 +190,90 @@ describe('backlink vocabulary → canonical (lossless, every leaf)', () => {
     expect(
       backlinkFilterToCanonical({ type: 'Not', filter: { type: 'HasTag', tag_id: 'x' } }),
     ).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Backlink vocabulary — lossless ROUND TRIP (canonical ⇄ BacklinkFilter).
+//
+// Issue #1646 surface 4: the backlink surface now PROJECTS its emitted wire
+// shape FROM the canonical model. The round-trip must be byte-exact for every
+// category the builder emits — including the #1647 status-`none` ⇒
+// `PropertyIsEmpty{key:'todo'}` sentinel and every property comparison op.
+// ---------------------------------------------------------------------------
+
+describe('backlink round-trip (BacklinkFilter ⇄ canonical, byte-exact)', () => {
+  // Every BacklinkFilter leaf the surface can produce. Property leaves cover
+  // every CompareOp + value-variant so no op is silently collapsed.
+  const roundTrip: BacklinkFilter[] = [
+    // Status: literal value (PropertyText{key:'todo'}) ...
+    { type: 'PropertyText', key: 'todo', op: 'Eq', value: 'DONE' },
+    // ... and the #1647 `none` sentinel (PropertyIsEmpty, NOT a literal match).
+    { type: 'PropertyIsEmpty', key: 'todo' },
+    // Priority (PropertyText{key:'priority'}).
+    { type: 'PropertyText', key: 'priority', op: 'Eq', value: '1' },
+    // Property — text, every op.
+    { type: 'PropertyText', key: 'k', op: 'Eq', value: 'v' },
+    { type: 'PropertyText', key: 'k', op: 'Neq', value: 'v' },
+    { type: 'PropertyText', key: 'k', op: 'Lt', value: 'v' },
+    { type: 'PropertyText', key: 'k', op: 'Gt', value: 'v' },
+    { type: 'PropertyText', key: 'k', op: 'Lte', value: 'v' },
+    { type: 'PropertyText', key: 'k', op: 'Gte', value: 'v' },
+    { type: 'PropertyText', key: 'k', op: 'Contains', value: 'v' },
+    { type: 'PropertyText', key: 'k', op: 'StartsWith', value: 'v' },
+    // Property — numeric & date, op preserved.
+    { type: 'PropertyNum', key: 'count', op: 'Eq', value: 42 },
+    { type: 'PropertyNum', key: 'count', op: 'Gt', value: 3.5 },
+    { type: 'PropertyDate', key: 'due', op: 'Lte', value: '2026-01-01' },
+    // Property set / empty.
+    { type: 'PropertyIsSet', key: 'k' },
+    { type: 'PropertyIsEmpty', key: 'k' },
+    // Tag / tag-prefix.
+    { type: 'HasTag', tag_id: 't1' },
+    { type: 'HasTagPrefix', prefix: 'proj/' },
+    // Contains.
+    { type: 'Contains', query: 'hello world' },
+    // Created date range (include both bounds + open bound).
+    { type: 'CreatedInRange', after: '2026-01-01', before: '2026-02-01' },
+    { type: 'CreatedInRange', after: '2026-01-01', before: null },
+    { type: 'CreatedInRange', after: null, before: '2026-02-01' },
+    // Block type.
+    { type: 'BlockType', block_type: 'task' },
+    // Source page include/exclude.
+    { type: 'SourcePage', included: ['a'], excluded: ['b'] },
+    // Non-builder leaves that still must survive the round-trip.
+    { type: 'TodoState', state: 'TODO' },
+    { type: 'Priority', level: '2' },
+    { type: 'DueDate', op: 'Gte', value: '2026-03-01' },
+  ]
+
+  for (const filter of roundTrip) {
+    it(`round-trips ${filter.type} (${JSON.stringify(filter)})`, () => {
+      const canonical = backlinkFilterToCanonical(filter)
+      expect(canonical).not.toBeNull()
+      expect(canonicalToBacklinkFilter(canonical as FilterPredicate)).toEqual(filter)
+    })
+  }
+
+  it('preserves the #1647 status-none ⇒ PropertyIsEmpty{key:todo} sentinel exactly', () => {
+    const noneEmit: BacklinkFilter = { type: 'PropertyIsEmpty', key: 'todo' }
+    const canonical = backlinkFilterToCanonical(noneEmit)
+    expect(canonical).toEqual({
+      kind: 'property',
+      key: 'todo',
+      predicate: { type: 'NotExists' },
+      exclude: false,
+    })
+    // It must NOT become a literal `value='none'` text match.
+    const back = canonicalToBacklinkFilter(canonical as FilterPredicate)
+    expect(back).toEqual({ type: 'PropertyIsEmpty', key: 'todo' })
+    expect(back).not.toEqual({ type: 'PropertyText', key: 'todo', op: 'Eq', value: 'none' })
+  })
+
+  it('drops compound/out-of-allowlist predicates from the inverse', () => {
+    // Compound leaves are managed at the list level, not by the inverse.
+    expect(canonicalToBacklinkFilter({ kind: 'orphan' })).toBeNull()
+    expect(canonicalToBacklinkFilter({ kind: 'pathGlob', pattern: '*', exclude: false })).toBeNull()
   })
 })
 

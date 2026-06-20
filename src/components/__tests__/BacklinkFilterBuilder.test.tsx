@@ -30,6 +30,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
 import { STATE_FILTER_VALUES } from '@/components/filters/forms/stateVocabulary'
+import { backlinkFilterToCanonical, canonicalToBacklinkFilter } from '@/lib/filters/model'
 
 import type { BacklinkFilter } from '../../lib/tauri'
 import { listTagsByPrefix } from '../../lib/tauri'
@@ -1442,5 +1443,65 @@ describe('BacklinkFilterBuilder', () => {
         { timeout: 5000 },
       )
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Issue #1646 surface 4 — canonical-model projection PARITY.
+//
+// The backlink surface now derives its emitted `BacklinkFilter` FROM the
+// canonical model: every filter the builder produces is round-tripped
+// `BacklinkFilter → FilterPredicate → BacklinkFilter` before it reaches
+// `onApply` (see `projectThroughCanonical` in AddFilterRow). This block is the
+// dedicated parity proof: for the representative set of wire shapes the inline
+// forms emit (the SAME shapes the UI-driven tests above assert), the canonical
+// projection is the IDENTITY — i.e. the emitted `BacklinkFilter[]` is
+// byte-identical to the pre-migration direct-emit path. The UI-driven tests
+// above (status incl. `none`, priority, property text/num/date, date range,
+// tag, tag-prefix, contains, …) remain green precisely because of this.
+// ---------------------------------------------------------------------------
+
+describe('canonical projection parity (emitted BacklinkFilter byte-identical)', () => {
+  // The exact wire shapes the inline forms emit via `buildFilterForCategory`.
+  const emittedShapes: BacklinkFilter[] = [
+    // type
+    { type: 'BlockType', block_type: 'content' },
+    // status (literal) + the #1647 `none` sentinel
+    { type: 'PropertyText', key: 'todo', op: 'Eq', value: 'DONE' },
+    { type: 'PropertyIsEmpty', key: 'todo' },
+    // priority
+    { type: 'PropertyText', key: 'priority', op: 'Eq', value: '1' },
+    // contains
+    { type: 'Contains', query: 'hello' },
+    // property — text/num/date with the ops the form can pick
+    { type: 'PropertyText', key: 'k', op: 'Neq', value: 'v' },
+    { type: 'PropertyNum', key: 'count', op: 'Gt', value: 42 },
+    { type: 'PropertyDate', key: 'd', op: 'Lte', value: '2026-01-01' },
+    // property-set / property-empty
+    { type: 'PropertyIsSet', key: 'k' },
+    { type: 'PropertyIsEmpty', key: 'k' },
+    // date range (created)
+    { type: 'CreatedInRange', after: '2026-01-01', before: null },
+    // has-tag / tag-prefix
+    { type: 'HasTag', tag_id: 't1' },
+    { type: 'HasTagPrefix', prefix: 'proj/' },
+    // source page include/exclude
+    { type: 'SourcePage', included: ['a'], excluded: ['b'] },
+  ]
+
+  for (const shape of emittedShapes) {
+    it(`projects ${shape.type} (${JSON.stringify(shape)}) to an identical filter`, () => {
+      const canonical = backlinkFilterToCanonical(shape)
+      expect(canonical).not.toBeNull()
+      expect(canonicalToBacklinkFilter(canonical as NonNullable<typeof canonical>)).toEqual(shape)
+    })
+  }
+
+  it('keeps the #1647 status-none ⇒ PropertyIsEmpty{key:todo} sentinel on the projection', () => {
+    const noneEmit: BacklinkFilter = { type: 'PropertyIsEmpty', key: 'todo' }
+    const canonical = backlinkFilterToCanonical(noneEmit)
+    const projected = canonicalToBacklinkFilter(canonical as NonNullable<typeof canonical>)
+    expect(projected).toEqual({ type: 'PropertyIsEmpty', key: 'todo' })
+    expect(projected).not.toEqual({ type: 'PropertyText', key: 'todo', op: 'Eq', value: 'none' })
   })
 })

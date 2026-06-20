@@ -375,21 +375,21 @@ export function backlinkFilterToCanonical(filter: BacklinkFilter): FilterPredica
       return {
         kind: 'property',
         key: filter.key,
-        predicate: propTextPredicate(filter.op, filter.value),
+        predicate: comparePredicate(filter.op, { type: 'Text', value: filter.value }),
         exclude: false,
       }
     case 'PropertyNum':
       return {
         kind: 'property',
         key: filter.key,
-        predicate: { type: 'Eq', value: numPropValue(filter.value) },
+        predicate: comparePredicate(filter.op, { type: 'Num', value: filter.value }),
         exclude: false,
       }
     case 'PropertyDate':
       return {
         kind: 'property',
         key: filter.key,
-        predicate: { type: 'Eq', value: { type: 'Text', value: filter.value } },
+        predicate: comparePredicate(filter.op, { type: 'Date', value: filter.value }),
         exclude: false,
       }
     case 'PropertyIsSet':
@@ -425,20 +425,56 @@ export function backlinkFilterToCanonical(filter: BacklinkFilter): FilterPredica
   }
 }
 
-function propTextPredicate(op: CompareOp, value: string): PropertyPredicate {
-  // The backlink builder only ever emits `Eq` text comparisons today; keep the
-  // canonical predicate faithful to the op so future ops aren't silently lost.
-  if (op === 'Eq') return { type: 'Eq', value: { type: 'Text', value } }
-  if (op === 'Neq') return { type: 'Ne', value: { type: 'Text', value } }
-  // Other ops (Lt/Gt/Contains/StartsWith) have no canonical text-property
-  // variant yet; fall back to Eq so the value is preserved (documented gap).
-  return { type: 'Eq', value: { type: 'Text', value } }
+/**
+ * The backlink `CompareOp` and the canonical `PropertyPredicate` comparison
+ * variants are 1:1 — `Neq` is the only spelling difference (`Ne`). Encoding the
+ * exact op (not collapsing to `Eq`) is what makes the property round-trip
+ * lossless for every backlink property leaf.
+ */
+function comparePredicate(op: CompareOp, value: PropertyValue): PropertyPredicate {
+  switch (op) {
+    case 'Eq':
+      return { type: 'Eq', value }
+    case 'Neq':
+      return { type: 'Ne', value }
+    case 'Lt':
+      return { type: 'Lt', value }
+    case 'Gt':
+      return { type: 'Gt', value }
+    case 'Lte':
+      return { type: 'Lte', value }
+    case 'Gte':
+      return { type: 'Gte', value }
+    case 'Contains':
+      return { type: 'Contains', value }
+    case 'StartsWith':
+      return { type: 'StartsWith', value }
+  }
 }
 
-function numPropValue(value: number | null): PropertyValue {
-  // A null numeric value is degenerate; the builder guards against it, so this
-  // only protects the type. Represent as text-"" to stay total.
-  return value === null ? { type: 'Text', value: '' } : { type: 'Num', value }
+/** Inverse of {@link comparePredicate} — recover the backlink `CompareOp`. */
+function predicateCompareOp(type: PropertyPredicate['type']): CompareOp | null {
+  switch (type) {
+    case 'Eq':
+      return 'Eq'
+    case 'Ne':
+      return 'Neq'
+    case 'Lt':
+      return 'Lt'
+    case 'Gt':
+      return 'Gt'
+    case 'Lte':
+      return 'Lte'
+    case 'Gte':
+      return 'Gte'
+    case 'Contains':
+      return 'Contains'
+    case 'StartsWith':
+      return 'StartsWith'
+    case 'Exists':
+    case 'NotExists':
+      return null
+  }
 }
 
 function compareOpToDatePredicate(op: CompareOp, date: string): DatePredicate {
@@ -455,6 +491,131 @@ function compareOpToDatePredicate(op: CompareOp, date: string): DatePredicate {
       return { type: 'On', date }
     default:
       return { type: 'On', date }
+  }
+}
+
+/**
+ * Inverse of {@link compareOpToDatePredicate} for the `field: 'due'` canonical
+ * `date` predicate — recover the `{ op, value }` of a backlink `DueDate` leaf.
+ * The backlink builder never emits `DueDate` itself (its date category emits
+ * `CreatedInRange`), but the helper is total so a `DueDate` leaf fed through
+ * `backlinkFilterToCanonical` round-trips back to its `{op,value}` for the ops
+ * `compareOpToDatePredicate` can express (`Lt/Lte/Gt/Gte/Eq`). `Between`/`IsNull`
+ * have no `DueDate` op spelling and are not backlink-reachable → `null`.
+ */
+function datePredicateToBacklinkDue(
+  predicate: DatePredicate,
+): { op: CompareOp; value: string } | null {
+  switch (predicate.type) {
+    case 'Before':
+      return { op: 'Lt', value: predicate.date }
+    case 'OnOrBefore':
+      return { op: 'Lte', value: predicate.date }
+    case 'After':
+      return { op: 'Gt', value: predicate.date }
+    case 'OnOrAfter':
+      return { op: 'Gte', value: predicate.date }
+    case 'On':
+      return { op: 'Eq', value: predicate.date }
+    case 'IsNull':
+    case 'Between':
+      return null
+  }
+}
+
+/**
+ * Project a single canonical predicate back to a legacy `BacklinkFilter`, the
+ * inverse of {@link backlinkFilterToCanonical} for every kind the backlink
+ * surface builds/emits. Returns `null` for any predicate outside the backlink
+ * allow-list (the caller drops it).
+ *
+ * This is byte-exact for what the backlink builder actually emits: a property
+ * leaf reconstructs the precise `PropertyText/Num/Date/IsSet/IsEmpty` wire shape
+ * (the `PropertyValue` variant + predicate type pin it down), so the
+ * status-`none` ⇒ `PropertyIsEmpty{key:'todo'}` sentinel and every other op are
+ * preserved on the round-trip.
+ */
+export function canonicalToBacklinkFilter(predicate: FilterPredicate): BacklinkFilter | null {
+  switch (predicate.kind) {
+    case 'property':
+      return canonicalPropertyToBacklink(predicate.key, predicate.predicate)
+    case 'status': {
+      // The backlink builder routes status through a `PropertyText`/
+      // `PropertyIsEmpty` leaf (handled by the `property` kind above), so the
+      // `status` kind here only ever originates from a `TodoState` leaf —
+      // single value, never null/excluded.
+      const [state] = predicate.values
+      return predicate.isNull ||
+        predicate.exclude ||
+        predicate.values.length !== 1 ||
+        state === undefined
+        ? null
+        : { type: 'TodoState', state }
+    }
+    case 'priority': {
+      // Likewise the builder routes priority through `PropertyText{key:'priority'}`;
+      // a `priority` kind here originates from a `Priority` leaf.
+      const [level] = predicate.values
+      return predicate.exclude || predicate.values.length !== 1 || level === undefined
+        ? null
+        : { type: 'Priority', level }
+    }
+    case 'date': {
+      if (predicate.field !== 'due') return null
+      const due = datePredicateToBacklinkDue(predicate.predicate)
+      return due ? { type: 'DueDate', op: due.op, value: due.value } : null
+    }
+    case 'createdRange':
+      return { type: 'CreatedInRange', after: predicate.after, before: predicate.before }
+    case 'tag':
+      return predicate.by === 'id' ? { type: 'HasTag', tag_id: predicate.tagId } : null
+    case 'tagPrefix':
+      return { type: 'HasTagPrefix', prefix: predicate.prefix }
+    case 'contains':
+      return { type: 'Contains', query: predicate.query }
+    case 'blockType': {
+      const [blockType] = predicate.values
+      return predicate.exclude || predicate.values.length !== 1 || blockType === undefined
+        ? null
+        : { type: 'BlockType', block_type: blockType }
+    }
+    case 'sourcePage':
+      return {
+        type: 'SourcePage',
+        included: [...predicate.included],
+        excluded: [...predicate.excluded],
+      }
+    default:
+      return null
+  }
+}
+
+/**
+ * Reconstruct the exact backlink property leaf from a canonical `property`
+ * predicate. The `PropertyPredicate` type + its `PropertyValue` variant fully
+ * determine which of `PropertyText`/`PropertyNum`/`PropertyDate`/`PropertyIsSet`/
+ * `PropertyIsEmpty` to emit, so the inverse is byte-exact.
+ */
+function canonicalPropertyToBacklink(
+  key: string,
+  predicate: PropertyPredicate,
+): BacklinkFilter | null {
+  if (predicate.type === 'Exists') return { type: 'PropertyIsSet', key }
+  if (predicate.type === 'NotExists') return { type: 'PropertyIsEmpty', key }
+  const op = predicateCompareOp(predicate.type)
+  if (op === null) return null
+  const value = predicate.value
+  switch (value.type) {
+    case 'Text':
+      return { type: 'PropertyText', key, op, value: value.value }
+    case 'Num':
+      return { type: 'PropertyNum', key, op, value: value.value }
+    case 'Date':
+      return { type: 'PropertyDate', key, op, value: value.value }
+    case 'Ref':
+      // The backlink builder never emits a `Ref` property value; it has no
+      // backlink leaf to reconstruct, so drop it rather than guess.
+      return null
   }
 }
 
