@@ -41,7 +41,7 @@ import { useJournalStore } from '@/stores/journal'
 
 // Shared by the roving-tabindex keyboard handler and the `.map` below so the
 // arrow-key navigation order always matches the rendered tab order.
-const JOURNAL_MODES = ['daily', 'weekly', 'monthly', 'agenda'] as const
+const JOURNAL_MODES = ['daily', 'weekly', 'monthly', 'stream', 'agenda'] as const
 type JournalMode = (typeof JOURNAL_MODES)[number]
 
 export function JournalControls(): React.ReactElement {
@@ -133,7 +133,16 @@ export function JournalControls(): React.ReactElement {
   // UX-236: hide the Today button when already on today's daily journal.
   // JournalControls only renders inside `currentView === 'journal'`, so the
   // view-level leg of the expression used in GlobalDateControls collapses here.
-  const todayButtonHidden = mode === 'daily' && isSameDay(currentDate, new Date())
+  // #1415 — the stream is permanently top-anchored at today, so the Today
+  // button has no destination to jump to; hide it there too.
+  const todayButtonHidden =
+    (mode === 'daily' && isSameDay(currentDate, new Date())) || mode === 'stream'
+
+  // #1415 — agenda and stream have no per-day date cursor: agenda is a task
+  // panel, the stream scrolls a fixed today→past column. Both hide the
+  // prev/next date stepper + date display (the stepper would have nothing to
+  // move). The calendar picker stays available in both.
+  const hidesDateNav = mode === 'agenda' || mode === 'stream'
 
   return (
     <div
@@ -153,12 +162,14 @@ export function JournalControls(): React.ReactElement {
             daily: t('journal.dayTab'),
             weekly: t('journal.weekTab'),
             monthly: t('journal.monthTab'),
+            stream: t('journal.streamTab'),
             agenda: t('journal.agendaTab'),
           }
           const ariaLabels: Record<string, string> = {
             daily: t('journal.dailyView'),
             weekly: t('journal.weeklyView'),
             monthly: t('journal.monthlyView'),
+            stream: t('journal.streamView'),
             agenda: t('journal.agendaView'),
           }
           return (
@@ -194,7 +205,7 @@ export function JournalControls(): React.ReactElement {
         {/* UX-260 sub-fix 2: surface the Alt+Left / Alt+Right / Alt+T
             shortcuts via Tooltips so users discover the bindings without
             opening the KeyboardShortcuts sheet. */}
-        {mode !== 'agenda' && (
+        {!hidesDateNav && (
           <>
             <IconButton
               variant="ghost"

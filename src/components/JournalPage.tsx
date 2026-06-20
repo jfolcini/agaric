@@ -38,6 +38,7 @@ import { useInPageFindStore } from '../stores/useInPageFindStore'
 import { AgendaView } from './journal/AgendaView'
 import { DailyView } from './journal/DailyView'
 import { MonthlyView } from './journal/MonthlyView'
+import { StreamView } from './journal/StreamView'
 import { WeeklyView } from './journal/WeeklyView'
 import { LinkPreviewTooltip } from './LinkPreviewTooltip'
 import { SpaceManageDialog } from './SpaceManageDialog'
@@ -229,6 +230,10 @@ export function JournalPage({
         />
       )}
       {!loading && mode === 'monthly' && <MonthlyView makeDayEntry={makeDayEntry} />}
+      {/* #1415 — the continuous stream owns its OWN windowed date list +
+          page map (it grows past `currentDate`'s month range), so it does
+          not consume JournalPage's `makeDayEntry`/`handleAddBlock`. */}
+      {!loading && mode === 'stream' && <StreamView onNavigateToPage={onNavigateToPage} />}
       {!loading && mode === 'agenda' && <AgendaView onNavigateToPage={onNavigateToPage} />}
 
       {/* Link preview tooltip — covers all external links in journal */}
