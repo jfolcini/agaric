@@ -21,6 +21,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { STATE_FILTER_VALUES } from '@/components/filters/forms/stateVocabulary'
 import { t } from '@/lib/i18n'
 
 import { StateFilterForm } from '../filter-forms/StateFilterForm'
@@ -56,6 +57,19 @@ describe('StateFilterForm — render', () => {
     expect(
       screen.getByRole('radiogroup', { name: t('search.filterHelper.matchMode') }),
     ).toBeInTheDocument()
+  })
+
+  // Issue #1647 follow-up — this surface offers the SINGLE canonical state
+  // vocabulary (`STATE_FILTER_VALUES`), now shared with the backlink Status
+  // form. Proves no vocab drift after sourcing the value control from the
+  // unified vocabulary.
+  it('offers the full unified state vocabulary', () => {
+    setup()
+    const options = screen.getAllByRole('option').map((o) => (o as HTMLOptionElement).value)
+    expect(options).toEqual([...STATE_FILTER_VALUES])
+    expect(options).toContain('WAITING')
+    expect(options).toContain('CANCELLED')
+    expect(options).toContain('none')
   })
 })
 

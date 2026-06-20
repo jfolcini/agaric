@@ -137,6 +137,16 @@ export const references: Record<string, string> = {
   'backlink.todoStatus': 'TODO',
   'backlink.doingStatus': 'DOING',
   'backlink.doneStatus': 'DONE',
+  // Issue #1647 follow-up — the SINGLE canonical task-state vocabulary,
+  // shared by the search "State" builder form and the backlink "Status"
+  // category form (see components/filters/forms/stateVocabulary.ts). One
+  // label set so the two surfaces can never drift.
+  'filterState.todo': 'TODO',
+  'filterState.doing': 'DOING',
+  'filterState.done': 'DONE',
+  'filterState.waiting': 'WAITING',
+  'filterState.cancelled': 'CANCELLED',
+  'filterState.none': 'None',
   'backlink.priorityValueLabel': 'Priority value',
   'backlink.highPriority': 'High [1]',
   'backlink.mediumPriority': 'Medium [2]',

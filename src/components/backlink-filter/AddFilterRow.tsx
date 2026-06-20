@@ -64,6 +64,16 @@ function buildTypeFilter(s: BuildState): BuildResult {
 }
 
 function buildStatusFilter(s: BuildState): BuildResult {
+  // Issue #1647 follow-up — the unified vocabulary includes `none`, which on
+  // the SEARCH side is a SENTINEL meaning "no state set" (the `state:` filter
+  // resolves `none` to `todo_state IS NULL`, not a literal match — see
+  // src-tauri/src/fts/metadata_filter.rs). A literal `PropertyText Eq 'none'`
+  // here would instead match blocks whose `todo` property is the string
+  // "none", silently diverging from search semantics. Map `none` to the
+  // "property absent" filter (`PropertyIsEmpty`) so both surfaces agree.
+  if (s.statusValue === 'none') {
+    return { filter: { type: 'PropertyIsEmpty', key: 'todo' } }
+  }
   return { filter: { type: 'PropertyText', key: 'todo', op: 'Eq', value: s.statusValue } }
 }
 

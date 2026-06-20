@@ -1,8 +1,10 @@
 /**
  * PEND-58g UX-A5 — `state:` / `not-state:` builder form.
  *
- * SEARCH vocab (`STATE_VALUES` from `useAutocompleteSources`), NOT the
- * backlink TODO/DOING/DONE shortlist. Emits a `state` or `notState`
+ * Issue #1647 follow-up — the State vocabulary is now the SINGLE canonical
+ * task-state set shared with the backlink "Status" form via
+ * `components/filters/forms/stateVocabulary.ts` (value set sourced from
+ * `STATE_VALUES`, with translated labels). Emits a `state` or `notState`
  * `FilterToken` with `span: [0, 0]` and closes the popover.
  */
 
@@ -10,15 +12,12 @@ import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Button } from '@/components/ui/button'
+import { FilterValueSelect } from '@/components/filters/forms/FilterValueSelect'
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import { STATE_VALUES } from '@/hooks/useAutocompleteSources'
+  STATE_FILTER_VALUES,
+  useStateFilterOptions,
+} from '@/components/filters/forms/stateVocabulary'
+import { Button } from '@/components/ui/button'
 import type { FilterToken } from '@/lib/search-query'
 
 import { IncludeExcludeToggle } from './IncludeExcludeToggle'
@@ -30,7 +29,8 @@ export interface StateFilterFormProps {
 
 export function StateFilterForm({ onAddFilter, onBack }: StateFilterFormProps): React.ReactElement {
   const { t } = useTranslation()
-  const [value, setValue] = useState<string>(STATE_VALUES[0])
+  const stateOptions = useStateFilterOptions()
+  const [value, setValue] = useState<string>(STATE_FILTER_VALUES[0])
   const [negate, setNegate] = useState(false)
 
   // PEND-58g UX-A5 — move focus into the sub-form on open so keyboard users
@@ -67,22 +67,13 @@ export function StateFilterForm({ onAddFilter, onBack }: StateFilterFormProps): 
           includeLabel={t('search.filterHelper.include')}
           excludeLabel={t('search.filterHelper.exclude')}
         />
-        <Select value={value} onValueChange={setValue}>
-          <SelectTrigger
-            ref={triggerRef}
-            size="sm"
-            aria-label={t('search.filterHelper.stateValueLabel')}
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {STATE_VALUES.map((s) => (
-              <SelectItem key={s} value={s}>
-                {s}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <FilterValueSelect
+          options={stateOptions}
+          value={value}
+          onValueChange={setValue}
+          triggerRef={triggerRef}
+          ariaLabel={t('search.filterHelper.stateValueLabel')}
+        />
       </div>
       <div className="mt-2 flex gap-2 justify-end">
         <Button type="button" variant="outline" size="sm" onClick={onBack}>
