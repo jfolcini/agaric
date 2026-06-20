@@ -27,6 +27,9 @@
     "exactOptionalPropertyTypes": true,
     "noImplicitReturns": true,
     "noPropertyAccessFromIndexSignature": true,
+    "noImplicitOverride": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
 
     /* Path aliases */
     "paths": {

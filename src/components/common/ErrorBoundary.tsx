@@ -46,7 +46,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
     return { hasError: true, error, reportOpen: false }
   }
 
-  componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
+  override componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
     logger.error('ErrorBoundary', error.message, {
       stack: error.stack ?? '',
       componentStack: errorInfo.componentStack ?? '',
@@ -57,7 +57,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
     preloadBugReportDialog()
   }
 
-  render() {
+  override render() {
     if (this.state.hasError) {
       const error = this.state.error
       return (
