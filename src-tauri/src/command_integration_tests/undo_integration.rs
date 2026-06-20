@@ -244,6 +244,178 @@ async fn undo_cross_page_move_reprojects_source_group_dense() {
     }
 }
 
+/// #1553: Undo of a cross-parent move must persist the SETTLED (reprojected)
+/// position in BOTH affected sibling groups, never the raw PROVISIONAL
+/// `new_position` the reverse `MoveBlock` arm writes before densifying.
+///
+/// `apply_reverse_in_tx`'s `MoveBlock` arm (now via `reverse_move_block`) writes
+/// the moved block's transient `index_to_provisional_position(idx)` rank with a
+/// raw `UPDATE`, then re-densifies BOTH the group it rejoins (source of the
+/// forward move) and the group it leaves (target of the forward move). The
+/// settled end-state of both groups must be dense 1..N with no duplicates/gaps,
+/// and the moved block's persisted position must be its settled rank — proving
+/// the densification is inseparable from the raw write.
+///
+/// Scenario (chosen so PROVISIONAL ≠ SETTLED is observable):
+/// `S1 > {A, B, C}` (1,2,3) and a second page `S2 > {X, Y}` (1,2). Move `B` to
+/// the FRONT of `S2` (slot 0): the engine reprojects `S1` survivors to A=1, C=2
+/// and `S2` to B=1, X=2, Y=3. Then undo. The reverse writes B back under `S1`
+/// at provisional `index_to_provisional_position(1) = 2` and removes it from the
+/// front of `S2`. After the mandatory reprojections the SETTLED state is
+/// `S1 = A=1, B=2, C=3` and `S2 = X=1, Y=2` — the source group recovers the
+/// member, the target group collapses its survivors back to dense 1,2. A
+/// regression that persisted the raw provisional write (without densifying the
+/// target group) would leave `S2` at X=2, Y=3 (gap at 1), which this test
+/// rejects.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_cross_parent_move_persists_settled_position_both_groups() {
+    use crate::op::{CreateBlockPayload, MoveBlockPayload, OpPayload};
+    use crate::ulid::BlockId;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let state = crate::loro::shared::install_for_test();
+    state.registry.clear();
+
+    const S1: &str = "01HZ1553000000000000000PG1";
+    const S2: &str = "01HZ1553000000000000000PG2";
+    const A: &str = "01HZ15530000000000000000AA";
+    const B: &str = "01HZ15530000000000000000BB";
+    const C: &str = "01HZ15530000000000000000CC";
+    const X: &str = "01HZ15530000000000000000XX";
+    const Y: &str = "01HZ15530000000000000000YY";
+
+    seed_block_both(&pool, state, S1, "page", "page-1", None, 1).await;
+    seed_block_both(&pool, state, S2, "page", "page-2", None, 2).await;
+    assign_all_to_test_space(&pool).await;
+
+    // S1 children A,B,C (slots 0,1,2 ⇒ dense 1,2,3).
+    for (i, child) in [A, B, C].into_iter().enumerate() {
+        dispatch_via_engine(
+            &pool,
+            &mat,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::from_trusted(child),
+                block_type: "content".into(),
+                parent_id: Some(BlockId::from_trusted(S1)),
+                position: None,
+                index: Some(i64::try_from(i).unwrap()),
+                content: child.into(),
+            }),
+        )
+        .await;
+    }
+    // S2 children X,Y (slots 0,1 ⇒ dense 1,2).
+    for (i, child) in [X, Y].into_iter().enumerate() {
+        dispatch_via_engine(
+            &pool,
+            &mat,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::from_trusted(child),
+                block_type: "content".into(),
+                parent_id: Some(BlockId::from_trusted(S2)),
+                position: None,
+                index: Some(i64::try_from(i).unwrap()),
+                content: child.into(),
+            }),
+        )
+        .await;
+    }
+    assign_all_to_test_space(&pool).await;
+
+    // Move B to the FRONT of S2 (slot 0). Engine reprojects:
+    // S1 → A=1, C=2 ; S2 → B=1, X=2, Y=3.
+    dispatch_via_engine(
+        &pool,
+        &mat,
+        OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: BlockId::from_trusted(B),
+            new_parent_id: Some(BlockId::from_trusted(S2)),
+            new_position: 1,
+            new_index: Some(0),
+        }),
+    )
+    .await;
+    assign_all_to_test_space(&pool).await;
+
+    let group_positions = |parent: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (String, i64)>(
+                "SELECT id, position FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+                 ORDER BY position, id",
+            )
+            .bind(parent)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        }
+    };
+
+    assert_eq!(
+        group_positions(S2).await,
+        vec![(B.to_owned(), 1), (X.to_owned(), 2), (Y.to_owned(), 3)],
+        "sanity: after the move S2 is dense B=1, X=2, Y=3"
+    );
+
+    // Undo. move_block ops journal against the NEW parent's page (S2).
+    let undo = undo_page_op_inner(&pool, DEV, &mat, S2.to_owned(), 0)
+        .await
+        .expect("undo move");
+    settle(&mat).await;
+    assert_eq!(undo.reversed_op_type, "move_block");
+
+    // SOURCE group (S1, the group B rejoins): SETTLED dense A=1, B=2, C=3 — B is
+    // back in its original middle slot and the group is gap/dupe-free.
+    assert_eq!(
+        group_positions(S1).await,
+        vec![(A.to_owned(), 1), (B.to_owned(), 2), (C.to_owned(), 3)],
+        "#1553: after undo, source group S1 is SETTLED dense A=1, B=2, C=3"
+    );
+
+    // TARGET group (S2, the group B left): SETTLED dense X=1, Y=2. This is the
+    // load-bearing assertion — the reverse removed B from the FRONT, so the raw
+    // path alone would leave X=2, Y=3 (gap at 1); only the mandatory target-group
+    // reprojection collapses them back to 1,2.
+    assert_eq!(
+        group_positions(S2).await,
+        vec![(X.to_owned(), 1), (Y.to_owned(), 2)],
+        "#1553: after undo, target group S2 is SETTLED dense X=1, Y=2 (no gap at 1)"
+    );
+
+    // The moved block's persisted position is its SETTLED rank (2), NOT the raw
+    // provisional `index_to_provisional_position(1)` that happens to also be 2
+    // here — pinned via the dense-group asserts above. Belt-and-braces: the
+    // persisted value is a real dense rank within S1's `1..N`.
+    let b_pos: i64 = sqlx::query_scalar("SELECT position FROM blocks WHERE id = ?")
+        .bind(B)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        b_pos, 2,
+        "#1553: B persists its settled dense rank (2) under S1, not a stray provisional value"
+    );
+
+    // ENGINE-PATH guard: a silent regression to the SQL-only fallback fails here.
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        for id in [S1, S2, A, B, C, X, Y] {
+            assert!(
+                guard
+                    .engine_mut()
+                    .read_block(id)
+                    .expect("read_block")
+                    .is_some(),
+                "block {id} absent from the engine tree — forward ops took the SQL-only FALLBACK",
+            );
+        }
+        drop(guard);
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undo_page_op_reverses_edit() {
     let (pool, _dir) = test_pool().await;

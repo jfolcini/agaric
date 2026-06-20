@@ -64,6 +64,80 @@ async fn reproject_live_sibling_group(
     crate::loro::projection::reproject_dense_positions(tx, &ordered).await
 }
 
+/// #1553: Reverse a [`OpPayload::MoveBlock`] inside an existing transaction as a
+/// single inseparable unit: the raw `parent_id`/`position` UPDATE, the dense
+/// 1-based reprojection of BOTH affected sibling groups, and the `page_id` /
+/// `space_id` re-derivation of the moved subtree.
+///
+/// The reverse-apply path ([`apply_reverse_in_tx`]) never enters `apply_op_tx`,
+/// so the engine reprojection the forward path relies on does NOT run here. The
+/// raw UPDATE writes the PROVISIONAL `new_position`
+/// (`index_to_provisional_position`); without the immediately following
+/// reprojection the moved block would persist that provisional rank while its
+/// new siblings keep their old ranks — duplicates/gaps that never converge
+/// (this path only enqueues a background CACHE rebuild). Folding the write and
+/// both reprojections into one helper makes the densification structurally
+/// inseparable from the raw write, so the settled position is what persists, not
+/// the transient provisional one.
+async fn reverse_move_block(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    p: &crate::op::MoveBlockPayload,
+) -> Result<(), AppError> {
+    let new_parent_id_str = p.new_parent_id.as_ref().map(BlockId::as_str);
+    let move_block_id_str = p.block_id.as_str();
+
+    // #928: capture the moved block's CURRENT parent BEFORE the reverse UPDATE
+    // reparents it. The reverse of a move re-homes the block from its present
+    // parent (the forward move's target) back to `new_parent_id` (the forward
+    // move's source). BOTH groups change membership, so — exactly like the
+    // forward `apply_move_block_via_loro` — both need a dense 1-based
+    // reprojection afterward.
+    let old_parent_id: Option<String> =
+        sqlx::query_scalar::<_, Option<String>>("SELECT parent_id FROM blocks WHERE id = ?")
+            .bind(move_block_id_str)
+            .fetch_optional(&mut **tx)
+            .await?
+            .flatten();
+
+    // Raw write of the PROVISIONAL `new_position`. This rank is transient: the
+    // reprojections below replace it with the settled dense 1-based position.
+    let result = sqlx::query!(
+        "UPDATE blocks SET parent_id = ?, position = ? \
+         WHERE id = ? AND deleted_at IS NULL",
+        new_parent_id_str,
+        p.new_position,
+        move_block_id_str,
+    )
+    .execute(&mut **tx)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!(
+            "block '{}' not found or soft-deleted during undo",
+            p.block_id
+        )));
+    }
+
+    // #928: reproject dense 1-based positions for both affected sibling groups.
+    // The target group (the block's restored parent) always needs it because the
+    // block just (re)joined it at a provisional rank; the source group (the
+    // parent it left) needs it too on a cross-parent undo because it lost a
+    // member and must re-densify. A same-parent undo touches a single group
+    // (old == new), so the dedup below reprojects it once. This mirrors the
+    // forward path's `reproject_dense_positions(old_siblings)` + `(new_siblings)`.
+    reproject_live_sibling_group(tx, new_parent_id_str).await?;
+    if old_parent_id.as_deref() != new_parent_id_str {
+        reproject_live_sibling_group(tx, old_parent_id.as_deref()).await?;
+    }
+
+    // #664: refresh `page_id` AND `space_id` for the moved block and its
+    // descendants synchronously, mirroring `move_block_inner`. Without this sync
+    // update, callers reading right after commit see a stale `page_id` /
+    // `space_id` (#533) for the moved subtree until the async `RebuildPageIds`
+    // materializer task lands.
+    crate::commands::block_cleanup::rederive_page_and_space_ids(tx, move_block_id_str).await?;
+    Ok(())
+}
+
 /// Apply the materialized effect of a reverse [`OpPayload`] to the blocks/tags/properties
 /// tables inside an existing transaction.
 ///
@@ -167,68 +241,11 @@ pub async fn apply_reverse_in_tx(
             }
         }
         OpPayload::MoveBlock(p) => {
-            let new_parent_id_str = p.new_parent_id.as_ref().map(BlockId::as_str);
-            let move_block_id_str = p.block_id.as_str();
-
-            // #928: capture the moved block's CURRENT parent BEFORE the reverse
-            // UPDATE reparents it. The reverse of a move re-homes the block from
-            // its present parent (the forward move's target) back to
-            // `new_parent_id` (the forward move's source). BOTH groups change
-            // membership, so — exactly like the forward `apply_move_block_via_loro`
-            // — both need a dense 1-based reprojection afterward. Without this
-            // the raw UPDATE below leaves the block carrying its PROVISIONAL
-            // `new_position` (`index_to_provisional_position`) while its new
-            // siblings keep their old ranks: duplicates/gaps that never converge
-            // (the foreground engine reproject runs for the forward op-dispatch
-            // path but NOT for this reverse-apply path, which only enqueues a
-            // background CACHE rebuild, never `apply_op_tx`).
-            let old_parent_id: Option<String> = sqlx::query_scalar::<_, Option<String>>(
-                "SELECT parent_id FROM blocks WHERE id = ?",
-            )
-            .bind(move_block_id_str)
-            .fetch_optional(&mut **tx)
-            .await?
-            .flatten();
-
-            let result = sqlx::query!(
-                "UPDATE blocks SET parent_id = ?, position = ? \
-                 WHERE id = ? AND deleted_at IS NULL",
-                new_parent_id_str,
-                p.new_position,
-                move_block_id_str,
-            )
-            .execute(&mut **tx)
-            .await?;
-            if result.rows_affected() == 0 {
-                return Err(AppError::NotFound(format!(
-                    "block '{}' not found or soft-deleted during undo",
-                    p.block_id
-                )));
-            }
-
-            // #928: reproject dense 1-based positions for both affected sibling
-            // groups. The target group (the block's restored parent) always
-            // needs it because the block just (re)joined it at a provisional
-            // rank; the source group (the parent it left) needs it too on a
-            // cross-parent undo because it lost a member and must re-densify.
-            // A same-parent undo touches a single group (old == new), so the
-            // dedup below reprojects it once. This mirrors the forward path's
-            // `reproject_dense_positions(old_siblings)` + `(new_siblings)`.
-            reproject_live_sibling_group(tx, new_parent_id_str).await?;
-            if old_parent_id.as_deref() != new_parent_id_str {
-                reproject_live_sibling_group(tx, old_parent_id.as_deref()).await?;
-            }
-
-            // #664: refresh `page_id` AND `space_id` for the moved block
-            // and its descendants synchronously, mirroring
-            // `move_block_inner`. Without this sync update, callers reading
-            // right after commit see a stale `page_id` / `space_id` (#533)
-            // for the moved subtree until the async `RebuildPageIds`
-            // materializer task lands. Before #664 this arm open-coded the
-            // chain and had drifted to skip the `space_id` step; the shared
-            // helper now guarantees both columns are re-derived.
-            crate::commands::block_cleanup::rederive_page_and_space_ids(tx, p.block_id.as_str())
-                .await?;
+            // #1553: the raw write + both sibling-group reprojections + page/space
+            // re-derivation are encapsulated in `reverse_move_block` so the dense
+            // reprojection (which replaces the provisional `new_position` with the
+            // settled 1-based rank) cannot be separated from the raw write.
+            reverse_move_block(tx, p).await?;
         }
         // AddTag and RemoveTag are intentionally idempotent: INSERT OR IGNORE
         // silently handles duplicates, and the DELETE below does not check

@@ -50,14 +50,21 @@
 ///   for the identical input class.
 /// - End conditions:
 ///     * `until_date` — stop once `current > until_date`.
-///     * `remaining` — stop once we've emitted (or attempted to emit)
-///       `remaining` projections. Counted **regardless** of whether the
+///     * `remaining` — stop once we've produced `remaining` occurrences
+///       of the **true series**. Each shift consumes one unit of the
+///       budget regardless of whether the occurrence lands inside
+///       `[range_start, range_end]` (#1550) and regardless of whether the
 ///       caller's `emit` closure accepted the entry, so the count
-///       semantics survive a cursor / size-cap reject downstream.
+///       semantics track the real series position (and survive a cursor /
+///       size-cap reject downstream). Counting only in-range emits let a
+///       far-past-start recurrence advance through unbounded pre-range
+///       steps for free and thus emit more in-range occurrences than
+///       `repeat_count` implies.
 /// - Range clipping:
 ///     * `current > range_end` → break (no more emissions can land).
 ///     * `current >= range_start` → emit; otherwise advance silently
-///       and keep iterating.
+///       and keep iterating. Either way the occurrence consumes one unit
+///       of the `remaining` budget (see above).
 ///
 /// Source iteration order is fixed: `due_date` first, then
 /// `scheduled_date`. Both the cache and on-the-fly paths previously
@@ -186,18 +193,22 @@ pub(crate) fn project_block_dates<F>(
         let mut projected_count = 0usize;
         let max_remaining = remaining.unwrap_or(usize::MAX);
 
-        // For `++` mode, pre-emit the caught-up date itself when it
-        // lands inside the requested range and is not past `until_date`.
-        // The main loop shifts before emit-checking, so without this
-        // pre-emit the caught-up date would be silently skipped.
-        if mode == "plus_plus"
-            && projected_count < max_remaining
-            && current >= range_start
-            && current <= range_end
-        {
+        // For `++` mode, pre-emit the caught-up date itself when it is not
+        // past `until_date` and lands within `range_end`. The main loop
+        // shifts before emit-checking, so without this pre-emit the
+        // caught-up date would be silently skipped.
+        //
+        // The caught-up date is the first real occurrence of the series, so
+        // it consumes one unit of the `remaining` (repeat-count) budget even
+        // when it falls before `range_start` (#1550: budget tracks the true
+        // series, not just the in-range window). The `emit` itself stays
+        // gated on the full `[range_start, range_end]` check.
+        if mode == "plus_plus" && projected_count < max_remaining && current <= range_end {
             let past_until = repeat_until.is_some_and(|until| current > until);
             if !past_until {
-                emit(current, source_name);
+                if current >= range_start {
+                    emit(current, source_name);
+                }
                 projected_count += 1;
             }
         }
@@ -223,9 +234,19 @@ pub(crate) fn project_block_dates<F>(
                 break;
             }
 
+            // Every shift produces one occurrence of the true series, so
+            // it consumes one unit of the `remaining` (repeat-count) budget
+            // regardless of whether it lands inside `[range_start,
+            // range_end]`. Counting only in-range emits (the pre-fix
+            // behaviour, #1550) let a far-past-start recurrence advance
+            // through unbounded pre-range steps without spending the
+            // budget, so it could emit MORE in-range occurrences than
+            // `repeat_count` implies. The `emit` itself stays gated on the
+            // range check — only the in-range tuples are surfaced — but the
+            // count now reflects the real series position.
+            projected_count += 1;
             if current >= range_start {
                 emit(current, source_name);
-                projected_count += 1;
             }
         }
     }
