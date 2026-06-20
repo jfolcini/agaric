@@ -953,6 +953,16 @@ describe('round-trip: serialize(parse(s)) === s', () => {
     ['blockquote with marks', '> **strong**'],
     ['simple table', '| A | B |\n| --- | --- |\n| 1 | 2 |'],
     ['table with marks', '| **bold** | *italic* |\n| --- | --- |\n| a | b |'],
+    ['flat bullet list', '- one\n- two'],
+    ['flat ordered list', '1. one\n2. two'],
+    // Nested lists created by Tab/sinkListItem (#1513): the indented child list
+    // must survive serialize→parse→serialize without dropping items.
+    ['nested bullet list (2 levels)', '- parent\n  - child'],
+    ['nested bullet list (3 levels)', '- a\n  - b\n    - c'],
+    ['nested ordered list', '1. parent\n  1. child'],
+    ['bullet with two nested children', '- parent\n  - child 1\n  - child 2'],
+    ['mixed nested under bullet', '- parent\n  1. ordered child'],
+    ['nested then sibling', '- a\n  - a1\n- b'],
   ]
 
   for (const [name, input] of cases) {
@@ -965,6 +975,97 @@ describe('round-trip: serialize(parse(s)) === s', () => {
     // Header-only table serializes as header + separator
     const md = '| A | B |\n| --- | --- |'
     expect(serialize(parse(md))).toBe(md)
+  })
+})
+
+// -- nested lists (sinkListItem) ----------------------------------------------
+// Regression for #1513: a list item can legally contain a nested list (its
+// content is `paragraph block*`, Tab is bound to sinkListItem). The old flat
+// serializer treated the nested list as an unknown inline node and dropped its
+// text on blur. The serializer now recurses + indents, and the parser dedents
+// the indented block back into the same nested structure.
+describe('nested lists (#1513): preserve sinkListItem nesting', () => {
+  it('serializes a nested bullet list with indentation', () => {
+    const input = doc(
+      bulletList(
+        listItem(paragraph(text('parent')), bulletList(listItem(paragraph(text('child'))))),
+      ),
+    )
+    expect(serialize(input)).toBe('- parent\n  - child')
+  })
+
+  it('serializes three nesting levels', () => {
+    const input = doc(
+      bulletList(
+        listItem(
+          paragraph(text('a')),
+          bulletList(listItem(paragraph(text('b')), bulletList(listItem(paragraph(text('c')))))),
+        ),
+      ),
+    )
+    expect(serialize(input)).toBe('- a\n  - b\n    - c')
+  })
+
+  it('does not fire onUnknownNode for a nested list', () => {
+    const input = doc(
+      bulletList(listItem(paragraph(text('p')), bulletList(listItem(paragraph(text('c')))))),
+    )
+    const onUnknown = vi.fn()
+    serialize(input, onUnknown)
+    expect(onUnknown).not.toHaveBeenCalled()
+  })
+
+  it('round-trips a 2-level nested bullet list structure (no dropped items)', () => {
+    const input = doc(
+      bulletList(
+        listItem(
+          paragraph(text('parent')),
+          bulletList(listItem(paragraph(text('child 1'))), listItem(paragraph(text('child 2')))),
+        ),
+        listItem(paragraph(text('sibling'))),
+      ),
+    )
+    const md = serialize(input)
+    expect(md).toBe('- parent\n  - child 1\n  - child 2\n- sibling')
+    // The nested children survive the parse back into the same structure.
+    expect(parse(md)).toEqual(input)
+  })
+
+  it('round-trips a nested ordered list structure', () => {
+    const input = doc(
+      orderedList(
+        listItem(paragraph(text('parent')), orderedList(listItem(paragraph(text('child'))))),
+      ),
+    )
+    const md = serialize(input)
+    expect(md).toBe('1. parent\n  1. child')
+    expect(parse(md)).toEqual(input)
+  })
+
+  it('round-trips a mixed bullet→ordered nesting', () => {
+    const input = doc(
+      bulletList(
+        listItem(
+          paragraph(text('parent')),
+          orderedList(listItem(paragraph(text('ordered child')))),
+        ),
+      ),
+    )
+    const md = serialize(input)
+    expect(md).toBe('- parent\n  1. ordered child')
+    expect(parse(md)).toEqual(input)
+  })
+
+  it('round-trips three levels structurally', () => {
+    const input = doc(
+      bulletList(
+        listItem(
+          paragraph(text('a')),
+          bulletList(listItem(paragraph(text('b')), bulletList(listItem(paragraph(text('c')))))),
+        ),
+      ),
+    )
+    expect(parse(serialize(input))).toEqual(input)
   })
 })
 

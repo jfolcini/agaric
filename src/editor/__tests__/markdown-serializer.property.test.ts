@@ -366,7 +366,17 @@ function normalizeDoc(doc: DocNode): DocNode {
         return {
           ...p,
           content: p.content.map((item) =>
-            item.content ? { ...item, content: item.content.map(normalizeParagraphNode) } : item,
+            item.content
+              ? {
+                  ...item,
+                  // List-item children may be paragraphs or nested lists (#1513);
+                  // the generator here produces flat (paragraph-only) lists, so
+                  // only paragraph children need text-node normalization.
+                  content: item.content.map((c) =>
+                    c.type === 'paragraph' ? normalizeParagraphNode(c) : c,
+                  ),
+                }
+              : item,
           ),
         }
       }

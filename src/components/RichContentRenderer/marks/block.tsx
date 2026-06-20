@@ -4,6 +4,7 @@ import type {
   BlockLevelNode,
   BulletListNode,
   ListItemNode,
+  OrderedListNode,
   ParagraphNode,
   TableNode,
 } from '../../../editor/types'
@@ -34,9 +35,15 @@ export function renderBulletListBlock(
     const item = content[i]
     const itemKey = `${key}-${i}`
     const liChildren: React.ReactNode[] = []
-    const paragraphs = item?.content ?? []
-    for (let j = 0; j < paragraphs.length; j++) {
-      const p = paragraphs[j] as ParagraphNode | undefined
+    const children = item?.content ?? []
+    for (let j = 0; j < children.length; j++) {
+      const child = children[j]
+      if (child?.type === 'orderedList' || child?.type === 'bulletList') {
+        // Nested list (Tab/sinkListItem, #1513) renders as a sublist in the <li>.
+        liChildren.push(renderNestedList(child, `${itemKey}-${j}`, ctx))
+        continue
+      }
+      const p = child as ParagraphNode | undefined
       if (p?.content) {
         liChildren.push(...renderInlineContent(p.content, `${itemKey}-${j}`, ctx))
       }
@@ -48,6 +55,21 @@ export function renderBulletListBlock(
       {items}
     </ul>
   )
+}
+
+/**
+ * Dispatch a nested list child (#1513) to its block renderer. Passed into
+ * `renderOrderedListBlock` so it can recurse without importing this module
+ * (which would form a cycle).
+ */
+function renderNestedList(
+  list: OrderedListNode | BulletListNode,
+  key: string,
+  ctx: RenderContext,
+): React.ReactNode {
+  return list.type === 'orderedList'
+    ? renderOrderedListBlock(list, key, ctx, renderNestedList)
+    : renderBulletListBlock(list, key, ctx)
 }
 
 /**
@@ -68,7 +90,7 @@ export function renderBlock(
     case 'blockquote':
       return renderBlockquoteBlock(block, key, ctx, renderBlock)
     case 'orderedList':
-      return renderOrderedListBlock(block, key, ctx)
+      return renderOrderedListBlock(block, key, ctx, renderNestedList)
     case 'bulletList':
       return renderBulletListBlock(block, key, ctx)
     case 'horizontalRule':
@@ -97,9 +119,16 @@ function renderListItemsInline(
   const out: React.ReactNode[] = []
   for (let i = 0; i < items.length; i++) {
     if (i > 0) out.push(<span key={`${key}-isep-${i}`}> </span>)
-    const paragraphs = items[i]?.content ?? []
-    for (let j = 0; j < paragraphs.length; j++) {
-      const p = paragraphs[j] as ParagraphNode | undefined
+    const children = items[i]?.content ?? []
+    for (let j = 0; j < children.length; j++) {
+      const child = children[j]
+      if (child?.type === 'orderedList' || child?.type === 'bulletList') {
+        // Nested list (#1513): flatten its items' text into the inline preview
+        // too, so nested content is not silently dropped from the one-liner.
+        out.push(...renderListItemsInline(child.content ?? [], `${key}-${i}-${j}`, ctx))
+        continue
+      }
+      const p = child as ParagraphNode | undefined
       if (p?.content) out.push(...renderInlineContent(p.content, `${key}-${i}-${j}`, ctx))
     }
   }
