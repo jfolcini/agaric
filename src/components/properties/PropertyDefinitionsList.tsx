@@ -263,8 +263,12 @@ export function PropertyDefinitionsList(): React.ReactElement {
                         <span
                           className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground"
                           data-testid={`locked-options-${def.key}`}
+                          title={t('propertiesView.optionsLockedTitle')}
                         >
-                          <Lock className="h-3 w-3" aria-hidden="true" />
+                          <Lock
+                            className="h-3 w-3"
+                            aria-label={t('propertiesView.optionsLockedTitle')}
+                          />
                           {t('propertiesView.optionsLocked')}
                         </span>
                       </TooltipTrigger>

@@ -188,6 +188,7 @@ export const properties: Record<string, string> = {
   'propertiesView.editOptionsTooltip': 'Edit options',
   'propertiesView.noFilterResults': 'No properties match your search',
   'propertiesView.optionsLocked': 'Locked',
+  'propertiesView.optionsLockedTitle': 'Task state cycle is fixed and not editable',
   'propertiesView.optionsLockedTooltip':
     'The TODO state cycle is fixed at TODO → DOING → DONE → CANCELLED. Options cannot be edited.',
   'propertiesView.taskCycleHelpLabel': 'Task cycle help',

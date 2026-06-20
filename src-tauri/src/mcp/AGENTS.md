@@ -78,6 +78,12 @@ Two pipes / two sockets is a deliberate split: an agent can connect to the RO su
 
 **Do not cross-pollute.** A read-only tool that needs to write (e.g. caching) goes through a normal command handler; it doesn't grow a mutation path on the RO surface.
 
+### Full-vault RO scope (no per-space isolation)
+
+The RO surface is **vault-wide read-only by design**: an agent given one `space_id` can still enumerate and read every space. `list_spaces` (`tools_ro.rs`, `handle_list_spaces` → `list_spaces_registry_inner`) is the concrete discovery surface — it returns `{id, name, is_default}` for *every* space with no scoping — and the other unscoped RO readers (search / list / fetch) then read any space's pages and blocks. This is the intended contract, not a leak.
+
+**If you ever add per-space RO isolation**, `list_spaces` plus the unscoped RO readers are the enumeration path to close: gate `list_spaces` to the connection's authorised space(s) and scope every RO reader to a `space_id` filter. Until then, treat the RO surface as a full-vault enumeration capability.
+
 ## Testing
 
 - **`tools_ro::tests` + `tools_rw::tests`** cover input validation + happy path + at least one error path per tool. Use `test_pool()` + materializer fixture.
