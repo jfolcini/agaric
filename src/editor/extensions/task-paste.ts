@@ -7,8 +7,11 @@
  * would only ever fold into `todo_state` at flush time (and only for TODO/DONE).
  *
  * Strategy (deliberately narrow to avoid regressing normal paste):
- *   1. Act ONLY when the selection is empty (cursor only) — never clobber a
- *      paste-over-selection.
+ *   1. Act ONLY when the selection is a bare caret sitting in a genuinely EMPTY
+ *      non-task paragraph — never clobber a paste-over-selection, and never
+ *      discard existing text when the caret is mid-paragraph (#1514). A paste
+ *      into non-empty content falls through to the default handler, which
+ *      inserts the raw marker at the caret.
  *   2. Act ONLY when the pasted text/plain, trimmed, parses to EXACTLY ONE
  *      paragraph carrying a `todoState` attr (a single GFM task line). Anything
  *      else — plain text, multi-line markdown, a heading, a bullet list, a task
@@ -70,6 +73,18 @@ export const TaskPaste = Extension.create({
             const taskNode = pastedTaskParagraph(clipboardText)
             if (!taskNode) return false
 
+            // Only take over the block when the caret sits in a genuinely empty,
+            // non-task paragraph (mirroring how typing `- [ ] ` converts the
+            // current block). A collapsed cursor inside non-empty text means
+            // pasting mid-paragraph must NOT clobber the existing content — fall
+            // through to the default paste, which inserts the raw marker at the
+            // caret (then folds into todo_state at flush). See #1514.
+            const { $from } = view.state.selection
+            const parent = $from.parent
+            if (parent.content.size > 0 || parent.attrs?.['todoState']) {
+              return false
+            }
+
             const { schema } = view.state
             const paragraphType = schema.nodes['paragraph']
             if (!paragraphType) return false
@@ -90,10 +105,9 @@ export const TaskPaste = Extension.create({
               return false
             }
 
-            const { $from } = view.state.selection
-            // Replace the entire current paragraph (the empty/cursor block) with
-            // the task paragraph so the block becomes a task, mirroring how
-            // typing `- [ ] ` converts the current block.
+            // Replace the entire current (now known-empty) paragraph with the
+            // task paragraph so the block becomes a task, mirroring how typing
+            // `- [ ] ` converts the current block.
             const start = $from.before($from.depth)
             const end = $from.after($from.depth)
             const tr = view.state.tr.replaceRangeWith(start, end, pmParagraph)
