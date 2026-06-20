@@ -564,7 +564,7 @@ describe('AgendaFilterBuilder', () => {
     })
 
     it('ignores legacy localStorage values (UX-202)', () => {
-      localStorage.setItem('task_cycle', JSON.stringify([null, 'TODO', 'DOING', 'DONE', 'WAITING']))
+      localStorage.setItem('task_cycle', JSON.stringify([null, 'TODO', 'DOING', 'DONE', 'LEGACY']))
       try {
         expect(getTaskStates()).toEqual(['TODO', 'DOING', 'DONE', 'CANCELLED'])
       } finally {
@@ -589,7 +589,7 @@ describe('AgendaFilterBuilder', () => {
     expect(within(group).getByLabelText('CANCELLED')).toBeInTheDocument()
     expect(within(group).getByLabelText('DONE')).toBeInTheDocument()
     // Legacy custom state should NOT appear — the cycle is now locked.
-    expect(within(group).queryByLabelText('WAITING')).not.toBeInTheDocument()
+    expect(within(group).queryByLabelText('LEGACY')).not.toBeInTheDocument()
   })
 
   // -----------------------------------------------------------------------

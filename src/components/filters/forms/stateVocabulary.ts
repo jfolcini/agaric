@@ -36,7 +36,6 @@ const STATE_LABEL_KEYS: Record<StateFilterValue, string> = {
   TODO: 'filterState.todo',
   DOING: 'filterState.doing',
   DONE: 'filterState.done',
-  WAITING: 'filterState.waiting',
   CANCELLED: 'filterState.cancelled',
   none: 'filterState.none',
 }

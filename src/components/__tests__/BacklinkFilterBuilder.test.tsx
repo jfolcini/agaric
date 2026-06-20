@@ -171,11 +171,13 @@ describe('BacklinkFilterBuilder', () => {
 
     // Issue #1647 follow-up — the maintainer UNIFIED the search "State" and
     // backlink "Status" vocabularies into one canonical set. The backlink
-    // Status form now offers the FULL set (TODO/DOING/DONE/WAITING/
-    // CANCELLED/none) sourced from the shared `STATE_FILTER_VALUES`, exactly
-    // like the search State form. (Previously this was a TODO/DOING/DONE
-    // shortlist.)
-    it('offers the full unified state vocabulary (same as search State)', async () => {
+    // Status form offers the unified set sourced from the shared
+    // `STATE_FILTER_VALUES`, exactly like the search State form. The
+    // supported set is the locked task cycle plus `none`:
+    // TODO/DOING/DONE/CANCELLED/none. (Previously this was a TODO/DOING/DONE
+    // shortlist; the dead `WAITING` option was removed since it can never be
+    // set by the locked TASK_CYCLE.)
+    it('offers the unified state vocabulary (same as search State)', async () => {
       const user = userEvent.setup()
       renderBuilder()
 
@@ -186,10 +188,11 @@ describe('BacklinkFilterBuilder', () => {
       const values = within(statusSelect)
         .getAllByRole('option')
         .map((o) => (o as HTMLOptionElement).value)
-      // The full unified set — sourced from the single canonical vocabulary.
+      // The unified set — sourced from the single canonical vocabulary.
       expect(values).toEqual([...STATE_FILTER_VALUES])
-      // Values that used to be search-only are now present on this surface.
-      expect(values).toContain('WAITING')
+      expect(values).toEqual(['TODO', 'DOING', 'DONE', 'CANCELLED', 'none'])
+      // The dead `WAITING` option (never settable) is no longer offered.
+      expect(values).not.toContain('WAITING')
       expect(values).toContain('CANCELLED')
       expect(values).toContain('none')
     })

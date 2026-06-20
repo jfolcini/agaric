@@ -60,7 +60,7 @@ describe('StatusIcon', () => {
   })
 
   it('renders Circle icon for unknown state', () => {
-    render(<StatusIcon state="WAITING" />)
+    render(<StatusIcon state="UNKNOWN" />)
     expect(screen.getByTestId('icon-todo')).toBeInTheDocument()
   })
 
