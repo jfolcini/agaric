@@ -1685,4 +1685,142 @@ mod tests {
         .unwrap();
         assert_eq!(total, 3, "expected exactly three seeded ops; got {total}");
     }
+
+    /// Insert a raw `op_log` row with an explicit `is_undo` flag — used by the
+    /// #1517 regression test to stamp a REVERSE op (plain `op_type`,
+    /// `is_undo = 1`) without driving a full undo through the pipeline (which
+    /// would use real `now_ms()` timestamps and defeat the deterministic
+    /// window placement the test relies on).
+    #[allow(clippy::too_many_arguments)] // raw-insert test helper mirrors the op_log columns
+    async fn insert_raw_op_is_undo(
+        pool: &SqlitePool,
+        device_id: &str,
+        seq: i64,
+        op_type: &str,
+        payload: &str,
+        block_id: Option<&str>,
+        created_at: i64,
+        is_undo: i64,
+    ) {
+        sqlx::query(
+            "INSERT INTO op_log \
+             (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, is_undo) \
+             VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(device_id)
+        .bind(seq)
+        .bind("test-hash-placeholder")
+        .bind(op_type)
+        .bind(payload)
+        .bind(created_at)
+        .bind(block_id)
+        .bind(is_undo)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// #1517: `find_undo_group_inner`'s `ordered_ops` CTE must EXCLUDE reverse
+    /// ops from the undoable set. A reverse op (the one an undo appends) carries
+    /// `op_log.is_undo = 1` but a PLAIN `op_type` (e.g. `edit_block`) with NO
+    /// `undo_`/`redo_` prefix. The old filter keyed on dead
+    /// `op_type NOT LIKE 'undo\_%'`/`'redo\_%'` predicates that matched zero
+    /// rows, so reverse ops were counted as ordinary undoable ops — a held
+    /// Ctrl+Z within the window then extended the group across ops already
+    /// undone. The fix keys on `is_undo = 0`.
+    ///
+    /// Setup: page + child, two consecutive same-device forward `edit_block`
+    /// ops, then ONE reverse `edit_block` op (plain op_type, `is_undo = 1`)
+    /// stacked on top — all three within the group window. With the fix the
+    /// reverse op is excluded, so the depth-0 group seeds at the forward
+    /// `edit2` and spans only the two forward edits ⇒ 2. Were the reverse op
+    /// (wrongly) counted, it would become the seed and the group would inflate
+    /// to 3.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn find_undo_group_excludes_reverse_ops_1517() {
+        use crate::op::EditBlockPayload;
+
+        let (pool, _dir) = test_pool().await;
+
+        let page_id = BlockId::test_id("PAGE1");
+        let child_id = BlockId::test_id("CHILD1");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'page', 'P', 0)",
+        )
+        .bind(page_id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, parent_id, block_type, content, position) \
+             VALUES (?, ?, 'content', 'c', 0)",
+        )
+        .bind(child_id.as_str())
+        .bind(page_id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Two consecutive same-device FORWARD edits (is_undo = 0).
+        for (i, text) in ["edit1", "edit2"].into_iter().enumerate() {
+            let edit = OpPayload::EditBlock(EditBlockPayload {
+                block_id: child_id.clone(),
+                to_text: text.into(),
+                prev_edit: None,
+            });
+            append_local_op_at(&pool, DEV, edit, FIXED_TS + i64::try_from(i).unwrap())
+                .await
+                .unwrap();
+        }
+
+        // Sanity: before any reverse op, the depth-0 group spans both forward
+        // edits (same device, within the 10ms window).
+        let before = find_undo_group_inner(&pool, page_id.as_str(), 0, 10)
+            .await
+            .unwrap();
+        assert_eq!(before, 2, "two consecutive forward edits form a group of 2");
+
+        // Stack a REVERSE op on top: same device, plain `edit_block` op_type,
+        // is_undo = 1, within the window of the two forward edits. This is the
+        // exact row shape the dead `op_type NOT LIKE 'undo_%'` predicate failed
+        // to exclude.
+        let reverse_payload = serde_json::to_string(&EditBlockPayload {
+            block_id: child_id.clone(),
+            to_text: "edit1".into(),
+            prev_edit: Some((DEV.to_string(), 2)),
+        })
+        .unwrap();
+        insert_raw_op_is_undo(
+            &pool,
+            DEV,
+            3,
+            "edit_block",
+            &reverse_payload,
+            Some(child_id.as_str()),
+            FIXED_TS + 2,
+            1, // is_undo
+        )
+        .await;
+
+        // CORE #1517 ASSERTION: the depth-0 group still seeds at the forward
+        // `edit2` and counts only the two forward edits — the reverse op is
+        // excluded. A regression that counts the reverse op would seed at it
+        // and inflate the group to 3.
+        let after = find_undo_group_inner(&pool, page_id.as_str(), 0, 10)
+            .await
+            .unwrap();
+        assert_eq!(
+            after, 2,
+            "#1517: reverse ops (is_undo = 1) must be excluded from the \
+             undoable set; group must stay 2, not inflate to 3; got {after}"
+        );
+
+        // Guard against a false pass: the reverse op really is present and would
+        // be enumerated were the filter dead.
+        let reverse_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log WHERE is_undo = 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(reverse_rows, 1, "exactly one reverse op seeded");
+    }
 }

@@ -407,7 +407,16 @@ pub async fn delete_block_inner(
 
     // Single timestamp for both op_log and blocks — reverse_delete_block uses
     // record.created_at as deleted_at_ref, so they must match exactly.
-    let now = crate::db::now_ms();
+    //
+    // #1549: source the delete timestamp from the monotonic-per-process
+    // delete clock, NOT wall-clock `now_ms()`. The value is the cohort
+    // identity for restore (`WHERE deleted_at = ?`) and for cascade-root
+    // detection (`op.created_at = blocks.deleted_at`); two independent
+    // deletes landing in the same wall-clock ms would otherwise collide and
+    // let a restore over-restore a separately-deleted nested subtree. The
+    // SAME value is written to both the op_log `created_at` and `deleted_at`,
+    // so they still match exactly.
+    let now = crate::db::next_delete_ms();
 
     // Append to op_log within transaction
     let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
@@ -678,7 +687,15 @@ pub async fn delete_blocks_by_ids_inner(
 
     // Single timestamp for op_log + cascade UPDATE so reverse_delete_block
     // can match `op_record.created_at` against `blocks.deleted_at`.
-    let now = crate::db::now_ms();
+    //
+    // #1549: monotonic-per-process delete clock, NOT wall-clock `now_ms()`.
+    // Each root in this batch is stamped from the SAME `now` (one cohort per
+    // batch), but distinct delete *operations* (separate command invocations)
+    // get distinct timestamps even within the same wall-clock ms, so a
+    // restore keyed on `deleted_at = ?` cannot over-restore an
+    // independently-deleted nested subtree. The value feeds both the op_log
+    // `created_at` and the cascade `deleted_at` so they match exactly.
+    let now = crate::db::next_delete_ms();
 
     // Append one `DeleteBlock` op per root (NOT per descendant — the
     // cascade is captured by the recursive UPDATE below). This mirrors

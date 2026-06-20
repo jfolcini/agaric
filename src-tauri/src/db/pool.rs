@@ -81,6 +81,65 @@ pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
+/// Process-global monotonic source for the **delete timestamp** that a
+/// soft-delete stamps into `blocks.deleted_at` (and the matching
+/// `delete_block` op's `created_at`).
+///
+/// **Why a dedicated clock and not [`now_ms`]?** A soft-delete uses its
+/// `deleted_at` value as the *cohort identity* for restore: a restore walks
+/// the deleted subtree and clears only rows whose `deleted_at` equals the
+/// seed's (`descendants_cte_standard!()` / `WHERE deleted_at = ?`), and
+/// `restore_all_deleted_inner` keys cascade-root detection on
+/// `op.created_at = blocks.deleted_at`. [`now_ms`] is wall-clock and **not
+/// monotonic**: two independent deletes that land in the same millisecond
+/// (or a backward NTP step) collide on `deleted_at`, which makes a
+/// separately-deleted nested subtree structurally indistinguishable from the
+/// outer cohort. Restoring the outer cohort then over-restores the inner,
+/// independently-deleted subtree (#1549).
+///
+/// This accessor returns `max(now_ms(), last + 1)` under a compare-and-swap
+/// loop, so successive calls are **strictly increasing within a process**
+/// even when the wall clock repeats or steps backward, giving every distinct
+/// delete a distinct `deleted_at`. When the wall clock advances normally the
+/// value tracks it (the stored high-water mark is just `now_ms()` again); it
+/// only diverges by a few ms under same-millisecond bursts. Across process
+/// restarts the clock reseeds from [`now_ms`] on first use — collisions only
+/// matter within a single live session (deletes that share a process), so a
+/// fresh seed is fine.
+///
+/// [`now_ms`] itself is deliberately left wall-clock for all other callers
+/// (op `created_at` ordering relies on the composite `(created_at, seq)` key,
+/// staleness windows, display, etc.).
+pub fn next_delete_ms() -> i64 {
+    use std::sync::atomic::{AtomicI64, Ordering};
+
+    /// High-water mark of the last delete timestamp handed out, per process.
+    /// `0` means "never seeded" — the first call below seeds it from
+    /// [`now_ms`] (epoch-ms is always far above 0, so `0` is an unambiguous
+    /// sentinel).
+    static DELETE_CLOCK: AtomicI64 = AtomicI64::new(0);
+
+    let mut last = DELETE_CLOCK.load(Ordering::Relaxed);
+    loop {
+        // Strictly greater than the last value we handed out, and never
+        // behind wall-clock. `last + 1` cannot overflow in practice (i64
+        // epoch-ms covers ±292M years), but saturate defensively.
+        let candidate = now_ms().max(last.saturating_add(1));
+        match DELETE_CLOCK.compare_exchange_weak(
+            last,
+            candidate,
+            Ordering::SeqCst,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return candidate,
+            // Another thread advanced the clock between our load and CAS;
+            // retry against the value it observed (no torn reads — the CAS
+            // is the single linearization point).
+            Err(observed) => last = observed,
+        }
+    }
+}
+
 /// Acquire a connection from the pool, logging at `warn` if the acquire
 /// itself took longer than [`SLOW_ACQUIRE_WARN_MS`].
 ///

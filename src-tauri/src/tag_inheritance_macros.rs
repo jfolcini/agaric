@@ -240,6 +240,42 @@ macro_rules! tag_inh_descendant_tags_full {
     };
 }
 
+/// Non-recursive CTE body: collapse the full descendant-tags walk to the
+/// **nearest-ancestor** attribution per `(block_id, tag_id)`.
+///
+/// [`tag_inh_descendant_tags_full`] can emit several rows for the same
+/// `(block_id, tag_id)` — one per tag-bearing ancestor along the chain —
+/// each carrying a different `inherited_from` and `depth`. Because
+/// `block_tag_inherited` has PK `(block_id, tag_id)`, only one survives.
+/// Inserting straight from `descendant_tags` with `INSERT OR IGNORE`
+/// would let the survivor be recursion-ordering-dependent.
+///
+/// This CTE keeps the row with the minimum `depth` (the nearest tagging
+/// ancestor), matching the deterministic rule the incremental
+/// remove path enforces via `WHERE a.depth = (SELECT MIN(...))`. A
+/// `MIN(inherited_from)` tiebreak makes the choice fully deterministic
+/// even in the (tree-impossible) case of two equal-depth ancestors, so
+/// the full rebuild and the incremental remove always agree.
+///
+/// Caller responsibility: emit a [`tag_inh_descendant_tags_full`] CTE
+/// earlier in the same `WITH RECURSIVE` block.
+///
+/// CTE name `descendant_tags_nearest(block_id, tag_id, inherited_from)`.
+#[macro_export]
+macro_rules! tag_inh_rebuild_nearest {
+    () => {
+        "descendant_tags_nearest(block_id, tag_id, inherited_from) AS ( \
+             SELECT dt.block_id, dt.tag_id, MIN(dt.inherited_from) AS inherited_from \
+             FROM descendant_tags dt \
+             WHERE dt.depth = ( \
+                 SELECT MIN(dt2.depth) FROM descendant_tags dt2 \
+                 WHERE dt2.block_id = dt.block_id AND dt2.tag_id = dt.tag_id \
+             ) \
+             GROUP BY dt.block_id, dt.tag_id \
+         )"
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::MAX_TAG_INHERITANCE_DEPTH;
@@ -306,6 +342,7 @@ mod tests {
             ("ancestors_walk(0)", tag_inh_ancestors_walk!(0)),
             ("ancestors_walk(1)", tag_inh_ancestors_walk!(1)),
             ("descendant_tags_full", tag_inh_descendant_tags_full!()),
+            ("rebuild_nearest", tag_inh_rebuild_nearest!()),
             (
                 "tagged_descendants_in_subtree",
                 tag_inh_tagged_descendants_in_subtree!(),
