@@ -51,7 +51,7 @@ function getOrCreate(): HTMLElement {
     border: '0',
   })
   el.id = 'sr-announcer'
-  document.body.appendChild(el)
+  document.body.append(el)
   return el
 }
 

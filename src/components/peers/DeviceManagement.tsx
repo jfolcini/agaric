@@ -114,7 +114,7 @@ export function DeviceManagement(): React.ReactElement {
       // #1673: Sort a COPY (don't mutate the IPC payload) with a total-order
       // comparator: named devices first (alphabetical), then unnamed by
       // synced_at desc, with peer_id as the final stable tiebreak.
-      const sorted = [...peerList].sort(comparePeers)
+      const sorted = [...peerList].toSorted(comparePeers)
       setPeers(sorted)
       // #1076: mirror the backend peer list into the shared sync store so
       // the StatusPanel Sync panel and the sidebar status dot reflect the

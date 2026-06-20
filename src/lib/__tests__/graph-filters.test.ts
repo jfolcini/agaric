@@ -135,12 +135,12 @@ describe('applyGraphFilters', () => {
   describe('hasDueDate filter', () => {
     it('returns only nodes with a non-null, non-empty due_date when value is true', () => {
       const result = applyGraphFilters(nodes, [{ type: 'hasDueDate', value: true }])
-      expect(result.map((n) => n.id).sort()).toEqual(['cancelled', 'todo-high'])
+      expect(result.map((n) => n.id).toSorted()).toEqual(['cancelled', 'todo-high'])
     })
 
     it('returns only nodes WITHOUT a due_date when value is false', () => {
       const result = applyGraphFilters(nodes, [{ type: 'hasDueDate', value: false }])
-      expect(result.map((n) => n.id).sort()).toEqual(['doing-med', 'done', 'plain', 'template'])
+      expect(result.map((n) => n.id).toSorted()).toEqual(['doing-med', 'done', 'plain', 'template'])
     })
 
     it('treats empty string as no due date', () => {
@@ -153,24 +153,24 @@ describe('applyGraphFilters', () => {
   describe('hasScheduledDate filter', () => {
     it('returns only nodes with scheduled_date when value is true', () => {
       const result = applyGraphFilters(nodes, [{ type: 'hasScheduledDate', value: true }])
-      expect(result.map((n) => n.id).sort()).toEqual(['cancelled', 'doing-med'])
+      expect(result.map((n) => n.id).toSorted()).toEqual(['cancelled', 'doing-med'])
     })
 
     it('returns nodes without scheduled_date when value is false', () => {
       const result = applyGraphFilters(nodes, [{ type: 'hasScheduledDate', value: false }])
-      expect(result.map((n) => n.id).sort()).toEqual(['done', 'plain', 'template', 'todo-high'])
+      expect(result.map((n) => n.id).toSorted()).toEqual(['done', 'plain', 'template', 'todo-high'])
     })
   })
 
   describe('hasBacklinks filter', () => {
     it('returns only nodes with backlink_count > 0 when value is true', () => {
       const result = applyGraphFilters(nodes, [{ type: 'hasBacklinks', value: true }])
-      expect(result.map((n) => n.id).sort()).toEqual(['done', 'plain', 'todo-high'])
+      expect(result.map((n) => n.id).toSorted()).toEqual(['done', 'plain', 'todo-high'])
     })
 
     it('returns only nodes with backlink_count == 0 when value is false', () => {
       const result = applyGraphFilters(nodes, [{ type: 'hasBacklinks', value: false }])
-      expect(result.map((n) => n.id).sort()).toEqual(['cancelled', 'doing-med', 'template'])
+      expect(result.map((n) => n.id).toSorted()).toEqual(['cancelled', 'doing-med', 'template'])
     })
 
     it('passes nodes through when backlink_count is undefined', () => {
@@ -202,12 +202,12 @@ describe('applyGraphFilters', () => {
   describe('tag filter', () => {
     it('matches nodes with at least one of the selected tags (OR)', () => {
       const result = applyGraphFilters(nodes, [{ type: 'tag', tagIds: ['work'] }])
-      expect(result.map((n) => n.id).sort()).toEqual(['doing-med', 'todo-high'])
+      expect(result.map((n) => n.id).toSorted()).toEqual(['doing-med', 'todo-high'])
     })
 
     it('matches nodes with any of multiple selected tags', () => {
       const result = applyGraphFilters(nodes, [{ type: 'tag', tagIds: ['work', 'home'] }])
-      expect(result.map((n) => n.id).sort()).toEqual(['cancelled', 'doing-med', 'todo-high'])
+      expect(result.map((n) => n.id).toSorted()).toEqual(['cancelled', 'doing-med', 'todo-high'])
     })
 
     it('treats empty tagIds as no-op', () => {
@@ -237,7 +237,7 @@ describe('applyGraphFilters', () => {
         { type: 'priority', values: ['1', '2'] },
         { type: 'tag', tagIds: ['work'] },
       ])
-      expect(result.map((n) => n.id).sort()).toEqual(['doing-med', 'todo-high'])
+      expect(result.map((n) => n.id).toSorted()).toEqual(['doing-med', 'todo-high'])
     })
 
     it('returns empty when filters have no overlap', () => {

@@ -1094,7 +1094,7 @@ describe('useNavigationStore', () => {
   // `currentView` directly.
   describe('CR-PERSIST navigation migrate (#753)', () => {
     const migrate = useNavigationStore.persist.getOptions().migrate
-    type MigratedNav = {
+    interface MigratedNav {
       currentView: string
       currentViewBySpace: Record<string, string>
       selectedBlockId: string | null

@@ -78,7 +78,7 @@ test.describe('Search toggles (E2E-1)', () => {
   test('default search sends all-false filter flags', async ({ page }) => {
     await searchAndAwaitIpc(page, 'Welcome')
     const calls = await getInvokeCalls(page, 'search_blocks')
-    const filter = calls[calls.length - 1]?.['filter'] as Record<string, unknown>
+    const filter = calls.at(-1)?.['filter'] as Record<string, unknown>
     expect(filter['caseSensitive']).toBe(false)
     expect(filter['wholeWord']).toBe(false)
     expect(filter['isRegex']).toBe(false)
@@ -88,7 +88,7 @@ test.describe('Search toggles (E2E-1)', () => {
     await page.getByTestId('search-toggle-case-sensitive').click()
     await searchAndAwaitIpc(page, 'Welcome')
     const calls = await getInvokeCalls(page, 'search_blocks')
-    const filter = calls[calls.length - 1]?.['filter'] as Record<string, unknown>
+    const filter = calls.at(-1)?.['filter'] as Record<string, unknown>
     expect(filter['caseSensitive']).toBe(true)
     expect(filter['wholeWord']).toBe(false)
     expect(filter['isRegex']).toBe(false)
@@ -98,7 +98,7 @@ test.describe('Search toggles (E2E-1)', () => {
     await page.getByTestId('search-toggle-whole-word').click()
     await searchAndAwaitIpc(page, 'Welcome')
     const calls = await getInvokeCalls(page, 'search_blocks')
-    const filter = calls[calls.length - 1]?.['filter'] as Record<string, unknown>
+    const filter = calls.at(-1)?.['filter'] as Record<string, unknown>
     expect(filter['wholeWord']).toBe(true)
     expect(filter['caseSensitive']).toBe(false)
     expect(filter['isRegex']).toBe(false)
@@ -117,7 +117,7 @@ test.describe('Search toggles (E2E-1)', () => {
     // tag) so the assertion is synchronous — no async tag-id resolution to race.
     await searchAndAwaitIpc(page, 'W.*come state:TODO')
     const calls = await getInvokeCalls(page, 'search_blocks')
-    const last = calls[calls.length - 1]
+    const last = calls.at(-1)
     const filter = last?.['filter'] as Record<string, unknown>
     expect(filter['isRegex']).toBe(true)
     // The `state:` token is stripped from the regex pattern…

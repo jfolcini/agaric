@@ -31,7 +31,7 @@
  * `String.prototype.includes`.
  */
 
-const COMBINING_DIACRITICS = /[\u0300-\u036f]/g
+const COMBINING_DIACRITICS = /[\u0300-\u036F]/g
 
 /**
  * Return `true` when every code unit in `s` is in the ASCII range

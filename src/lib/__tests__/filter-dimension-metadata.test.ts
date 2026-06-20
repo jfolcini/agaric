@@ -142,8 +142,8 @@ describe('filter-dimension-metadata', () => {
     })
 
     it('matches the keys of DIMENSION_OPTIONS', () => {
-      const optionKeys = Object.keys(DIMENSION_OPTIONS).sort()
-      const allDimsSorted = [...ALL_DIMENSIONS].sort()
+      const optionKeys = Object.keys(DIMENSION_OPTIONS).toSorted()
+      const allDimsSorted = [...ALL_DIMENSIONS].toSorted()
       expect(allDimsSorted).toEqual(optionKeys)
     })
   })

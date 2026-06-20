@@ -453,7 +453,7 @@ test.describe('sort', () => {
     // Alphabetical (default) — the daily page (digits) sorts before letters.
     await selectSort(page, 'Alphabetical')
     let titles = await visibleTitles(page)
-    const sorted = [...titles].sort((a, b) => a.localeCompare(b))
+    const sorted = [...titles].toSorted((a, b) => a.localeCompare(b))
     expect(titles).toEqual(sorted)
 
     // Default — id-ASC (the seed pages were inserted Getting Started first).
@@ -465,7 +465,7 @@ test.describe('sort', () => {
     // zero-inbound pages.
     await selectSort(page, 'Most linked')
     titles = await visibleTitles(page)
-    expect(titles.slice(0, 2).sort()).toEqual(['Getting Started', 'Quick Notes'])
+    expect(titles.slice(0, 2).toSorted()).toEqual(['Getting Started', 'Quick Notes'])
 
     // Most content — Getting Started and the daily page each carry 5 child
     // blocks (the most), so they lead; the alphabetical tiebreaker puts the

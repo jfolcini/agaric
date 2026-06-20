@@ -15,8 +15,7 @@
  */
 
 import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor, within } from '@testing-library/react'
@@ -167,7 +166,7 @@ describe('SpaceJournalTemplateEditor', () => {
   // symbol. Read the source on disk and assert no `useRef` call and no
   // identifier-style declaration of the old ref name.
   it('source no longer declares journalTemplateInitializedRef and uses no useRef', () => {
-    const here = dirname(fileURLToPath(import.meta.url))
+    const here = import.meta.dirname
     const src = readFileSync(join(here, '..', 'SpaceJournalTemplateEditor.tsx'), 'utf8')
     // No `useRef(...)` call anywhere in the file — lazy `useState`
     // does the whole job for the initial-vs-controlled-value seam.

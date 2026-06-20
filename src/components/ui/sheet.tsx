@@ -45,19 +45,18 @@ const SheetOverlay = ({
   ref,
   className,
   ...props
-}: React.ComponentProps<typeof SheetPrimitive.Overlay>) => {
-  return (
-    <SheetPrimitive.Overlay
-      ref={ref}
-      data-slot="sheet-overlay"
-      className={cn(
-        'fixed inset-0 z-50 bg-black/50 dark:bg-black/60 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0',
-        className,
-      )}
-      {...props}
-    />
-  )
-}
+}: React.ComponentProps<typeof SheetPrimitive.Overlay>) => (
+  <SheetPrimitive.Overlay
+    ref={ref}
+    data-slot="sheet-overlay"
+    className={cn(
+      'fixed inset-0 z-50 bg-black/50 dark:bg-black/60 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0',
+      className,
+    )}
+    {...props}
+  />
+)
+
 SheetOverlay.displayName = 'SheetOverlay'
 
 /**
@@ -172,60 +171,56 @@ SheetContent.displayName = 'SheetContent'
 // (mirrors DialogHeader/DialogFooter, which also rely on DialogContent's
 // padding frame). Avoids the double-padding regression — the title now
 // sits at the same 24 px gutter as the SheetBody contents below.
-const SheetHeader = ({ ref, className, ...props }: React.ComponentProps<'div'>) => {
-  return (
-    <div
-      ref={ref}
-      data-slot="sheet-header"
-      className={cn('flex flex-col gap-1.5', className)}
-      {...props}
-    />
-  )
-}
+const SheetHeader = ({ ref, className, ...props }: React.ComponentProps<'div'>) => (
+  <div
+    ref={ref}
+    data-slot="sheet-header"
+    className={cn('flex flex-col gap-1.5', className)}
+    {...props}
+  />
+)
+
 SheetHeader.displayName = 'SheetHeader'
 
-const SheetFooter = ({ ref, className, ...props }: React.ComponentProps<'div'>) => {
-  return (
-    <div
-      ref={ref}
-      data-slot="sheet-footer"
-      className={cn('mt-auto flex flex-col gap-2', className)}
-      {...props}
-    />
-  )
-}
+const SheetFooter = ({ ref, className, ...props }: React.ComponentProps<'div'>) => (
+  <div
+    ref={ref}
+    data-slot="sheet-footer"
+    className={cn('mt-auto flex flex-col gap-2', className)}
+    {...props}
+  />
+)
+
 SheetFooter.displayName = 'SheetFooter'
 
 const SheetTitle = ({
   ref,
   className,
   ...props
-}: React.ComponentProps<typeof SheetPrimitive.Title>) => {
-  return (
-    <SheetPrimitive.Title
-      ref={ref}
-      data-slot="sheet-title"
-      className={cn('text-lg font-semibold leading-none tracking-tight text-foreground', className)}
-      {...props}
-    />
-  )
-}
+}: React.ComponentProps<typeof SheetPrimitive.Title>) => (
+  <SheetPrimitive.Title
+    ref={ref}
+    data-slot="sheet-title"
+    className={cn('text-lg font-semibold leading-none tracking-tight text-foreground', className)}
+    {...props}
+  />
+)
+
 SheetTitle.displayName = 'SheetTitle'
 
 const SheetDescription = ({
   ref,
   className,
   ...props
-}: React.ComponentProps<typeof SheetPrimitive.Description>) => {
-  return (
-    <SheetPrimitive.Description
-      ref={ref}
-      data-slot="sheet-description"
-      className={cn('text-sm text-muted-foreground', className)}
-      {...props}
-    />
-  )
-}
+}: React.ComponentProps<typeof SheetPrimitive.Description>) => (
+  <SheetPrimitive.Description
+    ref={ref}
+    data-slot="sheet-description"
+    className={cn('text-sm text-muted-foreground', className)}
+    {...props}
+  />
+)
+
 SheetDescription.displayName = 'SheetDescription'
 
 /**

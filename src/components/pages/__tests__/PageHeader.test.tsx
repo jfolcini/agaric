@@ -2146,7 +2146,7 @@ describe('PageHeader dedicated delete button (Part A)', () => {
 
     // Reach into the toast.success call to invoke the Undo handler.
     const successCalls = mockedToastSuccess.mock.calls
-    const lastCall = successCalls[successCalls.length - 1]
+    const lastCall = successCalls.at(-1)
     const opts = lastCall?.[1] as { action: { onClick: () => void } } | undefined
     expect(opts?.action?.onClick).toBeTypeOf('function')
 

@@ -54,7 +54,7 @@ describe('buildSinglePageBranch', () => {
     const p1 = makePage({ id: 'P1', content: 'Bravo' })
     const p2 = makePage({ id: 'P2', content: 'Alpha' })
     const sortByName = (input: BlockRow[]) =>
-      [...input].sort((a, b) => (a.content ?? '').localeCompare(b.content ?? ''))
+      [...input].toSorted((a, b) => (a.content ?? '').localeCompare(b.content ?? ''))
     const result = buildSinglePageBranch([p1, p2], sortByName)
     // Sorted: Alpha first.
     expect(result.groupedRows[0]).toMatchObject({ kind: 'page', page: { id: 'P2' } })

@@ -146,7 +146,7 @@ test.describe('Block drag-and-drop (touch / narrow viewport)', () => {
     // …and the recorded IPC carries GS_2 moving to slot 0 ("move to top", #400).
     await expect.poll(async () => (await moveCalls(page)).length).toBeGreaterThan(0)
     const calls = await moveCalls(page)
-    const mine = calls.find((c) => c.blockId === gs2) ?? calls[calls.length - 1]
+    const mine = calls.find((c) => c.blockId === gs2) ?? calls.at(-1)
     expect(mine?.blockId).toBe(gs2)
     expect(mine?.newIndex).toBe(0)
   })

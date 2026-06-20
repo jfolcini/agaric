@@ -29,17 +29,16 @@ const labelVariants = cva('font-medium', {
 
 type LabelProps = React.ComponentProps<'label'> & VariantProps<typeof labelVariants>
 
-const Label = ({ ref, className, size, muted, ...props }: LabelProps) => {
-  return (
-    // oxlint-disable-next-line jsx-a11y/label-has-associated-control -- htmlFor is forwarded via spread props
-    <label
-      ref={ref}
-      data-slot="label"
-      className={cn(labelVariants({ size, muted }), className)}
-      {...props}
-    />
-  )
-}
+const Label = ({ ref, className, size, muted, ...props }: LabelProps) => (
+  // oxlint-disable-next-line jsx-a11y/label-has-associated-control -- htmlFor is forwarded via spread props
+  <label
+    ref={ref}
+    data-slot="label"
+    className={cn(labelVariants({ size, muted }), className)}
+    {...props}
+  />
+)
+
 Label.displayName = 'Label'
 
 export { Label, labelVariants }

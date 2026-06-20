@@ -65,7 +65,7 @@ test.describe('Block drag-and-drop (mouse)', () => {
 
     await expect.poll(async () => (await moveCalls(page)).length).toBeGreaterThan(0)
     const calls = await moveCalls(page)
-    const mine = calls.find((c) => c.blockId === gs2) ?? calls[calls.length - 1]
+    const mine = calls.find((c) => c.blockId === gs2) ?? calls.at(-1)
     // #400: "move to top" is slot 0. Pre-#400 this computed firstPos - 1 = 0/-1,
     // which the real backend rejected as `position <= 0`.
     expect(mine?.newIndex).toBe(0)

@@ -40,7 +40,7 @@ async function lastCall(
   cmd: string,
 ): Promise<Record<string, unknown> | null> {
   const calls = await getInvokeCalls(page, cmd)
-  return (calls[calls.length - 1] as Record<string, unknown>) ?? null
+  return (calls.at(-1) as Record<string, unknown>) ?? null
 }
 
 test.describe('Keyboard fundamentals', () => {

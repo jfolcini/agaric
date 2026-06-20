@@ -392,23 +392,27 @@ export function PdfViewerDialog({
 
       switch (e.key) {
         case 'ArrowLeft':
-        case 'PageUp':
+        case 'PageUp': {
           e.preventDefault()
           goToPrev()
           break
+        }
         case 'ArrowRight':
-        case 'PageDown':
+        case 'PageDown': {
           e.preventDefault()
           goToNext()
           break
-        case 'Home':
+        }
+        case 'Home': {
           e.preventDefault()
           goToPage(1)
           break
-        case 'End':
+        }
+        case 'End': {
           e.preventDefault()
           goToPage(numPages)
           break
+        }
       }
     }
 

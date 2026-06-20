@@ -140,7 +140,7 @@ describe('useLocalStoragePreference', () => {
       throw new Error('quota exceeded')
     })
     const warnSpy = vi.spyOn(logger, 'warn')
-    expect(() => render(<Harness storageKey="test:write-throw" defaultValue={'x'} />)).not.toThrow()
+    expect(() => render(<Harness storageKey="test:write-throw" defaultValue="x" />)).not.toThrow()
     expect(warnSpy).toHaveBeenCalledWith(
       'useLocalStoragePreference',
       'Failed to write localStorage preference',
@@ -221,7 +221,7 @@ describe('useLocalStoragePreference', () => {
       let sortByCaptured: string | null = null
       let groupByCaptured: string | null = null
 
-      const allowedSorts = ['date', 'priority', 'created']
+      const allowedSorts = new Set(['date', 'priority', 'created'])
       const allowedGroups = ['none', 'priority', 'status', 'tag']
 
       render(
@@ -231,7 +231,7 @@ describe('useLocalStoragePreference', () => {
             defaultValue="date"
             options={{
               parse: (raw) => {
-                if (allowedSorts.includes(raw)) return raw
+                if (allowedSorts.has(raw)) return raw
                 throw new Error(`invalid sortBy: ${raw}`)
               },
               serialize: (v) => v,

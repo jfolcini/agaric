@@ -46,7 +46,7 @@ describe('SearchResultBlockRow', () => {
   it('renders a role=option <li> with the focus state applied', () => {
     render(
       <ul>
-        <SearchResultBlockRow row={makeRow()} isFocused={true} onClick={() => {}} />
+        <SearchResultBlockRow row={makeRow()} isFocused onClick={() => {}} />
       </ul>,
     )
     const option = screen.getByRole('option')
@@ -183,7 +183,7 @@ describe('SearchResultBlockRow', () => {
     const onClick = vi.fn()
     render(
       <ul>
-        <SearchResultBlockRow row={makeRow()} isFocused={false} onClick={onClick} loading={true} />
+        <SearchResultBlockRow row={makeRow()} isFocused={false} onClick={onClick} loading />
       </ul>,
     )
     const option = screen.getByRole('option')

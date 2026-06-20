@@ -25,7 +25,7 @@ describe('usePrimaryFocus', () => {
 
   it('focus() returns true and focuses registered element when attached to DOM', () => {
     const input = document.createElement('input')
-    document.body.appendChild(input)
+    document.body.append(input)
 
     const ref = createRef<HTMLInputElement>()
     ;(ref as { current: HTMLInputElement | null }).current = input

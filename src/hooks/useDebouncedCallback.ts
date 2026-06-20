@@ -29,13 +29,14 @@ export function useDebouncedCallback(
   delayRef.current = delay
 
   // Cleanup on unmount
-  useEffect(() => {
-    return () => {
+  useEffect(
+    () => () => {
       if (timerRef.current) {
         clearTimeout(timerRef.current)
       }
-    }
-  }, [])
+    },
+    [],
+  )
 
   // The empty dependency array is intentional, NOT a stale-closure bug — do not
   // "fix" it by adding `callback`/`delay` to the deps.

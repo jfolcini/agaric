@@ -89,9 +89,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   }, [forceExpanded])
 
   const findDef = useCallback(
-    (key: string): PropertyDefinition | undefined => {
-      return definitions.find((d) => d.key === key)
-    },
+    (key: string): PropertyDefinition | undefined => definitions.find((d) => d.key === key),
     [definitions],
   )
 

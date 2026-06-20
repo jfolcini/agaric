@@ -66,7 +66,7 @@ export function registerBackHandler(handler: BackHandler, priority: number): () 
  * turn every back press into an app exit.
  */
 export function runBackChain(): boolean {
-  const sorted = [...entries].sort((a, b) => b.priority - a.priority || b.seq - a.seq)
+  const sorted = [...entries].toSorted((a, b) => b.priority - a.priority || b.seq - a.seq)
   for (const entry of sorted) {
     try {
       if (entry.handler()) return true

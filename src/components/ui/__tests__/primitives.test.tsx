@@ -789,7 +789,7 @@ describe('IconButton', () => {
 
   it('forwards arbitrary DOM props (data-testid, data-starred)', () => {
     render(
-      <IconButton tooltip="Star" ariaLabel="Star" data-testid="star-btn" data-starred={true}>
+      <IconButton tooltip="Star" ariaLabel="Star" data-testid="star-btn" data-starred>
         <span aria-hidden="true">★</span>
       </IconButton>,
     )

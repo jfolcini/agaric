@@ -141,7 +141,7 @@ describe('usePageDeleteAction', () => {
     // `toast.success`, so the action handler we passed in the hook is the
     // function we want to invoke here.
     const successCalls = vi.mocked(toast.success).mock.calls
-    const lastCall = successCalls[successCalls.length - 1]
+    const lastCall = successCalls.at(-1)
     const opts = lastCall?.[1] as { action: { onClick: () => void } } | undefined
     expect(opts?.action?.onClick).toBeTypeOf('function')
 

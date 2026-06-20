@@ -245,7 +245,7 @@ export function getProjection(
 
   // Sentinel: drop after last item — compute depth/parent from drag offset
   if (overId === SENTINEL_ID) {
-    const lastItem = items[items.length - 1]
+    const lastItem = items.at(-1)
     const maxEndDepth = Math.min(lastItem ? lastItem.depth + 1 : 0, depthCeiling)
     // Use drag offset to allow indentation even at the end
     const effectiveOffset =

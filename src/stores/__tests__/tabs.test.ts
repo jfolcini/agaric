@@ -17,7 +17,7 @@ import { MAX_PAGE_STACK_DEPTH, selectPageStack, useTabsStore } from '../tabs'
 
 const migrate = useTabsStore.persist.getOptions().migrate
 
-type PersistedTabs = {
+interface PersistedTabs {
   tabs: Array<{ id: string; pageStack: Array<{ pageId: string; title: string }>; label: string }>
   activeTabIndex: number
   tabsBySpace: Record<string, unknown[]>
@@ -283,7 +283,7 @@ describe('pageStack depth cap (#754)', () => {
     expect(stack).toHaveLength(MAX_PAGE_STACK_DEPTH)
     // Newest entry stays on top…
     const last = MAX_PAGE_STACK_DEPTH + overshoot - 1
-    expect(stack[stack.length - 1]).toEqual({ pageId: `PAGE_${last}`, title: `Title ${last}` })
+    expect(stack.at(-1)).toEqual({ pageId: `PAGE_${last}`, title: `Title ${last}` })
     // …and the oldest entries were dropped (drop-oldest, not drop-newest).
     expect(stack[0]).toEqual({ pageId: `PAGE_${overshoot}`, title: `Title ${overshoot}` })
   })

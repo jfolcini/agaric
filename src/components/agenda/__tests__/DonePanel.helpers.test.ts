@@ -178,7 +178,7 @@ describe('groupBlocksByPage', () => {
     expect(ids).toEqual(['idz', 'ida', 'idZ', 'idA'])
     // Confirm we are not merely matching whatever `localeCompare` does — the
     // expected order must differ from the descending-localeCompare order.
-    const localeOrder = [...blocks].map((b) => b.id).sort((a, b) => b.localeCompare(a))
+    const localeOrder = [...blocks].map((b) => b.id).toSorted((a, b) => b.localeCompare(a))
     expect(localeOrder).not.toEqual(ids)
     // Strict total order: re-running on a different input permutation is stable.
     const reSorted = groupBlocksByPage(blocks.toReversed(), titles, untitled)

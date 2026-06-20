@@ -134,7 +134,7 @@ describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () =>
     renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
 
     const input = document.createElement('input')
-    document.body.appendChild(input)
+    document.body.append(input)
     try {
       const navBefore = useNavigationStore.getState().currentView
       fireEvent.keyDown(input, { key: '.', ctrlKey: true })
@@ -182,7 +182,7 @@ describe('useAppKeyboardShortcuts — Ctrl+K collision (palette vs editor link)'
     // runs `target.closest(...)` and finds no ProseMirror ancestor — the
     // bubbling event still reaches the window-level listener.
     const div = document.createElement('div')
-    document.body.appendChild(div)
+    document.body.append(div)
     try {
       div.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true, cancelable: true }),
@@ -202,7 +202,7 @@ describe('useAppKeyboardShortcuts — Ctrl+K collision (palette vs editor link)'
     const pm = document.createElement('div')
     pm.className = 'ProseMirror'
     pm.setAttribute('contenteditable', 'true')
-    document.body.appendChild(pm)
+    document.body.append(pm)
     try {
       const e = new KeyboardEvent('keydown', {
         key: 'k',
@@ -235,7 +235,7 @@ describe('useAppKeyboardShortcuts — Ctrl+. collision (runLastCommand vs collap
     renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
 
     const input = document.createElement('input')
-    document.body.appendChild(input)
+    document.body.append(input)
     try {
       const navBefore = useNavigationStore.getState().currentView
       const e = new KeyboardEvent('keydown', {
@@ -391,7 +391,7 @@ describe('useAppKeyboardShortcuts — space digit hotkeys', () => {
       renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
 
       const input = document.createElement('input')
-      document.body.appendChild(input)
+      document.body.append(input)
       try {
         fireEvent.keyDown(input, { key: '3', ctrlKey: true })
         expect(setCurrentSpace).not.toHaveBeenCalled()
@@ -528,7 +528,7 @@ describe('useAppKeyboardShortcuts — typing-in-field gating', () => {
     renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
 
     const input = document.createElement('input')
-    document.body.appendChild(input)
+    document.body.append(input)
     try {
       const initial = useJournalStore.getState().currentDate
       fireEvent.keyDown(input, { key: 'ArrowRight', altKey: true })

@@ -101,8 +101,9 @@ export function convertBlockContent(content: string, type: BlockTypeToken): stri
 
   const text = firstLineText(content)
   switch (type) {
-    case 'paragraph':
+    case 'paragraph': {
       return text
+    }
     case 'h1':
     case 'h2':
     case 'h3':
@@ -112,14 +113,18 @@ export function convertBlockContent(content: string, type: BlockTypeToken): stri
       const level = Number.parseInt(type.slice(1), 10)
       return `${'#'.repeat(level)} ${text}`
     }
-    case 'quote':
+    case 'quote': {
       return `> ${text}`
-    case 'numbered-list':
+    }
+    case 'numbered-list': {
       return `1. ${text}`
-    case 'callout':
+    }
+    case 'callout': {
       return `> [!INFO] ${text}`
-    default:
+    }
+    default: {
       return content
+    }
   }
 }
 
@@ -138,9 +143,11 @@ export function turnIdToBlockType(id: string): BlockTypeToken | null {
     case 'quote':
     case 'code':
     case 'numbered-list':
-    case 'callout':
+    case 'callout': {
       return token
-    default:
+    }
+    default: {
       return null
+    }
   }
 }

@@ -322,7 +322,10 @@ export async function insertTemplateBlocks(
   // `__BATCH_INDEX__<i>` that we resolve to the freshly-created block
   // id after the batch returns. We build a map source-id → batch-index
   // as we walk so children can reference their just-pushed parent.
-  type DeferredSpec = { spec: CreateBlockSpec; resolveParentFromIndex: number | null }
+  interface DeferredSpec {
+    spec: CreateBlockSpec
+    resolveParentFromIndex: number | null
+  }
   const deferred: DeferredSpec[] = []
 
   // Deferred index of the block that carried the `{{cursor}}` marker (the

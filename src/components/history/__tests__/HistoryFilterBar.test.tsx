@@ -238,7 +238,7 @@ describe('HistoryFilterBar', () => {
         <HistoryFilterBar
           opTypeFilter={null}
           onFilterChange={onFilterChange}
-          showAllSpaces={true}
+          showAllSpaces
           onShowAllSpacesChange={onShowAllSpacesChange}
         />,
       )
@@ -298,7 +298,7 @@ describe('HistoryFilterBar', () => {
         <HistoryFilterBar
           opTypeFilter={null}
           onFilterChange={onFilterChange}
-          showAllSpaces={true}
+          showAllSpaces
           onShowAllSpacesChange={onShowAllSpacesChange}
         />,
       )

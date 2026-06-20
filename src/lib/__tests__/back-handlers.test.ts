@@ -50,7 +50,7 @@ describe('overlayBackHandler', () => {
       const overlay = document.createElement('div')
       overlay.setAttribute('role', role)
       overlay.setAttribute('data-state', 'open')
-      document.body.appendChild(overlay)
+      document.body.append(overlay)
 
       const onKeydown = vi.fn()
       window.addEventListener('keydown', onKeydown)
@@ -77,8 +77,8 @@ describe('overlayBackHandler', () => {
     overlay.setAttribute('role', 'dialog')
     overlay.setAttribute('data-state', 'open')
     const button = document.createElement('button')
-    overlay.appendChild(button)
-    document.body.appendChild(overlay)
+    overlay.append(button)
+    document.body.append(overlay)
     button.focus()
     expect(document.activeElement).toBe(button)
 
@@ -98,7 +98,7 @@ describe('overlayBackHandler', () => {
     const overlay = document.createElement('div')
     overlay.setAttribute('role', 'dialog')
     overlay.setAttribute('data-state', 'open')
-    document.body.appendChild(overlay)
+    document.body.append(overlay)
     ;(document.activeElement as HTMLElement | null)?.blur()
 
     const onKeydown = vi.fn()
@@ -117,13 +117,13 @@ describe('overlayBackHandler', () => {
     const closedDialog = document.createElement('div')
     closedDialog.setAttribute('role', 'dialog')
     closedDialog.setAttribute('data-state', 'closed')
-    document.body.appendChild(closedDialog)
+    document.body.append(closedDialog)
 
     // Collapsible / accordion triggers also carry data-state="open" but
     // must never swallow a back press.
     const collapsible = document.createElement('div')
     collapsible.setAttribute('data-state', 'open')
-    document.body.appendChild(collapsible)
+    document.body.append(collapsible)
 
     expect(overlayBackHandler()).toBe(false)
   })

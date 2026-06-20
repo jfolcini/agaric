@@ -257,7 +257,7 @@ describe('useJournalAutoCreate', () => {
       value: true,
       configurable: true,
     })
-    document.body.appendChild(editable)
+    document.body.append(editable)
 
     act(() => {
       editable.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true }))
@@ -278,7 +278,7 @@ describe('useJournalAutoCreate', () => {
     expect(opts.handleAddBlock).not.toHaveBeenCalled()
 
     const input = document.createElement('input')
-    document.body.appendChild(input)
+    document.body.append(input)
 
     act(() => {
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true }))

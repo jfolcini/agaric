@@ -98,7 +98,7 @@ describe('TemplatePicker', () => {
       },
       true,
     )
-    document.body.appendChild(outside)
+    document.body.append(outside)
     try {
       render(<TemplatePicker templatePages={templatePages} onSelect={onSelect} onClose={onClose} />)
       // Dispatch Escape with the "editor-owned" element as target so the
@@ -190,7 +190,7 @@ describe('TemplatePicker', () => {
     // focus when the picker unmounts — the second half of a real focus trap.
     const trigger = document.createElement('button')
     trigger.textContent = 'trigger'
-    document.body.appendChild(trigger)
+    document.body.append(trigger)
     trigger.focus()
     expect(document.activeElement).toBe(trigger)
 

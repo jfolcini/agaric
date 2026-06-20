@@ -59,7 +59,7 @@ function lastInvokeArgs(cmd: string): Record<string, unknown> {
   if (calls.length === 0) {
     throw new Error(`expected at least one '${cmd}' call but found none`)
   }
-  const last = calls[calls.length - 1] as [string, Record<string, unknown>]
+  const last = calls.at(-1) as [string, Record<string, unknown>]
   return last[1]
 }
 

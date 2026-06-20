@@ -993,7 +993,7 @@ describe('TabBar', () => {
 
       const closeItems = document.querySelectorAll('[data-tab-dropdown-close]')
       await waitFor(() => {
-        expect(closeItems[closeItems.length - 1]).toHaveFocus()
+        expect([...closeItems].at(-1)).toHaveFocus()
       })
     })
 

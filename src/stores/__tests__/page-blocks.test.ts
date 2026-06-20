@@ -2824,7 +2824,7 @@ describe('PageBlockStore', () => {
     /** Pull the `newIndex` from the most recent move_block IPC call. */
     function lastMoveIndex(): number | undefined {
       const calls = mockedInvoke.mock.calls.filter((c) => c[0] === 'move_block')
-      const last = calls[calls.length - 1]?.[1] as { newIndex?: number } | undefined
+      const last = calls.at(-1)?.[1] as { newIndex?: number } | undefined
       return last?.newIndex
     }
 

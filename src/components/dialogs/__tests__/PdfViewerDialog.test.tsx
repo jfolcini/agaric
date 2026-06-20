@@ -136,12 +136,7 @@ describe('PdfViewerDialog', () => {
 
   it('renders the filename in the title when open', async () => {
     render(
-      <PdfViewerDialog
-        open={true}
-        onOpenChange={vi.fn()}
-        fileUrl="blob:report"
-        filename="report.pdf"
-      />,
+      <PdfViewerDialog open onOpenChange={vi.fn()} fileUrl="blob:report" filename="report.pdf" />,
     )
     await waitFor(() => {
       expect(screen.getByText('report.pdf')).toBeInTheDocument()
@@ -157,9 +152,7 @@ describe('PdfViewerDialog', () => {
       destroy: vi.fn(),
     })
 
-    render(
-      <PdfViewerDialog open={true} onOpenChange={vi.fn()} fileUrl="blob:t" filename="test.pdf" />,
-    )
+    render(<PdfViewerDialog open onOpenChange={vi.fn()} fileUrl="blob:t" filename="test.pdf" />)
 
     await waitFor(() => {
       expect(screen.getByTestId('pdf-loading')).toBeInTheDocument()
@@ -170,9 +163,7 @@ describe('PdfViewerDialog', () => {
   })
 
   it('mounts the prebuilt PDFViewer and renders the page indicator after load', async () => {
-    render(
-      <PdfViewerDialog open={true} onOpenChange={vi.fn()} fileUrl="blob:t" filename="test.pdf" />,
-    )
+    render(<PdfViewerDialog open onOpenChange={vi.fn()} fileUrl="blob:t" filename="test.pdf" />)
 
     await waitFor(() => {
       expect(screen.getByTestId('pdf-page-indicator')).toBeInTheDocument()
@@ -185,9 +176,7 @@ describe('PdfViewerDialog', () => {
 
   it('next button advances the viewer page', async () => {
     const user = userEvent.setup()
-    render(
-      <PdfViewerDialog open={true} onOpenChange={vi.fn()} fileUrl="blob:t" filename="test.pdf" />,
-    )
+    render(<PdfViewerDialog open onOpenChange={vi.fn()} fileUrl="blob:t" filename="test.pdf" />)
     await waitFor(() => {
       expect(screen.getByText('Page 1 / 5')).toBeInTheDocument()
     })
@@ -200,9 +189,7 @@ describe('PdfViewerDialog', () => {
   })
 
   it('previous button is disabled on the first page', async () => {
-    render(
-      <PdfViewerDialog open={true} onOpenChange={vi.fn()} fileUrl="blob:t" filename="test.pdf" />,
-    )
+    render(<PdfViewerDialog open onOpenChange={vi.fn()} fileUrl="blob:t" filename="test.pdf" />)
     await waitFor(() => {
       expect(screen.getByText('Page 1 / 5')).toBeInTheDocument()
     })
@@ -218,9 +205,7 @@ describe('PdfViewerDialog', () => {
       promise: rejected,
       destroy: vi.fn(),
     })
-    render(
-      <PdfViewerDialog open={true} onOpenChange={vi.fn()} fileUrl="blob:bad" filename="bad.pdf" />,
-    )
+    render(<PdfViewerDialog open onOpenChange={vi.fn()} fileUrl="blob:bad" filename="bad.pdf" />)
     await waitFor(() => {
       expect(screen.getByTestId('pdf-error')).toBeInTheDocument()
       expect(screen.getByText('Error: Network error')).toBeInTheDocument()
@@ -231,12 +216,7 @@ describe('PdfViewerDialog', () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
     render(
-      <PdfViewerDialog
-        open={true}
-        onOpenChange={onOpenChange}
-        fileUrl="blob:t"
-        filename="test.pdf"
-      />,
+      <PdfViewerDialog open onOpenChange={onOpenChange} fileUrl="blob:t" filename="test.pdf" />,
     )
     await waitFor(() => {
       expect(screen.getByText('test.pdf')).toBeInTheDocument()
@@ -248,9 +228,7 @@ describe('PdfViewerDialog', () => {
   // ─── Annotation toolbar (#1452) ──────────────────────────────────────────
   describe('annotation toolbar', () => {
     it('is hidden when blockId / attachmentId are absent (view-only)', async () => {
-      render(
-        <PdfViewerDialog open={true} onOpenChange={vi.fn()} fileUrl="blob:t" filename="test.pdf" />,
-      )
+      render(<PdfViewerDialog open onOpenChange={vi.fn()} fileUrl="blob:t" filename="test.pdf" />)
       await waitFor(() => {
         expect(screen.getByText('Page 1 / 5')).toBeInTheDocument()
       })
@@ -260,7 +238,7 @@ describe('PdfViewerDialog', () => {
     it('appears when the owning block is known', async () => {
       render(
         <PdfViewerDialog
-          open={true}
+          open
           onOpenChange={vi.fn()}
           fileUrl="blob:t"
           filename="test.pdf"
@@ -279,7 +257,7 @@ describe('PdfViewerDialog', () => {
       const user = userEvent.setup()
       render(
         <PdfViewerDialog
-          open={true}
+          open
           onOpenChange={vi.fn()}
           fileUrl="blob:t"
           filename="test.pdf"
@@ -299,7 +277,7 @@ describe('PdfViewerDialog', () => {
     it('Save is disabled until an annotation exists', async () => {
       render(
         <PdfViewerDialog
-          open={true}
+          open
           onOpenChange={vi.fn()}
           fileUrl="blob:t"
           filename="test.pdf"
@@ -319,7 +297,7 @@ describe('PdfViewerDialog', () => {
       const onOpenChange = vi.fn()
       render(
         <PdfViewerDialog
-          open={true}
+          open
           onOpenChange={onOpenChange}
           fileUrl="blob:t"
           filename="report.pdf"
@@ -362,7 +340,7 @@ describe('PdfViewerDialog', () => {
   it('has no a11y violations when open', async () => {
     const { container } = render(
       <PdfViewerDialog
-        open={true}
+        open
         onOpenChange={vi.fn()}
         fileUrl="blob:t"
         filename="report.pdf"

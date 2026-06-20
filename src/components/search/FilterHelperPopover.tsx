@@ -177,16 +177,18 @@ export function FilterHelperPopover({
 
   function handleTagKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     switch (e.key) {
-      case 'ArrowDown':
+      case 'ArrowDown': {
         if (tagSuggestions.length === 0) return
         e.preventDefault()
         setActiveIndex((prev) => Math.min(prev + 1, tagSuggestions.length - 1))
         break
-      case 'ArrowUp':
+      }
+      case 'ArrowUp': {
         if (tagSuggestions.length === 0) return
         e.preventDefault()
         setActiveIndex((prev) => Math.max(prev - 1, 0))
         break
+      }
       case 'Enter': {
         const item = tagSuggestions[activeIndex]
         if (activeIndex >= 0 && item) {
@@ -195,10 +197,11 @@ export function FilterHelperPopover({
         }
         break
       }
-      case 'Escape':
+      case 'Escape': {
         e.preventDefault()
         handleOpenChange(false)
         break
+      }
     }
   }
 
@@ -307,7 +310,7 @@ export function FilterHelperPopover({
               // The `<ul role="listbox">` is always mounted in tag mode (it
               // renders a loading row / "No tags found" row), so the combobox
               // must report expanded even while suggestions are loading/empty.
-              aria-expanded={true}
+              aria-expanded
               aria-controls={TAG_LISTBOX_ID}
               {...(activeDescendant ? { 'aria-activedescendant': activeDescendant } : {})}
               // oxlint-disable-next-line jsx-a11y/no-autofocus -- this combobox renders only after the user switches into tag mode inside the open filter popover; focusing it lets them type the tag query immediately (the listbox below is driven by this input via aria-activedescendant)

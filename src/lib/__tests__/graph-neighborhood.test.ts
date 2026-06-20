@@ -39,25 +39,25 @@ const EDGES = [edge('A', 'B'), edge('B', 'C'), edge('C', 'D'), edge('A', 'E')]
 describe('computeNeighborhoodIds', () => {
   it('returns only the seed at 0 hops', () => {
     const ids = computeNeighborhoodIds(NODES, EDGES, 'A', 0)
-    expect([...ids].sort()).toEqual(['A'])
+    expect([...ids].toSorted()).toEqual(['A'])
   })
 
   it('returns seed + direct neighbors at 1 hop (both links and backlinks)', () => {
     // From B: A (backlink-ish — A→B) and C (B→C). Undirected traversal.
     const ids = computeNeighborhoodIds(NODES, EDGES, 'B', 1)
-    expect([...ids].sort()).toEqual(['A', 'B', 'C'])
+    expect([...ids].toSorted()).toEqual(['A', 'B', 'C'])
   })
 
   it('includes the seeds own outgoing links and backlinks at 1 hop', () => {
     // A links B and E; nothing links to A → 1-hop = {A, B, E}.
     const ids = computeNeighborhoodIds(NODES, EDGES, 'A', 1)
-    expect([...ids].sort()).toEqual(['A', 'B', 'E'])
+    expect([...ids].toSorted()).toEqual(['A', 'B', 'E'])
   })
 
   it('expands to 2-hop neighbors', () => {
     // A(0) → B,E(1) → C(2). D is 3 hops away, excluded.
     const ids = computeNeighborhoodIds(NODES, EDGES, 'A', 2)
-    expect([...ids].sort()).toEqual(['A', 'B', 'C', 'E'])
+    expect([...ids].toSorted()).toEqual(['A', 'B', 'C', 'E'])
   })
 
   it('reaches farther nodes only with more hops', () => {
@@ -84,13 +84,13 @@ describe('computeNeighborhoodIds', () => {
   it('handles cycles without infinite loops', () => {
     const cyclic = [edge('A', 'B'), edge('B', 'C'), edge('C', 'A')]
     const ids = computeNeighborhoodIds(['A', 'B', 'C'].map(node), cyclic, 'A', 5)
-    expect([...ids].sort()).toEqual(['A', 'B', 'C'])
+    expect([...ids].toSorted()).toEqual(['A', 'B', 'C'])
   })
 
   it('treats edges as undirected (hydrated GraphNode endpoints resolved)', () => {
     const hydrated: GraphEdge[] = [{ source: node('A'), target: node('B'), ref_count: 1 }]
     const ids = computeNeighborhoodIds(['A', 'B'].map(node), hydrated, 'B', 1)
-    expect([...ids].sort()).toEqual(['A', 'B'])
+    expect([...ids].toSorted()).toEqual(['A', 'B'])
   })
 })
 
@@ -103,9 +103,11 @@ describe('computeLocalGraph', () => {
 
   it('returns the 1-hop subgraph with only internal edges', () => {
     const local = computeLocalGraph(NODES, EDGES, 'A', 1)
-    expect(local.nodes.map((n) => n.id).sort()).toEqual(['A', 'B', 'E'])
+    expect(local.nodes.map((n) => n.id).toSorted()).toEqual(['A', 'B', 'E'])
     // Edges within {A,B,E}: A-B and A-E. B-C is dropped (C excluded).
-    const edgeKeys = local.edges.map((e) => `${e.source as string}-${e.target as string}`).sort()
+    const edgeKeys = local.edges
+      .map((e) => `${e.source as string}-${e.target as string}`)
+      .toSorted()
     expect(edgeKeys).toEqual(['A-B', 'A-E'])
   })
 

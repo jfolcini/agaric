@@ -122,7 +122,7 @@ export function useBlockLinkResolve(
   // links, but that re-scan stays purely local CPU and the IPC remains
   // guarded by the uncached-id check.
   const contentSignature = useMemo(
-    () => blocks.map((b) => b.id + '\0' + (b.content ?? '')).join('\x01'),
+    () => blocks.map((b) => `${b.id}\0${b.content ?? ''}`).join('\x01'),
     [blocks],
   )
 

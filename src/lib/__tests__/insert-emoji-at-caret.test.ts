@@ -52,7 +52,7 @@ describe('insertEmojiIntoInput', () => {
   it('splices at the input caret and moves the caret after the emoji', () => {
     const el = document.createElement('input')
     el.value = 'hello'
-    document.body.appendChild(el)
+    document.body.append(el)
     el.setSelectionRange(2, 2)
 
     const next = insertEmojiIntoInput(el, ROCKET)
@@ -67,7 +67,7 @@ describe('insertEmojiIntoInput', () => {
   it('replaces the selected range', () => {
     const el = document.createElement('input')
     el.value = 'hello'
-    document.body.appendChild(el)
+    document.body.append(el)
     el.setSelectionRange(0, 5)
 
     expect(insertEmojiIntoInput(el, ROCKET)).toBe(ROCKET)

@@ -22,7 +22,7 @@ import { SIDEBAR_WIDTH_DEFAULT } from '@/components/ui/sidebar/use-sidebar-state
 
 const SIDEBAR_WIDTH_ICON_PX = 48 // 3rem at 16px base
 
-export type UseSidebarRailDragOptions = {
+export interface UseSidebarRailDragOptions {
   open: boolean
   sidebarWidth: number
   setSidebarWidth: (width: number) => void
@@ -31,7 +31,7 @@ export type UseSidebarRailDragOptions = {
   toggleSidebar: () => void
 }
 
-export type UseSidebarRailDragReturn = {
+export interface UseSidebarRailDragReturn {
   onPointerDown: (event: React.PointerEvent) => void
   onDoubleClick: () => void
 }
@@ -131,16 +131,17 @@ export function useSidebarRailDrag({
 
   // FE-H-15: if the rail unmounts mid-drag, detach the still-attached
   // `document` listeners so they do not leak and reference stale state.
-  React.useEffect(() => {
-    return () => {
+  React.useEffect(
+    () => () => {
       const handles = dragListenersRef.current
       if (handles) {
         document.removeEventListener('pointermove', handles.move)
         document.removeEventListener('pointerup', handles.up)
         dragListenersRef.current = null
       }
-    }
-  }, [])
+    },
+    [],
+  )
 
   return { onPointerDown, onDoubleClick }
 }

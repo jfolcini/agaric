@@ -16,7 +16,7 @@ describe('UnpairConfirmDialog', () => {
   })
 
   it('renders title and description when open', () => {
-    render(<UnpairConfirmDialog open={true} onOpenChange={vi.fn()} onConfirm={vi.fn()} />)
+    render(<UnpairConfirmDialog open onOpenChange={vi.fn()} onConfirm={vi.fn()} />)
     expect(screen.getByText('Unpair device?')).toBeInTheDocument()
     expect(
       screen.getByText(
@@ -28,7 +28,7 @@ describe('UnpairConfirmDialog', () => {
   it('calls onConfirm when "Yes, unpair" is clicked', async () => {
     const user = userEvent.setup()
     const onConfirm = vi.fn()
-    render(<UnpairConfirmDialog open={true} onOpenChange={vi.fn()} onConfirm={onConfirm} />)
+    render(<UnpairConfirmDialog open onOpenChange={vi.fn()} onConfirm={onConfirm} />)
 
     await user.click(screen.getByRole('button', { name: /Yes, unpair/i }))
     expect(onConfirm).toHaveBeenCalledOnce()
@@ -37,14 +37,14 @@ describe('UnpairConfirmDialog', () => {
   it('calls onOpenChange(false) when Cancel is clicked', async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
-    render(<UnpairConfirmDialog open={true} onOpenChange={onOpenChange} onConfirm={vi.fn()} />)
+    render(<UnpairConfirmDialog open onOpenChange={onOpenChange} onConfirm={vi.fn()} />)
 
     await user.click(screen.getByRole('button', { name: /Cancel/i }))
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
   it('has no a11y violations', async () => {
-    render(<UnpairConfirmDialog open={true} onOpenChange={vi.fn()} onConfirm={vi.fn()} />)
+    render(<UnpairConfirmDialog open onOpenChange={vi.fn()} onConfirm={vi.fn()} />)
     const results = await axe(document.body)
     expect(results).toHaveNoViolations()
   })
@@ -55,7 +55,7 @@ describe('UnpairConfirmDialog', () => {
     const onConfirm = vi.fn()
     const onOpenChange = vi.fn()
 
-    render(<UnpairConfirmDialog open={true} onOpenChange={onOpenChange} onConfirm={onConfirm} />)
+    render(<UnpairConfirmDialog open onOpenChange={onOpenChange} onConfirm={onConfirm} />)
 
     // Cancel is auto-focused for destructive dialogs — Enter activates Cancel.
     await user.keyboard('{Enter}')

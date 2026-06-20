@@ -53,7 +53,7 @@ describe('CollapsiblePanelHeader', () => {
 
   it('shows ChevronRight when collapsed (aria-expanded=false)', () => {
     render(
-      <CollapsiblePanelHeader isCollapsed={true} onToggle={() => {}}>
+      <CollapsiblePanelHeader isCollapsed onToggle={() => {}}>
         Header
       </CollapsiblePanelHeader>,
     )
@@ -140,7 +140,7 @@ describe('CollapsiblePanelHeader', () => {
 
   it('sets aria-label to "Expand …" when collapsed', () => {
     render(
-      <CollapsiblePanelHeader isCollapsed={true} onToggle={() => {}}>
+      <CollapsiblePanelHeader isCollapsed onToggle={() => {}}>
         References
       </CollapsiblePanelHeader>,
     )
@@ -160,7 +160,7 @@ describe('CollapsiblePanelHeader', () => {
 
   it('handles non-string children gracefully in aria-label', () => {
     render(
-      <CollapsiblePanelHeader isCollapsed={true} onToggle={() => {}}>
+      <CollapsiblePanelHeader isCollapsed onToggle={() => {}}>
         <span>Complex child</span>
       </CollapsiblePanelHeader>,
     )

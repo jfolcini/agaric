@@ -147,7 +147,7 @@ describe('useHistoryKeyboardNav', () => {
     const { result } = renderNav(opts)
 
     const input = document.createElement('input')
-    document.body.appendChild(input)
+    document.body.append(input)
     try {
       act(() => {
         const event = new KeyboardEvent('keydown', {

@@ -802,7 +802,7 @@ describe('AddFilterPopover', () => {
         if (all.length < 2) throw new Error('inner popover not yet open')
         return all
       })
-      const inner = dialogs[dialogs.length - 1] as HTMLElement
+      const inner = dialogs.at(-1) as HTMLElement
       await user.click(within(inner).getByText('Tag'))
       await user.type(within(inner).getByLabelText('Tag id'), 'urgent')
       await user.click(within(inner).getByRole('button', { name: 'Apply' }))

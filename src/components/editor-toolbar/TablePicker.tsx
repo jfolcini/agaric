@@ -46,33 +46,39 @@ export function TablePicker({ editor, onClose }: TablePickerProps): React.ReactE
     const r = rows || 1
     const c = cols || 1
     switch (e.key) {
-      case 'ArrowDown':
+      case 'ArrowDown': {
         e.preventDefault()
         setRows(Math.min(MAX_ROWS, r + 1))
         setCols(c)
         break
-      case 'ArrowUp':
+      }
+      case 'ArrowUp': {
         e.preventDefault()
         setRows(Math.max(1, r - 1))
         setCols(c)
         break
-      case 'ArrowRight':
+      }
+      case 'ArrowRight': {
         e.preventDefault()
         setCols(Math.min(MAX_COLS, c + 1))
         setRows(r)
         break
-      case 'ArrowLeft':
+      }
+      case 'ArrowLeft': {
         e.preventDefault()
         setCols(Math.max(1, c - 1))
         setRows(r)
         break
+      }
       case 'Enter':
-      case ' ':
+      case ' ': {
         e.preventDefault()
         insert(r, c)
         break
-      default:
+      }
+      default: {
         break
+      }
     }
   }
 

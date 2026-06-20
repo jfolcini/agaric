@@ -153,20 +153,12 @@ export function ensureRegistered(): void {
   })
 
   // Due: / scheduled: share the date-value parser.
-  registerTokenPrefix('due:', (value, span) => {
-    return parseDateToken(value, span, 'due')
-  })
-  registerTokenPrefix('scheduled:', (value, span) => {
-    return parseDateToken(value, span, 'scheduled')
-  })
+  registerTokenPrefix('due:', (value, span) => parseDateToken(value, span, 'due'))
+  registerTokenPrefix('scheduled:', (value, span) => parseDateToken(value, span, 'scheduled'))
 
   // Prop:key=value / not-prop:key=value
-  registerTokenPrefix('prop:', (value, span) => {
-    return parsePropToken(value, span, 'prop')
-  })
-  registerTokenPrefix('not-prop:', (value, span) => {
-    return parsePropToken(value, span, 'notProp')
-  })
+  registerTokenPrefix('prop:', (value, span) => parsePropToken(value, span, 'prop'))
+  registerTokenPrefix('not-prop:', (value, span) => parsePropToken(value, span, 'notProp'))
 }
 
 /**

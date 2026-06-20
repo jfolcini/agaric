@@ -124,17 +124,20 @@ export function DataSettingsTab(): React.ReactElement {
             // events. `complete` arrives after the backend commits; we
             // leave the bar full and let the file-loop advance.
             switch (update.kind) {
-              case 'started':
+              case 'started': {
                 setCurrentFileBlocksDone(0)
                 setCurrentFileBlocksTotal(update.blocks_total)
                 break
-              case 'progress':
+              }
+              case 'progress': {
                 setCurrentFileBlocksDone(update.blocks_done)
                 setCurrentFileBlocksTotal(update.blocks_total)
                 break
-              case 'complete':
+              }
+              case 'complete': {
                 setCurrentFileBlocksDone(update.blocks_created)
                 break
+              }
             }
           })
           totalBlocks += result.blocks_created

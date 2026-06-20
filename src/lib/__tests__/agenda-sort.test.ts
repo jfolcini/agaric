@@ -132,7 +132,7 @@ describe('groupByDate', () => {
       makeBlock({ id: 'B2', due_date: '2020-01-01', todo_state: 'TODO' }),
     ]
     const groups = groupByDate(blocks)
-    const lastGroup = groups[groups.length - 1]
+    const lastGroup = groups.at(-1)
     expect(lastGroup?.label).toBe('No date')
     expect(lastGroup?.blocks[0]?.id).toBe('B1')
   })

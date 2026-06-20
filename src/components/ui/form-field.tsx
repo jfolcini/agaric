@@ -53,23 +53,22 @@ const FormField = ({
   children,
   htmlFor,
   className,
-}: FormFieldProps) => {
-  return (
-    <div ref={ref} data-slot="form-field" className={cn('space-y-2', className)}>
-      <Label htmlFor={htmlFor} muted={false}>
-        {label}
-      </Label>
-      {children}
-      {error ? (
-        <p className="text-xs text-destructive" role="alert">
-          {error}
-        </p>
-      ) : description ? (
-        <p className="text-xs text-muted-foreground">{description}</p>
-      ) : null}
-    </div>
-  )
-}
+}: FormFieldProps) => (
+  <div ref={ref} data-slot="form-field" className={cn('space-y-2', className)}>
+    <Label htmlFor={htmlFor} muted={false}>
+      {label}
+    </Label>
+    {children}
+    {error ? (
+      <p className="text-xs text-destructive" role="alert">
+        {error}
+      </p>
+    ) : description ? (
+      <p className="text-xs text-muted-foreground">{description}</p>
+    ) : null}
+  </div>
+)
+
 FormField.displayName = 'FormField'
 
 export { FormField }

@@ -53,7 +53,7 @@ export function SourcePageFilter({
 
   // Sort by blockCount descending, then filter by search
   const filteredPages = useMemo(() => {
-    const sorted = [...sourcePages].sort((a, b) => b.blockCount - a.blockCount)
+    const sorted = [...sourcePages].toSorted((a, b) => b.blockCount - a.blockCount)
     if (!search.trim()) return sorted
     // Unicode-aware fold.
     return sorted.filter((p) => matchesSearchFolded(p.pageTitle ?? 'Untitled', search))

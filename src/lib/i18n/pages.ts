@@ -183,7 +183,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.loading': 'Loading...',
   'pageBrowser.deletePage': 'Delete page?',
   'pageBrowser.deleteDescription':
-    'This will permanently delete the page \u201c{{name}}\u201d and all its child blocks. This action cannot be undone.',
+    'This will permanently delete the page \u201C{{name}}\u201D and all its child blocks. This action cannot be undone.',
   'pageBrowser.deleteSuccess': 'Page deleted',
   'pageBrowser.deleteCascadeWarning': 'This will permanently delete the page and all its blocks.',
   'pageBrowser.delete': 'Delete',

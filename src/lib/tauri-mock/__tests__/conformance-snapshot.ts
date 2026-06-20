@@ -146,7 +146,7 @@ export function buildSnapshot(
       due_date: (b['due_date'] as string | null | undefined) ?? null,
       scheduled_date: (b['scheduled_date'] as string | null | undefined) ?? null,
     }))
-    .sort((a, b) => cmpTokens(a.id, b.id))
+    .toSorted((a, b) => cmpTokens(a.id, b.id))
 
   // Properties — block_properties projection. Exclude auto-derived timestamp
   // keys (created_at/completed_at) to match the Rust side.
@@ -167,7 +167,7 @@ export function buildSnapshot(
       })
     }
   }
-  const properties = propertyRows.sort((a, b) => {
+  const properties = propertyRows.toSorted((a, b) => {
     const c = cmpTokens(a['block_id'] as string, b['block_id'] as string)
     if (c !== 0) return c
     const ak = a['key'] as string
@@ -182,7 +182,7 @@ export function buildSnapshot(
       tagRows.push({ block_id: relabel(blockId), tag_id: relabel(tagId) })
     }
   }
-  const block_tags = tagRows.sort((a, b) => {
+  const block_tags = tagRows.toSorted((a, b) => {
     const c = cmpTokens(a['block_id'] as string, b['block_id'] as string)
     if (c !== 0) return c
     return cmpTokens(a['tag_id'] as string, b['tag_id'] as string)
@@ -212,7 +212,7 @@ export function buildSnapshot(
       })
     }
   }
-  const page_links = linkRows.sort((a, b) => {
+  const page_links = linkRows.toSorted((a, b) => {
     let c = cmpTokens(a['source_id'] as string, b['source_id'] as string)
     if (c !== 0) return c
     c = cmpTokens(a['target_id'] as string, b['target_id'] as string)

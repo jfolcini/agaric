@@ -80,7 +80,7 @@ export function groupBlocksByPage(
     }
     bucket.items.push(block)
   }
-  const groups = [...groupMap.values()].sort((a, b) => a.title.localeCompare(b.title))
+  const groups = [...groupMap.values()].toSorted((a, b) => a.title.localeCompare(b.title))
   for (const group of groups) {
     // ULID ids are codepoint-sortable: a binary comparison gives a deterministic
     // most-recent-first order. `localeCompare` is locale/collation-sensitive and

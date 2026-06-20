@@ -146,7 +146,7 @@ describe('PairingDialog', () => {
       list_peer_refs: [],
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     expect(await screen.findByText('Pair Device')).toBeInTheDocument()
   })
@@ -157,7 +157,7 @@ describe('PairingDialog', () => {
       list_peer_refs: [],
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     // The QR is rendered via dangerouslySetInnerHTML with the backend SVG
     const qr = await screen.findByTestId('pairing-qr-code')
@@ -173,7 +173,7 @@ describe('PairingDialog', () => {
       list_peer_refs: [],
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     expect(await screen.findByText('alpha bravo charlie delta')).toBeInTheDocument()
   })
@@ -184,7 +184,7 @@ describe('PairingDialog', () => {
       list_peer_refs: [],
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     // Wait for loading to finish
     await screen.findByText('alpha bravo charlie delta')
@@ -208,7 +208,7 @@ describe('PairingDialog', () => {
       confirm_pairing: undefined,
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     // Wait for loading to finish
     await screen.findByText('alpha bravo charlie delta')
@@ -236,7 +236,7 @@ describe('PairingDialog', () => {
       list_peer_refs: [],
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     // Wait for loading to finish
     await screen.findByText('alpha bravo charlie delta')
@@ -254,7 +254,7 @@ describe('PairingDialog', () => {
       cancel_pairing: undefined,
     })
 
-    render(<PairingDialog open={true} onOpenChange={onOpenChange} />)
+    render(<PairingDialog open onOpenChange={onOpenChange} />)
 
     // Wait for loading to finish
     await screen.findByText('alpha bravo charlie delta')
@@ -275,7 +275,7 @@ describe('PairingDialog', () => {
       list_peer_refs: mockPeers,
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     // Wait for loading to finish
     await screen.findByText('Paired Devices')
@@ -294,7 +294,7 @@ describe('PairingDialog', () => {
       list_peer_refs: [],
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     expect(await screen.findByText('No paired devices yet.')).toBeInTheDocument()
   })
@@ -307,7 +307,7 @@ describe('PairingDialog', () => {
       delete_peer_ref: undefined,
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     // Wait for peers to show
     await screen.findByText('peer-abc-1234567890')
@@ -342,7 +342,7 @@ describe('PairingDialog', () => {
       return undefined
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     // Error text includes the backend error message
     const errorEl = await screen.findByRole('alert')
@@ -358,7 +358,7 @@ describe('PairingDialog', () => {
       return undefined
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     await screen.findByText('alpha bravo charlie delta')
 
@@ -381,7 +381,7 @@ describe('PairingDialog', () => {
       () => new Promise(() => {}), // never resolves
     )
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       const loadingEl = document.querySelector('.pairing-loading')
@@ -397,7 +397,7 @@ describe('PairingDialog', () => {
       cancel_pairing: undefined,
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     // Wait for content to load
     await screen.findByText('alpha bravo charlie delta')
@@ -413,7 +413,7 @@ describe('PairingDialog', () => {
       cancel_pairing: undefined,
     })
 
-    const { rerender } = render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    const { rerender } = render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     // Wait for pairing to start
     await screen.findByText('alpha bravo charlie delta')
@@ -434,7 +434,7 @@ describe('PairingDialog', () => {
       cancel_pairing: undefined,
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     // Wait for pairing to start
     await screen.findByText('alpha bravo charlie delta')
@@ -453,7 +453,7 @@ describe('PairingDialog', () => {
       cancel_pairing: undefined,
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     await screen.findByText('Pair Device')
 
@@ -478,7 +478,7 @@ describe('PairingDialog', () => {
       list_peer_refs: [],
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
     await screen.findByText('alpha bravo charlie delta')
 
     const inputs = screen.getAllByRole('textbox') as HTMLInputElement[]
@@ -503,7 +503,7 @@ describe('PairingDialog', () => {
       list_peer_refs: [],
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
     await screen.findByText('alpha bravo charlie delta')
 
     const inputs = screen.getAllByRole('textbox')
@@ -529,7 +529,7 @@ describe('PairingDialog', () => {
       confirm_pairing: undefined,
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
     await screen.findByText('alpha bravo charlie delta')
 
     const inputs = screen.getAllByRole('textbox')
@@ -563,7 +563,7 @@ describe('PairingDialog', () => {
       return undefined
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     // Wait for error to appear
     const errorEl = await screen.findByRole('alert')
@@ -595,7 +595,7 @@ describe('PairingDialog', () => {
       cancel_pairing: undefined,
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     // Wait for pairing info to load — use real microtasks for promises
     await act(async () => {
@@ -634,7 +634,7 @@ describe('PairingDialog', () => {
       list_peer_refs: [],
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
     await screen.findByText('alpha bravo charlie delta')
 
     const grid = document.querySelector('.pairing-word-inputs')
@@ -647,7 +647,7 @@ describe('PairingDialog', () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
     const triggerRef = { current: document.createElement('button') }
-    document.body.appendChild(triggerRef.current)
+    document.body.append(triggerRef.current)
     triggerRef.current.textContent = 'Open Pairing'
     const focusSpy = vi.spyOn(triggerRef.current, 'focus')
 
@@ -657,7 +657,7 @@ describe('PairingDialog', () => {
       cancel_pairing: undefined,
     })
 
-    render(<PairingDialog open={true} onOpenChange={onOpenChange} triggerRef={triggerRef} />)
+    render(<PairingDialog open onOpenChange={onOpenChange} triggerRef={triggerRef} />)
 
     await screen.findByText('alpha bravo charlie delta')
 
@@ -680,7 +680,7 @@ describe('PairingDialog', () => {
       confirm_pairing: undefined,
     })
 
-    render(<PairingDialog open={true} onOpenChange={onOpenChange} />)
+    render(<PairingDialog open onOpenChange={onOpenChange} />)
 
     await screen.findByText('alpha bravo charlie delta')
 
@@ -709,7 +709,7 @@ describe('PairingDialog', () => {
       cancel_pairing: undefined,
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     // Wait for pairing info to load
     await act(async () => {
@@ -745,7 +745,7 @@ describe('PairingDialog', () => {
       return null
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
     await waitFor(() => {
       const dialog = document.querySelector('.pairing-dialog')
       expect(dialog).toBeInTheDocument()
@@ -767,7 +767,7 @@ describe('PairingDialog', () => {
       return undefined
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     const errorEl = await screen.findByRole('alert')
     expect(errorEl).toHaveTextContent(/Failed to start pairing:.*db connection lost/i)
@@ -782,7 +782,7 @@ describe('PairingDialog', () => {
       return undefined
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     await screen.findByText('peer-abc-1234567890')
 
@@ -816,7 +816,7 @@ describe('PairingDialog', () => {
       return undefined
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     await screen.findByText('alpha bravo charlie delta')
 
@@ -841,7 +841,7 @@ describe('PairingDialog', () => {
       return undefined
     })
 
-    const { rerender } = render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    const { rerender } = render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     await screen.findByText('alpha bravo charlie delta')
 
@@ -860,7 +860,7 @@ describe('PairingDialog', () => {
       return undefined
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     // Wait for error to appear
     const errorEl = await screen.findByRole('alert')
@@ -880,7 +880,7 @@ describe('PairingDialog', () => {
       list_peer_refs: [],
     })
 
-    const { unmount } = render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    const { unmount } = render(<PairingDialog open onOpenChange={vi.fn()} />)
     await screen.findByText('alpha bravo charlie delta')
 
     const inputs = screen.getAllByRole('textbox') as HTMLInputElement[]
@@ -921,7 +921,7 @@ describe('PairingDialog', () => {
       cancel_pairing: undefined,
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     // Flush init promises
     await act(async () => {
@@ -980,7 +980,7 @@ describe('PairingDialog', () => {
       return undefined
     })
 
-    render(<PairingDialog open={true} onOpenChange={onOpenChange} />)
+    render(<PairingDialog open onOpenChange={onOpenChange} />)
     await screen.findByText('alpha bravo charlie delta')
 
     const inputs = screen.getAllByRole('textbox')
@@ -1034,7 +1034,7 @@ describe('PairingDialog', () => {
     })
 
     const onOpenChange = vi.fn()
-    render(<PairingDialog open={true} onOpenChange={onOpenChange} />)
+    render(<PairingDialog open onOpenChange={onOpenChange} />)
     await screen.findByText('alpha bravo charlie delta')
 
     // Press Escape (or any close vector) without an in-flight pairing.
@@ -1061,7 +1061,7 @@ describe('PairingDialog', () => {
       cancel_pairing: undefined,
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     // Flush init promises under fake timers.
     await act(async () => {
@@ -1097,7 +1097,7 @@ describe('PairingDialog', () => {
       cancel_pairing: undefined,
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     await act(async () => {
       await vi.runAllTimersAsync()
@@ -1138,7 +1138,7 @@ describe('PairingDialog', () => {
       cancel_pairing: undefined,
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     await act(async () => {
       await vi.runAllTimersAsync()
@@ -1173,7 +1173,7 @@ describe('PairingDialog', () => {
       cancel_pairing: undefined,
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     await act(async () => {
       await vi.runAllTimersAsync()
@@ -1202,7 +1202,7 @@ describe('PairingDialog', () => {
       cancel_pairing: undefined,
     })
 
-    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     await act(async () => {
       await vi.runAllTimersAsync()
@@ -1252,7 +1252,7 @@ describe('PairingDialog', () => {
     }) as unknown as typeof useIpcCommand)
 
     try {
-      render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+      render(<PairingDialog open onOpenChange={vi.fn()} />)
 
       await waitFor(() => {
         expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(

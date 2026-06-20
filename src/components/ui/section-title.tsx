@@ -19,16 +19,21 @@ export type SectionTitleColor = 'done' | 'active' | 'pending' | 'overdue' | 'def
 
 const colorClassFor = (color: SectionTitleColor): string => {
   switch (color) {
-    case 'done':
+    case 'done': {
       return 'text-status-done-foreground'
-    case 'active':
+    }
+    case 'active': {
       return 'text-status-active-foreground'
-    case 'pending':
+    }
+    case 'pending': {
       return 'text-status-pending-foreground'
-    case 'overdue':
+    }
+    case 'overdue': {
       return 'text-destructive'
-    case 'default':
+    }
+    case 'default': {
       return 'text-foreground'
+    }
   }
 }
 
@@ -46,23 +51,22 @@ const SectionTitle = ({
   count,
   className,
   ...rest
-}: SectionTitleProps) => {
-  return (
-    <h4
-      ref={ref}
-      data-slot="section-title"
-      {...rest}
-      className={cn(
-        'text-xs font-semibold mb-1.5 flex items-center gap-1',
-        colorClassFor(color),
-        className,
-      )}
-    >
-      <span>{label}</span>
-      <span className="text-muted-foreground font-normal">({count})</span>
-    </h4>
-  )
-}
+}: SectionTitleProps) => (
+  <h4
+    ref={ref}
+    data-slot="section-title"
+    {...rest}
+    className={cn(
+      'text-xs font-semibold mb-1.5 flex items-center gap-1',
+      colorClassFor(color),
+      className,
+    )}
+  >
+    <span>{label}</span>
+    <span className="text-muted-foreground font-normal">({count})</span>
+  </h4>
+)
+
 SectionTitle.displayName = 'SectionTitle'
 
 export { SectionTitle }

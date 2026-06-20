@@ -67,17 +67,15 @@ vi.mock('@/components/agenda/AgendaFilterBuilder', () => ({
     sortBy: string
     onGroupByChange: unknown
     onSortByChange: unknown
-  }) => {
-    return (
-      <div
-        data-testid="agenda-sort-group-controls"
-        data-group-by={props.groupBy}
-        data-sort-by={props.sortBy}
-      >
-        AgendaSortGroupControls
-      </div>
-    )
-  },
+  }) => (
+    <div
+      data-testid="agenda-sort-group-controls"
+      data-group-by={props.groupBy}
+      data-sort-by={props.sortBy}
+    >
+      AgendaSortGroupControls
+    </div>
+  ),
 }))
 
 // ── Capture props from AgendaResults ────────────────────────────────

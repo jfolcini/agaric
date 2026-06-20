@@ -45,7 +45,7 @@ describe('PageAliasSection rendering', () => {
   })
 
   it('renders editing form when editingAliases is true', () => {
-    render(<PageAliasSection {...defaultProps} aliases={['my-alias']} editingAliases={true} />)
+    render(<PageAliasSection {...defaultProps} aliases={['my-alias']} editingAliases />)
 
     expect(screen.getByLabelText('New alias input')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^add$/i })).toBeInTheDocument()
@@ -53,9 +53,7 @@ describe('PageAliasSection rendering', () => {
   })
 
   it('shows remove buttons on aliases when editing', () => {
-    render(
-      <PageAliasSection {...defaultProps} aliases={['alias-a', 'alias-b']} editingAliases={true} />,
-    )
+    render(<PageAliasSection {...defaultProps} aliases={['alias-a', 'alias-b']} editingAliases />)
 
     expect(screen.getByRole('button', { name: /remove alias alias-a/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /remove alias alias-b/i })).toBeInTheDocument()
@@ -68,7 +66,7 @@ describe('PageAliasSection rendering', () => {
   })
 
   it('renders editing form when no aliases but editingAliases is true', () => {
-    render(<PageAliasSection {...defaultProps} editingAliases={true} />)
+    render(<PageAliasSection {...defaultProps} editingAliases />)
 
     expect(screen.getByLabelText('New alias input')).toBeInTheDocument()
   })
@@ -95,7 +93,7 @@ describe('PageAliasSection interaction', () => {
       <PageAliasSection
         {...defaultProps}
         aliases={['my-alias']}
-        editingAliases={true}
+        editingAliases
         onStopEditing={onStopEditing}
       />,
     )
@@ -109,11 +107,7 @@ describe('PageAliasSection interaction', () => {
     const user = userEvent.setup()
 
     render(
-      <PageAliasSection
-        {...defaultProps}
-        editingAliases={true}
-        onAliasInputChange={onAliasInputChange}
-      />,
+      <PageAliasSection {...defaultProps} editingAliases onAliasInputChange={onAliasInputChange} />,
     )
 
     const input = screen.getByLabelText('New alias input')
@@ -129,7 +123,7 @@ describe('PageAliasSection interaction', () => {
     render(
       <PageAliasSection
         {...defaultProps}
-        editingAliases={true}
+        editingAliases
         aliasInput="new-alias"
         onAddAlias={onAddAlias}
       />,
@@ -146,7 +140,7 @@ describe('PageAliasSection interaction', () => {
     render(
       <PageAliasSection
         {...defaultProps}
-        editingAliases={true}
+        editingAliases
         aliasInput="new-alias"
         onAddAlias={onAddAlias}
       />,
@@ -167,7 +161,7 @@ describe('PageAliasSection interaction', () => {
       <PageAliasSection
         {...defaultProps}
         aliases={['alias-a', 'alias-b']}
-        editingAliases={true}
+        editingAliases
         onRemoveAlias={onRemoveAlias}
       />,
     )
@@ -179,7 +173,7 @@ describe('PageAliasSection interaction', () => {
 
 describe('PageAliasSection touch target on remove button', () => {
   it('remove-alias button has 44 px coarse-pointer touch target', () => {
-    render(<PageAliasSection {...defaultProps} aliases={['alias-a']} editingAliases={true} />)
+    render(<PageAliasSection {...defaultProps} aliases={['alias-a']} editingAliases />)
 
     const btn = screen.getByRole('button', { name: /remove alias alias-a/i })
     expect(btn.className).toContain('[@media(pointer:coarse)]:h-11')
@@ -188,7 +182,7 @@ describe('PageAliasSection touch target on remove button', () => {
   })
 
   it('remove-alias button keeps focus-visible ring tokens', () => {
-    render(<PageAliasSection {...defaultProps} aliases={['alias-a']} editingAliases={true} />)
+    render(<PageAliasSection {...defaultProps} aliases={['alias-a']} editingAliases />)
 
     const btn = screen.getByRole('button', { name: /remove alias alias-a/i })
     expect(btn.className).toContain('focus-ring-visible')
@@ -199,7 +193,7 @@ describe('PageAliasSection touch target on remove button', () => {
   //              `w-full` override does not apply. Add a sm: breakpoint so the
   //              field grows to 128 px before falling back to the desktop default.
   it('alias input has sm:w-32 viewport-width breakpoint', () => {
-    render(<PageAliasSection {...defaultProps} editingAliases={true} />)
+    render(<PageAliasSection {...defaultProps} editingAliases />)
 
     const input = screen.getByLabelText('New alias input')
     expect(input.className).toContain('sm:w-32')
@@ -218,7 +212,7 @@ describe('PageAliasSection accessibility', () => {
 
   it('has no a11y violations in editing mode', async () => {
     const { container } = render(
-      <PageAliasSection {...defaultProps} aliases={['my-alias']} editingAliases={true} />,
+      <PageAliasSection {...defaultProps} aliases={['my-alias']} editingAliases />,
     )
 
     const results = await axe(container)

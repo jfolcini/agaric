@@ -65,7 +65,7 @@ describe('HistoryRevertDialog', () => {
     const onSuccess = vi.fn()
     render(
       <HistoryRevertDialog
-        open={true}
+        open
         onOpenChange={vi.fn()}
         selectedEntries={ENTRIES}
         onSuccess={onSuccess}
@@ -87,7 +87,7 @@ describe('HistoryRevertDialog', () => {
     const onSuccess = vi.fn()
     render(
       <HistoryRevertDialog
-        open={true}
+        open
         onOpenChange={vi.fn()}
         selectedEntries={ENTRIES}
         onSuccess={onSuccess}

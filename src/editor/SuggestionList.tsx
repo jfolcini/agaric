@@ -165,9 +165,7 @@ export const SuggestionList = ({
   }, [activeDescendantId, onActiveDescendantChange])
 
   useImperativeHandle(ref, () => ({
-    onKeyDown: ({ event }) => {
-      return handleKeyDown(event)
-    },
+    onKeyDown: ({ event }) => handleKeyDown(event),
   }))
 
   // Group items by category while preserving flat index for keyboard navigation.

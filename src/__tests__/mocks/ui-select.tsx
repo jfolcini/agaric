@@ -33,7 +33,7 @@ import { createPortal } from 'react-dom'
 
 type TriggerProps = Record<string, unknown>
 
-type SelectCtx = {
+interface SelectCtx {
   value?: string
   onValueChange?: (v: string) => void
   disabled?: boolean
@@ -44,7 +44,7 @@ const Ctx = createContext<SelectCtx>({
   triggerPropsRef: { current: {} },
 })
 
-type SelectProps = {
+interface SelectProps {
   value?: string
   onValueChange?: (v: string) => void
   disabled?: boolean
@@ -60,7 +60,7 @@ export function Select({ value, onValueChange, disabled, children }: SelectProps
   return createElement(Ctx.Provider, { value: ctx }, children)
 }
 
-type SelectTriggerProps = {
+interface SelectTriggerProps {
   size?: 'default' | 'sm'
   className?: string
   children?: React.ReactNode
@@ -76,7 +76,7 @@ export function SelectTrigger({ children: _children, ...props }: SelectTriggerPr
   return null
 }
 
-type SelectValueProps = {
+interface SelectValueProps {
   placeholder?: string
   children?: React.ReactNode
 }
@@ -85,7 +85,7 @@ export function SelectValue(_props: SelectValueProps) {
   return null
 }
 
-type SelectContentProps = {
+interface SelectContentProps {
   children?: React.ReactNode
 }
 
@@ -183,7 +183,7 @@ export function SelectContent({ children }: SelectContentProps) {
   )
 }
 
-type SelectItemProps = {
+interface SelectItemProps {
   value: string
   children?: React.ReactNode
   disabled?: boolean
@@ -212,7 +212,7 @@ export function SelectItem({ value, children, disabled, endContent }: SelectItem
   return createElement(Fragment, null, optionEl, createPortal(endContent, document.body))
 }
 
-type GroupLikeProps = {
+interface GroupLikeProps {
   children?: React.ReactNode
   [key: string]: unknown
 }

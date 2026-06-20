@@ -59,23 +59,29 @@ export function buildInitParams(
   def: PropertyDefinition,
 ): SetPropertyParams | null {
   switch (def.value_type) {
-    case 'number':
+    case 'number': {
       return { blockId, key: def.key, valueNum: 0 }
-    case 'date':
+    }
+    case 'date': {
       // Local calendar day (matches getTodayString / formatDate used
       // everywhere else); `toISOString()` would be UTC → off-by-one for
       // users in negative-offset timezones.
       return { blockId, key: def.key, valueDate: getTodayString() }
+    }
     case 'text':
-    case 'select':
+    case 'select': {
       return { blockId, key: def.key, valueText: '' }
-    case 'ref':
+    }
+    case 'ref': {
       return { blockId, key: def.key, valueRef: null }
-    case 'boolean':
+    }
+    case 'boolean': {
       // A freshly-added boolean property defaults to false.
       return { blockId, key: def.key, valueBool: false }
-    default:
+    }
+    default: {
       return null
+    }
   }
 }
 

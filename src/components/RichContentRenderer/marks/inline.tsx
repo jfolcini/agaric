@@ -20,22 +20,30 @@ function renderInlineNode(
   ctx: RenderContext,
 ): React.ReactElement | null {
   switch (node.type) {
-    case 'text':
+    case 'text': {
       return renderTextInline(node, key, ctx)
-    case 'tag_ref':
+    }
+    case 'tag_ref': {
       return renderTagRef(node, key, ctx)
-    case 'block_link':
+    }
+    case 'block_link': {
       return renderBlockLink(node, key, ctx)
-    case 'block_ref':
+    }
+    case 'block_ref': {
       return renderBlockRef(node, key, ctx)
-    case 'hardBreak':
+    }
+    case 'hardBreak': {
       return renderHardBreak(node, key)
-    case 'math_inline':
+    }
+    case 'math_inline': {
       return renderMathInline(node, key)
-    case 'image':
+    }
+    case 'image': {
       return renderImage(node, key)
-    default:
+    }
+    default: {
       return null
+    }
   }
 }
 

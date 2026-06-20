@@ -115,9 +115,7 @@ export function BlockPropertyDrawer({
 
   // Determine property type from definitions
   const getType = useCallback(
-    (key: string) => {
-      return definitions.find((d) => d.key === key)?.value_type ?? 'text'
-    },
+    (key: string) => definitions.find((d) => d.key === key)?.value_type ?? 'text',
     [definitions],
   )
 

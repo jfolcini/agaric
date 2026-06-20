@@ -72,47 +72,58 @@ export function astToFilterProjection(ast: SearchQueryAST): AstFilterProjection 
         if (!tagNames.includes(tagValue)) tagNames.push(tagValue)
         break
       }
-      case 'pathInclude':
+      case 'pathInclude': {
         // Comma-separated values inside one path: token expand into
         // multiple include entries (the plan's "Multiple `path:`
         // tokens → equivalent to comma-separating them" rule).
         for (const v of splitCommas(f.value)) includePageGlobs.push(v)
         break
-      case 'pathExclude':
+      }
+      case 'pathExclude': {
         for (const v of splitCommas(f.value)) excludePageGlobs.push(v)
         break
-      case 'state':
+      }
+      case 'state': {
         if (!stateFilter.includes(f.value)) stateFilter.push(f.value)
         break
-      case 'notState':
+      }
+      case 'notState': {
         // Project to `excluded_state_filter`; the backend
         // emits `(todo_state IS NULL OR todo_state NOT IN (...))`.
         if (!excludedStateFilter.includes(f.value)) excludedStateFilter.push(f.value)
         break
-      case 'priority':
+      }
+      case 'priority': {
         if (!priorityFilter.includes(f.value)) priorityFilter.push(f.value)
         break
-      case 'notPriority':
+      }
+      case 'notPriority': {
         // Symmetric to `notState`.
         if (!excludedPriorityFilter.includes(f.value)) excludedPriorityFilter.push(f.value)
         break
-      case 'due':
+      }
+      case 'due': {
         // Last `due:` token wins (a future revision can collapse to a
         // composite predicate). Documented in docs/SEARCH.md.
         dueFilter = f.value
         break
-      case 'scheduled':
+      }
+      case 'scheduled': {
         scheduledFilter = f.value
         break
-      case 'prop':
+      }
+      case 'prop': {
         propertyFilters.push({ key: f.key, value: f.value })
         break
-      case 'notProp':
+      }
+      case 'notProp': {
         excludedPropertyFilters.push({ key: f.key, value: f.value })
         break
-      case 'invalid':
+      }
+      case 'invalid': {
         // Don't ship invalid tokens to the backend.
         break
+      }
     }
   }
   return {

@@ -74,7 +74,7 @@ interface SetupResult {
   unmount: () => void
 }
 
-function setup(initialPageMap: Map<string, string> = new Map()): SetupResult {
+function setup(initialPageMap = new Map<string, string>()): SetupResult {
   const pageCreatedCalls: PageCreatedCall[] = []
   const onPageCreated = (dateStr: string, pageId: string) => {
     pageCreatedCalls.push({ dateStr, pageId })

@@ -225,7 +225,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="B1"
           content="Hello"
-          isFocused={true}
+          isFocused
           rovingEditor={makeRovingEditor() as never}
         />,
       )
@@ -239,7 +239,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="B1"
           content="Hello"
-          isFocused={true}
+          isFocused
           rovingEditor={makeRovingEditor({ editor: null }) as never}
         />,
       )
@@ -253,7 +253,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="B1"
           content="Hello"
-          isFocused={true}
+          isFocused
           rovingEditor={makeRovingEditor() as never}
         />,
       )
@@ -268,8 +268,8 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="B1"
           content="Hello"
-          isFocused={true}
-          isSelected={true}
+          isFocused
+          isSelected
           rovingEditor={makeRovingEditor() as never}
         />,
       )
@@ -419,7 +419,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="B1"
           content="original text"
-          isFocused={true}
+          isFocused
           rovingEditor={roving as never}
         />,
       )
@@ -441,12 +441,7 @@ describe('EditableBlock', () => {
       })
 
       render(
-        <EditableBlock
-          blockId="B1"
-          content="original"
-          isFocused={true}
-          rovingEditor={roving as never}
-        />,
+        <EditableBlock blockId="B1" content="original" isFocused rovingEditor={roving as never} />,
       )
 
       const wrapper = getBlockEditorWrapper()
@@ -464,12 +459,7 @@ describe('EditableBlock', () => {
       })
 
       render(
-        <EditableBlock
-          blockId="B1"
-          content="same text"
-          isFocused={true}
-          rovingEditor={roving as never}
-        />,
+        <EditableBlock blockId="B1" content="same text" isFocused rovingEditor={roving as never} />,
       )
 
       const wrapper = getBlockEditorWrapper()
@@ -488,14 +478,7 @@ describe('EditableBlock', () => {
         activeBlockId: null,
       })
 
-      render(
-        <EditableBlock
-          blockId="B1"
-          content="text"
-          isFocused={true}
-          rovingEditor={roving as never}
-        />,
-      )
+      render(<EditableBlock blockId="B1" content="text" isFocused rovingEditor={roving as never} />)
 
       const wrapper = getBlockEditorWrapper()
       fireEvent.blur(wrapper as Element)
@@ -518,12 +501,7 @@ describe('EditableBlock', () => {
       })
 
       render(
-        <EditableBlock
-          blockId="B1"
-          content="original"
-          isFocused={true}
-          rovingEditor={roving as never}
-        />,
+        <EditableBlock blockId="B1" content="original" isFocused rovingEditor={roving as never} />,
       )
 
       const wrapper = getBlockEditorWrapper()
@@ -546,12 +524,7 @@ describe('EditableBlock', () => {
       })
 
       render(
-        <EditableBlock
-          blockId="B1"
-          content="original"
-          isFocused={true}
-          rovingEditor={roving as never}
-        />,
+        <EditableBlock blockId="B1" content="original" isFocused rovingEditor={roving as never} />,
       )
 
       const wrapper = getBlockEditorWrapper()
@@ -583,7 +556,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="B1"
           content="Hello"
-          isFocused={true}
+          isFocused
           rovingEditor={makeRovingEditor() as never}
         />,
       )
@@ -599,19 +572,14 @@ describe('EditableBlock', () => {
       const roving = makeRovingEditor({ activeBlockId: 'B1', unmount: mockUnmount })
 
       render(
-        <EditableBlock
-          blockId="B1"
-          content="Hello"
-          isFocused={true}
-          rovingEditor={roving as never}
-        />,
+        <EditableBlock blockId="B1" content="Hello" isFocused rovingEditor={roving as never} />,
       )
 
       // Simulate a Radix popover being open AND visible in the DOM
       const portal = document.createElement('div')
       portal.setAttribute('data-editor-portal', '')
       ;(portal as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
-      document.body.appendChild(portal)
+      document.body.append(portal)
 
       const editorWrapper = getBlockEditorWrapper()
       fireEvent.blur(editorWrapper, { relatedTarget: null })
@@ -626,19 +594,14 @@ describe('EditableBlock', () => {
       const roving = makeRovingEditor({ activeBlockId: 'B1', unmount: mockUnmount })
 
       render(
-        <EditableBlock
-          blockId="B1"
-          content="Hello"
-          isFocused={true}
-          rovingEditor={roving as never}
-        />,
+        <EditableBlock blockId="B1" content="Hello" isFocused rovingEditor={roving as never} />,
       )
 
       // Simulate a Radix popover that is in the DOM but hidden
       const portal = document.createElement('div')
       portal.setAttribute('data-editor-portal', '')
       ;(portal as unknown as { checkVisibility: () => boolean }).checkVisibility = () => false
-      document.body.appendChild(portal)
+      document.body.append(portal)
 
       const editorWrapper = getBlockEditorWrapper()
       fireEvent.blur(editorWrapper, { relatedTarget: null })
@@ -656,20 +619,15 @@ describe('EditableBlock', () => {
       const roving = makeRovingEditor({ activeBlockId: 'B1', unmount: mockUnmount })
 
       render(
-        <EditableBlock
-          blockId="B1"
-          content="Hello"
-          isFocused={true}
-          rovingEditor={roving as never}
-        />,
+        <EditableBlock blockId="B1" content="Hello" isFocused rovingEditor={roving as never} />,
       )
 
       // Simulate relatedTarget being inside a Radix popover
       const portal = document.createElement('div')
       portal.setAttribute('data-editor-portal', '')
       const input = document.createElement('input')
-      portal.appendChild(input)
-      document.body.appendChild(portal)
+      portal.append(input)
+      document.body.append(portal)
 
       const editorWrapper = getBlockEditorWrapper()
       fireEvent.blur(editorWrapper, { relatedTarget: input })
@@ -690,7 +648,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="B1"
           content="Hello"
-          isFocused={true}
+          isFocused
           rovingEditor={makeRovingEditor() as never}
         />,
       )
@@ -735,7 +693,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="B1"
           content="Hello"
-          isFocused={true}
+          isFocused
           rovingEditor={makeRovingEditor() as never}
         />,
       )
@@ -752,7 +710,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="B1"
           content="Hello"
-          isFocused={true}
+          isFocused
           rovingEditor={makeRovingEditor() as never}
         />,
       )
@@ -774,12 +732,7 @@ describe('EditableBlock', () => {
       const roving = makeRovingEditor({ activeBlockId: 'B1', unmount: mockUnmount })
 
       render(
-        <EditableBlock
-          blockId="B1"
-          content="Hello"
-          isFocused={true}
-          rovingEditor={roving as never}
-        />,
+        <EditableBlock blockId="B1" content="Hello" isFocused rovingEditor={roving as never} />,
       )
 
       // Simulate relatedTarget being inside a suggestion popup
@@ -787,8 +740,8 @@ describe('EditableBlock', () => {
       popup.classList.add('suggestion-popup')
       popup.setAttribute('data-editor-portal', '')
       const btn = document.createElement('button')
-      popup.appendChild(btn)
-      document.body.appendChild(popup)
+      popup.append(btn)
+      document.body.append(popup)
 
       const editorWrapper = getBlockEditorWrapper()
       fireEvent.blur(editorWrapper, { relatedTarget: btn })
@@ -822,12 +775,7 @@ describe('EditableBlock', () => {
       )
 
       rerender(
-        <EditableBlock
-          blockId="B1"
-          content="New block"
-          isFocused={true}
-          rovingEditor={roving as never}
-        />,
+        <EditableBlock blockId="B1" content="New block" isFocused rovingEditor={roving as never} />,
       )
 
       // Auto-mount effect should unmount old block and save changes
@@ -854,9 +802,7 @@ describe('EditableBlock', () => {
       const { rerender } = render(
         <EditableBlock blockId="B1" content="x" isFocused={false} rovingEditor={roving as never} />,
       )
-      rerender(
-        <EditableBlock blockId="B1" content="x" isFocused={true} rovingEditor={roving as never} />,
-      )
+      rerender(<EditableBlock blockId="B1" content="x" isFocused rovingEditor={roving as never} />)
 
       expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', 'unsaved changes')
       // The orphan draft row for the block we moved AWAY from must be dropped.
@@ -878,9 +824,7 @@ describe('EditableBlock', () => {
       const { rerender } = render(
         <EditableBlock blockId="B1" content="" isFocused={false} rovingEditor={roving as never} />,
       )
-      rerender(
-        <EditableBlock blockId="B1" content="" isFocused={true} rovingEditor={roving as never} />,
-      )
+      rerender(<EditableBlock blockId="B1" content="" isFocused rovingEditor={roving as never} />)
 
       expect(mockEdit).not.toHaveBeenCalled()
       expect(mockDeleteDraft).toHaveBeenCalledWith('OLD_BLOCK')
@@ -899,9 +843,7 @@ describe('EditableBlock', () => {
         <EditableBlock blockId="B1" content="" isFocused={false} rovingEditor={roving as never} />,
       )
 
-      rerender(
-        <EditableBlock blockId="B1" content="" isFocused={true} rovingEditor={roving as never} />,
-      )
+      rerender(<EditableBlock blockId="B1" content="" isFocused rovingEditor={roving as never} />)
 
       expect(mockSplitBlock).toHaveBeenCalledWith('OLD_BLOCK', 'line1\nline2')
       expect(mockEdit).not.toHaveBeenCalled()
@@ -926,12 +868,7 @@ describe('EditableBlock', () => {
       )
 
       rerender(
-        <EditableBlock
-          blockId="B1"
-          content="text"
-          isFocused={true}
-          rovingEditor={roving as never}
-        />,
+        <EditableBlock blockId="B1" content="text" isFocused rovingEditor={roving as never} />,
       )
 
       expect(mockUnmount).not.toHaveBeenCalled()
@@ -951,9 +888,7 @@ describe('EditableBlock', () => {
         <EditableBlock blockId="B1" content="" isFocused={false} rovingEditor={roving as never} />,
       )
 
-      rerender(
-        <EditableBlock blockId="B1" content="" isFocused={true} rovingEditor={roving as never} />,
-      )
+      rerender(<EditableBlock blockId="B1" content="" isFocused rovingEditor={roving as never} />)
 
       expect(mockUnmount).toHaveBeenCalledOnce()
       expect(mockEdit).not.toHaveBeenCalled()
@@ -979,9 +914,7 @@ describe('EditableBlock', () => {
         <EditableBlock blockId="B1" content="" isFocused={false} rovingEditor={roving as never} />,
       )
 
-      rerender(
-        <EditableBlock blockId="B1" content="" isFocused={true} rovingEditor={roving as never} />,
-      )
+      rerender(<EditableBlock blockId="B1" content="" isFocused rovingEditor={roving as never} />)
 
       expect(mockShouldSplitOnBlur).toHaveBeenCalledWith(codeBlock)
       expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', codeBlock)
@@ -1002,16 +935,14 @@ describe('EditableBlock', () => {
         originalMarkdown: '',
       })
 
-      render(
-        <EditableBlock blockId="B1" content="" isFocused={true} rovingEditor={roving as never} />,
-      )
+      render(<EditableBlock blockId="B1" content="" isFocused rovingEditor={roving as never} />)
 
       // Simulate a visible suggestion popup being open in the DOM
       const popup = document.createElement('div')
       popup.classList.add('suggestion-popup')
       popup.setAttribute('data-editor-portal', '')
       ;(popup as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
-      document.body.appendChild(popup)
+      document.body.append(popup)
 
       const editorWrapper = getBlockEditorWrapper()
       fireEvent.blur(editorWrapper, { relatedTarget: null })
@@ -1035,9 +966,7 @@ describe('EditableBlock', () => {
         originalMarkdown: '',
       })
 
-      render(
-        <EditableBlock blockId="B1" content="" isFocused={true} rovingEditor={roving as never} />,
-      )
+      render(<EditableBlock blockId="B1" content="" isFocused rovingEditor={roving as never} />)
 
       // No popup in DOM — blur runs fully (early save + unmount save)
       const editorWrapper = getBlockEditorWrapper()
@@ -1061,12 +990,7 @@ describe('EditableBlock', () => {
       })
 
       render(
-        <EditableBlock
-          blockId="B1"
-          content="original"
-          isFocused={true}
-          rovingEditor={roving as never}
-        />,
+        <EditableBlock blockId="B1" content="original" isFocused rovingEditor={roving as never} />,
       )
 
       // Visible popup in the DOM — should early return WITHOUT saving
@@ -1074,7 +998,7 @@ describe('EditableBlock', () => {
       popup.classList.add('suggestion-popup')
       popup.setAttribute('data-editor-portal', '')
       ;(popup as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
-      document.body.appendChild(popup)
+      document.body.append(popup)
 
       const editorWrapper = getBlockEditorWrapper()
       fireEvent.blur(editorWrapper, { relatedTarget: null })
@@ -1097,16 +1021,14 @@ describe('EditableBlock', () => {
         originalMarkdown: '',
       })
 
-      render(
-        <EditableBlock blockId="B1" content="" isFocused={true} rovingEditor={roving as never} />,
-      )
+      render(<EditableBlock blockId="B1" content="" isFocused rovingEditor={roving as never} />)
 
       // Visible popup in DOM — triggers early return
       const popup = document.createElement('div')
       popup.classList.add('suggestion-popup')
       popup.setAttribute('data-editor-portal', '')
       ;(popup as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
-      document.body.appendChild(popup)
+      document.body.append(popup)
 
       const editorWrapper = getBlockEditorWrapper()
       fireEvent.blur(editorWrapper, { relatedTarget: null })
@@ -1141,7 +1063,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="B1"
           content="original text"
-          isFocused={true}
+          isFocused
           rovingEditor={roving as never}
         />,
       )
@@ -1172,12 +1094,7 @@ describe('EditableBlock', () => {
       })
 
       render(
-        <EditableBlock
-          blockId="B1"
-          content="original"
-          isFocused={true}
-          rovingEditor={roving as never}
-        />,
+        <EditableBlock blockId="B1" content="original" isFocused rovingEditor={roving as never} />,
       )
 
       const wrapper = getBlockEditorWrapper()
@@ -1201,7 +1118,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="B1"
           content="ArrowRight content"
-          isFocused={true}
+          isFocused
           rovingEditor={roving as never}
         />,
       )
@@ -1255,7 +1172,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="B1"
           content="original text"
-          isFocused={true}
+          isFocused
           rovingEditor={roving as never}
         />,
       )
@@ -1280,12 +1197,7 @@ describe('EditableBlock', () => {
       })
 
       render(
-        <EditableBlock
-          blockId="B1"
-          content="original"
-          isFocused={true}
-          rovingEditor={roving as never}
-        />,
+        <EditableBlock blockId="B1" content="original" isFocused rovingEditor={roving as never} />,
       )
 
       const wrapper = getBlockEditorWrapper()
@@ -1342,9 +1254,7 @@ describe('EditableBlock', () => {
         <EditableBlock blockId="B1" content="" isFocused={false} rovingEditor={roving as never} />,
       )
 
-      rerender(
-        <EditableBlock blockId="B1" content="" isFocused={true} rovingEditor={roving as never} />,
-      )
+      rerender(<EditableBlock blockId="B1" content="" isFocused rovingEditor={roving as never} />)
 
       // splitBlock was called for old block (and rejects)
       expect(mockSplitBlock).toHaveBeenCalledWith('OLD_BLOCK', 'line1\nline2')
@@ -1370,12 +1280,7 @@ describe('EditableBlock', () => {
       })
 
       render(
-        <EditableBlock
-          blockId="B1"
-          content="original"
-          isFocused={true}
-          rovingEditor={roving as never}
-        />,
+        <EditableBlock blockId="B1" content="original" isFocused rovingEditor={roving as never} />,
       )
 
       // Fire an update so liveContent is set
@@ -1405,12 +1310,7 @@ describe('EditableBlock', () => {
       })
 
       render(
-        <EditableBlock
-          blockId="B1"
-          content="original"
-          isFocused={true}
-          rovingEditor={roving as never}
-        />,
+        <EditableBlock blockId="B1" content="original" isFocused rovingEditor={roving as never} />,
       )
 
       const wrapper = getBlockEditorWrapper()
@@ -1437,12 +1337,7 @@ describe('EditableBlock', () => {
       })
 
       const { unmount } = render(
-        <EditableBlock
-          blockId="B1"
-          content="original"
-          isFocused={true}
-          rovingEditor={roving as never}
-        />,
+        <EditableBlock blockId="B1" content="original" isFocused rovingEditor={roving as never} />,
       )
 
       // Fire an update so liveContent is set
@@ -1495,12 +1390,7 @@ describe('EditableBlock', () => {
       })
 
       render(
-        <EditableBlock
-          blockId="B1"
-          content="original"
-          isFocused={true}
-          rovingEditor={roving as never}
-        />,
+        <EditableBlock blockId="B1" content="original" isFocused rovingEditor={roving as never} />,
       )
 
       // Simulate a TipTap update firing with new content.
@@ -1530,7 +1420,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="B1"
           content="original text"
-          isFocused={true}
+          isFocused
           rovingEditor={roving as never}
         />,
       )
@@ -1552,12 +1442,7 @@ describe('EditableBlock', () => {
       })
 
       const { unmount } = render(
-        <EditableBlock
-          blockId="B1"
-          content="original"
-          isFocused={true}
-          rovingEditor={roving as never}
-        />,
+        <EditableBlock blockId="B1" content="original" isFocused rovingEditor={roving as never} />,
       )
 
       // Fire an update so liveContent is set
@@ -1603,7 +1488,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="NEW_BLOCK"
           content="original"
-          isFocused={true}
+          isFocused
           rovingEditor={roving as never}
         />,
       )
@@ -1640,7 +1525,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="NEW_BLOCK"
           content="original"
-          isFocused={true}
+          isFocused
           rovingEditor={roving as never}
         />,
       )
@@ -1716,7 +1601,7 @@ describe('EditableBlock', () => {
           <EditableBlock
             blockId="B1"
             content="original"
-            isFocused={true}
+            isFocused
             rovingEditor={roving as never}
           />,
         )
@@ -1771,7 +1656,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="BLK_1"
           content="hello"
-          isFocused={true}
+          isFocused
           rovingEditor={makeRovingEditor() as never}
         />,
       )
@@ -1790,7 +1675,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="BLK_1"
           content="hello"
-          isFocused={true}
+          isFocused
           rovingEditor={makeRovingEditor() as never}
         />,
       )
@@ -1812,7 +1697,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="BLK_1"
           content="hello"
-          isFocused={true}
+          isFocused
           rovingEditor={makeRovingEditor() as never}
         />,
       )
@@ -1841,7 +1726,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="BLK_1"
           content="hello"
-          isFocused={true}
+          isFocused
           rovingEditor={makeRovingEditor() as never}
         />,
       )
@@ -1863,7 +1748,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="BLK_1"
           content="hello"
-          isFocused={true}
+          isFocused
           rovingEditor={makeRovingEditor() as never}
         />,
       )
@@ -1889,7 +1774,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="BLK_1"
           content="hello"
-          isFocused={true}
+          isFocused
           rovingEditor={makeRovingEditor() as never}
         />,
       )
@@ -1917,7 +1802,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="BLK_1"
           content="hello"
-          isFocused={true}
+          isFocused
           rovingEditor={makeRovingEditor() as never}
         />,
       )
@@ -1945,7 +1830,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="BLK_1"
           content="hello"
-          isFocused={true}
+          isFocused
           rovingEditor={makeRovingEditor() as never}
         />,
       )
@@ -1967,7 +1852,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="BLK_1"
           content="hello"
-          isFocused={true}
+          isFocused
           rovingEditor={makeRovingEditor() as never}
         />,
       )
@@ -1990,7 +1875,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="BLK_1"
           content="hello"
-          isFocused={true}
+          isFocused
           rovingEditor={makeRovingEditor() as never}
         />,
       )
@@ -2035,7 +1920,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="BLK_1"
           content="hello"
-          isFocused={true}
+          isFocused
           rovingEditor={makeRovingEditor() as never}
         />,
       )
@@ -2091,7 +1976,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="BLK_1"
           content="hello"
-          isFocused={true}
+          isFocused
           rovingEditor={makeRovingEditor({ editor, activeBlockId: 'BLK_1' }) as never}
         />,
       )
@@ -2116,7 +2001,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="BLK_1"
           content="hello"
-          isFocused={true}
+          isFocused
           rovingEditor={makeRovingEditor({ editor, activeBlockId: 'BLK_1' }) as never}
         />,
       )
@@ -2137,7 +2022,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="BLK_1"
           content="hello"
-          isFocused={true}
+          isFocused
           rovingEditor={makeRovingEditor({ editor, activeBlockId: 'BLK_1' }) as never}
         />,
       )
@@ -2162,7 +2047,7 @@ describe('EditableBlock', () => {
         <EditableBlock
           blockId="BLK_1"
           content="hello"
-          isFocused={true}
+          isFocused
           // Editor is mounted on a DIFFERENT block — never inject into it.
           rovingEditor={makeRovingEditor({ editor, activeBlockId: 'BLK_OTHER' }) as never}
         />,

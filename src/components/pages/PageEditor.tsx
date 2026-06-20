@@ -91,11 +91,12 @@ function PageEditorInner({
   }, [selectedBlockId, blocks, blocksById, setFocused, clearSelection])
 
   // Clear undo state for the previous page when navigating away or unmounting
-  useEffect(() => {
-    return () => {
+  useEffect(
+    () => () => {
       useUndoStore.getState().clearPage(pageId)
-    }
-  }, [pageId])
+    },
+    [pageId],
+  )
 
   const handleAddBlock = useCallback(async () => {
     // Find the last top-level block (direct child of this page) rather than
@@ -103,7 +104,7 @@ function PageEditorInner({
     // Using the flat-tree tail would create the new block under the wrong
     // parent (the nested block's parent instead of the page).
     const topLevel = blocks.filter((b) => b.parent_id === pageId)
-    const lastBlock = topLevel[topLevel.length - 1]
+    const lastBlock = topLevel.at(-1)
     if (lastBlock) {
       const newId = await createBelow(lastBlock.id, '')
       if (newId) {
@@ -161,13 +162,14 @@ function PageEditorInner({
     },
     [setFindContainer],
   )
-  useEffect(() => {
-    return () => {
+  useEffect(
+    () => () => {
       // Unmount path — when this page is replaced, drop the container
       // registration so a leftover toolbar can't paint stale highlights.
       setFindContainer(null)
-    }
-  }, [setFindContainer])
+    },
+    [setFindContainer],
+  )
 
   return (
     <div

@@ -49,7 +49,7 @@ describe('useSidebarKeyboard', () => {
     renderHook(() => useSidebarKeyboard(toggle))
 
     const input = document.createElement('input')
-    document.body.appendChild(input)
+    document.body.append(input)
     input.focus()
     fireEvent.keyDown(input, { key: 'b', ctrlKey: true })
     expect(toggle).not.toHaveBeenCalled()
@@ -62,7 +62,7 @@ describe('useSidebarKeyboard', () => {
     renderHook(() => useSidebarKeyboard(toggle))
 
     const ta = document.createElement('textarea')
-    document.body.appendChild(ta)
+    document.body.append(ta)
     ta.focus()
     fireEvent.keyDown(ta, { key: 'b', ctrlKey: true })
     expect(toggle).not.toHaveBeenCalled()
@@ -76,7 +76,7 @@ describe('useSidebarKeyboard', () => {
 
     const editor = document.createElement('div')
     editor.setAttribute('contenteditable', 'true')
-    document.body.appendChild(editor)
+    document.body.append(editor)
     editor.focus()
     fireEvent.keyDown(editor, { key: 'b', ctrlKey: true })
     expect(toggle).not.toHaveBeenCalled()

@@ -194,8 +194,8 @@ describe('useEditorBlur', () => {
       popup.classList.add('suggestion-popup')
       popup.setAttribute('data-editor-portal', '')
       const btn = document.createElement('button')
-      popup.appendChild(btn)
-      document.body.appendChild(popup)
+      popup.append(btn)
+      document.body.append(popup)
 
       act(() => {
         result.current.handleBlur(makeFocusEvent(btn))
@@ -228,13 +228,13 @@ describe('useEditorBlur', () => {
       // Create wrapper element (simulates the editor <section>)
       const wrapper = document.createElement('div')
       wrapper.setAttribute('data-testid', 'editor-wrapper')
-      document.body.appendChild(wrapper)
+      document.body.append(wrapper)
 
       // Simulate a visible Radix popover in the DOM OUTSIDE the wrapper
       const portal = document.createElement('div')
       portal.setAttribute('data-editor-portal', '')
       ;(portal as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
-      document.body.appendChild(portal)
+      document.body.append(portal)
 
       act(() => {
         result.current.handleBlur(makeFocusEvent(null, wrapper))
@@ -267,13 +267,13 @@ describe('useEditorBlur', () => {
       // Create wrapper element
       const wrapper = document.createElement('div')
       wrapper.setAttribute('data-testid', 'editor-wrapper')
-      document.body.appendChild(wrapper)
+      document.body.append(wrapper)
 
       // Simulate a hidden Radix popover in the DOM
       const portal = document.createElement('div')
       portal.setAttribute('data-editor-portal', '')
       ;(portal as unknown as { checkVisibility: () => boolean }).checkVisibility = () => false
-      document.body.appendChild(portal)
+      document.body.append(portal)
 
       act(() => {
         result.current.handleBlur(makeFocusEvent(null, wrapper))
@@ -436,14 +436,14 @@ describe('useEditorBlur', () => {
       // Create wrapper element
       const wrapper = document.createElement('div')
       wrapper.setAttribute('data-testid', 'editor-wrapper')
-      document.body.appendChild(wrapper)
+      document.body.append(wrapper)
 
       // Add a visible popup OUTSIDE the wrapper to trigger portal guard
       const popup = document.createElement('div')
       popup.classList.add('suggestion-popup')
       popup.setAttribute('data-editor-portal', '')
       ;(popup as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
-      document.body.appendChild(popup)
+      document.body.append(popup)
 
       const { result } = renderHook(() =>
         useEditorBlur({
@@ -610,14 +610,14 @@ describe('useEditorBlur', () => {
       // Create wrapper element
       const wrapper = document.createElement('div')
       wrapper.setAttribute('data-testid', 'editor-wrapper')
-      document.body.appendChild(wrapper)
+      document.body.append(wrapper)
 
       // Add a visible popup OUTSIDE the wrapper to trigger portal guard
       const popup = document.createElement('div')
       popup.classList.add('suggestion-popup')
       popup.setAttribute('data-editor-portal', '')
       ;(popup as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
-      document.body.appendChild(popup)
+      document.body.append(popup)
 
       const { result } = renderHook(() =>
         useEditorBlur({
@@ -811,8 +811,8 @@ describe('useEditorBlur', () => {
 
         const portal = buildPortalElement(selector)
         const inner = document.createElement('button')
-        portal.appendChild(inner)
-        document.body.appendChild(portal)
+        portal.append(inner)
+        document.body.append(portal)
 
         act(() => {
           result.current.handleBlur(makeFocusEvent(inner))
@@ -847,11 +847,11 @@ describe('useEditorBlur', () => {
 
         const wrapper = document.createElement('section')
         wrapper.setAttribute('data-testid', 'editor-wrapper')
-        document.body.appendChild(wrapper)
+        document.body.append(wrapper)
 
         const portal = buildPortalElement(selector)
         ;(portal as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
-        document.body.appendChild(portal)
+        document.body.append(portal)
 
         act(() => {
           result.current.handleBlur(makeFocusEvent(null, wrapper))
@@ -884,7 +884,7 @@ describe('useEditorBlur', () => {
 
       const wrapper = document.createElement('section')
       wrapper.setAttribute('data-testid', 'editor-wrapper')
-      document.body.appendChild(wrapper)
+      document.body.append(wrapper)
 
       // No checkVisibility on the portal — the scan must fall back to
       // offsetParent. We stub a non-null offsetParent to simulate a visible
@@ -895,7 +895,7 @@ describe('useEditorBlur', () => {
         configurable: true,
         get: () => document.body,
       })
-      document.body.appendChild(portal)
+      document.body.append(portal)
 
       act(() => {
         result.current.handleBlur(makeFocusEvent(null, wrapper))
@@ -927,7 +927,7 @@ describe('useEditorBlur', () => {
 
       const wrapper = document.createElement('section')
       wrapper.setAttribute('data-testid', 'editor-wrapper')
-      document.body.appendChild(wrapper)
+      document.body.append(wrapper)
 
       // Portal element exists but is hidden — neither path should treat it
       // as visible, so the editor proceeds to save.
@@ -938,7 +938,7 @@ describe('useEditorBlur', () => {
         configurable: true,
         get: () => null,
       })
-      document.body.appendChild(portal)
+      document.body.append(portal)
 
       act(() => {
         result.current.handleBlur(makeFocusEvent(null, wrapper))
@@ -970,7 +970,7 @@ describe('useEditorBlur', () => {
 
       const wrapper = document.createElement('section')
       wrapper.setAttribute('data-testid', 'editor-wrapper')
-      document.body.appendChild(wrapper)
+      document.body.append(wrapper)
 
       // Place a portal-ish element INSIDE the wrapper. Even though the
       // selector matches and it is visible, Step 4b skips elements
@@ -979,7 +979,7 @@ describe('useEditorBlur', () => {
       portal.classList.add('formatting-toolbar')
       portal.setAttribute('data-editor-portal', '')
       ;(portal as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
-      wrapper.appendChild(portal)
+      wrapper.append(portal)
 
       act(() => {
         result.current.handleBlur(makeFocusEvent(null, wrapper))
@@ -1014,14 +1014,14 @@ describe('useEditorBlur', () => {
 
       const wrapper = document.createElement('section')
       wrapper.setAttribute('data-testid', 'editor-wrapper')
-      document.body.appendChild(wrapper)
+      document.body.append(wrapper)
 
       const popup = document.createElement('div')
       popup.classList.add('block-context-menu')
       popup.setAttribute('data-editor-portal', '')
       const inner = document.createElement('button')
-      popup.appendChild(inner)
-      document.body.appendChild(popup)
+      popup.append(inner)
+      document.body.append(popup)
 
       act(() => {
         result.current.handleBlur(makeFocusEvent(inner, wrapper))
@@ -1060,14 +1060,14 @@ describe('useEditorBlur', () => {
       // Create wrapper (simulates the editor <section>)
       const wrapper = document.createElement('section')
       wrapper.setAttribute('data-testid', 'editor-wrapper')
-      document.body.appendChild(wrapper)
+      document.body.append(wrapper)
 
       // Place a visible formatting toolbar INSIDE the wrapper
       const toolbar = document.createElement('div')
       toolbar.classList.add('formatting-toolbar')
       toolbar.setAttribute('data-editor-portal', '')
       ;(toolbar as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
-      wrapper.appendChild(toolbar)
+      wrapper.append(toolbar)
 
       act(() => {
         result.current.handleBlur(makeFocusEvent(null, wrapper))
@@ -1103,14 +1103,14 @@ describe('useEditorBlur', () => {
       // Create wrapper (simulates the editor <section>)
       const wrapper = document.createElement('section')
       wrapper.setAttribute('data-testid', 'editor-wrapper')
-      document.body.appendChild(wrapper)
+      document.body.append(wrapper)
 
       // Place a visible date picker OUTSIDE the wrapper (in document.body)
       const picker = document.createElement('div')
       picker.classList.add('date-picker-popup')
       picker.setAttribute('data-editor-portal', '')
       ;(picker as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
-      document.body.appendChild(picker)
+      document.body.append(picker)
 
       act(() => {
         result.current.handleBlur(makeFocusEvent(null, wrapper))
@@ -1146,19 +1146,19 @@ describe('useEditorBlur', () => {
       // Create wrapper (simulates the editor <section>)
       const wrapper = document.createElement('section')
       wrapper.setAttribute('data-testid', 'editor-wrapper')
-      document.body.appendChild(wrapper)
+      document.body.append(wrapper)
 
       // Formatting toolbar is visible INSIDE the wrapper (the B-56 trigger)
       const toolbar = document.createElement('div')
       toolbar.classList.add('formatting-toolbar')
       toolbar.setAttribute('data-editor-portal', '')
       ;(toolbar as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
-      wrapper.appendChild(toolbar)
+      wrapper.append(toolbar)
 
       // relatedTarget is an external element (e.g. sidebar button)
       const sidebar = document.createElement('button')
       sidebar.textContent = 'Sidebar'
-      document.body.appendChild(sidebar)
+      document.body.append(sidebar)
 
       act(() => {
         result.current.handleBlur(makeFocusEvent(sidebar, wrapper))

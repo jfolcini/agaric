@@ -113,7 +113,7 @@ const mockedUndoGetState = vi.mocked(useUndoStore.getState)
 
 function renderHook(hookFn: () => void): { unmount: () => void } {
   const container = document.createElement('div')
-  document.body.appendChild(container)
+  document.body.append(container)
   let root: Root
 
   function TestComponent(): null {
@@ -245,7 +245,7 @@ describe('useUndoShortcuts', () => {
     editable.contentEditable = 'true'
     // jsdom may not fully implement isContentEditable — set it explicitly
     Object.defineProperty(editable, 'isContentEditable', { value: true })
-    document.body.appendChild(editable)
+    document.body.append(editable)
 
     fireEvent.keyDown(editable, { key: 'z', ctrlKey: true })
 
@@ -259,7 +259,7 @@ describe('useUndoShortcuts', () => {
     const { unmount } = renderHook(() => useUndoShortcuts())
 
     const input = document.createElement('input')
-    document.body.appendChild(input)
+    document.body.append(input)
 
     fireEvent.keyDown(input, { key: 'z', ctrlKey: true })
 
@@ -273,7 +273,7 @@ describe('useUndoShortcuts', () => {
     const { unmount } = renderHook(() => useUndoShortcuts())
 
     const textarea = document.createElement('textarea')
-    document.body.appendChild(textarea)
+    document.body.append(textarea)
 
     fireEvent.keyDown(textarea, { key: 'z', ctrlKey: true })
 

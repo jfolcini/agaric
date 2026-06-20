@@ -97,15 +97,19 @@ function resolveToken(rawName: string, now: Date, ctx: TemplateVariableContext):
   }
 
   switch (name.toLowerCase()) {
-    case 'date':
+    case 'date': {
       // Reuse the project's ISO date helper (YYYY-MM-DD).
       return formatDate(now)
-    case 'time':
+    }
+    case 'time': {
       return format(now, 'HH:mm')
-    case 'title':
+    }
+    case 'title': {
       return ctx.pageTitle ?? ''
-    default:
+    }
+    default: {
       return null
+    }
   }
 }
 

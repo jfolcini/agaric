@@ -94,8 +94,8 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
   const resolveVersion = useResolveStore((s) => s.version)
   const renderedSpans = useMemo(
     () =>
-      visibleSpans.map((span) => {
-        return (
+      visibleSpans.map(
+        (span) =>
           renderRichContent(span.value, {
             interactive: false,
             // Diff spans render inside inline <del>/<ins>/<span> within a
@@ -105,9 +105,8 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
             resolveBlockStatus,
             resolveTagName,
             resolveTagStatus,
-          }) ?? span.value
-        )
-      }),
+          }) ?? span.value,
+      ),
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion is intentionally load-bearing — the resolve callbacks read a mutable cache via refs that oxlint cannot see through, so the version is the only trigger for re-resolution when the resolve store updates.
     [
       visibleSpans,
@@ -204,7 +203,7 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
               else spanRefs.current.delete(i)
             }
             switch (span.tag) {
-              case 'Delete':
+              case 'Delete': {
                 return (
                   <del
                     key={key}
@@ -223,7 +222,8 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
                     {content}
                   </del>
                 )
-              case 'Insert':
+              }
+              case 'Insert': {
                 return (
                   <ins
                     key={key}
@@ -242,12 +242,14 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
                     {content}
                   </ins>
                 )
-              default:
+              }
+              default: {
                 return (
                   <span key={key} ref={refCallback}>
                     {content}
                   </span>
                 )
+              }
             }
           })}
         </p>

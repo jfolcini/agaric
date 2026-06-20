@@ -370,9 +370,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
 
         // Determine group size from the most recent batch undo
         const groupSize =
-          pageState.redoGroupSizes.length > 0
-            ? (pageState.redoGroupSizes[pageState.redoGroupSizes.length - 1] as number)
-            : 1
+          pageState.redoGroupSizes.length > 0 ? (pageState.redoGroupSizes.at(-1) as number) : 1
 
         let firstResult: UndoResult | null = null
         let redoneCount = 0

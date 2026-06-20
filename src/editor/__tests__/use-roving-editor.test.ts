@@ -466,7 +466,7 @@ describe('custom extension keyboard shortcuts', () => {
       | undefined
     const toggleStrike = vi.fn(() => true)
     const shortcuts = addKeyboardShortcuts?.call({ editor: { commands: { toggleStrike } } }) ?? {}
-    expect(Object.keys(shortcuts).sort()).toEqual(['Mod-Shift-s', 'Mod-Shift-x'])
+    expect(Object.keys(shortcuts).toSorted()).toEqual(['Mod-Shift-s', 'Mod-Shift-x'])
   })
 
   it('HighlightWithShortcut toggles highlight via command', () => {
@@ -1826,7 +1826,7 @@ describe('  host-unmount popup sweep', () => {
     // body and removes any matches.
     const orphan = document.createElement('div')
     orphan.classList.add('suggestion-popup')
-    document.body.appendChild(orphan)
+    document.body.append(orphan)
     expect(document.querySelectorAll('.suggestion-popup').length).toBe(1)
 
     const hook = renderHook(() => useRovingEditor())

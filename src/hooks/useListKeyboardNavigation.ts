@@ -91,7 +91,10 @@ export function resolveNavOptions(options: UseListKeyboardNavigationOptions): Re
 // Dispatch infrastructure
 // ---------------------------------------------------------------------------
 
-type KeyLike = { key: string; preventDefault: () => void }
+interface KeyLike {
+  key: string
+  preventDefault: () => void
+}
 
 interface KeyRule {
   matches: (e: KeyLike, opts: ResolvedNavOptions) => boolean

@@ -75,7 +75,7 @@ describe('useAppSpaceLifecycle — visual identity', () => {
   it('calls setWindowTitle with the active space name on mount', async () => {
     renderHook(() => useAppSpaceLifecycle())
     await waitFor(() => {
-      expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Personal \u00b7 Agaric')
+      expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Personal \u00B7 Agaric')
     })
   })
 
@@ -98,7 +98,7 @@ describe('useAppSpaceLifecycle — visual identity', () => {
 
     const { rerender } = renderHook(() => useAppSpaceLifecycle())
     await waitFor(() => {
-      expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Personal \u00b7 Agaric')
+      expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Personal \u00B7 Agaric')
     })
     vi.mocked(setWindowTitle).mockClear()
 
@@ -111,7 +111,7 @@ describe('useAppSpaceLifecycle — visual identity', () => {
       )
     })
     await waitFor(() => {
-      expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Work \u00b7 Agaric')
+      expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Work \u00B7 Agaric')
     })
   })
 })

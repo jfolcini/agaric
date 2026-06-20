@@ -130,7 +130,7 @@ describe('dispatchBlockCommand', () => {
 
     for (const name of names) dispatchBlockCommand(name)
 
-    expect(calls.sort()).toEqual([...names].sort())
+    expect(calls.toSorted()).toEqual([...names].toSorted())
   })
 })
 

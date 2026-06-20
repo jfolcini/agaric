@@ -1517,7 +1517,7 @@ describe('SearchPanel', () => {
     expect(batchResolveCalls).toHaveLength(1)
     const args = batchResolveCalls[0]?.[1] as { ids: string[] }
     expect(args.ids).toHaveLength(3)
-    expect([...args.ids].sort()).toEqual(['PAGE_A', 'PAGE_B', 'PAGE_C'])
+    expect([...args.ids].toSorted()).toEqual(['PAGE_A', 'PAGE_B', 'PAGE_C'])
   })
 
   // Issue #153 — soft-deleted / missing parents are never cached in

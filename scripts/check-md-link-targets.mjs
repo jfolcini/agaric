@@ -31,9 +31,8 @@
 import { execSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const ROOT = path.resolve(import.meta.dirname, '..')
 
 // ─── 1. List of tracked files (lookup table) ─────────────────────────
 const trackedFiles = new Set(

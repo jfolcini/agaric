@@ -99,7 +99,7 @@ function renderPopup(
   const popup = document.createElement('div')
   popup.className = 'suggestion-popup'
   popup.checkVisibility = () => true
-  document.body.appendChild(popup)
+  document.body.append(popup)
   const cbProps = extra?.onActiveDescendantChange
     ? { onActiveDescendantChange: extra.onActiveDescendantChange }
     : {}

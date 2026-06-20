@@ -58,8 +58,8 @@ describe('useSlashCommandDate', () => {
 
   it('exposes exactly the four date commands and no prefix entries', () => {
     const { result } = renderHook(() => useSlashCommandDate())
-    expect(Object.keys(result.current.exact).sort()).toEqual(
-      ['date', 'due', 'repeat-until', 'schedule'].sort(),
+    expect(Object.keys(result.current.exact).toSorted()).toEqual(
+      ['date', 'due', 'repeat-until', 'schedule'].toSorted(),
     )
     expect(result.current.prefix).toEqual([])
   })

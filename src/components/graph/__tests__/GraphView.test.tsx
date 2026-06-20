@@ -202,7 +202,7 @@ class MockWorker {
   static instances: MockWorker[] = []
   postMessageCalls: any[] = []
   terminated = false
-  private listeners: Map<string, MessageHandler[]> = new Map()
+  private listeners = new Map<string, MessageHandler[]>()
 
   constructor(_url: any, _opts?: any) {
     MockWorker.instances.push(this)
@@ -1793,9 +1793,7 @@ describe('GraphView', () => {
       })
 
       // Non-page blocks are filtered out — the worker receives only the 2 pages.
-      const latestWorker = MockWorker.instances[MockWorker.instances.length - 1] as InstanceType<
-        typeof MockWorker
-      >
+      const latestWorker = MockWorker.instances.at(-1) as InstanceType<typeof MockWorker>
       const startMsg = latestWorker?.postMessageCalls.find((m: any) => m.type === 'start')
       expect(startMsg).toBeDefined()
     })

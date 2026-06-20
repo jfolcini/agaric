@@ -91,7 +91,7 @@ describe('PairingQrDisplay', () => {
         {...defaultProps}
         countdownDisplay={null}
         countdown={0}
-        isExpired={true}
+        isExpired
         onRetry={onRetry}
       />,
     )
@@ -108,7 +108,7 @@ describe('PairingQrDisplay', () => {
         {...defaultProps}
         countdownDisplay={null}
         countdown={0}
-        isExpired={true}
+        isExpired
         onRetry={onRetry}
       />,
     )
@@ -123,7 +123,7 @@ describe('PairingQrDisplay', () => {
         {...defaultProps}
         countdownDisplay={null}
         countdown={0}
-        isExpired={true}
+        isExpired
         error="Some error"
       />,
     )
@@ -241,7 +241,7 @@ describe('PairingQrDisplay', () => {
   })
 
   it('renders the visible pause indicator with text-foreground emphasis', () => {
-    const { container } = render(<PairingQrDisplay {...defaultProps} pausedByTyping={true} />)
+    const { container } = render(<PairingQrDisplay {...defaultProps} pausedByTyping />)
 
     const paused = container.querySelector('.pairing-countdown-paused')
     expect(paused).toBeTruthy()
@@ -255,7 +255,7 @@ describe('PairingQrDisplay', () => {
 
   it('has no a11y violations when expired', async () => {
     const { container } = render(
-      <PairingQrDisplay {...defaultProps} countdownDisplay={null} countdown={0} isExpired={true} />,
+      <PairingQrDisplay {...defaultProps} countdownDisplay={null} countdown={0} isExpired />,
     )
 
     const results = await axe(container)
@@ -274,13 +274,13 @@ describe('PairingQrDisplay', () => {
       const { rerender } = render(<PairingQrDisplay {...defaultProps} pausedByTyping={false} />)
       announceMock.mockClear()
 
-      rerender(<PairingQrDisplay {...defaultProps} pausedByTyping={true} />)
+      rerender(<PairingQrDisplay {...defaultProps} pausedByTyping />)
 
       expect(announceMock).toHaveBeenCalledWith('Pairing countdown paused while typing')
     })
 
     it('announces "resumed" when pausedByTyping flips true → false', () => {
-      const { rerender } = render(<PairingQrDisplay {...defaultProps} pausedByTyping={true} />)
+      const { rerender } = render(<PairingQrDisplay {...defaultProps} pausedByTyping />)
       announceMock.mockClear()
 
       rerender(<PairingQrDisplay {...defaultProps} pausedByTyping={false} />)
@@ -292,7 +292,7 @@ describe('PairingQrDisplay', () => {
       // Don't regress: the inline pause indicator stays inside the
       // aria-hidden countdown <p>; the SR channel is the announce()
       // helper, not this paragraph.
-      const { container } = render(<PairingQrDisplay {...defaultProps} pausedByTyping={true} />)
+      const { container } = render(<PairingQrDisplay {...defaultProps} pausedByTyping />)
 
       const countdown = container.querySelector('.pairing-countdown')
       expect(countdown).toHaveAttribute('aria-hidden', 'true')

@@ -36,7 +36,7 @@ describe('ListViewState', () => {
   describe('loading state (skeleton)', () => {
     it('renders default LoadingSkeleton when loading with no items', () => {
       const { container } = render(
-        <ListViewState loading={true} items={[]} empty={<p>No items</p>}>
+        <ListViewState loading items={[]} empty={<p>No items</p>}>
           {(items) => (
             <ul>
               {items.map((i) => (
@@ -54,7 +54,7 @@ describe('ListViewState', () => {
     it('renders custom skeleton when provided', () => {
       render(
         <ListViewState<Item>
-          loading={true}
+          loading
           items={[]}
           skeleton={<div data-testid="custom-skeleton">Loading...</div>}
           empty={<p>No items</p>}
@@ -75,7 +75,7 @@ describe('ListViewState', () => {
 
     it('renders nothing when skeleton is null', () => {
       const { container } = render(
-        <ListViewState<Item> loading={true} items={[]} skeleton={null} empty={<p>No items</p>}>
+        <ListViewState<Item> loading items={[]} skeleton={null} empty={<p>No items</p>}>
           {(items) => (
             <ul>
               {items.map((i) => (
@@ -91,7 +91,7 @@ describe('ListViewState', () => {
 
     it('does not render empty state while loading', () => {
       render(
-        <ListViewState<Item> loading={true} items={[]} empty={<p>No items</p>}>
+        <ListViewState<Item> loading items={[]} empty={<p>No items</p>}>
           {(items) => (
             <ul>
               {items.map((i) => (
@@ -107,7 +107,7 @@ describe('ListViewState', () => {
 
     it('does not render children while loading with empty items', () => {
       render(
-        <ListViewState<Item> loading={true} items={[]} empty={<p>No items</p>}>
+        <ListViewState<Item> loading items={[]} empty={<p>No items</p>}>
           {() => <div data-testid="children-content">Content</div>}
         </ListViewState>,
       )
@@ -223,7 +223,7 @@ describe('ListViewState', () => {
 
     it('renders children when loading but items exist (reload scenario)', () => {
       render(
-        <ListViewState<Item> loading={true} items={sampleItems} empty={<p>No items</p>}>
+        <ListViewState<Item> loading items={sampleItems} empty={<p>No items</p>}>
           {(items) => (
             <ul>
               {items.map((i) => (
@@ -242,7 +242,7 @@ describe('ListViewState', () => {
 
     it('does not show skeleton when loading with existing items', () => {
       const { container } = render(
-        <ListViewState<Item> loading={true} items={sampleItems} empty={<p>No items</p>}>
+        <ListViewState<Item> loading items={sampleItems} empty={<p>No items</p>}>
           {(items) => (
             <ul>
               {items.map((i) => (
@@ -279,7 +279,7 @@ describe('ListViewState', () => {
   describe('state transitions', () => {
     it('transitions from skeleton to loaded', () => {
       const { rerender } = render(
-        <ListViewState<Item> loading={true} items={[]} empty={<p>No items</p>}>
+        <ListViewState<Item> loading items={[]} empty={<p>No items</p>}>
           {(items) => (
             <ul>
               {items.map((i) => (
@@ -312,7 +312,7 @@ describe('ListViewState', () => {
 
     it('transitions from skeleton to empty', () => {
       const { rerender } = render(
-        <ListViewState<Item> loading={true} items={[]} empty={<p>No items</p>}>
+        <ListViewState<Item> loading items={[]} empty={<p>No items</p>}>
           {(items) => (
             <ul>
               {items.map((i) => (
@@ -392,7 +392,7 @@ describe('ListViewState', () => {
 
       // Start reload — items stay visible
       rerender(
-        <ListViewState<Item> loading={true} items={sampleItems} empty={<p>No items</p>}>
+        <ListViewState<Item> loading items={sampleItems} empty={<p>No items</p>}>
           {(items) => (
             <ul>
               {items.map((i) => (
@@ -456,7 +456,7 @@ describe('ListViewState', () => {
     it('renders custom skeleton with aria attributes', () => {
       render(
         <ListViewState<Item>
-          loading={true}
+          loading
           items={[]}
           skeleton={
             // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- test queries getByRole('status') on this fixture

@@ -28,7 +28,7 @@ describe('Switch', () => {
   // -- Controlled rendering ---------------------------------------------------
 
   it('renders with checked=true and reflects aria-checked', () => {
-    render(<Switch checked={true} onCheckedChange={() => {}} aria-label="Toggle feature" />)
+    render(<Switch checked onCheckedChange={() => {}} aria-label="Toggle feature" />)
 
     const sw = screen.getByRole('switch', { name: 'Toggle feature' })
     expect(sw).toHaveAttribute('aria-checked', 'true')
@@ -59,7 +59,7 @@ describe('Switch', () => {
   it('calls onCheckedChange(false) when clicked while checked', async () => {
     const user = userEvent.setup()
     const onCheckedChange = vi.fn()
-    render(<Switch checked={true} onCheckedChange={onCheckedChange} aria-label="Toggle feature" />)
+    render(<Switch checked onCheckedChange={onCheckedChange} aria-label="Toggle feature" />)
 
     await user.click(screen.getByRole('switch', { name: 'Toggle feature' }))
 

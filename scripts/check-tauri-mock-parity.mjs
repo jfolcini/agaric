@@ -25,9 +25,8 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const ROOT = path.resolve(import.meta.dirname, '..')
 const BINDINGS = path.join(ROOT, 'src/lib/bindings.ts')
 const HANDLERS = path.join(ROOT, 'src/lib/tauri-mock/handlers.ts')
 
@@ -95,10 +94,10 @@ if (mocked.size === 0) {
 }
 
 // ─── 3. Compute missing / extra ─────────────────────────────────────
-const missingAll = [...expected].filter((c) => !mocked.has(c)).sort()
+const missingAll = [...expected].filter((c) => !mocked.has(c)).toSorted()
 const missingNew = missingAll.filter((c) => !KNOWN_UNMOCKED.has(c))
-const allowlistStale = [...KNOWN_UNMOCKED].filter((c) => !missingAll.includes(c)).sort()
-const extra = [...mocked].filter((c) => !expected.has(c)).sort()
+const allowlistStale = [...KNOWN_UNMOCKED].filter((c) => !missingAll.includes(c)).toSorted()
+const extra = [...mocked].filter((c) => !expected.has(c)).toSorted()
 
 let exitCode = 0
 

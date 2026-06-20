@@ -109,7 +109,7 @@ describe('useLinkPreview', () => {
   it('updates state when pointerenter fires on .external-link element', () => {
     const dom = makeContainer()
     const link = createExternalLink()
-    dom.appendChild(link)
+    dom.append(link)
 
     const { result } = renderHook(() => useLinkPreview(dom))
 
@@ -125,7 +125,7 @@ describe('useLinkPreview', () => {
   it('clears state on pointerleave', () => {
     const dom = makeContainer()
     const link = createExternalLink()
-    dom.appendChild(link)
+    dom.append(link)
 
     const { result } = renderHook(() => useLinkPreview(dom))
 
@@ -150,7 +150,7 @@ describe('useLinkPreview', () => {
 
     const dom = makeContainer()
     const link = createExternalLink()
-    dom.appendChild(link)
+    dom.append(link)
 
     const { result } = renderHook(() => useLinkPreview(dom))
 
@@ -174,7 +174,7 @@ describe('useLinkPreview', () => {
 
     const dom = makeContainer()
     const link = createExternalLink()
-    dom.appendChild(link)
+    dom.append(link)
 
     const { result } = renderHook(() => useLinkPreview(dom))
 
@@ -197,7 +197,7 @@ describe('useLinkPreview', () => {
 
     const dom = makeContainer()
     const link = createExternalLink()
-    dom.appendChild(link)
+    dom.append(link)
 
     const { result } = renderHook(() => useLinkPreview(dom))
 
@@ -218,8 +218,8 @@ describe('useLinkPreview', () => {
     const dom = makeContainer()
     const link1 = createExternalLink('https://example.com/1')
     const link2 = createExternalLink('https://example.com/2')
-    dom.appendChild(link1)
-    dom.appendChild(link2)
+    dom.append(link1)
+    dom.append(link2)
 
     renderHook(() => useLinkPreview(dom))
 
@@ -257,7 +257,7 @@ describe('useLinkPreview', () => {
     const dom = makeContainer()
     const span = document.createElement('span')
     span.textContent = 'not a link'
-    dom.appendChild(span)
+    dom.append(span)
 
     const { result } = renderHook(() => useLinkPreview(dom))
 
@@ -272,7 +272,7 @@ describe('useLinkPreview', () => {
   it('stops responding to events after unmount', () => {
     const dom = makeContainer()
     const link = createExternalLink()
-    dom.appendChild(link)
+    dom.append(link)
 
     const { unmount } = renderHook(() => useLinkPreview(dom))
 
@@ -303,7 +303,7 @@ describe('useLinkPreview', () => {
         y: 100,
         toJSON: () => ({}),
       }) as DOMRect
-    dom.appendChild(span)
+    dom.append(span)
 
     const { result } = renderHook(() => useLinkPreview(dom))
 
@@ -321,7 +321,7 @@ describe('useLinkPreview', () => {
   it('updates state when focusin fires on .external-link element', () => {
     const dom = makeContainer()
     const link = createExternalLink()
-    dom.appendChild(link)
+    dom.append(link)
 
     const { result } = renderHook(() => useLinkPreview(dom))
 
@@ -337,7 +337,7 @@ describe('useLinkPreview', () => {
   it('clears state on focusout', () => {
     const dom = makeContainer()
     const link = createExternalLink()
-    dom.appendChild(link)
+    dom.append(link)
 
     const { result } = renderHook(() => useLinkPreview(dom))
 
@@ -360,7 +360,7 @@ describe('useLinkPreview', () => {
     const dom = makeContainer()
     const span = document.createElement('span')
     span.textContent = 'not a link'
-    dom.appendChild(span)
+    dom.append(span)
 
     const { result } = renderHook(() => useLinkPreview(dom))
 
@@ -377,7 +377,7 @@ describe('useLinkPreview', () => {
 
     const dom = makeContainer()
     const link = createExternalLink()
-    dom.appendChild(link)
+    dom.append(link)
 
     const { result } = renderHook(() => useLinkPreview(dom))
 
@@ -397,7 +397,7 @@ describe('useLinkPreview', () => {
   it('Escape dismisses the preview when one is shown', () => {
     const dom = makeContainer()
     const link = createExternalLink()
-    dom.appendChild(link)
+    dom.append(link)
 
     const { result } = renderHook(() => useLinkPreview(dom))
 
@@ -418,7 +418,7 @@ describe('useLinkPreview', () => {
   it('Escape with defaultPrevented=true does NOT dismiss the preview (additive behavior)', () => {
     const dom = makeContainer()
     const link = createExternalLink()
-    dom.appendChild(link)
+    dom.append(link)
 
     const { result } = renderHook(() => useLinkPreview(dom))
 
@@ -441,7 +441,7 @@ describe('useLinkPreview', () => {
   it('Escape is a no-op when no preview is currently shown', () => {
     const dom = makeContainer()
     const link = createExternalLink()
-    dom.appendChild(link)
+    dom.append(link)
 
     const { result } = renderHook(() => useLinkPreview(dom))
 
@@ -458,7 +458,7 @@ describe('useLinkPreview', () => {
   it('keeps mouse hover behavior intact alongside focus support', () => {
     const dom = makeContainer()
     const link = createExternalLink()
-    dom.appendChild(link)
+    dom.append(link)
 
     const { result } = renderHook(() => useLinkPreview(dom))
 
@@ -477,7 +477,7 @@ describe('useLinkPreview', () => {
   it('removes focus and keydown listeners on unmount', () => {
     const dom = makeContainer()
     const link = createExternalLink()
-    dom.appendChild(link)
+    dom.append(link)
 
     const removeContainerSpy = vi.spyOn(dom, 'removeEventListener')
     const removeWindowSpy = vi.spyOn(window, 'removeEventListener')

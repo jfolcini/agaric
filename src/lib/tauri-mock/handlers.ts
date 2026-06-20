@@ -226,27 +226,35 @@ function globMatchesTitle(pattern: string, title: string): boolean {
  */
 function metaRowMatchesFilter(r: PageMetaRow, f: Record<string, unknown>): boolean {
   switch (f['type'] as string) {
-    case 'Stub':
+    case 'Stub': {
       return r.childBlockCount === 0
-    case 'HasNoInboundLinks':
+    }
+    case 'HasNoInboundLinks': {
       return r.inboundLinkCount === 0
-    case 'Orphan':
+    }
+    case 'Orphan': {
       return r.inboundLinkCount === 0 && !r.hasOutboundLink
-    case 'Tag':
+    }
+    case 'Tag': {
       return blockTags.get(r.id)?.has(f['tag'] as string) ?? false
-    case 'Priority':
+    }
+    case 'Priority': {
       return r.priority === (f['priority'] as string)
+    }
     case 'PathGlob': {
       // Case-insensitive glob over the page title. `exclude:true` inverts.
       const hit = globMatchesTitle((f['pattern'] as string) ?? '', r.content ?? '')
       return (f['exclude'] as boolean) ? !hit : hit
     }
-    case 'HasProperty':
+    case 'HasProperty': {
       return hasPropertyMatches(r, f)
-    case 'LastEdited':
+    }
+    case 'LastEdited': {
       return lastEditedMatches(r, f['spec'] as Record<string, unknown> | undefined)
-    default:
+    }
+    default: {
       return true
+    }
   }
 }
 
@@ -267,10 +275,12 @@ function hasPropertyMatches(r: PageMetaRow, f: Record<string, unknown>): boolean
   const ptype = predicate?.['type'] as string | undefined
   const prop = properties.get(r.id)?.get(key)
   switch (ptype) {
-    case 'Exists':
+    case 'Exists': {
       return prop != null
-    case 'NotExists':
+    }
+    case 'NotExists': {
       return prop == null
+    }
     case 'Eq':
     case 'Ne': {
       const value = predicate?.['value'] as Record<string, unknown> | undefined
@@ -285,8 +295,9 @@ function hasPropertyMatches(r: PageMetaRow, f: Record<string, unknown>): boolean
       // absent OR present-but-different.
       return ptype === 'Ne' ? !hit : hit
     }
-    default:
+    default: {
       return true
+    }
   }
 }
 
@@ -312,17 +323,19 @@ function lastEditedMatches(r: PageMetaRow, spec: Record<string, unknown> | undef
       if (lm == null) return false
       return lm >= cutoff(spec['days'] as number)
     }
-    case 'OlderThan':
+    case 'OlderThan': {
       // NULL last-modified sorts as the oldest possible → counts as older.
       return lm == null || lm < cutoff(spec['days'] as number)
+    }
     case 'Range': {
       if (lm == null) return false
       const start = spec['start'] as string
       const end = spec['end'] as string
       return lm >= start && lm <= end
     }
-    default:
+    default: {
       return true
+    }
   }
 }
 
@@ -330,21 +343,26 @@ function lastEditedMatches(r: PageMetaRow, spec: Record<string, unknown> | undef
 function compareMetaRows(x: PageMetaRow, y: PageMetaRow, sort: string): number {
   let primary = 0
   switch (sort) {
-    case 'alphabetical':
+    case 'alphabetical': {
       primary = (x.content ?? '').toLowerCase().localeCompare((y.content ?? '').toLowerCase())
       break
-    case 'recently-modified':
+    }
+    case 'recently-modified': {
       primary = (y.lastModifiedAt ?? '').localeCompare(x.lastModifiedAt ?? '')
       break
-    case 'most-linked':
+    }
+    case 'most-linked': {
       primary = y.inboundLinkCount - x.inboundLinkCount
       break
-    case 'most-content':
+    }
+    case 'most-content': {
       primary = y.childBlockCount - x.childBlockCount
       break
-    default:
+    }
+    default: {
       primary = x.id.localeCompare(y.id)
       break
+    }
   }
   return primary !== 0 ? primary : x.id.localeCompare(y.id)
 }
@@ -361,15 +379,19 @@ function compareMetaRows(x: PageMetaRow, y: PageMetaRow, sort: string): number {
  */
 function sortDiscriminator(sort: string): number {
   switch (sort) {
-    case 'recently-modified':
+    case 'recently-modified': {
       return 2
-    case 'most-linked':
+    }
+    case 'most-linked': {
       return 3
-    case 'most-content':
+    }
+    case 'most-content': {
       return 4
+    }
     // `alphabetical` and `default` both ride the default-wire keyset.
-    default:
+    default: {
       return 5
+    }
   }
 }
 
@@ -382,18 +404,22 @@ function encodeNextCursor(last: PageMetaRow, sort: string): string {
   const disc = sortDiscriminator(sort)
   const cursorObj: Record<string, unknown> = { id: last.id, version: 1, position: disc }
   switch (sort) {
-    case 'alphabetical':
+    case 'alphabetical': {
       cursorObj['deleted_at'] = last.content
       break
-    case 'recently-modified':
+    }
+    case 'recently-modified': {
       cursorObj['deleted_at'] = last.lastModifiedAt
       break
-    case 'most-linked':
+    }
+    case 'most-linked': {
       cursorObj['seq'] = last.inboundLinkCount
       break
-    case 'most-content':
+    }
+    case 'most-content': {
       cursorObj['seq'] = last.childBlockCount
       break
+    }
   }
   return btoa(JSON.stringify(cursorObj))
 }
@@ -1452,7 +1478,7 @@ export const HANDLERS: Record<string, Handler> = {
       .filter(
         (s) => ((s['parent_id'] as string | null) ?? null) === oldParentId && !s['deleted_at'],
       )
-      .sort((x, y) => {
+      .toSorted((x, y) => {
         const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
         const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
         if (px !== py) return px - py
@@ -1613,15 +1639,14 @@ export const HANDLERS: Record<string, Handler> = {
     return { items: backlinkItems, next_cursor: null, has_more: false }
   },
 
-  get_block_history: (_args) => {
+  get_block_history: (_args) =>
     // The backend now accepts `opTypeFilter`. The
     // mock signature mirrors that for parity with `bindings.ts` (the
     // handlers-drift test only checks that the command name is
     // present, but accepting the arg is the right shape). Browser-mode
     // callers don't currently exercise per-block history end-to-end, so
     // returning an empty page is still the cheapest correct behaviour.
-    return { items: [], next_cursor: null, has_more: false, total_count: null }
-  },
+    ({ items: [], next_cursor: null, has_more: false, total_count: null }),
 
   list_page_history: (args) => {
     // Honour `scope: SpaceScope` by resolving the payload's `block_id`
@@ -1676,7 +1701,7 @@ export const HANDLERS: Record<string, Handler> = {
     // Newest-first ordering on (created_at DESC, seq DESC).
     const undoableOps = [...opLog]
       .filter((o) => !o.op_type.startsWith('undo_') && !o.op_type.startsWith('redo_'))
-      .sort((a2, b2) => {
+      .toSorted((a2, b2) => {
         if (a2.created_at !== b2.created_at) return a2.created_at < b2.created_at ? 1 : -1
         return b2.seq - a2.seq
       })
@@ -1706,7 +1731,7 @@ export const HANDLERS: Record<string, Handler> = {
     const ops = a['ops'] as Array<{ device_id: string; seq: number }>
     const results: Array<Record<string, unknown>> = []
 
-    const sorted = [...ops].sort((x, y) => y.seq - x.seq)
+    const sorted = [...ops].toSorted((x, y) => y.seq - x.seq)
 
     for (const opRef of sorted) {
       const target = opLog.find((o) => o.device_id === opRef.device_id && o.seq === opRef.seq)
@@ -1776,20 +1801,18 @@ export const HANDLERS: Record<string, Handler> = {
     }
   },
 
-  get_status: () => {
-    return {
-      foreground_queue_depth: 0,
-      background_queue_depth: 0,
-      total_ops_dispatched: 0,
-      total_background_dispatched: 0,
-      fg_high_water: 0,
-      bg_high_water: 0,
-      fg_errors: 0,
-      bg_errors: 0,
-      fg_panics: 0,
-      bg_panics: 0,
-    }
-  },
+  get_status: () => ({
+    foreground_queue_depth: 0,
+    background_queue_depth: 0,
+    total_ops_dispatched: 0,
+    total_background_dispatched: 0,
+    fg_high_water: 0,
+    bg_high_water: 0,
+    fg_errors: 0,
+    bg_errors: 0,
+    fg_panics: 0,
+    bg_panics: 0,
+  }),
 
   // ---------------------------------------------------------------------------
   // Properties & tags queries
@@ -2018,20 +2041,24 @@ export const HANDLERS: Record<string, Handler> = {
     const matches = (blockId: string, node: TagExprNode): boolean => {
       const tags = blockTags.get(blockId)
       switch (node.type) {
-        case 'Tag':
+        case 'Tag': {
           return tags?.has(node.value) ?? false
+        }
         case 'Prefix': {
           if (!tags || tags.size === 0) return false
           const wanted = prefixTagIds(node.value)
           for (const t of tags) if (wanted.has(t)) return true
           return false
         }
-        case 'And':
+        case 'And': {
           return node.value.every((child) => matches(blockId, child))
-        case 'Or':
+        }
+        case 'Or': {
           return node.value.some((child) => matches(blockId, child))
-        case 'Not':
+        }
+        case 'Not': {
           return !matches(blockId, node.value)
+        }
       }
     }
 
@@ -2088,18 +2115,24 @@ export const HANDLERS: Record<string, Handler> = {
 
       const cmp = (lhs: string, rhs: string): boolean => {
         switch (operator) {
-          case 'neq':
+          case 'neq': {
             return lhs !== rhs
-          case 'lt':
+          }
+          case 'lt': {
             return lhs < rhs
-          case 'gt':
+          }
+          case 'gt': {
             return lhs > rhs
-          case 'lte':
+          }
+          case 'lte': {
             return lhs <= rhs
-          case 'gte':
+          }
+          case 'gte': {
             return lhs >= rhs
-          default:
+          }
+          default: {
             return lhs === rhs
+          }
         }
       }
 
@@ -2565,7 +2598,7 @@ export const HANDLERS: Record<string, Handler> = {
     // Always include common keys
     keys.add('todo')
     keys.add('priority')
-    return [...keys].sort()
+    return [...keys].toSorted()
   },
 
   // #1425 — distinct text values for a key, usage-ranked (most-used
@@ -2582,7 +2615,7 @@ export const HANDLERS: Record<string, Handler> = {
       counts.set(value, (counts.get(value) ?? 0) + 1)
     }
     return [...counts.entries()]
-      .sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))
+      .toSorted((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))
       .map(([value]) => value)
   },
 
@@ -3179,7 +3212,7 @@ export const HANDLERS: Record<string, Handler> = {
     if (!page) throw new Error('not found')
     const children = [...blocks.values()]
       .filter((b) => b['parent_id'] === pid && !(b['deleted_at'] as string | null))
-      .sort((x, y) => ((x['position'] as number) ?? 0) - ((y['position'] as number) ?? 0))
+      .toSorted((x, y) => ((x['position'] as number) ?? 0) - ((y['position'] as number) ?? 0))
     let md = `# ${(page['content'] as string) ?? 'Untitled'}\n\n`
     for (const child of children) {
       md += `- ${(child['content'] as string) ?? ''}\n`

@@ -176,7 +176,7 @@ describe('useBlockTags appliedTagIds', () => {
 
     // Inherited set is ONLY the purely-inherited tag — TAG_BOTH is
     // excluded (renders once, as direct), TAG_INH is present.
-    expect([...result.current.inheritedTagIds].sort()).toEqual(['TAG_INH'])
+    expect([...result.current.inheritedTagIds].toSorted()).toEqual(['TAG_INH'])
     expect(result.current.inheritedTagIds.has('TAG_BOTH')).toBe(false)
 
     expect(mockedInvoke).toHaveBeenCalledWith('list_inherited_tags_for_block', {

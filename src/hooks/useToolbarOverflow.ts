@@ -46,7 +46,7 @@ export const OVERFLOW_TRIGGER_WIDTH_PX = 28
  */
 export const POPOVER_TRIGGER_VARIABLE_RESERVE_PX = 24
 
-export type ToolbarItemBase = {
+export interface ToolbarItemBase {
   /** Stable identifier — used as React key + sentinel data attribute. */
   key: string
   /** 0 = drops first, 100 = always visible. */
@@ -155,7 +155,7 @@ export function computeOverflow<T extends ToolbarItem>(
     .map((item, idx) => ({ item, idx }))
     .filter((b): b is { item: T & { kind: 'button' }; idx: number } => b.item.kind === 'button')
 
-  const dropOrder = buttons.slice().sort((a, b) => {
+  const dropOrder = buttons.slice().toSorted((a, b) => {
     if (a.item.priority !== b.item.priority) return a.item.priority - b.item.priority
     return b.idx - a.idx
   })

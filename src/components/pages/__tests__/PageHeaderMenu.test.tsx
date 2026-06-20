@@ -297,7 +297,7 @@ describe('PageHeaderMenu template toggle button', () => {
 
     rerender(
       <TooltipProvider>
-        <PageHeaderMenu {...defaultProps} isTemplate={true} />
+        <PageHeaderMenu {...defaultProps} isTemplate />
       </TooltipProvider>,
     )
     expect(btn).toHaveAttribute('aria-pressed', 'true')

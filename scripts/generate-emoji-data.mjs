@@ -19,8 +19,7 @@
 
 import { writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
 
 const require = createRequire(import.meta.url)
 /** @type {Array<Record<string, unknown>>} */
@@ -28,7 +27,7 @@ const data = require('emojibase-data/en/data.json')
 /** @type {Record<string, string | string[]>} */
 const shortcodes = require('emojibase-data/en/shortcodes/emojibase.json')
 
-const here = dirname(fileURLToPath(import.meta.url))
+const here = import.meta.dirname
 const OUT = resolve(here, '../src/editor/emoji-data.generated.ts')
 
 /** Display names for the standard CLDR groups, in render order. "Component"

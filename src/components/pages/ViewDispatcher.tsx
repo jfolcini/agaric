@@ -184,13 +184,14 @@ export function ViewDispatcher({
   // this level is zero re-renders.
   const goBack = useTabsStore((s) => s.goBack)
   switch (currentView) {
-    case 'journal':
+    case 'journal': {
       return (
         <FeatureErrorBoundary name="Journal" nameKey="sidebar.journal">
           <JournalPage onNavigateToPage={onPageSelect} />
         </FeatureErrorBoundary>
       )
-    case 'search':
+    }
+    case 'search': {
       return (
         <FeatureErrorBoundary name="Search" nameKey="sidebar.search">
           <Suspense fallback={<ViewFallback />}>
@@ -198,7 +199,8 @@ export function ViewDispatcher({
           </Suspense>
         </FeatureErrorBoundary>
       )
-    case 'pages':
+    }
+    case 'pages': {
       return (
         <FeatureErrorBoundary name="Pages" nameKey="sidebar.pages">
           <Suspense fallback={<ViewFallback />}>
@@ -206,7 +208,8 @@ export function ViewDispatcher({
           </Suspense>
         </FeatureErrorBoundary>
       )
-    case 'tags':
+    }
+    case 'tags': {
       return (
         <FeatureErrorBoundary name="Tags" nameKey="sidebar.tags">
           <Suspense fallback={<ViewFallback />}>
@@ -214,7 +217,8 @@ export function ViewDispatcher({
           </Suspense>
         </FeatureErrorBoundary>
       )
-    case 'trash':
+    }
+    case 'trash': {
       return (
         <FeatureErrorBoundary name="Trash" nameKey="sidebar.trash">
           <Suspense fallback={<ViewFallback />}>
@@ -222,7 +226,8 @@ export function ViewDispatcher({
           </Suspense>
         </FeatureErrorBoundary>
       )
-    case 'settings':
+    }
+    case 'settings': {
       return (
         <FeatureErrorBoundary name="Settings" nameKey="sidebar.settings">
           <Suspense fallback={<ViewFallback />}>
@@ -230,7 +235,8 @@ export function ViewDispatcher({
           </Suspense>
         </FeatureErrorBoundary>
       )
-    case 'status':
+    }
+    case 'status': {
       return (
         <FeatureErrorBoundary name="Status" nameKey="sidebar.status">
           <Suspense fallback={<ViewFallback />}>
@@ -238,7 +244,8 @@ export function ViewDispatcher({
           </Suspense>
         </FeatureErrorBoundary>
       )
-    case 'history':
+    }
+    case 'history': {
       return (
         <FeatureErrorBoundary name="History" nameKey="sidebar.history">
           <Suspense fallback={<ViewFallback />}>
@@ -246,7 +253,8 @@ export function ViewDispatcher({
           </Suspense>
         </FeatureErrorBoundary>
       )
-    case 'templates':
+    }
+    case 'templates': {
       return (
         <FeatureErrorBoundary name="Templates" nameKey="sidebar.templates">
           <Suspense fallback={<ViewFallback />}>
@@ -254,7 +262,8 @@ export function ViewDispatcher({
           </Suspense>
         </FeatureErrorBoundary>
       )
-    case 'graph':
+    }
+    case 'graph': {
       return (
         <FeatureErrorBoundary name="Graph" nameKey="sidebar.graph">
           <Suspense fallback={<ViewFallback />}>
@@ -262,7 +271,8 @@ export function ViewDispatcher({
           </Suspense>
         </FeatureErrorBoundary>
       )
-    case 'query':
+    }
+    case 'query': {
       return (
         <FeatureErrorBoundary name="AdvancedQuery" nameKey="sidebar.query">
           <Suspense fallback={<ViewFallback />}>
@@ -270,7 +280,8 @@ export function ViewDispatcher({
           </Suspense>
         </FeatureErrorBoundary>
       )
-    case 'page-editor':
+    }
+    case 'page-editor': {
       // #1723: a fresh-space switch can force currentView='page-editor'
       // while the empty tab list leaves activePage null. Returning null
       // here paints a blank content region (a routed view returning null
@@ -291,6 +302,7 @@ export function ViewDispatcher({
           </Suspense>
         </FeatureErrorBoundary>
       )
+    }
     default: {
       // #1577: make the switch exhaustive over the `View` union. If a new
       // `View` member is added without a dispatcher case, this assignment

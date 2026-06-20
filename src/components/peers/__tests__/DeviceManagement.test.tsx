@@ -997,7 +997,7 @@ describe('DeviceManagement', () => {
         }
       }
 
-      const order = [...rows].sort(comparePeers).map((p) => p.peer_id)
+      const order = [...rows].toSorted(comparePeers).map((p) => p.peer_id)
       expect(order).toEqual([
         'p-apple', // named, alpha; tie on name+synced_at broken by peer_id
         'p-apple-2',
@@ -1015,7 +1015,7 @@ describe('DeviceManagement', () => {
         row({ peer_id: 'a', device_name: 'Abe' }),
       ]
       const snapshot = original.map((p) => p.peer_id)
-      void [...original].sort(comparePeers)
+      void [...original].toSorted(comparePeers)
       expect(original.map((p) => p.peer_id)).toEqual(snapshot)
     })
   })

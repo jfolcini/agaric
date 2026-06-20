@@ -152,26 +152,36 @@ function buildFilterForCategory(
   t: TFunc,
 ): BuildResult {
   switch (category) {
-    case 'type':
+    case 'type': {
       return buildTypeFilter(state)
-    case 'status':
+    }
+    case 'status': {
       return buildStatusFilter(state)
-    case 'priority':
+    }
+    case 'priority': {
       return buildPriorityFilter(state)
-    case 'contains':
+    }
+    case 'contains': {
       return buildContainsFilter(state, t)
-    case 'property':
+    }
+    case 'property': {
       return buildPropertyFilter(state, t)
-    case 'date':
+    }
+    case 'date': {
       return buildDateFilter(state, t)
-    case 'property-set':
+    }
+    case 'property-set': {
       return buildPropertySetFilter(state, t)
-    case 'property-empty':
+    }
+    case 'property-empty': {
       return buildPropertyEmptyFilter(state, t)
-    case 'has-tag':
+    }
+    case 'has-tag': {
       return buildHasTagFilter(state, t)
-    case 'tag-prefix':
+    }
+    case 'tag-prefix': {
       return buildTagPrefixFilter(state, t)
+    }
   }
 }
 

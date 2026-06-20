@@ -107,7 +107,7 @@ describe('useDebouncedCallback', () => {
     const callback = vi.fn()
 
     const container = document.createElement('div')
-    document.body.appendChild(container)
+    document.body.append(container)
 
     let scheduleRef: ((value: string) => void) | null = null
 

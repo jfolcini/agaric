@@ -164,7 +164,7 @@ describe('Input', () => {
   // -- aria-invalid propagation -----------------------------------------------
 
   it('propagates aria-invalid="true" from prop to DOM', () => {
-    render(<Input aria-invalid={true} aria-label="Field" />)
+    render(<Input aria-invalid aria-label="Field" />)
 
     const el = screen.getByRole('textbox', { name: 'Field' })
     expect(el).toHaveAttribute('aria-invalid', 'true')
@@ -251,7 +251,7 @@ describe('Input', () => {
     const { container } = render(
       <>
         <label htmlFor="field-invalid">Field</label>
-        <Input id="field-invalid" aria-invalid={true} />
+        <Input id="field-invalid" aria-invalid />
       </>,
     )
     const results = await axe(container)

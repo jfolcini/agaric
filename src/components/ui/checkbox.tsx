@@ -8,35 +8,34 @@ const Checkbox = ({
   ref,
   className,
   ...props
-}: React.ComponentProps<typeof CheckboxPrimitive.Root>) => {
-  return (
-    <div
-      className="inline-flex items-center justify-center [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-      data-slot="checkbox-hitbox"
+}: React.ComponentProps<typeof CheckboxPrimitive.Root>) => (
+  <div
+    className="inline-flex items-center justify-center [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+    data-slot="checkbox-hitbox"
+  >
+    <CheckboxPrimitive.Root
+      ref={ref}
+      data-slot="checkbox"
+      className={cn(
+        'peer inline-flex size-4 shrink-0 items-center justify-center rounded-sm border border-input bg-background shadow-sm transition-colors',
+        'focus-ring-visible',
+        'disabled:cursor-not-allowed disabled:opacity-50',
+        'data-[state=checked]:bg-primary data-[state=checked]:border-primary data-[state=checked]:text-primary-foreground',
+        '[@media(pointer:coarse)]:size-5',
+        className,
+      )}
+      {...props}
     >
-      <CheckboxPrimitive.Root
-        ref={ref}
-        data-slot="checkbox"
-        className={cn(
-          'peer inline-flex size-4 shrink-0 items-center justify-center rounded-sm border border-input bg-background shadow-sm transition-colors',
-          'focus-ring-visible',
-          'disabled:cursor-not-allowed disabled:opacity-50',
-          'data-[state=checked]:bg-primary data-[state=checked]:border-primary data-[state=checked]:text-primary-foreground',
-          '[@media(pointer:coarse)]:size-5',
-          className,
-        )}
-        {...props}
+      <CheckboxPrimitive.Indicator
+        data-slot="checkbox-indicator"
+        className="flex items-center justify-center text-current"
       >
-        <CheckboxPrimitive.Indicator
-          data-slot="checkbox-indicator"
-          className="flex items-center justify-center text-current"
-        >
-          <Check className="size-3.5 [@media(pointer:coarse)]:size-4" strokeWidth={3} />
-        </CheckboxPrimitive.Indicator>
-      </CheckboxPrimitive.Root>
-    </div>
-  )
-}
+        <Check className="size-3.5 [@media(pointer:coarse)]:size-4" strokeWidth={3} />
+      </CheckboxPrimitive.Indicator>
+    </CheckboxPrimitive.Root>
+  </div>
+)
+
 Checkbox.displayName = 'Checkbox'
 
 export { Checkbox }

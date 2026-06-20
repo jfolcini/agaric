@@ -87,7 +87,7 @@ describe('Command (cmdk wrapper)', () => {
 
     // Empty state: trigger the no-match filter to mount CommandEmpty.
     const user = userEvent.setup()
-    const { container: emptyContainer } = render(<Harness shouldFilter={true} />)
+    const { container: emptyContainer } = render(<Harness shouldFilter />)
     await user.type(emptyContainer.querySelector('input') as HTMLElement, 'zzz')
     expect(emptyContainer.querySelector('[data-slot="command-empty"]')).toBeInTheDocument()
   })
@@ -159,7 +159,7 @@ describe('Command (cmdk wrapper)', () => {
 
   it('CommandEmpty appears when no items match the filter', async () => {
     const user = userEvent.setup()
-    render(<Harness shouldFilter={true} />)
+    render(<Harness shouldFilter />)
 
     await user.type(screen.getByRole('combobox'), 'zzz')
 
@@ -185,7 +185,7 @@ describe('Command (cmdk wrapper)', () => {
 
   it('has no a11y violations (empty state)', async () => {
     const user = userEvent.setup()
-    const { container } = render(<Harness shouldFilter={true} />)
+    const { container } = render(<Harness shouldFilter />)
     await user.type(screen.getByRole('combobox'), 'zzz')
 
     const results = await axe(container, axeConfig)

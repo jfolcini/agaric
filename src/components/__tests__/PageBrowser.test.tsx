@@ -2975,7 +2975,7 @@ describe('PageBrowser', () => {
       // useStarredPages reads localStorage, etc.) — pick the latest as
       // the post-stabilisation reference.
       expect(capturedEstimateSizes.length).toBeGreaterThan(0)
-      const initialEstimateSize = capturedEstimateSizes[capturedEstimateSizes.length - 1]
+      const initialEstimateSize = capturedEstimateSizes.at(-1)
 
       // Trigger a re-render that changes only the `newPageName` state —
       // `groupedRows`, `pages`, `filterText`, sorting, and starred set

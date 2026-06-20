@@ -74,28 +74,39 @@ function ensureAddId(filter: BacklinkFilter): FilterWithKey {
 
 function getFilterKey(filter: BacklinkFilter): string {
   switch (filter.type) {
-    case 'BlockType':
+    case 'BlockType': {
       return `BlockType:${filter.block_type}`
-    case 'PropertyText':
+    }
+    case 'PropertyText': {
       return `PropertyText:${filter.key}:${filter.op}:${filter.value}`
-    case 'PropertyNum':
+    }
+    case 'PropertyNum': {
       return `PropertyNum:${filter.key}:${filter.op}:${filter.value}`
-    case 'PropertyDate':
+    }
+    case 'PropertyDate': {
       return `PropertyDate:${filter.key}:${filter.op}:${filter.value}`
-    case 'PropertyIsSet':
+    }
+    case 'PropertyIsSet': {
       return `PropertyIsSet:${filter.key}`
-    case 'PropertyIsEmpty':
+    }
+    case 'PropertyIsEmpty': {
       return `PropertyIsEmpty:${filter.key}`
-    case 'Contains':
+    }
+    case 'Contains': {
       return `Contains:${filter.query}`
-    case 'CreatedInRange':
+    }
+    case 'CreatedInRange': {
       return `CreatedInRange:${filter.after ?? ''}:${filter.before ?? ''}`
-    case 'HasTag':
+    }
+    case 'HasTag': {
       return `HasTag:${filter.tag_id}`
-    case 'HasTagPrefix':
+    }
+    case 'HasTagPrefix': {
       return `HasTagPrefix:${filter.prefix}`
-    default:
+    }
+    default: {
       return JSON.stringify(filter)
+    }
   }
 }
 

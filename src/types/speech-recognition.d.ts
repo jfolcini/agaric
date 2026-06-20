@@ -54,9 +54,7 @@ interface SpeechRecognition extends EventTarget {
   onstart: ((event: Event) => void) | null
 }
 
-interface SpeechRecognitionConstructor {
-  new (): SpeechRecognition
-}
+type SpeechRecognitionConstructor = new () => SpeechRecognition
 
 interface Window {
   SpeechRecognition?: SpeechRecognitionConstructor

@@ -1355,7 +1355,7 @@ describe('list_property_keys', () => {
     })
     const result = invoke('list_property_keys') as string[]
     // Should be sorted and include 'category', 'status', plus defaults 'priority' and 'todo'
-    expect(result).toEqual([...result].sort())
+    expect(result).toEqual([...result].toSorted())
     expect(result).toContain('status')
     expect(result).toContain('category')
   })
@@ -3401,13 +3401,13 @@ describe('list_pages_with_metadata — compound filters', () => {
 
   it('PathGlob narrows by case-insensitive glob over the title', () => {
     const meet = listPages([{ type: 'PathGlob', pattern: 'meet*', exclude: false }])
-    expect(titlesOf(meet).sort()).toEqual(['Meeting Notes Template', 'Meetings'])
+    expect(titlesOf(meet).toSorted()).toEqual(['Meeting Notes Template', 'Meetings'])
     expect(meet.total_count).toBe(2)
   })
 
   it('PathGlob bare word matches as a substring', () => {
     const sub = listPages([{ type: 'PathGlob', pattern: 'eeting', exclude: false }])
-    expect(titlesOf(sub).sort()).toEqual(['Meeting Notes Template', 'Meetings'])
+    expect(titlesOf(sub).toSorted()).toEqual(['Meeting Notes Template', 'Meetings'])
   })
 
   it('PathGlob ? matches exactly one character', () => {
@@ -3526,7 +3526,7 @@ describe('list_pages_with_metadata — compound filters', () => {
       { type: 'Orphan' },
       { type: 'PathGlob', pattern: 'meet*', exclude: false },
     ])
-    expect(titlesOf(combo).sort()).toEqual(['Meeting Notes Template', 'Meetings'])
+    expect(titlesOf(combo).toSorted()).toEqual(['Meeting Notes Template', 'Meetings'])
   })
 
   it('reports total_count on the first page and null on cursor pages (D6 null-retention)', () => {

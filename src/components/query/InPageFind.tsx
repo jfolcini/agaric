@@ -297,11 +297,12 @@ export function InPageFind({
   }, [open, currentIndex])
 
   // ── Clear highlights on unmount.
-  useEffect(() => {
-    return () => {
+  useEffect(
+    () => () => {
       clearHighlights()
-    }
-  }, [])
+    },
+    [],
+  )
 
   // ── findInPageNext / findInPagePrev (F3 / Shift+F3 by default) — global
   // next/prev while the toolbar is open. Bound at window so the user

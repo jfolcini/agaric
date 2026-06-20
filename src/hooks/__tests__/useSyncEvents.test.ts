@@ -146,7 +146,7 @@ const mockedAnnounce = vi.mocked(announce)
 
 function renderHook(hookFn: () => void): { unmount: () => void } {
   const container = document.createElement('div')
-  document.body.appendChild(container)
+  document.body.append(container)
   let root: Root
 
   function TestComponent(): null {

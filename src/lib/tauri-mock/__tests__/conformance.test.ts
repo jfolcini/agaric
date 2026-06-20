@@ -44,7 +44,7 @@ const FIXTURES_DIR = join(process.cwd(), 'conformance', 'fixtures')
 function loadFixtures(): Array<{ path: string; fixture: Fixture }> {
   return readdirSync(FIXTURES_DIR)
     .filter((f) => f.endsWith('.json'))
-    .sort()
+    .toSorted()
     .map((f) => {
       const path = join(FIXTURES_DIR, f)
       return { path, fixture: JSON.parse(readFileSync(path, 'utf8')) as Fixture }

@@ -150,7 +150,7 @@ describe('PaletteActionMenu', () => {
 
     fireEvent.keyDown(menu, { key: 'ArrowDown' })
     fireEvent.keyDown(menu, { key: 'ArrowDown' })
-    expect(items[items.length - 1]).toHaveFocus()
+    expect(items.at(-1)).toHaveFocus()
 
     fireEvent.keyDown(menu, { key: 'ArrowDown' })
     expect(items[0]).toHaveFocus()
@@ -163,7 +163,7 @@ describe('PaletteActionMenu', () => {
     expect(items[0]).toHaveFocus()
 
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowUp' })
-    expect(items[items.length - 1]).toHaveFocus()
+    expect(items.at(-1)).toHaveFocus()
   })
 
   it('ArrowUp moves focus to the previous item', () => {

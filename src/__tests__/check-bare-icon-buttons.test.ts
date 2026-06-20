@@ -1,5 +1,4 @@
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
@@ -79,7 +78,7 @@ describe('findBareIconButtons (detector)', () => {
 
 describe('bare icon Button guard (live src/ tree)', () => {
   it('has no bare icon-only Buttons without an accessible name', () => {
-    const here = dirname(fileURLToPath(import.meta.url))
+    const here = import.meta.dirname
     const srcRoot = join(here, '..')
     const violations = scanTree(srcRoot)
     expect(violations).toEqual([])

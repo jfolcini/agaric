@@ -63,7 +63,7 @@ describe('path-history', () => {
     expect(history).not.toContain('glob-2')
     expect(history).not.toContain('glob-3')
     expect(history).not.toContain('glob-4')
-    expect(history[history.length - 1]).toBe('glob-5')
+    expect(history.at(-1)).toBe('glob-5')
   })
 
   it('is a no-op for empty / null space ids and empty / whitespace globs', () => {

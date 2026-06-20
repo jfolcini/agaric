@@ -48,7 +48,7 @@ describe('ToggleRow', () => {
     const { rerender } = render(<ToggleRow {...defaultProps} checked={false} />)
     expect(screen.getByRole('switch')).toHaveAttribute('aria-checked', 'false')
 
-    rerender(<ToggleRow {...defaultProps} checked={true} />)
+    rerender(<ToggleRow {...defaultProps} checked />)
     expect(screen.getByRole('switch')).toHaveAttribute('aria-checked', 'true')
   })
 

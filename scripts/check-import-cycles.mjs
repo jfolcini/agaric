@@ -17,9 +17,8 @@
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
+const __dirname = import.meta.dirname
 const SRC = resolve(__dirname, '..', 'src')
 
 const EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']
@@ -123,21 +122,27 @@ function preprocess(src) {
   const cx = { src, n, out, codeMask, i: 0, state: 'code' }
   while (cx.i < n) {
     switch (cx.state) {
-      case 'code':
+      case 'code': {
         stepCode(cx)
         break
-      case 'line':
+      }
+      case 'line': {
         stepLine(cx)
         break
-      case 'block':
+      }
+      case 'block': {
         stepBlock(cx)
         break
+      }
       case 'sq':
-      case 'dq':
+      case 'dq': {
         stepQuoted(cx)
         break
-      default: // 'tmpl'
+      }
+      default: {
+        // 'tmpl'
         stepTemplate(cx)
+      }
     }
   }
   return { masked: out.join(''), codeMask }
@@ -365,12 +370,12 @@ function main() {
   console.error(`FAIL: ${cycles.length} import cycle(s) found across ${files.length} modules:`)
   for (const comp of cycles) {
     console.error('  cycle:')
-    for (const f of comp.sort()) console.error(`    - ${rel(f)}`)
+    for (const f of comp.toSorted()) console.error(`    - ${rel(f)}`)
   }
   process.exit(1)
 }
 
 // Run the scan only when invoked directly as a script, not when imported.
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && resolve(process.argv[1]) === import.meta.filename) {
   main()
 }

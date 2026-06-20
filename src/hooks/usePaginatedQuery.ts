@@ -185,11 +185,12 @@ export function usePaginatedQuery<T>(
   // own mount-only effect (empty deps) so it does NOT tear down the
   // controller that the deps-change effect above just armed; that effect
   // already aborts the prior request before re-arming.
-  useEffect(() => {
-    return () => {
+  useEffect(
+    () => () => {
       abortRef.current?.abort()
-    }
-  }, [])
+    },
+    [],
+  )
 
   const loadMore = useCallback(() => {
     if (nextCursor && !loading) load(nextCursor)

@@ -897,7 +897,7 @@ describe('handleBlockKeyDown', () => {
       popup.className = 'suggestion-popup'
       // jsdom doesn't implement checkVisibility or offsetParent, so mock it
       popup.checkVisibility = () => true
-      document.body.appendChild(popup)
+      document.body.append(popup)
       return popup
     }
 
@@ -951,7 +951,7 @@ describe('handleBlockKeyDown', () => {
     // so no Tab case is needed here.
     function setupHookWithRealEditor(opts: { content?: string } = {}) {
       const element = document.createElement('div')
-      document.body.appendChild(element)
+      document.body.append(element)
       const editor = new Editor({
         element,
         extensions: [Document, Paragraph, Text],
@@ -1045,7 +1045,7 @@ describe('handleBlockKeyDown', () => {
 describe('useBlockKeyboard — IME / composition guard', () => {
   function setup() {
     const element = document.createElement('div')
-    document.body.appendChild(element)
+    document.body.append(element)
     const editor = new Editor({
       element,
       extensions: [Document, Paragraph, Text],
@@ -1096,7 +1096,7 @@ describe('useBlockKeyboard — IME / composition guard', () => {
 describe('useBlockKeyboard — Tab-indent accessibility opt-out', () => {
   function setup() {
     const element = document.createElement('div')
-    document.body.appendChild(element)
+    document.body.append(element)
     const editor = new Editor({
       element,
       extensions: [Document, Paragraph, Text],
@@ -1145,7 +1145,7 @@ describe('useBlockKeyboard — Tab-indent accessibility opt-out', () => {
 describe('useBlockKeyboard — beforeinput fallback (#915)', () => {
   function setup(markdownContent?: string) {
     const element = document.createElement('div')
-    document.body.appendChild(element)
+    document.body.append(element)
     const editor = new Editor({
       element,
       extensions: [Document, Paragraph, Text],
@@ -1317,7 +1317,7 @@ describe('#725 — node-type guards (code block / table)', () => {
 
   function makeCodeBlockEditor(codeText: string): { editor: Editor; cleanup: () => void } {
     const element = document.createElement('div')
-    document.body.appendChild(element)
+    document.body.append(element)
     const editor = new Editor({
       element,
       extensions: [Document, Paragraph, Text, CodeBlockLowlight.configure({ lowlight })],
@@ -1341,7 +1341,7 @@ describe('#725 — node-type guards (code block / table)', () => {
 
   function makeTableEditor(): { editor: Editor; cleanup: () => void } {
     const element = document.createElement('div')
-    document.body.appendChild(element)
+    document.body.append(element)
     const editor = new Editor({
       element,
       extensions: [Document, Paragraph, Text, Table, TableRow, TableHeader, TableCell],
@@ -1485,7 +1485,7 @@ describe('#725 — node-type guards (code block / table)', () => {
   describe('plain paragraphs are unaffected (control)', () => {
     it('Enter in a paragraph still flushes via onEnterSave (real editor)', () => {
       const element = document.createElement('div')
-      document.body.appendChild(element)
+      document.body.append(element)
       const editor = new Editor({
         element,
         extensions: [Document, Paragraph, Text],
@@ -1541,7 +1541,7 @@ describe('#725 — node-type guards (code block / table)', () => {
 describe('useBlockKeyboard — cleanup on a destroyed editor (#1017)', () => {
   it('does not throw and skips editor.off() when the editor was destroyed before cleanup', () => {
     const element = document.createElement('div')
-    document.body.appendChild(element)
+    document.body.append(element)
     const editor = new Editor({
       element,
       extensions: [Document, Paragraph, Text],
@@ -1570,7 +1570,7 @@ describe('useBlockKeyboard — cleanup on a destroyed editor (#1017)', () => {
 
   it('still detaches the mount listener when the editor is alive at cleanup', () => {
     const element = document.createElement('div')
-    document.body.appendChild(element)
+    document.body.append(element)
     const editor = new Editor({
       element,
       extensions: [Document, Paragraph, Text],

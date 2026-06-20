@@ -39,7 +39,7 @@ async function lastMove(
   page: import('@playwright/test').Page,
 ): Promise<{ blockId?: string; newParentId?: string | null; newIndex?: number } | null> {
   const calls = await getInvokeCalls(page, 'move_block')
-  return (calls[calls.length - 1] as never) ?? null
+  return (calls.at(-1) as never) ?? null
 }
 
 test.describe('Keyboard block movement', () => {

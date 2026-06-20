@@ -50,31 +50,41 @@ function MetricLabel({ label, tooltip }: { label: string; tooltip: string }): Re
 
 function syncStateLabel(state: SyncState, t: (key: string) => string): string {
   switch (state) {
-    case 'idle':
+    case 'idle': {
       return t('status.syncIdle')
-    case 'syncing':
+    }
+    case 'syncing': {
       return t('status.syncSyncing')
-    case 'error':
+    }
+    case 'error': {
       return t('status.syncError')
-    case 'offline':
+    }
+    case 'offline': {
       return t('status.syncOffline')
-    default:
+    }
+    default: {
       return state
+    }
   }
 }
 
 function syncStateDotClasses(state: SyncState): string {
   switch (state) {
-    case 'idle':
+    case 'idle': {
       return 'bg-status-done-foreground'
-    case 'syncing':
+    }
+    case 'syncing': {
       return 'bg-status-pending-foreground'
-    case 'error':
+    }
+    case 'error': {
       return 'bg-destructive'
-    case 'offline':
+    }
+    case 'offline': {
       return 'bg-muted-foreground'
-    default:
+    }
+    default: {
       return 'bg-muted-foreground'
+    }
   }
 }
 
@@ -90,7 +100,7 @@ function syncStateDotClasses(state: SyncState): string {
 function SyncStateIcon({ state }: { state: SyncState }): React.ReactElement {
   const className = 'sync-state-icon h-3 w-3 shrink-0 text-muted-foreground'
   switch (state) {
-    case 'syncing':
+    case 'syncing': {
       return (
         <RefreshCw
           className={cn(className, 'animate-spin')}
@@ -98,8 +108,9 @@ function SyncStateIcon({ state }: { state: SyncState }): React.ReactElement {
           aria-hidden="true"
         />
       )
+    }
     case 'error':
-    case 'offline':
+    case 'offline': {
       return (
         <AlertCircle
           className={cn(className, 'text-destructive')}
@@ -107,7 +118,8 @@ function SyncStateIcon({ state }: { state: SyncState }): React.ReactElement {
           aria-hidden="true"
         />
       )
-    default:
+    }
+    default: {
       return (
         <CheckCircle2
           className={className}
@@ -115,6 +127,7 @@ function SyncStateIcon({ state }: { state: SyncState }): React.ReactElement {
           aria-hidden="true"
         />
       )
+    }
   }
 }
 

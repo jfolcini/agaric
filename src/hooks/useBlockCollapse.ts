@@ -161,10 +161,7 @@ export function useBlockCollapse(
     const skipUntilDepth: number[] = []
 
     for (const block of blocks) {
-      while (
-        skipUntilDepth.length > 0 &&
-        block.depth <= (skipUntilDepth[skipUntilDepth.length - 1] as number)
-      ) {
+      while (skipUntilDepth.length > 0 && block.depth <= (skipUntilDepth.at(-1) as number)) {
         skipUntilDepth.pop()
       }
 

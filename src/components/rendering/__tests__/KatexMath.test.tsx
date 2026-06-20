@@ -40,14 +40,14 @@ describe('KatexMath (#1437)', () => {
 
   it('renders in display mode as a block element', () => {
     mockedRender.mockReturnValue('<span class="katex katex-display">x</span>')
-    render(<KatexMath latex={'\\int x'} display />)
+    render(<KatexMath latex="\\int x" display />)
     const el = screen.getByTestId('katex-block')
     expect(el.tagName).toBe('DIV')
   })
 
   it('calls KaTeX with throwOnError:false so invalid LaTeX never throws', () => {
     mockedRender.mockReturnValue('<span class="katex"></span>')
-    render(<KatexMath latex={'\\frac{'} />)
+    render(<KatexMath latex="\\frac{" />)
     expect(mockedRender).toHaveBeenCalledWith(
       '\\frac{',
       expect.objectContaining({ throwOnError: false }),
@@ -58,7 +58,7 @@ describe('KatexMath (#1437)', () => {
     mockedRender.mockImplementation(() => {
       throw new Error('boom')
     })
-    render(<KatexMath latex={'\\bad{'} />)
+    render(<KatexMath latex="\\bad{" />)
     const fallback = screen.getByTestId('katex-error')
     expect(fallback.textContent).toBe('\\bad{')
   })

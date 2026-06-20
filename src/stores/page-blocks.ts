@@ -1012,7 +1012,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
             )
             let insertAt: number
             if (newIndex >= siblingsRemaining.length) {
-              const lastSib = siblingsRemaining[siblingsRemaining.length - 1]
+              const lastSib = siblingsRemaining.at(-1)
               if (lastSib) {
                 const lastSibDesc = getDragDescendants(remaining, lastSib.id)
                 insertAt = remaining.findIndex((b) => b.id === lastSib.id) + 1
@@ -1078,7 +1078,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       const order = new Map(get().blocks.map((b, i) => [b.id, i] as const))
       const ordered = ids
         .filter((id) => order.has(id))
-        .sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0))
+        .toSorted((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0))
       if (ordered.length === 0) return
 
       try {
@@ -1770,7 +1770,7 @@ function unregisterPageStore(pageId: string, store: StoreApi<PageBlockState>): v
   if (slot.refCount > 0) {
     // If the slot owner just unmounted out of order, adopt the newest
     // surviving provider so the slot never references an unmounted store.
-    const newest = slot.liveStores[slot.liveStores.length - 1]
+    const newest = slot.liveStores.at(-1)
     if (slot.store === store && newest !== undefined) {
       slot.store = newest
     }

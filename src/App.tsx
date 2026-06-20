@@ -362,7 +362,7 @@ function App() {
     setView('settings')
   }, [setView, setShowNoPeersDialog, setPendingSettingsTab])
 
-  const activePage = pageStack.length > 0 ? pageStack[pageStack.length - 1] : null
+  const activePage = pageStack.length > 0 ? pageStack.at(-1) : null
 
   // ── View key for scroll restore + transition ──────────────────────
   const viewKey =

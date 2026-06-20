@@ -744,7 +744,7 @@ describe('DaySection', () => {
     class MockIntersectionObserver {
       callback: IOCallback
       rootMargin: string
-      observed: Set<Element> = new Set()
+      observed = new Set<Element>()
       static instances: MockIntersectionObserver[] = []
 
       constructor(callback: IOCallback, options?: IntersectionObserverInit) {

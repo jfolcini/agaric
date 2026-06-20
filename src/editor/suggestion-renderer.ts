@@ -276,8 +276,8 @@ export function createSuggestionRenderer(
         zIndex: '50',
       })
       applySafePosition(popup, null)
-      document.body.appendChild(popup)
-      popup.appendChild(renderer.element)
+      document.body.append(popup)
+      popup.append(renderer.element)
       const popupRef = popup
       updatePosition(popup, props).catch((err: unknown) => {
         logger.warn('SuggestionRenderer', 'Position update failed', { label }, err)

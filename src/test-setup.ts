@@ -108,7 +108,7 @@ afterEach(() => {
 // CodeQL doesn't flag production callers as passing superfluous arguments
 // (`js/superfluous-trailing-arguments` would fire on `new ResizeObserver(cb)`
 // when the mock's constructor declared zero parameters).
-if (typeof globalThis.ResizeObserver === 'undefined') {
+if (globalThis.ResizeObserver === undefined) {
   globalThis.ResizeObserver = class ResizeObserver {
     constructor(_callback: ResizeObserverCallback) {}
     observe() {}
@@ -117,7 +117,7 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
   } as unknown as typeof globalThis.ResizeObserver
 }
 
-if (typeof globalThis.IntersectionObserver === 'undefined') {
+if (globalThis.IntersectionObserver === undefined) {
   globalThis.IntersectionObserver = class IntersectionObserver {
     readonly root = null
     readonly rootMargin = '0px'
@@ -133,7 +133,7 @@ if (typeof globalThis.IntersectionObserver === 'undefined') {
 }
 
 // pdfjs-dist requires DOMMatrix which jsdom doesn't provide
-if (typeof globalThis.DOMMatrix === 'undefined') {
+if (globalThis.DOMMatrix === undefined) {
   globalThis.DOMMatrix = class DOMMatrix {
     m11 = 1
     m12 = 0

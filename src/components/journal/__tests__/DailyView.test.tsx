@@ -168,7 +168,7 @@ describe('DailyView  selectedBlockId scroll-into-view', () => {
   function seedBlockElement(id: string): HTMLElement {
     const el = document.createElement('div')
     el.setAttribute('data-block-id', id)
-    document.body.appendChild(el)
+    document.body.append(el)
     seededElements.push(el)
     return el
   }

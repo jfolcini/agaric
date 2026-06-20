@@ -143,7 +143,7 @@ describe('PageTreeItem', () => {
       const user = userEvent.setup()
       const child = makeLeaf('child-page', 'ns/child-page', 'P1')
       const node = makeNamespace('ns', 'ns', [child])
-      render(<PageTreeItem node={node} {...defaultProps} forceExpand={true} />)
+      render(<PageTreeItem node={node} {...defaultProps} forceExpand />)
 
       // Click namespace button — should not collapse
       await user.click(screen.getByText('ns'))

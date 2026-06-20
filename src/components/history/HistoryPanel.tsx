@@ -229,9 +229,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   // (focused row auto-expands), Enter restores the focused row, Esc
   // collapses. Skips non-restorable rows so the keyboard cursor never
   // gets "stuck" on a non-actionable entry.
-  const restorableEntries = useMemo(() => {
-    return filteredEntries.filter(isRestorable)
-  }, [filteredEntries])
+  const restorableEntries = useMemo(() => filteredEntries.filter(isRestorable), [filteredEntries])
 
   const handlePanelKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLUListElement>) => {

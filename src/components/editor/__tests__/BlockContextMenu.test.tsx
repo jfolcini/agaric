@@ -389,7 +389,7 @@ describe('BlockContextMenu', () => {
     const items = screen.getAllByRole('menuitem')
     // First item focused, ArrowUp wraps to last
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowUp' })
-    expect(items[items.length - 1]).toHaveFocus()
+    expect(items.at(-1)).toHaveFocus()
   })
 
   it('Home moves focus to first item', () => {
@@ -410,7 +410,7 @@ describe('BlockContextMenu', () => {
 
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'End' })
     const items = screen.getAllByRole('menuitem')
-    expect(items[items.length - 1]).toHaveFocus()
+    expect(items.at(-1)).toHaveFocus()
   })
 
   it('ArrowDown wraps from last item to first', () => {
@@ -420,7 +420,7 @@ describe('BlockContextMenu', () => {
     const items = screen.getAllByRole('menuitem')
     // Move to last item
     fireEvent.keyDown(menu, { key: 'End' })
-    expect(items[items.length - 1]).toHaveFocus()
+    expect(items.at(-1)).toHaveFocus()
 
     // ArrowDown should wrap to first
     fireEvent.keyDown(menu, { key: 'ArrowDown' })
@@ -448,7 +448,7 @@ describe('BlockContextMenu', () => {
     expect(items.length).toBeGreaterThan(1)
     // Delete sits at the bottom so it can't be mis-clicked / Enter-activated
     // on open; the first item is a non-destructive action.
-    expect(items[items.length - 1]).toHaveTextContent(t('contextMenu.delete'))
+    expect(items.at(-1)).toHaveTextContent(t('contextMenu.delete'))
     expect(items[0]).not.toHaveTextContent(t('contextMenu.delete'))
   })
 
@@ -631,7 +631,7 @@ describe('BlockContextMenu', () => {
   it('restores focus to triggerRef element on Escape', () => {
     const triggerEl = document.createElement('div')
     triggerEl.tabIndex = -1
-    document.body.appendChild(triggerEl)
+    document.body.append(triggerEl)
     const triggerRef = { current: triggerEl }
     const focusSpy = vi.spyOn(triggerEl, 'focus')
 
@@ -654,8 +654,8 @@ describe('BlockContextMenu', () => {
     blockEl.setAttribute('data-block-id', 'BLOCK_01')
     const fallbackBtn = document.createElement('button')
     fallbackBtn.setAttribute('data-context-trigger', 'true')
-    blockEl.appendChild(fallbackBtn)
-    document.body.appendChild(blockEl)
+    blockEl.append(fallbackBtn)
+    document.body.append(blockEl)
 
     const fallbackFocusSpy = vi.spyOn(fallbackBtn, 'focus')
 
@@ -1141,7 +1141,7 @@ describe('BlockContextMenu', () => {
       }) as typeof autoUpdate)
 
       const triggerEl = document.createElement('button')
-      document.body.appendChild(triggerEl)
+      document.body.append(triggerEl)
       const triggerRef = { current: triggerEl }
 
       const { logger } = await import('@/lib/logger')
@@ -1311,7 +1311,7 @@ describe('BlockContextMenu', () => {
       const initialCount = initialItems.length
 
       // Re-render with hasChildren=true — Collapse joins the visible set.
-      rerender(<BlockContextMenu {...(props as BlockContextMenuProps)} hasChildren={true} />)
+      rerender(<BlockContextMenu {...(props as BlockContextMenuProps)} hasChildren />)
 
       await waitFor(() => {
         expect(screen.getAllByRole('menuitem').length).toBe(initialCount + 1)
@@ -1363,13 +1363,13 @@ describe('BlockContextMenu', () => {
       const chip = document.createElement('span')
       chip.setAttribute('role', 'button')
       chip.tabIndex = 0
-      blockEl.appendChild(chip)
+      blockEl.append(chip)
 
       const gutterBtn = document.createElement('button')
       gutterBtn.setAttribute('data-context-trigger', 'true')
-      blockEl.appendChild(gutterBtn)
+      blockEl.append(gutterBtn)
 
-      document.body.appendChild(blockEl)
+      document.body.append(blockEl)
 
       const chipFocusSpy = vi.spyOn(chip, 'focus')
       const gutterFocusSpy = vi.spyOn(gutterBtn, 'focus')
@@ -1678,7 +1678,7 @@ describe('BlockContextMenu actions bag (#1020)', () => {
         position={{ x: 0, y: 0 }}
         onClose={vi.fn()}
         actions={{ onDelete: vi.fn(), onIndent: vi.fn() }}
-        hasChildren={true}
+        hasChildren
       />,
     )
 

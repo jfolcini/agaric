@@ -70,23 +70,25 @@ export function BlockZoomBar({
   const { t } = useTranslation()
   const { resolveBlockTitle } = useRichContentCallbacks()
 
-  const items = useMemo<BreadcrumbCrumb[]>(() => {
-    return breadcrumbs.map((item, i) => {
-      const isLast = i === breadcrumbs.length - 1
-      const stripped = stripBreadcrumbMarkup(item.content, resolveBlockTitle)
-      const label = stripped.length > 0 ? stripped : t('block.untitled')
-      return {
-        id: item.id,
-        label,
-        ...(isLast ? {} : { onSelect: () => onNavigate(item.id) }),
-        testId: item.id,
-        // Callers historically targeted `data-zoom-crumb` for keyboard
-        // and a11y assertions; preserve it alongside the primitive's generic
-        // `data-breadcrumb-crumb` to avoid breaking those selectors.
-        dataAttributes: { 'data-zoom-crumb': item.id },
-      }
-    })
-  }, [breadcrumbs, resolveBlockTitle, t, onNavigate])
+  const items = useMemo<BreadcrumbCrumb[]>(
+    () =>
+      breadcrumbs.map((item, i) => {
+        const isLast = i === breadcrumbs.length - 1
+        const stripped = stripBreadcrumbMarkup(item.content, resolveBlockTitle)
+        const label = stripped.length > 0 ? stripped : t('block.untitled')
+        return {
+          id: item.id,
+          label,
+          ...(isLast ? {} : { onSelect: () => onNavigate(item.id) }),
+          testId: item.id,
+          // Callers historically targeted `data-zoom-crumb` for keyboard
+          // and a11y assertions; preserve it alongside the primitive's generic
+          // `data-breadcrumb-crumb` to avoid breaking those selectors.
+          dataAttributes: { 'data-zoom-crumb': item.id },
+        }
+      }),
+    [breadcrumbs, resolveBlockTitle, t, onNavigate],
+  )
 
   if (breadcrumbs.length === 0) return null
 

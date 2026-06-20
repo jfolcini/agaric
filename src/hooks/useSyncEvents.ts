@@ -66,15 +66,19 @@ export function mapBackendState(backendState: string): 'idle' | 'syncing' | 'err
     case 'exchanging_heads':
     case 'streaming_ops':
     case 'applying_ops':
-    case 'merging':
+    case 'merging': {
       return 'syncing'
-    case 'complete':
+    }
+    case 'complete': {
       return 'idle'
+    }
     case 'failed':
-    case 'reset_required':
+    case 'reset_required': {
       return 'error'
-    default:
+    }
+    default: {
       return 'idle'
+    }
   }
 }
 

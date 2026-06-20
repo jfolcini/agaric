@@ -377,8 +377,8 @@ describe('SheetContent soft-keyboard avoidance (#760)', () => {
         </SheetContent>
       </Sheet>,
     )
-    expect(added.sort()).toEqual(['resize', 'scroll'])
+    expect(added.toSorted()).toEqual(['resize', 'scroll'])
     unmount()
-    expect(removed.sort()).toEqual(['resize', 'scroll'])
+    expect(removed.toSorted()).toEqual(['resize', 'scroll'])
   })
 })

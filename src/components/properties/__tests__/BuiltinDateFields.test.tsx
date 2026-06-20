@@ -104,7 +104,7 @@ describe('BuiltinDateFields', () => {
       <BuiltinDateFields
         dueDate="2026-06-15"
         scheduledDate={null}
-        hasCustomProperties={true}
+        hasCustomProperties
         onSaveDate={vi.fn()}
         onClearDate={vi.fn()}
       />,

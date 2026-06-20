@@ -155,11 +155,12 @@ export function JournalPage({
     },
     [setFindContainer],
   )
-  useEffect(() => {
-    return () => {
+  useEffect(
+    () => () => {
       setFindContainer(null)
-    }
-  }, [setFindContainer])
+    },
+    [setFindContainer],
+  )
 
   // ── Main render ─────────────────────────────────────────────────────
 

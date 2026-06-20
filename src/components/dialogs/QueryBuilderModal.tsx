@@ -222,21 +222,26 @@ export function QueryBuilderModal({
     let nextIndex: number
     switch (e.key) {
       case 'ArrowDown':
-      case 'ArrowRight':
+      case 'ArrowRight': {
         nextIndex = (currentIndex + 1) % count
         break
+      }
       case 'ArrowUp':
-      case 'ArrowLeft':
+      case 'ArrowLeft': {
         nextIndex = (currentIndex - 1 + count) % count
         break
-      case 'Home':
+      }
+      case 'Home': {
         nextIndex = 0
         break
-      case 'End':
+      }
+      case 'End': {
         nextIndex = count - 1
         break
-      default:
+      }
+      default: {
         return
+      }
     }
     e.preventDefault()
     const target = QUERY_TYPES[nextIndex] as QueryType

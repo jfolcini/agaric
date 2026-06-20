@@ -39,7 +39,7 @@ describe('Checkbox', () => {
   // -- Controlled rendering ---------------------------------------------------
 
   it('renders checked when checked={true} (controlled)', () => {
-    render(<Checkbox checked={true} onCheckedChange={() => {}} aria-label="Accept terms" />)
+    render(<Checkbox checked onCheckedChange={() => {}} aria-label="Accept terms" />)
 
     const cb = screen.getByRole('checkbox', { name: 'Accept terms' })
     expect(cb).toHaveAttribute('aria-checked', 'true')
@@ -57,7 +57,7 @@ describe('Checkbox', () => {
   // -- Uncontrolled rendering -------------------------------------------------
 
   it('renders checked when defaultChecked={true} (uncontrolled)', () => {
-    render(<Checkbox defaultChecked={true} aria-label="Accept terms" />)
+    render(<Checkbox defaultChecked aria-label="Accept terms" />)
 
     const cb = screen.getByRole('checkbox', { name: 'Accept terms' })
     expect(cb).toHaveAttribute('aria-checked', 'true')
@@ -96,7 +96,7 @@ describe('Checkbox', () => {
   it('click fires onCheckedChange(false) in controlled mode when checked', async () => {
     const user = userEvent.setup()
     const onCheckedChange = vi.fn()
-    render(<Checkbox checked={true} onCheckedChange={onCheckedChange} aria-label="Accept terms" />)
+    render(<Checkbox checked onCheckedChange={onCheckedChange} aria-label="Accept terms" />)
 
     await user.click(screen.getByRole('checkbox', { name: 'Accept terms' }))
 
@@ -150,7 +150,7 @@ describe('Checkbox', () => {
   // -- aria-invalid propagation -----------------------------------------------
 
   it('propagates aria-invalid="true" from prop to DOM', () => {
-    render(<Checkbox aria-invalid={true} aria-label="Accept terms" />)
+    render(<Checkbox aria-invalid aria-label="Accept terms" />)
 
     const cb = screen.getByRole('checkbox', { name: 'Accept terms' })
     expect(cb).toHaveAttribute('aria-invalid', 'true')
@@ -167,7 +167,7 @@ describe('Checkbox', () => {
 
   it('renders the checkbox-indicator slot when checked', () => {
     const { container } = render(
-      <Checkbox checked={true} onCheckedChange={() => {}} aria-label="Accept terms" />,
+      <Checkbox checked onCheckedChange={() => {}} aria-label="Accept terms" />,
     )
 
     const indicator = container.querySelector('[data-slot="checkbox-indicator"]')
@@ -239,7 +239,7 @@ describe('Checkbox', () => {
     const { container } = render(
       <>
         <label htmlFor="agree-invalid">Accept terms</label>
-        <Checkbox id="agree-invalid" aria-invalid={true} />
+        <Checkbox id="agree-invalid" aria-invalid />
       </>,
     )
     const results = await axe(container)

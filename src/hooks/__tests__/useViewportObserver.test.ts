@@ -20,7 +20,7 @@ type IOCallback = (entries: IntersectionObserverEntry[], observer: IntersectionO
 class MockIntersectionObserver {
   callback: IOCallback
   rootMargin: string
-  observed: Set<Element> = new Set()
+  observed = new Set<Element>()
 
   static instances: MockIntersectionObserver[] = []
 
@@ -59,7 +59,7 @@ function renderHook<T>(hookFn: () => T): {
   unmount: () => void
 } {
   const container = document.createElement('div')
-  document.body.appendChild(container)
+  document.body.append(container)
   let root: Root
 
   const result = { current: undefined as unknown as T }
@@ -193,7 +193,7 @@ describe('useViewportObserver', () => {
     // mounted in the hook's first commit must be caught up when the
     // observer is created.
     const container = document.createElement('div')
-    document.body.appendChild(container)
+    document.body.append(container)
     let root!: Root
 
     function TestComponent(): ReturnType<typeof createElement> {
@@ -222,7 +222,7 @@ describe('useViewportObserver', () => {
 
   it('re-observes tracked elements when a rootMargin change rebuilds the observer (#755)', () => {
     const container = document.createElement('div')
-    document.body.appendChild(container)
+    document.body.append(container)
     let root!: Root
 
     function TestComponent({ margin }: { margin: string }): ReturnType<typeof createElement> {

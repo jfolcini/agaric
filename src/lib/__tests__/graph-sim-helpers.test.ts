@@ -237,7 +237,7 @@ describe('createZoomKeyHandler \u2014 keyboard zoom dispatch (#1172)', () => {
     const handler = createZoomKeyHandler(svg, zb as any)
 
     const input = document.createElement('input')
-    document.body.appendChild(input)
+    document.body.append(input)
     try {
       // Re-target the event at the editable element.
       const e = new KeyboardEvent('keydown', { key: '0' })

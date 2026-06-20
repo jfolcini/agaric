@@ -101,35 +101,44 @@ function revertBlockRowField(
   b: BlockRow,
 ): boolean {
   switch (opType) {
-    case 'create_block':
+    case 'create_block': {
       b['deleted_at'] = new Date().toISOString()
       return true
-    case 'delete_block':
+    }
+    case 'delete_block': {
       b['deleted_at'] = null
       return true
-    case 'edit_block':
+    }
+    case 'edit_block': {
       b['content'] = (payload['from_text'] as string | null) ?? null
       return true
+    }
     // NOTE: `move_block` is intentionally handled in `applyRevertForOp`
     // (it needs the whole `blocks` map to renumber both sibling groups) and
     // is therefore NOT a case here. See the #958 fix.
-    case 'restore_block':
+    case 'restore_block': {
       b['deleted_at'] = new Date().toISOString()
       return true
-    case 'set_todo_state':
+    }
+    case 'set_todo_state': {
       b['todo_state'] = (payload['from_state'] as string | null) ?? null
       return true
-    case 'set_priority':
+    }
+    case 'set_priority': {
       b['priority'] = (payload['from_level'] as string | null) ?? null
       return true
-    case 'set_due_date':
+    }
+    case 'set_due_date': {
       b['due_date'] = (payload['from_date'] as string | null) ?? null
       return true
-    case 'set_scheduled_date':
+    }
+    case 'set_scheduled_date': {
       b['scheduled_date'] = (payload['from_date'] as string | null) ?? null
       return true
-    default:
+    }
+    default: {
       return false
+    }
   }
 }
 

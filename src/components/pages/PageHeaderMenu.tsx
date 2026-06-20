@@ -170,11 +170,12 @@ export function PageHeaderMenu({
       }
       case 'End': {
         event.preventDefault()
-        focusItem(ids[ids.length - 1] ?? null)
+        focusItem(ids.at(-1) ?? null)
         break
       }
-      default:
+      default: {
         break
+      }
     }
   }
 

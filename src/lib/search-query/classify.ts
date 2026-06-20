@@ -122,8 +122,8 @@ function buildFreeText(
   quoted: Array<[number, number]>,
 ): string {
   // Sort defensively — the tokeniser emits in order, but don't rely on it.
-  const consumedOrdered = [...consumed].sort((a, b) => a[0] - b[0])
-  const quotedOrdered = [...quoted].sort((a, b) => a[0] - b[0])
+  const consumedOrdered = [...consumed].toSorted((a, b) => a[0] - b[0])
+  const quotedOrdered = [...quoted].toSorted((a, b) => a[0] - b[0])
 
   // First pass: strip the consumed (filter) spans, building the surviving
   // text AND mapping each quoted span into the *output* coordinate space so

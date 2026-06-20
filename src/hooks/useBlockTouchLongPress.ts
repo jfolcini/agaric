@@ -142,11 +142,12 @@ export function useBlockTouchLongPress({
   )
 
   // Cleanup timer on unmount to prevent memory leak
-  useEffect(() => {
-    return () => {
+  useEffect(
+    () => () => {
       clearLongPress()
-    }
-  }, [clearLongPress])
+    },
+    [clearLongPress],
+  )
 
   return {
     handleTouchStart,

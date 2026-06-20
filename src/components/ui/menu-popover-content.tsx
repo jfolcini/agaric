@@ -26,15 +26,14 @@ const MenuPopoverContent = ({
   ref,
   className,
   ...props
-}: React.ComponentProps<typeof PopoverPrimitive.Content>) => {
-  return (
-    <PopoverContent
-      ref={ref}
-      className={cn('w-64 max-w-[calc(100vw-1.5rem)]', className)}
-      {...props}
-    />
-  )
-}
+}: React.ComponentProps<typeof PopoverPrimitive.Content>) => (
+  <PopoverContent
+    ref={ref}
+    className={cn('w-64 max-w-[calc(100vw-1.5rem)]', className)}
+    {...props}
+  />
+)
+
 MenuPopoverContent.displayName = 'MenuPopoverContent'
 
 export { MenuPopoverContent }

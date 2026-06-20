@@ -83,26 +83,36 @@ export function renderBlock(
   ctx: RenderContext,
 ): React.ReactElement | React.ReactNode[] | null {
   switch (block.type) {
-    case 'heading':
+    case 'heading': {
       return renderHeadingBlock(block, key, ctx)
-    case 'codeBlock':
+    }
+    case 'codeBlock': {
       return renderCodeBlock(block, key)
-    case 'blockquote':
+    }
+    case 'blockquote': {
       return renderBlockquoteBlock(block, key, ctx, renderBlock)
-    case 'orderedList':
+    }
+    case 'orderedList': {
       return renderOrderedListBlock(block, key, ctx, renderNestedList)
-    case 'bulletList':
+    }
+    case 'bulletList': {
       return renderBulletListBlock(block, key, ctx)
-    case 'horizontalRule':
+    }
+    case 'horizontalRule': {
       return renderHorizontalRuleBlock(key)
-    case 'table':
+    }
+    case 'table': {
       return renderTableBlock(block, key, ctx)
-    case 'math_block':
+    }
+    case 'math_block': {
       return renderMathBlock(block, key)
-    case 'paragraph':
+    }
+    case 'paragraph': {
       return block.content ? renderInlineContent(block.content, key, ctx) : null
-    default:
+    }
+    default: {
       return null
+    }
   }
 }
 
@@ -173,10 +183,12 @@ export function renderBlockInline(
   ctx: RenderContext,
 ): React.ReactNode[] {
   switch (block.type) {
-    case 'paragraph':
+    case 'paragraph': {
       return block.content ? renderInlineContent(block.content, key, ctx) : []
-    case 'heading':
+    }
+    case 'heading': {
       return block.content ? renderInlineContent(block.content, key, ctx) : []
+    }
     case 'codeBlock': {
       const code = block.content?.[0]?.text ?? ''
       return code ? [<code key={key}>{code}</code>] : []
@@ -190,19 +202,24 @@ export function renderBlockInline(
       }
       return out
     }
-    case 'orderedList':
+    case 'orderedList': {
       return renderListItemsInline(block.content ?? [], key, ctx)
-    case 'bulletList':
+    }
+    case 'bulletList': {
       return renderListItemsInline(block.content ?? [], key, ctx)
-    case 'table':
+    }
+    case 'table': {
       return renderTableInline(block, key, ctx)
+    }
     case 'math_block': {
       const latex = block.attrs?.latex ?? ''
       return latex ? [<span key={key}>{latex}</span>] : []
     }
-    case 'horizontalRule':
+    case 'horizontalRule': {
       return []
-    default:
+    }
+    default: {
       return []
+    }
   }
 }

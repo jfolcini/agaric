@@ -307,8 +307,8 @@ function marksEqual(a: readonly PMMark[] | undefined, b: readonly PMMark[] | und
   const ma = a ?? []
   const mb = b ?? []
   if (ma.length !== mb.length) return false
-  const sortedA = [...ma].map((m) => JSON.stringify(m)).sort()
-  const sortedB = [...mb].map((m) => JSON.stringify(m)).sort()
+  const sortedA = [...ma].map((m) => JSON.stringify(m)).toSorted()
+  const sortedB = [...mb].map((m) => JSON.stringify(m)).toSorted()
   return sortedA.every((t, i) => t === sortedB[i])
 }
 
@@ -316,7 +316,7 @@ function marksEqual(a: readonly PMMark[] | undefined, b: readonly PMMark[] | und
 function mergeAdjacentTextNodes(content: readonly InlineNode[]): InlineNode[] {
   const merged: InlineNode[] = []
   for (const node of content) {
-    const last = merged.length > 0 ? merged[merged.length - 1] : null
+    const last = merged.length > 0 ? merged.at(-1) : null
     if (node.type === 'text' && last?.type === 'text' && marksEqual(last.marks, node.marks)) {
       // Merge into previous text node
       const combined: TextNode = { type: 'text', text: last.text + node.text }
@@ -623,11 +623,12 @@ describe('property: content preservation', () => {
   it('text content is preserved across parse→serialize (no silent data loss)', () => {
     fc.assert(
       fc.property(
-        arbMarkdownString.filter((s) => {
-          // Escaped # or ``` can produce heading/code-fence syntax after one round-trip
-          // which is intentional markdown behavior, not data loss
-          return !s.includes('\\#') && !s.includes('\\`')
-        }),
+        arbMarkdownString.filter(
+          (s) =>
+            // Escaped # or ``` can produce heading/code-fence syntax after one round-trip
+            // which is intentional markdown behavior, not data loss
+            !s.includes('\\#') && !s.includes('\\`'),
+        ),
         (s) => {
           const doc1 = parse(s)
           const md1 = serialize(doc1)

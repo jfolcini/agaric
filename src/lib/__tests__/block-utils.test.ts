@@ -90,8 +90,8 @@ describe('processCheckboxSyntax', () => {
 describe('INTERNAL_PROPERTY_KEYS', () => {
   it('contains exactly the 5 expected keys', () => {
     expect(INTERNAL_PROPERTY_KEYS.size).toBe(5)
-    expect([...INTERNAL_PROPERTY_KEYS].sort()).toEqual(
-      ['repeat', 'created_at', 'completed_at', 'repeat-seq', 'repeat-origin'].sort(),
+    expect([...INTERNAL_PROPERTY_KEYS].toSorted()).toEqual(
+      ['repeat', 'created_at', 'completed_at', 'repeat-seq', 'repeat-origin'].toSorted(),
     )
   })
 

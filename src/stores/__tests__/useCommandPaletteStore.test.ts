@@ -28,7 +28,7 @@ afterEach(() => {
 describe('useCommandPaletteStore — open / close', () => {
   it('captures the element that has focus on open$', () => {
     const input = document.createElement('input')
-    document.body.appendChild(input)
+    document.body.append(input)
     input.focus()
     useCommandPaletteStore.getState().open$()
     expect(useCommandPaletteStore.getState().open).toBe(true)
@@ -50,7 +50,7 @@ describe('useCommandPaletteStore — open / close', () => {
 
   it('close() clears the query, mode, and captured focus reference', () => {
     const input = document.createElement('input')
-    document.body.appendChild(input)
+    document.body.append(input)
     input.focus()
     useCommandPaletteStore.getState().open$()
     useCommandPaletteStore.getState().setQuery('something')

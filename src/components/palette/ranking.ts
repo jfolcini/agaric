@@ -83,7 +83,7 @@ export function mergeAndRankGroups(
     g.score = scoreGroup(g, lower)
   }
 
-  const orderedIds = [...order].sort((a, b) => {
+  const orderedIds = [...order].toSorted((a, b) => {
     const ga = groups.get(a)
     const gb = groups.get(b)
     if (ga == null || gb == null) return 0

@@ -24,8 +24,7 @@
  */
 
 import { readFileSync, readdirSync } from 'node:fs'
-import { dirname, join, relative } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join, relative } from 'node:path'
 
 /**
  * Walk every `<Button …>` opening tag in `src` and return its raw attribute
@@ -131,13 +130,13 @@ export function scanTree(root) {
       out.push(`${relative(root, file)}:${line}`)
     }
   }
-  return out.sort()
+  return out.toSorted()
 }
 
 // CLI: only run the filesystem scan when invoked directly (not on import).
-const isDirectRun = process.argv[1] === fileURLToPath(import.meta.url)
+const isDirectRun = process.argv[1] === import.meta.filename
 if (isDirectRun) {
-  const here = dirname(fileURLToPath(import.meta.url))
+  const here = import.meta.dirname
   const srcRoot = join(here, '..', 'src')
   const violations = scanTree(srcRoot)
   if (violations.length > 0) {
