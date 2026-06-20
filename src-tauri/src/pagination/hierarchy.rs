@@ -2,6 +2,7 @@ use sqlx::SqlitePool;
 
 use super::{
     ActiveBlockRow, Cursor, NULL_POSITION_SENTINEL, PageRequest, PageResponse, build_page_response,
+    position_keyset_binds,
 };
 use crate::error::AppError;
 
@@ -40,10 +41,9 @@ pub async fn list_children(
 ) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
 
-    let (cursor_flag, cursor_pos, cursor_id): (Option<i64>, i64, &str) = match page.after.as_ref() {
-        Some(c) => (Some(1), c.position.unwrap_or(NULL_POSITION_SENTINEL), &c.id),
-        None => (None, 0, ""),
-    };
+    // #1652 — shared `(position, id)` cursor-bind destructure (the single
+    // source of truth shared with `get_page_inner` / the markdown export).
+    let (cursor_flag, cursor_pos, cursor_id) = position_keyset_binds(page.after.as_ref());
 
     // FEAT-3 Phase 2 — ?6 (space_id) drives the shared space-filter
     // clause. ?7 is `NULL_POSITION_SENTINEL`: the keyset comparison and

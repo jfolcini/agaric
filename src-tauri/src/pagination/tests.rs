@@ -4987,6 +4987,77 @@ mod tests_p7 {
         );
     }
 
+    /// Test 3b (#1652) — `get_page_inner` subtree walk across a page
+    /// boundary. The subtree path assembles `has_more` / `next_cursor` /
+    /// truncate via the shared `split_position_keyset_page` helper (rather
+    /// than `build_page_response`, because `PageSubtreeResponse` is not a
+    /// `PageResponse<T>`). The other `get_page_inner` tests only fetch a
+    /// single page (limit ≥ child count), so none would catch an off-by-one
+    /// in the `limit + 1` over-fetch / truncate / next-cursor-from-last-row
+    /// logic of the refactored helper. This walks 3 children at limit=2 —
+    /// page1 (2 children, has_more, cursor) then page2 (1 child, no more) —
+    /// and asserts the union covers every child exactly once in `(position,
+    /// id)` order, so a dropped / duplicated / off-by-one boundary fails.
+    #[tokio::test]
+    async fn get_page_subtree_paginates_across_boundary_1652() {
+        let (pool, _dir) = test_pool().await;
+        insert_space_block(&pool, SPACE_A_ID, "Personal").await;
+
+        const PAGE: &str = "01PAGE1652000000000000PAGE";
+        insert_block(&pool, PAGE, "page", "Boundary", None, Some(1)).await;
+        assign_to_space(&pool, PAGE, SPACE_A_ID).await;
+
+        // Three children at positions 1, 2, 3 — deterministic (position, id)
+        // order: C1, C2, C3.
+        const C1: &str = "01CHILD1652000000000000C1A";
+        const C2: &str = "01CHILD1652000000000000C2B";
+        const C3: &str = "01CHILD1652000000000000C3C";
+        insert_block(&pool, C1, "content", "c1", Some(PAGE), Some(1)).await;
+        insert_block(&pool, C2, "content", "c2", Some(PAGE), Some(2)).await;
+        insert_block(&pool, C3, "content", "c3", Some(PAGE), Some(3)).await;
+
+        // Page 1 — limit 2 over a 3-child subtree must over-fetch, truncate
+        // to 2, flag has_more, and emit a resume cursor.
+        let p1 = get_page_inner(&pool, PAGE, SPACE_A_ID, None, Some(2))
+            .await
+            .expect("page 1 must succeed");
+        let ids1: Vec<String> = p1.children.iter().map(|c| c.id.to_string()).collect();
+        assert_eq!(
+            ids1,
+            vec![C1.to_string(), C2.to_string()],
+            "page1 = [C1, C2]"
+        );
+        assert!(p1.has_more, "page1 must flag more children remaining");
+        let cursor = p1
+            .next_cursor
+            .clone()
+            .expect("page1 must carry a resume cursor when has_more");
+
+        // Page 2 — resuming from the cursor must yield exactly the final
+        // child with no further pages and no trailing cursor.
+        let p2 = get_page_inner(&pool, PAGE, SPACE_A_ID, Some(cursor), Some(2))
+            .await
+            .expect("page 2 must succeed");
+        let ids2: Vec<String> = p2.children.iter().map(|c| c.id.to_string()).collect();
+        assert_eq!(ids2, vec![C3.to_string()], "page2 = [C3]");
+        assert!(!p2.has_more, "page2 must NOT flag more children");
+        assert!(
+            p2.next_cursor.is_none(),
+            "no trailing cursor once has_more is false"
+        );
+
+        // Union covers every child exactly once — a dropped or duplicated
+        // boundary row fails here.
+        let mut all: Vec<String> = ids1.into_iter().chain(ids2).collect();
+        all.sort();
+        all.dedup();
+        assert_eq!(
+            all,
+            vec![C1.to_string(), C2.to_string(), C3.to_string()],
+            "the two pages together must cover all 3 children exactly once"
+        );
+    }
+
     /// Test 4 — deterministic property-style regression: 3 spaces × 5
     /// pages each (15 pages) × 2 foreign spaces per page (30 foreign
     /// pairs). Every foreign-space resolution MUST return None and
@@ -5540,4 +5611,189 @@ async fn space_filter_pre_and_post_section_5_3_match() {
     assert!(post.iter().any(|id| id == CHILD_IN_X));
     assert!(!post.iter().any(|id| id == PAGE_NO_SPACE));
     assert!(!post.iter().any(|id| id == CHILD_OUT));
+}
+
+// ---------------------------------------------------------------------------
+// #1652 — (position, id) keyset drift guard.
+// ---------------------------------------------------------------------------
+//
+// The `(COALESCE(position, sentinel), id)` keyset is inlined verbatim at three
+// `sqlx::query_as!` callsites (`pagination::list_children`,
+// `commands::pages::get_page_inner`, `commands::pages::markdown` export walk)
+// because the macro requires a string literal and cannot compose from a
+// `const &str`. To stop those copies from drifting (the very bug #1652
+// reports — they had previously diverged on NULL handling), this parity walk
+// — modelled on `crate::space_filter_canonical` — scans every `src/**/*.rs`
+// file and asserts each inlined keyset WHERE / ORDER BY fragment normalises to
+// the single canonical shape in `pagination::mod`.
+mod position_keyset_drift {
+    use super::{POSITION_KEYSET_ORDER_CANONICAL, POSITION_KEYSET_WHERE_CANONICAL};
+    use regex::Regex;
+
+    /// Render a keyset SQL fragment into comparable canonical form by:
+    /// 1. Replacing every `?<digits>` (e.g. `?3`, `?6`, `?7`) with `?N` —
+    ///    the bind index varies per callsite.
+    /// 2. Collapsing every run of ASCII whitespace (incl. the `\` line-
+    ///    continuations in plain string literals and the newlines in raw
+    ///    string SQL) to a single space.
+    /// 3. Removing whitespace immediately adjacent to `(`/`)` so differing
+    ///    indentation inside the parenthesised condition collapses.
+    fn normalize_keyset(s: &str) -> String {
+        let numbered_re = Regex::new(r"\?\d+").expect("numbered placeholder regex compiles");
+        let s = numbered_re.replace_all(s, "?N").to_string();
+        let ws_re = Regex::new(r"[\s\\]+").expect("whitespace regex compiles");
+        let s = ws_re.replace_all(&s, " ").to_string();
+        let paren_open_re = Regex::new(r"\(\s+").expect("paren-open regex compiles");
+        let s = paren_open_re.replace_all(&s, "(").to_string();
+        let paren_close_re = Regex::new(r"\s+\)").expect("paren-close regex compiles");
+        let s = paren_close_re.replace_all(&s, ")").to_string();
+        s.trim().to_string()
+    }
+
+    /// Recursively collect `(relative_path, contents)` for every `*.rs` file
+    /// under `dir`. Mirrors `space_filter_canonical::tests::collect_rs_files`.
+    fn collect_rs_files(
+        dir: &std::path::Path,
+        src_root: &std::path::Path,
+    ) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        let entries = std::fs::read_dir(dir)
+            .unwrap_or_else(|e| panic!("read_dir {} failed: {e}", dir.display()));
+        for entry in entries {
+            let entry = entry.expect("dir entry");
+            let path = entry.path();
+            if path.is_dir() {
+                out.extend(collect_rs_files(&path, src_root));
+            } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                let rel = path
+                    .strip_prefix(src_root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let contents = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|e| panic!("read {} failed: {e}", path.display()));
+                out.push((rel, contents));
+            }
+        }
+        out
+    }
+
+    /// Test A — the canonical consts normalise to a stable, hand-written
+    /// single-line equivalent. Catches stray invisible characters / typos in
+    /// `POSITION_KEYSET_*_CANONICAL`, and mutating the canonical const away
+    /// from its true shape fails here.
+    #[test]
+    fn keyset_canonicals_normalise_to_self() {
+        assert_eq!(
+            normalize_keyset(POSITION_KEYSET_WHERE_CANONICAL),
+            normalize_keyset(
+                "(?2 IS NULL OR (COALESCE(position, ?6) > ?3 OR (COALESCE(position, ?6) = ?3 AND id > ?4)))"
+            ),
+            "POSITION_KEYSET_WHERE_CANONICAL must normalise to the hand-written \
+             single-line equivalent; check for stray characters."
+        );
+        assert_eq!(
+            normalize_keyset(POSITION_KEYSET_ORDER_CANONICAL),
+            normalize_keyset("ORDER BY COALESCE(position, ?6) ASC, id ASC"),
+            "POSITION_KEYSET_ORDER_CANONICAL must normalise to the hand-written \
+             single-line equivalent; check for stray characters."
+        );
+    }
+
+    /// Test B — every inlined `(COALESCE(position, sentinel), id)` keyset
+    /// WHERE condition and ORDER BY found by a recursive `src/**/*.rs` walk
+    /// normalises to the canonical shape. A new copy in *any* file is
+    /// automatically policed (no allowlist, no magic count). If the three
+    /// known copies ever diverge again, this fails CI.
+    #[test]
+    fn position_keyset_production_sites_match_canonical() {
+        // This file holds the hand-written `alternate` strings in Test A,
+        // which are canonical by construction; policing them is circular.
+        const DENY_FILES: &[&str] = &["pagination/tests.rs"];
+
+        let src_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let sites = collect_rs_files(&src_root, &src_root);
+
+        // WHERE-keyset locator: the parenthesised `(?N IS NULL OR ( COALESCE
+        // (position, ?N) > ?N OR (COALESCE(position, ?N) = ?N AND id > ?N)))`
+        // condition. `(?s)` so multi-line raw-string SQL is captured;
+        // `[\s\\]*` between tokens absorbs whitespace + `\` continuations.
+        let where_re = Regex::new(
+            r"(?s)\(\s*\?\d+[\s\\]+IS[\s\\]+NULL[\s\\]+OR[\s\\]*\([\s\\]*COALESCE\(position,[\s\\]*\?\d+\)[\s\\]*>[\s\\]*\?\d+[\s\\]+OR[\s\\]*\(COALESCE\(position,[\s\\]*\?\d+\)[\s\\]*=[\s\\]*\?\d+[\s\\]+AND[\s\\]+id[\s\\]*>[\s\\]*\?\d+\)\)\)",
+        )
+        .expect("keyset WHERE pattern regex must compile");
+
+        // ORDER-BY locator: `ORDER BY COALESCE(position, ?N) ASC, id ASC`.
+        let order_re = Regex::new(
+            r"(?s)ORDER[\s\\]+BY[\s\\]+COALESCE\(position,[\s\\]*\?\d+\)[\s\\]+ASC,[\s\\]+id[\s\\]+ASC",
+        )
+        .expect("keyset ORDER BY pattern regex must compile");
+
+        let where_norm = normalize_keyset(POSITION_KEYSET_WHERE_CANONICAL);
+        let order_norm = normalize_keyset(POSITION_KEYSET_ORDER_CANONICAL);
+        let mut where_hits = 0usize;
+        let mut order_hits = 0usize;
+        let mut failures: Vec<String> = Vec::new();
+
+        for (path, content) in &sites {
+            if DENY_FILES.contains(&path.as_str()) {
+                continue;
+            }
+            for m in where_re.find_iter(content) {
+                where_hits += 1;
+                let site = normalize_keyset(m.as_str());
+                if site != where_norm {
+                    failures.push(format!(
+                        "  {path} (WHERE)\n    actual:    {site}\n    canonical: {where_norm}",
+                    ));
+                }
+            }
+            // Only assert ORDER BY shape where it accompanies a keyset
+            // WHERE in the same file — `load_page_subtree` / the
+            // `list_all_pages_in_space` content ordering also use ORDER BY but
+            // are not (position, id) keyset walks. Restricting the ORDER-BY
+            // parity to files that also carry the keyset WHERE keeps the guard
+            // focused on the three duplicated keyset sites.
+            if where_re.is_match(content) {
+                for m in order_re.find_iter(content) {
+                    order_hits += 1;
+                    let site = normalize_keyset(m.as_str());
+                    if site != order_norm {
+                        failures.push(format!(
+                            "  {path} (ORDER BY)\n    actual:    {site}\n    canonical: {order_norm}",
+                        ));
+                    }
+                }
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "{} (position, id) keyset fragment(s) drifted from the canonical \
+             shape in pagination::mod (after bind-index + whitespace \
+             normalisation):\n{}\n\nUpdate the drifted SQL to match \
+             POSITION_KEYSET_WHERE_CANONICAL / POSITION_KEYSET_ORDER_CANONICAL, \
+             or — if the deviation is intentional — extend `normalize_keyset` \
+             and document why.",
+            failures.len(),
+            failures.join("\n"),
+        );
+
+        // The walk must always find the three known production copies; zero
+        // means the regex or canonical shape changed and silently disabled
+        // the guard. The keyset is duplicated at exactly three sites today;
+        // assert at least that many so removing a copy (good) still leaves
+        // ≥1 and a regex break (bad) trips the floor.
+        assert!(
+            where_hits >= 3,
+            "expected ≥3 inlined keyset WHERE copies (list_children, \
+             get_page_inner, markdown export); found {where_hits}. The \
+             pattern regex or the canonical shape likely changed and \
+             disabled this drift guard."
+        );
+        assert!(
+            order_hits >= 3,
+            "expected ≥3 inlined keyset ORDER BY copies; found {order_hits}."
+        );
+    }
 }

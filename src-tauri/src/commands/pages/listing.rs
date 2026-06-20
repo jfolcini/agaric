@@ -15,7 +15,8 @@ use crate::commands::tags::MAX_FILTER_TAG_IDS;
 use crate::db::ReadPool;
 use crate::error::AppError;
 use crate::pagination::{
-    self, BlockRow, Cursor, NULL_POSITION_SENTINEL, PageRequest, PageResponse,
+    self, BlockRow, NULL_POSITION_SENTINEL, PageRequest, PageResponse, position_keyset_binds,
+    split_position_keyset_page,
 };
 use crate::ulid::BlockId;
 
@@ -189,11 +190,16 @@ pub async fn get_page_inner(
     // `pagination` directly (still `pub(crate)`, intra-crate re-use is the
     // intended scope), so any future change to the sentinel's value is
     // automatically picked up here without a silent drift hazard.
-    let (cursor_flag, cursor_pos, cursor_id): (Option<i64>, i64, &str) =
-        match page_req.after.as_ref() {
-            Some(c) => (Some(1), c.position.unwrap_or(NULL_POSITION_SENTINEL), &c.id),
-            None => (None, 0, ""),
-        };
+    //
+    // #1652 — the cursor-bind destructure and the page-response assembly
+    // below are the *shared* `pagination::position_keyset_binds` /
+    // `split_position_keyset_page` helpers, so the has_more / next_cursor /
+    // cursor-format logic has one source of truth across `list_children`,
+    // this site, and the markdown export. The keyset SQL itself stays inlined
+    // (`sqlx::query_as!` needs a literal) and is guarded against drift by
+    // `pagination::POSITION_KEYSET_WHERE_CANONICAL` /
+    // `POSITION_KEYSET_ORDER_CANONICAL`'s parity walk.
+    let (cursor_flag, cursor_pos, cursor_id) = position_keyset_binds(page_req.after.as_ref());
 
     // Liveness: `deleted_at IS NULL` is the sole guard for which blocks
     // appear in the user-facing subtree. (The former `is_conflict` /
@@ -224,33 +230,20 @@ pub async fn get_page_inner(
     .fetch_all(pool)
     .await?;
 
-    // Mirror `build_page_response` locally because `PageSubtreeResponse`
-    // is not a `PageResponse<T>` — we nest children inside the page shape.
-    let limit_usize = usize::try_from(page_req.limit).unwrap_or(usize::MAX);
-    let has_more = rows.len() > limit_usize;
+    // #1652 — shared has_more / next_cursor / truncate assembly. We can't go
+    // through `build_page_response` because `PageSubtreeResponse` nests the
+    // children inside the page shape rather than being a `PageResponse<T>`,
+    // but `split_position_keyset_page` carries the identical (position, id)
+    // cursor logic, so the page boundary is byte-identical to
+    // `list_children`'s.
     let mut children = rows;
-    if has_more {
-        children.truncate(limit_usize);
-    }
-    let next_cursor = if has_more {
-        let last = children.last().expect("has_more implies non-empty");
-        let cur = Cursor {
-            id: last.id.clone().into_string(),
-            position: Some(last.position.unwrap_or(NULL_POSITION_SENTINEL)),
-            deleted_at: None,
-            seq: None,
-            rank: None,
-        };
-        Some(cur.encode()?)
-    } else {
-        None
-    };
+    let page_info = split_position_keyset_page(&mut children, page_req.limit)?;
 
     Ok(PageSubtreeResponse {
         page,
         children,
-        next_cursor,
-        has_more,
+        next_cursor: page_info.next_cursor,
+        has_more: page_info.has_more,
     })
 }
 
