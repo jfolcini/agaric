@@ -113,7 +113,13 @@ export function DataSettingsTab(): React.ReactElement {
         setCurrentFileBlocksTotal(0)
         try {
           const content = await file.text()
-          const result = await importMarkdown(content, file.name, activeSpaceId, (update) => {
+          // #1446 Part B — when importing a folder/vault (a `webkitdirectory`
+          // pick), pass the file's relative path so the backend maps the
+          // folder hierarchy to the page's namespace (`a/b/API.md` → namespace
+          // `a/b/API`), the inverse of the namespaced export. A plain file pick
+          // has an empty `webkitRelativePath`, so we fall back to the basename.
+          const importPath = file.webkitRelativePath || file.name
+          const result = await importMarkdown(content, importPath, activeSpaceId, (update) => {
             // #128 — drive the intra-file block bar from the streamed
             // events. `complete` arrives after the backend commits; we
             // leave the bar full and let the file-loop advance.

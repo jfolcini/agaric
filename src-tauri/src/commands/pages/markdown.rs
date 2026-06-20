@@ -43,6 +43,77 @@ use super::super::*;
 /// relative to the threshold instead of hardcoding the number.
 pub(crate) const IMPORT_CHUNK_BLOCKS: usize = 500;
 
+/// Matches a HUMAN-readable wiki-link token `[[Page Name]]` on import (#1446
+/// Part B). The inner capture is the page NAME (any run of characters that is
+/// neither `]` nor a newline, non-greedy so `[[A]] [[B]]` matches twice). A
+/// token whose body is a canonical 26-char Crockford-base32 ULID is left
+/// untouched (it is already an internal `[[ULID]]` ref) — the resolver checks
+/// the captured body against [`crate::cache::PAGE_LINK_RE`] before rewriting.
+/// Mirrors the frontend `HUMAN_PAGE_LINK_RE` used by the paste path (#1484).
+static HUMAN_PAGE_LINK_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"\[\[([^\]\n]+?)\]\]").expect("invalid human page-link regex")
+});
+
+/// Map an import path (basename or folder-relative path) to the namespaced
+/// page TITLE (#1446 Part B — folder → namespace, the inverse of the
+/// namespaced export). Strips a trailing `.md`, normalises `\` to `/`, drops
+/// empty segments, and rejoins with `/` so `Project/Backend/API.md` →
+/// `Project/Backend/API`. Returns an empty string when nothing usable remains
+/// (the caller falls back to a default title).
+pub(crate) fn folder_path_to_namespace_title(path: &str) -> String {
+    let without_ext = path.strip_suffix(".md").unwrap_or(path);
+    without_ext
+        .replace('\\', "/")
+        .split('/')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Collect the DISTINCT human-readable `[[Page Name]]` names referenced across
+/// every parsed block's content (#1446 Part B). A token whose body is already a
+/// canonical `[[ULID]]` ref is skipped (it needs no resolution). Used to drive
+/// the create-if-missing pre-pass before the block-write loop, so each distinct
+/// name is resolved/created exactly once regardless of how many blocks cite it.
+fn collect_inbound_page_link_names(blocks: &[import::ParsedBlock]) -> Vec<String> {
+    use std::collections::BTreeSet;
+    let mut names: BTreeSet<String> = BTreeSet::new();
+    for block in blocks {
+        for cap in HUMAN_PAGE_LINK_RE.captures_iter(&block.content) {
+            let name = cap[1].trim();
+            // Skip canonical `[[ULID]]` bodies — they are already internal refs.
+            if name.is_empty() || crate::cache::PAGE_LINK_RE.is_match(&cap[0]) {
+                continue;
+            }
+            names.insert(name.to_string());
+        }
+    }
+    names.into_iter().collect()
+}
+
+/// Rewrite human-readable `[[Page Name]]` tokens in `content` to internal
+/// `[[ULID]]` refs using the resolved `name → ULID` map (#1446 Part B). A name
+/// absent from the map (unresolvable / ambiguous duplicate title / creation
+/// failure) is left as its original plain-text token — nothing is dropped.
+/// Canonical `[[ULID]]` tokens already in the content are left untouched.
+fn rewrite_inbound_page_links(content: &str, resolved: &HashMap<String, String>) -> String {
+    HUMAN_PAGE_LINK_RE
+        .replace_all(content, |caps: &regex::Captures<'_>| {
+            let whole = &caps[0];
+            // Already an internal `[[ULID]]` ref — keep verbatim.
+            if crate::cache::PAGE_LINK_RE.is_match(whole) {
+                return whole.to_string();
+            }
+            let name = caps[1].trim();
+            match resolved.get(name) {
+                Some(ulid) => format!("[[{ulid}]]"),
+                None => whole.to_string(),
+            }
+        })
+        .into_owned()
+}
+
 /// Replace `#[ULID]` with `#tagname` and `[[ULID]]` with `[[Page Title]]`
 /// in content, preserving all other markdown formatting.
 fn resolve_ulids_for_export(
@@ -673,9 +744,18 @@ pub async fn import_markdown_with_progress(
 
     let parse_output = import::parse_logseq_markdown(&content);
 
-    // Derive page title from filename (strip .md extension)
+    // Derive the page title from the filename (#1446 Part B — folder →
+    // namespace). The caller may pass either a bare basename (`API.md`) or a
+    // relative path within the imported folder/vault (`Project/Backend/API.md`,
+    // e.g. a browser `webkitRelativePath`). We strip the `.md` extension and
+    // keep the `/`-delimited path AS the namespaced page title, the inverse of
+    // the namespaced export (Part A): `Project/Backend/API.md` → page title
+    // `Project/Backend/API`. Backslash separators (Windows-authored paths) are
+    // normalised to `/` first. Empty path segments (leading/trailing or doubled
+    // separators) are dropped so a stray slash never yields a blank namespace.
     let page_title = filename
-        .map(|f| f.trim_end_matches(".md").to_string())
+        .map(|f| folder_path_to_namespace_title(&f))
+        .filter(|t| !t.is_empty())
         .unwrap_or_else(|| "Imported Page".to_string());
 
     // #128 — emit `Started` with the parser's block count so the UI can
@@ -869,6 +949,80 @@ pub async fn import_markdown_with_progress(
         tx.enqueue_background(prop_op);
     }
 
+    // #1446 Part B — resolve inbound `[[Page Name]]` wiki-links to internal
+    // `[[ULID]]` refs, creating any missing target page (create-if-missing).
+    // This is a PRE-PASS over the whole parsed document so each distinct name
+    // is resolved/created exactly once (a name cited by N blocks creates at
+    // most one page), and so the created pages share the FIRST chunk's atomic
+    // write alongside the importing page itself (before the block loop opens a
+    // new chunk). The resolved `name → ULID` map then drives an in-loop rewrite
+    // of each block's content.
+    //
+    // Resolution mirrors the paste path (#1484) duplicate-title rule, scoped to
+    // the import's OWN space (`AND space_id = ?`):
+    //   * exactly one same-space page with that title → link to it,
+    //   * none                                        → create the page + link,
+    //   * more than one (ambiguous)                   → leave plain text.
+    // A name we cannot resolve or create is simply absent from the map, so the
+    // rewrite leaves its original `[[Name]]` token untouched — nothing is lost.
+    let mut resolved_page_links: HashMap<String, String> = HashMap::new();
+    for name in collect_inbound_page_link_names(&parse_output.blocks) {
+        // Count same-space live pages carrying this exact title. The importing
+        // page (created above, in this tx) is visible here, so a self-reference
+        // `[[<this page title>]]` resolves to it.
+        let matches: Vec<String> = sqlx::query_scalar!(
+            r#"SELECT id FROM blocks
+               WHERE content = ?
+                 AND block_type = 'page'
+                 AND deleted_at IS NULL
+                 AND space_id = ?
+               ORDER BY id ASC
+               LIMIT 2"#,
+            name,
+            space_id,
+        )
+        .fetch_all(&mut **tx)
+        .await?;
+
+        match matches.as_slice() {
+            [single] => {
+                resolved_page_links.insert(name, single.clone());
+            }
+            [] => {
+                // Create the missing target page inside this chunk's tx, then
+                // stamp its `space` ref (mirrors the importing page above), so
+                // the new page is a first-class member of the import's space.
+                let (new_page, new_page_op) =
+                    create_block_in_tx(&mut tx, device_id, "page".into(), name.clone(), None, None)
+                        .await?;
+                tx.enqueue_background(new_page_op);
+                let new_page_id = new_page.id.clone().into_string();
+                let (_b, new_space_op) = set_property_in_tx(
+                    &mut tx,
+                    device_id,
+                    new_page_id.clone(),
+                    "space",
+                    None,
+                    None,
+                    None,
+                    Some(space_id.clone()),
+                    None,
+                )
+                .await?;
+                tx.enqueue_background(new_space_op);
+                resolved_page_links.insert(name, new_page_id);
+            }
+            _ => {
+                // Ambiguous: two or more pages share this title in the space.
+                // Never guess which was meant — leave the token as plain text
+                // and surface a non-fatal warning.
+                warnings.push(format!(
+                    "wiki-link '[[{name}]]' matches multiple pages in this space; left as plain text"
+                ));
+            }
+        }
+    }
+
     // #662 — number of blocks written into the *current* chunk's
     // transaction. Reset to 0 each time a chunk is flushed. A new chunk is
     // only opened at a top-level (depth-0) subtree boundary, so a chunk
@@ -912,11 +1066,16 @@ pub async fn import_markdown_with_progress(
         // Create the block inside the current chunk's transaction. A
         // failure here aborts the import — `?` drops `tx` and rolls back
         // the current chunk (earlier committed chunks survive).
+        // #1446 Part B — rewrite inbound `[[Page Name]]` wiki-links to internal
+        // `[[ULID]]` refs using the pre-resolved map. Names that were
+        // ambiguous / unresolvable (absent from the map) keep their original
+        // plain-text token; canonical `[[ULID]]` tokens are left untouched.
+        let content = rewrite_inbound_page_links(&block.content, &resolved_page_links);
         let (new_block, block_op) = create_block_in_tx(
             &mut tx,
             device_id,
             "content".into(),
-            block.content.clone(),
+            content,
             Some(parent_id.clone()),
             None,
         )
