@@ -124,6 +124,31 @@ describe('image — round-trip stability (#1434)', () => {
     expect(content).toEqual([{ type: 'image', attrs: { alt: 'a]b', src: 'c.png' } }])
   })
 
+  it('an alt with spaces round-trips loss-free (#1434)', () => {
+    const md = '![a wide cat](c.png)'
+    expect(serialize(parse(md))).toBe(md)
+    expect(firstParaContent(md)).toEqual([
+      { type: 'image', attrs: { alt: 'a wide cat', src: 'c.png' } },
+    ])
+  })
+
+  it('the attachment-ref form `![alt](attachment:<id>)` round-trips (#1434)', () => {
+    // A pasted/dropped image references its attachment by id; the serializer
+    // treats the ref as an opaque URL, so it round-trips byte-for-byte.
+    const md = '![photo.png](attachment:01HZX9P3QABCDEF0123456789)'
+    expect(serialize(parse(md))).toBe(md)
+    expect(firstParaContent(md)).toEqual([
+      {
+        type: 'image',
+        attrs: { alt: 'photo.png', src: 'attachment:01HZX9P3QABCDEF0123456789' },
+      },
+    ])
+    // And a node built directly from the attachment ref serializes to it.
+    expect(serialize(imageDoc('photo.png', 'attachment:ATT_1'))).toBe(
+      '![photo.png](attachment:ATT_1)',
+    )
+  })
+
   it('a `[text](url)` link round-trips as a link, never an image', () => {
     const md = '[cat](https://x.com)'
     // bare-URL display autolinks; the important invariant is no image appears.
