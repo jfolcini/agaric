@@ -130,6 +130,9 @@ function StaticBlockInner({
   const [pdfViewerOpen, setPdfViewerOpen] = useState(false)
   const [pdfViewerUrl, setPdfViewerUrl] = useState('')
   const [pdfViewerFilename, setPdfViewerFilename] = useState('')
+  // ULID of the attachment being viewed — lets the viewer persist an
+  // annotated copy and delete the original on save (#1452).
+  const [pdfViewerAttachmentId, setPdfViewerAttachmentId] = useState('')
 
   // Image lightbox state. `images` is the full ordered set of image
   // attachments in this block (#212 item 2 — enables prev/next nav); `index`
@@ -200,7 +203,7 @@ function StaticBlockInner({
     setLightboxState((prev) => (prev ? { ...prev, index } : prev))
   }, [])
 
-  const handlePdfOpen = useCallback((url: string, filename: string) => {
+  const handlePdfOpen = useCallback((url: string, filename: string, attachmentId: string) => {
     // PEND-76 F2 — the PDF url is now a `blob:` object URL (asset protocol is
     // disabled). Revoke any previously-opened blob URL before replacing it so
     // we don't leak across successive opens.
@@ -209,8 +212,16 @@ function StaticBlockInner({
       return url
     })
     setPdfViewerFilename(filename)
+    setPdfViewerAttachmentId(attachmentId)
     setPdfViewerOpen(true)
   }, [])
+
+  // #1452 — after the viewer bakes annotations into a new attachment and
+  // deletes the original, refresh the block's attachment list so the new copy
+  // shows up (and the old one disappears) without a full reload.
+  const handlePdfSaved = useCallback(() => {
+    batchAttachments?.invalidate(blockId)
+  }, [batchAttachments, blockId])
 
   // Revoke the PDF blob URL once the viewer closes (and on unmount) so the
   // object URL created in AttachmentRenderer doesn't leak.
@@ -364,6 +375,9 @@ function StaticBlockInner({
           onOpenChange={setPdfViewerOpen}
           fileUrl={pdfViewerUrl}
           filename={pdfViewerFilename}
+          blockId={blockId}
+          attachmentId={pdfViewerAttachmentId}
+          onSaved={handlePdfSaved}
         />
       </Suspense>
       {lightboxState && (

@@ -712,6 +712,35 @@ export function addMockAttachment(
   return row
 }
 
+// ---------------------------------------------------------------------------
+// E2E attachment seeding WITH real bytes (#1452). The PDF annotation viewer
+// reads the attachment over IPC and parses it with pdf.js, so the seeded
+// attachment must carry actual bytes (the by-metadata `addMockAttachment`
+// stores none and `read_attachment` would return []). Exposed on
+// `window.__addMockAttachmentWithBytes`.
+// ---------------------------------------------------------------------------
+
+export function addMockAttachmentWithBytes(
+  blockId: string,
+  filename: string,
+  mimeType: string,
+  bytes: number[],
+): Record<string, unknown> {
+  const id = fakeId()
+  const row = {
+    id,
+    block_id: blockId,
+    filename,
+    mime_type: mimeType,
+    size_bytes: bytes.length,
+    fs_path: `attachments/${id}`,
+    created_at: new Date().toISOString(),
+  }
+  attachments.set(id, row)
+  attachmentBytes.set(id, bytes)
+  return row
+}
+
 /**
  * #548: bulk-insert `count` agenda items so the virtualized AgendaResults list
  * is long enough to actually recycle rows under a real browser (jsdom can't

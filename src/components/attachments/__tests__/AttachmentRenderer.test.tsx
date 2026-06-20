@@ -336,7 +336,9 @@ describe('AttachmentRenderer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open file report.pdf' }))
     await waitFor(() => expect(onPdfOpen).toHaveBeenCalled())
     expect(mockedReadAttachment).toHaveBeenCalledWith('att-pdf')
-    expect(onPdfOpen).toHaveBeenCalledWith(expect.stringMatching(/^blob:/), 'report.pdf')
+    // #1452 — the attachment id is forwarded so the viewer can persist an
+    // annotated copy and delete the original on save.
+    expect(onPdfOpen).toHaveBeenCalledWith(expect.stringMatching(/^blob:/), 'report.pdf', 'att-pdf')
   })
 
   it('non-PDF file chip click reads the bytes over IPC (download), not openUrl', async () => {
