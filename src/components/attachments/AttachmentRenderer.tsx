@@ -1,4 +1,4 @@
-import { MoveHorizontal } from 'lucide-react'
+import { ChevronDown, ChevronRight, Download, MoveHorizontal } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -9,6 +9,7 @@ import {
   snapToPreset,
 } from '@/components/editor-toolbar/ImageResizeToolbar'
 import { MimeIcon } from '@/components/rendering/MimeIcon'
+import { renderRichContent } from '@/components/RichContentRenderer'
 import { formatSize } from '@/lib/attachment-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -46,6 +47,43 @@ interface Attachment {
  */
 function bytesToBlob(bytes: Uint8Array, mimeType: string): Blob {
   return new Blob([new Uint8Array(bytes)], { type: mimeType })
+}
+
+/**
+ * Upper bound on the decoded text we hand to `renderRichContent` for an inline
+ * markdown/text preview (#1451). A very large note shouldn't parse + mount an
+ * unbounded React tree on every block render; past this we truncate and tell
+ * the user to download for the full file. ~256 KB of UTF-8 is a generous cap
+ * for a "preview" (well beyond any human-authored note) while keeping the
+ * parse/render cost bounded.
+ */
+const MARKDOWN_PREVIEW_CHAR_CAP = 256 * 1024
+
+/**
+ * Whether an attachment should render as an inline rich-text preview (#1451)
+ * rather than the generic download chip. Covers `text/markdown` and
+ * `text/plain` MIME types plus the common `.md` / `.markdown` / `.txt`
+ * extensions (some import paths land `.md` files as `application/octet-stream`).
+ */
+function isMarkdownAttachment(att: Attachment): boolean {
+  const mime = att.mime_type.toLowerCase()
+  if (mime === 'text/markdown' || mime === 'text/plain' || mime === 'text/x-markdown') {
+    return true
+  }
+  const name = att.filename.toLowerCase()
+  return name.endsWith('.md') || name.endsWith('.markdown') || name.endsWith('.txt')
+}
+
+/** Trigger a browser download of `bytes` as `filename` via a transient anchor. */
+function triggerDownload(bytes: Uint8Array, mimeType: string, filename: string): void {
+  const url = URL.createObjectURL(bytesToBlob(bytes, mimeType))
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
 }
 
 /**
@@ -483,6 +521,202 @@ function AttachmentImage({
   )
 }
 
+/**
+ * Generic non-image attachment chip (#1451 extracted it from the inline map so
+ * the markdown-preview path can fall back to it). PDFs open in the lazy viewer;
+ * everything else reads bytes over IPC and triggers a browser download (the
+ * backend owns storage so `fs_path` isn't externally openable).
+ */
+function AttachmentFileChip({
+  att,
+  onPdfOpen,
+}: {
+  att: Attachment
+  onPdfOpen: (url: string, filename: string, attachmentId: string) => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  return (
+    <button
+      type="button"
+      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent/50 active:bg-accent/70 hover:text-foreground"
+      aria-label={t('attachment.openFile', { filename: att.filename })}
+      onClick={async (e) => {
+        e.stopPropagation()
+        if (att.mime_type === 'application/pdf') {
+          // Asset protocol is disabled — read the bytes over IPC and hand
+          // the PDF viewer a blob URL it can fetch via pdfjs getDocument().
+          try {
+            const bytes = await readAttachment(att.id)
+            const url = URL.createObjectURL(bytesToBlob(bytes, att.mime_type))
+            onPdfOpen(url, att.filename, att.id)
+          } catch (err) {
+            logger.warn('AttachmentRenderer', 'read pdf bytes failed', { id: att.id }, err)
+            notify.error(t('attachments.loadFailed'))
+          }
+        } else {
+          // Non-image, non-PDF: `fs_path` is backend-relative (the backend owns
+          // storage), so it can't be opened externally. Read the bytes over IPC
+          // and trigger a browser download.
+          try {
+            const bytes = await readAttachment(att.id)
+            triggerDownload(bytes, att.mime_type, att.filename)
+          } catch (err) {
+            logger.warn('AttachmentRenderer', 'download attachment failed', { id: att.id }, err)
+            notify.error(t('attachments.loadFailed'))
+          }
+        }
+      }}
+    >
+      <MimeIcon mimeType={att.mime_type} />
+      <span className="truncate max-w-[200px]">{att.filename}</span>
+      <span className="shrink-0 opacity-70">{formatSize(att.size_bytes)}</span>
+    </button>
+  )
+}
+
+/**
+ * Inline rich-text preview for a `.md` / text attachment (#1451). Lazily reads
+ * the attachment bytes over IPC (viewport-gated, mirroring `AttachmentImage`),
+ * decodes UTF-8, and renders the markdown via the existing `renderRichContent`
+ * (read-only, non-interactive at-rest render — external wikilinks render as
+ * literal text per the issue's design note). A header shows the filename with a
+ * collapse/expand toggle and a download affordance. On load failure it falls
+ * back to the generic file chip so the user can still grab the file.
+ */
+function MarkdownAttachment({
+  att,
+  onPdfOpen,
+}: {
+  att: Attachment
+  onPdfOpen: (url: string, filename: string, attachmentId: string) => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  const [text, setText] = useState<string | null>(null)
+  const [truncated, setTruncated] = useState(false)
+  const [error, setError] = useState(false)
+  const [expanded, setExpanded] = useState(true)
+  // Viewport gate (mirrors AttachmentImage): defer the IPC byte read until the
+  // header approaches the viewport so off-screen previews don't fetch eagerly.
+  const [inView, viewGateRef] = useEnteredViewport<HTMLDivElement>()
+
+  useEffect(() => {
+    if (!inView) return
+    let cancelled = false
+    setText(null)
+    setError(false)
+    readAttachment(att.id)
+      .then((bytes) => {
+        if (cancelled) return
+        const decoded = new TextDecoder('utf-8').decode(bytes)
+        if (decoded.length > MARKDOWN_PREVIEW_CHAR_CAP) {
+          setText(decoded.slice(0, MARKDOWN_PREVIEW_CHAR_CAP))
+          setTruncated(true)
+        } else {
+          setText(decoded)
+          setTruncated(false)
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return
+        logger.warn('AttachmentRenderer', 'read markdown bytes failed', { id: att.id }, err)
+        setError(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [att.id, inView])
+
+  const rendered = useMemo(
+    () => (text != null ? renderRichContent(text, { interactive: false }) : null),
+    [text],
+  )
+
+  const handleDownload = useCallback(
+    async (e: React.MouseEvent) => {
+      e.stopPropagation()
+      try {
+        const bytes = await readAttachment(att.id)
+        triggerDownload(bytes, att.mime_type || 'text/markdown', att.filename)
+      } catch (err) {
+        logger.warn('AttachmentRenderer', 'download markdown failed', { id: att.id }, err)
+        notify.error(t('attachments.loadFailed'))
+      }
+    },
+    [att.id, att.mime_type, att.filename, t],
+  )
+
+  // Load error → fall back to the plain chip so the file stays accessible.
+  if (error) {
+    return <AttachmentFileChip att={att} onPdfOpen={onPdfOpen} />
+  }
+
+  return (
+    <div
+      ref={viewGateRef}
+      className="w-full max-w-full overflow-hidden rounded-md border border-border bg-muted/30 text-left"
+      data-testid="markdown-attachment"
+    >
+      <div className="flex items-center gap-1.5 border-b border-border px-2 py-1 text-xs text-muted-foreground">
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5 rounded bg-transparent border-0 p-0 text-muted-foreground hover:text-foreground transition-colors min-w-0"
+          aria-label={
+            expanded
+              ? t('attachment.collapsePreview', { filename: att.filename })
+              : t('attachment.expandPreview', { filename: att.filename })
+          }
+          aria-expanded={expanded}
+          onClick={(e) => {
+            e.stopPropagation()
+            setExpanded((v) => !v)
+          }}
+        >
+          {expanded ? (
+            <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          )}
+          <MimeIcon mimeType={att.mime_type} />
+          <span className="truncate">{att.filename}</span>
+        </button>
+        <span className="shrink-0 opacity-70">{formatSize(att.size_bytes)}</span>
+        <button
+          type="button"
+          className="ml-auto inline-flex shrink-0 items-center rounded bg-transparent border-0 p-0.5 text-muted-foreground hover:text-foreground transition-colors"
+          aria-label={t('attachment.downloadFile', { filename: att.filename })}
+          onClick={handleDownload}
+        >
+          <Download className="h-3.5 w-3.5" aria-hidden="true" />
+        </button>
+      </div>
+      {expanded && (
+        <div className="px-3 py-2 text-sm" data-testid="markdown-attachment-body">
+          {text == null ? (
+            <span
+              className="text-xs text-muted-foreground"
+              data-testid="markdown-attachment-loading"
+            >
+              {t('attachment.loadingMarkdown')}
+            </span>
+          ) : (
+            <>
+              <div className="prose-sm max-w-none break-words">{rendered}</div>
+              {truncated && (
+                <p
+                  className="mt-2 text-xs italic text-muted-foreground"
+                  data-testid="markdown-attachment-truncated"
+                >
+                  {t('attachment.previewTruncated')}
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function AttachmentRenderer({
   blockId,
   attachments,
@@ -497,8 +731,6 @@ export function AttachmentRenderer({
   onLightboxOpen,
   onPdfOpen,
 }: AttachmentRendererProps): React.ReactElement | null {
-  const { t } = useTranslation()
-
   // Registry of loaded image blob URLs, keyed by attachment id. Children report
   // their URL as it loads/unloads; we read it (in attachment order) to build the
   // lightbox image set on click so prev/next can cycle the whole block.
@@ -577,56 +809,13 @@ export function AttachmentRenderer({
             />
           )
         }
-        return (
-          <button
-            key={att.id}
-            type="button"
-            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent/50 active:bg-accent/70 hover:text-foreground"
-            aria-label={t('attachment.openFile', { filename: att.filename })}
-            onClick={async (e) => {
-              e.stopPropagation()
-              if (att.mime_type === 'application/pdf') {
-                // Asset protocol is disabled — read the bytes over IPC and hand
-                // the PDF viewer a blob URL it can fetch via pdfjs getDocument().
-                try {
-                  const bytes = await readAttachment(att.id)
-                  const url = URL.createObjectURL(bytesToBlob(bytes, att.mime_type))
-                  onPdfOpen(url, att.filename, att.id)
-                } catch (err) {
-                  logger.warn('AttachmentRenderer', 'read pdf bytes failed', { id: att.id }, err)
-                  notify.error(t('attachments.loadFailed'))
-                }
-              } else {
-                // Non-image, non-PDF: `fs_path` is backend-relative (the
-                // backend owns storage), so it can't be opened externally.
-                // Read the bytes over IPC and trigger a browser download.
-                try {
-                  const bytes = await readAttachment(att.id)
-                  const url = URL.createObjectURL(bytesToBlob(bytes, att.mime_type))
-                  const anchor = document.createElement('a')
-                  anchor.href = url
-                  anchor.download = att.filename
-                  document.body.appendChild(anchor)
-                  anchor.click()
-                  anchor.remove()
-                  URL.revokeObjectURL(url)
-                } catch (err) {
-                  logger.warn(
-                    'AttachmentRenderer',
-                    'download attachment failed',
-                    { id: att.id },
-                    err,
-                  )
-                  notify.error(t('attachments.loadFailed'))
-                }
-              }
-            }}
-          >
-            <MimeIcon mimeType={att.mime_type} />
-            <span className="truncate max-w-[200px]">{att.filename}</span>
-            <span className="shrink-0 opacity-70">{formatSize(att.size_bytes)}</span>
-          </button>
-        )
+        // #1451: render `.md` / text attachments as an inline rich-text
+        // preview (reusing `renderRichContent`) instead of a download-only chip.
+        if (isMarkdownAttachment(att)) {
+          return <MarkdownAttachment key={att.id} att={att} onPdfOpen={onPdfOpen} />
+        }
+        // Everything else (PDF / binary) keeps the generic file chip.
+        return <AttachmentFileChip key={att.id} att={att} onPdfOpen={onPdfOpen} />
       })}
     </div>
   )
