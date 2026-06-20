@@ -11,7 +11,7 @@ use crate::error::AppError;
 /// Primary type for block IDs. Type aliases below provide semantic names for
 /// non-block entity IDs (attachments, snapshots) that are also ULIDs.
 ///
-/// **Deserialization normalizes to uppercase Crockford base32** — any valid
+/// **Deserialization normalizes to canonical Crockford base32** — any valid
 /// ULID string (lowercase, mixed-case) is accepted and stored in canonical
 /// uppercase form. This is critical for blake3 hash determinism.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, sqlx::Type, specta::Type)]
@@ -25,10 +25,30 @@ impl<'de> serde::Deserialize<'de> for BlockId {
         D: serde::Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        // Lenient: uppercase-normalize without ULID validation.
-        // Validation happens at the API boundary via `from_string`.
-        // This must accept any string stored by `from_trusted` / `test_id`.
-        Ok(Self(s.to_ascii_uppercase()))
+        // `Deserialize` is the genuinely-UNTRUSTED entry point: remote op-log
+        // payloads, sync messages and IPC parameters reach `BlockId` through
+        // here (e.g. `serde_json::from_str::<EditBlockPayload>` in `dag.rs`).
+        // Because `normalize_block_ids()` is now a no-op (op.rs), the canonical
+        // form fed to the blake3 hash preimage is decided HERE.
+        //
+        // #1558 — Canonicalize valid ULIDs through the *same* Crockford path
+        // `from_string` uses (`ulid::Ulid::from_str().to_string()`), so any
+        // two encodings of the same logical ULID (case-variant, or any
+        // decode-equivalent form a Crockford decoder accepts) collapse to one
+        // byte-identical string and therefore one hash. Untrusted input can no
+        // longer inject a non-canonical id into the hash preimage.
+        //
+        // Strings that are NOT valid 26-char ULIDs fall back to lenient
+        // ASCII-uppercase normalization (no error) so that values stored by
+        // `from_trusted` / `test_id` — synthetic non-ULID test fixtures like
+        // "AB", "P", "BLOCK_A" — still deserialize. This keeps the test
+        // ergonomics intact while hardening the real-ULID path. ASCII-only
+        // uppercase matches `from_trusted` byte-for-byte for those non-ULID
+        // inputs (AGENTS.md invariant #8).
+        match ulid::Ulid::from_str(&s) {
+            Ok(parsed) => Ok(Self(parsed.to_string())),
+            Err(_) => Ok(Self(s.to_ascii_uppercase())),
+        }
     }
 }
 
@@ -65,9 +85,19 @@ impl BlockId {
     /// validation. Use in command handlers where the ID was returned by a
     /// previous `create_block` and is being passed back from the frontend.
     ///
-    /// Uses `to_ascii_uppercase()` to match the `Deserialize` impl — Unicode
-    /// `to_uppercase()` would produce different output for non-ASCII inputs
-    /// (e.g. "ß" → "SS"), breaking blake3 determinism across the two paths.
+    /// **Lenient by design — this is the TRUSTED path.** Unlike the
+    /// `Deserialize` impl (the untrusted entry point, which canonicalizes
+    /// valid ULIDs through `ulid::Ulid::from_str` per #1558), `from_trusted`
+    /// performs no ULID parse: the caller promises the value is already a
+    /// valid, canonical ULID minted by `BlockId::new()` / `from_string`.
+    /// Keeping it parse-free is what lets test fixtures and in-process
+    /// round-trips use synthetic non-ULID ids ("AB", "P", "BLOCK_A") cheaply.
+    ///
+    /// Uses `to_ascii_uppercase()` so that, for the non-ULID inputs the two
+    /// paths share (the `Deserialize` fallback also ASCII-uppercases), the
+    /// byte output matches — Unicode `to_uppercase()` would produce different
+    /// output for non-ASCII inputs (e.g. "ß" → "SS"), breaking blake3
+    /// determinism across the two paths (AGENTS.md invariant #8).
     pub fn from_trusted(s: &str) -> Self {
         Self(s.to_ascii_uppercase())
     }
