@@ -58,13 +58,40 @@ test.describe('Keyboard fundamentals', () => {
     const editor = await focusBlock(page, 0)
 
     // Build "helloworld" with the caret deterministically BETWEEN the two
-    // halves — type "world", jump Home, then type "hello". This avoids the
-    // arrow-key caret-timing race that flakes when the typed text hasn't
-    // committed before the caret moves.
+    // halves, then split there. The original recipe typed "world", pressed
+    // Home, then typed "hello" — but Home is itself a caret-move transaction
+    // that must COMMIT before the next keystroke types. Under the static
+    // `vite preview` build's tighter timing and the 2-worker shard load in CI,
+    // the caret had sometimes not collapsed to the start before "hello" typed
+    // (or Home was dropped on a focus hiccup), so the text landed at the end
+    // and produced "worldhello" instead of "helloworld" — failing the split
+    // and flaking `playwright (1)` on BE-only PRs once #1458 moved e2e onto
+    // the preview build.
+    //
+    // Make it deterministic: type the WHOLE word in one go (no mid-stream
+    // caret move to race), confirm it committed, then drive the caret to the
+    // split point with ArrowLeft and poll the DOM selection until it is
+    // actually collapsed at offset 5 ("hello|world") before pressing Enter.
     await editor.press('Control+a')
-    await editor.pressSequentially('world')
-    await editor.press('Home')
-    await editor.pressSequentially('hello')
+    await editor.pressSequentially('helloworld')
+    // Sync point: the full text has committed before we move the caret.
+    await expect(editor).toHaveText('helloworld')
+    // Drive the caret to sit between "hello" and "world" (offset 5). Re-press
+    // ArrowLeft from the end until the selection is collapsed exactly there,
+    // so the split position never depends on a single keystroke winning a race.
+    await editor.press('End')
+    await expect
+      .poll(async () => {
+        const offset = await page.evaluate(() => {
+          const sel = window.getSelection()
+          return sel !== null && sel.isCollapsed ? sel.anchorOffset : -1
+        })
+        if (offset > 5) {
+          await editor.press('ArrowLeft')
+        }
+        return offset
+      })
+      .toBe(5)
 
     await clearInvokeCalls(page)
     await editor.press('Enter')
