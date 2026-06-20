@@ -1888,16 +1888,13 @@ pub async fn purge_blocks_by_ids_inner(
         // invariant #9 exception — mirror the same shape the cascade walks)
         // and the seed's denormalized space (read directly; the canonical
         // resolver filters out this soft-deleted row).
-        let cohort = sqlx::query_scalar::<_, String>(
-            "WITH RECURSIVE descendants(id, depth) AS ( \
-                 SELECT id, 0 FROM blocks WHERE id = ? \
-                 UNION ALL \
-                 SELECT b.id, d.depth + 1 FROM blocks b \
-                 INNER JOIN descendants d ON b.parent_id = d.id \
-                 WHERE d.depth < 100 \
-             ) \
-             SELECT id FROM descendants",
-        )
+        let cohort = sqlx::query_scalar::<_, String>(concat!(
+            // #1655: single-root purge cohort walk via the shared
+            // `descendants_cte_purge!()` macro (no `deleted_at` filter,
+            // `depth < 100` cap) instead of re-inlining the CTE body.
+            crate::descendants_cte_purge!(),
+            "SELECT id FROM descendants",
+        ))
         .bind(&root.id)
         .fetch_all(&mut **tx)
         .await?;
