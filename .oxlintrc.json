@@ -75,7 +75,15 @@
     "unicorn/prefer-array-find": "error",
     "react/jsx-no-constructed-context-values": "error",
 
-    "eslint/eqeqeq": ["error", "always", { "null": "ignore" }]
+    "eslint/eqeqeq": ["error", "always", { "null": "ignore" }],
+
+    "unicorn/prefer-node-protocol": "error",
+    "unicorn/prefer-array-flat-map": "error",
+    "eslint/default-case-last": "error",
+    "unicorn/prefer-string-slice": "error",
+    "eslint/no-alert": "error",
+    "unicorn/prefer-modern-math-apis": "error",
+    "eslint/no-lonely-if": "error"
   },
   "overrides": [
     {

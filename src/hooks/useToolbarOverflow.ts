@@ -130,10 +130,10 @@ export function computeOverflow<T extends ToolbarItem>(
           total += widthOf(item)
           keptBefore++
         }
-      } else {
+      } else if (keptBefore > 0 && totalKept - keptBefore > 0) {
         // separator — include only if at least one kept button exists on
         // each side (before: keptBefore; after: totalKept - keptBefore).
-        if (keptBefore > 0 && totalKept - keptBefore > 0) total += widthOf(item)
+        total += widthOf(item)
       }
     }
     return total
@@ -183,10 +183,10 @@ export function computeOverflow<T extends ToolbarItem>(
         visible.push(item)
         keptBefore++
       }
-    } else {
-      // separator: keep only if a kept button exists on each side.
-      if (keptBefore > 0 && keptButtons - keptBefore > 0) visible.push(item)
-      // separators never go to overflowed
+    } else if (keptBefore > 0 && keptButtons - keptBefore > 0) {
+      // separator: keep only if a kept button exists on each side
+      // (separators never go to overflowed).
+      visible.push(item)
     }
   }
 

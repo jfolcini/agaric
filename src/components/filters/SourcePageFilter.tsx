@@ -76,20 +76,18 @@ export function SourcePageFilter({
             [...excluded, pageId],
           )
         }
+      } else if (included.includes(pageId)) {
+        // Normal click: toggle include (remove if already included)
+        onChange(
+          included.filter((id) => id !== pageId),
+          excluded,
+        )
       } else {
-        // Normal click: toggle include
-        if (included.includes(pageId)) {
-          onChange(
-            included.filter((id) => id !== pageId),
-            excluded,
-          )
-        } else {
-          // Remove from excluded if present, add to included
-          onChange(
-            [...included, pageId],
-            excluded.filter((id) => id !== pageId),
-          )
-        }
+        // Normal click: add to included (remove from excluded if present)
+        onChange(
+          [...included, pageId],
+          excluded.filter((id) => id !== pageId),
+        )
       }
     },
     [included, excluded, onChange],

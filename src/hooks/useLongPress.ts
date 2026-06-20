@@ -76,7 +76,7 @@ export function useLongPress({
       if (start == null) return
       const dx = e.clientX - start.x
       const dy = e.clientY - start.y
-      if (Math.sqrt(dx * dx + dy * dy) > moveThreshold) clear()
+      if (Math.hypot(dx, dy) > moveThreshold) clear()
     },
     [clear, moveThreshold],
   )
