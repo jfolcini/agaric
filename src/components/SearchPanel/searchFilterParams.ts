@@ -11,6 +11,7 @@
  * shape is accepted by `searchBlocks` as `Partial<…>` extension fields
  * (each entry is `T | undefined`).
  */
+import { canonicalToSearchProjection, searchProjectionToCanonical } from '@/lib/filters/model'
 import type { AstFilterProjection } from '@/lib/search-query'
 
 /**
@@ -48,13 +49,23 @@ export type SearchFilterParams = {
 }
 
 export function astFilterParams(
-  projection: AstFilterProjection,
+  rawProjection: AstFilterProjection,
   tagIds: string[],
 ): SearchFilterParams {
+  // Issue #1646, step 1 — the search surface now projects from the canonical
+  // filter model. We round-trip the AST projection through `FilterPredicate[]`
+  // and back before emitting the IPC bundle, so the search representation is
+  // unified with the other surfaces while the emitted `SearchFilterParams`
+  // stays byte-identical (the round-trip is the identity on the projection;
+  // proven by the parity tests). The query-string UI is unchanged — this is a
+  // pure internal-representation convergence at the IPC boundary.
+  const projection = canonicalToSearchProjection(searchProjectionToCanonical(rawProjection))
   // #717 — `useTagResolution` yields exactly one settled entry per input
   // name, so fewer ids than names means at least one name is definitively
   // unresolved (callers hold the search while resolution is pending).
   // Project the matches-nothing sentinel instead of dropping the filter.
+  // The unresolved-tag check uses the canonical-projected `tagNames`, which is
+  // identical to the input (`tag` predicates round-trip losslessly).
   const hasUnresolvedTag = projection.tagNames.length > tagIds.length
   return {
     tagIds: hasUnresolvedTag ? [UNRESOLVED_TAG_SENTINEL] : tagIds.length === 0 ? undefined : tagIds,

@@ -55,6 +55,12 @@ import type {
   PropertyValue,
 } from '@/lib/bindings'
 import type { GraphFilter } from '@/lib/graph-filters'
+import type {
+  AstFilterProjection,
+  DateFilterValue,
+  DateOp,
+  NamedDateRange,
+} from '@/lib/search-query'
 
 // ---------------------------------------------------------------------------
 // Canonical discriminated union
@@ -512,4 +518,228 @@ export function filterPrimitiveToCanonical(filter: FilterPrimitive): FilterPredi
     case 'Snippet':
       return null
   }
+}
+
+// ---------------------------------------------------------------------------
+// Search surface conversion (Issue #1646, step 1 — "adapter only").
+//
+// The search surface's user-facing model is the query-string AST, projected to
+// the flat `AstFilterProjection` by `astToFilterProjection`. That projection is
+// what `astFilterParams` turns into the loose `SearchFilterParams` IPC bundle.
+//
+// This adapter inserts the canonical model *between* the AST projection and the
+// IPC bundle: `searchProjectionToCanonical` builds `FilterPredicate[]`, and
+// `canonicalToSearchProjection` is its exact inverse, reconstructing the same
+// `AstFilterProjection`. Composed, the round-trip is the identity on the
+// projection, so the byte shape `astFilterParams` ultimately emits is unchanged
+// (proven by the parity tests). The search query-string UI is untouched.
+//
+// Parity-critical encoding choices:
+//   - `state:none` / `not-state:none` flow as the literal value string `'none'`
+//     inside the canonical `status` predicate's `values` (NOT collapsed to the
+//     `isNull` flag), exactly as the projection carries it today — so the
+//     emitted `stateFilter` / `excludedStateFilter` array is byte-identical and
+//     the backend's `todo_state IS NULL` sentinel path is preserved verbatim.
+//     (Mirrors the backlink `none` lesson from #1647: don't reinterpret the
+//     sentinel mid-adapter.)
+//   - `due:`/`scheduled:` `DateFilterValue` (named bucket OR comparison op) is
+//     carried losslessly through the canonical `date` predicate's `DatePredicate`
+//     via a reserved sentinel for the named buckets (see below).
+// ---------------------------------------------------------------------------
+
+/**
+ * Sentinel prefix used to carry a search named-date bucket (e.g. `today`,
+ * `none`, `this-week`) through the canonical `date` predicate without inventing
+ * a new variant. A real comparison-op date is always `YYYY-MM-DD`, so a date
+ * string starting with this non-ISO prefix can never collide; it round-trips
+ * back to `{ kind: 'named', name }` exactly.
+ */
+const SEARCH_NAMED_DATE_SENTINEL = '__search-named-date__:'
+
+const SEARCH_DATE_OP_TO_PREDICATE: Record<DateOp, (date: string) => DatePredicate> = {
+  '<': (date) => ({ type: 'Before', date }),
+  '<=': (date) => ({ type: 'OnOrBefore', date }),
+  '=': (date) => ({ type: 'On', date }),
+  '>=': (date) => ({ type: 'OnOrAfter', date }),
+  '>': (date) => ({ type: 'After', date }),
+}
+
+/** Map a search `DateFilterValue` losslessly onto a canonical `DatePredicate`. */
+function searchDateToPredicate(value: DateFilterValue): DatePredicate {
+  if (value.kind === 'named') {
+    return { type: 'On', date: `${SEARCH_NAMED_DATE_SENTINEL}${value.name}` }
+  }
+  return SEARCH_DATE_OP_TO_PREDICATE[value.op](value.date)
+}
+
+/** Inverse of {@link searchDateToPredicate}. Total over the predicates it emits. */
+function predicateToSearchDate(predicate: DatePredicate): DateFilterValue {
+  switch (predicate.type) {
+    case 'Before':
+      return { kind: 'op', op: '<', date: predicate.date }
+    case 'OnOrBefore':
+      return { kind: 'op', op: '<=', date: predicate.date }
+    case 'OnOrAfter':
+      return { kind: 'op', op: '>=', date: predicate.date }
+    case 'After':
+      return { kind: 'op', op: '>', date: predicate.date }
+    case 'On':
+      if (predicate.date.startsWith(SEARCH_NAMED_DATE_SENTINEL)) {
+        return {
+          kind: 'named',
+          name: predicate.date.slice(SEARCH_NAMED_DATE_SENTINEL.length) as NamedDateRange,
+        }
+      }
+      return { kind: 'op', op: '=', date: predicate.date }
+    case 'IsNull':
+    case 'Between':
+      // The search surface never emits these; degenerate fallback keeps the
+      // function total. (Not reachable from `searchDateToPredicate`.)
+      return { kind: 'op', op: '=', date: '' }
+  }
+}
+
+/**
+ * The search property predicate is always an equality on a text value — the
+ * query string only expresses `prop:key=value`. The canonical `property`
+ * predicate carries the full `PropertyPredicate`, so search uses the `Eq`/`Text`
+ * leaf and `exclude` for the `not-prop:` negation.
+ */
+function searchPropPredicate(value: string): PropertyPredicate {
+  return { type: 'Eq', value: { type: 'Text', value } }
+}
+
+function predicateToSearchPropValue(predicate: PropertyPredicate): string {
+  // Inverse of `searchPropPredicate`: pull the text operand back out. The
+  // search adapter only ever produces the `Eq`/`Text` shape, so this is total
+  // over what it emits.
+  if ((predicate.type === 'Eq' || predicate.type === 'Ne') && predicate.value.type === 'Text') {
+    return predicate.value.value
+  }
+  return ''
+}
+
+/**
+ * Project a search `AstFilterProjection` into the canonical model.
+ *
+ * Lossless for every category the search AST can produce (tag-by-name, path
+ * include/exclude globs, state / not-state, priority / not-priority, due /
+ * scheduled dates, prop / not-prop). The order of the returned predicates
+ * mirrors the projection's field order so {@link canonicalToSearchProjection}
+ * reconstructs the projection exactly.
+ *
+ * Note: the resolved tag *ids* (`SearchFilterParams.tagIds`) are NOT part of
+ * this projection — they come from async tag-name resolution and the
+ * matches-nothing sentinel is applied at the IPC boundary in `astFilterParams`.
+ * The canonical `tag` predicates here carry the resolved-by-name *names* only.
+ */
+export function searchProjectionToCanonical(projection: AstFilterProjection): FilterPredicate[] {
+  const out: FilterPredicate[] = []
+  for (const name of projection.tagNames) out.push({ kind: 'tag', by: 'name', name })
+  for (const pattern of projection.includePageGlobs)
+    out.push({ kind: 'pathGlob', pattern, exclude: false })
+  for (const pattern of projection.excludePageGlobs)
+    out.push({ kind: 'pathGlob', pattern, exclude: true })
+  for (const value of projection.stateFilter)
+    out.push({ kind: 'status', values: [value], isNull: false, exclude: false })
+  for (const value of projection.excludedStateFilter)
+    out.push({ kind: 'status', values: [value], isNull: false, exclude: true })
+  for (const value of projection.priorityFilter)
+    out.push({ kind: 'priority', values: [value], exclude: false })
+  for (const value of projection.excludedPriorityFilter)
+    out.push({ kind: 'priority', values: [value], exclude: true })
+  if (projection.dueFilter !== null)
+    out.push({ kind: 'date', field: 'due', predicate: searchDateToPredicate(projection.dueFilter) })
+  if (projection.scheduledFilter !== null)
+    out.push({
+      kind: 'date',
+      field: 'scheduled',
+      predicate: searchDateToPredicate(projection.scheduledFilter),
+    })
+  for (const p of projection.propertyFilters)
+    out.push({
+      kind: 'property',
+      key: p.key,
+      predicate: searchPropPredicate(p.value),
+      exclude: false,
+    })
+  for (const p of projection.excludedPropertyFilters)
+    out.push({
+      kind: 'property',
+      key: p.key,
+      predicate: searchPropPredicate(p.value),
+      exclude: true,
+    })
+  return out
+}
+
+/**
+ * Collapse canonical predicates back to an `AstFilterProjection` — the exact
+ * inverse of {@link searchProjectionToCanonical}. Predicates outside the search
+ * surface's allow-list are dropped (defensive; the search builder never makes
+ * them). `state:none` stays the literal `'none'` value string, preserving the
+ * backend `todo_state IS NULL` sentinel path.
+ */
+export function canonicalToSearchProjection(
+  predicates: readonly FilterPredicate[],
+): AstFilterProjection {
+  const projection: AstFilterProjection = {
+    tagNames: [],
+    includePageGlobs: [],
+    excludePageGlobs: [],
+    stateFilter: [],
+    priorityFilter: [],
+    excludedStateFilter: [],
+    excludedPriorityFilter: [],
+    dueFilter: null,
+    scheduledFilter: null,
+    propertyFilters: [],
+    excludedPropertyFilters: [],
+  }
+  for (const p of predicates) {
+    switch (p.kind) {
+      case 'tag':
+        if (p.by === 'name') projection.tagNames.push(p.name)
+        break
+      case 'pathGlob':
+        if (p.exclude) projection.excludePageGlobs.push(p.pattern)
+        else projection.includePageGlobs.push(p.pattern)
+        break
+      case 'status':
+        // Each search state token is a single-value canonical `status`
+        // predicate; flatten them back into the flat projection arrays.
+        for (const v of p.values) {
+          if (p.exclude) projection.excludedStateFilter.push(v)
+          else projection.stateFilter.push(v)
+        }
+        break
+      case 'priority':
+        for (const v of p.values) {
+          if (p.exclude) projection.excludedPriorityFilter.push(v)
+          else projection.priorityFilter.push(v)
+        }
+        break
+      case 'date':
+        if (p.field === 'due') projection.dueFilter = predicateToSearchDate(p.predicate)
+        else if (p.field === 'scheduled')
+          projection.scheduledFilter = predicateToSearchDate(p.predicate)
+        break
+      case 'property':
+        if (p.exclude)
+          projection.excludedPropertyFilters.push({
+            key: p.key,
+            value: predicateToSearchPropValue(p.predicate),
+          })
+        else
+          projection.propertyFilters.push({
+            key: p.key,
+            value: predicateToSearchPropValue(p.predicate),
+          })
+        break
+      default:
+        // Outside the search allow-list — dropped.
+        break
+    }
+  }
+  return projection
 }
