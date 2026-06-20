@@ -190,6 +190,68 @@ mod tests {
         );
     }
 
+    /// #1549 — `next_delete_ms()` is strictly increasing across rapid
+    /// successive calls, even when wall-clock `now_ms()` would repeat within
+    /// the same millisecond. This is the property that gives every distinct
+    /// delete a distinct `deleted_at` cohort key, so the restore-cohort
+    /// filter (`WHERE deleted_at = ?`) can't conflate two independent deletes.
+    #[test]
+    fn next_delete_ms_is_strictly_increasing_1549() {
+        // A tight burst that — by construction — issues many calls within a
+        // single wall-clock millisecond on any realistic machine. Each value
+        // must be strictly greater than the previous one.
+        let mut prev = next_delete_ms();
+        assert!(prev > 0, "next_delete_ms() must be positive (post-epoch)");
+        for _ in 0..10_000 {
+            let cur = next_delete_ms();
+            assert!(
+                cur > prev,
+                "next_delete_ms() must be strictly increasing: {cur} !> {prev}"
+            );
+            prev = cur;
+        }
+    }
+
+    /// #1549 — concurrent callers never observe a torn read or a duplicate:
+    /// across N threads each pulling many values, every value handed out is
+    /// unique (the CAS loop is the single linearization point).
+    #[test]
+    fn next_delete_ms_unique_under_concurrency_1549() {
+        use std::collections::HashSet;
+        use std::sync::{Arc, Mutex};
+
+        const THREADS: usize = 8;
+        const PER_THREAD: usize = 5_000;
+
+        let seen: Arc<Mutex<HashSet<i64>>> = Arc::new(Mutex::new(HashSet::new()));
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let seen = Arc::clone(&seen);
+                std::thread::spawn(move || {
+                    let mut local = Vec::with_capacity(PER_THREAD);
+                    for _ in 0..PER_THREAD {
+                        local.push(next_delete_ms());
+                    }
+                    let mut guard = seen.lock().unwrap();
+                    for v in local {
+                        assert!(
+                            guard.insert(v),
+                            "duplicate delete timestamp handed out: {v}"
+                        );
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(
+            seen.lock().unwrap().len(),
+            THREADS * PER_THREAD,
+            "every concurrent call must yield a unique delete timestamp"
+        );
+    }
+
     #[tokio::test]
     async fn init_pool_sets_wal_journal_mode() {
         let (pool, _dir) = test_pool().await;

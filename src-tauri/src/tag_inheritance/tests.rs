@@ -569,6 +569,84 @@ async fn rebuild_all_matches_propagation() {
     assert_eq!(rows.len(), 5);
 }
 
+/// #1546: the full rebuild and the incremental path must produce IDENTICAL
+/// `inherited_from` attribution for every block in a multi-tagger chain.
+///
+/// Scenario: GRAND -> PARENT -> CHILD, where GRAND **and** PARENT both hold
+/// TAG directly. `block_tag_inherited` has PK `(block_id, tag_id)`, so CHILD
+/// keeps exactly one `inherited_from`. The canonical rule is the **nearest
+/// tagging ancestor**: CHILD -> PARENT (depth 1), not GRAND (depth 2). This
+/// is the attribution the incremental path converges on (and the remove path
+/// deliberately re-establishes — see `remove_inherited_reattributes_to_grandparent`).
+///
+/// Before the fix the full rebuild inserted straight from the recursive
+/// `descendant_tags` walk with `INSERT OR IGNORE`, so the survivor per
+/// `(block_id, tag_id)` was recursion-ordering-dependent and could land on
+/// GRAND — disagreeing with the incremental path for CHILD until a later
+/// remove self-healed it. The fix collapses the rebuild walk to the MIN-depth
+/// row per `(block_id, tag_id)` (`tag_inh_rebuild_nearest!`), so both paths
+/// now agree deterministically.
+#[tokio::test]
+async fn rebuild_matches_incremental_for_multi_tagger_chain() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "TAG", "tag", "tag-name", None).await;
+    insert_block(&pool, "GRAND", "page", "grand", None).await;
+    insert_block(&pool, "PARENT", "content", "parent", Some("GRAND")).await;
+    insert_block(&pool, "CHILD", "content", "child", Some("PARENT")).await;
+
+    // Both GRAND and PARENT hold TAG directly.
+    insert_tag_assoc(&pool, "GRAND", "TAG").await;
+    insert_tag_assoc(&pool, "PARENT", "TAG").await;
+
+    // --- Incremental path: converge on the canonical nearest-ancestor state.
+    // Propagating PARENT before GRAND lands CHILD on its nearest tagger PARENT
+    // (the same end-state the remove path re-establishes); this is the
+    // attribution the rebuild must match.
+    {
+        let mut conn = pool.acquire().await.unwrap();
+        propagate_tag_to_descendants(&mut conn, "PARENT", "TAG")
+            .await
+            .unwrap();
+        propagate_tag_to_descendants(&mut conn, "GRAND", "TAG")
+            .await
+            .unwrap();
+    }
+    let incremental_rows = get_inherited(&pool).await;
+
+    // Sanity: the incremental path produced the canonical nearest attribution.
+    assert!(
+        incremental_rows.contains(&("CHILD".into(), "TAG".into(), "PARENT".into())),
+        "precondition: incremental path must attribute CHILD to nearest ancestor PARENT, got: {incremental_rows:?}"
+    );
+
+    // --- Full rebuild path: recompute the whole cache from scratch. ---
+    rebuild_all(&pool).await.unwrap();
+    let rebuild_rows = get_inherited(&pool).await;
+
+    // Parity: the two strategies must agree row-for-row (the #1546 fix).
+    assert_eq!(
+        incremental_rows, rebuild_rows,
+        "full rebuild and incremental propagation must produce identical \
+         inherited_from for every block (#1546)\nincremental: {incremental_rows:?}\nrebuild: {rebuild_rows:?}"
+    );
+
+    // And the rebuild must use the canonical nearest-ancestor attribution.
+    assert!(
+        rebuild_rows.contains(&("CHILD".into(), "TAG".into(), "PARENT".into())),
+        "CHILD must inherit TAG from the NEAREST tagging ancestor PARENT (not GRAND), got: {rebuild_rows:?}"
+    );
+    assert!(
+        rebuild_rows.contains(&("PARENT".into(), "TAG".into(), "GRAND".into())),
+        "PARENT must inherit TAG from GRAND, got: {rebuild_rows:?}"
+    );
+    assert_eq!(
+        rebuild_rows.len(),
+        2,
+        "only PARENT and CHILD inherit, got: {rebuild_rows:?}"
+    );
+}
+
 // ======================================================================
 // recompute_subtree_inheritance: skips deleted blocks
 // ======================================================================

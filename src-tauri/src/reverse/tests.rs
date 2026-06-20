@@ -103,6 +103,214 @@ async fn reverse_edit_block_produces_edit_with_prior_text() {
         _ => panic!("expected EditBlock"),
     }
 }
+/// #1526: undo of an edit must restore the text of its CAUSAL predecessor
+/// (`EditBlockPayload::prev_edit`), NOT the ancestor that merely happens to be
+/// nearest in `(created_at, seq, device_id)` order. The two disagree under
+/// cross-device clock skew, where a concurrent edit from another device lands
+/// with a `created_at` BETWEEN the causal predecessor and the edit being
+/// undone — `find_prior_text`'s timestamp scan would (wrongly) return that
+/// intruder.
+///
+/// Scenario (same block, two devices, skewed clocks):
+///   * `device-a` creates the block ("v0")           @ ts = T+0   (a, seq 1)
+///   * `device-a` edits to "CORRECT-causal-prev"      @ ts = T+5   (a, seq 2)
+///   * `device-b` edits to "WRONG-intruder"           @ ts = T+8   (b, seq 1)
+///   * `device-b` edits to "latest", prev_edit=(a,2)  @ ts = T+10  (b, seq 2)
+///
+/// Undoing the last edit must restore "CORRECT-causal-prev" (its prev_edit
+/// target), even though `find_prior_text` ordered by `(created_at, seq,
+/// device_id)` would return "WRONG-intruder" (ts T+8 is the greatest key
+/// strictly before T+10). The fix follows `prev_edit`; this test pins it.
+#[tokio::test]
+async fn reverse_edit_follows_prev_edit_not_timestamp_under_skew_1526() {
+    let (pool, _dir) = test_pool().await;
+    const DEV_A: &str = "device-a";
+    const DEV_B: &str = "device-b";
+    let blk = BlockId::test_id("SKEWBLK");
+
+    // (a, seq 1) create "v0".
+    append_local_op_at(
+        &pool,
+        DEV_A,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: blk.clone(),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            index: None,
+            content: "v0".into(),
+        }),
+        FIXED_TS,
+    )
+    .await
+    .unwrap();
+
+    // (a, seq 2) edit to the CAUSAL predecessor text @ T+5.
+    let prev = append_local_op_at(
+        &pool,
+        DEV_A,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: blk.clone(),
+            to_text: "CORRECT-causal-prev".into(),
+            prev_edit: Some((DEV_A.to_string(), 1)),
+        }),
+        FIXED_TS + 5,
+    )
+    .await
+    .unwrap();
+    assert_eq!(prev.seq, 2, "sanity: causal predecessor is (a, seq 2)");
+
+    // (b, seq 1) concurrent INTRUDER edit @ T+8 — different device, NOT the
+    // causal predecessor, but its timestamp sits between prev and the undo
+    // target, so the timestamp scan would pick it.
+    append_local_op_at(
+        &pool,
+        DEV_B,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: blk.clone(),
+            to_text: "WRONG-intruder".into(),
+            prev_edit: None,
+        }),
+        FIXED_TS + 8,
+    )
+    .await
+    .unwrap();
+
+    // (b, seq 2) the edit we will undo @ T+10; prev_edit points at (a, 2).
+    let undo_target = append_local_op_at(
+        &pool,
+        DEV_B,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: blk.clone(),
+            to_text: "latest".into(),
+            prev_edit: Some((DEV_A.to_string(), 2)),
+        }),
+        FIXED_TS + 10,
+    )
+    .await
+    .unwrap();
+
+    // Sanity: the timestamp-ordered scan WOULD return the intruder — proving the
+    // disagreement is real and the prev_edit branch is load-bearing.
+    let by_timestamp = find_prior_text(
+        &pool,
+        blk.as_str(),
+        undo_target.created_at,
+        undo_target.seq,
+        &undo_target.device_id,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        by_timestamp.as_deref(),
+        Some("WRONG-intruder"),
+        "sanity: the (created_at, seq, device_id) scan returns the intruder, \
+         so following prev_edit must override it"
+    );
+
+    // The reverse must restore the CAUSAL predecessor's text, via prev_edit.
+    let reverse = compute_reverse(&pool, DEV_B, undo_target.seq)
+        .await
+        .unwrap();
+    match reverse {
+        OpPayload::EditBlock(ref p) => assert_eq!(
+            p.to_text, "CORRECT-causal-prev",
+            "#1526: undo must restore the prev_edit target, not the \
+             timestamp-nearest intruder"
+        ),
+        other => panic!("expected EditBlock, got {other:?}"),
+    }
+}
+
+/// #1526: when `prev_edit` is `None` (e.g. legacy ops), the reverse falls back
+/// to the timestamp-ordered `find_prior_text` — the pre-fix behaviour is
+/// preserved for ops that carry no causal pointer.
+#[tokio::test]
+async fn reverse_edit_falls_back_to_timestamp_when_prev_edit_none_1526() {
+    let (pool, _dir) = test_pool().await;
+    append_op(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("FALLBK"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            index: None,
+            content: "v0".into(),
+        }),
+        FIXED_TS,
+    )
+    .await;
+    append_op(
+        &pool,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id("FALLBK"),
+            to_text: "prior".into(),
+            prev_edit: None,
+        }),
+        FIXED_TS + 5,
+    )
+    .await;
+    let rec = append_op(
+        &pool,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id("FALLBK"),
+            to_text: "latest".into(),
+            prev_edit: None,
+        }),
+        FIXED_TS + 10,
+    )
+    .await;
+    let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
+    match reverse {
+        OpPayload::EditBlock(ref p) => assert_eq!(
+            p.to_text, "prior",
+            "prev_edit=None falls back to the timestamp-nearest prior op"
+        ),
+        other => panic!("expected EditBlock, got {other:?}"),
+    }
+}
+
+/// #1526: a dangling `prev_edit` (its op removed by op-log compaction) falls
+/// back to `find_prior_text` rather than erroring out — the timestamp scan is
+/// the best remaining reconstruction.
+#[tokio::test]
+async fn reverse_edit_dangling_prev_edit_falls_back_to_timestamp_1526() {
+    let (pool, _dir) = test_pool().await;
+    append_op(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("DANGLE"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            index: None,
+            content: "v0".into(),
+        }),
+        FIXED_TS,
+    )
+    .await;
+    // The edit we undo references a NON-EXISTENT prev_edit (device, seq 999).
+    let rec = append_op(
+        &pool,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id("DANGLE"),
+            to_text: "latest".into(),
+            prev_edit: Some((TEST_DEVICE.to_string(), 999)),
+        }),
+        FIXED_TS + 10,
+    )
+    .await;
+    let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
+    match reverse {
+        OpPayload::EditBlock(ref p) => assert_eq!(
+            p.to_text, "v0",
+            "dangling prev_edit falls back to the timestamp-nearest prior op (the create)"
+        ),
+        other => panic!("expected EditBlock, got {other:?}"),
+    }
+}
+
 #[tokio::test]
 async fn reverse_edit_block_when_prior_is_create_uses_content() {
     let (pool, _dir) = test_pool().await;

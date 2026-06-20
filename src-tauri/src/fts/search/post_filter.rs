@@ -145,6 +145,16 @@ where
     // has no rank field).
     let mut survivors: Vec<(SearchBlockRow, f64)> = Vec::with_capacity(target);
 
+    // #1556 — distinguish "the FTS scan ran dry" from "the window-count
+    // ceiling stopped us mid-scan". The loop has two truncating exits
+    // (`fetched == 0` and `fetched < window_usize`) that mean the source is
+    // genuinely exhausted; set this flag there. If the loop instead runs out
+    // of windows while the FTS scan is still live (last window came back
+    // full), this stays `false`, signalling there may be matching rows past
+    // the scan ceiling — so `has_more` must be reported `true` even though we
+    // never filled a page.
+    let mut fts_exhausted = false;
+
     for _ in 0..POST_FILTER_MAX_WINDOWS {
         if survivors.len() >= target {
             break;
@@ -178,6 +188,7 @@ where
 
         let fetched = rows.len();
         if fetched == 0 {
+            fts_exhausted = true;
             break;
         }
 
@@ -203,21 +214,41 @@ where
         // FTS exhausted — a window returned fewer rows than requested, so
         // there is nothing left to scan. Stop regardless of survivor count.
         if fetched < window_usize {
+            fts_exhausted = true;
             break;
         }
     }
 
-    let has_more = survivors.len() > limit_usize;
-    if has_more {
+    let page_full = survivors.len() > limit_usize;
+    if page_full {
         survivors.truncate(limit_usize);
     }
 
-    let next_cursor = if has_more {
+    // #1556 — the window-count ceiling can stop the scan before a full page is
+    // filled even though the FTS source still has rows (every fetched window
+    // came back full and we ran out of windows). In that case there may be
+    // matching rows past the scan ceiling, so we must report `has_more = true`
+    // and hand back a cursor that resumes scanning from the last candidate we
+    // reached — otherwise the caller wrongly concludes "no more results". The
+    // genuinely-exhausted case (a truncating window break set `fts_exhausted`)
+    // keeps reporting `has_more = false`.
+    let truncated_by_window_cap = !page_full && !fts_exhausted;
+    let has_more = page_full || truncated_by_window_cap;
+
+    let next_cursor = if page_full {
         // `next_cursor` = (rank, id) of the LAST RETURNED survivor.
         let (last_row, last_rank) = survivors
             .last()
-            .expect("has_more implies at least `limit` survivors (limit >= 1)");
+            .expect("page_full implies at least `limit` survivors (limit >= 1)");
         Some(Cursor::for_id_and_rank(last_row.id.as_str().to_string(), *last_rank).encode()?)
+    } else if truncated_by_window_cap {
+        // No full page, but the scan was cut short by the window ceiling with
+        // the FTS source still live. Resume from the last candidate scanned
+        // (every candidate — kept or dropped — advanced this cursor), so the
+        // next page continues past the ceiling instead of re-scanning. A
+        // non-exhausted scan always advanced past at least one full window, so
+        // `cursor_id` is non-empty here.
+        Some(Cursor::for_id_and_rank(cursor_id, cursor_rank).encode()?)
     } else {
         None
     };

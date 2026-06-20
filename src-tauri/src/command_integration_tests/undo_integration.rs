@@ -789,3 +789,110 @@ async fn undo_move_block_synchronously_refreshes_page_id() {
         "sanity: undo restored parent_id to page_a"
     );
 }
+
+/// #1543: reversing a `CreateBlock` is a SOFT delete by design — undo-of-create
+/// leaves a RECOVERABLE tombstone (the row stays in `blocks` with `deleted_at`
+/// set and the engine node tombstoned), it does NOT hard-purge the row. This
+/// pins that documented behaviour (see the comment on `reverse_create_block`)
+/// so a future change that silently switches to a hard purge fails loudly.
+///
+/// Driven through the production ENGINE path (`install_for_test` + the
+/// foreground `dispatch_op`/undo pipeline), asserting the SETTLED state: the row
+/// is present-but-soft-deleted in SQL and the node is still readable from the
+/// per-space engine tree (a hard purge would have removed both).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reverse_create_block_leaves_recoverable_soft_delete_not_purge_1543() {
+    use crate::op::{CreateBlockPayload, OpPayload};
+    use crate::ulid::BlockId;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let state = crate::loro::shared::install_for_test();
+    state.registry.clear();
+
+    const PAGE: &str = "01HZ1543000000000000000PAG";
+    const BLK: &str = "01HZ15430000000000000000BB";
+
+    // Seed the ROOT page into SQL + engine and assign the space so the child
+    // CreateBlock op below resolves a space and routes through the engine path.
+    seed_block_both(&pool, state, PAGE, "page", "page", None, 1).await;
+    assign_all_to_test_space(&pool).await;
+
+    // Create the child block via a real CreateBlock op on the engine path.
+    dispatch_via_engine(
+        &pool,
+        &mat,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(BLK),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::from_trusted(PAGE)),
+            position: None,
+            index: Some(0),
+            content: "to be undone".into(),
+        }),
+    )
+    .await;
+    assign_all_to_test_space(&pool).await;
+
+    // Sanity: the block exists and is live (deleted_at NULL) before the undo.
+    let (exists_before, deleted_before): (i64, Option<i64>) =
+        sqlx::query_as("SELECT COUNT(*), MAX(deleted_at) FROM blocks WHERE id = ?")
+            .bind(BLK)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(exists_before, 1, "sanity: block row exists before undo");
+    assert!(
+        deleted_before.is_none(),
+        "sanity: block is live (deleted_at NULL) before undo"
+    );
+
+    // Undo the create. The reverse is a SOFT DeleteBlock (not a purge).
+    let undo = undo_page_op_inner(&pool, DEV, &mat, PAGE.to_owned(), 0)
+        .await
+        .expect("undo create");
+    settle(&mat).await;
+    assert_eq!(
+        undo.reversed_op_type, "create_block",
+        "undo target must be the create_block op"
+    );
+
+    // CORE #1543 ASSERTION: the row is NOT purged — it still exists in `blocks`,
+    // now soft-deleted (deleted_at set). A hard-remove regression would drop the
+    // row entirely (COUNT 0).
+    let (exists_after, deleted_after): (i64, Option<i64>) =
+        sqlx::query_as("SELECT COUNT(*), MAX(deleted_at) FROM blocks WHERE id = ?")
+            .bind(BLK)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        exists_after, 1,
+        "#1543: undo-of-create must SOFT-delete, leaving a recoverable row — \
+         not purge it (COUNT must stay 1)"
+    );
+    assert!(
+        deleted_after.is_some(),
+        "#1543: undo-of-create must set deleted_at (soft delete, recoverable tombstone)"
+    );
+
+    // ENGINE-PATH guard: the node is still present (tombstoned) in the per-space
+    // engine tree — a hard purge would have destroyed it, and a silent
+    // regression to the SQL-only fallback (where the engine never saw the
+    // create) would also fail here.
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        assert!(
+            guard
+                .engine_mut()
+                .read_block(BLK)
+                .expect("read_block")
+                .is_some(),
+            "#1543: the soft-deleted block's node must remain in the engine tree \
+             (tombstone), so redo can re-apply onto the existing node"
+        );
+        drop(guard);
+    }
+}

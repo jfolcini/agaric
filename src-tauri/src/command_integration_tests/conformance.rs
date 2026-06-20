@@ -1715,6 +1715,145 @@ async fn local_delete_restore_tombstones_cohort_no_phantom_1257() {
 }
 
 // ---------------------------------------------------------------------------
+// #1549 — restore must NOT over-restore an independently-deleted nested
+// subtree, EVEN when both deletes land in the same wall-clock millisecond.
+//
+// Tree: S1 > P > C > G. The grandchild G is soft-deleted INDEPENDENTLY first
+// (its own delete op + cohort timestamp). Then the parent P is deleted: the
+// cascade marks P + C but SKIPS the already-deleted G (the recursive arm
+// filters `deleted_at IS NULL`), so G keeps its OWN cohort timestamp. The two
+// deletes are issued back-to-back, so on a real machine their wall-clock
+// `now_ms()` would collide — which, pre-#1549, made G's `deleted_at`
+// structurally indistinguishable from the P/C cohort. Restoring P then
+// resurrected G via the `WHERE deleted_at = deleted_at_ref` cohort filter.
+//
+// With the monotonic-per-process delete clock (`next_delete_ms()`), G's delete
+// and P's delete get DISTINCT `deleted_at` values even within one wall-clock
+// ms, so restoring P (keyed on P's `deleted_at`) restores ONLY P + C and
+// leaves the independently-deleted G trashed. Driven through the production
+// pipeline (`install_for_test` engine + real `delete_block_inner` /
+// `restore_block_inner`); asserted on the SETTLED SQL + engine state.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_does_not_over_restore_independently_deleted_nested_subtree_1549() {
+    let s1 = seed_label_to_id("S1");
+    let p = seed_label_to_id("PP"); // parent (restore root)
+    let c = seed_label_to_id("CC"); // child (in P's cohort)
+    let g = seed_label_to_id("GG"); // grandchild (deleted INDEPENDENTLY)
+    let _ = &s1;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let state = crate::loro::shared::install_for_test();
+    state.registry.clear();
+
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "PP", "block_type": "content", "content": "P",    "parent_id": "S1", "position": 1}),
+        json!({"id": "CC", "block_type": "content", "content": "C",    "parent_id": "PP", "position": 1}),
+        json!({"id": "GG", "block_type": "content", "content": "G",    "parent_id": "CC", "position": 1}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+    assign_all_to_test_space(&pool).await;
+
+    async fn deleted_at_of(pool: &SqlitePool, id: &str) -> Option<i64> {
+        sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    // 1) Delete the grandchild G INDEPENDENTLY (its own root + cohort stamp).
+    delete_block_inner(&pool, DEV, &mat, BlockId::from(g.as_str()))
+        .await
+        .expect("delete grandchild");
+    settle(&mat).await;
+    let g_deleted_at = deleted_at_of(&pool, &g)
+        .await
+        .expect("grandchild must be soft-deleted");
+
+    // 2) Delete the parent P back-to-back. The cascade marks P + C but skips
+    //    the already-deleted G. On a real machine these two deletes share a
+    //    wall-clock ms; the monotonic clock must still give P a DISTINCT stamp.
+    delete_block_inner(&pool, DEV, &mat, BlockId::from(p.as_str()))
+        .await
+        .expect("delete parent");
+    settle(&mat).await;
+    let p_deleted_at = deleted_at_of(&pool, &p)
+        .await
+        .expect("parent must be soft-deleted");
+
+    // The crux of #1549: distinct deletes get distinct cohort timestamps.
+    assert_ne!(
+        g_deleted_at, p_deleted_at,
+        "#1549: independently-deleted grandchild and parent must have DISTINCT \
+         deleted_at (monotonic-per-process delete clock), even back-to-back",
+    );
+    // G untouched by P's cascade — still carries its OWN cohort stamp.
+    assert_eq!(
+        deleted_at_of(&pool, &g).await,
+        Some(g_deleted_at),
+        "grandchild must retain its own cohort timestamp after the parent cascade",
+    );
+
+    // 3) Restore the parent via the SINGLE-block production path, keyed on P's
+    //    own cohort timestamp (what the trash UI / restore_block command pass).
+    let restored = restore_block_inner(&pool, DEV, &mat, BlockId::from(p.as_str()), p_deleted_at)
+        .await
+        .expect("restore parent");
+    settle(&mat).await;
+
+    assert_eq!(
+        restored.restored_count, 2,
+        "restore must clear ONLY P's cohort (P + C), not the independently-\
+         deleted grandchild G (got {})",
+        restored.restored_count,
+    );
+
+    // SQL — P and C are alive; G STAYS deleted (the #1549 acceptance assertion).
+    assert!(
+        deleted_at_of(&pool, &p).await.is_none(),
+        "parent P must be restored",
+    );
+    assert!(
+        deleted_at_of(&pool, &c).await.is_none(),
+        "child C (in P's cohort) must be restored",
+    );
+    assert_eq!(
+        deleted_at_of(&pool, &g).await,
+        Some(g_deleted_at),
+        "#1549: the independently-deleted grandchild G MUST stay trashed — \
+         restoring the outer cohort must NOT resurrect the inner subtree",
+    );
+
+    // The emitted RestoreBlock op must carry P's OWN cohort timestamp (the
+    // exact cohort a peer's replay would restore — never G's).
+    let ops = crate::op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
+    let restore_ops: Vec<_> = ops
+        .iter()
+        .filter(|o| o.op_type == "restore_block")
+        .collect();
+    assert_eq!(restore_ops.len(), 1, "exactly one restore_block op");
+    assert!(
+        restore_ops[0].payload.contains(&format!("{p_deleted_at}")),
+        "restore op's deleted_at_ref must be P's cohort timestamp ({p_deleted_at}); \
+         payload = {}",
+        restore_ops[0].payload,
+    );
+
+    mat.shutdown();
+}
+
+// ---------------------------------------------------------------------------
 // #1392 — move tag-inheritance recompute is owned by the engine helper on BOTH
 // arms.
 //

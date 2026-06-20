@@ -8395,10 +8395,12 @@ async fn be_a10_sqla1_cursor_rejects_over_cap_limit() {
 }
 
 /// BE-A10 (6) — POST_FILTER_MAX_WINDOWS bound: a pathologically selective
-/// filter stops at the window bound and reports `has_more = false` without
-/// hanging — AND a survivor sitting *beyond* the bound's reach is NOT
-/// surfaced (the best-effort contract: matches past the scan ceiling are
-/// invisible).
+/// filter stops at the window bound without hanging, and a survivor sitting
+/// *beyond* the bound's reach is NOT surfaced on this page (the scan ceiling
+/// caps how far a single page looks). #1556 — because the FTS scan was cut
+/// short by the window ceiling (not exhausted), the page reports
+/// `has_more = true` with a resuming `next_cursor` so the caller knows to
+/// page past the ceiling rather than wrongly concluding "no more results".
 ///
 /// Seed more candidates than the scan ceiling can reach
 /// (`POST_FILTER_WINDOW * POST_FILTER_MAX_WINDOWS` = 100 * 10 = 1000): 1050
@@ -8467,13 +8469,18 @@ async fn be_a10_post_filter_max_windows_bound_stops_without_hanging() {
         0,
         "survivor at index 1040 is past the 1000-candidate bound → empty page"
     );
+    // #1556 — the window-count ceiling stopped the scan at 1000 candidates
+    // while the FTS source still had ~50 rows (1050 total > 1000 ceiling).
+    // That is NOT exhaustion, so `has_more` must be `true` (matching rows —
+    // including the survivor at index 1040 — exist past the scan ceiling) and
+    // a resuming cursor must be handed back so the caller can page further.
     assert!(
-        !result.has_more,
-        "window-bound exhaustion must report has_more = false (best-effort contract)"
+        result.has_more,
+        "window-cap truncation with the FTS scan still live must report has_more = true (#1556)"
     );
     assert!(
-        result.next_cursor.is_none(),
-        "no survivors surfaced → no next_cursor"
+        result.next_cursor.is_some(),
+        "window-cap truncation must hand back a resuming next_cursor (#1556)"
     );
 }
 

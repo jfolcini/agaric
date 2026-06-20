@@ -2,14 +2,35 @@
 
 use sqlx::SqlitePool;
 
+use crate::db::ReadPool;
 use crate::error::AppError;
 use crate::op::{
     CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
     RestoreBlockPayload,
 };
-use crate::op_log::OpRecord;
+use crate::op_log::{OpRecord, get_op_by_seq};
 use crate::ulid::BlockId;
 
+// #1543: the reverse of a `create_block` is a SOFT delete (`DeleteBlock`), not a
+// hard purge. This is deliberate and internally consistent with the rest of the
+// undo/redo machinery:
+//
+//   * Undo-of-create leaves the row soft-deleted (`deleted_at` set) and its
+//     engine node tombstoned, rather than physically removing it. The block
+//     disappears from the live view (the user-visible "undo create = remove
+//     from view" expectation) while remaining recoverable.
+//   * Redo (`apply.rs::apply_restore_via_loro` path) then re-applies onto the
+//     EXISTING tombstoned node — a hard purge would have destroyed the node and
+//     forced redo to recreate it, breaking CRDT identity / convergence.
+//   * It mirrors `reverse_restore_block` (M-71) and `reverse_delete_block`: the
+//     whole reverse family operates on soft-delete state, never hard purge.
+//
+// The cost is a lingering soft-deleted row + tombstone after create-then-undo,
+// surfaced in the Trash. The pinning test
+// `reverse_create_block_leaves_recoverable_soft_delete_not_purge` in
+// `command_integration_tests/undo_integration.rs` makes this design loud rather
+// than silent; flipping that assertion (to expect a purged/absent row) is the
+// signal that the soft-delete trade-off is being renegotiated.
 pub fn reverse_create_block(record: &OpRecord) -> Result<OpPayload, AppError> {
     let payload: CreateBlockPayload = serde_json::from_str(&record.payload)?;
     Ok(OpPayload::DeleteBlock(DeleteBlockPayload {
@@ -30,14 +51,50 @@ pub async fn reverse_edit_block(
     record: &OpRecord,
 ) -> Result<OpPayload, AppError> {
     let payload: EditBlockPayload = serde_json::from_str(&record.payload)?;
-    let prior_text = find_prior_text(
-        pool,
-        payload.block_id.as_str(),
-        record.created_at,
-        record.seq,
-        &record.device_id,
-    )
-    .await?
+    // #1526: follow the op's CAUSAL predecessor (`payload.prev_edit`) when it is
+    // present, rather than reconstructing the pre-image purely by timestamp
+    // order. `prev_edit` is the `(device_id, seq)` of the edit/create that was
+    // the live value when this edit was authored (stamped by
+    // `find_prev_edit_in_tx`, which keys on `seq DESC` — the per-device causal
+    // counter — NOT `created_at`). Restoring exactly that op's text is the
+    // correct undo target even under cross-device clock skew, where
+    // `find_prior_text`'s `(created_at, seq, device_id)` ordering could pick a
+    // DIFFERENT ancestor that the live edit had already superseded.
+    //
+    // Fall back to the timestamp-ordered `find_prior_text` only when:
+    //   * `prev_edit` is `None` (e.g. pre-MAINT-147 ops, or the first edit after
+    //     a create where the pointer was not recorded), or
+    //   * the pointed-at op is missing (e.g. removed by op-log compaction) —
+    //     the timestamp scan is the best remaining reconstruction.
+    let prior_text = match &payload.prev_edit {
+        Some((prev_device, prev_seq)) => {
+            match get_op_by_seq(&ReadPool(pool.clone()), prev_device, *prev_seq).await {
+                Ok(prev) => Some(text_of_edit_or_create(&prev)?),
+                // Pointer dangles (compaction) — fall back to the timestamp scan.
+                Err(AppError::NotFound(_)) => {
+                    find_prior_text(
+                        pool,
+                        payload.block_id.as_str(),
+                        record.created_at,
+                        record.seq,
+                        &record.device_id,
+                    )
+                    .await?
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        None => {
+            find_prior_text(
+                pool,
+                payload.block_id.as_str(),
+                record.created_at,
+                record.seq,
+                &record.device_id,
+            )
+            .await?
+        }
+    }
     .ok_or_else(|| {
         AppError::NotFound(format!(
             "no prior text found for block '{}' before ({}, {})",
@@ -51,6 +108,40 @@ pub async fn reverse_edit_block(
     }))
 }
 
+/// Extract the text an `edit_block`/`create_block` op contributed to its block:
+/// `to_text` for an edit, `content` for a create. Used by [`reverse_edit_block`]
+/// to recover the pre-image named by `EditBlockPayload::prev_edit` (#1526).
+fn text_of_edit_or_create(record: &OpRecord) -> Result<String, AppError> {
+    match record.op_type.as_str() {
+        "edit_block" => {
+            let p: EditBlockPayload = serde_json::from_str(&record.payload)?;
+            Ok(p.to_text)
+        }
+        "create_block" => {
+            let p: CreateBlockPayload = serde_json::from_str(&record.payload)?;
+            Ok(p.content)
+        }
+        other => Err(AppError::InvalidOperation(format!(
+            "prev_edit ({}, {}) points to a non-text op '{}'; expected edit_block/create_block",
+            record.device_id, record.seq, other
+        ))),
+    }
+}
+
+/// Reverse of a `move_block` op: re-home the block to its prior sibling slot.
+///
+/// #1526: unlike [`reverse_edit_block`], the reverse of a move CANNOT follow a
+/// causal `prev_edit`-style pointer — [`MoveBlockPayload`] carries no
+/// predecessor reference, so the only available reconstruction of the prior
+/// placement is [`find_prior_position`]'s `(created_at, seq, device_id)`
+/// timestamp scan. This is therefore INTENTIONALLY timestamp-ordered: undo of a
+/// move is well-defined under single-device editing (where `seq` is a strictly
+/// monotonic causal counter, so timestamp order agrees with causal order), and
+/// the placement-recovery semantics for cross-device clock skew would require a
+/// wire-format (op payload) extension — out of scope under AGENTS.md
+/// "Architectural Stability". If a `prev_move` pointer is ever added to
+/// `MoveBlockPayload`, mirror the `prev_edit` branch in `reverse_edit_block`
+/// here.
 pub async fn reverse_move_block(
     pool: &SqlitePool,
     record: &OpRecord,

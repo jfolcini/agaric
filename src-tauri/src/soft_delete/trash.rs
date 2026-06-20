@@ -9,7 +9,9 @@ use crate::op_log::OpRecord;
 
 /// Soft-delete a single block (no cascade).
 pub async fn soft_delete_block(pool: &SqlitePool, block_id: &str) -> Result<Option<i64>, AppError> {
-    let now = crate::db::now_ms();
+    // #1549: monotonic-per-process delete clock so this primitive's
+    // `deleted_at` stamp never collides with another same-ms delete's cohort.
+    let now = crate::db::next_delete_ms();
     let result = sqlx::query!(
         "UPDATE blocks SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
         now,
@@ -70,7 +72,9 @@ pub async fn cascade_soft_delete(
     block_id: &str,
 ) -> Result<(i64, u64), AppError> {
     tracing::debug!(seed_block_id = %block_id, "cascade soft-delete starting");
-    let now = crate::db::now_ms();
+    // #1549: monotonic-per-process delete clock so this cascade's cohort
+    // `deleted_at` never collides with another same-ms delete's cohort.
+    let now = crate::db::next_delete_ms();
     // MAINT-112: `CommandTx::begin_immediate` inherits the slow-acquire
     // tracing from `begin_immediate_logged` AND couples commit +
     // post-commit cache dispatch (see the synthesized `delete_block` op

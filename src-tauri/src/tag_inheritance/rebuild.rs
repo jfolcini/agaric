@@ -31,8 +31,10 @@ pub async fn rebuild_all(pool: &SqlitePool) -> Result<(), AppError> {
     sqlx::query(concat!(
         "WITH RECURSIVE ",
         crate::tag_inh_descendant_tags_full!(),
+        ", ",
+        crate::tag_inh_rebuild_nearest!(),
         " INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
-         SELECT block_id, tag_id, inherited_from FROM descendant_tags",
+         SELECT block_id, tag_id, inherited_from FROM descendant_tags_nearest",
     ))
     .execute(&mut *tx)
     .await?;
@@ -82,8 +84,10 @@ pub(crate) async fn rebuild_all_split(
     sqlx::query(concat!(
         "WITH RECURSIVE ",
         crate::tag_inh_descendant_tags_full!(),
+        ", ",
+        crate::tag_inh_rebuild_nearest!(),
         " INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
-         SELECT block_id, tag_id, inherited_from FROM descendant_tags",
+         SELECT block_id, tag_id, inherited_from FROM descendant_tags_nearest",
     ))
     .execute(&mut *tx)
     .await?;
