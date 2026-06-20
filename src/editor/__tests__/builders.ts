@@ -96,14 +96,14 @@ export function heading(level: number, ...nodes: InlineNode[]): HeadingNode {
   return { type: 'heading', attrs: { level }, content: nodes }
 }
 
-export function codeBlock(code: string, language?: string): CodeBlockNode {
+export function codeBlock(source: string, language?: string): CodeBlockNode {
   const attrs = language ? { language } : undefined
-  if (code.length === 0) {
+  if (source.length === 0) {
     return attrs ? { type: 'codeBlock', attrs } : { type: 'codeBlock' }
   }
   return attrs
-    ? { type: 'codeBlock', attrs, content: [{ type: 'text', text: code }] }
-    : { type: 'codeBlock', content: [{ type: 'text', text: code }] }
+    ? { type: 'codeBlock', attrs, content: [{ type: 'text', text: source }] }
+    : { type: 'codeBlock', content: [{ type: 'text', text: source }] }
 }
 
 export function blockquote(...blocks: BlockLevelNode[]): BlockquoteNode {

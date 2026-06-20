@@ -41,17 +41,17 @@ vi.mock('@/components/RichContentRenderer', () => ({
 // Passing `windowSize` as a *getter* lets the factory re-read the holder
 // on every render, so flipping it between tests takes effect immediately.
 const { WINDOW_SIZE, virtualState } = vi.hoisted(() => {
-  const WINDOW_SIZE = 4
+  const windowSize = 4
   // `null` window = render every row; a number = cap to that many rows.
-  const virtualState: { window: number | null } = { window: WINDOW_SIZE }
-  return { WINDOW_SIZE, virtualState }
+  const state: { window: number | null } = { window: windowSize }
+  return { WINDOW_SIZE: windowSize, virtualState: state }
 })
 
 vi.mock('@tanstack/react-virtual', async () => {
   const { mockReactVirtual } = await import('@/__tests__/mocks/react-virtual')
-  const { vi } = await import('vitest')
+  const { vi: viMock } = await import('vitest')
   const impl = mockReactVirtual({ windowSize: () => virtualState.window }).useVirtualizer
-  return { useVirtualizer: vi.fn(impl) }
+  return { useVirtualizer: viMock.fn(impl) }
 })
 
 import { useVirtualizer } from '@tanstack/react-virtual'

@@ -15,10 +15,10 @@ import { renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { mockUnlisten, mockListen, mockLoggerWarn } = vi.hoisted(() => {
-  const mockUnlisten = vi.fn()
-  const mockListen = vi.fn().mockResolvedValue(mockUnlisten)
-  const mockLoggerWarn = vi.fn()
-  return { mockUnlisten, mockListen, mockLoggerWarn }
+  const unlisten = vi.fn()
+  const listen = vi.fn().mockResolvedValue(unlisten)
+  const loggerWarn = vi.fn()
+  return { mockUnlisten: unlisten, mockListen: listen, mockLoggerWarn: loggerWarn }
 })
 
 vi.mock('@tauri-apps/api/event', () => ({

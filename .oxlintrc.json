@@ -68,7 +68,13 @@
     "unicorn/prefer-math-min-max": "error",
     "eslint/no-else-return": "error",
     "unicorn/prefer-import-meta-properties": "error",
-    "unicorn/prefer-at": "error"
+    "unicorn/prefer-at": "error",
+
+    "eslint/no-shadow": "error",
+    "oxc/no-map-spread": "error",
+    "unicorn/prefer-set-has": "error",
+    "unicorn/prefer-array-find": "error",
+    "react/jsx-no-constructed-context-values": "error"
   },
   "overrides": [
     {

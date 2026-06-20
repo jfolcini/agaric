@@ -99,7 +99,7 @@ export function useBlockZoom(
     const descendants = getDragDescendants(blocks, zoomedBlockId)
     return collapseVisible
       .filter((b) => descendants.has(b.id))
-      .map((b) => ({ ...b, depth: b.depth - depthOffset }))
+      .map((b) => Object.assign({}, b, { depth: b.depth - depthOffset }))
   }, [zoomedBlockId, blocks, collapseVisible])
 
   return {

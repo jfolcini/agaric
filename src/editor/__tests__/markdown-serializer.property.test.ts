@@ -112,7 +112,7 @@ const arbMarks: fc.Arbitrary<PMMark[]> = fc
 /** A text node with random marks. */
 const arbTextNode: fc.Arbitrary<TextNode> = fc.tuple(arbText, arbMarks).map(([text, marks]) => {
   const node: TextNode = { type: 'text' as const, text }
-  if (marks.length > 0) return { ...node, marks }
+  if (marks.length > 0) return Object.assign({}, node, { marks })
   return node
 })
 

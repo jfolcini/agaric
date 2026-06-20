@@ -39,12 +39,12 @@ interface MockBytesWindow extends Window {
 /** Seed a real PDF attachment (with bytes) into the mock store. */
 async function seedPdf(page: import('@playwright/test').Page, blockId: string, filename: string) {
   await page.evaluate(
-    ({ blockId, filename, b64 }) => {
+    ({ blockId: innerBlockId, filename: innerFilename, b64 }) => {
       const bin = atob(b64)
       const bytes = Array.from({ length: bin.length }, (_, i) => bin.charCodeAt(i))
       ;(window as unknown as MockBytesWindow).__addMockAttachmentWithBytes?.(
-        blockId,
-        filename,
+        innerBlockId,
+        innerFilename,
         'application/pdf',
         bytes,
       )

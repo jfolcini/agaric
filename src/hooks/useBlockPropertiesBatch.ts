@@ -71,8 +71,8 @@ export function useBlockPropertiesBatch(blocks: Array<{ id: string }>): BlockPro
   // for any conceivable id string — not just the ULIDs this codebase
   // uses today.
   const { idSignature, ids } = useMemo(() => {
-    const ids = blocks.map((b) => b.id)
-    return { idSignature: ids.join(' '), ids }
+    const blockIds = blocks.map((b) => b.id)
+    return { idSignature: blockIds.join(' '), ids: blockIds }
   }, [blocks])
 
   useEffect(() => {

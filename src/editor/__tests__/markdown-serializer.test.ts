@@ -433,8 +433,8 @@ describe('parse', () => {
     })
 
     it('empty string roundtrips', () => {
-      const doc = parse('')
-      expect(serialize(doc)).toBe('')
+      const parsed = parse('')
+      expect(serialize(parsed)).toBe('')
     })
 
     it('plain text', () => {
@@ -1826,7 +1826,7 @@ describe('hardening: link scan depth', () => {
 
 describe('block_ref round-trip', () => {
   it('serializes block_ref node to ((ULID))', () => {
-    const doc = {
+    const docNode = {
       type: 'doc',
       content: [
         {
@@ -1839,7 +1839,7 @@ describe('block_ref round-trip', () => {
         },
       ],
     }
-    expect(serialize(doc as unknown as DocNode)).toBe(
+    expect(serialize(docNode as unknown as DocNode)).toBe(
       'see ((01HZ00000000000000000BLOCK)) for details',
     )
   })

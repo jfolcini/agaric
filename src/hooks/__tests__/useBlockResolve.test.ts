@@ -1717,8 +1717,8 @@ describe('searchPages — alias prefix matching', () => {
       items = await result.current.searchPages('mystery')
     })
 
-    const nonCreate = items.filter((i) => !i.isCreate)
-    expect(nonCreate[0]).toEqual({
+    const nonCreate = items.find((i) => !i.isCreate)
+    expect(nonCreate).toEqual({
       id: 'ALIAS_PAGE_3',
       label: 'Untitled (alias: mystery)',
       isAlias: true,

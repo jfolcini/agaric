@@ -308,8 +308,8 @@ describe('insertTemplateBlocks — {{ }} variable substitution (#1442)', () => {
     // The marker block's created id is reported, and the marker is stripped
     // from the inserted content.
     expect(cursorBlockId).toBe('NEW_B')
-    const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
-    const specs = (batchCalls[0]?.[1] as { specs: Array<{ content: string }> } | undefined)?.specs
+    const batchCall = mockedInvoke.mock.calls.find(([cmd]) => cmd === 'create_blocks_batch')
+    const specs = (batchCall?.[1] as { specs: Array<{ content: string }> } | undefined)?.specs
     expect(specs?.[1]?.content).toBe('here')
   })
 })

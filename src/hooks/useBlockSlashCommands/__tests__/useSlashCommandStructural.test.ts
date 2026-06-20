@@ -46,7 +46,9 @@ describe('useSlashCommandStructural — headings', () => {
       pageStore.setState({
         blocks: pageStore
           .getState()
-          .blocks.map((b) => (b.id === 'BLOCK_1' ? { ...b, content: 'plain text' } : b)),
+          .blocks.map((b) =>
+            b.id === 'BLOCK_1' ? Object.assign({}, b, { content: 'plain text' }) : b,
+          ),
       })
 
       await result.current.exact[`h${n}`]?.(ctx, { id: `h${n}`, label: `Heading ${n}` })
@@ -66,7 +68,9 @@ describe('useSlashCommandStructural — headings', () => {
     ctx.pageStore.setState({
       blocks: ctx.pageStore
         .getState()
-        .blocks.map((b) => (b.id === 'BLOCK_1' ? { ...b, content: '### already-h3' } : b)),
+        .blocks.map((b) =>
+          b.id === 'BLOCK_1' ? Object.assign({}, b, { content: '### already-h3' }) : b,
+        ),
     })
     await result.current.exact['h1']?.(ctx, { id: 'h1', label: 'Heading 1' })
     expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
@@ -92,7 +96,9 @@ describe('useSlashCommandStructural — callouts', () => {
     ctx.pageStore.setState({
       blocks: ctx.pageStore
         .getState()
-        .blocks.map((b) => (b.id === 'BLOCK_1' ? { ...b, content: 'note-text' } : b)),
+        .blocks.map((b) =>
+          b.id === 'BLOCK_1' ? Object.assign({}, b, { content: 'note-text' }) : b,
+        ),
     })
     await result.current.exact['callout']?.(ctx, { id: 'callout', label: 'Callout' })
     expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
@@ -112,7 +118,7 @@ describe('useSlashCommandStructural — callouts', () => {
     ctx.pageStore.setState({
       blocks: ctx.pageStore
         .getState()
-        .blocks.map((b) => (b.id === 'BLOCK_1' ? { ...b, content: 'careful' } : b)),
+        .blocks.map((b) => (b.id === 'BLOCK_1' ? Object.assign({}, b, { content: 'careful' }) : b)),
     })
     const handler = result.current.prefix.find(([p]) => p === 'callout-')?.[1]
     expect(handler).toBeDefined()
@@ -131,7 +137,7 @@ describe('useSlashCommandStructural — list, divider', () => {
     ctx.pageStore.setState({
       blocks: ctx.pageStore
         .getState()
-        .blocks.map((b) => (b.id === 'BLOCK_1' ? { ...b, content: 'item' } : b)),
+        .blocks.map((b) => (b.id === 'BLOCK_1' ? Object.assign({}, b, { content: 'item' }) : b)),
     })
     await result.current.exact['numbered-list']?.(ctx, {
       id: 'numbered-list',
@@ -196,7 +202,9 @@ describe('useSlashCommandStructural — turn into (#264)', () => {
     // the store's `setWithBlocksById` wrapper, which rebuilds the `blocksById`
     // map that `readCurrentContent` reads from.
     pageStore.setState({
-      blocks: pageStore.getState().blocks.map((b) => (b.id === 'BLOCK_1' ? { ...b, content } : b)),
+      blocks: pageStore
+        .getState()
+        .blocks.map((b) => (b.id === 'BLOCK_1' ? Object.assign({}, b, { content }) : b)),
     })
   }
 

@@ -175,7 +175,7 @@ export function UnlinkedReferences({
     listTagsByPrefix({ prefix: '' })
       .then((result) => {
         if (cancelled) return
-        setTags((result ?? []).map((t) => ({ id: t.tag_id, name: t.name })))
+        setTags((result ?? []).map((tag) => ({ id: tag.tag_id, name: tag.name })))
       })
       .catch((e) => {
         if (cancelled) return
@@ -450,8 +450,8 @@ export function UnlinkedReferences({
                     listClassName="unlinked-references-blocks ml-4 mt-1 space-y-1"
                     listAriaLabel={(title) => t('unlinkedRefs.mentionsFrom', { title })}
                     {...(onNavigateToPage && {
-                      onPageTitleClick: (pageId: string, title: string) =>
-                        onNavigateToPage(pageId, title),
+                      onPageTitleClick: (clickedPageId: string, title: string) =>
+                        onNavigateToPage(clickedPageId, title),
                     })}
                     renderBlock={(block, _group) => (
                       <li

@@ -35,13 +35,8 @@ async function addMockAttachment(
   sizeBytes: number,
 ) {
   await page.evaluate(
-    ({ blockId, filename, mimeType, sizeBytes }) => {
-      ;(window as unknown as MockAttachmentWindow).__addMockAttachment?.(
-        blockId,
-        filename,
-        mimeType,
-        sizeBytes,
-      )
+    ({ blockId: bId, filename: fName, mimeType: mType, sizeBytes: size }) => {
+      ;(window as unknown as MockAttachmentWindow).__addMockAttachment?.(bId, fName, mType, size)
     },
     { blockId, filename, mimeType, sizeBytes },
   )

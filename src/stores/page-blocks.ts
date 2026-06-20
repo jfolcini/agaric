@@ -1001,7 +1001,9 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
             const movedSet = new Set([blockId, ...descendants])
             const movedItems = cur
               .filter((b) => movedSet.has(b.id))
-              .map((b) => (b.id === blockId ? { ...b, position: resp.new_position } : b))
+              .map((b) =>
+                b.id === blockId ? Object.assign({}, b, { position: resp.new_position }) : b,
+              )
             const remaining = cur.filter((b) => !movedSet.has(b.id))
 
             // The flat index in `remaining` of the (newIndex)-th same-parent
@@ -1263,13 +1265,14 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
 
               const movedItems: FlatBlock[] = cur
                 .filter((b) => movedSet.has(b.id))
-                .map((b) => ({
-                  ...b,
-                  depth: b.depth - 1,
-                  ...(b.id === blockId
-                    ? { parent_id: newParentId, position: resp.new_position }
-                    : {}),
-                }))
+                .map((b) => {
+                  const moved = Object.assign({}, b, { depth: b.depth - 1 })
+                  if (b.id === blockId) {
+                    moved.parent_id = newParentId
+                    moved.position = resp.new_position
+                  }
+                  return moved
+                })
 
               const remaining = cur.filter((b) => !movedSet.has(b.id))
               const parentDescendants = getDragDescendants(remaining, parent.id)
@@ -1393,7 +1396,9 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
                 const movedSet = new Set([blockId, ...movedDescendants])
                 const movedItems = cur
                   .filter((b) => movedSet.has(b.id))
-                  .map((b) => (b.id === blockId ? { ...b, position: resp.new_position } : b))
+                  .map((b) =>
+                    b.id === blockId ? Object.assign({}, b, { position: resp.new_position }) : b,
+                  )
                 const remaining = cur.filter((b) => !movedSet.has(b.id))
                 const insertAt = remaining.findIndex((b) => b.id === prevSibling.id)
                 const newBlocks = [...remaining]
@@ -1506,7 +1511,9 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
                 const movedSet = new Set([blockId, ...movedDescendants])
                 const movedItems = cur
                   .filter((b) => movedSet.has(b.id))
-                  .map((b) => (b.id === blockId ? { ...b, position: resp.new_position } : b))
+                  .map((b) =>
+                    b.id === blockId ? Object.assign({}, b, { position: resp.new_position }) : b,
+                  )
                 const remaining = cur.filter((b) => !movedSet.has(b.id))
                 const nextDescendants = getDragDescendants(remaining, nextSibling.id)
                 let insertAt = remaining.findIndex((b) => b.id === nextSibling.id) + 1

@@ -87,7 +87,7 @@ export function useHeaderLabel(): string {
   if (currentView === 'page-editor' && pageStack.length > 0) {
     return ''
   }
-  const item = NAV_ITEMS.find((item) => item.id === currentView)
+  const item = NAV_ITEMS.find((navItem) => navItem.id === currentView)
   return item ? t(item.labelKey) : ''
 }
 

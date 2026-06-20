@@ -85,11 +85,17 @@ export function CommandsModeBody({
   }
   const commands: ReadonlyArray<RenderedCommand> = useMemo(
     () =>
-      PALETTE_COMMANDS.map((c) => ({
-        ...c,
-        label: t(c.labelKey),
-        run: () => c.run({ onClose, onEscalate }),
-      })),
+      PALETTE_COMMANDS.map((c) => {
+        const rendered: RenderedCommand = {
+          id: c.id,
+          category: c.category,
+          icon: c.icon,
+          label: t(c.labelKey),
+          run: () => c.run({ onClose, onEscalate }),
+        }
+        if (c.shortcutId !== undefined) rendered.shortcutId = c.shortcutId
+        return rendered
+      }),
     [t, onEscalate, onClose],
   )
 

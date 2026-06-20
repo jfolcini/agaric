@@ -83,7 +83,7 @@ function recentSlashCommands(): PickerItem[] {
   return getRecentCommands(RECENT_SLASH_PREFIX)
     .map((r) => byId.get(r.id))
     .filter((c): c is PickerItem => c != null)
-    .map((c) => ({ ...c, category: RECENT_SLASH_CATEGORY }))
+    .map((c) => Object.assign({}, c, { category: RECENT_SLASH_CATEGORY }))
 }
 
 export const SLASH_COMMANDS: PickerItem[] = [

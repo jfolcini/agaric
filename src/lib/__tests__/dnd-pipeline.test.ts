@@ -115,7 +115,7 @@ function reflatten(rows: FlatBlock[]): FlatBlock[] {
     const parentDepth = row.parent_id != null ? (depthOf.get(row.parent_id) ?? -1) : -1
     const depth = parentDepth + 1
     depthOf.set(id, depth)
-    return { ...row, depth }
+    return Object.assign({}, row, { depth })
   })
 }
 
@@ -281,7 +281,7 @@ function zoomedView(items: FlatBlock[], zoomedBlockId: string): FlatBlock[] {
   const descendantIds = collectDescendants(items, zoomedBlockId)
   return items
     .filter((b) => descendantIds.has(b.id))
-    .map((b) => ({ ...b, depth: b.depth - depthOffset }))
+    .map((b) => Object.assign({}, b, { depth: b.depth - depthOffset }))
 }
 
 interface ZoomedDropResult extends DropResult {

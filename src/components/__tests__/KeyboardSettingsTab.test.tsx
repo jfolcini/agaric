@@ -170,7 +170,7 @@ describe('KeyboardSettingsTab', () => {
 
     // After resetShortcut is called, getCurrentShortcuts should return the default (non-custom) binding
     const shortcutsAfterReset = MOCK_SHORTCUTS.map((s) =>
-      s.id === 'indentBlock' ? { ...s, keys: 'Tab', isCustom: false } : s,
+      s.id === 'indentBlock' ? Object.assign({}, s, { keys: 'Tab', isCustom: false }) : s,
     )
     mockResetShortcut.mockImplementation(() => {
       mockGetCurrentShortcuts.mockReturnValue(shortcutsAfterReset)

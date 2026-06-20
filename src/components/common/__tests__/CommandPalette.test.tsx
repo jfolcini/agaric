@@ -217,7 +217,11 @@ function seedRecentPagesStore(entries: PageRef[]): void {
 
 function readRecentPagesStore(): Array<{ id: string; pinned?: boolean }> {
   const slice = useRecentPagesStore.getState().recentPagesBySpace['SPACE_TEST'] ?? []
-  return slice.map((p) => ({ id: p.pageId, ...(p.pinned === true && { pinned: true }) }))
+  return slice.map((p) => {
+    const entry: { id: string; pinned?: boolean } = { id: p.pageId }
+    if (p.pinned === true) entry.pinned = true
+    return entry
+  })
 }
 
 describe('CommandPalette — empty state', () => {

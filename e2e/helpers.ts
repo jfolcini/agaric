@@ -722,20 +722,20 @@ async function dispatchTouch(
   y: number,
 ): Promise<void> {
   await page.evaluate(
-    ({ selector, type, x, y }) => {
-      const el = document.querySelector(selector)
-      if (!el) throw new Error(`dispatchTouch: no element for selector ${selector}`)
+    ({ selector: sel, type: evType, x: cx, y: cy }) => {
+      const el = document.querySelector(sel)
+      if (!el) throw new Error(`dispatchTouch: no element for selector ${sel}`)
       const touch = new Touch({
         identifier: 1,
         target: el,
-        clientX: x,
-        clientY: y,
-        pageX: x,
-        pageY: y,
+        clientX: cx,
+        clientY: cy,
+        pageX: cx,
+        pageY: cy,
       })
       // touchend carries no live `touches`, only `changedTouches`.
-      const active = type === 'touchend' ? [] : [touch]
-      const ev = new TouchEvent(type, {
+      const active = evType === 'touchend' ? [] : [touch]
+      const ev = new TouchEvent(evType, {
         bubbles: true,
         cancelable: true,
         composed: true,
@@ -859,7 +859,7 @@ export async function typeSlashCommand(page: Page, command: string) {
  */
 export async function selectEditorRange(page: Page, from: number, to: number): Promise<void> {
   await page.evaluate(
-    ({ from, to }) => {
+    ({ from: fromOff, to: toOff }) => {
       const root = document.querySelector('[data-testid="block-editor"] [contenteditable="true"]')
       if (!root) throw new Error('selectEditorRange: focused editor not found')
       const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
@@ -879,8 +879,8 @@ export async function selectEditorRange(page: Page, from: number, to: number): P
         const last = textNodes.at(-1) as Text
         return [last, last.length]
       }
-      const [startNode, startOff] = locate(from)
-      const [endNode, endOff] = locate(to)
+      const [startNode, startOff] = locate(fromOff)
+      const [endNode, endOff] = locate(toOff)
       const range = document.createRange()
       range.setStart(startNode, startOff)
       range.setEnd(endNode, endOff)

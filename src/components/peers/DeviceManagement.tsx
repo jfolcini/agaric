@@ -98,7 +98,7 @@ export function DeviceManagement(): React.ReactElement {
   }, [error])
 
   useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 60_000)
+    const id = setInterval(() => setTick((tick) => tick + 1), 60_000)
     return () => clearInterval(id)
   }, [])
 

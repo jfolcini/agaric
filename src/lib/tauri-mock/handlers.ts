@@ -1845,11 +1845,11 @@ export const HANDLERS: Record<string, Handler> = {
       return true
     })
 
-    items.sort((a: Record<string, unknown>, b: Record<string, unknown>) => {
-      const dateA = a['due_date'] ?? a['scheduled_date'] ?? ''
-      const dateB = b['due_date'] ?? b['scheduled_date'] ?? ''
+    items.sort((rowA: Record<string, unknown>, rowB: Record<string, unknown>) => {
+      const dateA = rowA['due_date'] ?? rowA['scheduled_date'] ?? ''
+      const dateB = rowB['due_date'] ?? rowB['scheduled_date'] ?? ''
       if (dateA !== dateB) return (dateB as string).localeCompare(dateA as string)
-      return (b['id'] as string).localeCompare(a['id'] as string)
+      return (rowB['id'] as string).localeCompare(rowA['id'] as string)
     })
 
     return Promise.resolve({

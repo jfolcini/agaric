@@ -105,7 +105,7 @@ function consumeExternalLink(
     if (node.type === 'text') {
       const existing = (node.marks ?? []).filter((m) => m.type !== 'link') as PMMark[]
       const marks = [...outerMarks, ...existing, linkMark]
-      return { ...node, marks }
+      return { type: 'text', text: node.text, marks }
     }
     // tag_ref, block_link, hardBreak — can't apply marks to atom nodes
     return node

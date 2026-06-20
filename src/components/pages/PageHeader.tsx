@@ -72,11 +72,12 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
     const segments = title.split('/')
     return segments.map((segment, i) => {
       const isLast = i === segments.length - 1
-      return {
+      const crumb: BreadcrumbCrumb = {
         id: `${i}-${segment}`,
         label: segment,
-        ...(isLast ? {} : { onSelect: () => navigateToNamespace() }),
       }
+      if (!isLast) crumb.onSelect = () => navigateToNamespace()
+      return crumb
     })
   }, [title, navigateToNamespace])
 
@@ -422,7 +423,9 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   // also appears as inherited (the hook dedupes; direct wins).
   const appliedTags = [
     ...allTags.filter((t_) => appliedTagIds.has(t_.id)),
-    ...allTags.filter((t_) => inheritedTagIds.has(t_.id)).map((t_) => ({ ...t_, inherited: true })),
+    ...allTags
+      .filter((t_) => inheritedTagIds.has(t_.id))
+      .map((t_) => Object.assign({}, t_, { inherited: true })),
   ]
   const availableTags = allTags
     .filter((t_) => !appliedTagIds.has(t_.id))

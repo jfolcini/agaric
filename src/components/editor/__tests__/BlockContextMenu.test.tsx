@@ -863,14 +863,14 @@ describe('BlockContextMenu', () => {
    * does not trigger Node's unhandled-rejection tracking.
    */
   function failedPositioning() {
-    const t: Record<string, () => typeof t> = {}
+    const thenable: Record<string, () => typeof thenable> = {}
     // Define the promise-like methods via computed keys so no static `then`
     // member is declared (avoids unicorn/no-thenable) while preserving the
     // never-settling-thenable behaviour at runtime.
     for (const key of ['then', 'catch', 'finally']) {
-      t[key] = () => t
+      thenable[key] = () => thenable
     }
-    return t as unknown as ReturnType<typeof import('@floating-ui/dom').computePosition>
+    return thenable as unknown as ReturnType<typeof import('@floating-ui/dom').computePosition>
   }
 
   it('falls back to initial position when computePosition rejects', async () => {
@@ -1144,8 +1144,8 @@ describe('BlockContextMenu', () => {
       document.body.append(triggerEl)
       const triggerRef = { current: triggerEl }
 
-      const { logger } = await import('@/lib/logger')
-      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { logger: loggerMod } = await import('@/lib/logger')
+      const warnSpy = vi.spyOn(loggerMod, 'warn').mockImplementation(() => {})
       mockedComputePosition.mockClear()
 
       renderMenu({ triggerRef })
@@ -1196,8 +1196,8 @@ describe('BlockContextMenu', () => {
         return () => {}
       }) as typeof autoUpdate)
 
-      const { logger } = await import('@/lib/logger')
-      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { logger: loggerMod } = await import('@/lib/logger')
+      const warnSpy = vi.spyOn(loggerMod, 'warn').mockImplementation(() => {})
 
       renderMenu({ position: { x: 175, y: 325 } })
 

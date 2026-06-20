@@ -225,10 +225,10 @@ export function TagFilterPanel(): React.ReactElement {
       try {
         const tags = await listTagsByPrefix({ prefix: p })
         setMatchingTags(
-          tags.map((t) => ({
-            tag_id: t.tag_id,
-            name: t.name,
-            usage_count: t.usage_count,
+          tags.map((tag) => ({
+            tag_id: tag.tag_id,
+            name: tag.name,
+            usage_count: tag.usage_count,
           })),
         )
       } catch {
@@ -317,14 +317,14 @@ export function TagFilterPanel(): React.ReactElement {
 
   const handleAddTag = useCallback(
     (tag: MatchingTag) => {
-      if (selectedTags.some((t) => t.id === tag.tag_id)) return
+      if (selectedTags.some((sel) => sel.id === tag.tag_id)) return
       setSelectedTags((prev) => [...prev, { id: tag.tag_id, name: tag.name }])
     },
     [selectedTags],
   )
 
   const handleRemoveTag = useCallback((tagId: string) => {
-    setSelectedTags((prev) => prev.filter((t) => t.id !== tagId))
+    setSelectedTags((prev) => prev.filter((sel) => sel.id !== tagId))
   }, [])
 
   // ── #1426 prefix pills ───────────────────────────────────────────
@@ -341,7 +341,7 @@ export function TagFilterPanel(): React.ReactElement {
   }, [])
 
   // Filter out already-selected tags from matching results
-  const filteredMatching = matchingTags.filter((t) => !selectedTags.some((s) => s.id === t.tag_id))
+  const filteredMatching = matchingTags.filter((m) => !selectedTags.some((s) => s.id === m.tag_id))
 
   const handleSearchKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {

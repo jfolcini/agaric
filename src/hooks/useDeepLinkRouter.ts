@@ -379,7 +379,7 @@ export function dispatchLaunchUrl(raw: string): void {
   if (parsed.protocol === 'agaric:') {
     host = parsed.hostname.toLowerCase()
     // First non-empty segment is the identifier (matches the Rust router).
-    identifier = parsed.pathname.split('/').filter((s) => s.length > 0)[0]
+    identifier = parsed.pathname.split('/').find((s) => s.length > 0)
   } else if (parsed.protocol === 'https:') {
     // Only `https://agaric.app/o/<host>/<id>` is a deep link; any other
     // https authority is an ordinary web URL and must not be routed.

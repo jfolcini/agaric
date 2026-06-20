@@ -3133,7 +3133,7 @@ describe('PageBlockStore', () => {
       const v2 = render(createElement(Provider, { pageId: p2 }, 'b'))
 
       const seen = new Map<string, StoreApi<PageBlockState>>()
-      forEachPageStore((pageId, store) => seen.set(pageId, store))
+      forEachPageStore((pId, storeApi) => seen.set(pId, storeApi))
       expect(seen.get(p1)).toBe(getPageStore(p1))
       expect(seen.get(p2)).toBe(getPageStore(p2))
 
