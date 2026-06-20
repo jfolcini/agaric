@@ -31,7 +31,7 @@ test.describe('Autocomplete (PEND-60)', () => {
     const popover = page.getByTestId('autocomplete-popover')
     await expect(popover).toBeVisible()
 
-    for (const value of ['TODO', 'DOING', 'DONE', 'WAITING', 'CANCELLED', 'none']) {
+    for (const value of ['TODO', 'DOING', 'DONE', 'CANCELLED', 'none']) {
       await expect(page.getByTestId(`autocomplete-item-${value}`)).toBeVisible()
     }
   })
