@@ -8,7 +8,9 @@ import { makeBlock } from '../../__tests__/fixtures'
 import {
   humanizeRefTokens,
   INDENT_UNIT,
+  internalizeRefTokens,
   parseIndentedMarkdown,
+  type RefInternalizers,
   serializeBlockSubtree,
 } from '../block-clipboard'
 import type { FlatBlock } from '../tree-utils'
@@ -287,5 +289,166 @@ describe('serializeBlockSubtree reference rendering (#1440)', () => {
     serializeBlockSubtree(items, ['A'], resolve)
     // The FlatBlock in `items` still carries the ULID-based stored content.
     expect(items[0]?.content).toBe(original)
+  })
+})
+
+// #1484 — import/paste resolution of human-readable wiki-links back to internal
+// refs: `[[Page Name]]`→`[[ULID]]` (create if missing), `#tag`→`#[ULID]` (create
+// if missing), leaving canonical tokens, unresolvable names, and `((Name))`
+// block refs as-is. The injected resolvers mock the page/tag lookup + creation
+// IPC the production wiring (`buildImportRefInternalizers` in page-blocks)
+// performs.
+describe('internalizeRefTokens (#1484)', () => {
+  const EXISTING_PAGE = '01HZ0PAGE0000000000000000A'
+  const NEW_PAGE = '01HZ0NEWPAGE00000000000NEW'
+  const EXISTING_TAG = '01HZ0TAG00000000000000000B'
+  const NEW_TAG = '01HZ0NEWTAG0000000000NEWTG'
+
+  /**
+   * A scriptable resolver pair: `pages`/`tags` map an EXISTING name to its ULID;
+   * any other name is "created" (recorded in `created`, assigned the matching
+   * NEW_* ULID). A name listed in `ambiguous` resolves to `null` (left plain).
+   */
+  function makeResolvers(opts: {
+    pages?: Record<string, string>
+    tags?: Record<string, string>
+    ambiguous?: Set<string>
+  }): { resolvers: RefInternalizers; created: { pages: string[]; tags: string[] } } {
+    const created = { pages: [] as string[], tags: [] as string[] }
+    const resolvers: RefInternalizers = {
+      page: async (name) => {
+        if (opts.ambiguous?.has(name)) return null
+        if (opts.pages && name in opts.pages) return opts.pages[name] ?? null
+        created.pages.push(name)
+        return NEW_PAGE
+      },
+      tag: async (name) => {
+        if (opts.ambiguous?.has(name)) return null
+        if (opts.tags && name in opts.tags) return opts.tags[name] ?? null
+        created.tags.push(name)
+        return NEW_TAG
+      },
+    }
+    return { resolvers, created }
+  }
+
+  it('resolves an existing [[Page Name]] to its internal [[ULID]]', async () => {
+    const { resolvers } = makeResolvers({ pages: { 'My Page': EXISTING_PAGE } })
+    expect(await internalizeRefTokens('see [[My Page]] here', resolvers)).toBe(
+      `see [[${EXISTING_PAGE}]] here`,
+    )
+  })
+
+  it('creates a missing [[New Page]] and links to the created ULID', async () => {
+    const { resolvers, created } = makeResolvers({})
+    expect(await internalizeRefTokens('link [[New Page]]', resolvers)).toBe(`link [[${NEW_PAGE}]]`)
+    expect(created.pages).toEqual(['New Page'])
+  })
+
+  it('resolves an existing #tag to its internal #[ULID]', async () => {
+    const { resolvers } = makeResolvers({ tags: { todo: EXISTING_TAG } })
+    expect(await internalizeRefTokens('tagged #todo today', resolvers)).toBe(
+      `tagged #[${EXISTING_TAG}] today`,
+    )
+  })
+
+  it('creates a missing #newtag and links to the created ULID', async () => {
+    const { resolvers, created } = makeResolvers({})
+    expect(await internalizeRefTokens('a #newtag here', resolvers)).toBe(`a #[${NEW_TAG}] here`)
+    expect(created.tags).toEqual(['newtag'])
+  })
+
+  it('resolves a nested #parent/child tag name', async () => {
+    const { resolvers, created } = makeResolvers({})
+    expect(await internalizeRefTokens('#parent/child', resolvers)).toBe(`#[${NEW_TAG}]`)
+    expect(created.tags).toEqual(['parent/child'])
+  })
+
+  it('leaves an ambiguous (duplicate-title) [[Name]] as plain text, no create', async () => {
+    const { resolvers, created } = makeResolvers({ ambiguous: new Set(['Dup Title']) })
+    expect(await internalizeRefTokens('see [[Dup Title]]', resolvers)).toBe('see [[Dup Title]]')
+    expect(created.pages).toEqual([])
+  })
+
+  it('leaves a canonical [[ULID]] untouched (internal round-trip stays ULID)', async () => {
+    const { resolvers, created } = makeResolvers({})
+    expect(await internalizeRefTokens(`dup [[${EXISTING_PAGE}]]`, resolvers)).toBe(
+      `dup [[${EXISTING_PAGE}]]`,
+    )
+    // A bare-ULID body is never treated as a name → no page created.
+    expect(created.pages).toEqual([])
+  })
+
+  it('leaves a canonical #[ULID] tag untouched', async () => {
+    const { resolvers, created } = makeResolvers({})
+    expect(await internalizeRefTokens(`canon #[${EXISTING_TAG}]`, resolvers)).toBe(
+      `canon #[${EXISTING_TAG}]`,
+    )
+    expect(created.tags).toEqual([])
+  })
+
+  it('leaves a ((Block Name)) block ref as plain text (no by-name creation)', async () => {
+    const { resolvers } = makeResolvers({})
+    expect(await internalizeRefTokens('quote ((Some Block))', resolvers)).toBe(
+      'quote ((Some Block))',
+    )
+  })
+
+  it('does not read an intraword #frag as a tag', async () => {
+    const { resolvers, created } = makeResolvers({})
+    expect(await internalizeRefTokens('color#fff and a#b', resolvers)).toBe('color#fff and a#b')
+    expect(created.tags).toEqual([])
+  })
+
+  it('creates a repeated new name exactly once across one line', async () => {
+    const { resolvers, created } = makeResolvers({})
+    const out = await internalizeRefTokens('[[Repeat]] then [[Repeat]]', resolvers)
+    expect(out).toBe(`[[${NEW_PAGE}]] then [[${NEW_PAGE}]]`)
+    expect(created.pages).toEqual(['Repeat'])
+  })
+
+  it('resolves mixed page links and tags in one line', async () => {
+    const { resolvers } = makeResolvers({
+      pages: { 'My Page': EXISTING_PAGE },
+      tags: { todo: EXISTING_TAG },
+    })
+    expect(await internalizeRefTokens('[[My Page]] is #todo', resolvers)).toBe(
+      `[[${EXISTING_PAGE}]] is #[${EXISTING_TAG}]`,
+    )
+  })
+
+  it('does not rewrite a #tag substring inside an UNRESOLVED [[Page Name]] (#1867 review)', async () => {
+    // A page name containing a `#tag`-looking substring that doesn't resolve must
+    // stay verbatim — its `#alpha` must NOT be internalized (which would corrupt
+    // the link into `[[Project #[ULID]]]`). A real tag outside the brackets still resolves.
+    const { resolvers, created } = makeResolvers({ ambiguous: new Set(['Project #alpha']) })
+    expect(await internalizeRefTokens('[[Project #alpha]] and #realtag', resolvers)).toBe(
+      `[[Project #alpha]] and #[${NEW_TAG}]`,
+    )
+    // Only the outside tag was created; the in-bracket `alpha` was skipped.
+    expect(created.tags).toEqual(['realtag'])
+  })
+})
+
+// Full human-readable → internal → human-readable round-trip (#1440 + #1484):
+// export renders names, re-import resolves them back to the right internal
+// refs, and a second export renders the names again — a stable fixed point.
+describe('wiki-link round-trip: humanize ⇄ internalize', () => {
+  const PAGE = '01HZ0PAGE0000000000000000A'
+  const TAG = '01HZ0TAG00000000000000000B'
+
+  it('internal → human → internal recovers the canonical ULID tokens', async () => {
+    const internal = `link [[${PAGE}]] tagged #[${TAG}]`
+    // Export direction (#1440): ULIDs → names.
+    const names: Record<string, string> = { [PAGE]: 'My Page', [TAG]: 'todo' }
+    const humanized = humanizeRefTokens(internal, (u) => names[u])
+    expect(humanized).toBe('link [[My Page]] tagged #todo')
+
+    // Import direction (#1484): names → ULIDs (these pages/tags already exist).
+    const resolvers: RefInternalizers = {
+      page: async (n) => (n === 'My Page' ? PAGE : null),
+      tag: async (n) => (n === 'todo' ? TAG : null),
+    }
+    expect(await internalizeRefTokens(humanized, resolvers)).toBe(internal)
   })
 })
