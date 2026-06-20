@@ -231,15 +231,16 @@ pub(super) async fn target_pages_for_block_ids(
 /// - `PurgeBlock`: same as delete, plus the cohort's source-pages of
 ///   inbound edges that get cleared by FK CASCADE on `block_links`.
 ///
-/// NOTE on `EditBlock` / `CreateBlock` with link tokens: the new
-/// `block_links` rows are written by the background `ReindexBlockLinks`
-/// task. The recompute here will pick up edge REMOVALS (the SELECT
-/// re-runs against current `block_links` which still has the removed
-/// edge briefly — wait, no, block_links isn't updated until ReindexBlockLinks
-/// runs in the background, so the OLD edges are still present here).
-/// The per-op recompute captures count changes driven by `blocks` mutations
-/// (deletions, restorations); link-token additions / removals are picked
-/// up by the matching pass in the `ReindexBlockLinks` handler below.
+/// NOTE on `EditBlock` / `CreateBlock` with link tokens (#1548): the new
+/// block's outbound `block_links` rows are brought in sync IN THIS TX via
+/// `cache::reindex_block_links_conn` BEFORE the count recompute, so the
+/// in-tx `inbound_link_count` SELECT (which joins `block_links`) reflects
+/// added and removed edges immediately — the count is synchronously correct
+/// per-op rather than eventually-consistent on the background
+/// `ReindexBlockLinks` task. That background task remains as the idempotent
+/// backstop: it re-diffs the same content, finds the edges already applied,
+/// and is a no-op, so the synchronous update and the rebuild converge on the
+/// same value with no double-count.
 pub(super) async fn maintain_pages_cache_counts_after_op(
     conn: &mut sqlx::SqliteConnection,
     pre_state: &PreOpState,
@@ -290,6 +291,17 @@ pub(super) async fn maintain_pages_cache_counts_after_op(
             // and add the inferred target pages.
             let tokens = parse_link_targets_from_content(content);
             if !tokens.is_empty() {
+                // #1548: write this block's outbound `block_links` edges IN
+                // THIS TX (idempotent diff, same engine the background
+                // `ReindexBlockLinks` task uses) BEFORE the recompute below,
+                // so the in-tx `inbound_link_count` SELECT — which joins
+                // `block_links` — observes the new edges immediately. Without
+                // this the count stayed stale until the async reindex caught
+                // up. The later background reindex re-diffs the same content,
+                // finds the edges already present, and is a no-op: the sync
+                // update and the backstop rebuild converge with no
+                // double-count.
+                crate::cache::reindex_block_links_conn(conn, block_id).await?;
                 for p in target_pages_for_block_ids(conn, &tokens).await? {
                     affected.insert(p);
                 }
@@ -304,25 +316,32 @@ pub(super) async fn maintain_pages_cache_counts_after_op(
                 affected.insert(p);
             }
             // Pages reachable via OLD outbound edges (still in
-            // `block_links` until `ReindexBlockLinks` runs in BG).
+            // `block_links` until we re-diff below). Collected BEFORE the
+            // in-tx reindex so a page that just LOST its only inbound edge
+            // (token removed) is still in the affected set and gets its
+            // decremented count recomputed.
             for p in outbound_target_pages_for_block(conn, block_id).await? {
                 affected.insert(p);
             }
             // Pages parsed from the NEW content — caught via target's
-            // page_id. The block_links row may not be written yet but
-            // the SELECT joins against `block_links` so newly-arrived
-            // edges aren't reflected until `ReindexBlockLinks` runs.
-            // Capture the candidate pages so the matching pass in the
-            // `ReindexBlockLinks` arm can refresh them. We add them
-            // here too so the `pages_cache.inbound_link_count` is
-            // monotonic — never temporarily higher than the live
-            // SELECT would produce.
+            // page_id. We add them so the affected set covers pages that
+            // just GAINED an inbound edge as well.
             let tokens = parse_link_targets_from_content(to_text);
             if !tokens.is_empty() {
                 for p in target_pages_for_block_ids(conn, &tokens).await? {
                     affected.insert(p);
                 }
             }
+            // #1548: bring this block's outbound `block_links` rows in sync
+            // with the new content IN THIS TX (idempotent diff — the same
+            // engine the background `ReindexBlockLinks` task runs), so the
+            // `inbound_link_count` recompute below — which joins
+            // `block_links` — reflects added AND removed edges immediately
+            // instead of staying stale until the async reindex catches up.
+            // The later background reindex re-diffs the same content, finds
+            // no changes, and is a no-op: the synchronous update and the
+            // backstop rebuild converge with no double-count.
+            crate::cache::reindex_block_links_conn(conn, block_id).await?;
         }
         PreOpState::Cohort(cohort) => {
             // The cohort is captured upstream in `apply_op_tx` (see

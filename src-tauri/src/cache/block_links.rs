@@ -15,7 +15,34 @@ use crate::error::AppError;
 /// 4. Diffs: deletes removed links, inserts added links within the same tx.
 pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
     let mut tx = crate::db::begin_immediate_logged(pool, "cache_block_links_reindex").await?;
+    reindex_block_links_conn(&mut tx, block_id).await?;
+    tx.commit().await?;
+    Ok(())
+}
 
+/// Connection-scoped core of [`reindex_block_links`]: runs the
+/// read → diff → DELETE/INSERT of a single block's outbound `block_links`
+/// edges against an already-open connection/transaction, WITHOUT opening or
+/// committing its own transaction. The caller controls the transaction
+/// boundary.
+///
+/// This is the diff engine shared between the background
+/// `ReindexBlockLinks` task (via [`reindex_block_links`], which wraps this in
+/// its own tx) and the foreground per-op `pages_cache` count maintenance
+/// hook (`materializer::handlers::pages_cache`), which calls it INSIDE the
+/// apply-op transaction so the in-tx `inbound_link_count` recompute observes
+/// the just-written edges immediately rather than after the async reindex
+/// catches up (#1548).
+///
+/// Idempotent by construction: it diffs the parsed content tokens against the
+/// rows currently in `block_links`, so a second run (e.g. the background
+/// `ReindexBlockLinks` after the foreground hook already applied the edges)
+/// finds an empty diff and is a no-op — the synchronous update and the
+/// backstop rebuild converge on the same edge set with no double-count.
+pub async fn reindex_block_links_conn(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+) -> Result<(), AppError> {
     // 1. Get current content (combined with step 2 in the same tx to
     //    avoid an extra connection round-trip). Soft-deleted blocks
     //    do not contribute outbound links to `block_links` (M-14).
@@ -23,7 +50,7 @@ pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<()
         "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL",
         block_id,
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut *conn)
     .await?;
 
     let content = match row {
@@ -43,7 +70,7 @@ pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<()
         "SELECT target_id FROM block_links WHERE source_id = ?",
         block_id,
     )
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut *conn)
     .await?;
 
     let old_targets: HashSet<String> = existing_rows.into_iter().map(|r| r.target_id).collect();
@@ -71,13 +98,13 @@ pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<()
         None
     } else {
         let source_block_id = crate::ulid::BlockId::from_trusted(block_id);
-        crate::space::resolve_block_space(&mut *tx, &source_block_id)
+        crate::space::resolve_block_space(&mut *conn, &source_block_id)
             .await?
             .map(|s| s.as_str().to_owned())
     };
 
     if to_delete.is_empty() && to_insert.is_empty() {
-        // No changes — transaction is rolled back on drop (no commit needed).
+        // No changes — leave the caller's transaction untouched.
         return Ok(());
     }
 
@@ -93,7 +120,7 @@ pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<()
         )
         .bind(block_id)
         .bind(&delete_json)
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
     }
 
@@ -126,11 +153,10 @@ pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<()
         .bind(block_id)
         .bind(&insert_json)
         .bind(&source_space)
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
     }
 
-    tx.commit().await?;
     Ok(())
 }
 

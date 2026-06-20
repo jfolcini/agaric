@@ -339,6 +339,30 @@ where
 // Public API
 // ---------------------------------------------------------------------------
 
+/// Parse a `parent_seqs` JSON string into a **canonically ordered**
+/// `Vec<(String, i64)>`.
+///
+/// The op-log stores `parent_seqs` exactly as it was hashed/received, which
+/// the writer ([`append_merge_op`]) sorts lexicographically by
+/// `(device_id, seq)` before hashing. [`insert_remote_op`] deliberately
+/// preserves the stored bytes verbatim (re-sorting them would change the
+/// hash preimage and invalidate legacy rows), so a row written by an older
+/// or bugged peer may carry a hash-valid but non-canonically-ordered array.
+///
+/// This is the single read-side canonicalization point: it parses the JSON
+/// and re-sorts the parsed `Vec` into the writer's canonical order. The sort
+/// is allocation-local and order-stable for already-canonical input (the
+/// common case), so order-sensitive consumers can rely on a deterministic
+/// parent ordering without depending on the on-disk byte order.
+fn parse_parent_seqs_canonical(parent_seqs_json: &str) -> Result<Vec<(String, i64)>, AppError> {
+    let mut parents: Vec<(String, i64)> = serde_json::from_str(parent_seqs_json)?;
+    // Canonical order == the writer's order: lexicographic ascending by
+    // `(device_id, seq)` (see `append_merge_op`, which `sort()`s the same
+    // `Vec<(String, i64)>` shape before hashing).
+    parents.sort();
+    Ok(parents)
+}
+
 /// Insert an op received from a remote device into the op_log.
 ///
 /// Uses `INSERT OR IGNORE` on the composite PK `(device_id, seq)` so that
@@ -353,14 +377,27 @@ where
 /// `parent_seqs` string (including reordering its entries) breaks the
 /// hash and is rejected above.
 ///
-/// We therefore do **not** re-verify that `parent_seqs` is in canonical
-/// lexicographic order on the read side.  Canonical ordering is enforced
-/// by the writer ([`append_merge_op`] sorts before hashing) and any
-/// non-canonical ordering written by an older or bugged peer would still
-/// produce a self-consistent hash that round-trips correctly through
-/// `find_lca` and friends.  Adding a runtime ordering assertion here
-/// would invalidate otherwise-valid existing op log rows produced under
-/// earlier writer code paths.
+/// We therefore do **not** re-verify (nor rewrite) the stored `parent_seqs`
+/// string to canonical lexicographic order on the read side.  Canonical
+/// ordering is enforced by the writer ([`append_merge_op`] sorts before
+/// hashing); any non-canonical ordering written by an older or bugged peer
+/// would still produce a self-consistent hash that round-trips correctly
+/// through `find_lca` and friends.  Re-sorting the *stored string* here
+/// (or asserting its order) would change the hash preimage and invalidate
+/// otherwise-valid existing op log rows produced under earlier writer code
+/// paths — so the bytes on disk are left exactly as received.
+///
+/// ## Invariant for readers — `parent_seqs` may be non-canonically ordered
+///
+/// Because the stored string is preserved verbatim, **consumers must not
+/// assume the parsed `Vec<(String, i64)>` is in canonical order**. Any
+/// order-sensitive consumer (hash-chain re-derivation, dedup keyed on the
+/// parent multiset, future merge-parent comparison) MUST canonicalize on
+/// read via [`parse_parent_seqs_canonical`], which parses the JSON and
+/// re-sorts the parsed `Vec` into the same order the writer used. This is a
+/// cheap, allocation-local sort that costs nothing for the already-canonical
+/// common case and repairs the rare legacy/peer row, without touching the
+/// hash-bearing stored bytes.
 pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bool, AppError> {
     // #1600 — Reject any raw NUL byte in a hashed field *before* the op
     // reaches the hash recipe. The `\0` delimiter is the wire-format
@@ -406,7 +443,13 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bo
     // explicit defensive priority — fail fast on insert rather than
     // surface as a `NotFound` deep inside a sync log.
     if let Some(parent_seqs_json) = record.parent_seqs.as_deref() {
-        let parents: Vec<(String, i64)> = serde_json::from_str(parent_seqs_json)?;
+        // Canonicalize on read: the stored bytes may be non-canonically
+        // ordered (preserved verbatim to keep the hash valid), so any
+        // consumer that parses them goes through the single
+        // canonicalization point. The existence check below is itself
+        // order-insensitive, but routing through the helper enforces the
+        // documented read-side contract uniformly.
+        let parents: Vec<(String, i64)> = parse_parent_seqs_canonical(parent_seqs_json)?;
         if !parents.is_empty() {
             // SQL-review B-C4 (issue #112 sub-item 3): batch the
             // per-parent existence check into one query. Today this is

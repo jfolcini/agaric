@@ -1770,6 +1770,177 @@ async fn inmem_handle_incoming_sync_rejects_busy_peer() {
     materializer.shutdown();
 }
 
+/// #1519: the documented pairing flow leaves the responder with NO
+/// `peer_refs` row at confirm time — `confirm_pairing_inner` only writes a
+/// `set_pending_pairing` marker, because the joiner's real `device_id` is
+/// unknown until it connects (the QR carries only the passphrase). The first
+/// post-pair connection therefore arrives from a device with no `peer_ref`.
+///
+/// Before the fix, the S-1 unpaired gate rejected that first connection
+/// outright ("not paired") with no exception for a pending pairing, so the
+/// TOFU upsert that would establish the `peer_ref` never ran and the
+/// initiator was stuck with no forward path.
+///
+/// After the fix, an active `set_pending_pairing` marker admits that first
+/// connection PAST the S-1 gate. We prove the new transition by pre-acquiring
+/// the per-peer lock: the device now reaches the busy-peer branch (it got
+/// past S-1) instead of being rejected as unpaired — i.e. the gate accepted
+/// a device with no `peer_ref` because pairing was pending.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inmem_handle_incoming_sync_admits_first_connection_while_pairing_pending() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    // The responder just confirmed pairing: no `peer_ref` row exists yet, only
+    // the pending-pairing marker that bridges to the first TOFU connection.
+    assert!(
+        peer_refs::get_peer_ref(&pool, "JOINING_DEV")
+            .await
+            .unwrap()
+            .is_none(),
+        "precondition: joining device must be unpaired"
+    );
+    peer_refs::set_pending_pairing(&pool).await.unwrap();
+    assert!(
+        peer_refs::is_pending_pairing(&pool).await.unwrap(),
+        "precondition: pairing must be pending"
+    );
+
+    // Pre-acquire the per-peer lock so that, if (and only if) the connection
+    // gets PAST the S-1 unpaired gate, it lands on the busy-peer branch — a
+    // distinct, observable response from the "not paired" rejection.
+    let _guard = scheduler.try_lock_peer("JOINING_DEV").unwrap();
+
+    let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+
+    let pool_clone = pool.clone();
+    let mat_clone = materializer.clone();
+    let sched_clone = scheduler.clone();
+    let sink_clone = event_sink.clone();
+    let handle = tokio::spawn(async move {
+        handle_incoming_sync(
+            server_conn,
+            pool_clone,
+            "LOCAL_DEV".to_string(),
+            mat_clone,
+            sched_clone,
+            sink_clone,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+    });
+
+    client_conn
+        .send_json(&SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "JOINING_DEV".to_string(),
+                seq: 0,
+                hash: "fakehash".to_string(),
+            }],
+            loro_vvs: vec![],
+        })
+        .await
+        .unwrap();
+
+    // The fix: with pairing pending, the unpaired device is admitted past the
+    // S-1 gate and (because the lock is held) reaches the busy branch. A "not
+    // paired" response here would mean the gate still rejected it — the bug.
+    let response: SyncMessage = client_conn.recv_json().await.unwrap();
+    assert!(
+        matches!(
+            &response,
+            SyncMessage::Error { message } if message.contains("busy")
+        ),
+        "expected the first post-pair connection to pass the S-1 gate while \
+         pairing is pending (landing on the held-lock 'busy' branch), got: {response:?}"
+    );
+    assert!(
+        !matches!(
+            &response,
+            SyncMessage::Error { message } if message.contains("not paired")
+        ),
+        "first post-pair connection must NOT be rejected as unpaired while pairing is pending"
+    );
+
+    let result = handle.await.unwrap();
+    assert!(
+        result.is_ok(),
+        "handle_incoming_sync should return Ok after admitting the pending-pairing connection"
+    );
+
+    materializer.shutdown();
+}
+
+/// #1519 (control): the pending-pairing exception is gated on the marker — an
+/// unpaired device with NO active pending-pairing marker is still rejected at
+/// the S-1 gate. This guards against the fix accidentally admitting every
+/// unpaired device. Mirrors `inmem_handle_incoming_sync_admits_first_connection_while_pairing_pending`
+/// but with no marker set.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inmem_handle_incoming_sync_rejects_unpaired_without_pending_marker() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    // No peer_ref AND no pending-pairing marker.
+    assert!(
+        !peer_refs::is_pending_pairing(&pool).await.unwrap(),
+        "precondition: pairing must NOT be pending"
+    );
+
+    // Hold the lock too: if the gate were (wrongly) bypassed we'd see "busy";
+    // the correct behaviour is the "not paired" rejection before the lock.
+    let _guard = scheduler.try_lock_peer("UNKNOWN_DEV").unwrap();
+
+    let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+
+    let pool_clone = pool.clone();
+    let mat_clone = materializer.clone();
+    let sched_clone = scheduler.clone();
+    let sink_clone = event_sink.clone();
+    let handle = tokio::spawn(async move {
+        handle_incoming_sync(
+            server_conn,
+            pool_clone,
+            "LOCAL_DEV".to_string(),
+            mat_clone,
+            sched_clone,
+            sink_clone,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+    });
+
+    client_conn
+        .send_json(&SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "UNKNOWN_DEV".to_string(),
+                seq: 0,
+                hash: "fakehash".to_string(),
+            }],
+            loro_vvs: vec![],
+        })
+        .await
+        .unwrap();
+
+    let response: SyncMessage = client_conn.recv_json().await.unwrap();
+    assert!(
+        matches!(
+            &response,
+            SyncMessage::Error { message } if message.contains("not paired")
+        ),
+        "an unpaired device with no pending-pairing marker must still be rejected, got: {response:?}"
+    );
+
+    let result = handle.await.unwrap();
+    assert!(result.is_ok(), "handle_incoming_sync should return Ok");
+
+    materializer.shutdown();
+}
+
 /// #1605: When the daemon's shared cancel flag is set, the responder
 /// session aborts at the top of its message loop — PROMPTLY, well before
 /// the 180 s `RECV_TIMEOUT` it would otherwise block on while waiting for

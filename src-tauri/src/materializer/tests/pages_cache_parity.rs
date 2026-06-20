@@ -474,6 +474,128 @@ async fn same_page_edge_excluded_from_inbound_count() {
     assert_parity(&pool, "after cross-page edge").await;
 }
 
+/// #1548 — the per-op `inbound_link_count` must be correct SYNCHRONOUSLY,
+/// i.e. immediately after the foreground `ApplyOp` for a link-adding /
+/// link-removing edit, WITHOUT waiting for the background
+/// `ReindexBlockLinks` task. Before the fix the foreground recompute joined
+/// `block_links` before the new edge was written (that write happened only
+/// in the async reindex), so the count stayed stale until the async job
+/// caught up. The fix writes the block's outbound edges in-tx via
+/// `cache::reindex_block_links_conn` before the recompute.
+///
+/// This test asserts BOTH halves of the contract:
+///  1. After the FG op ALONE (no BG ReindexBlockLinks), the cached
+///     `inbound_link_count` already equals the canonical live value.
+///  2. Running the BG ReindexBlockLinks afterwards yields the SAME value —
+///     the synchronous update and the backstop rebuild converge with no
+///     double-count.
+#[tokio::test]
+async fn inbound_count_correct_synchronously_without_bg_reindex() {
+    // 26-char Crockford-base32 ids so `ULID_LINK_RE` ([0-9A-Z]{26})
+    // actually matches the `[[..]]` token and a real `block_links` edge
+    // is created (short fixture ids would silently never match the regex).
+    const SRC_PG: &str = "01HZ00000000000000000SRCPG";
+    const TGT_PG: &str = "01HZ00000000000000000TGTPG";
+    const SRC_CB: &str = "01HZ00000000000000000SRCCB";
+
+    let (pool, _dir) = test_pool().await;
+    seed_page(&pool, SRC_PG, "Source Page").await;
+    seed_page(&pool, TGT_PG, "Target Page").await;
+
+    // A content block on SRC_PG that will hold the link. page_id is set
+    // directly (mirrors what RebuildPageIds stamps) so the cross-page
+    // src.page_id != target exclusion evaluates correctly.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id) \
+             VALUES (?, 'content', 'body', ?, ?)",
+    )
+    .bind(SRC_CB)
+    .bind(SRC_PG)
+    .bind(SRC_PG)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE pages_cache SET child_block_count = 1 WHERE page_id = ?")
+        .bind(SRC_PG)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_parity(&pool, "seeded source block").await;
+
+    // Baseline: TGT_PG has no inbound links yet.
+    let (inbound, _) = cached_counts(&pool, TGT_PG).await.unwrap();
+    assert_eq!(inbound, 0, "target starts with zero inbound links");
+
+    // EditBlock that ADDS a [[TGT_PG]] link — but drive ONLY the foreground
+    // ApplyOp (note the empty `link_block_ids`: NO BG ReindexBlockLinks is
+    // run). This is the heart of #1548: pre-fix the in-tx recompute joined
+    // `block_links` before the edge existed, so the count stayed 0 here.
+    let payload =
+        format!(r#"{{"block_id":"{SRC_CB}","to_text":"body [[{TGT_PG}]]","prev_edit":null}}"#);
+    run_op(&pool, op_task("edit_block", &payload), &[]).await;
+
+    // (1) Synchronous correctness: the FG op ALONE must have made the
+    // count correct — the edge was written in-tx and the recompute saw it.
+    let (inbound_fg, _) = cached_counts(&pool, TGT_PG).await.unwrap();
+    assert_eq!(
+        inbound_fg, 1,
+        "inbound_link_count must be correct synchronously after the FG op, \
+         BEFORE any background ReindexBlockLinks runs"
+    );
+    // And it must equal the canonical live value, not just a literal.
+    let (canon_inbound, _) = canonical_counts(&pool, TGT_PG).await;
+    assert_eq!(
+        inbound_fg, canon_inbound,
+        "synchronous count must equal the canonical live SELECT"
+    );
+    assert_parity(&pool, "after FG-only link add").await;
+
+    // (2) No double-count: running the BG ReindexBlockLinks (the backstop)
+    // afterwards must leave the value unchanged — the diff is now empty.
+    handle_background_task(
+        &pool,
+        &MaterializeTask::ReindexBlockLinks {
+            block_id: SRC_CB.into(),
+        },
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (inbound_after_bg, _) = cached_counts(&pool, TGT_PG).await.unwrap();
+    assert_eq!(
+        inbound_after_bg, 1,
+        "background ReindexBlockLinks must NOT double-count — converges to the same value"
+    );
+    assert_parity(&pool, "after backstop BG reindex").await;
+
+    // Now REMOVE the link, again FG-only, and assert it decrements
+    // synchronously back to 0.
+    let payload = format!(r#"{{"block_id":"{SRC_CB}","to_text":"body","prev_edit":null}}"#);
+    run_op(&pool, op_task("edit_block", &payload), &[]).await;
+    let (inbound_removed, _) = cached_counts(&pool, TGT_PG).await.unwrap();
+    assert_eq!(
+        inbound_removed, 0,
+        "inbound_link_count must decrement synchronously when the link is removed"
+    );
+    assert_parity(&pool, "after FG-only link remove").await;
+
+    // Backstop again: still 0, no drift.
+    handle_background_task(
+        &pool,
+        &MaterializeTask::ReindexBlockLinks {
+            block_id: SRC_CB.into(),
+        },
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (inbound_final, _) = cached_counts(&pool, TGT_PG).await.unwrap();
+    assert_eq!(inbound_final, 0, "removal stays converged after BG reindex");
+    assert_parity(&pool, "after backstop BG reindex (removal)").await;
+}
+
 /// E4 — a `MoveBlock` that reparents a block onto a DIFFERENT page must
 /// refresh BOTH the source page's and the destination page's
 /// `child_block_count`. Before the fix the MoveBlock arm was a no-op

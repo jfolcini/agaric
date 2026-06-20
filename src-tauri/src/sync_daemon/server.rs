@@ -231,19 +231,41 @@ pub(crate) async fn handle_incoming_sync(
             return Ok(());
         }
 
-        // Reject unpaired devices (S-1)
-        if peer_refs::get_peer_ref(&pool_ref, &remote_id)
+        // Reject unpaired devices (S-1).
+        //
+        // #1519: the documented pairing flow leaves the responder with NO
+        // `peer_refs` row at confirm time — `confirm_pairing_inner` only writes
+        // a `set_pending_pairing` marker (the QR carries just the passphrase, so
+        // the joiner's real `device_id` is unknown until it connects; the row is
+        // established by TOFU on that first authenticated connection). Without an
+        // exception here, this gate rejects that very first post-pair connection
+        // before the TOFU upsert below can run, so neither device can complete
+        // the first sync and the initiator is stuck with no forward path. When a
+        // pairing is pending, accept the first connection and let the B-33 TOFU
+        // path below persist the `peer_ref` + observed cert hash; we clear the
+        // pending marker once that succeeds.
+        let pairing_pending = if peer_refs::get_peer_ref(&pool_ref, &remote_id)
             .await?
             .is_none()
         {
-            tracing::warn!(peer_id = %remote_id, "rejecting sync from unpaired device");
-            conn.send_json(&SyncMessage::Error {
-                message: "peer not paired with this device".into(),
-            })
-            .await?;
-            let _ = conn.close().await;
-            return Ok(());
-        }
+            if peer_refs::is_pending_pairing(&pool_ref).await? {
+                tracing::info!(
+                    peer_id = %remote_id,
+                    "accepting first sync from unpaired device while pairing is pending (#1519 TOFU)"
+                );
+                true
+            } else {
+                tracing::warn!(peer_id = %remote_id, "rejecting sync from unpaired device");
+                conn.send_json(&SyncMessage::Error {
+                    message: "peer not paired with this device".into(),
+                })
+                .await?;
+                let _ = conn.close().await;
+                return Ok(());
+            }
+        } else {
+            false
+        };
 
         // S-5: Acquire per-peer lock BEFORE reading/storing cert hash so
         // two devices that connect simultaneously after pairing cannot
@@ -286,14 +308,36 @@ pub(crate) async fn handle_incoming_sync(
                 // (trust-on-first-use, same model as SSH known_hosts)
                 if stored_hash.is_none()
                     && let Some(ref observed) = conn.peer_cert_hash()
-                    && let Err(e) =
-                        peer_refs::upsert_peer_ref_with_cert(&pool_ref, &remote_id, observed).await
                 {
-                    tracing::warn!(
-                        peer_id = %remote_id,
-                        error = %e,
-                        "failed to store peer cert hash (TOFU)"
-                    );
+                    match peer_refs::upsert_peer_ref_with_cert(&pool_ref, &remote_id, observed)
+                        .await
+                    {
+                        Ok(()) => {
+                            // #1519: the `peer_ref` now exists, so the
+                            // pending-pairing bridge that admitted this first
+                            // connection has done its job. Clear the marker so
+                            // the daemon stops advertising "accepting pairing"
+                            // and a later unpaired device cannot ride the same
+                            // open window. Best-effort: a failure here only
+                            // leaves the marker to expire on its TTL.
+                            if pairing_pending
+                                && let Err(e) = peer_refs::clear_pending_pairing(&pool_ref).await
+                            {
+                                tracing::warn!(
+                                    peer_id = %remote_id,
+                                    error = %e,
+                                    "failed to clear pending-pairing marker after TOFU (#1519)"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                peer_id = %remote_id,
+                                error = %e,
+                                "failed to store peer cert hash (TOFU)"
+                            );
+                        }
+                    }
                 }
             }
             CertVerifyResult::CnMismatch {
