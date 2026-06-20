@@ -29,7 +29,7 @@ describe('filter-dimension-metadata', () => {
     })
 
     it('ignores legacy localStorage values', () => {
-      localStorage.setItem('task_cycle', JSON.stringify([null, 'TODO', 'WAITING', 'DONE']))
+      localStorage.setItem('task_cycle', JSON.stringify([null, 'TODO', 'LEGACY', 'DONE']))
       try {
         expect(getTaskStates()).toEqual(['TODO', 'DOING', 'DONE', 'CANCELLED'])
       } finally {

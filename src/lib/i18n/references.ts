@@ -144,7 +144,6 @@ export const references: Record<string, string> = {
   'filterState.todo': 'TODO',
   'filterState.doing': 'DOING',
   'filterState.done': 'DONE',
-  'filterState.waiting': 'WAITING',
   'filterState.cancelled': 'CANCELLED',
   'filterState.none': 'None',
   'backlink.priorityValueLabel': 'Priority value',

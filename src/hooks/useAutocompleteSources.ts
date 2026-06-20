@@ -38,7 +38,7 @@ import {
 import type { AutocompleteAnchor } from '@/lib/search-query/autocomplete'
 import { getPropertyDef, listTagsByPrefix, paginationLimit } from '@/lib/tauri'
 
-export const STATE_VALUES = ['TODO', 'DOING', 'DONE', 'WAITING', 'CANCELLED', 'none'] as const
+export const STATE_VALUES = ['TODO', 'DOING', 'DONE', 'CANCELLED', 'none'] as const
 export const DATE_BUCKET_VALUES = [
   'today',
   'yesterday',

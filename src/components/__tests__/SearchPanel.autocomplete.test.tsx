@@ -83,9 +83,12 @@ describe('SearchPanel autocomplete (PEND-60 Phase 1)', () => {
 
     const popover = await screen.findByTestId('autocomplete-popover')
     expect(popover).toBeInTheDocument()
-    for (const value of ['TODO', 'DOING', 'DONE', 'WAITING', 'CANCELLED', 'none']) {
+    for (const value of ['TODO', 'DOING', 'DONE', 'CANCELLED', 'none']) {
       expect(screen.getByTestId(`autocomplete-item-${value}`)).toBeInTheDocument()
     }
+    // The dead `WAITING` option (never settable by the locked TASK_CYCLE) is
+    // no longer offered.
+    expect(screen.queryByTestId('autocomplete-item-WAITING')).not.toBeInTheDocument()
   })
 
   it('filters values by what the user typed after the prefix', async () => {

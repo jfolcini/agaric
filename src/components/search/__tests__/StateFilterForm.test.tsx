@@ -63,11 +63,13 @@ describe('StateFilterForm — render', () => {
   // vocabulary (`STATE_FILTER_VALUES`), now shared with the backlink Status
   // form. Proves no vocab drift after sourcing the value control from the
   // unified vocabulary.
-  it('offers the full unified state vocabulary', () => {
+  it('offers the unified state vocabulary', () => {
     setup()
     const options = screen.getAllByRole('option').map((o) => (o as HTMLOptionElement).value)
     expect(options).toEqual([...STATE_FILTER_VALUES])
-    expect(options).toContain('WAITING')
+    expect(options).toEqual(['TODO', 'DOING', 'DONE', 'CANCELLED', 'none'])
+    // The dead `WAITING` option (never settable) is no longer offered.
+    expect(options).not.toContain('WAITING')
     expect(options).toContain('CANCELLED')
     expect(options).toContain('none')
   })

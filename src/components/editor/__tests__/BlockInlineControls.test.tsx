@@ -226,7 +226,7 @@ describe('TaskCheckbox', () => {
   })
 
   it('renders custom style for unknown state', () => {
-    const { container } = render(<TaskCheckbox state="WAITING" />)
+    const { container } = render(<TaskCheckbox state="UNKNOWN" />)
     expect(container.querySelector('.task-checkbox-custom')).toBeInTheDocument()
   })
 })
