@@ -426,6 +426,13 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   const searchPropertyKeysRef = useRef(searchPropertyKeys)
   searchPropertyKeysRef.current = searchPropertyKeys
 
+  // #1890 — coalesce the per-keystroke markdown serialize (the one FE perf
+  // path the React Compiler can't memoize, since it runs in an editor update
+  // handler, not render). Holds the id of a scheduled animation frame, or null
+  // when none is pending. Cancelled on teardown so a deferred serialize never
+  // fires against a torn-down or doc-swapped editor.
+  const pendingSerializeFrameRef = useRef<number | null>(null)
+
   // #726 — build the extensions array EXACTLY ONCE and keep its identity stable
   // across renders. `@tiptap/react`'s `useEditor` (called below with the default
   // empty deps array) takes the `deps.length === 0` path: on every render it
@@ -555,16 +562,55 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   // Fires on every TipTap `update` while mounted. Serializes the current
   // document to markdown and forwards it to the registered listener (if any)
   // — replaces the old 500ms polling interval in EditableBlock (#536).
+  // #1890 — serialize the active block once per animation frame instead of on
+  // every keystroke. Rapid typing fires many `update` events within one frame;
+  // we coalesce them into a single serialize that reads the latest document at
+  // flush time. The frame is cancelled on teardown (see `cancelPendingSerialize`).
   const handleEditorUpdate = useCallback(() => {
-    const cb = onMarkdownChangeRef.current
-    if (!cb || !editor) return
-    const json = editor.getJSON() as DocNode
-    cb(serialize(json, notifyUnknownNodeTypeToast))
+    if (pendingSerializeFrameRef.current !== null) return
+    pendingSerializeFrameRef.current = requestAnimationFrame(() => {
+      pendingSerializeFrameRef.current = null
+      const cb = onMarkdownChangeRef.current
+      if (!cb || !editor) return
+      const json = editor.getJSON() as DocNode
+      cb(serialize(json, notifyUnknownNodeTypeToast))
+    })
   }, [editor])
+
+  const cancelPendingSerialize = useCallback(() => {
+    if (pendingSerializeFrameRef.current !== null) {
+      cancelAnimationFrame(pendingSerializeFrameRef.current)
+      pendingSerializeFrameRef.current = null
+    }
+  }, [])
+
+  // #1890 — drop any queued serialize frame when the host component unmounts,
+  // so the coalesced callback never runs after teardown.
+  useEffect(() => cancelPendingSerialize, [cancelPendingSerialize])
 
   const mount = useCallback(
     (blockId: string, markdown: string, opts?: MountOptions) => {
       if (!editor) return
+
+      // #1890 — defensively drop any serialize frame still queued from a prior
+      // session before swapping in the new block's document. `unmount` already
+      // cancels on the normal block→block path, but `mount` can be reached
+      // without a preceding `unmount` (e.g. the consumer skips unmount when
+      // `activeBlockId` is null). Without this, a stale frame would flush AFTER
+      // `replaceDocSilently` below and serialize the NEW doc — a spurious change
+      // notification for a block the user never edited. Cancelling here makes
+      // mount self-sufficient instead of relying on every caller routing
+      // through unmount first.
+      //
+      // Detach the update listener too: it is re-attached at the END of mount.
+      // If a prior mount left it attached (the no-unmount path), mount's own
+      // `replaceDocSilently` / focus dispatches below would feed
+      // `handleEditorUpdate` and schedule a serialize of the just-swapped-in
+      // document — and `editor.on` would stack a SECOND listener copy. `off` is
+      // idempotent, so this is a no-op on the normal unmount→mount path where
+      // unmount already detached it.
+      editor.off('update', handleEditorUpdate)
+      cancelPendingSerialize()
 
       // B-77 fix layer 2: Exit all suggestion plugins BEFORE replacing the
       // document so setMeta({ exit: true }) fires while decorations still
@@ -643,15 +689,18 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       editor.commands.focus(opts?.cursorPlacement ?? null)
       editor.on('update', handleEditorUpdate)
     },
-    [editor, handleEditorUpdate],
+    [editor, handleEditorUpdate, cancelPendingSerialize],
   )
 
   const unmount = useCallback((): string | null => {
     if (!editor) return null
     const unmountBlockId = activeBlockIdRef.current
 
-    // Detach the markdown-change listener before wiping state.
+    // Detach the markdown-change listener before wiping state, and drop any
+    // serialize frame still queued for the outgoing block (#1890) — otherwise
+    // it would fire against the about-to-be-replaced document.
     editor.off('update', handleEditorUpdate)
+    cancelPendingSerialize()
 
     // B-77 fix layer 4: Exit all suggestion plugins before wiping the
     // document.  Without this, blur → unmount → replaceDocSilently
@@ -723,7 +772,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       changed: delta?.changed ?? false,
     })
     return delta?.changed ? delta.newMarkdown : null
-  }, [editor, handleEditorUpdate])
+  }, [editor, handleEditorUpdate, cancelPendingSerialize])
 
   const getMarkdown = useCallback((): string | null => {
     if (!editor) return null

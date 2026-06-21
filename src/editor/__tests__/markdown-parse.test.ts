@@ -19,7 +19,18 @@ vi.mock('../../lib/logger', () => ({
 import { logger } from '../../lib/logger'
 import { parse } from '../markdown-parse'
 import { serialize } from '../markdown-serialize'
-import { bold, bulletList, doc, italic, listItem, paragraph, task, text } from './builders'
+import {
+  bold,
+  bulletList,
+  doc,
+  hardBreak,
+  italic,
+  listItem,
+  orderedList,
+  paragraph,
+  task,
+  text,
+} from './builders'
 
 describe('parse — depth-limit truncation (FE-L-7)', () => {
   beforeEach(() => {
@@ -298,6 +309,58 @@ describe('parse — GFM task lists (#1435)', () => {
     for (const state of ['TODO', 'DOING', 'DONE', 'CANCELLED'] as const) {
       const original = doc(task(state, text('x')))
       expect(parse(serialize(original))).toEqual(original)
+    }
+  })
+})
+
+describe('parse — list-item hard breaks (#1885)', () => {
+  it('keeps a hard-break continuation inside the SAME list-item paragraph', () => {
+    // `- foo\` (odd trailing backslash) + `bar` on the next line is one item
+    // whose paragraph holds [text "foo", hardBreak, text "bar"] — NOT two blocks.
+    expect(parse('- foo\\\nbar')).toEqual(
+      doc(bulletList(listItem(paragraph(text('foo'), hardBreak(), text('bar'))))),
+    )
+  })
+
+  it('keeps TWO hard breaks inside one list-item paragraph', () => {
+    expect(parse('- a\\\nb\\\nc')).toEqual(
+      doc(
+        bulletList(listItem(paragraph(text('a'), hardBreak(), text('b'), hardBreak(), text('c')))),
+      ),
+    )
+  })
+
+  it('keeps a hard break followed by a nested sub-list in the same item', () => {
+    expect(parse('- foo\\\nbar\n  - baz')).toEqual(
+      doc(
+        bulletList(
+          listItem(
+            paragraph(text('foo'), hardBreak(), text('bar')),
+            bulletList(listItem(paragraph(text('baz')))),
+          ),
+        ),
+      ),
+    )
+  })
+
+  it('keeps a hard break inside an ordered-list item', () => {
+    expect(parse('1. foo\\\nbar')).toEqual(
+      doc(orderedList(listItem(paragraph(text('foo'), hardBreak(), text('bar'))))),
+    )
+  })
+
+  it('still splits a plain (no-backslash) continuation into a top-level paragraph', () => {
+    // Regression guard: without the trailing backslash, `bar` is its own block.
+    expect(parse('- foo\nbar')).toEqual(
+      doc(bulletList(listItem(paragraph(text('foo')))), paragraph(text('bar'))),
+    )
+  })
+
+  it('round-trips list-item hard breaks losslessly (serialize∘parse is identity)', () => {
+    for (const md of ['- foo\\\nbar', '- a\\\nb\\\nc', '- foo\\\nbar\n  - baz', '1. foo\\\nbar']) {
+      expect(serialize(parse(md))).toBe(md)
+      // …and the structure is stable through a second round-trip.
+      expect(parse(serialize(parse(md)))).toEqual(parse(md))
     }
   })
 })

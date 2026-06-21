@@ -365,23 +365,54 @@ function leadingIndent(line: string): number {
 }
 
 /**
+ * Convert a list of paragraph lines (the first being the marker text, the rest
+ * being hard-break continuations) into inline nodes, inserting a `hardBreak`
+ * between successive lines. Each non-final line carries an odd trailing
+ * backslash run as its hard-break marker, which is stripped before inline
+ * parsing — mirroring `parseParagraph` so list-item and top-level paragraphs
+ * round-trip identically (#1885).
+ */
+function parseHardBreakLines(textLines: readonly string[], depth: number): InlineNode[] {
+  const inlineNodes: InlineNode[] = []
+  for (let k = 0; k < textLines.length; k++) {
+    const line = textLines[k] as string
+    if (k === textLines.length - 1) {
+      inlineNodes.push(...parseLine(line, depth))
+    } else {
+      inlineNodes.push(...parseLine(line.slice(0, -1), depth), { type: 'hardBreak' })
+    }
+  }
+  return inlineNodes
+}
+
+/**
  * Collect the lines belonging to one list item that begins at `lines[start]`:
- * the marker line itself plus all subsequent more-indented (nested) lines.
- * Returns the inline text after the marker, the dedented nested lines, and the
- * index just past the item. `markerRe` must capture the item text in group 1
- * for bullets and group 2 for ordered items (selected via `textGroup`).
+ * the marker line, any hard-break continuation lines (each preceding line
+ * ending in an odd trailing backslash run — #1885), plus all subsequent
+ * more-indented (nested) lines. Returns the item's paragraph lines (the marker
+ * text followed by its continuations), the dedented nested lines, and the index
+ * just past the item. `markerRe` must capture the item text in group 1 for
+ * bullets and group 2 for ordered items (selected via `textGroup`).
  */
 function collectListItem(
   lines: readonly string[],
   start: number,
   markerRe: RegExp,
   textGroup: number,
-): { text: string; nested: string[]; next: number } | null {
+): { textLines: string[]; nested: string[]; next: number } | null {
   const itemMatch = (lines[start] as string).match(markerRe)
   if (!itemMatch) return null
-  const text = (itemMatch[textGroup] ?? '') as string
-  const nestedRaw: string[] = []
+  const textLines = [(itemMatch[textGroup] ?? '') as string]
   let j = start + 1
+  // A hard break inside the item's paragraph serializes as an odd trailing
+  // backslash run with the continuation on the next (unindented) line. Consume
+  // those continuations into the item's paragraph so the hard break survives the
+  // round-trip, exactly as `parseParagraph` does for top-level paragraphs.
+  while (j < lines.length && trailingBackslashRun(textLines.at(-1) as string) % 2 === 1) {
+    textLines.push(lines[j] as string)
+    j++
+  }
+  const nestedRaw: string[] = []
   while (j < lines.length && leadingIndent(lines[j] as string) > 0) {
     nestedRaw.push(lines[j] as string)
     j++
@@ -396,7 +427,7 @@ function collectListItem(
   const nested = Number.isFinite(minIndent)
     ? nestedRaw.map((line) => line.slice(minIndent))
     : nestedRaw
-  return { text, nested, next: j }
+  return { textLines, nested, next: j }
 }
 
 /** Ordered list: consecutive `N. item` lines, with nested (indented) lists. */
@@ -411,7 +442,7 @@ export function parseOrderedList(
   while (j < lines.length) {
     const collected = collectListItem(lines, j, ORDERED_ITEM_RE, 2)
     if (!collected) break
-    items.push(buildListItem(collected.text, collected.nested, depth))
+    items.push(buildListItem(collected.textLines, collected.nested, depth))
     j = collected.next
   }
   const consumed = j - i
@@ -451,7 +482,7 @@ export function parseBulletList(
     if (BULLET_TASK_RE.test(line)) break
     const collected = collectListItem(lines, j, BULLET_ITEM_RE, 1)
     if (!collected) break
-    items.push(buildListItem(collected.text, collected.nested, depth))
+    items.push(buildListItem(collected.textLines, collected.nested, depth))
     j = collected.next
   }
   const consumed = j - i
@@ -466,8 +497,8 @@ export function parseBulletList(
  * any resulting `bulletList`/`orderedList` blocks are appended so that
  * `Tab`/`sinkListItem` nesting round-trips without loss (#1513).
  */
-function buildListItem(itemText: string, nested: string[], depth: number): ListItemNode {
-  const inlineContent = parseLine(itemText, depth)
+function buildListItem(itemTextLines: string[], nested: string[], depth: number): ListItemNode {
+  const inlineContent = parseHardBreakLines(itemTextLines, depth)
   const paragraph: ParagraphNode =
     inlineContent.length === 0
       ? { type: 'paragraph' }
