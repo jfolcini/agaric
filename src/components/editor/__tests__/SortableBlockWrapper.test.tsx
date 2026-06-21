@@ -79,7 +79,6 @@ function makeProps(
       activeBlockId: null,
     } as never,
     hasChildren: false,
-    anyBlockHasChildren: false,
     isCollapsed: false,
     isAnimating: false,
     siblingSetsize: 1,

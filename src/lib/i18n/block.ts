@@ -31,18 +31,6 @@ export const block: Record<string, string> = {
   // key token is the UI-Events `key` value ("."), matching `toAriaKeyshortcuts`
   // (modifier → "Control", non-modifier whitespace stripped, no code-name map).
   'block.collapseKeyshortcuts': 'Control+.',
-  // #927 f3: tap-the-bullet zoom (Logseq's signature gesture). Every block —
-  // leaf or parent — renders a tappable bullet that zooms into the block. The
-  // bullet doubles as the collapsed/has-children indicator (a ring halo when
-  // the block has hidden children).
-  'block.zoomBullet': 'Zoom in',
-  'block.zoomBulletTip': 'Zoom in (Alt+.)',
-  'block.zoomBulletCollapsed': 'Zoom in (has hidden children)',
-  // #976 (item 12) — an EXPANDED parent and a leaf both previously announced a
-  // bare "Zoom in", so screen-reader users couldn't tell them apart (the
-  // collapsed state already has its own label + a visual halo). Distinguish the
-  // expanded-parent case so AT users know the block has children to zoom into.
-  'block.zoomBulletParent': 'Zoom in (block has children)',
   // #927 f4: swipe-to-indent / swipe-to-outdent gestures on touch. Surfaced as
   // aria descriptions so assistive tech announces the available gestures.
   'block.swipe.indented': 'Block indented',

@@ -111,8 +111,6 @@ export function BlockListRenderer({
     dragStore.notifyPending()
   })
 
-  const anyBlockHasChildren = hasChildrenSet.size > 0
-
   // #1069 — derive a Set once per render so per-row membership is O(1).
   // `selectedBlockIds` stays a string[] in the store; the lookup below ran
   // before the React.memo gate, making selection-changing renders N×O(N).
@@ -249,7 +247,6 @@ export function BlockListRenderer({
                     viewport={viewport}
                     rovingEditor={rovingEditor}
                     hasChildren={hasChildrenSet.has(block.id)}
-                    anyBlockHasChildren={anyBlockHasChildren}
                     isCollapsed={collapsedIds.has(block.id)}
                     isAnimating={animatingBlockIds.has(block.id)}
                     siblingSetsize={aria?.setsize}

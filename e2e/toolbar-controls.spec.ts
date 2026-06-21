@@ -37,7 +37,6 @@ import {
   activeSheet,
   expect,
   focusBlock,
-  focusBlockById,
   openPage,
   reopenPage,
   saveBlock,
@@ -328,34 +327,19 @@ test.describe('Inline controls — gutter (#1170)', () => {
     await waitForBoot(page)
   })
 
-  test('zoom bullet zooms into the block', async ({ page }) => {
+  test('context-menu Zoom in zooms into the block', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
-    // The bullet's zoom is wired only when the block has children
-    // (`onZoomIn = hasChildren ? … : undefined`), so give GS_1 a child by
-    // indenting GS_2 under it (Ctrl+Shift+ArrowRight = indent).
-    const blocks = page.locator('[data-testid="sortable-block"]')
-    const ids = await blocks.evaluateAll((els) =>
-      els.map((el) => el.getAttribute('data-block-id') ?? ''),
-    )
-    const [gs1Id, gs2Id] = ids
-    await focusBlockById(page, gs2Id ?? '')
-    await page.keyboard.press('Control+Shift+ArrowRight')
-    await expect
-      .poll(async () =>
-        Number.parseInt(
-          await blocks.nth(1).evaluate((el) => window.getComputedStyle(el).paddingLeft),
-          10,
-        ),
-      )
-      .toBeGreaterThan(0)
-    await page.keyboard.press('Escape')
+    // The inline zoom bullet was removed (2026-06-20); zoom is now reached via
+    // the right-click / long-press context menu and is available for ANY block
+    // (no longer gated on having children). Right-click the first block and
+    // choose "Zoom in".
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    await firstBlock.click({ button: 'right' })
 
-    // Hover the now-parent block to reveal its bullet, then click it.
-    const parentRow = page.locator(`[data-testid="sortable-block"][data-block-id="${gs1Id}"]`)
-    await parentRow.hover()
-    const bullet = parentRow.locator('[data-testid="block-bullet"]')
-    await bullet.click()
+    const menu = page.getByRole('menu', { name: 'Block actions' }).last()
+    await expect(menu).toBeVisible()
+    await menu.getByRole('menuitem', { name: 'Zoom in' }).click()
 
     // Zooming renders the BlockZoomBar with a Home crumb.
     await expect(page.locator('[data-zoom-crumb="home"]')).toBeVisible()

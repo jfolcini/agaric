@@ -1,4 +1,4 @@
-import { expect, openPage, test, waitForBoot } from './helpers'
+import { deleteBlockViaContextMenu, expect, openPage, test, waitForBoot } from './helpers'
 
 // HistoryView tests mutate and assert against the shared
 // mock op-log within a describe — same risk profile as undo-redo-blocks,
@@ -112,12 +112,9 @@ test.describe('HistoryView batch revert', () => {
     const countBefore = await page.locator('[data-testid="sortable-block"]').count()
     expect(countBefore).toBeGreaterThan(0)
 
-    // Delete the first block
+    // Delete the first block via the context menu
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
-    await firstBlock.hover()
-    const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
-    await expect(deleteBtn).toBeVisible()
-    await deleteBtn.click()
+    await deleteBlockViaContextMenu(page, firstBlock)
     await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore - 1)
 
     // Navigate to History

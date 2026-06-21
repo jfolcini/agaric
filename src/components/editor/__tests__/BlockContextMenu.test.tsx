@@ -205,18 +205,20 @@ describe('BlockContextMenu', () => {
     const menu = screen.getByRole('menu')
     // Top-level rows.
     expect(within(menu).getByText(t('contextMenu.delete'))).toBeInTheDocument()
-    expect(within(menu).getByText(t('contextMenu.indent'))).toBeInTheDocument()
-    expect(within(menu).getByText(t('contextMenu.dedent'))).toBeInTheDocument()
     expect(within(menu).getByText(t('contextMenu.collapse'))).toBeInTheDocument()
     expect(within(menu).getByText(t('contextMenu.setTodo'))).toBeInTheDocument()
     expect(within(menu).getByText(t('contextMenu.setPriority1'))).toBeInTheDocument()
-    // #1109 — the "Move & arrange" disclosure toggle is top-level; Move up /
-    // Move down are nested under it and surface only when it expands.
+    // Indent / Dedent / Move up / Move down are nested under the "Move &
+    // arrange" disclosure toggle and surface only when it expands.
     expect(within(menu).getByText(t('contextMenu.moveArrange'))).toBeInTheDocument()
+    expect(within(menu).queryByText(t('contextMenu.indent'))).not.toBeInTheDocument()
+    expect(within(menu).queryByText(t('contextMenu.dedent'))).not.toBeInTheDocument()
     expect(within(menu).queryByText(t('contextMenu.moveUp'))).not.toBeInTheDocument()
     expect(within(menu).queryByText(t('contextMenu.moveDown'))).not.toBeInTheDocument()
 
     await expandMoveArrange(user)
+    expect(within(menu).getByText(t('contextMenu.indent'))).toBeInTheDocument()
+    expect(within(menu).getByText(t('contextMenu.dedent'))).toBeInTheDocument()
     expect(within(menu).getByText(t('contextMenu.moveUp'))).toBeInTheDocument()
     expect(within(menu).getByText(t('contextMenu.moveDown'))).toBeInTheDocument()
   })
@@ -235,6 +237,8 @@ describe('BlockContextMenu', () => {
     const user = userEvent.setup()
     const { props } = renderMenu()
 
+    // Indent is nested under the "Move & arrange" disclosure.
+    await expandMoveArrange(user)
     await user.click(screen.getByText(t('contextMenu.indent')))
 
     expect(props.onIndent).toHaveBeenCalledWith('BLOCK_01')
@@ -245,6 +249,8 @@ describe('BlockContextMenu', () => {
     const user = userEvent.setup()
     const { props } = renderMenu()
 
+    // Dedent is nested under the "Move & arrange" disclosure.
+    await expandMoveArrange(user)
     await user.click(screen.getByText(t('contextMenu.dedent')))
 
     expect(props.onDedent).toHaveBeenCalledWith('BLOCK_01')
@@ -370,6 +376,16 @@ describe('BlockContextMenu', () => {
     expect(screen.getByText(t('contextMenu.expand'))).toBeInTheDocument()
   })
 
+  // Zoom in is ungated (2026-06-20): it works for ANY block, including leaves,
+  // now that the inline any-block zoom bullet was removed. Collapse/Expand stays
+  // children-gated, so a leaf shows Zoom in but no Collapse/Expand.
+  it('shows Zoom in for a leaf block (hasChildren false) when onZoomIn is provided', () => {
+    renderMenu({ hasChildren: false, onZoomIn: vi.fn() })
+    expect(screen.getByText(t('contextMenu.zoomIn'))).toBeInTheDocument()
+    expect(screen.queryByText(t('contextMenu.collapse'))).not.toBeInTheDocument()
+    expect(screen.queryByText(t('contextMenu.expand'))).not.toBeInTheDocument()
+  })
+
   // ── Keyboard navigation ─────────────────────────────────────────
 
   it('ArrowDown moves focus to next item', () => {
@@ -454,16 +470,14 @@ describe('BlockContextMenu', () => {
 
   // ── Shortcut hints ──────────────────────────────────────────────
 
-  it('renders shortcut hints for top-level items', () => {
+  it('renders shortcut hints for top-level items', async () => {
     // #976 (items 16-19) — wire the actions whose hints were previously missing
     // (merge, zoom-in) so we can assert their newly-added shortcut hints too.
+    const user = userEvent.setup()
     renderMenu({ onMerge: vi.fn(), onZoomIn: vi.fn(), onShowHistory: vi.fn() })
 
     const menu = screen.getByRole('menu')
-    // Hints on rows that stay top-level (Indent/Dedent inline, tasks, view,
-    // history, delete).
-    expect(within(menu).getByText('Ctrl+Shift+→')).toBeInTheDocument()
-    expect(within(menu).getByText('Ctrl+Shift+←')).toBeInTheDocument()
+    // Hints on rows that stay top-level (tasks, view, history, delete).
     expect(within(menu).getByText('Ctrl+.')).toBeInTheDocument()
     expect(within(menu).getByText('Ctrl+Enter')).toBeInTheDocument()
     // #976 (item 19) — alternation notation, no longer the ambiguous "1-3".
@@ -475,6 +489,14 @@ describe('BlockContextMenu', () => {
     expect(within(menu).getByText('Alt+.')).toBeInTheDocument()
     // #976 (item 15) — block-history keyboard binding hint.
     expect(within(menu).getByText('Ctrl+Shift+Y')).toBeInTheDocument()
+
+    // Indent / Dedent moved behind the "Move & arrange" disclosure; their hints
+    // surface once it expands.
+    expect(within(menu).queryByText('Ctrl+Shift+→')).not.toBeInTheDocument()
+    expect(within(menu).queryByText('Ctrl+Shift+←')).not.toBeInTheDocument()
+    await expandMoveArrange(user)
+    expect(within(menu).getByText('Ctrl+Shift+→')).toBeInTheDocument()
+    expect(within(menu).getByText('Ctrl+Shift+←')).toBeInTheDocument()
   })
 
   // #1728 — the hints are no longer hardcoded literals; they are sourced from
@@ -495,11 +517,14 @@ describe('BlockContextMenu', () => {
       __resetPlatformCacheForTests()
     })
 
-    it('reflects a user rebind of a context-menu action', () => {
+    it('reflects a user rebind of a context-menu action', async () => {
       // Rebind "indent" from the default Ctrl+Shift+→ to Alt+Shift+→.
+      const user = userEvent.setup()
       setCustomShortcut('indentBlock', 'Alt + Shift + Arrow Right')
       renderMenu()
       const menu = screen.getByRole('menu')
+      // Indent lives behind the "Move & arrange" disclosure; expand to reveal it.
+      await expandMoveArrange(user)
       // The remapped binding is shown; the stale default is gone.
       expect(within(menu).getByText('Alt+Shift+→')).toBeInTheDocument()
       expect(within(menu).queryByText('Ctrl+Shift+→')).not.toBeInTheDocument()
@@ -752,13 +777,13 @@ describe('BlockContextMenu', () => {
     renderMenu()
 
     const items = screen.getAllByRole('menuitem')
-    // #1109 — Move up / Move down live behind the collapsed "Move & arrange"
-    // disclosure. #1445 — the link group is now always present, contributing
-    // "Copy block reference" ("Copy page reference" is absent here since no
-    // `pageRefId` prop is passed). So the default (collapsed) menu shows 8 rows:
-    // Copy block reference, Set as TODO, Set priority 1, Indent, Dedent, Move &
+    // Indent / Dedent / Move up / Move down live behind the collapsed "Move &
+    // arrange" disclosure. #1445 — the link group is now always present,
+    // contributing "Copy block reference" ("Copy page reference" is absent here
+    // since no `pageRefId` prop is passed). So the default (collapsed) menu
+    // shows 6 rows: Copy block reference, Set as TODO, Set priority 1, Move &
     // arrange (toggle), Collapse, Delete.
-    expect(items.length).toBe(8)
+    expect(items.length).toBe(6)
   })
 
   it('menu has aria-label', () => {
@@ -1266,6 +1291,8 @@ describe('BlockContextMenu', () => {
 
       renderMenu({ onClose, onIndent })
 
+      // Indent is nested under the "Move & arrange" disclosure.
+      await expandMoveArrange(user)
       await user.click(screen.getByText(t('contextMenu.indent')))
 
       await waitFor(() => {
@@ -1585,14 +1612,15 @@ describe('BlockContextMenu', () => {
     })
 
     it('omits the toggle entirely when no nested op is wired', () => {
-      // Only Indent/Dedent wired (no move/duplicate/merge) → the disclosure has
-      // no children, so the toggle must not render (no dead-end disclosure).
+      // No move-arrange child wired (Indent/Dedent/Move up/Move down/Duplicate/
+      // Merge all absent) → the disclosure has no children, so the toggle must
+      // not render (no dead-end disclosure). Only a non-move action is wired.
       render(
         <BlockContextMenu
           blockId="BLOCK_01"
           position={{ x: 0, y: 0 }}
           onClose={vi.fn()}
-          actions={{ onIndent: vi.fn(), onDedent: vi.fn() }}
+          actions={{ onToggleTodo: vi.fn() }}
           hasChildren={false}
         />,
       )
@@ -1668,10 +1696,11 @@ describe('BlockContextMenu actions bag (#1020)', () => {
     expect(onClose).toHaveBeenCalled()
   })
 
-  it('renders only the items whose action is present in the bag — a missing action is omitted, never a dead row', () => {
+  it('renders only the items whose action is present in the bag — a missing action is omitted, never a dead row', async () => {
     // A deliberately partial bag: only Delete + Indent are wired. Every OTHER
     // action key is absent, so the menu must NOT render those items at all
     // (no dead/no-op buttons that would silently fail when clicked).
+    const user = userEvent.setup()
     render(
       <BlockContextMenu
         blockId="BLOCK_01"
@@ -1685,14 +1714,16 @@ describe('BlockContextMenu actions bag (#1020)', () => {
     const menu = screen.getByRole('menu')
     // Present:
     expect(within(menu).getByText(t('contextMenu.delete'))).toBeInTheDocument()
-    expect(within(menu).getByText(t('contextMenu.indent'))).toBeInTheDocument()
     // #1445 — "Copy block reference" is independent of the actions bag (it only
     // needs the blockId), so it is always present.
     expect(within(menu).getByText(t('contextMenu.copyBlockRef'))).toBeInTheDocument()
+    // Indent is wired but nested under the (collapsed) "Move & arrange"
+    // disclosure, so the toggle is present while Indent itself is hidden.
+    expect(
+      within(menu).getByRole('menuitem', { name: new RegExp(t('contextMenu.moveArrange')) }),
+    ).toBeInTheDocument()
+    expect(within(menu).queryByText(t('contextMenu.indent'))).not.toBeInTheDocument()
     // Absent (their bag keys were never provided):
-    expect(within(menu).queryByText(t('contextMenu.dedent'))).not.toBeInTheDocument()
-    expect(within(menu).queryByText(t('contextMenu.moveUp'))).not.toBeInTheDocument()
-    expect(within(menu).queryByText(t('contextMenu.moveDown'))).not.toBeInTheDocument()
     expect(within(menu).queryByText(t('contextMenu.setTodo'))).not.toBeInTheDocument()
     expect(within(menu).queryByText(t('contextMenu.setPriority1'))).not.toBeInTheDocument()
     // hasChildren=true but no onToggleCollapse → no Collapse row.
@@ -1700,9 +1731,19 @@ describe('BlockContextMenu actions bag (#1020)', () => {
     // #1445 — no `pageRefId` passed here → "Copy page reference" stays absent.
     expect(within(menu).queryByText(t('contextMenu.copyPageRef'))).not.toBeInTheDocument()
 
-    // The two wired bag items plus the always-present Copy block reference —
+    // Top-level: Delete, Copy block reference, and the Move & arrange toggle —
     // no extra dead rows.
     expect(screen.getAllByRole('menuitem')).toHaveLength(3)
+
+    // Expanding the disclosure reveals Indent (the only wired child); Dedent /
+    // Move up / Move down stay absent since their bag keys were never provided.
+    await user.click(
+      within(menu).getByRole('menuitem', { name: new RegExp(t('contextMenu.moveArrange')) }),
+    )
+    expect(within(menu).getByText(t('contextMenu.indent'))).toBeInTheDocument()
+    expect(within(menu).queryByText(t('contextMenu.dedent'))).not.toBeInTheDocument()
+    expect(within(menu).queryByText(t('contextMenu.moveUp'))).not.toBeInTheDocument()
+    expect(within(menu).queryByText(t('contextMenu.moveDown'))).not.toBeInTheDocument()
   })
 
   it('still renders the Copy block reference row when the actions bag is empty (#1445)', () => {
