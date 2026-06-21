@@ -27,12 +27,25 @@ pub struct ParsedBlock {
     pub properties: Vec<(String, String)>,
 }
 
-/// Result of parsing a markdown file.
+/// Outcome of importing one markdown file: the created page plus aggregate
+/// counts and any non-fatal diagnostics, returned by
+/// [`import_markdown_with_progress`] and surfaced to the import UI.
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct ImportResult {
+    /// Title of the page block the import created (derived from the filename
+    /// or the file's leading heading).
     pub page_title: String,
+    /// Number of content blocks made durable by the import.
     pub blocks_created: i64,
+    /// Number of page-level properties stamped onto the created page (e.g.
+    /// from YAML frontmatter).
     pub properties_set: i64,
+    /// Non-fatal diagnostics collected while importing. Carries both soft
+    /// parse warnings (e.g. depth clamping, stripped `((block-ref))` tokens,
+    /// ambiguous wiki-links left as plain text) and per-item skip notices
+    /// (e.g. a frontmatter ref property that could not resolve to a page).
+    /// Empty on a fully clean import. Surfaced to the user and logged at
+    /// `warn!` on completion so a lossy import is never silent.
     pub warnings: Vec<String>,
 }
 
@@ -128,8 +141,16 @@ pub trait ImportProgressSink: Send + Sync {
 
 impl ImportProgressSink for tauri::ipc::Channel<ImportProgressUpdate> {
     fn emit(&self, update: ImportProgressUpdate) {
-        // Best-effort: a dropped channel must not fail the import.
-        let _ = self.send(update);
+        // Best-effort: a dropped channel must not fail the import. #1932 —
+        // but record the failure at debug so a frozen progress bar can be
+        // distinguished from a hung import ("progress channel dead" vs
+        // "import stuck") when triaging from the log.
+        if let Err(e) = self.send(update) {
+            tracing::debug!(
+                error = %e,
+                "import: progress channel send failed (frontend likely dropped it)"
+            );
+        }
     }
 }
 
@@ -170,6 +191,12 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     // hand-crafted/untrusted body bullet like `space:: X` is skipped instead of
     // failing an otherwise-valid import.
     let mut reserved_property_count: usize = 0;
+    // #1933: count `((uuid))` block references removed from content. Block-ref
+    // stripping is a lossy transform (the reference target vanishes) held to a
+    // lower observability bar than the other lossy transforms in this function;
+    // counting it here surfaces an aggregate warning so an import that drops
+    // block-refs is diagnosable from the returned warnings / logs.
+    let mut stripped_block_ref_count: usize = 0;
 
     // Normalize line endings BEFORE any other parsing. The frontmatter strip
     // below uses `find("\n---")`, which is fragile against CRLF (works only
@@ -225,7 +252,8 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
         // Check if this is a list item (- prefix)
         if let Some(text) = trimmed.strip_prefix("- ") {
             // Strip ((uuid)) block references -> plain text
-            let cleaned = strip_block_refs(text);
+            let (cleaned, removed) = strip_block_refs_counted(text);
+            stripped_block_ref_count += removed;
 
             blocks.push(ParsedBlock {
                 content: cleaned,
@@ -286,7 +314,8 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
             // bullet. Append it (newline-joined) to the owning block's content
             // instead of spawning a separate block, matching how Logseq stores
             // multi-line bullet bodies.
-            let cleaned = strip_block_refs(trimmed);
+            let (cleaned, removed) = strip_block_refs_counted(trimmed);
+            stripped_block_ref_count += removed;
             if !cleaned.is_empty() {
                 if !last.content.is_empty() {
                     last.content.push('\n');
@@ -296,7 +325,8 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
         } else {
             // Non-list, non-property line with no preceding block (file starts
             // with bare text) -- treat as a standalone depth-0 content block.
-            let cleaned = strip_block_refs(trimmed);
+            let (cleaned, removed) = strip_block_refs_counted(trimmed);
+            stripped_block_ref_count += removed;
             blocks.push(ParsedBlock {
                 content: cleaned,
                 depth,
@@ -333,6 +363,15 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
         warnings.push(format!(
             "{reserved_property_count} reserved/exporter-managed property line(s) (e.g. `space`) \
              were skipped during import"
+        ));
+    }
+    if stripped_block_ref_count > 0 {
+        // #1933: block-ref stripping is data-lossy (the `((uuid))` target is
+        // removed). Surface an aggregate warning so the drop is recoverable
+        // from the returned warnings / the import summary log, not silent.
+        warnings.push(format!(
+            "{stripped_block_ref_count} ((block-ref)) reference(s) were stripped from imported \
+             content and could not be preserved"
         ));
     }
 
@@ -656,10 +695,29 @@ static BLOCK_REF_RE: LazyLock<Regex> =
 static MULTI_SPACE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"  +").expect("invalid multi-space regex"));
 
-/// Strip `((uuid))` block references, replacing with their inner text or removing them.
-fn strip_block_refs(text: &str) -> String {
+/// Strip `((uuid))` block references, reporting how many `((uuid))` block
+/// references it removed (#1933). Block-reference stripping is a lossy
+/// transform — the reference target is silently dropped — so the import path
+/// needs a count to surface an aggregate diagnostic, mirroring the
+/// depth-clamp / orphan-property counters. Returns the cleaned text and the
+/// number of references removed from this line.
+fn strip_block_refs_counted(text: &str) -> (String, usize) {
+    let removed = BLOCK_REF_RE.find_iter(text).count();
+    if removed > 0 {
+        // Per-occurrence diagnostic so a stalled or lossy import is
+        // traceable line-by-line at debug level; the aggregate warning
+        // (assembled by `parse_logseq_markdown`) is the operator-facing
+        // summary.
+        tracing::debug!(
+            removed,
+            "stripping ((block-ref)) token(s) from imported line (#1933)"
+        );
+    }
     let result = BLOCK_REF_RE.replace_all(text, "");
-    MULTI_SPACE_RE.replace_all(result.trim(), " ").to_string()
+    (
+        MULTI_SPACE_RE.replace_all(result.trim(), " ").to_string(),
+        removed,
+    )
 }
 
 /// I-Core-10: matches the same alphabet that `op::validate_set_property`
@@ -779,6 +837,47 @@ mod tests {
     fn parse_block_refs_stripped() {
         let output = parse_logseq_markdown("- See ((abc-123)) here");
         assert_eq!(output.blocks[0].content, "See here");
+    }
+
+    /// #1933: block-ref stripping is a lossy transform and must surface an
+    /// aggregate warning carrying the count of references dropped, mirroring
+    /// the depth-clamp / orphan-property counters. The count covers list
+    /// items, continuation lines, and bare content lines.
+    #[test]
+    fn parse_block_refs_stripped_counts_and_warns_1933() {
+        let md = "\
+- See ((abc-123)) and ((def-456)) here
+  continuation with ((ghi-789))
+bare line ((jkl-012)) too";
+        let output = parse_logseq_markdown(md);
+        // Four refs total: two on the bullet, one on the continuation, one on
+        // the bare content line.
+        let warning = output
+            .warnings
+            .iter()
+            .find(|w| w.contains("((block-ref))"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "a block-ref-stripped warning must be emitted; got {:?}",
+                    output.warnings
+                )
+            });
+        assert!(
+            warning.contains("4 ((block-ref)) reference(s) were stripped"),
+            "warning must carry the count of stripped refs; got {warning:?}"
+        );
+    }
+
+    /// #1933: content with no block references must NOT emit a block-ref
+    /// warning (the counter only fires on an actual lossy strip).
+    #[test]
+    fn parse_no_block_refs_no_warning_1933() {
+        let output = parse_logseq_markdown("- A plain block\n- Another plain block");
+        assert!(
+            !output.warnings.iter().any(|w| w.contains("((block-ref))")),
+            "no block-ref warning when nothing was stripped; got {:?}",
+            output.warnings
+        );
     }
 
     #[test]
