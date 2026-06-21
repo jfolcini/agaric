@@ -443,6 +443,124 @@ jobs:
           echo "Uploading (clobber) ${appimages[0]} to release ${GITHUB_REF_NAME}"
           gh release upload "${GITHUB_REF_NAME}" "${appimages[0]}" --clobber
 
+      # #808 — produce the signed updater payload for each desktop platform.
+      # The in-app updater (tauri.conf.json plugins.updater) downloads the raw
+      # bundle and verifies a detached minisign `.sig` against the configured
+      # pubkey, then the fan-in `generate-latest-json` job stitches the four
+      # signatures into the `latest.json` manifest the endpoint serves.
+      #
+      # Signing is done HERE, in dedicated steps whose env holds ONLY the two
+      # TAURI_SIGNING_* secrets — never co-located with GITHUB_TOKEN or any JS
+      # build (#815). `bundle.createUpdaterArtifacts` is intentionally left
+      # false so the key never reaches `cargo tauri build`; we sign the
+      # already-built bundles out-of-band with `tauri signer sign` (the
+      # lockfile-pinned CLI via `npm run tauri`). Each `.sig` is uploaded in a
+      # SEPARATE step whose env holds only GITHUB_TOKEN, so each secret lives
+      # in exactly one step.
+      #
+      # Order matters: these run AFTER the AppImage repack-and-clobber above so
+      # Linux signs the FINAL repacked AppImage, and BEFORE the SBOM/attest
+      # block below so the macOS `.app.tar.gz` (built here) exists for the
+      # macOS attestation glob.
+      - name: Sign updater payload (Linux AppImage)
+        if: matrix.platform == 'ubuntu-24.04'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/appimage
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          appimages=("$BUNDLE_DIR"/Agaric_*_amd64.AppImage)
+          [ ${#appimages[@]} -eq 1 ] || { echo "::error::expected exactly 1 AppImage, found ${#appimages[@]}"; exit 1; }
+          npm run tauri -- signer sign "${appimages[0]}"
+          test -f "${appimages[0]}.sig"
+
+      - name: Upload Linux updater signature
+        if: matrix.platform == 'ubuntu-24.04'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/appimage
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          sigs=("$BUNDLE_DIR"/Agaric_*_amd64.AppImage.sig)
+          [ ${#sigs[@]} -eq 1 ] || { echo "::error::expected exactly 1 AppImage .sig, found ${#sigs[@]}"; exit 1; }
+          gh release upload "${GITHUB_REF_NAME}" "${sigs[0]}" --clobber
+
+      - name: Sign updater payload (Windows NSIS)
+        if: matrix.platform == 'windows-2025-vs2026'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/nsis
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          setups=("$BUNDLE_DIR"/*-setup.exe)
+          [ ${#setups[@]} -eq 1 ] || { echo "::error::expected exactly 1 NSIS setup, found ${#setups[@]}"; exit 1; }
+          npm run tauri -- signer sign "${setups[0]}"
+          test -f "${setups[0]}.sig"
+
+      - name: Upload Windows updater signature
+        if: matrix.platform == 'windows-2025-vs2026'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/nsis
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          sigs=("$BUNDLE_DIR"/*-setup.exe.sig)
+          [ ${#sigs[@]} -eq 1 ] || { echo "::error::expected exactly 1 NSIS .sig, found ${#sigs[@]}"; exit 1; }
+          gh release upload "${GITHUB_REF_NAME}" "${sigs[0]}" --clobber
+
+      # macOS: `createUpdaterArtifacts=false` means no `.app.tar.gz` is built,
+      # so we build it here from the `.app` bundle. Name it with the arch token
+      # (x86_64 / aarch64) so the two macos-15 matrix cells don't collide on a
+      # single `Agaric.app.tar.gz` asset and the fan-in job can map each `.sig`
+      # to its `darwin-*` platform key unambiguously.
+      - name: Build + sign updater payload (macOS app.tar.gz)
+        if: matrix.platform == 'macos-15'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/macos
+          MATRIX_TARGET: ${{ matrix.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apps=("$BUNDLE_DIR"/*.app)
+          [ ${#apps[@]} -eq 1 ] || { echo "::error::expected exactly 1 .app, found ${#apps[@]}"; exit 1; }
+          app="${apps[0]}"
+          version="${GITHUB_REF_NAME#v}"
+          arch="${MATRIX_TARGET%%-*}"   # x86_64 | aarch64
+          tarball="$BUNDLE_DIR/Agaric_${version}_${arch}.app.tar.gz"
+          # Tar the `.app` directory by basename (relative to its parent) so the
+          # archive unpacks to `Agaric.app`, the layout the updater replaces.
+          tar -C "$BUNDLE_DIR" -czf "$tarball" "$(basename "$app")"
+          npm run tauri -- signer sign "$tarball"
+          test -f "${tarball}.sig"
+
+      - name: Upload macOS updater payload + signature
+        if: matrix.platform == 'macos-15'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/macos
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tarballs=("$BUNDLE_DIR"/Agaric_*.app.tar.gz)
+          sigs=("$BUNDLE_DIR"/Agaric_*.app.tar.gz.sig)
+          [ ${#tarballs[@]} -eq 1 ] || { echo "::error::expected exactly 1 app.tar.gz, found ${#tarballs[@]}"; exit 1; }
+          [ ${#sigs[@]} -eq 1 ] || { echo "::error::expected exactly 1 app.tar.gz .sig, found ${#sigs[@]}"; exit 1; }
+          gh release upload "${GITHUB_REF_NAME}" "${tarballs[0]}" "${sigs[0]}" --clobber
+
       # PEND-40 #5: SLSA build provenance attestations for every released
       # desktop bundle. Each `subject-path` glob is narrowed to the file
       # extensions that actually ship on this platform — a single broad
@@ -458,10 +576,13 @@ jobs:
       # <file> --repo jfolcini/agaric`.
       # Detached `.sig` files (Tauri updater signatures) are intentionally
       # NOT attested — they are verification metadata for the parent
-      # bundle, not standalone artifacts. Updater payloads themselves
-      # (`.AppImage.tar.gz`, `.msi.zip`, `.exe.zip`, `.app.tar.gz`) ARE
-      # attested because they ship as distributable binaries to end users
-      # via the in-app updater.
+      # bundle, not standalone artifacts. The in-app updater payloads (#808)
+      # are the raw `.AppImage` (Linux), the raw NSIS `-setup.exe` (Windows),
+      # and the hand-built `.app.tar.gz` (macOS); all three ARE attested via
+      # the platform globs below because they ship as distributable binaries
+      # to end users via the in-app updater. (`createUpdaterArtifacts` stays
+      # false, so no bundler-produced `.AppImage.tar.gz` / `.msi.zip` /
+      # `.exe.zip` exist to attest.)
       # PEND-41 R9 — SBOM generation per platform. Two formats so downstream
       # consumers (Flathub, Homebrew tap, security scanners) get whichever
       # they support: SPDX-JSON (Linux Foundation standard) and CycloneDX-JSON
@@ -555,7 +676,6 @@ jobs:
         with:
           subject-path: |
             src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
-            src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage.tar.gz
             src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb
             ${{ runner.temp }}/agaric-${{ matrix.target }}.spdx.json
             ${{ runner.temp }}/agaric-${{ matrix.target }}.cyclonedx.json
@@ -567,9 +687,7 @@ jobs:
         with:
           subject-path: |
             src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
-            src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi.zip
             src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
-            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe.zip
             ${{ runner.temp }}/agaric-${{ matrix.target }}.spdx.json
             ${{ runner.temp }}/agaric-${{ matrix.target }}.cyclonedx.json
 
@@ -1150,9 +1268,106 @@ jobs:
   # what they just downloaded; the same content also lands on the workflow
   # run's step-summary page for the maintainer's at-a-glance check.
   # ---------------------------------------------------------------------------
+  # #808 — fan-in: stitch the four per-platform updater signatures (uploaded
+  # as `.sig` draft-release assets by the build-and-release matrix) into the
+  # `latest.json` manifest the configured updater endpoint serves, then upload
+  # it to the draft release. Without this, every installed app's update check
+  # 404s on `releases/latest/download/latest.json`. Runs after all four desktop
+  # cells finish; Android is excluded (it updates via the Play Store / APK, not
+  # Tauri's updater).
+  generate-latest-json:
+    needs: [verify-version, validate, build-and-release]
+    if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' && needs.build-and-release.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # gh release download + upload of .sig assets / latest.json
+    # Pure gh-API download + jq assembly + upload; trivial. 10-min budget.
+    timeout-minutes: 10
+    steps:
+      - name: Build and upload latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          base_url="https://github.com/${REPO}/releases/download/${TAG}"
+          tmp="$(mktemp -d)"
+          # Pull every updater signature uploaded by the build matrix.
+          gh release download "$TAG" --repo "$REPO" --dir "$tmp" --pattern '*.sig'
+
+          # Map each `.sig` (named `<payload-basename>.sig`) to its Tauri
+          # platform key. The macOS tarballs carry an explicit arch token so
+          # the two darwin cells never collide.
+          declare -A PLAT
+          shopt -s nullglob
+          for sig in "$tmp"/*.sig; do
+            base="$(basename "${sig%.sig}")"
+            case "$base" in
+              *_amd64.AppImage)                     key="linux-x86_64" ;;
+              *-setup.exe)                          key="windows-x86_64" ;;
+              *_x86_64.app.tar.gz)                  key="darwin-x86_64" ;;
+              *_aarch64.app.tar.gz)                 key="darwin-aarch64" ;;
+              *) echo "::error::unrecognised updater payload: $base"; exit 1 ;;
+            esac
+            PLAT["$key"]="$(jq -n --arg s "$(cat "$sig")" --arg u "${base_url}/${base}" \
+              '{signature:$s, url:$u}')"
+          done
+
+          for k in linux-x86_64 windows-x86_64 darwin-x86_64 darwin-aarch64; do
+            [ -n "${PLAT[$k]:-}" ] || { echo "::error::missing updater signature for platform $k"; exit 1; }
+          done
+
+          pub_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          notes="See the release page for the changelog and install instructions."
+          jq -n \
+            --arg version "$version" \
+            --arg notes "$notes" \
+            --arg pub_date "$pub_date" \
+            --argjson linux   "${PLAT[linux-x86_64]}" \
+            --argjson windows "${PLAT[windows-x86_64]}" \
+            --argjson dx86    "${PLAT[darwin-x86_64]}" \
+            --argjson darm    "${PLAT[darwin-aarch64]}" \
+            '{version:$version, notes:$notes, pub_date:$pub_date,
+              platforms:{ "linux-x86_64":$linux, "windows-x86_64":$windows,
+                          "darwin-x86_64":$dx86, "darwin-aarch64":$darm }}' \
+            > "$tmp/latest.json"
+
+          gh release upload "$TAG" "$tmp/latest.json" --repo "$REPO" --clobber
+
+      # Smoke-assert the manifest landed and is internally consistent. NOTE the
+      # public `releases/latest/download/latest.json` endpoint only resolves
+      # AFTER the draft is published (a draft is never "latest"), so this reads
+      # the draft assets directly rather than hitting the public URL.
+      - name: Smoke-assert updater manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          assets="$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name')"
+          grep -qx 'latest.json' <<<"$assets" || { echo "::error::latest.json not on release"; exit 1; }
+          sig_count="$(grep -c '\.sig$' <<<"$assets" || true)"
+          [ "$sig_count" -ge 4 ] || { echo "::error::expected >=4 .sig assets, found $sig_count"; exit 1; }
+          tmp="$(mktemp -d)"
+          gh release download "$TAG" --repo "$REPO" --dir "$tmp" --pattern 'latest.json'
+          got="$(jq -r .version "$tmp/latest.json")"
+          [ "$got" = "$version" ] || { echo "::error::latest.json.version=$got != tag $version"; exit 1; }
+          jq -e '.platforms
+                 | (keys|sort) == ["darwin-aarch64","darwin-x86_64","linux-x86_64","windows-x86_64"]
+                   and (to_entries|all(.value.signature != "" and .value.url != ""))' \
+            "$tmp/latest.json" >/dev/null \
+            || { echo "::error::latest.json platforms incomplete"; exit 1; }
+          echo "latest.json smoke check passed."
+
   finalize-release-notes:
-    needs: [verify-version, validate, build-and-release, android-build-and-release, generate-vex]
-    if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' && needs.build-and-release.result == 'success' && needs.android-build-and-release.result == 'success' && needs.generate-vex.result == 'success' }}
+    needs: [verify-version, validate, build-and-release, android-build-and-release, generate-vex, generate-latest-json]
+    if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' && needs.build-and-release.result == 'success' && needs.android-build-and-release.result == 'success' && needs.generate-vex.result == 'success' && needs.generate-latest-json.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write # gh release edit appends to the draft release notes
