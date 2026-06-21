@@ -3317,6 +3317,25 @@ export const HANDLERS: Record<string, Handler> = {
     // mock fixtures that pre-date this fix don't break.
     const spaceId = (a['spaceId'] as string | undefined) ?? ''
 
+    // `onProgress` (#128) — the real backend streams per-block progress over a
+    // `Channel<ImportProgressUpdate>`. The FE wrapper (`importMarkdown` in
+    // `tauri.ts`) ALWAYS passes a `Channel` as the `progress` arg, even when no
+    // callback is wired. `mockIPC` forwards args verbatim (no IPC
+    // serialization), so `a['progress']` is the live `Channel` instance and its
+    // public `onmessage` getter returns the consumer's callback. We drive it
+    // directly below so the dev-preview progress bar / aria-live announcements
+    // actually fire (the real emission contract: one `started`, one `progress`
+    // per block, one `complete` after the "commit"). Best-effort: if the arg is
+    // absent or shaped unexpectedly, emission is silently skipped.
+    const progress = a['progress'] as { onmessage?: (u: unknown) => void } | undefined
+    const emit = (update: unknown): void => {
+      try {
+        progress?.onmessage?.(update)
+      } catch {
+        // A faulty consumer callback must not break the mock import.
+      }
+    }
+
     // Derive page title from filename (strip .md extension) or first heading
     let pageTitle = 'Untitled'
     if (filename) {
@@ -3329,6 +3348,13 @@ export const HANDLERS: Record<string, Handler> = {
       pageTitle = headingMatch[1]?.trim() as string
       lines.shift() // remove heading line from block content
     }
+
+    // Faithful-but-simple property count: the real importer pulls properties
+    // from YAML frontmatter and inline `key:: value` lines. We don't reproduce
+    // the parser — we just count `key:: value` occurrences so the result panel's
+    // "N properties" branch is exercised in dev-preview rather than hardcoded to
+    // 0. (Frontmatter and `#tag` parsing are intentionally NOT modelled here.)
+    const propertiesSet = lines.filter((line) => /^\s*[^\s:][^:]*::\s+\S/.test(line)).length
 
     // Create the page block + stamp `space` ref property.
     const pageId = fakeId()
@@ -3347,29 +3373,52 @@ export const HANDLERS: Record<string, Handler> = {
       })
     }
 
-    // Create content blocks from non-empty lines
+    // Pre-compute the content blocks so we know `blocks_total` before emitting
+    // `started` (the real backend reports the parser's count up front so the UI
+    // can render a determinate bar from the very first event).
+    const contentLines = lines
+      .map((line) =>
+        line
+          // Strip leading list markers (-, *, +, numbered) and whitespace
+          .replace(/^\s*[-*+]\s+/, '')
+          .replace(/^\s*\d+\.\s+/, '')
+          .trim(),
+      )
+      .filter((trimmed) => trimmed.length > 0)
+    const blocksTotal = contentLines.length
+
+    emit({ kind: 'started', page_title: pageTitle, blocks_total: blocksTotal })
+
     let blocksCreated = 0
     let position = 0
-    for (const line of lines) {
-      // Strip leading list markers (-, *, +, numbered) and whitespace
-      const trimmed = line
-        .replace(/^\s*[-*+]\s+/, '')
-        .replace(/^\s*\d+\.\s+/, '')
-        .trim()
-      if (!trimmed) continue
-
+    for (const trimmed of contentLines) {
       const blockId = fakeId()
       const block = makeBlock(blockId, 'content', trimmed, pageId, position)
       blocks.set(blockId, block)
       blocksCreated++
       position++
+      emit({ kind: 'progress', blocks_done: blocksCreated, blocks_total: blocksTotal })
     }
+
+    // Representative non-empty warning so the result panel's warning UI is
+    // exercised in dev-preview. Mirrors the shape of a real parse-time
+    // diagnostic (#tag fidelity is not implemented; hashtags stay literal text).
+    const warnings: string[] = [
+      'dev-preview mock: tags (#tag) and attachments are not imported (kept as literal text)',
+    ]
+
+    emit({
+      kind: 'complete',
+      page_title: pageTitle,
+      blocks_created: blocksCreated,
+      properties_set: propertiesSet,
+    })
 
     return {
       page_title: pageTitle,
       blocks_created: blocksCreated,
-      properties_set: 0,
-      warnings: [] as string[],
+      properties_set: propertiesSet,
+      warnings,
     }
   },
 
