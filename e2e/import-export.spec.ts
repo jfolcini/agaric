@@ -127,8 +127,12 @@ test.describe('Import markdown', () => {
     // The import result card should show the page title and block count
     const importResult = page.locator('[data-testid="import-result"]')
     await expect(importResult).toBeVisible()
-    await expect(importResult).toContainText('Test Import Page')
-    await expect(importResult).toContainText('3 blocks')
+    // Title is filename-derived (#1919): 'test-import.md' -> 'test-import'.
+    // A leading `# heading` is ordinary content, not a title source.
+    await expect(importResult).toContainText('test-import')
+    // 4 blocks: the `# Test Import Page` heading line is content (1) plus the
+    // three `- ` bullets (3). Blank lines are dropped.
+    await expect(importResult).toContainText('4 blocks')
   })
 
   test('imported page appears in the page list', async ({ page }) => {
@@ -151,7 +155,8 @@ test.describe('Import markdown', () => {
       .locator('[data-slot="sidebar"]')
       .getByRole('button', { name: 'Pages', exact: true })
       .click()
-    await expect(page.getByText('My Imported Notes')).toBeVisible({ timeout: 5000 })
+    // Title is filename-derived (#1919): 'my-notes.md' -> 'my-notes'.
+    await expect(page.getByText('my-notes')).toBeVisible({ timeout: 5000 })
   })
 
   test('importing a file without heading uses filename as page title', async ({ page }) => {
@@ -348,8 +353,11 @@ test.describe('Round-trip fidelity', () => {
       return invoke('import_markdown', { content, filename: 'round-trip.md' })
     }, originalContent)) as { page_title: string; blocks_created: number }
 
-    expect(importResult.page_title).toBe('Round Trip Test')
-    expect(importResult.blocks_created).toBe(3)
+    // Title is filename-derived (#1919): 'round-trip.md' -> 'round-trip'.
+    expect(importResult.page_title).toBe('round-trip')
+    // 4 blocks: the `# Round Trip Test` heading line is content (1) plus the
+    // three `- ` bullets (Alpha/Beta/Gamma).
+    expect(importResult.blocks_created).toBe(4)
 
     // Now find the imported page and export it
     // We need to find the page ID by listing all pages
@@ -373,7 +381,7 @@ test.describe('Round-trip fidelity', () => {
       })
     })) as { items: Array<{ id: string; content: string }> }
 
-    const importedPage = pages.items.find((p) => p.content === 'Round Trip Test')
+    const importedPage = pages.items.find((p) => p.content === 'round-trip')
     expect(importedPage).toBeTruthy()
 
     // Export the imported page
@@ -388,8 +396,12 @@ test.describe('Round-trip fidelity', () => {
       return invoke('export_page_markdown', { pageId })
     }, importedPage?.id)) as string
 
-    // Verify the exported markdown contains the original content
-    expect(exportedMd).toMatch(/^# Round Trip Test/)
+    // The export header is the (filename-derived) page title (#1919).
+    expect(exportedMd).toMatch(/^# round-trip/)
+    // The original `# Round Trip Test` heading is now ordinary content, so it
+    // round-trips as a content bullet rather than the page title.
+    expect(exportedMd).toContain('- # Round Trip Test')
+    // The body content still round-trips faithfully.
     expect(exportedMd).toContain('- Alpha block')
     expect(exportedMd).toContain('- Beta block')
     expect(exportedMd).toContain('- Gamma block')
