@@ -1994,37 +1994,49 @@ mod parser_proptest {
             }
         }
 
-        /// No panic / no overflow + guard rail (`+Nm` / `+Ny` arms only):
-        /// these two arms route through `shift_by_months`, which is the ONLY
-        /// code path that uses `checked_*` i64 arithmetic and enforces the
-        /// documented `MIN_CALENDAR_YEAR..=MAX_CALENDAR_YEAR` guard rail. So
-        /// for these arms `shift_date_once` must NEVER panic — even for
-        /// pathological huge counts that would overflow i64 month math if
-        /// unchecked — and any `Some` result must land inside the guard rail.
+        /// No panic / no overflow + guard rail across ALL arms
+        /// (`daily`/`weekly`/`monthly`/`+Nd`/`+Nw`/`+Nm`/`+Ny`): every arm now
+        /// uses `checked_*` arithmetic and enforces the documented
+        /// `MIN_CALENDAR_YEAR..=MAX_CALENDAR_YEAR` guard rail (the day/week arms
+        /// via `shift_by_days` + `in_calendar_rail`, the month/year arms via
+        /// `shift_by_months`). So for *any* arm `shift_date_once` must NEVER
+        /// panic — even for pathological huge counts that would overflow the
+        /// underlying date/i64 math if unchecked — and any `Some` result must
+        /// land inside the guard rail.
         ///
-        /// NOTE: the `daily`/`weekly`/`monthly`/`+Nd`/`+Nw` arms are
-        /// deliberately NOT covered here — this proptest discovered that they
-        /// are *unguarded*: the `d`/`w` arms do `base +
-        /// chrono::Duration::days(..)` with no `checked_add` (panics on
-        /// overflow), and `monthly` has its own inline branch — none of them
-        /// apply the calendar-year guard rail, so all can leak a result
-        /// outside `[1900, 2200]`. See the `#[ignore]`d
-        /// `day_week_month_arms_unguarded_bug_1887` below, which documents
-        /// the bug; production code is intentionally left unchanged.
+        /// #1899 widened this property: the day/week/monthly arms used to be
+        /// excluded because they were unguarded (panic on overflow + guard-rail
+        /// leak — see `day_week_month_arms_unguarded_bug_1887`). They are now
+        /// guarded, so this property covers them.
         #[test]
-        fn shift_once_month_year_arms_never_panic_and_stay_in_rail(
+        fn shift_once_all_arms_never_panic_and_stay_in_rail(
             base in (1900i32..=2200, 1u32..=12, 1u32..=31).prop_filter_map(
                 "valid date", |(y, m, d)| NaiveDate::from_ymd_opt(y, m, d),
             ),
-            // Valid bounded m/y intervals, edge counts, and pathological huge
-            // counts that must be rejected by the i64 checked-arithmetic
-            // guard (→ `None`), never a panic. Only `+Nm`/`+Ny` — the arms
-            // that actually implement the guard rail.
+            // Valid bounded intervals across every arm, edge counts, and
+            // pathological huge counts that must be rejected by the checked
+            // arithmetic + calendar-year guard (→ `None`), never a panic. The
+            // day/week pathological counts (`+Nd`/`+Nw`, including `n * 7`
+            // overflow) exercise the #1899 fix directly.
             interval in prop_oneof![
+                // Keyword arms.
+                Just("daily".to_string()),
+                Just("weekly".to_string()),
+                Just("monthly".to_string()),
+                // Bounded explicit-count arms.
+                (1u32..=120).prop_map(|n| format!("+{n}d")),
+                (1u32..=60).prop_map(|n| format!("+{n}w")),
                 (1u32..=24).prop_map(|n| format!("+{n}m")),
                 (1u32..=5).prop_map(|n| format!("+{n}y")),
+                // Pathological huge counts: every arm must return `None`, never
+                // panic. The day/week ones probe the chrono `TimeDelta`
+                // overflow and the `n * 7` i64 overflow paths.
+                Just("+99999999d".to_string()),
+                Just("+99999999w".to_string()),
                 Just("+99999999y".to_string()),
                 Just("+99999999m".to_string()),
+                (1u64..=u64::MAX).prop_map(|n| format!("+{n}d")),
+                (1u64..=u64::MAX).prop_map(|n| format!("+{n}w")),
                 (1u64..=u64::MAX).prop_map(|n| format!("+{n}m")),
                 (1u64..=u64::MAX).prop_map(|n| format!("+{n}y")),
             ],
@@ -2054,34 +2066,29 @@ mod parser_proptest {
         }
     }
 
-    /// REGRESSION / BUG REPRODUCTION (#1887) — `#[ignore]`d on purpose.
+    /// REGRESSION / BUG REPRODUCTION (#1887 / #1899).
     ///
     /// These property tests discovered a real production bug in
-    /// `parser.rs::shift_date_once`: only the `+Nm`/`+Ny` arms (via
-    /// `shift_by_months`) use `checked_*` arithmetic and enforce the
+    /// `parser.rs::shift_date_once`: originally only the `+Nm`/`+Ny` arms (via
+    /// `shift_by_months`) used `checked_*` arithmetic and enforced the
     /// `MIN_CALENDAR_YEAR..=MAX_CALENDAR_YEAR` guard rail. The
-    /// `daily`/`weekly`/`monthly`/`+Nd`/`+Nw` arms do NOT, violating two
+    /// `daily`/`weekly`/`monthly`/`+Nd`/`+Nw` arms did NOT, violating two
     /// documented module invariants:
     ///
-    /// 1. **Panic on overflow** — the `d`/`w` arms compute
+    /// 1. **Panic on overflow** — the `d`/`w` arms computed
     ///    `base + chrono::Duration::days(..)` with the *unchecked* `+`
-    ///    operator, so a large day/week count panics with
+    ///    operator, so a large day/week count panicked with
     ///    `NaiveDate + TimeDelta overflowed` instead of returning `None`
     ///    (the module's documented "returns `None` if … overflows" /
     ///    "never panics" contract).
-    /// 2. **Guard-rail leak** — the `d`/`w`/`monthly` arms can return a date
+    /// 2. **Guard-rail leak** — the `d`/`w`/`monthly` arms could return a date
     ///    outside `[1900, 2200]` instead of `None`:
     ///    * `1900-01-01 +20000w` → `Some(2283-04-23)` (should be `None`),
     ///    * `2200-12-01 monthly` → `Some(2201-01-01)` (should be `None`).
     ///
-    /// Per the task constraint, production code is left UNCHANGED; this test
-    /// is `#[ignore]`d so it documents the finding without breaking CI.
-    /// Remove the `#[ignore]` once `parser.rs` guards the day/week/monthly
-    /// arms with `checked_add` + the calendar-year bound (mirroring
-    /// `shift_by_months`).
+    /// #1899 guarded those arms (`shift_by_days` + `in_calendar_rail`,
+    /// mirroring `shift_by_months`), so this test now PASSES un-ignored.
     #[test]
-    #[ignore = "documents #1887: day/week/monthly arms lack the overflow + \
-                calendar-year guard rail; run after parser.rs guards them"]
     fn day_week_month_arms_unguarded_bug_1887() {
         // Guard-rail leak via the week arm (no panic, just an out-of-rail
         // date):
