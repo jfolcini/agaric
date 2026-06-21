@@ -14,10 +14,13 @@ name: Scheduled deep checks
 #                    diagnostics bins + an app-lib test); the per-PR fmt/clippy
 #                    hooks also omit --all/--workspace, skipping the diagnostics
 #                    member entirely. This lane fails on that drift weekly.
-#   bench-compile  — #639: compile all 26 criterion benches (clippy already
-#                    `--all-targets`-lints them per-PR, but this also RUNS
-#                    the interactive_slo SLO gate + the `#[ignore]`d 20k-row
-#                    perf gates, which nothing else exercises).
+#   bench-compile  — #639: compile all criterion benches (clippy already
+#                    `--all-targets`-lints them per-PR), then #978: SMOKE-RUN
+#                    every bench once (`--test`) so a drifted seed/fixture
+#                    fails CI instead of rotting silently (previously only
+#                    interactive_slo ran; the rest were compile-only). Also
+#                    RUNS the interactive_slo SLO gate + the `#[ignore]`d
+#                    20k-row perf gates, which nothing else exercises.
 #   mutants        — #649: cargo-mutants scoped to the invariant core
 #                    (op, op_log, reverse, loro/engine). Non-blocking; the
 #                    survivor list is the deliverable to triage into tests.
@@ -123,13 +126,19 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # bench-compile (#639) — compile every bench target and run the gates that
-  # are otherwise never executed by automation: the interactive_slo SLO bench
-  # (it `panic!`s on a per-command budget breach — already pass/fail) and the
-  # `#[ignore]`d 20k-row perf gates.
+  # are otherwise never executed by automation: the #978 seed/fixture
+  # smoke-run (`--test` once per bench — validates fixtures, not perf), the
+  # interactive_slo SLO bench (it `panic!`s on a per-command budget breach —
+  # already pass/fail) and the `#[ignore]`d 20k-row perf gates.
   # ---------------------------------------------------------------------------
   bench-compile:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # 45 → 90: the #978 smoke phase RUNS every bench once. `--test` is a cold
+    # single shot (no warmup), which inflates the heavy 100K-seed benches
+    # (e.g. cache_bench's rebuild_* probes) 10×+ per AGENTS.md, so the suite
+    # walk needs materially more wall-clock than the compile + interactive_slo
+    # run alone.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -187,6 +196,74 @@ jobs:
         # guards this per-PR; this is the belt-and-braces compile under the
         # bench profile (criterion harness linked in).
         run: cargo bench --no-run
+
+      - name: Smoke-run every bench once (--test) — #978 seed/fixture guard
+        working-directory: src-tauri
+        # WHAT THIS VALIDATES: that every bench's SEED/FIXTURE is still valid
+        # against the live schema — NOT performance. Criterion's `--test`
+        # runs each benchmark function exactly ONCE (a cold single shot, no
+        # measurement, no timing budget), so a bench whose hand-seeded raw-SQL
+        # fixture has drifted from the schema (a migration renamed/retyped a
+        # column, a CHECK now forbids a value, …) PANICS here and fails the
+        # job. Before #978 only `interactive_slo` actually ran; the other 28
+        # benches were compile-only (`--no-run`), so a broken seed was
+        # false-green and could rot silently (the #1233 whole-suite drift
+        # class). This loop closes that gap by *running* them all.
+        #
+        # HOW (cargo #6313 — see benches/AGENTS.md): we do NOT `cargo bench
+        # --bench <name>` per bench — agaric's multi-crate-type [lib] races to
+        # write libagaric_lib.* and a per-bench recompile intermittently links
+        # the wrong `sqlx` (E0308 `Pool<Sqlite>`). Instead we run the PREBUILT
+        # binaries from the single cohesive `--no-run` build above, discovering
+        # them dynamically (no hardcoded hashes): each `[[bench]]` becomes a
+        # `target/release/deps/<name>-<hash>` executable. We pick the newest
+        # non-metadata file (`.d`/`.so`/`.dwp` filtered out) per AGENTS.md.
+        #
+        # `interactive_slo` is SKIPPED here on purpose: it gets a full WARM
+        # run in the next step (its `assert_under_budget` would false-fail on
+        # cold `--test` timings — AGENTS.md "--test timings are COLD"). The
+        # smoke gate asserts seeds are valid, not that they meet a budget.
+        shell: bash
+        run: |
+          set -uo pipefail
+          fail=0
+          # Newest executable for a bench: glob its candidates (a real binary
+          # has no extension; drop dep-info/shared-obj/split-debug), then pick
+          # the most recent by mtime. A glob + loop (not `ls | grep`) avoids
+          # the SC2010 lint and is robust to odd filenames.
+          newest_bench_bin() {
+            local name="$1" newest="" f
+            for f in "target/release/deps/${name}-"*; do
+              [[ -f "$f" && -x "$f" ]] || continue
+              case "$f" in *.d|*.so|*.dwp) continue ;; esac
+              if [[ -z "$newest" || "$f" -nt "$newest" ]]; then
+                newest="$f"
+              fi
+            done
+            printf '%s' "$newest"
+          }
+          # Bench target names from Cargo.toml's [[bench]] stanzas, minus
+          # interactive_slo (warm-gated separately below).
+          benches=$(grep -A1 '^\[\[bench\]\]' Cargo.toml \
+            | sed -n 's/^name = "\(.*\)"/\1/p' \
+            | grep -vx interactive_slo)
+          for name in $benches; do
+            bin=$(newest_bench_bin "$name")
+            if [ -z "$bin" ]; then
+              echo "::error::no prebuilt binary for bench '$name' (did --no-run compile it?)"
+              fail=1
+              continue
+            fi
+            echo "::group::smoke $name ($bin --test)"
+            if "$bin" --test; then
+              echo "smoke OK: $name"
+            else
+              echo "::error::bench '$name' FAILED its --test smoke run (seed/fixture drift?)"
+              fail=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$fail"
 
       - name: Run interactive_slo SLO gate (#639)
         working-directory: src-tauri
