@@ -365,7 +365,7 @@ async fn accept_error_does_not_kill_serve_loop_636() {
     let mut exhausted = false;
     for _ in 0..1_100_000 {
         if let Ok(f) = std::fs::File::open("/dev/null") {
-            hogs.push(f)
+            hogs.push(f);
         } else {
             exhausted = true;
             break;

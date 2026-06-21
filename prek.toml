@@ -720,12 +720,18 @@ name = "cargo clippy"
 # lint set, turning "benches compile" into a checked contract on the fast
 # (per-PR) path at near-zero marginal cost.
 #
+# `--workspace`: without it, `cargo clippy` in the workspace root lints only
+# the root `agaric` package, silently skipping the `agaric-diagnostics`
+# member (its 2 bins were never linted, so pedantic lints added to its
+# Cargo.toml had unfixed violations CI never saw). `--workspace` lints every
+# member.
+#
 # Pre-push only (#817): clippy compiles the whole workspace (+ all targets)
 # and surfaces latent warnings in untouched files, so it's too slow and too
 # broad for the commit path. As a pre-push-staged hook it runs once,
 # directly from the pre-push git shim (not via Phase A, which is
 # pre-commit-stage only).
-entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo clippy --all-targets -- -D warnings'"
+entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo clippy --workspace --all-targets -- -D warnings'"
 language = "system"
 pass_filenames = false
 types = ["rust"]

@@ -195,8 +195,7 @@ pub(crate) fn compare_against_proxy(hist: &Histogram) -> Vec<ProxyComparison> {
         hist.rows
             .iter()
             .find(|r| r.op_type == op)
-            .map(|r| r.count)
-            .unwrap_or(0)
+            .map_or(0, |r| r.count)
     };
 
     // 1. Walk the actual histogram rows.
@@ -383,13 +382,7 @@ pub(crate) fn format_histogram(hist: &Histogram, db_path: &std::path::Path) -> S
     let rule: String = "-".repeat(row_width);
 
     out.push_str(&format!(
-        "{:<op_width$}    {:>count_width$}    {:>pct_width$}\n",
-        header_op,
-        header_count,
-        header_pct,
-        op_width = op_width,
-        count_width = count_width,
-        pct_width = pct_width,
+        "{header_op:<op_width$}    {header_count:>count_width$}    {header_pct:>pct_width$}\n",
     ));
     out.push_str(&rule);
     out.push('\n');
@@ -902,7 +895,7 @@ mod tests {
         // Header
         assert!(out.contains("op_type"));
         assert!(out.contains("count"));
-        assert!(out.contains("%"));
+        assert!(out.contains('%'));
         // Rows with thousands separators
         assert!(out.contains("12,847"));
         assert!(out.contains("4,221"));
