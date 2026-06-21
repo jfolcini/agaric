@@ -28,6 +28,33 @@ pub(super) fn days_in_month(year: i32, month: u32) -> u32 {
     .map_or(28, |d| d.pred_opt().unwrap().day())
 }
 
+/// (b) — return `date` only if its year is inside the
+/// `MIN_CALENDAR_YEAR..=MAX_CALENDAR_YEAR` guard rail; otherwise `None`.
+///
+/// The day/week arms (`daily`/`weekly`/`+Nd`/`+Nw`) use this to enforce the
+/// same calendar-year bound that `shift_by_months` enforces for the month/year
+/// arms, so a large count that lands outside `[1900, 2200]` returns `None`
+/// instead of leaking an out-of-rail date.
+fn in_calendar_rail(date: chrono::NaiveDate) -> Option<chrono::NaiveDate> {
+    if (MIN_CALENDAR_YEAR..=MAX_CALENDAR_YEAR).contains(&i64::from(date.year())) {
+        Some(date)
+    } else {
+        None
+    }
+}
+
+/// (b) — shift `base` forward by `n_days` calendar days using checked
+/// arithmetic, returning `None` on `NaiveDate` overflow (instead of panicking)
+/// and applying the `MIN_CALENDAR_YEAR..=MAX_CALENDAR_YEAR` guard rail.
+///
+/// Shared by the `daily`/`weekly`/`+Nd`/`+Nw` arms. Mirrors `shift_by_months`:
+/// checked arithmetic + the calendar-year bound, returning `None` rather than a
+/// panic or an out-of-rail date.
+fn shift_by_days(base: chrono::NaiveDate, n_days: i64) -> Option<chrono::NaiveDate> {
+    let shifted = base.checked_add_signed(chrono::Duration::try_days(n_days)?)?;
+    in_calendar_rail(shifted)
+}
+
 /// (b) — shift `base` by `n_months` months, clamping the resulting
 /// day-of-month against the destination month length so e.g. shifting from
 /// `2024-02-29` by 12 months lands on `2025-02-28`.
@@ -69,8 +96,8 @@ pub(crate) fn shift_date_once(
     let day = base.day();
 
     let shifted = match interval {
-        "daily" => base + chrono::Duration::days(1),
-        "weekly" => base + chrono::Duration::days(7),
+        "daily" => shift_by_days(base, 1)?,
+        "weekly" => shift_by_days(base, 7)?,
         "monthly" => {
             // #679: month-end clamp is INTENTIONALLY sticky (Org-mode
             // in-place shift semantics). We shift the *given base* by one
@@ -89,7 +116,14 @@ pub(crate) fn shift_date_once(
             let new_month = if month == 12 { 1 } else { month + 1 };
             let new_year = if month == 12 { year + 1 } else { year };
             let max_day = days_in_month(new_year, new_month);
-            chrono::NaiveDate::from_ymd_opt(new_year, new_month, day.min(max_day))?
+            // (b): apply the same calendar-year guard rail as the month/year
+            // arms so e.g. `2200-12-01 monthly` (which would roll to 2201)
+            // returns `None` instead of leaking an out-of-rail date.
+            in_calendar_rail(chrono::NaiveDate::from_ymd_opt(
+                new_year,
+                new_month,
+                day.min(max_day),
+            )?)?
         }
         _ => {
             // Parse +Nd, +Nw, +Nm patterns (the leading '+' is already stripped
@@ -109,8 +143,10 @@ pub(crate) fn shift_date_once(
                 return None;
             }
             match unit {
-                "d" => base + chrono::Duration::days(n),
-                "w" => base + chrono::Duration::days(n * 7),
+                "d" => shift_by_days(base, n)?,
+                // (b): guard `n * 7` against i64 overflow before handing the
+                // day count to the checked day shift.
+                "w" => shift_by_days(base, n.checked_mul(7)?)?,
                 // (b): `+Nm` and `+Ny` share the leap-day-clamping
                 // month arithmetic via `shift_by_months`; the `y` arm just
                 // Multiplies by 12 first. `+1y` from 2024-02-29 lands
