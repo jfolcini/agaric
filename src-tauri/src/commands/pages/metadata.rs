@@ -187,7 +187,7 @@ pub struct PageWithMetadataRow {
 /// end" with no recovery, which Review Round 1 flagged across three
 /// independent reviewers as a BLOCKER. Per-sort i64 stamped into the
 /// already-unused `Cursor.position` slot.
-fn sort_discriminator(sort: PageSort) -> i64 {
+pub(crate) fn sort_discriminator(sort: PageSort) -> i64 {
     match sort {
         PageSort::Alphabetical => 1,
         PageSort::RecentlyModified => 2,

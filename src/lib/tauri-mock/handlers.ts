@@ -165,7 +165,7 @@ function pageLinkStats(
  * Metadata-rich page row mirroring the camelCase `PageWithMetadataRow` wire
  * shape, plus the mock-internal `hasOutboundLink` used to evaluate `Orphan`.
  */
-interface PageMetaRow {
+export interface PageMetaRow {
   id: string
   blockType: string
   content: string | null
@@ -340,7 +340,7 @@ function lastEditedMatches(r: PageMetaRow, spec: Record<string, unknown> | undef
 }
 
 /** Comparator mirroring the backend's per-sort keyset (id is the tiebreaker). */
-function compareMetaRows(x: PageMetaRow, y: PageMetaRow, sort: string): number {
+export function compareMetaRows(x: PageMetaRow, y: PageMetaRow, sort: string): number {
   let primary = 0
   switch (sort) {
     case 'alphabetical': {
@@ -400,7 +400,7 @@ function sortDiscriminator(sort: string): number {
  * round-trips hit the same validation path. The `position` slot carries the
  * sort discriminator (see `sortDiscriminator`).
  */
-function encodeNextCursor(last: PageMetaRow, sort: string): string {
+export function encodeNextCursor(last: PageMetaRow, sort: string): string {
   const disc = sortDiscriminator(sort)
   const cursorObj: Record<string, unknown> = { id: last.id, version: 1, position: disc }
   switch (sort) {

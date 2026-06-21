@@ -1,0 +1,91 @@
+{
+  "$comment_schema": "see ./README.md for the fixture schema",
+  "$comment": "Shared golden vectors for list_pages_with_metadata sort + cursor semantics (#1886, slice 1). The SAME file is asserted by the Rust query path (src-tauri/.../pages_metadata_conformance_tests.rs) and the tauri-mock TS reimplementation (src/lib/tauri-mock/__tests__/sort-cursor-conformance.test.ts). If backend semantics change, regenerate this file from the Rust side; the mock test then fails until handlers.ts is realigned. See README.md. Slice 1 covers the four WIRE sorts (default, recently-modified, most-linked, most-content) for ordering + cursor discriminator. Filters and recently-modified/count key-slot byte-equality are out of scope (key-slot representation legitimately differs: Rust stores epoch-ms-as-string, the mock stores ISO — only `id` + `position` are representation-stable across impls).",
+  "rows": [
+    {
+      "id": "01CNFP0000000000000000000A",
+      "content": "Banana",
+      "lastModifiedAt": "2024-03-01T00:00:00.000Z",
+      "inboundLinkCount": 2,
+      "childBlockCount": 5
+    },
+    {
+      "id": "01CNFP0000000000000000000B",
+      "content": "apple",
+      "lastModifiedAt": "2024-01-01T00:00:00.000Z",
+      "inboundLinkCount": 5,
+      "childBlockCount": 1
+    },
+    {
+      "id": "01CNFP0000000000000000000C",
+      "content": "Cherry",
+      "lastModifiedAt": "2024-02-01T00:00:00.000Z",
+      "inboundLinkCount": 5,
+      "childBlockCount": 3
+    },
+    {
+      "id": "01CNFP0000000000000000000D",
+      "content": "date",
+      "lastModifiedAt": "2024-05-01T00:00:00.000Z",
+      "inboundLinkCount": 0,
+      "childBlockCount": 3
+    },
+    {
+      "id": "01CNFP0000000000000000000E",
+      "content": "Apple",
+      "lastModifiedAt": "2024-04-01T00:00:00.000Z",
+      "inboundLinkCount": 2,
+      "childBlockCount": 0
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "default — block id ASC, id tiebreaker",
+      "sort": "default",
+      "expectedOrder": [
+        "01CNFP0000000000000000000A",
+        "01CNFP0000000000000000000B",
+        "01CNFP0000000000000000000C",
+        "01CNFP0000000000000000000D",
+        "01CNFP0000000000000000000E"
+      ],
+      "expectedCursorAfterFirst": { "id": "01CNFP0000000000000000000A", "position": 5 }
+    },
+    {
+      "name": "recently-modified — last_modified_at DESC, id tiebreaker",
+      "sort": "recently-modified",
+      "expectedOrder": [
+        "01CNFP0000000000000000000D",
+        "01CNFP0000000000000000000E",
+        "01CNFP0000000000000000000A",
+        "01CNFP0000000000000000000C",
+        "01CNFP0000000000000000000B"
+      ],
+      "expectedCursorAfterFirst": { "id": "01CNFP0000000000000000000D", "position": 2 }
+    },
+    {
+      "name": "most-linked — inbound_link_count DESC, id tiebreaker (B<C and A<E ties)",
+      "sort": "most-linked",
+      "expectedOrder": [
+        "01CNFP0000000000000000000B",
+        "01CNFP0000000000000000000C",
+        "01CNFP0000000000000000000A",
+        "01CNFP0000000000000000000E",
+        "01CNFP0000000000000000000D"
+      ],
+      "expectedCursorAfterFirst": { "id": "01CNFP0000000000000000000B", "position": 3, "seq": 5 }
+    },
+    {
+      "name": "most-content — child_block_count DESC, id tiebreaker (C<D tie)",
+      "sort": "most-content",
+      "expectedOrder": [
+        "01CNFP0000000000000000000A",
+        "01CNFP0000000000000000000C",
+        "01CNFP0000000000000000000D",
+        "01CNFP0000000000000000000B",
+        "01CNFP0000000000000000000E"
+      ],
+      "expectedCursorAfterFirst": { "id": "01CNFP0000000000000000000A", "position": 4, "seq": 5 }
+    }
+  ]
+}
