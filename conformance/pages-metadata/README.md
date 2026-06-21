@@ -49,7 +49,28 @@ exception and is asserted for the count sorts.
 ## Scope (staged, per #1886)
 
 - **In:** the four wire sorts — ordering + cursor discriminator (`position`/`seq`).
-- **Out (follow-up #1908):** filter-primitive evaluation parity, and
-  recently-modified key-slot byte-equality. `alphabetical` is intentionally
-  excluded — it never crosses the wire (`pageSortWireFor('alphabetical')` returns
-  `'default'`).
+- **Out (follow-up #1908):** the remaining filter-primitive evaluation parity
+  (`Tag` / `HasProperty` / `LastEdited`), and recently-modified key-slot
+  byte-equality. `alphabetical` is intentionally excluded — it never crosses the
+  wire (`pageSortWireFor('alphabetical')` returns `'default'`).
+
+## `PathGlob` filter (#1910)
+
+`path-glob.vectors.json` is the second fixture under the same contract, locking
+the Pages **page-path glob** filter. The backend moved this surface to the
+SQLite `GLOB` dialect in #1320-A; the mock had drifted to a stale LIKE
+translation (`globMatchesTitle`), so brace expansion, `[class]` ranges,
+validation and ASCII-only folding all diverged silently (#1910).
+
+- **Rust** — `src-tauri/src/commands/tests/pages_path_glob_conformance_tests.rs`
+  seeds `pages_cache` titles and drives the real `list_pages_with_metadata_inner`
+  with a `PathGlob` filter (`prepare_globs` → `LOWER(title) GLOB ?`).
+- **TypeScript** — `src/lib/search-query/__tests__/glob-conformance.test.ts`
+  drives `pageGlobFilterMatches` (in `src/lib/search-query/glob-validate.ts`, the
+  JS port of `prepare_globs` + a `GLOB`→`RegExp` compiler).
+
+Only the **set of matching page ids** is compared cross-impl (representation
+stable). Each `scenarios[]` entry has `{ pattern, exclude, expectedMatchingIds }`;
+`invalid[]` lists patterns both sides must reject with the shared `InvalidGlob:`
+prefix (the backend as `AppError::Validation`, the mock by dropping every row).
+Scenarios exercise the seven divergence classes catalogued in #1910.

@@ -13,6 +13,7 @@
 
 import { matchesSearchFolded } from '../fold-for-search'
 import { logger } from '../logger'
+import { pageGlobFilterMatches } from '../search-query/glob-validate'
 import { applyRevertForOp } from './revert'
 import {
   attachmentBytes,
@@ -185,38 +186,6 @@ export interface PageMetaRow {
 }
 
 /**
- * Match a page title against the documented Page-path glob mini-language,
- * case-insensitively. Mirrors `src-tauri/src/filters/primitive.rs::glob_to_like`
- * semantics:
- *   - `*` → any run of characters (`%`),
- *   - `?` → exactly one character (`_`),
- *   - a bare word (no `*`/`?`) → substring match (`%word%`),
- *   - any other char is a literal.
- * The match is anchored (the whole title must satisfy the pattern), which is
- * how SQLite `LIKE` evaluates — the substring wrap on bare words is what makes
- * `Alpha` match `My Alpha Page`.
- */
-function globMatchesTitle(pattern: string, title: string): boolean {
-  const hasWildcard = /[*?]/.test(pattern)
-  // Build an anchored, case-insensitive RegExp mirroring glob_to_like's
-  // translation. Bare words (no wildcard) become substring matches.
-  let body = ''
-  for (const ch of pattern) {
-    if (ch === '*') body += '.*'
-    else if (ch === '?') body += '.'
-    else body += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  }
-  const source = hasWildcard ? `^${body}$` : `^.*${body}.*$`
-  let re: RegExp
-  try {
-    re = new RegExp(source, 'i')
-  } catch {
-    return false
-  }
-  return re.test(title)
-}
-
-/**
  * Does a page row satisfy one compound-filter primitive? The mock evaluates
  * `Stub` / `HasNoInboundLinks` / `Orphan` / `Tag` / `Priority` / `PathGlob` /
  * `HasProperty` / `LastEdited` faithfully (mirroring the REAL backend
@@ -242,9 +211,13 @@ function metaRowMatchesFilter(r: PageMetaRow, f: Record<string, unknown>): boole
       return r.priority === (f['priority'] as string)
     }
     case 'PathGlob': {
-      // Case-insensitive glob over the page title. `exclude:true` inverts.
-      const hit = globMatchesTitle((f['pattern'] as string) ?? '', r.content ?? '')
-      return (f['exclude'] as boolean) ? !hit : hit
+      // SQLite-`GLOB` dialect parity (#1910): brace expansion, `[class]`
+      // ranges, validation and ASCII-only folding — see `pageGlobFilterMatches`.
+      return pageGlobFilterMatches(
+        (f['pattern'] as string) ?? '',
+        r.content ?? '',
+        (f['exclude'] as boolean) ?? false,
+      )
     }
     case 'HasProperty': {
       return hasPropertyMatches(r, f)
