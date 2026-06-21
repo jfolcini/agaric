@@ -1639,6 +1639,87 @@ describe('TrashView screen reader announcements', () => {
     })
   })
 
+  // #1888 — batch restore failure must surface the error (toast + live-region
+  // announce, mirroring the single-item path) AND keep the selection so the
+  // user can retry, rather than silently clearing it.
+  it('batch restore failure shows error toast, announces, and keeps the selection', async () => {
+    const { announce } = await import('../../lib/announcer')
+    const mockedAnnounce = vi.mocked(announce)
+    const mockedToastError = vi.mocked(toast.error)
+    const user = userEvent.setup()
+    const blocks = [
+      makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 }),
+      makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 }),
+    ]
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'restore_blocks_by_ids') throw new Error('DB error')
+      return undefined
+    })
+
+    render(<TrashView />)
+    await screen.findByText('item 1')
+    const checkboxes = screen.getAllByTestId('trash-item-checkbox')
+    await user.click(checkboxes[0] as HTMLElement)
+    await user.click(checkboxes[1] as HTMLElement)
+    await user.click(screen.getByRole('button', { name: /Restore selected/i }))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to restore selected blocks')
+    })
+    expect(mockedAnnounce).toHaveBeenCalledWith('Batch restore failed')
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+
+    // Selection preserved (toolbar still shows 2 selected, both rows checked).
+    const toolbar = screen.getByRole('toolbar')
+    expect(within(toolbar).getByText('2 selected')).toBeInTheDocument()
+    for (const cb of screen.getAllByTestId('trash-item-checkbox')) {
+      expect(cb).toBeChecked()
+    }
+  })
+
+  // #1888 — batch purge failure: same contract (error toast + announce, dialog
+  // closes, selection preserved).
+  it('batch purge failure shows error toast, announces, and keeps the selection', async () => {
+    const { announce } = await import('../../lib/announcer')
+    const mockedAnnounce = vi.mocked(announce)
+    const mockedToastError = vi.mocked(toast.error)
+    const user = userEvent.setup()
+    const blocks = [
+      makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 }),
+      makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 }),
+    ]
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'purge_blocks_by_ids') throw new Error('DB error')
+      return undefined
+    })
+
+    render(<TrashView />)
+    await screen.findByText('item 1')
+    const checkboxes = screen.getAllByTestId('trash-item-checkbox')
+    await user.click(checkboxes[0] as HTMLElement)
+    await user.click(checkboxes[1] as HTMLElement)
+    await user.click(screen.getByRole('button', { name: /Purge selected/i }))
+    await user.click(screen.getByRole('button', { name: /Yes/i }))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to purge selected blocks')
+    })
+    expect(mockedAnnounce).toHaveBeenCalledWith('Batch purge failed')
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+
+    // Confirmation dialog closed, but selection preserved for retry.
+    expect(screen.queryByText(/Permanently delete 2 items\?/i)).not.toBeInTheDocument()
+    const toolbar = screen.getByRole('toolbar')
+    expect(within(toolbar).getByText('2 selected')).toBeInTheDocument()
+    for (const cb of screen.getAllByTestId('trash-item-checkbox')) {
+      expect(cb).toBeChecked()
+    }
+  })
+
   it('announces trash emptied count on Empty Trash success', async () => {
     const { announce } = await import('../../lib/announcer')
     const mockedAnnounce = vi.mocked(announce)

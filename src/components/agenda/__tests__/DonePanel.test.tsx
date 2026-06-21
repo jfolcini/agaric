@@ -492,22 +492,22 @@ describe('DonePanel', () => {
   // Error-path tests
   // ---------------------------------------------------------------------------
 
-  // 14. queryByProperty rejects on initial load → renders nothing + logs error
-  it('renders nothing when queryByProperty rejects on initial load', async () => {
+  // 14. queryByProperty rejects on initial load → renders a distinct
+  // error + retry state (NOT the empty `null`, which is indistinguishable from
+  // "no completed items today") + logs error. #1888
+  it('renders an error + retry state when queryByProperty rejects on initial load', async () => {
     mockedQueryByProperty.mockRejectedValueOnce(new Error('backend error'))
 
     const { container } = render(<DonePanel date="2025-06-15" />)
 
-    await waitFor(() => {
-      expect(mockedQueryByProperty).toHaveBeenCalled()
-    })
-
-    // Empty panels are clutter (live UX review): the panel renders nothing
-    // when empty (even on error) instead of an EmptyState placeholder.
-    await waitFor(() => {
-      expect(container.querySelector('.done-panel')).not.toBeInTheDocument()
-    })
+    // The error state renders (a real panel, not the empty `null`).
+    expect(await screen.findByText(t('donePanel.loadError'))).toBeInTheDocument()
+    expect(container.querySelector('.done-panel')).toBeInTheDocument()
+    expect(container.querySelector('.done-panel-error')).toBeInTheDocument()
+    // It is NOT the empty `noneYet` placeholder.
     expect(screen.queryByText(t('donePanel.noneYet'))).not.toBeInTheDocument()
+    // A retry affordance is present.
+    expect(screen.getByRole('button', { name: t('donePanel.retryLabel') })).toBeInTheDocument()
     // Logger.error should have been called
     expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
       'DonePanel',
@@ -517,6 +517,44 @@ describe('DonePanel', () => {
     )
     // batchResolve should not have been called since queryByProperty failed first
     expect(mockedBatchResolve).not.toHaveBeenCalled()
+  })
+
+  // 14b. Retry affordance re-runs the load; a subsequent success replaces the
+  // error state with the loaded items. #1888
+  it('retry re-runs the load and renders items on success', async () => {
+    const user = userEvent.setup()
+    mockedQueryByProperty.mockRejectedValueOnce(new Error('backend error')).mockResolvedValueOnce({
+      items: [makeBlock({ id: 'B1', content: 'recovered task' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    render(<DonePanel date="2025-06-15" />)
+
+    // Error state first.
+    const retryBtn = await screen.findByRole('button', { name: t('donePanel.retryLabel') })
+
+    await user.click(retryBtn)
+
+    // Re-loads and shows the items; the error message is gone.
+    expect(await screen.findByText('recovered task')).toBeInTheDocument()
+    expect(screen.queryByText(t('donePanel.loadError'))).not.toBeInTheDocument()
+    expect(mockedQueryByProperty).toHaveBeenCalledTimes(2)
+  })
+
+  // 14c. The error/retry state is accessible. #1888
+  it('a11y: error + retry state has no violations', async () => {
+    mockedQueryByProperty.mockRejectedValueOnce(new Error('backend error'))
+
+    const { container } = render(<DonePanel date="2025-06-15" />)
+
+    await screen.findByText(t('donePanel.loadError'))
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
   })
 
   // 15. batchResolve rejects on initial load → blocks shown with Untitled group header

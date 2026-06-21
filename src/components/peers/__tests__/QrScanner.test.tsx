@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { QrScanner } from '@/components/peers/QrScanner'
+import { t } from '@/lib/i18n'
 
 // Configurable mock for html5-qrcode module
 let mockStartBehavior: 'error' | 'scan' | 'pending' = 'error'
@@ -130,10 +131,27 @@ describe('QrScanner', () => {
     const scanBtn = screen.getByRole('button', { name: /scan qr code/i })
     await user.click(scanBtn)
 
-    // Should show error and call onError callback
-    expect(await screen.findByText('Camera access denied')).toBeInTheDocument()
-    expect(onError).toHaveBeenCalledWith('Camera access denied')
+    // #1888: the user-facing error is the translated catalog string (not the
+    // raw, untranslated `err.message`), and the same translated text is passed
+    // to onError.
+    expect(await screen.findByText(t('qrScanner.cameraError'))).toBeInTheDocument()
+    expect(onError).toHaveBeenCalledWith(t('qrScanner.cameraError'))
     expect(onScan).not.toHaveBeenCalled()
+  })
+
+  // #1888: the announced (aria-live="assertive") error text is routed through
+  // t() — never the raw browser/library error string.
+  it('renders the translated camera error in the assertive live region (#1888)', async () => {
+    const user = userEvent.setup()
+    render(<QrScanner onScan={vi.fn()} onError={vi.fn()} />)
+
+    await user.click(screen.getByRole('button', { name: /scan qr code/i }))
+
+    const errorEl = await screen.findByText(t('qrScanner.cameraError'))
+    expect(errorEl).toBeInTheDocument()
+    expect(errorEl.getAttribute('aria-live')).toBe('assertive')
+    // The raw library message must NOT leak through to the user.
+    expect(screen.queryByText('Camera access denied')).not.toBeInTheDocument()
   })
 
   // Parent receives an explicit camera-denied signal so it can
@@ -150,9 +168,9 @@ describe('QrScanner', () => {
     const scanBtn = screen.getByRole('button', { name: /scan qr code/i })
     await user.click(scanBtn)
 
-    expect(await screen.findByText('Camera access denied')).toBeInTheDocument()
+    expect(await screen.findByText(t('qrScanner.cameraError'))).toBeInTheDocument()
     expect(onCameraDenied).toHaveBeenCalledTimes(1)
-    expect(onError).toHaveBeenCalledWith('Camera access denied')
+    expect(onError).toHaveBeenCalledWith(t('qrScanner.cameraError'))
   })
 
   it('does not call onCameraDenied on successful scan', async () => {

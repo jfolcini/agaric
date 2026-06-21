@@ -83,6 +83,7 @@ export const sync: Record<string, string> = {
   'qrScanner.retryCameraButton': 'Retry Camera',
   'qrScanner.scanQrCodeButton': 'Scan QR Code',
   'qrScanner.scanningMessage': 'Scanning...',
+  'qrScanner.cameraError': 'Camera access failed. Check camera permissions and try again.',
   'device.syncComplete': 'Sync complete',
   'device.syncFailed': 'Sync failed',
   'sync.failedForDevice': 'Sync failed for device {{deviceId}}...',

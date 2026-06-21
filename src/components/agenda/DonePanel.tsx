@@ -23,6 +23,7 @@ import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { BlockListItem } from '@/components/editor/BlockListItem'
 import { PageLink } from '@/components/pages/PageLink'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
+import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { SectionGroupHeader } from '@/components/ui/section-group-header'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
@@ -51,6 +52,13 @@ export function DonePanel({
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const [blocks, setBlocks] = useState<BlockRow[]>([])
   const [loading, setLoading] = useState(false)
+  // Distinguishes a *failed* load from a legitimately empty panel: when the
+  // initial fetch rejects we surface an explicit error + retry affordance
+  // rather than rendering `null` (which is indistinguishable from "no done
+  // items today").
+  const [loadError, setLoadError] = useState(false)
+  // Bumped by the retry affordance to re-run the mount load effect.
+  const [reloadKey, setReloadKey] = useState(0)
   const [collapsed, setCollapsed] = useState(false)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
@@ -106,6 +114,7 @@ export function DonePanel({
     setTotalCount(0)
     setPageTitles(new Map())
     setCollapsed(false)
+    setLoadError(false)
 
     let cancelled = false
     const doFetch = async () => {
@@ -138,6 +147,7 @@ export function DonePanel({
       } catch (err) {
         if (!cancelled) {
           logger.error('DonePanel', 'Failed to load done items', undefined, err)
+          setLoadError(true)
         }
       } finally {
         if (!cancelled) setLoading(false)
@@ -147,7 +157,11 @@ export function DonePanel({
     return () => {
       cancelled = true
     }
-  }, [date, t, invalidationKey, excludePageId, currentSpaceId])
+  }, [date, t, invalidationKey, excludePageId, currentSpaceId, reloadKey])
+
+  const retryLoad = useCallback(() => {
+    setReloadKey((k) => k + 1)
+  }, [])
 
   const loadMore = useCallback(() => {
     if (nextCursor) {
@@ -261,6 +275,32 @@ export function DonePanel({
 
   const headerLabel =
     totalCount === 1 ? t('donePanel.headerOne') : t('donePanel.header', { count: totalCount })
+
+  // A *failed* load gets an explicit error + retry affordance, distinct from
+  // the empty `null` below — otherwise a thrown load is indistinguishable from
+  // "no completed items today". Only surfaced when there's nothing to show
+  // (an error on a load-more keeps the already-rendered items visible).
+  if (loadError && blocks.length === 0) {
+    return (
+      <section className="done-panel" aria-label={t('donePanel.completedItems')}>
+        <div
+          className="done-panel-error flex items-center gap-2 px-2 py-2 text-sm text-muted-foreground"
+          role="alert"
+        >
+          <span className="done-panel-error-message">{t('donePanel.loadError')}</span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={retryLoad}
+            className="done-panel-retry"
+            aria-label={t('donePanel.retryLabel')}
+          >
+            {t('donePanel.retry')}
+          </Button>
+        </div>
+      </section>
+    )
+  }
 
   // Render nothing when empty (and not loading): an empty "none yet" panel is
   // visual clutter on every journal day. This intentionally overrides the older
