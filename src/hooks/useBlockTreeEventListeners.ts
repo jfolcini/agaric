@@ -196,7 +196,26 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       )
     }
 
+    // #1439 — converted clipboard-HTML outline. The editor's HTML-paste handler
+    // emits the indented-markdown outline (`detail.markdown`); materialize it as
+    // real blocks via `pasteBlocks`, anchored on the focused block (`blockId` is
+    // the focused, owned block — the bus only routes here when this tree's store
+    // owns the focus). The outline lands AFTER the anchor (siblings/children),
+    // exactly like the keyboard/context-menu outline paste.
+    const onPasteHtmlBlocks: BlockCommandHandler = (blockId, detail) => {
+      const markdown = (detail as { markdown?: string } | undefined)?.markdown
+      if (!markdown) return
+      void pageStore
+        .getState()
+        .pasteBlocks(blockId, markdown)
+        .catch((err: unknown) => {
+          logger.error('BlockTree', 'Failed to paste HTML blocks', { blockId }, err)
+          notify.error(t('error.pasteBlocksFailed'))
+        })
+    }
+
     return registerBlockCommandTarget(pageStore, {
+      PASTE_HTML_BLOCKS: onPasteHtmlBlocks,
       DISCARD_BLOCK_EDIT: onDiscard,
       CYCLE_PRIORITY: onCyclePriority,
       SET_PRIORITY_1: setPriorityHandler('1'),

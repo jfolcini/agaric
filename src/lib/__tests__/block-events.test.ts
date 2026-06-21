@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BLOCK_EVENTS, dispatchBlockEvent, onBlockEvent } from '../block-events'
 
 describe('BLOCK_EVENTS', () => {
-  it('contains all 14 expected event keys', () => {
+  it('contains all 15 expected event keys', () => {
     const expectedKeys = [
       'OPEN_DATE_PICKER',
       'OPEN_DUE_DATE_PICKER',
@@ -20,6 +20,7 @@ describe('BLOCK_EVENTS', () => {
       'TOGGLE_TODO_STATE',
       'OPEN_BLOCK_PROPERTIES',
       'OPEN_QUERY_BUILDER',
+      'PASTE_HTML_BLOCKS',
       'DISCARD_BLOCK_EDIT',
       'CYCLE_PRIORITY',
       'SET_PRIORITY_1',

@@ -24,4 +24,8 @@ export const BLOCK_EVENTS = {
   INSERT_ORDERED_LIST: 'insert-ordered-list',
   INSERT_DIVIDER: 'insert-divider',
   INSERT_CALLOUT: 'insert-callout',
+  // #1439 — converted clipboard-HTML outline (multi-block). The editor's
+  // HTML-paste handler emits the indented-markdown outline; the focused
+  // BlockTree materializes it via `pasteBlocks(focusedBlockId, markdown)`.
+  PASTE_HTML_BLOCKS: 'paste-html-blocks',
 } as const
