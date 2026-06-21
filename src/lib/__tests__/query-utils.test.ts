@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildFilters, OPERATOR_SYMBOLS, parseQueryExpression } from '../query-utils'
+import {
+  buildFilters,
+  legacyQueryToFilterExpr,
+  OPERATOR_SYMBOLS,
+  parseQueryExpression,
+} from '../query-utils'
 
 describe('parseQueryExpression', () => {
   it('parses tag query', () => {
@@ -264,5 +269,192 @@ describe('OPERATOR_SYMBOLS', () => {
     expect(OPERATOR_SYMBOLS['gt']).toBe('>')
     expect(OPERATOR_SYMBOLS['lte']).toBe('≤')
     expect(OPERATOR_SYMBOLS['gte']).toBe('≥')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// legacyQueryToFilterExpr — the back-compat bridge from a parsed legacy
+// `{{query …}}` to the advanced engine's `FilterExpr`.
+//
+// These tests are the unit-level back-compat oracle for the execution
+// unification: every faithfully-translatable shape must produce the exact
+// engine leaf that reproduces the legacy match semantics, and every
+// NOT-faithfully-translatable shape must report `filterExpr: null` so the
+// caller keeps the legacy IPC path (never silently changing a block's results).
+// ---------------------------------------------------------------------------
+
+describe('legacyQueryToFilterExpr', () => {
+  const translate = (expr: string): ReturnType<typeof legacyQueryToFilterExpr> =>
+    legacyQueryToFilterExpr(parseQueryExpression(expr))
+
+  describe('faithfully translatable property shapes', () => {
+    it('translates todo_state=TODO to a State membership leaf', () => {
+      const { filterExpr, reasons } = translate('property:todo_state=TODO')
+      expect(reasons).toEqual([])
+      expect(filterExpr).toEqual({
+        type: 'And',
+        children: [
+          {
+            type: 'Leaf',
+            primitive: { type: 'State', values: ['TODO'], is_null: false, exclude: false },
+          },
+        ],
+      })
+    })
+
+    it('translates priority=1 to a Priority membership leaf', () => {
+      const { filterExpr, reasons } = translate('property:priority=1')
+      expect(reasons).toEqual([])
+      expect(filterExpr).toEqual({
+        type: 'And',
+        children: [
+          {
+            type: 'Leaf',
+            primitive: { type: 'Priority', values: ['1'], is_null: false, exclude: false },
+          },
+        ],
+      })
+    })
+
+    it('translates a custom property eq to HasProperty Eq(Text)', () => {
+      const { filterExpr, reasons } = translate('property:context=@office')
+      expect(reasons).toEqual([])
+      expect(filterExpr).toEqual({
+        type: 'And',
+        children: [
+          {
+            type: 'Leaf',
+            primitive: {
+              type: 'HasProperty',
+              key: 'context',
+              predicate: { type: 'Eq', value: { type: 'Text', value: '@office' } },
+            },
+          },
+        ],
+      })
+    })
+
+    it('maps every comparison operator on a custom property faithfully', () => {
+      const cases: [string, string][] = [
+        ['property:score!=100', 'Ne'],
+        ['property:score<100', 'Lt'],
+        ['property:score>100', 'Gt'],
+        ['property:score<=100', 'Lte'],
+        ['property:score>=100', 'Gte'],
+      ]
+      for (const [expr, predType] of cases) {
+        const { filterExpr, reasons } = translate(expr)
+        expect(reasons).toEqual([])
+        expect(filterExpr).toEqual({
+          type: 'And',
+          children: [
+            {
+              type: 'Leaf',
+              primitive: {
+                type: 'HasProperty',
+                key: 'score',
+                predicate: { type: predType, value: { type: 'Text', value: '100' } },
+              },
+            },
+          ],
+        })
+      }
+    })
+
+    it('maps due_date comparison operators to DueDate date predicates', () => {
+      const cases: [string, Record<string, string>][] = [
+        ['property:due_date=2025-01-01', { type: 'On', date: '2025-01-01' }],
+        ['property:due_date<2025-01-01', { type: 'Before', date: '2025-01-01' }],
+        ['property:due_date>2025-01-01', { type: 'After', date: '2025-01-01' }],
+        ['property:due_date<=2025-01-01', { type: 'OnOrBefore', date: '2025-01-01' }],
+        ['property:due_date>=2025-01-01', { type: 'OnOrAfter', date: '2025-01-01' }],
+      ]
+      for (const [expr, predicate] of cases) {
+        const { filterExpr, reasons } = translate(expr)
+        expect(reasons).toEqual([])
+        expect(filterExpr).toEqual({
+          type: 'And',
+          children: [{ type: 'Leaf', primitive: { type: 'DueDate', predicate } }],
+        })
+      }
+    })
+
+    it('translates a multi-filter AND into an And of leaves preserving order', () => {
+      const { filterExpr, reasons } = translate(
+        'property:todo_state=TODO property:due_date>=2025-06-01 property:context=@office',
+      )
+      expect(reasons).toEqual([])
+      expect(filterExpr).toEqual({
+        type: 'And',
+        children: [
+          {
+            type: 'Leaf',
+            primitive: { type: 'State', values: ['TODO'], is_null: false, exclude: false },
+          },
+          {
+            type: 'Leaf',
+            primitive: { type: 'DueDate', predicate: { type: 'OnOrAfter', date: '2025-06-01' } },
+          },
+          {
+            type: 'Leaf',
+            primitive: {
+              type: 'HasProperty',
+              key: 'context',
+              predicate: { type: 'Eq', value: { type: 'Text', value: '@office' } },
+            },
+          },
+        ],
+      })
+    })
+  })
+
+  describe('NOT faithfully translatable (keeps legacy path)', () => {
+    it('refuses tag shorthand (no name-prefix engine primitive)', () => {
+      const { filterExpr, reasons } = translate('tag:work')
+      expect(filterExpr).toBeNull()
+      expect(reasons).toContain('tag-prefix-match-has-no-engine-primitive')
+    })
+
+    it('refuses explicit type:tag', () => {
+      const { filterExpr, reasons } = translate('type:tag expr:work')
+      expect(filterExpr).toBeNull()
+      expect(reasons).toContain('tag-prefix-match-has-no-engine-primitive')
+    })
+
+    it('refuses a tag+property combination because of the tag', () => {
+      const { filterExpr, reasons } = translate('tag:work property:todo_state=TODO')
+      expect(filterExpr).toBeNull()
+      expect(reasons).toContain('tag-prefix-match-has-no-engine-primitive')
+    })
+
+    it('refuses backlinks', () => {
+      const { filterExpr, reasons } = translate('type:backlinks target:ULID123')
+      expect(filterExpr).toBeNull()
+      expect(reasons).toContain('backlinks-target-has-no-engine-primitive')
+    })
+
+    it('refuses explicit type:property (params, not shorthand)', () => {
+      const { filterExpr, reasons } = translate('type:property key:context value:@remote')
+      expect(filterExpr).toBeNull()
+      expect(reasons).toContain('explicit-type-property-uses-params-not-shorthand')
+    })
+
+    it('refuses unknown shapes', () => {
+      const { filterExpr, reasons } = translate('foo:bar')
+      expect(filterExpr).toBeNull()
+      expect(reasons).toContain('unknown-query-shape')
+    })
+
+    it('refuses a non-eq operator on the membership-only todo_state field', () => {
+      const { filterExpr, reasons } = translate('property:todo_state!=DONE')
+      expect(filterExpr).toBeNull()
+      expect(reasons).toContain('property-operator-not-expressible:todo_state:neq')
+    })
+
+    it('refuses a non-eq operator on the membership-only priority field', () => {
+      const { filterExpr, reasons } = translate('property:priority>1')
+      expect(filterExpr).toBeNull()
+      expect(reasons).toContain('property-operator-not-expressible:priority:gt')
+    })
   })
 })

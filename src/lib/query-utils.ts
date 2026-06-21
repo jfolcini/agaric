@@ -1,4 +1,5 @@
-import type { BacklinkFilter, CompareOp } from './tauri'
+import type { DatePredicate, PropertyPredicate } from './bindings'
+import type { BacklinkFilter, CompareOp, FilterExpr, FilterPrimitive } from './tauri'
 
 /** Parsed property filter from shorthand syntax (property:key=value). */
 export interface PropertyFilter {
@@ -175,4 +176,200 @@ export function buildFilters(
   }
 
   return filters
+}
+
+/**
+ * Map a {@link PropertyFilter} operator to the engine's nested
+ * {@link DatePredicate} (used by `DueDate`/`Scheduled` `FilterPrimitive`s).
+ *
+ * The legacy shorthand only carries the six comparison operators; the engine's
+ * richer date predicates (`On`, `IsNull`, `Between`) have no shorthand spelling,
+ * so they are unreachable from a legacy block and intentionally not produced
+ * here. Mirrors `AddFilterPopover.applyDate`'s predicate construction.
+ */
+function toDatePredicate(pf: PropertyFilter): DatePredicate {
+  switch (pf.operator) {
+    case 'neq': {
+      // No `!=` date predicate exists; `Ne` is property-only. The closest
+      // faithful structural form is "not on this day" — but the engine has no
+      // such date primitive, so a `due_date!=X` block is NOT translatable.
+      // Callers gate on `untranslatable` (see `legacyQueryToFilterExpr`); this
+      // arm is unreachable for them and falls back to an exact-day `On`.
+      return { type: 'On', date: pf.value }
+    }
+    case 'lt': {
+      return { type: 'Before', date: pf.value }
+    }
+    case 'gt': {
+      return { type: 'After', date: pf.value }
+    }
+    case 'lte': {
+      return { type: 'OnOrBefore', date: pf.value }
+    }
+    case 'gte': {
+      return { type: 'OnOrAfter', date: pf.value }
+    }
+    default: {
+      // `eq` / undefined → the exact calendar day (the engine expands `On` to a
+      // day window), matching the legacy `value_date = X` semantics.
+      return { type: 'On', date: pf.value }
+    }
+  }
+}
+
+/**
+ * Map a {@link PropertyFilter} operator to the engine's nested
+ * {@link PropertyPredicate} (used by `HasProperty`). All six shorthand
+ * operators have a faithful 1:1 predicate; `eq`/undefined → `Eq`.
+ */
+function toPropertyPredicate(pf: PropertyFilter): PropertyPredicate {
+  const value = { type: 'Text', value: pf.value } as const
+  switch (pf.operator) {
+    case 'neq': {
+      return { type: 'Ne', value }
+    }
+    case 'lt': {
+      return { type: 'Lt', value }
+    }
+    case 'gt': {
+      return { type: 'Gt', value }
+    }
+    case 'lte': {
+      return { type: 'Lte', value }
+    }
+    case 'gte': {
+      return { type: 'Gte', value }
+    }
+    default: {
+      return { type: 'Eq', value }
+    }
+  }
+}
+
+/**
+ * Translate a single parsed {@link PropertyFilter} to the engine
+ * {@link FilterPrimitive} that reproduces its match semantics, mirroring the
+ * fixed-field routing in {@link buildFilters} but onto the advanced-engine
+ * vocabulary (`State`/`Priority`/`DueDate`/`HasProperty`) used by
+ * `run_advanced_query`.
+ *
+ * Routing (matches `AddFilterPopover`'s chip construction):
+ *   - `todo_state` → `State { values:[v], is_null:false, exclude:false }`
+ *                    (only `eq` is faithful — `State` has no per-value operator)
+ *   - `priority`   → `Priority { values:[v], is_null:false, exclude:false }`
+ *                    (same `eq`-only constraint)
+ *   - `due_date`   → `DueDate { predicate }` (all six operators map; see
+ *                    {@link toDatePredicate})
+ *   - other keys   → `HasProperty { key, predicate }` (all six operators map)
+ *
+ * Returns `null` when the filter is NOT faithfully expressible on the engine
+ * vocabulary, so the caller can refuse to silently change a legacy block's
+ * results. The only such cases are a non-`eq` operator on the membership-only
+ * `todo_state` / `priority` fields (the engine's `State`/`Priority` leaves are
+ * pure set-membership and carry no comparison operator).
+ */
+function propertyFilterToPrimitive(pf: PropertyFilter): FilterPrimitive | null {
+  const isEq = pf.operator == null || pf.operator === 'eq'
+  if (pf.key === 'todo_state') {
+    if (!isEq) return null
+    return { type: 'State', values: [pf.value], is_null: false, exclude: false }
+  }
+  if (pf.key === 'priority') {
+    if (!isEq) return null
+    return { type: 'Priority', values: [pf.value], is_null: false, exclude: false }
+  }
+  if (pf.key === 'due_date') {
+    return { type: 'DueDate', predicate: toDatePredicate(pf) }
+  }
+  return { type: 'HasProperty', key: pf.key, predicate: toPropertyPredicate(pf) }
+}
+
+/** Outcome of {@link legacyQueryToFilterExpr}. */
+export interface LegacyToFilterExprResult {
+  /**
+   * The compiled engine `FilterExpr` (an `And` of the translated leaves),
+   * or `null` when the query is not faithfully translatable (see `reasons`).
+   * An empty/`unknown` query compiles to `And { children: [] }` (TRUE) — the
+   * same "match everything" the empty advanced builder produces.
+   */
+  filterExpr: FilterExpr | null
+  /**
+   * Per-shape reasons the query could NOT be translated to the engine
+   * vocabulary. Empty ⇒ a faithful `filterExpr` was produced. Non-empty ⇒
+   * `filterExpr` is `null` and the LEGACY execution path must be kept for this
+   * block (the back-compat-safe fallback).
+   */
+  reasons: string[]
+}
+
+/**
+ * #1280 / inline-query execution-unification — translate a parsed legacy
+ * `{{query …}}` expression to the advanced engine's `FilterExpr`, the input
+ * `run_advanced_query` consumes.
+ *
+ * This is the back-compat BRIDGE: the on-disk `{{query <text>}}` format and the
+ * `parseQueryExpression` reader are untouched; only the EXECUTION target is
+ * (eventually) re-pointed at the rich engine. To keep that switch provably
+ * behaviour-preserving, the translator is CONSERVATIVE — it returns
+ * `filterExpr: null` (and the caller keeps the legacy IPC path) whenever a shape
+ * has no faithful engine spelling. Today those shapes are:
+ *
+ *   1. `tag:` / `type:tag` — the legacy path matches a tag-NAME PREFIX
+ *      (`tags_cache.name LIKE 'work%'`, via `query_by_tags` `prefixes`). The
+ *      engine's only tag leaf is `Tag { tag: <exact tag id> }`; there is NO
+ *      name-prefix `FilterPrimitive`. A faithful translation would have to
+ *      `listTagsByPrefix` (an async IPC) and OR the resolved ids — which the
+ *      engine could express but this synchronous text→expr translator cannot,
+ *      and whose match set would also drift from the legacy block whenever tags
+ *      are added/renamed. So tag shapes are reported untranslatable.
+ *   2. `type:backlinks` (`target:`) — descendants-of-a-block; no equivalent
+ *      structural `FilterPrimitive` (it is a parent/descendant relation, not a
+ *      block predicate).
+ *   3. A non-`eq` operator on `todo_state` / `priority` — the engine's
+ *      `State`/`Priority` leaves are membership-only (see
+ *      {@link propertyFilterToPrimitive}).
+ *
+ * Everything else (single/multi property shorthand with any operator, including
+ * `due_date` ranges and custom-key comparisons) translates faithfully to an
+ * `And` of engine leaves with the SAME match semantics the legacy
+ * `filteredBlocksQuery` produced.
+ */
+export function legacyQueryToFilterExpr(
+  parsed: ReturnType<typeof parseQueryExpression>,
+): LegacyToFilterExprResult {
+  const reasons: string[] = []
+
+  // Tag shapes (shorthand `tag:` OR explicit `type:tag`): no faithful engine
+  // spelling (name-prefix is not a `FilterPrimitive`). See the doc-comment.
+  if (parsed.tagFilters.length > 0 || parsed.type === 'tag') {
+    reasons.push('tag-prefix-match-has-no-engine-primitive')
+  }
+  // Backlinks: a parent/descendant relation, not a block predicate.
+  if (parsed.type === 'backlinks') {
+    reasons.push('backlinks-target-has-no-engine-primitive')
+  }
+  // Legacy explicit `type:property key:X value:Y` lands in `params`, not
+  // `propertyFilters`, so it is not yet translatable via this path either.
+  if (parsed.type === 'property') {
+    reasons.push('explicit-type-property-uses-params-not-shorthand')
+  }
+  // `unknown` (no recognised shape) cannot be faithfully executed by the engine.
+  if (parsed.type === 'unknown') {
+    reasons.push('unknown-query-shape')
+  }
+
+  const children: FilterExpr[] = []
+  for (const pf of parsed.propertyFilters) {
+    const primitive = propertyFilterToPrimitive(pf)
+    if (primitive == null) {
+      reasons.push(`property-operator-not-expressible:${pf.key}:${pf.operator ?? 'eq'}`)
+      continue
+    }
+    children.push({ type: 'Leaf', primitive })
+  }
+
+  if (reasons.length > 0) {
+    return { filterExpr: null, reasons }
+  }
+  return { filterExpr: { type: 'And', children }, reasons: [] }
 }
