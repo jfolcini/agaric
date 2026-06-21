@@ -460,8 +460,8 @@ jobs:
       #
       # Order matters: these run AFTER the AppImage repack-and-clobber above so
       # Linux signs the FINAL repacked AppImage, and BEFORE the SBOM/attest
-      # block below so the macOS `.app.tar.gz` (built here) exists for the
-      # macOS attestation glob.
+      # block below so the macOS `.app.tar.gz` is signed before the SBOM /
+      # attestation steps reference the bundle.
       - name: Sign updater payload (Linux AppImage)
         if: matrix.platform == 'ubuntu-24.04'
         env:
@@ -518,35 +518,29 @@ jobs:
           [ ${#sigs[@]} -eq 1 ] || { echo "::error::expected exactly 1 NSIS .sig, found ${#sigs[@]}"; exit 1; }
           gh release upload "${GITHUB_REF_NAME}" "${sigs[0]}" --clobber
 
-      # macOS: `createUpdaterArtifacts=false` means no `.app.tar.gz` is built,
-      # so we build it here from the `.app` bundle. Name it with the arch token
-      # (x86_64 / aarch64) so the two macos-15 matrix cells don't collide on a
-      # single `Agaric.app.tar.gz` asset and the fan-in job can map each `.sig`
-      # to its `darwin-*` platform key unambiguously.
-      - name: Build + sign updater payload (macOS app.tar.gz)
+      # macOS: the bundler ALREADY emits the updater archive
+      # `bundle/macos/Agaric_<arch>.app.tar.gz` (arch = `x64` | `aarch64`) even
+      # with `createUpdaterArtifacts=false` — verified against the real 0.6.6
+      # release assets — it just never gets a `.sig`. So we sign Tauri's own
+      # canonical tarball in place rather than re-rolling our own (avoids a
+      # duplicate asset and guarantees the archive layout the updater unpacks).
+      # The arch token already disambiguates the two macos-15 matrix cells.
+      - name: Sign updater payload (macOS app.tar.gz)
         if: matrix.platform == 'macos-15'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/macos
-          MATRIX_TARGET: ${{ matrix.target }}
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
-          apps=("$BUNDLE_DIR"/*.app)
-          [ ${#apps[@]} -eq 1 ] || { echo "::error::expected exactly 1 .app, found ${#apps[@]}"; exit 1; }
-          app="${apps[0]}"
-          version="${GITHUB_REF_NAME#v}"
-          arch="${MATRIX_TARGET%%-*}"   # x86_64 | aarch64
-          tarball="$BUNDLE_DIR/Agaric_${version}_${arch}.app.tar.gz"
-          # Tar the `.app` directory by basename (relative to its parent) so the
-          # archive unpacks to `Agaric.app`, the layout the updater replaces.
-          tar -C "$BUNDLE_DIR" -czf "$tarball" "$(basename "$app")"
-          npm run tauri -- signer sign "$tarball"
-          test -f "${tarball}.sig"
+          tarballs=("$BUNDLE_DIR"/Agaric_*.app.tar.gz)
+          [ ${#tarballs[@]} -eq 1 ] || { echo "::error::expected exactly 1 bundler app.tar.gz, found ${#tarballs[@]}"; exit 1; }
+          npm run tauri -- signer sign "${tarballs[0]}"
+          test -f "${tarballs[0]}.sig"
 
-      - name: Upload macOS updater payload + signature
+      - name: Upload macOS updater signature
         if: matrix.platform == 'macos-15'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -555,11 +549,11 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          tarballs=("$BUNDLE_DIR"/Agaric_*.app.tar.gz)
+          # Only the `.sig` is uploaded here; tauri-action already uploaded the
+          # `.app.tar.gz` payload itself during its bundle step.
           sigs=("$BUNDLE_DIR"/Agaric_*.app.tar.gz.sig)
-          [ ${#tarballs[@]} -eq 1 ] || { echo "::error::expected exactly 1 app.tar.gz, found ${#tarballs[@]}"; exit 1; }
           [ ${#sigs[@]} -eq 1 ] || { echo "::error::expected exactly 1 app.tar.gz .sig, found ${#sigs[@]}"; exit 1; }
-          gh release upload "${GITHUB_REF_NAME}" "${tarballs[0]}" "${sigs[0]}" --clobber
+          gh release upload "${GITHUB_REF_NAME}" "${sigs[0]}" --clobber
 
       # PEND-40 #5: SLSA build provenance attestations for every released
       # desktop bundle. Each `subject-path` glob is narrowed to the file
@@ -578,7 +572,7 @@ jobs:
       # NOT attested — they are verification metadata for the parent
       # bundle, not standalone artifacts. The in-app updater payloads (#808)
       # are the raw `.AppImage` (Linux), the raw NSIS `-setup.exe` (Windows),
-      # and the hand-built `.app.tar.gz` (macOS); all three ARE attested via
+      # and the bundler-produced `.app.tar.gz` (macOS); all three ARE attested via
       # the platform globs below because they ship as distributable binaries
       # to end users via the in-app updater. (`createUpdaterArtifacts` stays
       # false, so no bundler-produced `.AppImage.tar.gz` / `.msi.zip` /
@@ -1305,11 +1299,15 @@ jobs:
           shopt -s nullglob
           for sig in "$tmp"/*.sig; do
             base="$(basename "${sig%.sig}")"
+            # Payload basenames as Tauri actually names them (verified against
+            # the real 0.6.6 release): Agaric_<v>_amd64.AppImage,
+            # Agaric_<v>_x64-setup.exe, Agaric_x64.app.tar.gz,
+            # Agaric_aarch64.app.tar.gz.
             case "$base" in
-              *_amd64.AppImage)                     key="linux-x86_64" ;;
-              *-setup.exe)                          key="windows-x86_64" ;;
-              *_x86_64.app.tar.gz)                  key="darwin-x86_64" ;;
-              *_aarch64.app.tar.gz)                 key="darwin-aarch64" ;;
+              *_amd64.AppImage)    key="linux-x86_64" ;;
+              *-setup.exe)         key="windows-x86_64" ;;
+              *_x64.app.tar.gz)    key="darwin-x86_64" ;;
+              *_aarch64.app.tar.gz) key="darwin-aarch64" ;;
               *) echo "::error::unrecognised updater payload: $base"; exit 1 ;;
             esac
             PLAT["$key"]="$(jq -n --arg s "$(cat "$sig")" --arg u "${base_url}/${base}" \

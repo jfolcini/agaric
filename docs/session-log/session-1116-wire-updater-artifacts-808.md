@@ -29,10 +29,12 @@ Per-platform updater payloads (Tauri 2 default mode):
 - **Linux** `linux-x86_64` — the raw repacked `.AppImage` (signed AFTER the
   existing icon-repack-and-clobber, so the signature matches the shipped file).
 - **Windows** `windows-x86_64` — the raw NSIS `-setup.exe`.
-- **macOS** `darwin-x86_64` / `darwin-aarch64` — a `.app.tar.gz` built in-step
-  (`createUpdaterArtifacts=false` means the bundler doesn't produce one), named
-  with an explicit arch token (`Agaric_<ver>_<arch>.app.tar.gz`) so the two
-  `macos-15` cells never collide on a single asset.
+- **macOS** `darwin-x86_64` / `darwin-aarch64` — the bundler's own
+  `Agaric_<arch>.app.tar.gz` (arch = `x64` | `aarch64`), signed in place. The
+  macOS bundler already emits this tarball even with `createUpdaterArtifacts`
+  false (verified against the real 0.6.6 assets); it just never got a `.sig`. We
+  sign Tauri's canonical archive rather than re-rolling our own — no duplicate
+  asset, and the unpack layout is guaranteed correct.
 
 A new fan-in job **`generate-latest-json`** (`needs` the desktop matrix; before
 `finalize-release-notes`) downloads the four `.sig` assets, maps each to its
@@ -57,12 +59,23 @@ globs; the macOS `*.app.tar.gz` glob is now valid (we build that tarball).
   Install & restart on each OS — the only way to confirm the hand-built macOS
   `.app.tar.gz` is layout-compatible with the updater's unpack.
 
-## Residual maintainer items (flagged in PR)
+## Verified before merge (the three residual items)
 
-1. Confirm real produced filenames match the case/glob arms on first run.
-2. Confirm the macOS hand-built `.app.tar.gz` updates correctly at runtime
-   (fallback: macOS-only key-isolated `createUpdaterArtifacts` rebuild).
-3. Key-match (stored `TAURI_SIGNING_PRIVATE_KEY` vs configured pubkey) —
-   maintainer verifies out-of-band.
+1. **Filenames vs glob/case arms** — checked against the real published 0.6.6
+   release: `Agaric_0.6.6_amd64.AppImage`, `Agaric_0.6.6_x64-setup.exe`,
+   `Agaric_x64.app.tar.gz`, `Agaric_aarch64.app.tar.gz`. All four sign-globs and
+   fan-in `case` arms match. This is what surfaced the macOS correction above
+   (Tauri already ships the tarball; we sign it, not rebuild it).
+2. **Updater format** — by signing Tauri's own canonical artifacts (raw
+   `.AppImage`, raw NSIS `-setup.exe`, bundler `.app.tar.gz`) the archive layout
+   is exactly what `tauri-plugin-updater` expects, so the old "hand-built
+   tarball compatibility" risk is gone. A true 3-OS install→update run still
+   needs real hardware + a published release; only that confirms end-to-end.
+3. **Key-match** — the local keypair at `~/.tauri/agaric.key{,.pub}` (created
+   2026-05-15, same date the GH secret was created) has a `.pub` whose contents
+   are **byte-identical** to `plugins.updater.pubkey` in `tauri.conf.json` (key
+   ID `639CE70BB786855A`). The encrypted private key is its generated
+   counterpart. Definitive sign+verify needs the key password (a GH secret not
+   present locally), so that final step stays maintainer-owned.
 
 Closes #808.
