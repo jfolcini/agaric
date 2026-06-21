@@ -49,9 +49,7 @@ exception and is asserted for the count sorts.
 ## Scope (staged, per #1886)
 
 - **In:** the four wire sorts — ordering + cursor discriminator (`position`/`seq`).
-- **Out:** recently-modified key-slot byte-equality, and the `HasProperty`
-  comparison / `LIKE` predicates (`Lt`/`Gt`/`Lte`/`Gte`/`Contains`/`StartsWith`),
-  which the mock does not yet implement (tracked in #1913). `alphabetical` is
+- **Out:** recently-modified key-slot byte-equality. `alphabetical` is
   intentionally excluded — it never crosses the wire
   (`pageSortWireFor('alphabetical')` returns `'default'`). The filter-primitive
   evaluation parity (#1908) is otherwise covered — see "Filter primitives",
@@ -139,7 +137,10 @@ and outbound **presence** cross the comparison, so both are representation-stabl
 - **TypeScript** — `tag-property-conformance.test.ts` seeds the `blockTags` /
   `properties` maps (cleared per scenario) and drives `metaRowMatchesFilter`.
 
-Scope is the predicates the mock implements and #1908 names: `Exists`,
-`NotExists`, `Eq`, `Ne` — for both `Text` and `Ref` values. The comparison /
-`LIKE` predicates (`Lt`/`Gt`/`Lte`/`Gte`/`Contains`/`StartsWith`) are a known
-mock gap, deliberately out of scope and tracked in **#1913**.
+Scope is the full `HasProperty` predicate matrix across all four value types
+(`Text`/`Ref`/`Num`/`Date`): `Exists`, `NotExists`, `Eq`, `Ne` (#1908 c), and
+the ordered `Lt`/`Gt`/`Lte`/`Gte` + `LIKE` `Contains`/`StartsWith` predicates
+(#1913). Ordered compares are numeric on `value_num` and lexical otherwise;
+`Contains`/`StartsWith` are ASCII-case-insensitive literal substring/prefix
+tests (SQLite `LIKE` is ASCII-case-insensitive and `escape_like` makes the
+needle literal) and short-circuit to no match on a `Num` comparand.

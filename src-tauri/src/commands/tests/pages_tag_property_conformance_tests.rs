@@ -12,12 +12,10 @@
 //! from THIS Rust side; the mock test then fails until `handlers.ts` is
 //! realigned. See `conformance/pages-metadata/README.md`.
 //!
-//! Scope: `Tag` plus the `HasProperty` predicates the mock actually implements
-//! — `Exists`, `NotExists`, `Eq`, `Ne` — for BOTH `Text` and `Ref` values, plus
-//! AND-composition. The ordered/LIKE predicates
-//! (`Lt`/`Gt`/`Lte`/`Gte`/`Contains`/`StartsWith`) are intentionally OUT of
-//! scope: the mock returns the default `true` for them (a known un-implemented
-//! gap, tracked by a separate #1908 follow-up).
+//! Scope: `Tag` plus the FULL `HasProperty` predicate matrix — `Exists`,
+//! `NotExists`, `Eq`, `Ne`, `Lt`, `Gt`, `Lte`, `Gte`, `Contains`, `StartsWith`
+//! — across all four value types (`Text`/`Ref`/`Num`/`Date`), plus
+//! AND-composition. The ordered/LIKE predicates were added in #1913.
 
 #![cfg(test)]
 
@@ -55,13 +53,16 @@ struct PropSeed {
     value: PropVal,
 }
 
-/// Fixture property value. Mirrors the wire `PropertyValue` shape
-/// (`{ "type": "Text"|"Ref", "value": "…" }`) but kept local + stringly-typed:
-/// the seed only needs to know which `block_properties` column to write.
+/// Fixture property value, mirroring the wire `PropertyValue` shape
+/// (`{ "type": "Text"|"Ref"|"Num"|"Date", "value": … }`). Drives which
+/// `block_properties` column the seed writes, per `property_value_column`.
 #[derive(Deserialize)]
-struct PropVal {
-    r#type: String,
-    value: String,
+#[serde(tag = "type")]
+enum PropVal {
+    Text { value: String },
+    Ref { value: String },
+    Num { value: f64 },
+    Date { value: String },
 }
 
 #[derive(Deserialize)]
@@ -130,35 +131,62 @@ async fn seed_tag_property_page(pool: &SqlitePool, row: &Row) {
     }
 
     for prop in &row.properties {
-        if prop.value.r#type == "Ref" {
-            // `block_properties.value_ref` is FK → blocks(id); insert the
-            // target page first.
-            sqlx::query(
-                "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position, page_id) \
-                 VALUES (?, 'page', 'RefTarget', NULL, NULL, ?)",
-            )
-            .bind(&prop.value.value)
-            .bind(&prop.value.value)
-            .execute(pool)
-            .await
-            .unwrap();
-            sqlx::query("INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, ?, ?)")
-                .bind(&row.id)
-                .bind(&prop.key)
-                .bind(&prop.value.value)
+        match &prop.value {
+            PropVal::Ref { value } => {
+                // `block_properties.value_ref` is FK → blocks(id); insert the
+                // target page first.
+                sqlx::query(
+                    "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position, page_id) \
+                     VALUES (?, 'page', 'RefTarget', NULL, NULL, ?)",
+                )
+                .bind(value)
+                .bind(value)
                 .execute(pool)
                 .await
                 .unwrap();
-        } else {
-            sqlx::query(
-                "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)",
-            )
-            .bind(&row.id)
-            .bind(&prop.key)
-            .bind(&prop.value.value)
-            .execute(pool)
-            .await
-            .unwrap();
+                sqlx::query(
+                    "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, ?, ?)",
+                )
+                .bind(&row.id)
+                .bind(&prop.key)
+                .bind(value)
+                .execute(pool)
+                .await
+                .unwrap();
+            }
+            PropVal::Text { value } => {
+                sqlx::query(
+                    "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)",
+                )
+                .bind(&row.id)
+                .bind(&prop.key)
+                .bind(value)
+                .execute(pool)
+                .await
+                .unwrap();
+            }
+            PropVal::Num { value } => {
+                sqlx::query(
+                    "INSERT INTO block_properties (block_id, key, value_num) VALUES (?, ?, ?)",
+                )
+                .bind(&row.id)
+                .bind(&prop.key)
+                .bind(value)
+                .execute(pool)
+                .await
+                .unwrap();
+            }
+            PropVal::Date { value } => {
+                sqlx::query(
+                    "INSERT INTO block_properties (block_id, key, value_date) VALUES (?, ?, ?)",
+                )
+                .bind(&row.id)
+                .bind(&prop.key)
+                .bind(value)
+                .execute(pool)
+                .await
+                .unwrap();
+            }
         }
     }
 }

@@ -13,12 +13,10 @@
  * `handlers.ts` is realigned — that is the whole point of the cross-impl gate.
  * See `conformance/pages-metadata/README.md`.
  *
- * Scope: `Tag` plus the HasProperty predicates the mock actually implements —
- * `Exists`, `NotExists`, `Eq`, `Ne` — for BOTH Text and Ref values, plus
- * AND-composition. The ordered/LIKE predicates (Lt/Gt/Lte/Gte/Contains/
- * StartsWith) are intentionally OUT of scope: `hasPropertyMatches` returns
- * `true` (default branch) for them, a known gap tracked by a separate #1908
- * follow-up.
+ * Scope: `Tag` plus the FULL HasProperty predicate matrix — `Exists`,
+ * `NotExists`, `Eq`, `Ne`, `Lt`, `Gt`, `Lte`, `Gte`, `Contains`, `StartsWith`
+ * — across all four value types (Text/Ref/Num/Date), plus AND-composition. The
+ * ordered/LIKE predicates were added in #1913.
  *
  * Unlike the pure-over-row increment (a), these primitives read GLOBAL mock
  * state (`blockTags` / `properties`), so each scenario seeds those maps
@@ -35,8 +33,8 @@ import { type PageMetaRow, metaRowMatchesFilter } from '../handlers'
 import { blockTags, properties } from '../seed'
 
 interface FixturePropValue {
-  type: 'Text' | 'Ref'
-  value: string
+  type: 'Text' | 'Ref' | 'Num' | 'Date'
+  value: string | number
 }
 
 interface FixtureProp {
@@ -75,23 +73,35 @@ const FIXTURE_PATH = path.resolve(
 const vectors = JSON.parse(readFileSync(FIXTURE_PATH, 'utf8')) as Vectors
 
 /**
+ * Map a fixture value to its `block_properties` column cell, mirroring the
+ * backend's 4-column store: Ref→`value_ref`, Num→`value_num`, Date→`value_date`,
+ * Text→`value_text`.
+ */
+function propCell(value: FixturePropValue): Record<string, string | number> {
+  switch (value.type) {
+    case 'Ref': {
+      return { value_ref: value.value }
+    }
+    case 'Num': {
+      return { value_num: value.value }
+    }
+    case 'Date': {
+      return { value_date: value.value }
+    }
+    default: {
+      return { value_text: value.value }
+    }
+  }
+}
+
+/**
  * Seed the global `blockTags` / `properties` maps from the fixture rows, the
- * exact state the mock's `Tag` / `HasProperty` evaluation reads. A Ref value
- * stores `{ value_ref }`, a Text value stores `{ value_text }` — mirroring the
- * backend's `block_properties` columns.
+ * exact state the mock's `Tag` / `HasProperty` evaluation reads.
  */
 function seedScenario(rows: FixtureRow[]): void {
   for (const row of rows) {
     blockTags.set(row.id, new Set(row.tags))
-    properties.set(
-      row.id,
-      new Map(
-        row.properties.map((p) => [
-          p.key,
-          p.value.type === 'Ref' ? { value_ref: p.value.value } : { value_text: p.value.value },
-        ]),
-      ),
-    )
+    properties.set(row.id, new Map(row.properties.map((p) => [p.key, propCell(p.value)])))
   }
 }
 

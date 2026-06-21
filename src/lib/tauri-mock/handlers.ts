@@ -13,7 +13,7 @@
 
 import { matchesSearchFolded } from '../fold-for-search'
 import { logger } from '../logger'
-import { pageGlobFilterMatches } from '../search-query/glob-validate'
+import { asciiLowercase, pageGlobFilterMatches } from '../search-query/glob-validate'
 import { applyRevertForOp } from './revert'
 import {
   attachmentBytes,
@@ -232,21 +232,116 @@ export function metaRowMatchesFilter(r: PageMetaRow, f: Record<string, unknown>)
 }
 
 /**
+ * Map a wire `PropertyValue` (`{ type, value }`) to the `block_properties`
+ * column it compares against plus its comparand, mirroring the backend's
+ * `property_value_column` 4-way mapping (D26 / #1280):
+ *   - `Text` → `value_text`, `Ref` → `value_ref` (string comparands),
+ *   - `Num`  → `value_num` (numeric), `Date` → `value_date` (ISO string).
+ */
+function propertyValueColumn(
+  value: Record<string, unknown> | undefined,
+): { col: string; wanted: string | number } | null {
+  if (!value) return null
+  const raw = value['value']
+  switch (value['type'] as string) {
+    case 'Text': {
+      return { col: 'value_text', wanted: raw as string }
+    }
+    case 'Ref': {
+      return { col: 'value_ref', wanted: raw as string }
+    }
+    case 'Num': {
+      return { col: 'value_num', wanted: raw as number }
+    }
+    case 'Date': {
+      return { col: 'value_date', wanted: raw as string }
+    }
+    default: {
+      return null
+    }
+  }
+}
+
+/** Ordered comparison for `Lt`/`Gt`/`Lte`/`Gte` — numeric for a `value_num`
+ * comparand, lexical (SQLite BINARY collation, ASCII-equivalent) otherwise. */
+function compareProperty(op: string, a: string | number, b: string | number): boolean {
+  switch (op) {
+    case 'Lt': {
+      return a < b
+    }
+    case 'Gt': {
+      return a > b
+    }
+    case 'Lte': {
+      return a <= b
+    }
+    case 'Gte': {
+      return a >= b
+    }
+    default: {
+      return false
+    }
+  }
+}
+
+type StoredProp = Record<string, unknown> | null
+
+/** `Eq` (EXISTS col = ?): the value column is present AND equals the comparand. */
+function propertyEqMatches(prop: StoredProp, value: Record<string, unknown> | undefined): boolean {
+  const vc = propertyValueColumn(value)
+  const stored = prop && vc ? (prop[vc.col] ?? null) : null
+  return vc != null && stored != null && stored === vc.wanted
+}
+
+/** `Lt`/`Gt`/`Lte`/`Gte`: ordered compare, value column guarded `IS NOT NULL`. */
+function propertyCompareMatches(
+  prop: StoredProp,
+  op: string,
+  value: Record<string, unknown> | undefined,
+): boolean {
+  const vc = propertyValueColumn(value)
+  if (!prop || !vc) return false
+  const stored = prop[vc.col] ?? null
+  if (stored == null) return false
+  return compareProperty(op, stored as string | number, vc.wanted)
+}
+
+/**
+ * `Contains`/`StartsWith`: `LIKE ? ESCAPE '\'` over a text column; a `Num`
+ * comparand short-circuits to no match (a numeric column has no substring).
+ * SQLite `LIKE` is ASCII-case-insensitive and `escape_like` makes the needle
+ * literal, so this is an ASCII-case-insensitive literal substring/prefix test.
+ */
+function propertyLikeMatches(
+  prop: StoredProp,
+  contains: boolean,
+  value: Record<string, unknown> | undefined,
+): boolean {
+  const vc = propertyValueColumn(value)
+  if (!prop || !vc || vc.col === 'value_num') return false
+  const stored = prop[vc.col] ?? null
+  if (stored == null) return false
+  const hay = asciiLowercase(String(stored))
+  const needle = asciiLowercase(String(vc.wanted))
+  return contains ? hay.includes(needle) : hay.startsWith(needle)
+}
+
+/**
  * Evaluate a `HasProperty` primitive against a page's seeded `block_properties`
  * (`properties` map, keyed on the page block id), mirroring the backend's
- * `compile_has_property` predicate matrix. The wire shape is the nested
+ * `compile_has_property` predicate matrix over the full 4-column value mapping
+ * (`property_value_column`). The wire shape is the nested
  * `predicate: PropertyPredicate` (D8 — invalid op/value combos are
- * unrepresentable):
- *   - `Exists`     — key present,
- *   - `NotExists`  — key absent,
- *   - `Eq`         — `value_text` (or `value_ref` for a Ref value) equals,
- *   - `Ne`         — no property row with that value (NOT EXISTS).
+ * unrepresentable): `Exists` / `NotExists`, `Eq` / `Ne`, the `Lt`/`Gt`/`Lte`/
+ * `Gte` ordered compares (#1280), and `Contains`/`StartsWith` LIKE matches
+ * (#1913).
  */
 function hasPropertyMatches(r: PageMetaRow, f: Record<string, unknown>): boolean {
   const key = f['key'] as string
   const predicate = f['predicate'] as Record<string, unknown> | undefined
   const ptype = predicate?.['type'] as string | undefined
-  const prop = properties.get(r.id)?.get(key)
+  const prop = properties.get(r.id)?.get(key) ?? null
+  const value = predicate?.['value'] as Record<string, unknown> | undefined
   switch (ptype) {
     case 'Exists': {
       return prop != null
@@ -254,19 +349,22 @@ function hasPropertyMatches(r: PageMetaRow, f: Record<string, unknown>): boolean
     case 'NotExists': {
       return prop == null
     }
-    case 'Eq':
+    case 'Eq': {
+      return propertyEqMatches(prop, value)
+    }
     case 'Ne': {
-      const value = predicate?.['value'] as Record<string, unknown> | undefined
-      // Ref values compare against `value_ref`; Text against `value_text`.
-      const isRef = value?.['type'] === 'Ref'
-      const wanted = (value?.['value'] as string | undefined) ?? null
-      const stored = prop
-        ? ((isRef ? prop['value_ref'] : prop['value_text']) as string | null)
-        : null
-      const hit = prop != null && wanted != null && stored === wanted
-      // `Ne` = NOT EXISTS a row with key=? AND value=? — true when the key is
-      // absent OR present-but-different.
-      return ptype === 'Ne' ? !hit : hit
+      // NOT EXISTS — true when the key is absent OR present-but-different.
+      return !propertyEqMatches(prop, value)
+    }
+    case 'Lt':
+    case 'Gt':
+    case 'Lte':
+    case 'Gte': {
+      return propertyCompareMatches(prop, ptype, value)
+    }
+    case 'Contains':
+    case 'StartsWith': {
+      return propertyLikeMatches(prop, ptype === 'Contains', value)
     }
     default: {
       return true
