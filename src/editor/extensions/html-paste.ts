@@ -54,16 +54,22 @@ const htmlPastePluginKey = new PluginKey('htmlPaste')
  */
 export function isUsableHtml(html: string | undefined | null): html is string {
   if (!html) return false
-  if (!/<[a-zA-Z][\s\S]*>/.test(html)) return false
-  // Strip comments + tags, decode the few entities that matter for emptiness,
-  // and check that some visible text remains.
-  const text = html
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&[a-zA-Z]+;/g, 'x')
-    .trim()
-  return text.length > 0
+  // Use the DOM to decide emptiness rather than regex tag-stripping: regex
+  // sanitization of HTML is bypassable (CodeQL js/incomplete-multi-character-
+  // sanitization), and the browser parser drops tags/comments correctly. A
+  // `text/html` payload that is really just escaped plain text parses to a body
+  // with no element children, so it is (correctly) rejected to the plain-text
+  // path. Fall back to a presence *test* (not a replace) where DOMParser is
+  // unavailable.
+  if (typeof DOMParser === 'undefined') return /<[a-zA-Z][\s\S]*>/.test(html)
+  let body: HTMLElement | null
+  try {
+    body = new DOMParser().parseFromString(html, 'text/html').body
+  } catch {
+    return false
+  }
+  if (!body || body.querySelector('*') === null) return false
+  return (body.textContent ?? '').trim().length > 0
 }
 
 /**
