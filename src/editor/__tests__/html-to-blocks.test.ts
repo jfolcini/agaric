@@ -306,6 +306,16 @@ describe('htmlBodyToOutline — images (Phase 2)', () => {
     const blocks = convert('<p><img src="https://x.com/c.png" alt="cat"></p>')
     expect(blocks[0]?.content).toBe('![cat](https://x.com/c.png)')
   })
+
+  it('escapes ] and \\ in an inline image alt so it cannot inject markdown', () => {
+    // A crafted alt must not break out of ![alt](src) to smuggle a second image
+    // with a javascript: src that bypasses isValidHttpUrl.
+    const blocks = convert('<p><img src="https://x.com/ok.png" alt="](javascript:xss) ![fake"></p>')
+    const content = blocks[0]?.content ?? ''
+    // The leading `]` is escaped to `\]`, so the alt span is not closed early
+    // and the only image src is the safe https one.
+    expect(content).toBe('![\\](javascript:xss) ![fake](https://x.com/ok.png)')
+  })
 })
 
 describe('htmlBodyToOutline — blockquotes (Phase 2)', () => {

@@ -72,7 +72,13 @@ export function createInlineTurndown(): {
     replacement: (_content, node) => {
       const el = node as HTMLImageElement
       const src = el.getAttribute('src') ?? ''
-      const alt = el.getAttribute('alt') ?? ''
+      // Escape `]` and `\` in the alt text BEFORE interpolating into
+      // `![alt](src)` — same as the block-level imageMarkdown(). Without this a
+      // crafted alt like `](javascript:xss) ![fake` would break out of the alt
+      // span and inject an image whose src bypasses isValidHttpUrl. Escaping is
+      // applied to the alt-only fallback too so an unsafe-src image cannot
+      // smuggle markdown (e.g. a `]`-based link) through its alt text.
+      const alt = (el.getAttribute('alt') ?? '').replace(/([\\\]])/g, '\\$1')
       if (!isValidHttpUrl(src)) return alt
       return `![${alt}](${src})`
     },
