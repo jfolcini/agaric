@@ -456,261 +456,12 @@ describe('SortableBlock', () => {
     expect(handle).toBeInTheDocument()
     expect(handle.tagName.toLowerCase()).toBe('button')
   })
-
-  it('renders a delete button with trash icon', () => {
-    mockUseSortable.mockReturnValue({
-      attributes: {},
-      listeners: {},
-      setNodeRef: vi.fn(),
-      transform: null,
-      transition: undefined,
-      isDragging: false,
-    })
-
-    const onDelete = vi.fn()
-
-    render(
-      <TestBlockActionsOverride actions={{ onDelete: onDelete }}>
-        <SortableBlock
-          blockId="BLOCK_1"
-          content="hello"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    expect(deleteBtn).toBeInTheDocument()
-    expect(screen.getByTestId('trash-icon')).toBeInTheDocument()
-  })
-
-  it('calls onDelete on click, not on pointerDown alone (#1532)', async () => {
-    mockUseSortable.mockReturnValue({
-      attributes: {},
-      listeners: {},
-      setNodeRef: vi.fn(),
-      transform: null,
-      transition: undefined,
-      isDragging: false,
-    })
-
-    const onDelete = vi.fn()
-
-    render(
-      <TestBlockActionsOverride actions={{ onDelete: onDelete }}>
-        <SortableBlock
-          blockId="BLOCK_42"
-          content="hello"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    // #1532: pointerDown only retains editor focus / stops propagation; it must
-    // not fire onDelete (that would double-fire alongside the synthetic click).
-    fireEvent.pointerDown(deleteBtn)
-    expect(onDelete).not.toHaveBeenCalled()
-
-    fireEvent.click(deleteBtn)
-    expect(onDelete).toHaveBeenCalledOnce()
-    expect(onDelete).toHaveBeenCalledWith('BLOCK_42')
-  })
-
-  it('delete button stopPropagation on pointerDown prevents parent activation', () => {
-    mockUseSortable.mockReturnValue({
-      attributes: {},
-      listeners: {},
-      setNodeRef: vi.fn(),
-      transform: null,
-      transition: undefined,
-      isDragging: false,
-    })
-
-    const onDelete = vi.fn()
-
-    render(
-      <TestBlockActionsOverride actions={{ onDelete: onDelete }}>
-        <SortableBlock
-          blockId="BLOCK_1"
-          content="hello"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
-    const stopSpy = vi.spyOn(event, 'stopPropagation')
-    deleteBtn.dispatchEvent(event)
-
-    expect(stopSpy).toHaveBeenCalled()
-    // #1532: pointerDown no longer fires onDelete (moved to onClick), so the
-    // press cannot double-delete; it only stops propagation to the parent.
-    expect(onDelete).not.toHaveBeenCalled()
-  })
-
-  it('delete button responds to keyboard activation (Enter/Space)', async () => {
-    mockUseSortable.mockReturnValue({
-      attributes: {},
-      listeners: {},
-      setNodeRef: vi.fn(),
-      transform: null,
-      transition: undefined,
-      isDragging: false,
-    })
-
-    const onDelete = vi.fn()
-    const user = userEvent.setup()
-
-    render(
-      <TestBlockActionsOverride actions={{ onDelete: onDelete }}>
-        <SortableBlock
-          blockId="BLOCK_KB"
-          content="keyboard test"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    await user.click(deleteBtn)
-
-    expect(onDelete).toHaveBeenCalledWith('BLOCK_KB')
-  })
-
-  it('does not render delete button when onDelete is not provided', () => {
-    mockUseSortable.mockReturnValue({
-      attributes: {},
-      listeners: {},
-      setNodeRef: vi.fn(),
-      transform: null,
-      transition: undefined,
-      isDragging: false,
-    })
-
-    render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-      />,
-    )
-
-    expect(screen.queryByRole('button', { name: /delete block/i })).not.toBeInTheDocument()
-  })
-})
-
-describe('SortableBlock history button', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    mockUseSortable.mockReturnValue({
-      attributes: {},
-      listeners: {},
-      setNodeRef: vi.fn(),
-      transform: null,
-      transition: undefined,
-      isDragging: false,
-    })
-  })
-
-  it('does not render history button when onShowHistory is not provided', () => {
-    render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-      />,
-    )
-
-    expect(screen.queryByRole('button', { name: /block history/i })).not.toBeInTheDocument()
-  })
-
-  it('renders history button when onShowHistory is provided', () => {
-    render(
-      <TestBlockActionsOverride actions={{ onShowHistory: vi.fn() }}>
-        <SortableBlock
-          blockId="BLOCK_1"
-          content="hello"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-
-    const historyBtn = screen.getByRole('button', { name: /block history/i })
-    expect(historyBtn).toBeInTheDocument()
-    expect(screen.getByTestId('clock-icon')).toBeInTheDocument()
-  })
-
-  it('calls onShowHistory with blockId when history button is clicked', async () => {
-    const user = userEvent.setup()
-    const onShowHistory = vi.fn()
-
-    render(
-      <TestBlockActionsOverride actions={{ onShowHistory: onShowHistory }}>
-        <SortableBlock
-          blockId="BLOCK_42"
-          content="hello"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-
-    const historyBtn = screen.getByRole('button', { name: /block history/i })
-    await user.click(historyBtn)
-
-    expect(onShowHistory).toHaveBeenCalledOnce()
-    expect(onShowHistory).toHaveBeenCalledWith('BLOCK_42')
-  })
-
-  it('history button has correct hover opacity classes', () => {
-    render(
-      <TestBlockActionsOverride actions={{ onShowHistory: vi.fn() }}>
-        <SortableBlock
-          blockId="BLOCK_1"
-          content="hello"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-
-    const historyBtn = screen.getByRole('button', { name: /block history/i })
-    expect(historyBtn.className).toContain('opacity-0')
-    expect(historyBtn.className).toContain('group-hover:opacity-100')
-  })
 })
 
 describe('SortableBlock gutter button pointer-events', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockUseSortable.mockReturnValue(makeSortable())
-  })
-
-  it('delete button has pointer-events-none when invisible (opacity-0)', () => {
-    render(
-      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
-        <SortableBlock
-          blockId="BLOCK_PE"
-          content="pointer-events test"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    expect(deleteBtn.className).toContain('opacity-0')
-    expect(deleteBtn.className).toContain('pointer-events-none')
-    expect(deleteBtn.className).toContain('group-hover:pointer-events-auto')
   })
 
   // #370: the desktop drag handle is hidden at rest (opacity-0 / pointer-events-
@@ -734,24 +485,6 @@ describe('SortableBlock gutter button pointer-events', () => {
     expect(dragHandle.className).not.toContain('opacity-30')
     expect(dragHandle.className).toContain('group-hover:opacity-100')
     expect(dragHandle.className).toContain('group-hover:pointer-events-auto')
-  })
-
-  it('history button has pointer-events-none when invisible (opacity-0)', () => {
-    render(
-      <TestBlockActionsOverride actions={{ onShowHistory: vi.fn() }}>
-        <SortableBlock
-          blockId="BLOCK_PE"
-          content="pointer-events test"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-
-    const historyBtn = screen.getByRole('button', { name: /block history/i })
-    expect(historyBtn.className).toContain('opacity-0')
-    expect(historyBtn.className).toContain('pointer-events-none')
-    expect(historyBtn.className).toContain('group-hover:pointer-events-auto')
   })
 
   it('gutter div has relative z-10 so overflowing buttons paint above siblings', () => {
@@ -815,7 +548,7 @@ describe('SortableBlock collapse/expand chevron', () => {
     expect(screen.queryByTestId('chevron-right-icon')).not.toBeInTheDocument()
   })
 
-  it('does not render spacer when hasChildren is false', () => {
+  it('always renders the chevron placeholder spacer on leaves (hasChildren false)', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -827,12 +560,11 @@ describe('SortableBlock collapse/expand chevron', () => {
     )
 
     const inlineControls = container.querySelector('.inline-controls')
-    // The chevron spacer is an aria-hidden <span> with `w-5 h-5`. Scope the
-    // query to a <span> placeholder so it doesn't match the #927 f3 zoom
-    // bullet (a <button> that also carries `w-5`), which is intentionally
-    // always present — including on leaves.
+    // The chevron slot is reserved on EVERY leaf via an aria-hidden <span>
+    // with `w-5 h-5`, so the block text stays aligned whether or not the row
+    // has children. (The gating on `anyBlockHasChildren` was removed.)
     const spacer = inlineControls?.querySelector('span.w-5.h-5[aria-hidden]')
-    expect(spacer).not.toBeInTheDocument()
+    expect(spacer).toBeInTheDocument()
   })
 
   it('applies rotate-90 class when expanded (not collapsed)', () => {
@@ -1319,23 +1051,6 @@ describe('gutter alignment', () => {
     expect(handle.className).not.toContain('mt-1')
   })
 
-  it('delete button has p-0.5 for alignment', () => {
-    mockUseSortable.mockReturnValue(makeSortable())
-    render(
-      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
-        <SortableBlock
-          blockId="B1"
-          content="test"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-    const deleteBtn = screen.getByRole('button', { name: /delete/i })
-    expect(deleteBtn.className).toContain('p-0.5')
-    expect(deleteBtn.className).not.toContain('mt-1')
-  })
-
   it('due date chip does not have mt-1 (alignment via container pt-1)', () => {
     mockUseSortable.mockReturnValue(makeSortable())
     const { container } = render(
@@ -1716,38 +1431,6 @@ describe('SortableBlock visibility controls', () => {
     expect(row.className).not.toContain('bg-muted/50')
   })
 
-  it('delete handle has opacity-0 class (hidden by default)', () => {
-    render(
-      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
-        <SortableBlock
-          blockId="BLOCK_1"
-          content="hello"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    expect(deleteBtn.className).toContain('opacity-0')
-  })
-
-  it('delete handle has group-hover:opacity-100 class for hover reveal', () => {
-    render(
-      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
-        <SortableBlock
-          blockId="BLOCK_1"
-          content="hello"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    expect(deleteBtn.className).toContain('group-hover:opacity-100')
-  })
-
   // #1243 — an EXPANDED parent hides its chevron at rest (children are already
   // visible below; a persistent caret just floats in the empty left gutter). It
   // reveals on the per-block hover / focus-within / .block-active contract, like
@@ -1802,40 +1485,6 @@ describe('SortableBlock visibility controls', () => {
     const handle = screen.getByRole('button', { name: /reorder block/i })
     expect(handle.className).not.toContain('max-sm:hidden')
     expect(handle.className).not.toContain('max-sm:flex')
-  })
-
-  it('history button has no per-button coarse-pointer classes for touch devices', () => {
-    render(
-      <TestBlockActionsOverride actions={{ onShowHistory: vi.fn() }}>
-        <SortableBlock
-          blockId="BLOCK_1"
-          content="hello"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-
-    const historyBtn = screen.getByRole('button', { name: /block history/i })
-    expect(historyBtn.className).not.toContain('max-sm:hidden')
-    expect(historyBtn.className).not.toContain('max-sm:flex')
-  })
-
-  it('delete handle has no per-button coarse-pointer classes for touch devices', () => {
-    render(
-      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
-        <SortableBlock
-          blockId="BLOCK_1"
-          content="hello"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    expect(deleteBtn.className).not.toContain('max-sm:hidden')
-    expect(deleteBtn.className).not.toContain('max-sm:flex')
   })
 
   it('priority badge is not rendered when no priority is set', () => {
@@ -1920,7 +1569,7 @@ describe('SortableBlock inline controls', () => {
     expect(marker).toBeInTheDocument()
   })
 
-  it('priority badge is inside inline-controls when set', () => {
+  it('priority badge is inside the below-block metadata row when set', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1931,9 +1580,12 @@ describe('SortableBlock inline controls', () => {
       />,
     )
 
-    const inlineControls = container.querySelector('.inline-controls')
-    const badge = inlineControls?.querySelector('.priority-badge')
+    // The priority badge moved out of the leading inline controls into the
+    // always-visible metadata row below the block text (2026-06-20).
+    const metadataRow = container.querySelector('.block-metadata-row')
+    const badge = metadataRow?.querySelector('.priority-badge')
     expect(badge).toBeInTheDocument()
+    expect(container.querySelector('.inline-controls .priority-badge')).not.toBeInTheDocument()
   })
 
   it('gutter width is w-[68px]', () => {
@@ -1964,23 +1616,21 @@ describe('SortableBlock inline controls', () => {
     expect(wrapper?.className).toContain('gap-1')
   })
 
-  it('gutter uses gap-1 between grip and delete', () => {
+  it('gutter uses gap-1 around the drag handle', () => {
     const { container } = render(
-      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
-        <SortableBlock
-          blockId="BLOCK_1"
-          content="hello"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
     )
 
     const gutter = container.querySelector('.w-\\[68px\\]')
     expect(gutter?.className).toContain('gap-1')
   })
 
-  it('gutter has no flex-1 spacer between grip and delete', () => {
+  it('gutter holds only the drag handle (no delete button, no spacer) at rest', () => {
     const { container } = render(
       <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
         <SortableBlock
@@ -1993,12 +1643,13 @@ describe('SortableBlock inline controls', () => {
     )
 
     const gutter = container.querySelector('.w-\\[68px\\]')
-    // Gutter should have exactly 2 children (grip + delete), no spacer div
+    // Delete moved to the context menu; the multi-select checkbox is omitted
+    // unless a selection is active. So at rest the gutter has exactly one
+    // child: the drag handle button.
     const children = gutter?.children
-    expect(children?.length).toBe(2)
-    // Both should be buttons
+    expect(children?.length).toBe(1)
     expect(children?.[0]?.tagName).toBe('BUTTON')
-    expect(children?.[1]?.tagName).toBe('BUTTON')
+    expect(children?.[0]).toHaveAttribute('data-testid', 'drag-handle')
   })
 
   it('inline controls use gap-1 between items', () => {
@@ -2020,9 +1671,7 @@ describe('SortableBlock inline controls', () => {
 
   it('alignment handled by items-center instead of per-element mt-1', () => {
     const { container } = render(
-      <TestBlockActionsOverride
-        actions={{ onDelete: vi.fn(), onToggleTodo: vi.fn(), onTogglePriority: vi.fn() }}
-      >
+      <TestBlockActionsOverride actions={{ onToggleTodo: vi.fn(), onTogglePriority: vi.fn() }}>
         <SortableBlock
           blockId="BLOCK_1"
           content="hello"
@@ -2034,13 +1683,11 @@ describe('SortableBlock inline controls', () => {
     )
 
     const grip = container.querySelector('.drag-handle')
-    const del = container.querySelector('.delete-handle')
     const checkbox = container.querySelector('.task-marker')
     const badge = container.querySelector('.priority-badge')
 
-    // Individual elements no longer have mt-1
+    // Individual elements no longer have mt-1 (delete moved to the context menu)
     expect(grip?.className).not.toContain('mt-1')
-    expect(del?.className).not.toContain('mt-1')
     expect(checkbox?.className).not.toContain('mt-1')
     expect(badge?.className).not.toContain('mt-1')
 
@@ -2107,23 +1754,6 @@ describe('SortableBlock a11y enhancements', () => {
     expect(handle.className).toContain('focus-ring-visible')
   })
 
-  it('delete button has focus-ring-visible class', () => {
-    render(
-      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
-        <SortableBlock
-          blockId="BLOCK_1"
-          content="hello"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    // #995: migrated from the legacy `focus-ring` to canonical `focus-ring-visible`.
-    expect(deleteBtn.className).toContain('focus-ring-visible')
-  })
-
   it('chevron has focus-visible ring classes', () => {
     render(
       <SortableBlock
@@ -2155,7 +1785,7 @@ describe('SortableBlock a11y enhancements', () => {
 
   it('all buttons have active:scale-95 class', () => {
     render(
-      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+      <TestBlockActionsOverride actions={{ onTogglePriority: vi.fn() }}>
         <SortableBlock
           blockId="BLOCK_1"
           content="hello"
@@ -2168,12 +1798,11 @@ describe('SortableBlock a11y enhancements', () => {
     )
 
     const handle = screen.getByRole('button', { name: /reorder block/i })
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
     const collapseBtn = screen.getByRole('button', { name: /collapse children/i })
     const marker = screen.getByRole('button', { name: /set as todo/i })
     const badge = screen.getByRole('button', { name: /priority P1/i })
 
-    for (const btn of [handle, deleteBtn, collapseBtn, marker, badge]) {
+    for (const btn of [handle, collapseBtn, marker, badge]) {
       expect(btn.className).toContain('active:scale-95')
     }
   })
@@ -2190,22 +1819,6 @@ describe('SortableBlock a11y enhancements', () => {
 
     const handle = screen.getByRole('button', { name: /reorder block/i })
     expect(handle.className).toContain('focus-visible:opacity-100')
-  })
-
-  it('delete button has focus-visible:opacity-100 class', () => {
-    render(
-      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
-        <SortableBlock
-          blockId="BLOCK_1"
-          content="hello"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    expect(deleteBtn.className).toContain('focus-visible:opacity-100')
   })
 
   it('empty checkbox has border-muted-foreground/40 (not border-transparent)', () => {
@@ -2645,7 +2258,7 @@ describe('SortableBlock due date chip', () => {
     expect(chip).toBeInTheDocument()
   })
 
-  it('due date chip is inside inline-controls', () => {
+  it('due date chip is inside the below-block metadata row', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -2656,8 +2269,8 @@ describe('SortableBlock due date chip', () => {
       />,
     )
 
-    const inlineControls = container.querySelector('.inline-controls')
-    const chip = inlineControls?.querySelector('.due-date-chip')
+    const metadataRow = container.querySelector('.block-metadata-row')
+    const chip = metadataRow?.querySelector('.due-date-chip')
     expect(chip).toBeInTheDocument()
   })
 
@@ -2707,14 +2320,14 @@ describe('SortableBlock due date chip', () => {
       />,
     )
 
-    const inlineControls = container.querySelector('.inline-controls')
-    const priorityBadge = inlineControls?.querySelector('.priority-badge')
-    const dueChip = inlineControls?.querySelector('.due-date-chip')
+    const metadataRow = container.querySelector('.block-metadata-row')
+    const priorityBadge = metadataRow?.querySelector('.priority-badge')
+    const dueChip = metadataRow?.querySelector('.due-date-chip')
     expect(priorityBadge).toBeInTheDocument()
     expect(dueChip).toBeInTheDocument()
 
     // Priority badge should come before due date chip in DOM order
-    const children = Array.from(inlineControls?.children ?? [])
+    const children = Array.from(metadataRow?.children ?? [])
     const priorityIdx = children.indexOf(priorityBadge as Element)
     const dueIdx = children.indexOf(dueChip as Element)
     expect(priorityIdx).toBeLessThan(dueIdx)
@@ -2901,7 +2514,7 @@ describe('SortableBlock scheduled date chip', () => {
     expect(chip).toBeInTheDocument()
   })
 
-  it('scheduled chip is inside inline-controls', () => {
+  it('scheduled chip is inside the below-block metadata row', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -2912,8 +2525,8 @@ describe('SortableBlock scheduled date chip', () => {
       />,
     )
 
-    const inlineControls = container.querySelector('.inline-controls')
-    const chip = inlineControls?.querySelector('.scheduled-chip')
+    const metadataRow = container.querySelector('.block-metadata-row')
+    const chip = metadataRow?.querySelector('.scheduled-chip')
     expect(chip).toBeInTheDocument()
   })
 
@@ -3087,7 +2700,7 @@ describe('SortableBlock property chips', () => {
     expect(screen.queryByText(/^\+\d+$/)).not.toBeInTheDocument()
   })
 
-  it('property chips are inside inline-controls', () => {
+  it('property chips are inside the below-block metadata row', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -3098,8 +2711,8 @@ describe('SortableBlock property chips', () => {
       />,
     )
 
-    const inlineControls = container.querySelector('.inline-controls')
-    const chip = inlineControls?.querySelector('.property-chip')
+    const metadataRow = container.querySelector('.block-metadata-row')
+    const chip = metadataRow?.querySelector('.property-chip')
     expect(chip).toBeInTheDocument()
   })
 
@@ -4095,44 +3708,6 @@ describe('SortableBlock mobile gutter hidden', () => {
     expect(dragHandle.className).not.toContain('max-sm:pointer-events-auto')
   })
 
-  it('history button has no per-button coarse-pointer classes (gutter container handles hiding)', () => {
-    render(
-      <TestBlockActionsOverride actions={{ onShowHistory: vi.fn() }}>
-        <SortableBlock
-          blockId="BLOCK_MOBILE"
-          content="mobile test"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-
-    const historyBtn = screen.getByRole('button', { name: /block history/i })
-    expect(historyBtn.className).not.toContain('max-sm:hidden')
-    expect(historyBtn.className).not.toContain('max-sm:flex')
-    expect(historyBtn.className).not.toContain('max-sm:opacity-100')
-    expect(historyBtn.className).not.toContain('max-sm:pointer-events-auto')
-  })
-
-  it('delete button has no per-button coarse-pointer classes (gutter container handles hiding)', () => {
-    render(
-      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
-        <SortableBlock
-          blockId="BLOCK_MOBILE"
-          content="mobile test"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    expect(deleteBtn.className).not.toContain('max-sm:hidden')
-    expect(deleteBtn.className).not.toContain('max-sm:flex')
-    expect(deleteBtn.className).not.toContain('max-sm:opacity-100')
-    expect(deleteBtn.className).not.toContain('max-sm:pointer-events-auto')
-  })
-
   // #918: on a *fine-pointer* (desktop / mouse) device the narrow gutter still
   // collapses to 0px below `md` and reveals its controls on hover — that
   // behaviour is unchanged. The touch case (where the collapse is suppressed so
@@ -4184,9 +3759,12 @@ describe('SortableBlock mobile gutter hidden', () => {
     )
 
     const editableBlock = screen.getByTestId('editable-block-BLOCK_MOBILE')
-    const contentDiv = editableBlock.parentElement as HTMLElement
-    expect(contentDiv.className).toContain('flex-1')
-    expect(contentDiv.className).toContain('min-w-0')
+    // The content column is now a vertical stack: `editableBlock.parentElement`
+    // is the inner line-through wrapper; the `flex-1 min-w-0 flex flex-col`
+    // column is its grandparent (which also holds the below-block metadata row).
+    const contentColumn = editableBlock.parentElement?.parentElement as HTMLElement
+    expect(contentColumn.className).toContain('flex-1')
+    expect(contentColumn.className).toContain('min-w-0')
   })
 })
 

@@ -134,12 +134,35 @@ function buildDeleteGroup(ctx: MenuGroupContext): MenuItem[] {
   ]
 }
 
-/** The collapsible "Move & arrange" children: Move up/down, Duplicate, Merge. */
+/**
+ * The collapsible "Move & arrange" children: Indent / Dedent, Move up/down,
+ * Duplicate, Merge. Indent/Dedent moved in here (2026-06-20) alongside the move
+ * ops so the top-level menu stays compact; they keep their single-press chords
+ * for the keyboard.
+ */
 function buildMoveArrangeChildren(ctx: MenuGroupContext): MenuItem[] {
   const { t, dispatch, handleAction, isBulk, actions, moveArrangeGroupId } = ctx
-  const { onMoveUp, onMoveDown, onDuplicate, onMerge } = actions
+  const { onIndent, onDedent, onMoveUp, onMoveDown, onDuplicate, onMerge } = actions
   const disclosureLabel = t('contextMenu.moveArrange')
   return [
+    {
+      label: t('contextMenu.indent'),
+      icon: <ArrowRightToLine className="h-3.5 w-3.5" />,
+      action: onIndent ? () => dispatch(onIndent) : undefined,
+      shortcut: shortcutHint('indentBlock'),
+      indented: true,
+      disclosureId: moveArrangeGroupId,
+      disclosureLabel,
+    },
+    {
+      label: t('contextMenu.dedent'),
+      icon: <ArrowLeftToLine className="h-3.5 w-3.5" />,
+      action: onDedent ? () => dispatch(onDedent) : undefined,
+      shortcut: shortcutHint('dedentBlock'),
+      indented: true,
+      disclosureId: moveArrangeGroupId,
+      disclosureLabel,
+    },
     {
       label: t('contextMenu.moveUp'),
       icon: <MoveUp className="h-3.5 w-3.5" />,
@@ -189,61 +212,55 @@ function buildMoveArrangeChildren(ctx: MenuGroupContext): MenuItem[] {
   ]
 }
 
-/** Group 2: Indent / Dedent inline + the collapsible "Move & arrange". */
+/**
+ * Group 2: the collapsible "Move & arrange" disclosure. Every block-arrangement
+ * op — Indent / Dedent, Move up/down, Duplicate, Merge — lives behind it
+ * (2026-06-20) so the top-level menu stays compact.
+ */
 function buildMoveGroup(ctx: MenuGroupContext): MenuItem[] {
-  const { t, dispatch, actions, moveArrangeOpen, setMoveArrangeOpen, moveArrangeGroupId } = ctx
-  const { onIndent, onDedent } = actions
-  const indentDedentItems: MenuItem[] = [
-    {
-      label: t('contextMenu.indent'),
-      icon: <ArrowRightToLine className="h-3.5 w-3.5" />,
-      action: onIndent ? () => dispatch(onIndent) : undefined,
-      shortcut: shortcutHint('indentBlock'),
-    },
-    {
-      label: t('contextMenu.dedent'),
-      icon: <ArrowLeftToLine className="h-3.5 w-3.5" />,
-      action: onDedent ? () => dispatch(onDedent) : undefined,
-      shortcut: shortcutHint('dedentBlock'),
-    },
-  ]
+  const { t, moveArrangeOpen, setMoveArrangeOpen, moveArrangeGroupId } = ctx
   const moveArrangeChildren = buildMoveArrangeChildren(ctx)
   // Only show the "Move & arrange" toggle when at least one child action is
   // actually wired (else the disclosure would expand to nothing).
   const hasMoveArrangeChildren = moveArrangeChildren.some((item) => item.action !== undefined)
+  if (!hasMoveArrangeChildren) return []
   return [
-    ...indentDedentItems,
-    ...(hasMoveArrangeChildren
-      ? [
-          {
-            label: t('contextMenu.moveArrange'),
-            icon: <MoveVertical className="h-3.5 w-3.5" />,
-            action: () => setMoveArrangeOpen((o) => !o),
-            expanded: moveArrangeOpen,
-            disclosureId: moveArrangeGroupId,
-          },
-          ...(moveArrangeOpen ? moveArrangeChildren : []),
-        ]
-      : []),
+    {
+      label: t('contextMenu.moveArrange'),
+      icon: <MoveVertical className="h-3.5 w-3.5" />,
+      action: () => setMoveArrangeOpen((o) => !o),
+      expanded: moveArrangeOpen,
+      disclosureId: moveArrangeGroupId,
+    },
+    ...(moveArrangeOpen ? moveArrangeChildren : []),
   ]
 }
 
-/** Group 3: Collapse/Expand + Zoom in (only if hasChildren). */
+/**
+ * Group 3: Collapse/Expand (only if hasChildren) + Zoom in. Collapse only makes
+ * sense for a block with children, but Zoom works on any block — including
+ * leaves — so it is NOT gated on `hasChildren` (2026-06-20, mirroring the
+ * removed any-block zoom bullet). Zoom is now the only path to focus a single
+ * block, so it must stay reachable for leaves too.
+ */
 function buildCollapseGroup(ctx: MenuGroupContext): MenuItem[] {
   const { t, handleAction, actions, hasChildren, isCollapsed } = ctx
   const { onToggleCollapse, onZoomIn } = actions
-  if (!hasChildren) return []
   return [
-    {
-      label: isCollapsed ? t('contextMenu.expand') : t('contextMenu.collapse'),
-      icon: isCollapsed ? (
-        <ChevronRight className="h-3.5 w-3.5" />
-      ) : (
-        <ChevronDown className="h-3.5 w-3.5" />
-      ),
-      action: onToggleCollapse ? () => handleAction(onToggleCollapse) : undefined,
-      shortcut: shortcutHint('collapseExpand'),
-    },
+    ...(hasChildren
+      ? [
+          {
+            label: isCollapsed ? t('contextMenu.expand') : t('contextMenu.collapse'),
+            icon: isCollapsed ? (
+              <ChevronRight className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronDown className="h-3.5 w-3.5" />
+            ),
+            action: onToggleCollapse ? () => handleAction(onToggleCollapse) : undefined,
+            shortcut: shortcutHint('collapseExpand'),
+          },
+        ]
+      : []),
     ...(onZoomIn
       ? [
           {

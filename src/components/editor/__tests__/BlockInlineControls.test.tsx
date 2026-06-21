@@ -112,6 +112,8 @@ import type { LucideIcon } from 'lucide-react'
 import {
   BlockInlineControls,
   type BlockInlineControlsProps,
+  BlockMetadataRow,
+  type BlockMetadataRowProps,
   DateChip,
   dueDateColor,
   formatCompactDate,
@@ -136,8 +138,22 @@ function makeProps(overrides: Partial<BlockInlineControlsProps> = {}): BlockInli
     blockId: 'BLOCK_1',
     hasChildren: false,
     isCollapsed: false,
+    ...overrides,
+  }
+}
+
+function renderMetadata(props: BlockMetadataRowProps) {
+  return render(
+    <TooltipProvider>
+      <BlockMetadataRow {...props} />
+    </TooltipProvider>,
+  )
+}
+
+function makeMetaProps(overrides: Partial<BlockMetadataRowProps> = {}): BlockMetadataRowProps {
+  return {
+    blockId: 'BLOCK_1',
     filteredProperties: [],
-    anyBlockHasChildren: true,
     attachmentCount: 0,
     showAttachments: false,
     onToggleAttachments: vi.fn(),
@@ -300,69 +316,6 @@ describe('BlockInlineControls', () => {
     expect(screen.getByTestId('collapse-toggle')).toBeInTheDocument()
   })
 
-  // ── #927 f3: tap-the-bullet zoom ──────────────────────────────────
-  describe('zoom bullet (#927 f3)', () => {
-    it('renders a bullet even on a leaf block (no children)', () => {
-      renderControls(makeProps({ hasChildren: false }))
-      const bullet = screen.getByTestId('block-bullet')
-      expect(bullet).toBeInTheDocument()
-      expect(bullet.getAttribute('data-has-children')).toBe('false')
-    })
-
-    it('renders a bullet on a parent block too', () => {
-      renderControls(makeProps({ hasChildren: true }))
-      const bullet = screen.getByTestId('block-bullet')
-      expect(bullet).toBeInTheDocument()
-      expect(bullet.getAttribute('data-has-children')).toBe('true')
-    })
-
-    it('calls onZoomIn with the block id when the bullet is clicked', async () => {
-      const user = userEvent.setup()
-      const onZoomIn = vi.fn()
-      renderControls(makeProps({ blockId: 'BLOCK_42', onZoomIn }))
-
-      await user.click(screen.getByTestId('block-bullet'))
-
-      expect(onZoomIn).toHaveBeenCalledOnce()
-      expect(onZoomIn).toHaveBeenCalledWith('BLOCK_42')
-    })
-
-    it('zooms from a leaf bullet as well', async () => {
-      const user = userEvent.setup()
-      const onZoomIn = vi.fn()
-      renderControls(makeProps({ blockId: 'LEAF_1', hasChildren: false, onZoomIn }))
-
-      await user.click(screen.getByTestId('block-bullet'))
-
-      expect(onZoomIn).toHaveBeenCalledWith('LEAF_1')
-    })
-
-    it('marks the bullet as collapsed when the block is collapsed', () => {
-      renderControls(makeProps({ hasChildren: true, isCollapsed: true }))
-      expect(screen.getByTestId('block-bullet').getAttribute('data-collapsed')).toBe('true')
-    })
-
-    // #976 (item 12) — the zoom-bullet aria-label must distinguish an expanded
-    // PARENT (has children) from a LEAF, and keep the collapsed message.
-    it('announces "has children" for an expanded parent bullet (#976)', () => {
-      renderControls(makeProps({ hasChildren: true, isCollapsed: false }))
-      const bullet = screen.getByTestId('block-bullet')
-      expect(bullet).toHaveAttribute('aria-label', t('block.zoomBulletParent'))
-    })
-
-    it('announces the bare zoom label for a leaf bullet (#976)', () => {
-      renderControls(makeProps({ hasChildren: false, isCollapsed: false }))
-      const bullet = screen.getByTestId('block-bullet')
-      expect(bullet).toHaveAttribute('aria-label', t('block.zoomBullet'))
-    })
-
-    it('announces hidden children for a collapsed bullet (#976)', () => {
-      renderControls(makeProps({ hasChildren: true, isCollapsed: true }))
-      const bullet = screen.getByTestId('block-bullet')
-      expect(bullet).toHaveAttribute('aria-label', t('block.zoomBulletCollapsed'))
-    })
-  })
-
   it('calls onToggleCollapse with blockId on chevron click', async () => {
     const user = userEvent.setup()
     const onToggle = vi.fn()
@@ -403,39 +356,31 @@ describe('BlockInlineControls', () => {
     expect(chevron.getAttribute('data-expanded')).toBe('false')
   })
 
-  it('renders placeholder span when anyBlockHasChildren is true but block has no children', () => {
-    const { container } = renderControls(
-      makeProps({ hasChildren: false, anyBlockHasChildren: true }),
-    )
+  it('renders placeholder span when hasChildren is false', () => {
+    const { container } = renderControls(makeProps({ hasChildren: false }))
     const placeholder = container.querySelector('span.flex-shrink-0.w-5.h-5')
     expect(placeholder).toBeInTheDocument()
   })
 
-  it('omits placeholder span when anyBlockHasChildren is false and block has no children', () => {
-    const { container } = renderControls(
-      makeProps({ hasChildren: false, anyBlockHasChildren: false }),
-    )
+  it('always renders the placeholder span on a leaf regardless of sibling state', () => {
+    const { container } = renderControls(makeProps({ hasChildren: false }))
     const placeholder = container.querySelector('span.flex-shrink-0.w-5.h-5')
-    expect(placeholder).not.toBeInTheDocument()
+    expect(placeholder).toBeInTheDocument()
   })
 
-  it('renders collapse toggle when hasChildren is true regardless of anyBlockHasChildren', () => {
-    renderControls(makeProps({ hasChildren: true, anyBlockHasChildren: false }))
+  it('renders collapse toggle when hasChildren is true', () => {
+    renderControls(makeProps({ hasChildren: true }))
     expect(screen.getByTestId('collapse-toggle')).toBeInTheDocument()
   })
 
   it('spacer and collapse toggle have matching width', () => {
-    // Render with hasChildren=false, anyBlockHasChildren=true to get spacer
-    const { container: spacerContainer } = renderControls(
-      makeProps({ hasChildren: false, anyBlockHasChildren: true }),
-    )
+    // Render with hasChildren=false to get the placeholder spacer
+    const { container: spacerContainer } = renderControls(makeProps({ hasChildren: false }))
     const spacer = spacerContainer.querySelector('span[aria-hidden]')
     expect(spacer?.className).toContain('w-5')
 
     // Render with hasChildren=true to get button
-    const { container: buttonContainer } = renderControls(
-      makeProps({ hasChildren: true, anyBlockHasChildren: true }),
-    )
+    const { container: buttonContainer } = renderControls(makeProps({ hasChildren: true }))
     const button = buttonContainer.querySelector('.collapse-toggle')
     expect(button?.className).toContain('w-5')
   })
@@ -453,21 +398,70 @@ describe('BlockInlineControls', () => {
     expect(onToggle).toHaveBeenCalledWith('BLOCK_1')
   })
 
+  it('has no a11y violations (default state)', async () => {
+    const { container } = renderControls(makeProps())
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  it('has no a11y violations (with children and todo)', async () => {
+    const { container } = renderControls(
+      makeProps({
+        hasChildren: true,
+        todoState: 'TODO',
+      }),
+    )
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  it('main container has narrow-viewport wrapping layout classes', () => {
+    const { container } = renderControls(makeProps())
+    const inlineControls = container.querySelector('.inline-controls') as HTMLElement
+    expect(inlineControls.className).toContain('max-sm:w-auto')
+    expect(inlineControls.className).toContain('max-sm:flex-shrink')
+  })
+
+  it('indicator buttons use max-sm: classes instead of [@media(pointer:coarse)]', () => {
+    renderControls(makeProps({ hasChildren: true }))
+    const collapseToggle = screen.getByTestId('collapse-toggle')
+    const taskMarker = screen.getByTestId('task-marker')
+    expect(collapseToggle.className).not.toContain('[@media(pointer:coarse)]')
+    expect(taskMarker.className).not.toContain('[@media(pointer:coarse)]')
+    expect(collapseToggle.className).toContain('max-sm:')
+    expect(taskMarker.className).toContain('max-sm:')
+  })
+})
+
+describe('BlockMetadataRow', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
   it('renders priority badge when priority is set', () => {
-    renderControls(makeProps({ priority: '1' }))
+    renderMetadata(makeMetaProps({ priority: '1' }))
     expect(screen.getByTestId('priority-badge')).toBeInTheDocument()
     expect(screen.getByText('P1')).toBeInTheDocument()
   })
 
   it('does not render priority badge when priority is null', () => {
-    renderControls(makeProps({ priority: null }))
+    renderMetadata(makeMetaProps({ priority: null }))
     expect(screen.queryByTestId('priority-badge')).not.toBeInTheDocument()
+  })
+
+  it('renders null (no row) when the block has no metadata', () => {
+    const { container } = renderMetadata(makeMetaProps())
+    expect(container.querySelector('.block-metadata-row')).not.toBeInTheDocument()
   })
 
   it('calls onTogglePriority on priority badge click', async () => {
     const user = userEvent.setup()
     const onToggle = vi.fn()
-    renderControls(makeProps({ priority: '2', onTogglePriority: onToggle }))
+    renderMetadata(makeMetaProps({ priority: '2', onTogglePriority: onToggle }))
     await user.click(screen.getByTestId('priority-badge'))
     expect(onToggle).toHaveBeenCalledWith('BLOCK_1')
   })
@@ -476,23 +470,23 @@ describe('BlockInlineControls', () => {
   // set/unset state via aria-pressed (it only renders when a priority is set,
   // so it is always pressed, but the toggle semantics must be explicit for AT).
   it('exposes aria-pressed=true on the priority badge (#976)', () => {
-    renderControls(makeProps({ priority: '1' }))
+    renderMetadata(makeMetaProps({ priority: '1' }))
     expect(screen.getByTestId('priority-badge')).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('renders due date chip when dueDate is set', () => {
-    renderControls(makeProps({ dueDate: '2099-03-15' }))
+    renderMetadata(makeMetaProps({ dueDate: '2099-03-15' }))
     expect(screen.getByText('Mar 15, 2099')).toBeInTheDocument()
   })
 
   it('renders scheduled date chip when scheduledDate is set', () => {
-    renderControls(makeProps({ scheduledDate: '2099-07-01' }))
+    renderMetadata(makeMetaProps({ scheduledDate: '2099-07-01' }))
     expect(screen.getByText('Jul 1, 2099')).toBeInTheDocument()
   })
 
   it('renders repeat indicator when repeat property exists', () => {
-    renderControls(
-      makeProps({
+    renderMetadata(
+      makeMetaProps({
         properties: [{ key: 'repeat', value: 'weekly' }],
       }),
     )
@@ -501,8 +495,8 @@ describe('BlockInlineControls', () => {
   })
 
   it('renders the repeat indicator as a non-interactive status span', () => {
-    const { container } = renderControls(
-      makeProps({
+    const { container } = renderMetadata(
+      makeMetaProps({
         properties: [{ key: 'repeat', value: 'weekly' }],
       }),
     )
@@ -523,7 +517,7 @@ describe('BlockInlineControls', () => {
       { key: 'c', value: 'v3' },
       { key: 'd', value: 'v4' },
     ]
-    renderControls(makeProps({ filteredProperties: filtered }))
+    renderMetadata(makeMetaProps({ filteredProperties: filtered }))
     expect(screen.getByTestId('property-chip-a')).toBeInTheDocument()
     expect(screen.getByTestId('property-chip-b')).toBeInTheDocument()
     expect(screen.getByTestId('property-chip-c')).toBeInTheDocument()
@@ -540,7 +534,7 @@ describe('BlockInlineControls', () => {
     ]
 
     it('renders as a button when filteredProperties.length > 3', () => {
-      renderControls(makeProps({ filteredProperties: fourProps }))
+      renderMetadata(makeMetaProps({ filteredProperties: fourProps }))
       const overflow = screen.getByTestId('property-overflow')
       expect(overflow).toBeInTheDocument()
       expect(overflow.tagName).toBe('BUTTON')
@@ -548,8 +542,8 @@ describe('BlockInlineControls', () => {
     })
 
     it('does not render when filteredProperties.length is exactly 3', () => {
-      renderControls(
-        makeProps({
+      renderMetadata(
+        makeMetaProps({
           filteredProperties: [
             { key: 'a', value: 'v1' },
             { key: 'b', value: 'v2' },
@@ -561,12 +555,12 @@ describe('BlockInlineControls', () => {
     })
 
     it('does not render when filteredProperties is empty', () => {
-      renderControls(makeProps({ filteredProperties: [] }))
+      renderMetadata(makeMetaProps({ filteredProperties: [] }))
       expect(screen.queryByTestId('property-overflow')).not.toBeInTheDocument()
     })
 
     it('has an accessible name via aria-label with total count', () => {
-      renderControls(makeProps({ filteredProperties: fourProps }))
+      renderMetadata(makeMetaProps({ filteredProperties: fourProps }))
       const label = t('block.showAllProperties', { count: fourProps.length })
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument()
     })
@@ -576,7 +570,7 @@ describe('BlockInlineControls', () => {
       const handler = vi.fn()
       document.addEventListener('open-block-properties', handler)
 
-      renderControls(makeProps({ filteredProperties: fourProps }))
+      renderMetadata(makeMetaProps({ filteredProperties: fourProps }))
       await user.click(screen.getByTestId('property-overflow'))
 
       expect(handler).toHaveBeenCalledOnce()
@@ -588,7 +582,7 @@ describe('BlockInlineControls', () => {
       const handler = vi.fn()
       document.addEventListener('open-block-properties', handler)
 
-      renderControls(makeProps({ filteredProperties: fourProps }))
+      renderMetadata(makeMetaProps({ filteredProperties: fourProps }))
       const overflow = screen.getByTestId('property-overflow')
       overflow.focus()
       await user.keyboard('{Enter}')
@@ -602,7 +596,7 @@ describe('BlockInlineControls', () => {
       const handler = vi.fn()
       document.addEventListener('open-block-properties', handler)
 
-      renderControls(makeProps({ filteredProperties: fourProps }))
+      renderMetadata(makeMetaProps({ filteredProperties: fourProps }))
       const overflow = screen.getByTestId('property-overflow')
       overflow.focus()
       await user.keyboard(' ')
@@ -612,26 +606,26 @@ describe('BlockInlineControls', () => {
     })
 
     it('wraps the button in a Tooltip trigger', () => {
-      renderControls(makeProps({ filteredProperties: fourProps }))
+      renderMetadata(makeMetaProps({ filteredProperties: fourProps }))
       const overflow = screen.getByTestId('property-overflow')
       expect(overflow.getAttribute('data-slot')).toBe('tooltip-trigger')
     })
 
     it('applies the shared focus-visible ring classes', () => {
-      renderControls(makeProps({ filteredProperties: fourProps }))
+      renderMetadata(makeMetaProps({ filteredProperties: fourProps }))
       const overflow = screen.getByTestId('property-overflow')
       expect(overflow.className).toContain('focus-ring-visible')
     })
 
     it('applies max-sm: touch target padding', () => {
-      renderControls(makeProps({ filteredProperties: fourProps }))
+      renderMetadata(makeMetaProps({ filteredProperties: fourProps }))
       const overflow = screen.getByTestId('property-overflow')
       expect(overflow.className).toContain('max-sm:px-2.5')
       expect(overflow.className).toContain('max-sm:py-1')
     })
 
     it('has no a11y violations when overflow button is rendered', async () => {
-      const { container } = renderControls(makeProps({ filteredProperties: fourProps }))
+      const { container } = renderMetadata(makeMetaProps({ filteredProperties: fourProps }))
       await waitFor(
         async () => {
           expect(await axe(container)).toHaveNoViolations()
@@ -643,7 +637,7 @@ describe('BlockInlineControls', () => {
     // A chevron icon signals that the chip is click-through to the
     // properties drawer (rather than a static count badge).
     it('renders a ChevronRight icon inside the overflow chip', () => {
-      renderControls(makeProps({ filteredProperties: fourProps }))
+      renderMetadata(makeMetaProps({ filteredProperties: fourProps }))
       const overflow = screen.getByTestId('property-overflow')
       const chevron = screen.getByTestId('chevron-right-icon')
       expect(chevron).toBeInTheDocument()
@@ -653,7 +647,7 @@ describe('BlockInlineControls', () => {
     // Aria-label and tooltip text mention the keyboard shortcut so
     // screen-reader users learn the binding alongside the count.
     it('aria-label mentions the Ctrl+Shift+P keyboard shortcut', () => {
-      renderControls(makeProps({ filteredProperties: fourProps }))
+      renderMetadata(makeMetaProps({ filteredProperties: fourProps }))
       const overflow = screen.getByTestId('property-overflow')
       expect(overflow.getAttribute('aria-label')).toContain('Ctrl+Shift+P')
     })
@@ -689,7 +683,7 @@ describe('BlockInlineControls', () => {
 
     it('shows 3 inline property chips before +N on a wide viewport', () => {
       setViewportWidth(1024)
-      renderControls(makeProps({ filteredProperties: threeProps }))
+      renderMetadata(makeMetaProps({ filteredProperties: threeProps }))
       expect(screen.getByTestId('property-chip-a')).toBeInTheDocument()
       expect(screen.getByTestId('property-chip-b')).toBeInTheDocument()
       expect(screen.getByTestId('property-chip-c')).toBeInTheDocument()
@@ -699,7 +693,7 @@ describe('BlockInlineControls', () => {
 
     it('shows only 2 inline property chips and a +1 overflow on a narrow viewport', () => {
       setViewportWidth(375)
-      renderControls(makeProps({ filteredProperties: threeProps }))
+      renderMetadata(makeMetaProps({ filteredProperties: threeProps }))
       expect(screen.getByTestId('property-chip-a')).toBeInTheDocument()
       expect(screen.getByTestId('property-chip-b')).toBeInTheDocument()
       // Third prop is collapsed into the overflow pill on mobile.
@@ -725,7 +719,7 @@ describe('BlockInlineControls', () => {
         // Wide viewport would normally show 3, but the explicit cap of 1 wins —
         // proving the contract is driven by the prop, not just the hook.
         setViewportWidth(1024)
-        renderControls(makeProps({ filteredProperties: threeProps, maxInlineProperties: 1 }))
+        renderMetadata(makeMetaProps({ filteredProperties: threeProps, maxInlineProperties: 1 }))
         expect(screen.getByTestId('property-chip-a')).toBeInTheDocument()
         expect(screen.queryByTestId('property-chip-b')).not.toBeInTheDocument()
         expect(screen.queryByTestId('property-chip-c')).not.toBeInTheDocument()
@@ -737,8 +731,8 @@ describe('BlockInlineControls', () => {
   it('calls onEditProp when property chip is clicked', async () => {
     const user = userEvent.setup()
     const onEditProp = vi.fn()
-    renderControls(
-      makeProps({
+    renderMetadata(
+      makeMetaProps({
         filteredProperties: [{ key: 'effort', value: '2h' }],
         onEditProp,
       }),
@@ -750,8 +744,8 @@ describe('BlockInlineControls', () => {
   it('calls onEditKey when property key label is clicked', async () => {
     const user = userEvent.setup()
     const onEditKey = vi.fn()
-    renderControls(
-      makeProps({
+    renderMetadata(
+      makeMetaProps({
         filteredProperties: [{ key: 'effort', value: '2h' }],
         onEditKey,
       }),
@@ -761,20 +755,20 @@ describe('BlockInlineControls', () => {
   })
 
   it('renders attachment badge when attachmentCount > 0', () => {
-    renderControls(makeProps({ attachmentCount: 3 }))
+    renderMetadata(makeMetaProps({ attachmentCount: 3 }))
     expect(screen.getByText('3')).toBeInTheDocument()
     expect(screen.getByTestId('paperclip-icon')).toBeInTheDocument()
   })
 
   it('does not render attachment badge when attachmentCount is 0', () => {
-    renderControls(makeProps({ attachmentCount: 0 }))
+    renderMetadata(makeMetaProps({ attachmentCount: 0 }))
     expect(screen.queryByTestId('paperclip-icon')).not.toBeInTheDocument()
   })
 
   it('calls onToggleAttachments when attachment badge is clicked', async () => {
     const user = userEvent.setup()
     const onToggle = vi.fn()
-    renderControls(makeProps({ attachmentCount: 2, onToggleAttachments: onToggle }))
+    renderMetadata(makeMetaProps({ attachmentCount: 2, onToggleAttachments: onToggle }))
     await user.click(screen.getByRole('button', { name: /attachment/i }))
     expect(onToggle).toHaveBeenCalledOnce()
   })
@@ -782,24 +776,24 @@ describe('BlockInlineControls', () => {
   // Badge plays a one-shot bump animation on count change.
   describe('attachment badge bump animation', () => {
     it('does not apply animate-in classes on initial mount', () => {
-      renderControls(makeProps({ attachmentCount: 2 }))
+      renderMetadata(makeMetaProps({ attachmentCount: 2 }))
       const badge = screen.getByTestId('attachment-badge')
       expect(badge.className).not.toContain('animate-in')
       expect(badge.className).not.toContain('zoom-in-95')
     })
 
     it('applies animate-in classes after the count increments', async () => {
-      const props = makeProps({ attachmentCount: 2 })
+      const props = makeMetaProps({ attachmentCount: 2 })
       const { rerender } = render(
         <TooltipProvider>
-          <BlockInlineControls {...props} />
+          <BlockMetadataRow {...props} />
         </TooltipProvider>,
       )
       expect(screen.getByTestId('attachment-badge').className).not.toContain('animate-in')
 
       rerender(
         <TooltipProvider>
-          <BlockInlineControls {...{ ...props, attachmentCount: 3 }} />
+          <BlockMetadataRow {...{ ...props, attachmentCount: 3 }} />
         </TooltipProvider>,
       )
 
@@ -813,17 +807,17 @@ describe('BlockInlineControls', () => {
     })
 
     it('remounts the badge so the CSS animation replays on each increment', async () => {
-      const props = makeProps({ attachmentCount: 1 })
+      const props = makeMetaProps({ attachmentCount: 1 })
       const { rerender } = render(
         <TooltipProvider>
-          <BlockInlineControls {...props} />
+          <BlockMetadataRow {...props} />
         </TooltipProvider>,
       )
       const initialBadge = screen.getByTestId('attachment-badge')
 
       rerender(
         <TooltipProvider>
-          <BlockInlineControls {...{ ...props, attachmentCount: 2 }} />
+          <BlockMetadataRow {...{ ...props, attachmentCount: 2 }} />
         </TooltipProvider>,
       )
 
@@ -836,48 +830,10 @@ describe('BlockInlineControls', () => {
     })
   })
 
-  it('has no a11y violations (default state)', async () => {
-    const { container } = renderControls(makeProps())
-    await waitFor(async () => {
-      const results = await axe(container)
-      expect(results).toHaveNoViolations()
-    })
-  })
-
-  it('has no a11y violations (with children and priority)', async () => {
-    const { container } = renderControls(
-      makeProps({
-        hasChildren: true,
-        priority: '1',
-        todoState: 'TODO',
-        dueDate: '2099-01-01',
-        attachmentCount: 1,
-      }),
-    )
-    await waitFor(async () => {
-      const results = await axe(container)
-      expect(results).toHaveNoViolations()
-    })
-  })
-
-  it('main container has narrow-viewport wrapping layout classes', () => {
-    const { container } = renderControls(makeProps())
-    const inlineControls = container.querySelector('.inline-controls') as HTMLElement
-    expect(inlineControls.className).toContain('max-sm:flex-wrap')
-    expect(inlineControls.className).toContain('max-sm:w-auto')
-    expect(inlineControls.className).toContain('max-sm:flex-shrink')
-  })
-
   it('indicator buttons use max-sm: classes instead of [@media(pointer:coarse)]', () => {
-    renderControls(makeProps({ hasChildren: true, priority: '1' }))
-    const collapseToggle = screen.getByTestId('collapse-toggle')
-    const taskMarker = screen.getByTestId('task-marker')
+    renderMetadata(makeMetaProps({ priority: '1' }))
     const priorityBadge = screen.getByTestId('priority-badge')
-    expect(collapseToggle.className).not.toContain('[@media(pointer:coarse)]')
-    expect(taskMarker.className).not.toContain('[@media(pointer:coarse)]')
     expect(priorityBadge.className).not.toContain('[@media(pointer:coarse)]')
-    expect(collapseToggle.className).toContain('max-sm:')
-    expect(taskMarker.className).toContain('max-sm:')
     expect(priorityBadge.className).toContain('max-sm:')
   })
 })
@@ -914,16 +870,6 @@ describe('BlockInlineControls focus retention (#1498)', () => {
     expect(onToggleCollapse).toHaveBeenCalledWith('BLOCK_1')
   })
 
-  it('zoom bullet: prevents default on mousedown and still fires onZoomIn', async () => {
-    const user = userEvent.setup()
-    const onZoomIn = vi.fn()
-    renderControls(makeProps({ blockId: 'BLOCK_7', onZoomIn }))
-    const btn = screen.getByTestId('block-bullet')
-    fireMouseDownAndAssertPrevented(btn)
-    await user.click(btn)
-    expect(onZoomIn).toHaveBeenCalledWith('BLOCK_7')
-  })
-
   it('task-marker: prevents default on mousedown and still fires onToggleTodo', async () => {
     const user = userEvent.setup()
     const onToggleTodo = vi.fn()
@@ -937,7 +883,7 @@ describe('BlockInlineControls focus retention (#1498)', () => {
   it('priority-badge: prevents default on mousedown and still fires onTogglePriority', async () => {
     const user = userEvent.setup()
     const onTogglePriority = vi.fn()
-    renderControls(makeProps({ priority: '1', onTogglePriority }))
+    renderMetadata(makeMetaProps({ priority: '1', onTogglePriority }))
     const btn = screen.getByTestId('priority-badge')
     fireMouseDownAndAssertPrevented(btn)
     await user.click(btn)
@@ -947,7 +893,7 @@ describe('BlockInlineControls focus retention (#1498)', () => {
   it('attachment-badge: prevents default on mousedown and still fires onToggleAttachments', async () => {
     const user = userEvent.setup()
     const onToggleAttachments = vi.fn()
-    renderControls(makeProps({ attachmentCount: 2, onToggleAttachments }))
+    renderMetadata(makeMetaProps({ attachmentCount: 2, onToggleAttachments }))
     const btn = screen.getByTestId('attachment-badge')
     fireMouseDownAndAssertPrevented(btn)
     await user.click(btn)
@@ -958,8 +904,8 @@ describe('BlockInlineControls focus retention (#1498)', () => {
     const user = userEvent.setup()
     const handler = vi.fn()
     document.addEventListener('open-block-properties', handler)
-    renderControls(
-      makeProps({
+    renderMetadata(
+      makeMetaProps({
         filteredProperties: [
           { key: 'a', value: 'v1' },
           { key: 'b', value: 'v2' },
@@ -979,7 +925,18 @@ describe('BlockInlineControls focus retention (#1498)', () => {
     const user = userEvent.setup()
     const handler = vi.fn()
     document.addEventListener(BLOCK_EVENTS.OPEN_DUE_DATE_PICKER, handler)
-    renderControls(makeProps({ dueDate: '2099-03-15' }))
+    render(
+      <TooltipProvider>
+        <DateChip
+          date="2099-03-15"
+          icon={(() => <svg />) as unknown as LucideIcon}
+          colorClass=""
+          eventName="OPEN_DUE_DATE_PICKER"
+          i18nKey="block.dueDate"
+          chipClass="due-date-chip"
+        />
+      </TooltipProvider>,
+    )
     const btn = screen.getByRole('button', { name: /due/i })
     fireMouseDownAndAssertPrevented(btn)
     await user.click(btn)
@@ -1043,10 +1000,10 @@ describe('BlockInlineControls multiselect suppression (Fix 6)', () => {
     expect(screen.getByTestId('task-marker')).toBeInTheDocument()
   })
 
-  // #994: the collapse chevron and zoom bullet are per-block structural /
-  // navigation controls — they INTENTIONALLY survive selection mode (only the
-  // task checkbox is suppressed). Hiding the chevron would reflow every row at
-  // selection-start and erase the collapsed-subtree cue.
+  // #994: the collapse chevron is a per-block structural control — it
+  // INTENTIONALLY survives selection mode (only the task checkbox is
+  // suppressed). Hiding the chevron would reflow every row at selection-start
+  // and erase the collapsed-subtree cue.
   it('keeps the collapse chevron (with its per-block aria-label) during selection mode', () => {
     useBlockStore.setState({ selectedBlockIds: ['OTHER'] })
     renderControls(makeProps({ hasChildren: true, isCollapsed: true }))
@@ -1056,11 +1013,5 @@ describe('BlockInlineControls multiselect suppression (Fix 6)', () => {
     // Per-block scope stays legible via the existing single-block aria-label.
     expect(chevron).toHaveAttribute('aria-label', t('block.expandChildren'))
     expect(chevron).toHaveAttribute('aria-expanded', 'false')
-  })
-
-  it('keeps the zoom bullet during selection mode', () => {
-    useBlockStore.setState({ selectedBlockIds: ['OTHER'] })
-    renderControls(makeProps({ hasChildren: true }))
-    expect(screen.getByTestId('block-bullet')).toBeInTheDocument()
   })
 })

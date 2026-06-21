@@ -142,9 +142,7 @@ describe('#216 A — keyboard-aware add-property picker', () => {
 describe('#216 B — drag handle a11y (BlockGutterControls)', () => {
   it('exposes aria-keyshortcuts and an accessible name', () => {
     setCoarse(false)
-    renderWithTooltip(
-      <BlockGutterControls blockId="b1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
-    )
+    renderWithTooltip(<BlockGutterControls blockId="b1" />)
     const handle = screen.getByTestId('drag-handle')
     expect(handle).toHaveAttribute(
       'aria-keyshortcuts',
@@ -155,9 +153,7 @@ describe('#216 B — drag handle a11y (BlockGutterControls)', () => {
 
   it('exposes aria-keyshortcuts on the touch drag handle too', () => {
     setCoarse(true)
-    renderWithTooltip(
-      <BlockGutterControls blockId="b1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
-    )
+    renderWithTooltip(<BlockGutterControls blockId="b1" />)
     expect(screen.getByTestId('drag-handle')).toHaveAttribute(
       'aria-keyshortcuts',
       'Control+Shift+ArrowUp Control+Shift+ArrowDown',
@@ -169,13 +165,10 @@ describe('#216 C4 — colour-blind collapse cue (BlockInlineControls)', () => {
   const baseProps = {
     blockId: 'b1',
     hasChildren: true,
-    anyBlockHasChildren: true,
-    filteredProperties: [],
-    attachmentCount: 0,
-    showAttachments: false,
-    onToggleAttachments: vi.fn(),
-    onEditProp: vi.fn(),
-    onEditKey: vi.fn(),
+    isCollapsed: false,
+    onToggleCollapse: vi.fn(),
+    todoState: null,
+    onToggleTodo: vi.fn(),
   }
 
   it('adds a non-rotation cue when collapsed', () => {
@@ -199,9 +192,7 @@ describe('#216 C4 — colour-blind collapse cue (BlockInlineControls)', () => {
 describe('#216 — axe accessibility checks', () => {
   it('gutter controls have no axe violations', async () => {
     setCoarse(false)
-    const { container } = renderWithTooltip(
-      <BlockGutterControls blockId="b1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
-    )
+    const { container } = renderWithTooltip(<BlockGutterControls blockId="b1" />)
     expect(await axe(container)).toHaveNoViolations()
   })
 })

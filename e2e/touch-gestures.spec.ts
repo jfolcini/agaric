@@ -4,15 +4,16 @@
  * Runs under an iPhone-class coarse-pointer + touch context so the product's
  * touch-only surfaces and gesture hooks are live:
  *
- *   (a) long-press → BlockContextMenu with Indent / Dedent / Move (always) and
- *       Zoom in (once the block has children) — `useBlockTouchLongPress`.
- *   (b) tap-the-bullet zoom — `BlockInlineControls` `data-testid="block-bullet"`
- *       calls `zoomIn(blockId)` (#927 f3 / Logseq's signature gesture).
+ *   (a) long-press → BlockContextMenu. Zoom in is available for any block, and
+ *       the structural ops (Indent / Dedent / Move) live behind the
+ *       "Move & arrange" disclosure — `useBlockTouchLongPress`.
+ *   (b) zoom into a block via the context-menu "Zoom in" item (the inline zoom
+ *       bullet was removed 2026-06-20; zoom is menu-only now).
  *   (c) swipe-left-to-delete past the 200 px auto-delete threshold fires the
  *       delete + the Gmail-style "Undo" toast — `useBlockSwipeActions` +
  *       `SortableBlock`'s `handleSwipeDelete`.
- *   (d) the more-actions overflow Sheet opens — `BlockGutterControls` touch
- *       render (`data-testid="more-actions"`).
+ *   (d) History and Delete (moved off the gutter, 2026-06-20) are reachable
+ *       from the long-press context menu.
  *
  * Gestures are driven via real `TouchEvent`s (`touchLongPress` / `touchSwipe`
  * in helpers) because these handlers bind to React `onTouch*`, not the pointer
@@ -58,10 +59,11 @@ test.describe('Touch gestures (iPhone viewport)', () => {
     await openPageMobile(page, PAGE)
   })
 
-  // (a) — long-press opens the menu with the structural ops, and Zoom in
-  // appears once the block has children. We first Indent GS_2 under GS_1 via
-  // the menu (a pure touch path), then re-open on GS_1 to see Zoom in.
-  test('long-press opens BlockContextMenu with Indent/Dedent/Move + Zoom (with children)', async ({
+  // (a) — long-press opens the menu. Zoom in is available for any block, and
+  // the structural ops live behind the "Move & arrange" disclosure. We expand
+  // that disclosure to reach Indent and drive it (nesting GS_2 under GS_1) via
+  // a pure touch path.
+  test('long-press opens BlockContextMenu with Zoom + Move & arrange (Indent/Dedent/Move)', async ({
     page,
   }) => {
     const ids = await blockIds(page)
@@ -76,17 +78,18 @@ test.describe('Touch gestures (iPhone viewport)', () => {
     // helper in helpers.ts).
     const activeMenu = () => page.getByRole('menu', { name: 'Block actions' }).last()
 
-    // Leaf block: structural ops present, Zoom in absent (gated on children).
+    // Leaf block: Zoom in is available (ungated, 2026-06-20). The structural ops
+    // (Indent / Dedent / Move) are collapsed behind the "Move & arrange"
+    // disclosure; expand it to reveal them.
     await touchLongPress(page, `[data-testid="block-static"][data-block-id="${gs1}"]`)
     let menu = activeMenu()
     await expect(menu).toBeVisible()
+    await expect(menu.getByRole('menuitem', { name: 'Zoom in' })).toBeVisible()
+    await menu.getByRole('menuitem', { name: 'Move & arrange' }).click()
     await expect(menu.getByRole('menuitem', { name: 'Indent' })).toBeVisible()
     await expect(menu.getByRole('menuitem', { name: 'Dedent' })).toBeVisible()
-    // #1109 — Move up/down now live behind the "Move & arrange" disclosure; expand it.
-    await menu.getByRole('menuitem', { name: 'Move & arrange' }).click()
     await expect(menu.getByRole('menuitem', { name: 'Move Up' })).toBeVisible()
     await expect(menu.getByRole('menuitem', { name: 'Move Down' })).toBeVisible()
-    await expect(menu.getByRole('menuitem', { name: 'Zoom in' })).toHaveCount(0)
 
     // Dismiss this menu before opening the next (the spec never clicked an
     // action on GS_1's menu, so it would otherwise stay open and collide with
@@ -94,39 +97,32 @@ test.describe('Touch gestures (iPhone viewport)', () => {
     await page.keyboard.press('Escape')
     await expect(page.getByRole('menu', { name: 'Block actions' })).toHaveCount(0)
 
-    // Make GS_1 a parent: long-press GS_2 → Indent (nests it under GS_1).
+    // Make GS_1 a parent: long-press GS_2 → Move & arrange → Indent (nests it).
     await touchLongPress(page, `[data-testid="block-static"][data-block-id="${gs2}"]`)
     menu = activeMenu()
     await expect(menu).toBeVisible()
+    await menu.getByRole('menuitem', { name: 'Move & arrange' }).click()
     await clearInvokeCalls(page)
     await menu.getByRole('menuitem', { name: 'Indent' }).click()
     await expect
       .poll(async () => (await getInvokeCalls(page, 'move_block')).length)
       .toBeGreaterThan(0)
-
-    // GS_1 now has a child → its menu surfaces Zoom in.
-    await touchLongPress(page, `[data-testid="block-static"][data-block-id="${gs1}"]`)
-    menu = activeMenu()
-    await expect(menu).toBeVisible()
-    await expect(menu.getByRole('menuitem', { name: 'Zoom in' })).toBeVisible()
   })
 
-  // (b) — tapping the bullet zooms into the block (Logseq's signature gesture).
-  // Zooming swaps the visible block set to the block's own subtree, so the
-  // tapped block leaves the sortable list (or a BlockZoomBar appears). We assert
-  // the zoom IPC / view change via the block's bullet click.
-  test('tapping the bullet zooms into the block', async ({ page }) => {
+  // (b) — zooming into a block via the context-menu "Zoom in" item swaps the
+  // visible block set to the block's own subtree, so the BlockZoomBar
+  // breadcrumb trail appears. Zoom is available for any block (the old inline
+  // zoom bullet was removed 2026-06-20).
+  test('zooming via the context-menu Zoom in item shows the breadcrumb trail', async ({ page }) => {
     const ids = await blockIds(page)
     const gs1 = ids[0] as string
+    const activeMenu = () => page.getByRole('menu', { name: 'Block actions' }).last()
 
-    const bullet = page.locator(
-      `[data-testid="sortable-block"][data-block-id="${gs1}"] [data-testid="block-bullet"]`,
-    )
-    await expect(bullet).toBeVisible()
-    await bullet.click()
+    await touchLongPress(page, `[data-testid="block-static"][data-block-id="${gs1}"]`)
+    const menu = activeMenu()
+    await expect(menu).toBeVisible()
+    await menu.getByRole('menuitem', { name: 'Zoom in' }).click()
 
-    // After zooming in, the BlockZoomBar breadcrumb trail renders (the bullet's
-    // `zoomIn` is NOT gated on children, unlike the context-menu Zoom item).
     await expect(page.getByRole('navigation', { name: /zoom breadcrumbs/i })).toBeVisible()
   })
 
@@ -153,27 +149,17 @@ test.describe('Touch gestures (iPhone viewport)', () => {
       .toBeGreaterThan(0)
   })
 
-  // (d) — the more-actions overflow Sheet opens on touch. The overflow button
-  // inherits the hover/active reveal contract (no hover on touch), so we focus
-  // the block first (→ `.block-active`) to surface it, then tap it.
-  test('the more-actions overflow sheet opens', async ({ page }) => {
+  // (d) — History and Delete moved off the gutter (2026-06-20) into the
+  // long-press context menu. Assert both are reachable there on touch.
+  test('long-press menu surfaces History and Delete', async ({ page }) => {
     const ids = await blockIds(page)
     const gs1 = ids[0] as string
-    const block = page.locator(`[data-testid="sortable-block"][data-block-id="${gs1}"]`)
+    const activeMenu = () => page.getByRole('menu', { name: 'Block actions' }).last()
 
-    // Focus the block to apply `.block-active`, which reveals the gutter overflow.
-    await page.locator(`[data-testid="block-static"][data-block-id="${gs1}"]`).click()
-    await expect(
-      page.locator(
-        `[data-testid="sortable-block"][data-block-id="${gs1}"] [data-testid="block-editor"]`,
-      ),
-    ).toBeVisible()
-
-    const moreActions = block.locator('[data-testid="more-actions"]')
-    await expect(moreActions).toBeVisible()
-    await moreActions.click()
-
-    // The overflow Sheet renders its action rows (History / Delete).
-    await expect(page.getByTestId('more-actions-delete')).toBeVisible()
+    await touchLongPress(page, `[data-testid="block-static"][data-block-id="${gs1}"]`)
+    const menu = activeMenu()
+    await expect(menu).toBeVisible()
+    await expect(menu.getByRole('menuitem', { name: 'History' })).toBeVisible()
+    await expect(menu.getByRole('menuitem', { name: 'Delete' })).toBeVisible()
   })
 })

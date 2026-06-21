@@ -1,4 +1,12 @@
-import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
+import {
+  deleteBlockViaContextMenu,
+  expect,
+  focusBlock,
+  openPage,
+  saveBlock,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * E2E coverage for the #1172 keyboard-collision gaps — shortcuts whose glyph
@@ -226,15 +234,12 @@ test.describe('Trash list-view keyboard selection', () => {
   async function seedTrashWithTwoItems(page: import('@playwright/test').Page) {
     await openPage(page, 'Getting Started')
 
-    // Delete two blocks via the hover Delete affordance (same path as
+    // Delete two blocks via the context menu (same path as
     // features-coverage.spec.ts). The first row collapses out after each
     // delete, so re-target `.first()` each time.
     for (let i = 0; i < 2; i++) {
       const row = page.locator('[data-testid="sortable-block"]').first()
-      await row.hover()
-      const deleteBtn = row.getByRole('button', { name: 'Delete block' })
-      await expect(deleteBtn).toBeVisible()
-      await deleteBtn.click()
+      await deleteBlockViaContextMenu(page, row)
     }
 
     // Navigate to Trash.

@@ -1,4 +1,5 @@
 import {
+  deleteBlockViaContextMenu,
   dragBlock,
   expect,
   focusBlock,
@@ -495,14 +496,9 @@ test.describe('Block interactions', () => {
     const countBefore = await page.locator('[data-testid="sortable-block"]').count()
     expect(countBefore).toBeGreaterThan(0)
 
-    // Hover over the first block to reveal the delete button
+    // Delete the first block via the context menu
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
-    await firstBlock.hover()
-
-    // Click the Delete block button
-    const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
-    await expect(deleteBtn).toBeVisible()
-    await deleteBtn.click()
+    await deleteBlockViaContextMenu(page, firstBlock)
 
     // Block count should decrease by one
     await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore - 1)

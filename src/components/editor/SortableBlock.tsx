@@ -1,15 +1,20 @@
 /**
  * SortableBlock — drag-and-drop wrapper for blocks using @dnd-kit (p2-t9).
  *
- * Wraps EditableBlock with sortable behavior. Two-zone layout:
- * - Narrow gutter (68px): grip handle + history + delete button (hover-gated, right-justified)
- * - Inline controls: chevron (when hasChildren), checkbox, priority badge (when set)
+ * Wraps EditableBlock with sortable behavior. Layout:
+ * - Narrow gutter (68px): grip handle (hover-gated) + the multi-select checkbox
+ *   (only while a selection is active), right-justified.
+ * - Inline controls: collapse chevron (reserved slot) + task checkbox, leading
+ *   the block text.
+ * - Below-block metadata row: priority badge, due / scheduled chips, repeat
+ *   indicator, property chips and the attachment badge, left-aligned under the
+ *   text and always visible.
  *
- * Left-to-right order:
- *   Gutter: [grip] [history] [delete]  |  Inline: [chevron?] [checkbox] [priority?] [content]
+ *   Gutter: [grip] | Inline: [chevron?] [checkbox] [content]
+ *                                                   [metadata row]
  *
- * Mobile / right-click context menu (long-press or right-click) provides
- * touch-friendly access to block actions: delete, indent, dedent, TODO, priority.
+ * History, Delete, Zoom and the indent/dedent + move ops live in the
+ * right-click / long-press context menu (touch-friendly), not the gutter.
  */
 
 import type { DraggableAttributes, DraggableSyntheticListeners } from '@dnd-kit/core'
@@ -24,7 +29,8 @@ import { BlockContextMenu } from '@/components/editor/BlockContextMenu'
 import { BlockGutterControls } from '@/components/editor/BlockGutterControls'
 import {
   BlockInlineControls,
-  type BlockInlineControlsProps,
+  BlockMetadataRow,
+  type BlockMetadataRowProps,
   getInlinePropertyLimit,
 } from '@/components/editor/BlockInlineControls'
 import {
@@ -188,7 +194,7 @@ function SwipeAffordances({
 }
 
 /** Resolver callbacks shared by the inline controls and the editor body. */
-type ResolverProps = Pick<BlockInlineControlsProps, 'resolveBlockTitle'> & {
+type ResolverProps = Pick<BlockMetadataRowProps, 'resolveBlockTitle'> & {
   resolveTagName?: ((id: string) => string) | undefined
   resolveBlockStatus?: ((id: string) => 'active' | 'deleted') | undefined
   resolveTagStatus?: ((id: string) => 'active' | 'deleted') | undefined
@@ -216,7 +222,6 @@ interface SortableBlockBodyProps extends ResolverProps, PropertyEditorProps {
   isTouchDevice: boolean
   swipeTranslateX: number
   hasChildren: boolean
-  anyBlockHasChildren: boolean
   isCollapsed: boolean
   todoState?: (string | null) | undefined
   priority?: (string | null) | undefined
@@ -231,8 +236,6 @@ interface SortableBlockBodyProps extends ResolverProps, PropertyEditorProps {
   rovingEditor: RovingEditorHandle
   attributes: DraggableAttributes
   listeners: DraggableSyntheticListeners
-  onDelete?: ((blockId: string) => void) | undefined
-  onShowHistory?: ((blockId: string) => void) | undefined
   onSelect?: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
   onToggleCollapse?: ((blockId: string) => void) | undefined
   onToggleTodo?: ((blockId: string) => void) | undefined
@@ -260,7 +263,6 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
     isTouchDevice,
     swipeTranslateX,
     hasChildren,
-    anyBlockHasChildren,
     isCollapsed,
     todoState,
     priority,
@@ -275,8 +277,6 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
     rovingEditor,
     attributes,
     listeners,
-    onDelete,
-    onShowHistory,
     onSelect,
     onToggleCollapse,
     onToggleTodo,
@@ -323,7 +323,7 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
         />
       )}
 
-      {/* ── Narrow gutter — grip + history + delete ────────────── */}
+      {/* ── Narrow gutter — drag handle (+ select checkbox) ────── */}
       {/* #918: On a fine-pointer device the gutter collapses to 0px on
             narrow viewports (`max-md`) and reveals its controls on hover.
             On a touch device there is no hover, and `BlockGutterControls`
@@ -341,8 +341,6 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
       >
         <BlockGutterControls
           blockId={blockId}
-          onDelete={onDelete}
-          onShowHistory={onShowHistory}
           dragAttributes={attributes}
           dragListeners={listeners}
           isSelected={isSelected}
@@ -355,7 +353,7 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
         />
       </div>
 
-      {/* ── Inline controls — chevron, checkbox, priority ─────── */}
+      {/* ── Inline controls — chevron (reserved slot) + task checkbox ── */}
       <BlockInlineControls
         blockId={blockId}
         hasChildren={hasChildren}
@@ -363,20 +361,6 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
         onToggleCollapse={onToggleCollapse}
         todoState={todoState}
         onToggleTodo={onToggleTodo}
-        priority={priority}
-        onTogglePriority={onTogglePriority}
-        dueDate={dueDate}
-        scheduledDate={scheduledDate}
-        properties={properties}
-        filteredProperties={filteredProperties}
-        maxInlineProperties={maxInlineProperties}
-        resolveBlockTitle={resolveBlockTitle}
-        anyBlockHasChildren={anyBlockHasChildren}
-        attachmentCount={attachmentCount}
-        showAttachments={showAttachments}
-        onToggleAttachments={onToggleAttachments}
-        onEditProp={onEditProp}
-        onEditKey={onEditKey}
       />
 
       {/* ── Property edit popover / key rename ────────────────── */}
@@ -393,33 +377,56 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
         setRefSearch={setRefSearch}
       />
 
-      {/* ── Block content ─────────────────────────────────────────── */}
-      <div
-        className={cn(
-          'flex-1 min-w-0 transition-[text-decoration-color,opacity] duration-moderate',
-          // #1243: NO active-block highlight here. A focused block already
-          // gets its own indicator — the `block-editor` box rendered by
-          // EditableBlock (`ring-1 ring-border bg-accent/[0.06] shadow-sm`,
-          // rounded). The earlier #1232 red `border-l-primary` bar +
-          // `bg-sidebar-accent` tint layered a second, alarm-red highlight on
-          // top of that grey box and let the tint bleed to the left edge
-          // behind the bar. Removing it leaves a single, calm focus
-          // treatment and tightens the negative space left of the text.
-          isClosedTask && !isFocused ? 'line-through opacity-50' : 'no-underline opacity-100',
-        )}
-      >
-        <EditableBlock
+      {/* ── Block content + below-block metadata row ──────────────── */}
+      {/* The content column is a vertical stack: the editor text, then the
+            interactive metadata chips (priority, dates, repeat, properties,
+            attachments) on their own row beneath it, left-aligned with the
+            text (user feedback 2026-06-20). */}
+      <div className="flex-1 min-w-0 flex flex-col">
+        <div
+          className={cn(
+            'min-w-0 transition-[text-decoration-color,opacity] duration-moderate',
+            // #1243: NO active-block highlight here. A focused block already
+            // gets its own indicator — the `block-editor` box rendered by
+            // EditableBlock (`ring-1 ring-border bg-accent/[0.06] shadow-sm`,
+            // rounded). The earlier #1232 red `border-l-primary` bar +
+            // `bg-sidebar-accent` tint layered a second, alarm-red highlight on
+            // top of that grey box and let the tint bleed to the left edge
+            // behind the bar. Removing it leaves a single, calm focus
+            // treatment and tightens the negative space left of the text.
+            isClosedTask && !isFocused ? 'line-through opacity-50' : 'no-underline opacity-100',
+          )}
+        >
+          <EditableBlock
+            blockId={blockId}
+            content={content}
+            isFocused={isFocused}
+            rovingEditor={rovingEditor}
+            onNavigate={onNavigate}
+            resolveBlockTitle={resolveBlockTitle}
+            resolveTagName={resolveTagName}
+            resolveBlockStatus={resolveBlockStatus}
+            resolveTagStatus={resolveTagStatus}
+            isSelected={isSelected}
+            onSelect={onSelect}
+          />
+        </div>
+
+        <BlockMetadataRow
           blockId={blockId}
-          content={content}
-          isFocused={isFocused}
-          rovingEditor={rovingEditor}
-          onNavigate={onNavigate}
+          priority={priority}
+          onTogglePriority={onTogglePriority}
+          dueDate={dueDate}
+          scheduledDate={scheduledDate}
+          properties={properties}
+          filteredProperties={filteredProperties}
+          maxInlineProperties={maxInlineProperties}
           resolveBlockTitle={resolveBlockTitle}
-          resolveTagName={resolveTagName}
-          resolveBlockStatus={resolveBlockStatus}
-          resolveTagStatus={resolveTagStatus}
-          isSelected={isSelected}
-          onSelect={onSelect}
+          attachmentCount={attachmentCount}
+          showAttachments={showAttachments}
+          onToggleAttachments={onToggleAttachments}
+          onEditProp={onEditProp}
+          onEditKey={onEditKey}
         />
       </div>
 
@@ -442,8 +449,6 @@ interface SortableBlockProps {
   rovingEditor: RovingEditorHandle
   /** Whether this block has children in the tree. */
   hasChildren?: boolean | undefined
-  /** Whether any block in the tree has children (for caret placeholder alignment). */
-  anyBlockHasChildren?: boolean | undefined
   /** Whether this block is currently collapsed. */
   isCollapsed?: boolean | undefined
   /** Current task state: 'TODO', 'DOING', 'DONE', or null/undefined for no task. */
@@ -467,7 +472,6 @@ function SortableBlockInner({
   depth = 0,
   rovingEditor,
   hasChildren = false,
-  anyBlockHasChildren = false,
   isCollapsed = false,
   todoState,
   priority,
@@ -493,8 +497,6 @@ function SortableBlockInner({
     onToggleCollapse,
     onToggleTodo,
     onTogglePriority,
-    onShowHistory,
-    onZoomIn: onZoomInResolved,
     onSelect,
   } = actions
   // #1018 — the row no longer subscribes to the whole `selectedBlockIds`
@@ -506,9 +508,10 @@ function SortableBlockInner({
   // 2nd+ selected block — without a stale snapshot and without the per-row
   // cascade. This row's own visual selected state arrives via the `isSelected`
   // prop (computed once by the parent list).
-  // Context menu zoom is gated by hasChildren (was previously gated in
-  // SortableBlockWrapper before the props chain was collapsed).
-  const onZoomIn = hasChildren ? onZoomInResolved : undefined
+  // Zoom is now reached only via the context menu (the inline zoom bullet was
+  // removed, 2026-06-20). It is available for EVERY block — including leaves —
+  // mirroring the old bullet's any-block zoom, so `onZoomIn` flows through the
+  // action bag ungated.
   const resolvers = useBlockResolvers()
   const resolveBlockTitle = resolvers?.resolveBlockTitle
   const resolveTagName = resolvers?.resolveTagName
@@ -709,7 +712,6 @@ function SortableBlockInner({
         isTouchDevice={isTouchDevice}
         swipeTranslateX={swipeTranslateX}
         hasChildren={hasChildren}
-        anyBlockHasChildren={anyBlockHasChildren}
         isCollapsed={isCollapsed}
         todoState={todoState}
         priority={priority}
@@ -724,8 +726,6 @@ function SortableBlockInner({
         rovingEditor={rovingEditor}
         attributes={attributes}
         listeners={listeners}
-        onDelete={onDelete}
-        onShowHistory={onShowHistory}
         onSelect={onSelect}
         onToggleCollapse={onToggleCollapse}
         onToggleTodo={onToggleTodo}
@@ -757,10 +757,10 @@ function SortableBlockInner({
           onClose={closeContextMenu}
           triggerRef={blockRef}
           // A2 (#1020) — forward the whole action bag instead of re-drilling
-          // each callback. `onZoomIn` is gated by `hasChildren` (zoom-in only
-          // makes sense for a block with children), so spread the bag and
-          // override that one key with the gated value.
-          actions={{ ...actions, onZoomIn }}
+          // each callback. `onZoomIn` flows through ungated: zoom is now a
+          // menu-only action available for every block, including leaves
+          // (2026-06-20, replacing the removed any-block zoom bullet).
+          actions={actions}
           // Fix 6 / #1018 — the menu reads the active multi-selection from the
           // store itself (it's the only consumer and only mounts while open),
           // so we no longer thread `selectedBlockIds` through here. Bulk mode

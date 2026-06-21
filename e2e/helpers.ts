@@ -214,6 +214,20 @@ export function activeMenu(page: Page): Locator {
   return page.locator('[role="menu"]').last()
 }
 
+/**
+ * Delete a block through the right-click / long-press context menu.
+ *
+ * The hover "Delete block" gutter button was removed (2026-06-20); Delete now
+ * lives only in `BlockContextMenu`. `block` should be a `sortable-block`
+ * locator. Right-clicks to open the menu, then clicks its "Delete" item.
+ */
+export async function deleteBlockViaContextMenu(page: Page, block: Locator): Promise<void> {
+  await block.click({ button: 'right' })
+  const menu = page.getByRole('menu', { name: 'Block actions' }).last()
+  // Exact match so this never resolves to the bulk "Delete N selected" label.
+  await menu.getByRole('menuitem', { name: 'Delete', exact: true }).click()
+}
+
 /** Active TipTap suggestion popup container (ReactRenderer portal). */
 export function activeSuggestionPopup(page: Page): Locator {
   return page.locator('[data-testid="suggestion-popup"]').last()

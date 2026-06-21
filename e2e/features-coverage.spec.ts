@@ -1,4 +1,11 @@
-import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
+import {
+  deleteBlockViaContextMenu,
+  expect,
+  focusBlock,
+  openPage,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * E2E coverage tests for remaining feature gaps.
@@ -149,10 +156,7 @@ test.describe('Trash', () => {
 
     // Delete the first block via hover button
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
-    await firstBlock.hover()
-    const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
-    await expect(deleteBtn).toBeVisible()
-    await deleteBtn.click()
+    await deleteBlockViaContextMenu(page, firstBlock)
 
     // Navigate to Trash
     await page.getByRole('button', { name: /^Trash/ }).click()
@@ -166,10 +170,7 @@ test.describe('Trash', () => {
 
     // Delete a block
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
-    await firstBlock.hover()
-    const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
-    await expect(deleteBtn).toBeVisible()
-    await deleteBtn.click()
+    await deleteBlockViaContextMenu(page, firstBlock)
 
     // Navigate to Trash
     await page.getByRole('button', { name: /^Trash/ }).click()
@@ -189,10 +190,7 @@ test.describe('Trash', () => {
 
     // Delete a block
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
-    await firstBlock.hover()
-    const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
-    await expect(deleteBtn).toBeVisible()
-    await deleteBtn.click()
+    await deleteBlockViaContextMenu(page, firstBlock)
 
     // Navigate to Trash
     await page.getByRole('button', { name: /^Trash/ }).click()
@@ -214,10 +212,7 @@ test.describe('Trash', () => {
 
     // Delete a block
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
-    await firstBlock.hover()
-    const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
-    await expect(deleteBtn).toBeVisible()
-    await deleteBtn.click()
+    await deleteBlockViaContextMenu(page, firstBlock)
 
     // Navigate to Trash
     await page.getByRole('button', { name: /^Trash/ }).click()
@@ -242,10 +237,7 @@ test.describe('Trash', () => {
 
     // Delete a block
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
-    await firstBlock.hover()
-    const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
-    await expect(deleteBtn).toBeVisible()
-    await deleteBtn.click()
+    await deleteBlockViaContextMenu(page, firstBlock)
 
     // Navigate to Trash
     await page.getByRole('button', { name: /^Trash/ }).click()
@@ -278,10 +270,7 @@ test.describe('Trash', () => {
 
     // Delete a block
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
-    await firstBlock.hover()
-    const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
-    await expect(deleteBtn).toBeVisible()
-    await deleteBtn.click()
+    await deleteBlockViaContextMenu(page, firstBlock)
 
     // Navigate to Trash
     await page.getByRole('button', { name: /^Trash/ }).click()

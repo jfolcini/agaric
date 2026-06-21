@@ -6,7 +6,6 @@ import { useTranslation } from 'react-i18next'
 import { PropertyChip } from '@/components/properties/PropertyChip'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useBlockActions } from '@/hooks/useBlockActions'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { type BLOCK_EVENTS, dispatchBlockEvent } from '@/lib/block-events'
@@ -154,6 +153,10 @@ export interface BlockInlineControlsProps {
   onToggleCollapse?: ((blockId: string) => void) | undefined
   todoState?: (string | null) | undefined
   onToggleTodo?: ((blockId: string) => void) | undefined
+}
+
+export interface BlockMetadataRowProps {
+  blockId: string
   priority?: (string | null) | undefined
   onTogglePriority?: ((blockId: string) => void) | undefined
   dueDate?: (string | null) | undefined
@@ -169,15 +172,6 @@ export interface BlockInlineControlsProps {
    */
   maxInlineProperties?: number | undefined
   resolveBlockTitle?: ((id: string) => string) | undefined
-  /** Whether any sibling block in the tree has children. When false, skip the caret placeholder. */
-  anyBlockHasChildren: boolean
-  /**
-   * #927 f3: tap-the-bullet zoom-in handler. When omitted, falls back to the
-   * `onZoomIn` published on the `BlockActions` context (production wires it
-   * there via `BlockActionsProvider`); the explicit prop lets isolated tests
-   * drive the bullet without standing up a provider.
-   */
-  onZoomIn?: ((blockId: string) => void) | undefined
   attachmentCount: number
   showAttachments: boolean
   onToggleAttachments: () => void
@@ -186,25 +180,24 @@ export interface BlockInlineControlsProps {
 }
 
 /**
- * The row-leading collapse chevron (when the block has children) or a reserved
- * placeholder slot (when any sibling does). Extracted to keep the conditional
- * chevron/placeholder branching out of `BlockInlineControls`' complexity count.
+ * The row-leading collapse chevron (when the block has children) or an
+ * always-reserved fixed-width placeholder slot (on leaves). Extracted to keep
+ * the conditional chevron/placeholder branching out of `BlockInlineControls`'
+ * complexity count.
  */
 function LeadingCollapseSlot({
   blockId,
   hasChildren,
   isCollapsed,
   isTouch,
-  anyBlockHasChildren,
   onToggleCollapse,
 }: {
   blockId: string
   hasChildren: boolean
   isCollapsed: boolean
   isTouch: boolean
-  anyBlockHasChildren: boolean
   onToggleCollapse?: ((blockId: string) => void) | undefined
-}): React.ReactElement | null {
+}): React.ReactElement {
   const { t } = useTranslation()
   if (hasChildren) {
     return (
@@ -258,88 +251,11 @@ function LeadingCollapseSlot({
       </Tooltip>
     )
   }
-  // Only reserve space for the caret if at least one block in the tree has
-  // children. This avoids an unsightly gap on leaf-only pages.
-  if (anyBlockHasChildren) {
-    return <span className="flex-shrink-0 w-5 h-5" aria-hidden />
-  }
-  return null
-}
-
-/**
- * The tap-the-bullet zoom control (#927 f3), rendered on every row. Hidden at
- * rest on fine pointers; the ring halo doubles as the collapsed-children cue.
- */
-function ZoomBullet({
-  blockId,
-  hasChildren,
-  isCollapsed,
-  isTouch,
-  zoomIn,
-}: {
-  blockId: string
-  hasChildren: boolean
-  isCollapsed: boolean
-  isTouch: boolean
-  zoomIn?: ((blockId: string) => void) | undefined
-}): React.ReactElement {
-  const { t } = useTranslation()
-  // #976 (item 12) — distinguish three cases so AT users can tell an expanded
-  // parent (has children) from a leaf.
-  const ariaLabel = isCollapsed
-    ? t('block.zoomBulletCollapsed')
-    : hasChildren
-      ? t('block.zoomBulletParent')
-      : t('block.zoomBullet')
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          className={cn(
-            'block-bullet group/bullet flex-shrink-0 flex items-center justify-center w-5 h-5 p-0 text-muted-foreground transition-opacity focus-ring-visible active:scale-95 touch-target',
-            'hover:text-foreground',
-            // FINE pointers (desktop): hidden at rest, revealed only on this
-            // block's hover / focus-within / active (selection), matching
-            // GUTTER_BUTTON_BASE. COARSE pointers (touch): NOT hidden — there is
-            // no hover, and the bullet is the tap-to-zoom target (#927 f3), so it
-            // must stay visible/tappable at rest (like the touch drag handle).
-            // #1236: gate the at-rest hidden state on `!isTouch` (JS) rather
-            // than `[@media(pointer:fine)]` (CSS) — WebKitGTK lies about that
-            // media query, so a desktop mouse would otherwise keep the bullet
-            // always-visible on every row.
-            !isTouch && 'opacity-0 pointer-events-none',
-            'group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto',
-          )}
-          data-testid="block-bullet"
-          data-has-children={hasChildren}
-          data-collapsed={isCollapsed}
-          aria-label={ariaLabel}
-          // #1498: keep editor focus on click (see collapse-toggle note).
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={(e) => {
-            e.stopPropagation()
-            zoomIn?.(blockId)
-          }}
-        >
-          {/* The ring halo (visible only when the block has hidden children)
-            is the non-zoom collapsed cue; the inner dot is the bullet. */}
-          <span
-            className={cn(
-              'flex items-center justify-center rounded-full transition-colors',
-              isCollapsed ? 'h-4 w-4 bg-muted/60 ring-1 ring-border' : 'h-4 w-4',
-            )}
-            aria-hidden
-          >
-            <span className="block h-1.5 w-1.5 rounded-full bg-current group-hover/bullet:bg-current" />
-          </span>
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="bottom" sideOffset={4}>
-        {t('block.zoomBulletTip')}
-      </TooltipContent>
-    </Tooltip>
-  )
+  // The chevron slot is ALWAYS reserved, even on leaf-only pages: a fixed-width
+  // placeholder keeps every block's text and controls aligned and prevents a
+  // layout shift the moment a block loses its children (user feedback
+  // 2026-06-20: "reserve the space but don't use it").
+  return <span className="flex-shrink-0 w-5 h-5" aria-hidden />
 }
 
 /** The per-block task checkbox (suppressed in multi-select mode by the caller). */
@@ -554,6 +470,17 @@ function AttachmentBadge({
   )
 }
 
+/**
+ * Leading per-row controls rendered immediately before the block text: the
+ * collapse chevron (or a reserved placeholder slot on leaves) and the task
+ * checkbox. Everything else (priority, dates, repeat, property chips,
+ * attachments) moved to the below-block `BlockMetadataRow` (user feedback
+ * 2026-06-20).
+ *
+ * The chevron slot is ALWAYS reserved (a fixed-width placeholder stands in on
+ * leaves) so button positions stay stable and the tree never shifts the moment
+ * a block becomes a leaf — the "reserve the space but don't use it" request.
+ */
 export const BlockInlineControls = React.memo(
   ({
     blockId,
@@ -562,6 +489,69 @@ export const BlockInlineControls = React.memo(
     onToggleCollapse,
     todoState,
     onToggleTodo,
+  }: BlockInlineControlsProps): React.ReactElement => {
+    // Fix 6 / #994 — when a multi-selection is active the row enters "select"
+    // mode. We suppress ONLY the task checkbox here (it doubles as an action
+    // target that would be ambiguous against the selection-scoped gutter
+    // checkbox); bulk task-state changes go through the batch toolbar / context
+    // menu, which apply to the whole selection.
+    //
+    // The collapse chevron INTENTIONALLY survives selection mode (it is NOT
+    // guarded by `hasSelection`). It is a per-block structural control — the
+    // row-leading, slot-reserved element that also carries the
+    // has-collapsed-children cue. Hiding it at selection-start would reflow every
+    // row horizontally and erase the collapsed-subtree cue exactly when users are
+    // picking subtrees. Best-in-class editors (Notion, Logseq) keep structural
+    // toggles live during multi-select; the per-block aria-label/tooltip keeps
+    // its single-block scope legible.
+    const hasSelection = useBlockStore((s) => s.selectedBlockIds.length > 0)
+
+    // #1236: the chevron's at-rest hidden state is gated on pointer-type. We use
+    // a JS gate (`useIsTouch()`) rather than a `[@media(pointer:fine)]` CSS query
+    // because the Linux WebKitGTK webview lies about that media query too
+    // (reports coarse for a plain mouse) — `useIsTouch` additionally checks
+    // `navigator.maxTouchPoints` to short-circuit the false-coarse.
+    const isTouch = useIsTouch()
+
+    return (
+      <div
+        className={cn(
+          'inline-controls flex items-center flex-shrink-0 gap-1 max-sm:flex-shrink max-sm:w-auto max-sm:gap-x-1',
+        )}
+      >
+        <LeadingCollapseSlot
+          blockId={blockId}
+          hasChildren={hasChildren}
+          isCollapsed={isCollapsed}
+          isTouch={isTouch}
+          onToggleCollapse={onToggleCollapse}
+        />
+
+        {/* Fix 6: in multiselect mode the task checkbox is suppressed on every
+          row (only the gutter select checkbox shows). */}
+        {!hasSelection && (
+          <TaskMarkerButton blockId={blockId} todoState={todoState} onToggleTodo={onToggleTodo} />
+        )}
+      </div>
+    )
+  },
+)
+BlockInlineControls.displayName = 'BlockInlineControls'
+
+/**
+ * Below-block metadata row (user feedback 2026-06-20): the interactive chips
+ * that used to crowd the inline-control cluster — priority badge, due /
+ * scheduled date chips, repeat indicator, property chips (+ overflow) and the
+ * attachment badge — now render on their own row under the block text,
+ * left-aligned with it. They stay fully interactive (priority cycles, dates open
+ * pickers, chips edit, attachments toggle) and ALWAYS visible at rest, since
+ * each carries meaningful state worth seeing at a glance.
+ *
+ * Renders nothing when the block carries no metadata, so leaves add no row.
+ */
+export const BlockMetadataRow = React.memo(
+  ({
+    blockId,
     priority,
     onTogglePriority,
     dueDate,
@@ -570,51 +560,18 @@ export const BlockInlineControls = React.memo(
     filteredProperties,
     maxInlineProperties,
     resolveBlockTitle,
-    anyBlockHasChildren,
-    onZoomIn,
     attachmentCount,
     showAttachments,
     onToggleAttachments,
     onEditProp,
     onEditKey,
-  }: BlockInlineControlsProps): React.ReactElement => {
-    // #927 f3: prefer the explicit prop (test fixtures), else read the zoom-in
-    // handler off the action bag the BlockTree publishes in production.
-    const actionsZoomIn = useBlockActions().onZoomIn
-    const zoomIn = onZoomIn ?? actionsZoomIn
-
-    // Fix 6 / #994 — when a multi-selection is active the row enters "select"
-    // mode. We suppress ONLY the task checkbox here (it doubles as an action
-    // target that would be ambiguous against the selection-scoped gutter
-    // checkbox); bulk task-state changes go through the batch toolbar / context
-    // menu, which apply to the whole selection.
-    //
-    // The collapse chevron and the zoom bullet INTENTIONALLY survive selection
-    // mode (they are NOT guarded by `hasSelection`). They are per-block
-    // structural / navigation controls — the chevron is the row-leading,
-    // slot-reserved element that also carries the has-collapsed-children cue, and
-    // the bullet zooms into a single block. Hiding the chevron at selection-start
-    // would reflow every row horizontally and erase the collapsed-subtree cue
-    // exactly when users are picking subtrees. Best-in-class editors (Notion,
-    // Logseq) keep structural toggles live during multi-select; their per-block
-    // aria-label/tooltip keeps their single-block scope legible. Any
-    // selection-wide collapse belongs on the batch toolbar / context menu, never
-    // overloaded onto the row chevron.
-    const hasSelection = useBlockStore((s) => s.selectedBlockIds.length > 0)
-
+  }: BlockMetadataRowProps): React.ReactElement | null => {
     // #217 C2 / A3 (#1021): cap how many property chips render inline before the
-    // `+N` overflow pill, relieving inline-control density on narrow viewports.
-    // The parent may pass `maxInlineProperties` explicitly (inspectable contract);
-    // otherwise we derive it from the viewport via the named limits.
+    // `+N` overflow pill, relieving chip density on narrow viewports. The parent
+    // may pass `maxInlineProperties` explicitly (inspectable contract); otherwise
+    // we derive it from the viewport via the named limits.
     const isMobile = useIsMobile()
     const inlinePropLimit = maxInlineProperties ?? getInlinePropertyLimit(isMobile)
-
-    // #1236: the bullet's at-rest hidden state is gated on pointer-type. We use a
-    // JS gate (`useIsTouch()`) rather than a `[@media(pointer:fine)]` CSS query
-    // because the Linux WebKitGTK webview lies about that media query too
-    // (reports coarse for a plain mouse) — `useIsTouch` additionally checks
-    // `navigator.maxTouchPoints` to short-circuit the false-coarse.
-    const isTouch = useIsTouch()
 
     // Play a one-shot bump animation when the attachment count changes
     // (file dropped/pasted). `animKey` starts as null so the very first render
@@ -632,44 +589,22 @@ export const BlockInlineControls = React.memo(
       }
     }, [attachmentCount])
 
-    // The `repeat` property (if any) drives the repeat indicator chip. Resolve
-    // it once so the JSX below stays a flat list of presentational subcomponents.
+    // The `repeat` property (if any) drives the repeat indicator chip.
     const repeatValue = properties?.find((p) => p.key === 'repeat')?.value
 
+    const hasContent =
+      Boolean(priority) ||
+      Boolean(dueDate) ||
+      Boolean(scheduledDate) ||
+      repeatValue !== undefined ||
+      filteredProperties.length > 0 ||
+      attachmentCount > 0
+
+    // No metadata → no row (leaves don't add an empty gap below the text).
+    if (!hasContent) return null
+
     return (
-      <div
-        className={cn(
-          'inline-controls flex items-center flex-shrink-0 gap-1 max-sm:flex-shrink max-sm:flex-wrap max-sm:w-auto max-sm:gap-x-1 max-sm:gap-y-1.5',
-        )}
-      >
-        <LeadingCollapseSlot
-          blockId={blockId}
-          hasChildren={hasChildren}
-          isCollapsed={isCollapsed}
-          isTouch={isTouch}
-          anyBlockHasChildren={anyBlockHasChildren}
-          onToggleCollapse={onToggleCollapse}
-        />
-
-        {/* #927 f3: tap-the-bullet zoom (Logseq's signature gesture). Rendered on
-          every row (leaves too) for a consistent affordance, but HIDDEN AT REST —
-          it follows the same per-block hover/focus/active contract as the gutter
-          controls. Tap/click zooms into the block; the collapse chevron carries
-          the has-children/collapsed cue. */}
-        <ZoomBullet
-          blockId={blockId}
-          hasChildren={hasChildren}
-          isCollapsed={isCollapsed}
-          isTouch={isTouch}
-          zoomIn={zoomIn}
-        />
-
-        {/* Fix 6: in multiselect mode the task checkbox is suppressed on every
-          row (only the gutter select checkbox shows). */}
-        {!hasSelection && (
-          <TaskMarkerButton blockId={blockId} todoState={todoState} onToggleTodo={onToggleTodo} />
-        )}
-
+      <div className="block-metadata-row flex items-center flex-wrap gap-1 mt-0.5">
         {priority && (
           <PriorityBadge
             blockId={blockId}
@@ -730,3 +665,4 @@ export const BlockInlineControls = React.memo(
     )
   },
 )
+BlockMetadataRow.displayName = 'BlockMetadataRow'

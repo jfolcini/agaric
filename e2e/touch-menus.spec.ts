@@ -4,15 +4,12 @@
  * Runs under an iPhone-class coarse-pointer + touch context so the product takes
  * its touch code paths (`useIsTouch()` → true, `useBlockTouchLongPress` armed):
  *
- *   1. BlockGutterControls more-actions overflow SHEET (touch render). On touch,
- *      `BlockGutterControls` collapses History + Delete into an overflow `Sheet`
- *      opened from a single `MoreVertical` button (`data-testid="more-actions"`).
- *      We assert the sheet opens, that tapping an action row FIRES it (Delete →
- *      `delete_block` IPC, the deterministic signal used by the swipe-delete test
- *      in `touch-gestures.spec.ts`), and that Escape / an outside (overlay) tap
- *      closes the sheet. The open-the-sheet half mirrors `touch-gestures.spec.ts`
- *      test (d) ("the more-actions overflow sheet opens"); this spec extends it
- *      to the fire-an-item + close paths that #1171 still lacked.
+ *   1. History + Delete via the long-press context menu. These actions moved off
+ *      the gutter (2026-06-20 — the touch more-actions overflow Sheet was
+ *      removed) into the `BlockContextMenu`. We assert a long-press surfaces both
+ *      History and Delete, and that tapping Delete FIRES it (→ `delete_block`
+ *      IPC, the deterministic signal used by the swipe-delete test in
+ *      `touch-gestures.spec.ts`) and removes the block.
  *
  *   2. External-link LONG-PRESS context menu. The right-click path is covered by
  *      `external-link-context-menu.spec.ts`; this is the TOUCH long-press path.
@@ -41,7 +38,6 @@ import { devices } from '@playwright/test'
 
 import {
   activeMenu,
-  activeSheet,
   clearInvokeCalls,
   expect,
   focusBlockById,
@@ -81,71 +77,33 @@ test.describe('Touch block menus (iPhone viewport, #1171)', () => {
     await openPageMobile(page, PAGE)
   })
 
-  // ── Gap 1 — BlockGutterControls more-actions overflow Sheet (touch) ──
+  // ── Gap 1 — History + Delete via the long-press context menu (touch) ──
   //
-  // The overflow button inherits the gutter hover/active reveal contract (no
-  // hover on touch), so we focus the block first (→ `.block-active`) to surface
-  // it, then tap it — exactly as `touch-gestures.spec.ts` test (d) does.
-  test('more-actions overflow sheet opens, fires an action, and closes', async ({ page }) => {
+  // History and Delete moved off the gutter into the BlockContextMenu
+  // (2026-06-20). We long-press to open the menu, assert both items are present,
+  // then tap Delete — the deterministic item: `onDelete(blockId)` →
+  // `delete_block` IPC (the same signal the swipe-delete test in
+  // `touch-gestures.spec.ts` asserts) — and confirm the block is removed.
+  test('long-press menu surfaces History + Delete, and Delete fires and removes the block', async ({
+    page,
+  }) => {
     const ids = await blockIds(page)
     const gs1 = ids[0] as string
-    const block = page.locator(`[data-testid="sortable-block"][data-block-id="${gs1}"]`)
 
-    // Focus the block to apply `.block-active`, which reveals the gutter overflow.
-    await focusBlockById(page, gs1)
-
-    const moreActions = block.locator('[data-testid="more-actions"]')
-    await expect(moreActions).toBeVisible()
-
-    // ── Open ──────────────────────────────────────────────────────────
-    await moreActions.click()
-    const sheet = activeSheet(page)
-    await expect(sheet).toBeVisible()
-    // The overflow Sheet renders its action rows (History / Delete).
-    await expect(page.getByTestId('more-actions-history')).toBeVisible()
-    await expect(page.getByTestId('more-actions-delete')).toBeVisible()
-
-    // ── Close on Escape ───────────────────────────────────────────────
-    await page.keyboard.press('Escape')
-    await expect(activeSheet(page)).toHaveCount(0)
-
-    // Closing the Sheet (Radix Dialog) restores focus to the trigger but the
-    // block editor is no longer focused, so `isFocused` → false drops the
-    // `.block-active` / `group-focus-within` reveal and the overflow button
-    // reverts to `opacity-0 pointer-events-none` (its wrapping gutter <div>
-    // then intercepts the click). Re-focus the block to surface it again —
-    // exactly the reveal contract documented above (focus → `.block-active`).
-    await focusBlockById(page, gs1)
-
-    // ── Re-open, then close by tapping the backdrop (outside) ──────────
-    await expect(moreActions).toBeVisible()
-    await moreActions.click()
-    await expect(activeSheet(page)).toBeVisible()
-    // Radix renders a full-viewport overlay; a click on it is an "outside"
-    // pointer-down → the Dialog/Sheet closes.
-    await page
-      .locator('[data-slot="sheet-overlay"]')
-      .last()
-      .click({ position: { x: 5, y: 5 } })
-    await expect(activeSheet(page)).toHaveCount(0)
-
-    // ── Re-open, then TAP an action row → it fires ────────────────────
-    // Delete is the deterministic item: `onDelete(blockId)` → `delete_block`
-    // IPC (the same signal the swipe-delete test in `touch-gestures.spec.ts`
-    // asserts). `SheetClose` wraps the row, so the tap also closes the sheet.
-    await focusBlockById(page, gs1) // re-reveal the overflow button (see above)
-    await expect(moreActions).toBeVisible()
-    await moreActions.click()
-    await expect(activeSheet(page)).toBeVisible()
+    await touchLongPress(page, `[data-testid="block-static"][data-block-id="${gs1}"]`)
+    const menu = activeMenu(page)
+    await expect(menu).toBeVisible()
+    await expect(menu.getByRole('menuitem', { name: 'History' })).toBeVisible()
+    await expect(menu.getByRole('menuitem', { name: 'Delete' })).toBeVisible()
 
     await clearInvokeCalls(page)
-    await page.getByTestId('more-actions-delete').click()
+    await menu.getByRole('menuitem', { name: 'Delete' }).click()
 
     await expect
       .poll(async () => (await getInvokeCalls(page, 'delete_block')).length)
       .toBeGreaterThan(0)
-    // The action also dismisses the sheet (SheetClose).
-    await expect(activeSheet(page)).toHaveCount(0)
+    // The action also dismisses the menu …
+    await expect(page.getByRole('menu', { name: 'Block actions' })).toHaveCount(0)
     // …and the block is gone from the tree.
     await expect.poll(async () => (await blockIds(page)).includes(gs1)).toBe(false)
   })

@@ -1,4 +1,4 @@
-import { expect, test } from './helpers'
+import { deleteBlockViaContextMenu, expect, test } from './helpers'
 
 /**
  * Editor lifecycle: CRUD operations, navigation, persistence.
@@ -102,13 +102,9 @@ test.describe('Editor lifecycle', () => {
     // Create a block to delete
     await addBlock(page, 'Delete me')
 
-    // Hover over the block to reveal delete button
+    // Delete the block via the context menu
     const block = page.locator('[data-testid="sortable-block"]').filter({ hasText: 'Delete me' })
-    await block.hover()
-
-    // Click the delete button
-    const deleteBtn = block.getByRole('button', { name: /delete block/i })
-    await deleteBtn.click()
+    await deleteBlockViaContextMenu(page, block)
 
     // Verify block is gone
     await expect(page.getByText('Delete me')).not.toBeVisible()

@@ -10,23 +10,14 @@ import { consumePreDragFocus } from '@/lib/pre-drag-focus'
 import { useBlockStore } from '@/stores/blocks'
 
 // Mock lucide-react icons. We extend the original module so transitive
-// dependencies (e.g. Sheet's close button → XIcon) still resolve, while
-// pinning the icons we assert on to predictable test ids.
+// dependencies still resolve, while pinning the icons we assert on to
+// predictable test ids.
 vi.mock('lucide-react', async (importOriginal) => {
   const actual = await importOriginal<typeof import('lucide-react')>()
   return {
     ...actual,
-    Clock: (props: { className?: string }) => (
-      <svg data-testid="clock-icon" className={props.className} />
-    ),
     GripVertical: (props: { className?: string }) => (
       <svg data-testid="grip-vertical-icon" className={props.className} />
-    ),
-    MoreVertical: (props: { className?: string }) => (
-      <svg data-testid="more-vertical-icon" className={props.className} />
-    ),
-    Trash2: (props: { className?: string }) => (
-      <svg data-testid="trash-icon" className={props.className} />
     ),
   }
 })
@@ -151,158 +142,6 @@ describe('BlockGutterControls', () => {
     expect(screen.getByTestId('grip-vertical-icon')).toBeInTheDocument()
   })
 
-  it('does not render history button when onShowHistory is not provided', () => {
-    renderWithTooltip(<BlockGutterControls blockId="B1" />)
-
-    expect(screen.queryByRole('button', { name: /block history/i })).not.toBeInTheDocument()
-  })
-
-  it('renders history button when onShowHistory is provided', () => {
-    renderWithTooltip(<BlockGutterControls blockId="B1" onShowHistory={vi.fn()} />)
-
-    const historyBtn = screen.getByRole('button', { name: /block history/i })
-    expect(historyBtn).toBeInTheDocument()
-    expect(screen.getByTestId('clock-icon')).toBeInTheDocument()
-  })
-
-  it('calls onShowHistory with blockId when history button is clicked', async () => {
-    const user = userEvent.setup()
-    const onShowHistory = vi.fn()
-
-    renderWithTooltip(<BlockGutterControls blockId="B42" onShowHistory={onShowHistory} />)
-
-    await user.click(screen.getByRole('button', { name: /block history/i }))
-    expect(onShowHistory).toHaveBeenCalledOnce()
-    expect(onShowHistory).toHaveBeenCalledWith('B42')
-  })
-
-  // #1498: the history button lives outside the contenteditable. With the
-  // block's editor focused, an un-prevented mousedown would blur it first
-  // (flush → re-mount) and swallow the click. preventDefault on mousedown keeps
-  // the editor focused so the click fires. (Delete already prevents this via its
-  // own onPointerDown; the drag handle / select checkbox intentionally keep
-  // their pointerdown behaviour for drag / selection.)
-  it('history button prevents default on mousedown and still fires onShowHistory', async () => {
-    const user = userEvent.setup()
-    const onShowHistory = vi.fn()
-    renderWithTooltip(<BlockGutterControls blockId="B7" onShowHistory={onShowHistory} />)
-
-    const historyBtn = screen.getByRole('button', { name: /block history/i })
-    const ev = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
-    const prevented = vi.spyOn(ev, 'preventDefault')
-    historyBtn.dispatchEvent(ev)
-    expect(prevented).toHaveBeenCalled()
-
-    await user.click(historyBtn)
-    expect(onShowHistory).toHaveBeenCalledWith('B7')
-  })
-
-  it('does not render delete button when onDelete is not provided', () => {
-    renderWithTooltip(<BlockGutterControls blockId="B1" />)
-
-    expect(screen.queryByRole('button', { name: /delete block/i })).not.toBeInTheDocument()
-  })
-
-  it('renders delete button when onDelete is provided', () => {
-    renderWithTooltip(<BlockGutterControls blockId="B1" onDelete={vi.fn()} />)
-
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    expect(deleteBtn).toBeInTheDocument()
-    expect(screen.getByTestId('trash-icon')).toBeInTheDocument()
-  })
-
-  // #1532: the action is bound to `onClick` ONLY (mirroring the history
-  // button). pointerDown must NOT fire onDelete — it exists purely for
-  // focus-retention (preventDefault) and to stop the press bubbling into block
-  // selection (stopPropagation). Binding the action there too made one mouse
-  // interaction (pointerdown → synthetic click) call onDelete twice.
-  it('does not call onDelete on pointerDown alone (action is click-bound)', () => {
-    const onDelete = vi.fn()
-    renderWithTooltip(<BlockGutterControls blockId="B99" onDelete={onDelete} />)
-
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    fireEvent.pointerDown(deleteBtn)
-
-    expect(onDelete).not.toHaveBeenCalled()
-  })
-
-  // #1532 (revert-sensitive): a single mouse interaction is a pointerdown
-  // followed by a synthetic click. `preventDefault` on pointerdown does NOT
-  // suppress that click, so binding onDelete to BOTH handlers fired it twice.
-  // Assert exactly ONE onDelete call across the whole sequence.
-  it('fires onDelete exactly once for a pointerdown+click mouse interaction (#1532)', () => {
-    const onDelete = vi.fn()
-    renderWithTooltip(<BlockGutterControls blockId="B99" onDelete={onDelete} />)
-
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    // Reproduce a real mouse press: pointerdown then the click the browser
-    // synthesizes on release. preventDefault on pointerdown does not cancel it.
-    fireEvent.pointerDown(deleteBtn)
-    fireEvent.click(deleteBtn)
-
-    expect(onDelete).toHaveBeenCalledTimes(1)
-    expect(onDelete).toHaveBeenCalledWith('B99')
-  })
-
-  it('calls onDelete with blockId on click (keyboard fallback)', async () => {
-    const user = userEvent.setup()
-    const onDelete = vi.fn()
-
-    renderWithTooltip(<BlockGutterControls blockId="B_KB" onDelete={onDelete} />)
-
-    await user.click(screen.getByRole('button', { name: /delete block/i }))
-    expect(onDelete).toHaveBeenCalledWith('B_KB')
-  })
-
-  // #1532: keyboard activation (Enter / Space) must still trigger delete.
-  // Native buttons dispatch a `click` on Enter/Space, and the action lives on
-  // onClick, so focusing the button and pressing each key fires onDelete once.
-  it('triggers onDelete via keyboard Enter and Space (action stays on click)', async () => {
-    const user = userEvent.setup()
-    const onDelete = vi.fn()
-
-    renderWithTooltip(<BlockGutterControls blockId="B_ENTER" onDelete={onDelete} />)
-
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    deleteBtn.focus()
-    await user.keyboard('{Enter}')
-    expect(onDelete).toHaveBeenCalledTimes(1)
-    expect(onDelete).toHaveBeenLastCalledWith('B_ENTER')
-
-    await user.keyboard(' ')
-    expect(onDelete).toHaveBeenCalledTimes(2)
-    expect(onDelete).toHaveBeenLastCalledWith('B_ENTER')
-  })
-
-  // #1532: pointerdown still keeps editor focus (preventDefault) so the
-  // following click isn't swallowed — same contract the history button relies
-  // on. Mirror the history button's focus-retention assertion for delete.
-  it('delete button prevents default on pointerDown to retain editor focus (#1532)', () => {
-    const onDelete = vi.fn()
-    renderWithTooltip(<BlockGutterControls blockId="B_FOCUS" onDelete={onDelete} />)
-
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    const ev = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
-    const prevented = vi.spyOn(ev, 'preventDefault')
-    deleteBtn.dispatchEvent(ev)
-
-    expect(prevented).toHaveBeenCalled()
-    // ... and the action did NOT fire on pointerdown.
-    expect(onDelete).not.toHaveBeenCalled()
-  })
-
-  it('stopPropagation on delete pointerDown prevents parent activation', () => {
-    const onDelete = vi.fn()
-    renderWithTooltip(<BlockGutterControls blockId="B1" onDelete={onDelete} />)
-
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
-    const stopSpy = vi.spyOn(event, 'stopPropagation')
-    deleteBtn.dispatchEvent(event)
-
-    expect(stopSpy).toHaveBeenCalled()
-  })
-
   it('spreads dragAttributes and dragListeners onto drag handle', () => {
     renderWithTooltip(
       <BlockGutterControls
@@ -341,16 +180,6 @@ describe('BlockGutterControls', () => {
 
     useBlockStore.setState({ focusedBlockId: null })
   })
-
-  it('renders all three buttons when all callbacks are provided', () => {
-    renderWithTooltip(
-      <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
-    )
-
-    expect(screen.getByTestId('drag-handle')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /block history/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /delete block/i })).toBeInTheDocument()
-  })
 })
 
 describe('BlockGutterControls tooltip visibility', () => {
@@ -365,38 +194,13 @@ describe('BlockGutterControls tooltip visibility', () => {
       expect(screen.getByRole('tooltip', { name: t('block.reorderTip') })).toBeInTheDocument()
     })
   })
-
-  it('shows delete tooltip on hover', async () => {
-    const user = userEvent.setup()
-
-    renderWithTooltip(<BlockGutterControls blockId="B1" onDelete={vi.fn()} />)
-
-    await user.hover(screen.getByRole('button', { name: /delete block/i }))
-
-    await waitFor(() => {
-      expect(screen.getByRole('tooltip', { name: t('block.delete') })).toBeInTheDocument()
-    })
-  })
-
-  it('shows history tooltip on hover', async () => {
-    const user = userEvent.setup()
-
-    renderWithTooltip(<BlockGutterControls blockId="B1" onShowHistory={vi.fn()} />)
-
-    await user.hover(screen.getByRole('button', { name: /block history/i }))
-
-    await waitFor(() => {
-      expect(screen.getByRole('tooltip', { name: t('block.history') })).toBeInTheDocument()
-    })
-  })
 })
 
 describe('BlockGutterControls gutter button classes', () => {
   // #370: the desktop drag handle follows the same per-block hover contract as
   // every other gutter control — hidden at rest (opacity-0 / pointer-events-none
   // from GUTTER_BUTTON_BASE) and revealed only on group-hover / focus-within /
-  // .block-active. The earlier #217-B2 opacity-30 at-rest tweak painted a grip
-  // on every row at all times, defeating per-row hover scope; reverted here.
+  // .block-active.
   it('drag handle is hidden at rest and revealed on row hover (per-block contract)', () => {
     renderWithTooltip(<BlockGutterControls blockId="B1" />)
 
@@ -408,79 +212,25 @@ describe('BlockGutterControls gutter button classes', () => {
     expect(dragHandle.className).toContain('group-hover:pointer-events-auto')
   })
 
-  it('delete button has pointer-events-none when invisible (opacity-0)', () => {
-    renderWithTooltip(<BlockGutterControls blockId="B1" onDelete={vi.fn()} />)
+  it('drag handle carries the touch-target utility class', () => {
+    // The .touch-target utility sets both min-height and min-width to 44px under
+    // (pointer: coarse) so the 20-px-wide gutter button meets WCAG 2.5.8 on
+    // touch devices. jsdom cannot evaluate the @media query, so we assert
+    // structural presence of the utility class instead of its computed width.
+    renderWithTooltip(<BlockGutterControls blockId="B1" />)
 
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    expect(deleteBtn.className).toContain('opacity-0')
-    expect(deleteBtn.className).toContain('pointer-events-none')
-    expect(deleteBtn.className).toContain('group-hover:pointer-events-auto')
-  })
-
-  it('history button has pointer-events-none when invisible (opacity-0)', () => {
-    renderWithTooltip(<BlockGutterControls blockId="B1" onShowHistory={vi.fn()} />)
-
-    const historyBtn = screen.getByRole('button', { name: /block history/i })
-    expect(historyBtn.className).toContain('opacity-0')
-    expect(historyBtn.className).toContain('pointer-events-none')
-    expect(historyBtn.className).toContain('group-hover:pointer-events-auto')
-  })
-
-  it('all three gutter buttons carry the touch-target utility class', () => {
-    // Regression for the.touch-target utility now sets both min-height
-    // and min-width to 44px under (pointer: coarse) so the 20-px-wide gutter
-    // buttons meet WCAG 2.5.8 on touch devices. jsdom cannot evaluate the
-    // @media query, so we assert structural presence of the utility class
-    // on each button instead of its computed width.
-    renderWithTooltip(
-      <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
-    )
-
-    const dragHandle = screen.getByTestId('drag-handle')
-    const historyBtn = screen.getByRole('button', { name: /block history/i })
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-
-    expect(dragHandle.className).toContain('touch-target')
-    expect(historyBtn.className).toContain('touch-target')
-    expect(deleteBtn.className).toContain('touch-target')
+    expect(screen.getByTestId('drag-handle').className).toContain('touch-target')
   })
 
   // #995: the gutter is the last consumer migrated off the legacy `focus-ring`
   // (2px ring + offset) onto the canonical `focus-ring-visible` (3px inset).
-  it('all three gutter buttons carry focus-ring-visible (not the legacy focus-ring)', () => {
-    renderWithTooltip(
-      <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
-    )
+  it('drag handle carries focus-ring-visible (not the legacy focus-ring)', () => {
+    renderWithTooltip(<BlockGutterControls blockId="B1" />)
 
     const dragHandle = screen.getByTestId('drag-handle')
-    const historyBtn = screen.getByRole('button', { name: /block history/i })
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-
-    for (const btn of [dragHandle, historyBtn, deleteBtn]) {
-      expect(btn.className).toContain('focus-ring-visible')
-      // No bare legacy token (guard against a regression to `focus-ring`).
-      expect(btn.className.split(/\s+/)).not.toContain('focus-ring')
-    }
-  })
-
-  // #997: the neutral / destructive hover palettes are centralized constants;
-  // assert each button carries the expected colour set (neutral keeps both
-  // bg+text, destructive keeps the destructive bg+text).
-  it('applies the centralized neutral/destructive hover palettes', () => {
-    renderWithTooltip(
-      <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
-    )
-
-    const historyBtn = screen.getByRole('button', { name: /block history/i })
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-
-    // History = neutral palette.
-    expect(historyBtn.className).toContain('hover:bg-accent')
-    expect(historyBtn.className).toContain('hover:text-foreground')
-    // Delete = destructive palette (and keeps the delete-handle modifier).
-    expect(deleteBtn.className).toContain('delete-handle')
-    expect(deleteBtn.className).toContain('hover:bg-destructive/10')
-    expect(deleteBtn.className).toContain('hover:text-destructive')
+    expect(dragHandle.className).toContain('focus-ring-visible')
+    // No bare legacy token (guard against a regression to `focus-ring`).
+    expect(dragHandle.className.split(/\s+/)).not.toContain('focus-ring')
   })
 
   // #997 decision: the drag handle deliberately stays text-only on hover (no
@@ -496,19 +246,12 @@ describe('BlockGutterControls gutter button classes', () => {
   // #998: the icon-button radius is folded into the shared base token; assert
   // it's present once and not bumped to the padded-row `rounded-md`.
   it('gutter icon buttons inherit rounded-sm from the shared base token', () => {
-    renderWithTooltip(
-      <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
-    )
+    renderWithTooltip(<BlockGutterControls blockId="B1" />)
 
     const dragHandle = screen.getByTestId('drag-handle')
-    const historyBtn = screen.getByRole('button', { name: /block history/i })
-    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-
-    for (const btn of [dragHandle, historyBtn, deleteBtn]) {
-      expect(btn.className.split(/\s+/)).toContain('rounded-sm')
-      // Must NOT be bumped to the padded-row radius (#998 explicit decision).
-      expect(btn.className.split(/\s+/)).not.toContain('rounded-md')
-    }
+    expect(dragHandle.className.split(/\s+/)).toContain('rounded-sm')
+    // Must NOT be bumped to the padded-row radius (#998 explicit decision).
+    expect(dragHandle.className.split(/\s+/)).not.toContain('rounded-md')
   })
 })
 
@@ -529,18 +272,12 @@ describe('BlockGutterControls multi-select checkbox (B1, #217)', () => {
     expect(screen.queryByTestId('block-select-checkbox')).not.toBeInTheDocument()
   })
 
-  // User feedback 2026-06-12: with NO active selection the checkbox must NOT
-  // clutter a casual hover — it's fully out of the way (no hover-reveal).
-  it('keeps the checkbox out of the way on casual hover when no selection is active', () => {
+  // New contract (user feedback 2026-06-20): the checkbox must NEVER reserve
+  // gutter space. With NO active selection and not selected, it is omitted from
+  // the DOM entirely (the start affordance is Ctrl/Cmd+Click).
+  it('does not render the checkbox when no selection is active and not selected', () => {
     renderWithTooltip(<BlockGutterControls blockId="B1" onSelect={vi.fn()} />)
-    const checkbox = screen.getByTestId('block-select-checkbox')
-    expect(checkbox).toBeInTheDocument()
-    expect(checkbox).toHaveAttribute('type', 'checkbox')
-    expect(checkbox).toHaveAttribute('aria-label', t('block.selectBlock'))
-    expect(checkbox.className).toContain('opacity-0')
-    expect(checkbox.className).toContain('pointer-events-none')
-    // NOT hover-revealed while idle.
-    expect(checkbox.className).not.toContain('group-hover:opacity-100')
+    expect(screen.queryByTestId('block-select-checkbox')).not.toBeInTheDocument()
   })
 
   // Once a multi-selection IS active, other rows hover-reveal their checkbox so
@@ -549,6 +286,9 @@ describe('BlockGutterControls multi-select checkbox (B1, #217)', () => {
     useBlockStore.setState({ selectedBlockIds: ['OTHER'] })
     renderWithTooltip(<BlockGutterControls blockId="B1" onSelect={vi.fn()} />)
     const checkbox = screen.getByTestId('block-select-checkbox')
+    expect(checkbox).toBeInTheDocument()
+    expect(checkbox).toHaveAttribute('type', 'checkbox')
+    expect(checkbox).toHaveAttribute('aria-label', t('block.selectBlock'))
     expect(checkbox.className).toContain('opacity-0')
     expect(checkbox.className).toContain('group-hover:opacity-100')
     expect(checkbox.className).not.toContain('pointer-events-none')
@@ -556,6 +296,8 @@ describe('BlockGutterControls multi-select checkbox (B1, #217)', () => {
 
   it('toggles selection via onSelect(blockId, "toggle") when changed', () => {
     const onSelect = vi.fn()
+    // A selection must be active for the checkbox to render at all.
+    useBlockStore.setState({ selectedBlockIds: ['OTHER'] })
     renderWithTooltip(<BlockGutterControls blockId="B_SEL" onSelect={onSelect} />)
 
     fireEvent.click(screen.getByTestId('block-select-checkbox'))
@@ -600,25 +342,15 @@ describe('BlockGutterControls multi-select checkbox (B1, #217)', () => {
   })
 
   it('passes axe audit with the checkbox rendered', async () => {
-    const { container } = renderWithTooltip(
-      <BlockGutterControls blockId="B1" onSelect={vi.fn()} onDelete={vi.fn()} />,
-    )
+    useBlockStore.setState({ selectedBlockIds: ['OTHER'] })
+    const { container } = renderWithTooltip(<BlockGutterControls blockId="B1" onSelect={vi.fn()} />)
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
 })
 
 describe('BlockGutterControls accessibility', () => {
-  it('passes axe audit with all buttons rendered', async () => {
-    const { container } = renderWithTooltip(
-      <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
-    )
-
-    const results = await axe(container)
-    expect(results).toHaveNoViolations()
-  })
-
-  it('passes axe audit with only drag handle rendered', async () => {
+  it('passes axe audit with the drag handle rendered', async () => {
     const { container } = renderWithTooltip(<BlockGutterControls blockId="B1" />)
 
     const results = await axe(container)
@@ -626,7 +358,7 @@ describe('BlockGutterControls accessibility', () => {
   })
 })
 
-/* ── Touch (pointer: coarse) — overflow Sheet ─────────────── */
+/* ── Touch (pointer: coarse) — drag grip ─────────────── */
 
 describe('BlockGutterControls (touch / pointer:coarse)', () => {
   let originalMatchMedia: PropertyDescriptor | undefined
@@ -642,34 +374,9 @@ describe('BlockGutterControls (touch / pointer:coarse)', () => {
     resetMaxTouchPoints()
   })
 
-  it('renders only drag handle and overflow button (not inline history/delete)', () => {
-    renderWithTooltip(
-      <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
-    )
-
-    expect(screen.getByTestId('drag-handle')).toBeInTheDocument()
-    expect(screen.getByTestId('more-actions')).toBeInTheDocument()
-    // Inline history/delete are NOT rendered on touch — they live in the Sheet.
-    expect(screen.queryByTestId('clock-icon')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('trash-icon')).not.toBeInTheDocument()
-    expect(screen.getByTestId('more-vertical-icon')).toBeInTheDocument()
-  })
-
-  it('overflow button exposes the dialog hint via aria attributes', () => {
-    renderWithTooltip(<BlockGutterControls blockId="B1" onDelete={vi.fn()} />)
-
-    const overflow = screen.getByTestId('more-actions')
-    // The aria-label is now enumerated based on available actions
-    // See the dedicated tests below for that contract.
-    expect(overflow).toHaveAttribute('aria-haspopup', 'dialog')
-    expect(overflow).toHaveAttribute('aria-expanded', 'false')
-  })
-
   // ── touch drag handle long-press hint ─────────────────────
   it('drag handle aria-label surfaces the long-press hint on touch', () => {
-    renderWithTooltip(
-      <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
-    )
+    renderWithTooltip(<BlockGutterControls blockId="B1" />)
 
     const dragHandle = screen.getByTestId('drag-handle')
     expect(dragHandle).toHaveAttribute('aria-label', t('block.reorderTouchHint'))
@@ -681,8 +388,6 @@ describe('BlockGutterControls (touch / pointer:coarse)', () => {
     renderWithTooltip(
       <BlockGutterControls
         blockId="B1"
-        onDelete={vi.fn()}
-        onShowHistory={vi.fn()}
         dragAttributes={{ 'data-dnd-activator': 'grip' } as never}
         dragListeners={dragListeners}
       />,
@@ -703,155 +408,31 @@ describe('BlockGutterControls (touch / pointer:coarse)', () => {
   })
 
   // ── #996: coarse-pointer icon legibility ──────────────────────────
-  // A 16px glyph in the WCAG 44px box reads as floaty; bump the touch grip and
-  // overflow icons to 20px on coarse pointers (desktop p-0.5/16px unchanged).
-  it('touch grip and overflow icons scale to 20px on coarse pointers (#996)', () => {
-    renderWithTooltip(<BlockGutterControls blockId="B1" onDelete={vi.fn()} />)
+  // A 16px glyph in the WCAG 44px box reads as floaty; bump the touch grip icon
+  // to 20px on coarse pointers (desktop p-0.5/16px unchanged).
+  it('touch grip icon scales to 20px on coarse pointers (#996)', () => {
+    renderWithTooltip(<BlockGutterControls blockId="B1" />)
 
     const grip = screen.getByTestId('grip-vertical-icon')
-    const overflow = screen.getByTestId('more-vertical-icon')
-
-    for (const icon of [grip, overflow]) {
-      expect(icon.getAttribute('class')).toContain('[@media(pointer:coarse)]:h-5')
-      expect(icon.getAttribute('class')).toContain('[@media(pointer:coarse)]:w-5')
-    }
+    expect(grip.getAttribute('class')).toContain('[@media(pointer:coarse)]:h-5')
+    expect(grip.getAttribute('class')).toContain('[@media(pointer:coarse)]:w-5')
   })
 
-  // #996: neither touch element paints a visible button background at rest —
-  // bg only appears on hover/active so the region reads as ambient chrome.
-  it('touch grip and overflow have no resting background (#996)', () => {
-    renderWithTooltip(<BlockGutterControls blockId="B1" onDelete={vi.fn()} />)
+  // #996: the touch grip paints no visible button background at rest — bg only
+  // appears on active so the region reads as ambient chrome.
+  it('touch grip has no resting background (#996)', () => {
+    renderWithTooltip(<BlockGutterControls blockId="B1" />)
 
     const grip = screen.getByTestId('drag-handle')
-    const overflow = screen.getByTestId('more-actions')
-
     // Grip: only active:bg-accent (no unconditional bg-* utility).
     expect(grip.className).toContain('active:bg-accent')
     expect(grip.className.split(/\s+/).some((c) => c.startsWith('bg-'))).toBe(false)
-    // Overflow: only hover:bg-accent (no unconditional bg-* utility).
-    expect(overflow.className).toContain('hover:bg-accent')
-    expect(overflow.className.split(/\s+/).some((c) => c.startsWith('bg-'))).toBe(false)
   })
 
-  // ── more-actions aria-label enumerates available actions ──
-  it('more-actions aria-label enumerates History and Delete when both are provided', () => {
-    renderWithTooltip(
-      <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
-    )
-
-    const overflow = screen.getByTestId('more-actions')
-    const expected = t('block.moreActionsEnumerated', {
-      actions: `${t('block.history')}, ${t('block.delete')}`,
-    })
-    expect(overflow).toHaveAttribute('aria-label', expected)
-  })
-
-  it('more-actions aria-label enumerates only Delete when onShowHistory is undefined', () => {
-    renderWithTooltip(<BlockGutterControls blockId="B1" onDelete={vi.fn()} />)
-
-    const overflow = screen.getByTestId('more-actions')
-    const expected = t('block.moreActionsEnumerated', { actions: t('block.delete') })
-    expect(overflow).toHaveAttribute('aria-label', expected)
-  })
-
-  it('does not render the overflow button when no secondary actions are wired', () => {
-    renderWithTooltip(<BlockGutterControls blockId="B1" />)
-
-    expect(screen.getByTestId('drag-handle')).toBeInTheDocument()
-    expect(screen.queryByTestId('more-actions')).not.toBeInTheDocument()
-  })
-
-  it('tapping overflow opens the Sheet with labelled History and Delete rows', async () => {
-    const user = userEvent.setup()
-    renderWithTooltip(
-      <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
-    )
-
-    await user.click(screen.getByTestId('more-actions'))
-
-    await waitFor(() => {
-      expect(screen.getByRole('dialog')).toBeInTheDocument()
-    })
-    expect(screen.getByText(t('block.actionsSheetTitle'))).toBeInTheDocument()
-    // Sheet rows expose the same labels as desktop tooltips.
-    expect(screen.getByTestId('more-actions-history')).toHaveTextContent(t('block.history'))
-    expect(screen.getByTestId('more-actions-delete')).toHaveTextContent(t('block.delete'))
-  })
-
-  it('History row in the Sheet calls onShowHistory(blockId)', async () => {
-    const user = userEvent.setup()
-    const onShowHistory = vi.fn()
-    renderWithTooltip(
-      <BlockGutterControls blockId="B_HX" onShowHistory={onShowHistory} onDelete={vi.fn()} />,
-    )
-
-    await user.click(screen.getByTestId('more-actions'))
-    await user.click(await screen.findByTestId('more-actions-history'))
-
-    expect(onShowHistory).toHaveBeenCalledTimes(1)
-    expect(onShowHistory).toHaveBeenCalledWith('B_HX')
-  })
-
-  it('Delete row in the Sheet calls onDelete(blockId)', async () => {
-    const user = userEvent.setup()
-    const onDelete = vi.fn()
-    renderWithTooltip(
-      <BlockGutterControls blockId="B_DEL" onDelete={onDelete} onShowHistory={vi.fn()} />,
-    )
-
-    await user.click(screen.getByTestId('more-actions'))
-    await user.click(await screen.findByTestId('more-actions-delete'))
-
-    expect(onDelete).toHaveBeenCalledTimes(1)
-    expect(onDelete).toHaveBeenCalledWith('B_DEL')
-  })
-
-  it('only renders the History row when onDelete is undefined', async () => {
-    const user = userEvent.setup()
-    renderWithTooltip(<BlockGutterControls blockId="B1" onShowHistory={vi.fn()} />)
-
-    await user.click(screen.getByTestId('more-actions'))
-
-    await waitFor(() => {
-      expect(screen.getByTestId('more-actions-history')).toBeInTheDocument()
-    })
-    expect(screen.queryByTestId('more-actions-delete')).not.toBeInTheDocument()
-  })
-
-  it('only renders the Delete row when onShowHistory is undefined', async () => {
-    const user = userEvent.setup()
-    renderWithTooltip(<BlockGutterControls blockId="B1" onDelete={vi.fn()} />)
-
-    await user.click(screen.getByTestId('more-actions'))
-
-    await waitFor(() => {
-      expect(screen.getByTestId('more-actions-delete')).toBeInTheDocument()
-    })
-    expect(screen.queryByTestId('more-actions-history')).not.toBeInTheDocument()
-  })
-
-  it('passes axe audit in touch mode (closed Sheet)', async () => {
-    const { container } = renderWithTooltip(
-      <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
-    )
+  it('passes axe audit in touch mode', async () => {
+    const { container } = renderWithTooltip(<BlockGutterControls blockId="B1" />)
 
     const results = await axe(container)
-    expect(results).toHaveNoViolations()
-  })
-
-  it('passes axe audit in touch mode (open Sheet)', async () => {
-    const user = userEvent.setup()
-    const { baseElement } = renderWithTooltip(
-      <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
-    )
-
-    await user.click(screen.getByTestId('more-actions'))
-    await waitFor(() => {
-      expect(screen.getByRole('dialog')).toBeInTheDocument()
-    })
-
-    // Use baseElement so axe sees the portalled Sheet content.
-    const results = await axe(baseElement)
     expect(results).toHaveNoViolations()
   })
 })
@@ -863,37 +444,23 @@ describe('BlockGutterControls multiselect mode (Fix 6)', () => {
     useBlockStore.setState({ selectedBlockIds: [] })
   })
 
-  it('desktop: suppresses history/delete, keeps the select checkbox + drag handle (#914)', () => {
+  it('desktop: keeps the select checkbox + drag handle (#914)', () => {
     useBlockStore.setState({ selectedBlockIds: ['OTHER'] })
-    renderWithTooltip(
-      <BlockGutterControls
-        blockId="B1"
-        onSelect={vi.fn()}
-        onDelete={vi.fn()}
-        onShowHistory={vi.fn()}
-      />,
-    )
+    renderWithTooltip(<BlockGutterControls blockId="B1" onSelect={vi.fn()} />)
     // The select checkbox AND the drag handle survive (the handle is kept so a
-    // multi-selection can still be dragged to move — #914); history/delete are
-    // suppressed to keep selection mode uncluttered.
+    // multi-selection can still be dragged to move — #914). History/Delete now
+    // live only in the context menu, so they are never in the gutter.
     expect(screen.getByTestId('block-select-checkbox')).toBeInTheDocument()
     expect(screen.getByTestId('drag-handle')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /delete block/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /block history/i })).not.toBeInTheDocument()
   })
 
-  it('touch: suppresses the touch grip + overflow trigger, keeps the checkbox', () => {
+  it('touch: suppresses the touch grip, keeps the checkbox', () => {
     const original = setMatchMedia(true)
     useBlockStore.setState({ selectedBlockIds: ['OTHER'] })
     try {
-      renderWithTooltip(
-        <BlockGutterControls
-          blockId="B1"
-          onSelect={vi.fn()}
-          onDelete={vi.fn()}
-          onShowHistory={vi.fn()}
-        />,
-      )
+      renderWithTooltip(<BlockGutterControls blockId="B1" onSelect={vi.fn()} />)
       expect(screen.getByTestId('block-select-checkbox')).toBeInTheDocument()
       expect(screen.queryByTestId('drag-handle')).not.toBeInTheDocument()
       expect(screen.queryByTestId('more-actions')).not.toBeInTheDocument()
@@ -903,10 +470,9 @@ describe('BlockGutterControls multiselect mode (Fix 6)', () => {
     }
   })
 
-  it('renders the full gutter (drag handle present) when no selection is active', () => {
+  it('renders the drag handle when no selection is active', () => {
     useBlockStore.setState({ selectedBlockIds: [] })
-    renderWithTooltip(<BlockGutterControls blockId="B1" onSelect={vi.fn()} onDelete={vi.fn()} />)
+    renderWithTooltip(<BlockGutterControls blockId="B1" onSelect={vi.fn()} />)
     expect(screen.getByTestId('drag-handle')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /delete block/i })).toBeInTheDocument()
   })
 })

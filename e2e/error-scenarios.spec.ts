@@ -1,4 +1,4 @@
-import { clearConsoleErrors, expect, test } from './helpers'
+import { clearConsoleErrors, deleteBlockViaContextMenu, expect, test } from './helpers'
 
 interface MockErrorWindow extends Window {
   __injectMockError?: (command: string, message: string) => void
@@ -112,13 +112,11 @@ test.describe('Error scenarios', () => {
       )
     })
 
-    // Try to delete the block
+    // Try to delete the block via the context menu
     const block = page
       .locator('[data-testid="sortable-block"]')
       .filter({ hasText: 'Block to fail-delete' })
-    await block.hover()
-    const deleteBtn = block.getByRole('button', { name: /delete block/i })
-    await deleteBtn.click()
+    await deleteBlockViaContextMenu(page, block)
 
     // The block should still be visible (delete failed) and the app should not crash
     // Check app is still functional by verifying header is still visible

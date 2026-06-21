@@ -54,7 +54,6 @@ export interface SortableBlockWrapperProps {
 
   // ── Tree / collapse state ──────────────────────────────────────────
   hasChildren: boolean
-  anyBlockHasChildren: boolean
   isCollapsed: boolean
   /** True when this row is a descendant of a just-expanded parent. */
   isAnimating: boolean
@@ -85,7 +84,6 @@ function SortableBlockWrapperInner({
   viewport,
   rovingEditor,
   hasChildren,
-  anyBlockHasChildren,
   isCollapsed,
   isAnimating,
   siblingSetsize,
@@ -210,7 +208,6 @@ function SortableBlockWrapperInner({
         depth={projectedDepth}
         rovingEditor={rovingEditor}
         hasChildren={hasChildren}
-        anyBlockHasChildren={anyBlockHasChildren}
         isCollapsed={isCollapsed}
         todoState={block.todo_state ?? null}
         priority={block.priority ?? null}

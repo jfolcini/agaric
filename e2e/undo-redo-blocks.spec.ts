@@ -1,4 +1,13 @@
-import { blurEditors, expect, focusBlock, openPage, reopenPage, test, waitForBoot } from './helpers'
+import {
+  blurEditors,
+  deleteBlockViaContextMenu,
+  expect,
+  focusBlock,
+  openPage,
+  reopenPage,
+  test,
+  waitForBoot,
+} from './helpers'
 
 // Block-level undo/redo tests mutate shared mock op-log state
 // within a describe, so run them serially to avoid cross-test interference
@@ -53,12 +62,9 @@ test.describe('Block-level undo/redo', () => {
     const countBefore = await page.locator('[data-testid="sortable-block"]').count()
     expect(countBefore).toBeGreaterThan(0)
 
-    // Delete the first block via hover button
+    // Delete the first block via the context menu
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
-    await firstBlock.hover()
-    const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
-    await expect(deleteBtn).toBeVisible()
-    await deleteBtn.click()
+    await deleteBlockViaContextMenu(page, firstBlock)
 
     // Verify block was deleted
     await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore - 1)
