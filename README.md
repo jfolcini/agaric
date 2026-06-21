@@ -178,7 +178,7 @@ It runs a local release-build check, bumps every version manifest in lockstep, G
 
 ### Android
 
-Both debug and release APKs build and run successfully. Release APKs are 24 MB (vs 402 MB debug) thanks to R8/ProGuard minification. Requires Android SDK, NDK 27, and JDK 17. See [docs/BUILD.md](docs/BUILD.md#android-builds) for signing and emulator setup.
+Both debug and release APKs build and run successfully. Release APKs are 24 MB (vs 402 MB debug) thanks to R8/ProGuard minification. Requires Android SDK, NDK 27, and JDK 17. See [docs/BUILD.md](docs/BUILD.md#android) for signing and emulator setup.
 
 ### Using Agaric with MCP clients
 
