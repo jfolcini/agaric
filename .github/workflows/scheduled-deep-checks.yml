@@ -6,12 +6,14 @@ name: Scheduled deep checks
 # step summaries and uploaded artifacts, and a maintainer triages survivors.
 #
 # Lanes:
-#   clippy-clean   — cache-busting full-workspace `cargo clippy`: no rust-cache,
-#                    cold compile, `--workspace`. The warm per-PR cache never
-#                    re-lints unchanged targets when a lint is newly added to a
-#                    Cargo.toml, so violations stay latent (this masked #1875's
-#                    pedantic lints in the diagnostics bins + an app-lib test).
-#                    This lane fails on that drift weekly. See the job comment.
+#   clippy-clean   — cache-busting full-workspace `cargo fmt --all --check` +
+#                    `cargo clippy`: no rust-cache, cold compile, `--workspace`.
+#                    The warm per-PR cache never re-lints unchanged targets when
+#                    a lint is newly added to a Cargo.toml, so violations stay
+#                    latent (this masked #1875's pedantic lints in the
+#                    diagnostics bins + an app-lib test); the per-PR fmt/clippy
+#                    hooks also omit --all/--workspace, skipping the diagnostics
+#                    member entirely. This lane fails on that drift weekly.
 #   bench-compile  — #639: compile all 26 criterion benches (clippy already
 #                    `--all-targets`-lints them per-PR, but this also RUNS
 #                    the interactive_slo SLO gate + the `#[ignore]`d 20k-row
@@ -85,7 +87,14 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: 1.95.0
-          components: clippy
+          components: clippy,rustfmt
+
+      - name: Check formatting over the whole workspace
+        working-directory: src-tauri
+        # `--all`: check every member, incl. agaric-diagnostics (the per-PR
+        # fmt hook omits it, so that crate's formatting is otherwise never
+        # enforced). No compile needed, so it runs before the clippy build.
+        run: cargo fmt --all --check
 
       # No Swatinem/rust-cache here ON PURPOSE: a warm cache is exactly what
       # masks newly-added lints on unchanged targets. This lane must compile
