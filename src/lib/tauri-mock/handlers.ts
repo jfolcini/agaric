@@ -3304,6 +3304,35 @@ export const HANDLERS: Record<string, Handler> = {
   // Markdown import (#660)
   // ---------------------------------------------------------------------------
 
+  // DELIBERATE APPROXIMATION of the Rust importer (#1919). The real import
+  // contract lives in `src-tauri/src/import.rs` (`parse_logseq_markdown`) and
+  // `src-tauri/src/commands/pages/markdown.rs` (`import_markdown_with_progress`
+  // / `folder_path_to_namespace_title`). This handler does NOT reimplement that
+  // parser — it deliberately models a faithful *subset* of the backend so the
+  // dev-preview UI (progress bar, warnings panel, "N properties" branch) is
+  // exercised, while never *accepting more structure than the backend does*.
+  //
+  // It intentionally aligns with the backend on the two things tests can assert:
+  //   - Title: derived from the filename/folder path the same way the backend
+  //     does (strip `.md`, normalise `\`→`/`, drop empty segments, rejoin with
+  //     `/`), falling back to "Imported Page". A leading `# heading` is NOT a
+  //     title source (the backend never reads one — import.rs treats `# heading`
+  //     as ordinary content).
+  //   - Block bullets: ONLY a `- ` prefix marks a bullet, matching
+  //     import.rs `strip_prefix("- ")`. `*`, `+`, and `1.` markers are kept as
+  //     literal content (the backend does not recognise them).
+  //
+  // It intentionally does NOT model (and tests MUST NOT rely on the mock for
+  // any of these — the Rust tests own the import contract):
+  //   - Frontmatter / inline `key:: value` properties beyond a raw COUNT
+  //     (`properties_set`); no property values are stamped onto blocks.
+  //   - Wiki-link (`[[...]]`) resolution.
+  //   - `((block-ref))` stripping.
+  //   - Indentation → depth nesting (all content blocks are emitted flat).
+  //   - `#tag` and attachment handling (kept as literal text).
+  //
+  // WARNING: mock-backed frontend tests give NO assurance about import-contract
+  // fidelity. Validate import semantics against the Rust tests, not this mock.
   import_markdown: (args) => {
     const a = args as Record<string, unknown>
     const content = (a['content'] as string) ?? ''
@@ -3336,18 +3365,23 @@ export const HANDLERS: Record<string, Handler> = {
       }
     }
 
-    // Derive page title from filename (strip .md extension) or first heading
-    let pageTitle = 'Untitled'
-    if (filename) {
-      pageTitle = filename.replace(/\.md$/i, '')
-    }
+    // Derive the page title the way the backend does
+    // (`folder_path_to_namespace_title`, markdown.rs): strip a trailing `.md`,
+    // normalise `\`→`/`, drop empty segments, rejoin with `/`. A leading
+    // `# heading` is NOT a title source (import.rs never reads one — it treats
+    // the heading line as ordinary content). Fall back to "Imported Page" when
+    // nothing usable remains, matching markdown.rs:884.
+    const namespaceTitle = (filename ?? '')
+      .replace(/\.md$/i, '')
+      .replace(/\\/g, '/')
+      .split('/')
+      .map((seg) => seg.trim())
+      .filter((seg) => seg.length > 0)
+      .join('/')
+    const pageTitle = namespaceTitle.length > 0 ? namespaceTitle : 'Imported Page'
+    // The heading line stays in `lines` as ordinary content (no shift),
+    // mirroring the backend which never excises a `# heading` line.
     const lines = content.split('\n')
-    // If first line is a heading, use it as the page title
-    const headingMatch = lines[0]?.match(/^#+\s+(.+)/)
-    if (headingMatch) {
-      pageTitle = headingMatch[1]?.trim() as string
-      lines.shift() // remove heading line from block content
-    }
 
     // Faithful-but-simple property count: the real importer pulls properties
     // from YAML frontmatter and inline `key:: value` lines. We don't reproduce
@@ -3379,9 +3413,11 @@ export const HANDLERS: Record<string, Handler> = {
     const contentLines = lines
       .map((line) =>
         line
-          // Strip leading list markers (-, *, +, numbered) and whitespace
-          .replace(/^\s*[-*+]\s+/, '')
-          .replace(/^\s*\d+\.\s+/, '')
+          // Strip ONLY a leading `- ` bullet marker, matching the backend
+          // (import.rs `strip_prefix("- ")`). `*`, `+`, and `1.` markers are
+          // NOT recognised by the importer, so they are left as literal content
+          // here — the mock must not accept structure the real importer ignores.
+          .replace(/^\s*-\s+/, '')
           .trim(),
       )
       .filter((trimmed) => trimmed.length > 0)
