@@ -436,9 +436,19 @@ pub(crate) fn resolve_expr_cte<'a>(
     Box::pin(async move {
         match expr {
             TagExpr::Tag(tag_id) if include_inherited => {
-                // Bound `depth < 100` on the recursive member to match
-                // `tag_inheritance::rebuild_all` and AGENTS.md invariant #9
-                // (no runaway recursion on corrupted parent_id chains).
+                // This oracle seeds at depth 0 on the **tag-bearer itself**,
+                // whereas the materialised macro `tag_inh_descendant_tags_full!()`
+                // (which builds `block_tag_inherited`, read by production
+                // `resolve_expr`) seeds at depth 0 on the bearer's **child**.
+                // Both bound the recursive member at `MAX_TAG_INHERITANCE_DEPTH`
+                // (= 100) relative to their own seed, so the macro — anchored
+                // one level lower — reaches one descendant deeper. To keep this
+                // correctness oracle in lockstep with the materialised table it
+                // checks, bound this walk at `< 101` so it covers the same span
+                // (bearer + 101 descendant levels). This is a test-only oracle;
+                // production walks are unaffected and still cap at `< 100`
+                // (AGENTS.md invariant #9 — no runaway recursion on corrupted
+                // parent_id chains).
                 let rows = sqlx::query_scalar::<_, String>(
                     "WITH RECURSIVE tagged_tree(id, depth) AS ( \
                          SELECT bt.block_id AS id, 0 AS depth \
@@ -449,7 +459,7 @@ pub(crate) fn resolve_expr_cte<'a>(
                          SELECT b.id, tt.depth + 1 \
                          FROM blocks b \
                          JOIN tagged_tree tt ON b.parent_id = tt.id \
-                         WHERE b.deleted_at IS NULL AND tt.depth < 100 \
+                         WHERE b.deleted_at IS NULL AND tt.depth < 101 \
                      ) \
                      SELECT DISTINCT id FROM tagged_tree",
                 )
@@ -460,8 +470,11 @@ pub(crate) fn resolve_expr_cte<'a>(
             }
             TagExpr::Prefix(prefix) if include_inherited => {
                 let escaped = format!("{}%", escape_like(prefix));
-                // Bound `depth < 100` on the recursive member — see comment in
-                // The `Tag` branch above.
+                // Bound `depth < 101` on the recursive member — see comment in
+                // the `Tag` branch above (this oracle anchors depth 0 at the
+                // tag-bearer; the materialised macro anchors at its child, so
+                // `< 101` here covers the same span the macro reaches with the
+                // production `< 100` bound).
                 let rows = sqlx::query_scalar::<_, String>(
                     "WITH RECURSIVE tagged_tree(id, depth) AS ( \
                          SELECT DISTINCT bt.block_id AS id, 0 AS depth \
@@ -474,7 +487,7 @@ pub(crate) fn resolve_expr_cte<'a>(
                          SELECT b.id, tt.depth + 1 \
                          FROM blocks b \
                          JOIN tagged_tree tt ON b.parent_id = tt.id \
-                         WHERE b.deleted_at IS NULL AND tt.depth < 100 \
+                         WHERE b.deleted_at IS NULL AND tt.depth < 101 \
                      ) \
                      SELECT DISTINCT id FROM tagged_tree",
                 )

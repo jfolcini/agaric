@@ -483,22 +483,28 @@ async fn materialized_matches_cte_oracle() {
     );
 }
 
-/// Regression for the recursive-CTE oracle used by parity tests must
-/// bound `depth < 100` to match `tag_inheritance::rebuild_all` and
-/// AGENTS.md invariant #9. Build a 101-deep chain whose root is tagged;
-/// the oracle must not return the leaf, which sits beyond the depth bound.
+/// Regression: the recursive-CTE oracle used by parity tests bounds its
+/// walk so that it covers the SAME depth as the materialised macro
+/// `tag_inh_descendant_tags_full!()` it checks. The oracle seeds depth 0
+/// at the tag-bearer and the macro seeds depth 0 at the bearer's child,
+/// so the oracle bounds at `depth < 101` to reach the same descendant the
+/// macro reaches with the production `< 100` bound. Build a 102-deep chain
+/// whose root is tagged; the oracle returns descendants up to D100
+/// (depth 101) and must NOT return D101 (depth 102), which sits beyond the
+/// bound. (Production walks are still capped at `< 100` — AGENTS.md
+/// invariant #9 — this is the test-only oracle.)
 #[tokio::test]
-async fn resolve_expr_cte_bounds_depth_at_100() {
+async fn resolve_expr_cte_bounds_depth_at_101() {
     let (pool, _dir) = test_pool().await;
     insert_block(&pool, "TAG_DEPTH", "tag", "depth-tag").await;
     insert_tag_cache(&pool, "TAG_DEPTH", "depth-tag", 1).await;
 
-    // Tag the root of a 101-deep chain so the recursive walk would reach
-    // the leaf at depth 101 from the seed without a bound.
+    // Tag the root of a 102-deep chain so the recursive walk would reach
+    // the leaf at depth 102 from the seed without a bound.
     insert_block(&pool, "ROOT_DEPTH", "content", "root").await;
     insert_tag_assoc(&pool, "ROOT_DEPTH", "TAG_DEPTH").await;
     let mut prev = "ROOT_DEPTH".to_string();
-    for i in 0..=100 {
+    for i in 0..=101 {
         let id = format!("D{i:03}");
         insert_child_block(&pool, &id, "content", "level", prev.as_str()).await;
         prev = id;
@@ -507,21 +513,21 @@ async fn resolve_expr_cte_bounds_depth_at_100() {
     let result = resolve_expr_cte(&pool, &TagExpr::Tag("TAG_DEPTH".into()), true)
         .await
         .unwrap();
-    // Seed ROOT_DEPTH is at depth 0; descendants D000..D099 are at depths
-    // 1..100 inclusive (all returned). The recursive predicate
-    // `tt.depth < 100` then prevents the step that would emit D100 at
-    // depth 101, so D100 must be excluded.
+    // Seed ROOT_DEPTH is at depth 0; descendants D000..D100 are at depths
+    // 1..101 inclusive (all returned). The recursive predicate
+    // `tt.depth < 101` then prevents the step that would emit D101 at
+    // depth 102, so D101 must be excluded.
     assert!(
         result.contains("ROOT_DEPTH"),
         "root (the tagged seed) must be returned"
     );
     assert!(
-        result.contains("D099"),
-        "descendant at depth 100 must still be returned (within the bound)"
+        result.contains("D100"),
+        "descendant at depth 101 must still be returned (within the bound)"
     );
     assert!(
-        !result.contains("D100"),
-        "descendant beyond depth 100 must be excluded by the bound, got: {result:?}"
+        !result.contains("D101"),
+        "descendant beyond depth 101 must be excluded by the bound, got: {result:?}"
     );
 }
 
@@ -1476,33 +1482,22 @@ async fn resolve_expr_or_concurrent_matches_sequential_oracle() {
 /// The two helpers measure depth from different anchors:
 ///   * `tag_inh_descendant_tags_full!()` (used by `rebuild_all`) seeds at
 ///     the **child** of the tagged block (depth 0 = first inherited row)
-///     and bounds `dt.depth < 100`.
-///   * `resolve_expr_cte` seeds at the tagged block itself (depth 0)
-///     and bounds `tt.depth < 100`.
+///     and bounds `dt.depth < 100`, so it reaches 101 levels below the
+///     tag-bearer (B001..=B101 inherited, plus the direct tag on B000).
+///   * `resolve_expr_cte` (a **test-only** oracle) seeds at the tagged
+///     block itself (depth 0) and now bounds `tt.depth < 101` so it
+///     covers the same span the macro reaches (B000..=B101).
 ///
-/// Both walks are bounded at the same constant (`MAX_TAG_INHERITANCE_DEPTH
-/// = 100`), but because the seeds differ by one level the materialised
-/// path can reach one descendant deeper than the oracle. A 105-deep
-/// chain forces the discrepancy into the assertion if it exists.
-///
-/// **CURRENTLY FAILS** — this test surfaces a real M-59-class off-by-one
-/// bug. The materialised helper emits 102 entries (B000 + B001..=B101);
-/// the CTE oracle emits 101 entries (B000..=B100). They walk the same
-/// 100 recursive steps but anchor at different points (child vs.
-/// tag-bearer), so the materialised path effectively reaches one level
-/// deeper than the oracle. Fix lives in production code — either
-/// (a) align the macro's seed at the tag-bearer (matches oracle) by
-/// changing `tag_inh_descendant_tags_full!()` (`tag_inheritance_macros.rs:235-251`)
-/// to `SELECT bt.block_id, 0 AS depth FROM block_tags bt …` and adjusting
-/// the recursive member to traverse children of the current row, or
-/// (b) align the oracle's seed at the child of the tag-bearer (matches
-/// macro) in `resolve_expr_cte` (`resolve.rs:249-261`). Either fix
-/// requires the symmetric change in both helpers landing together.
-/// `#[ignore]` until the fix lands; the failure message documents
-/// the exact divergence so the next maintainer doesn't have to
-/// re-derive it.
+/// Previously both bounded `< 100`; because the seeds differ by one level
+/// the materialised path reached one descendant deeper than the oracle
+/// (102 vs 101 entries on this 105-deep chain). That was a cosmetic
+/// off-by-one in the **test-only** oracle — production `resolve_expr` reads
+/// `block_tag_inherited` (built by the macro) and was never affected, so
+/// the fix loosens the oracle's bound by one (`< 100` -> `< 101`) to match
+/// the macro's child-anchored reach, rather than changing the materialised
+/// table or the production walk's `< 100` cap. A 105-deep chain forces the
+/// (now-resolved) discrepancy into the assertion if it ever regresses.
 #[tokio::test]
-#[ignore = "I-Search-5 / off-by-one between materialised helper and CTE oracle — both walk 100 recursive steps but anchor at different points; production fix required in tag_inheritance_macros.rs and/or resolve.rs"]
 async fn materialized_matches_cte_oracle_at_depth_boundary_i_search_5() {
     let (pool, _dir) = test_pool().await;
     insert_block(&pool, "TAG_BD", "tag", "boundary-tag").await;
