@@ -462,7 +462,7 @@ async fn audit_a5(
     // block's owning page `space` property (same shape as audit_a1/a3). Only
     // rows where BOTH spaces are assigned and DIFFER are violations.
     let rows = sqlx::query(
-        r#"WITH cs AS (
+        r"WITH cs AS (
               SELECT bp.block_id AS source_id, bp.key AS key, bp.value_ref AS target_id,
                 bs.space_id AS source_space,
                 bt.space_id AS target_space
@@ -475,7 +475,7 @@ async fn audit_a5(
              FROM cs
             WHERE source_space IS NOT NULL
               AND target_space IS NOT NULL
-              AND source_space <> target_space"#,
+              AND source_space <> target_space",
     )
     .fetch_all(pool)
     .await?;
