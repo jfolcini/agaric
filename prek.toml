@@ -695,12 +695,16 @@ stages = ["pre-commit", "pre-push"]
 # "fixer" contract used by the builtin trailing-whitespace hook — the hook
 # mutates the file, prek detects the modification and fails the run, and
 # the author re-stages the now-formatted file.
+#
+# `--all`: without it, `cargo fmt` formats only the root `agaric` package
+# and skips the `agaric-diagnostics` member (same blind spot `cargo clippy`
+# had without `--workspace`). `--all` formats every workspace member.
 [[repos]]
 repo = "local"
 [[repos.hooks]]
 id = "cargo-fmt"
 name = "cargo fmt"
-entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo fmt'"
+entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo fmt --all'"
 language = "system"
 pass_filenames = false
 types = ["rust"]
