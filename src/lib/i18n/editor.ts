@@ -75,7 +75,7 @@ export const editor: Record<string, string> = {
   // no other UI affordance — the empty-block placeholder is the one moment the
   // user is looking at the block before typing, so it doubles as a teach-in.
   'editor.emptyBlockPlaceholder':
-    'Type / for commands, [[ to link, @ to tag · Shift+Enter for a line break',
+    'Type / for commands, [[ to link, @ to tag, {{ for a query · Shift+Enter for a line break',
   // Label shown over the swipe-to-delete overlay on coarse-pointer
   // devices once the auto-delete threshold (200 px) is crossed mid-drag.
   'block.swipe.releaseToDelete': 'Release to delete',

@@ -53,6 +53,7 @@ import { MathBlock, MathInline } from './extensions/math'
 import { MermaidCodeBlockView } from './extensions/MermaidCodeBlockView'
 import { PropertyPicker, propertyPickerPluginKey } from './extensions/property-picker'
 import { QueryHint } from './extensions/query-hint'
+import { QueryPicker, queryPickerPluginKey } from './extensions/query-picker'
 import { SlashCommand, slashCommandPluginKey } from './extensions/slash-command'
 import { TagRef } from './extensions/tag-ref'
 import { TaskParagraph } from './extensions/task-paragraph'
@@ -71,6 +72,7 @@ const suggestionPluginKeys = [
   blockRefPickerPluginKey,
   emojiPickerPluginKey,
   propertyPickerPluginKey,
+  queryPickerPluginKey,
   slashCommandPluginKey,
 ]
 
@@ -527,6 +529,12 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       // (no `.suggestion-popup`), Tab-to-accept; never intercepts Enter, so
       // block-save always works. Self-contained (vocabulary from query-utils).
       QueryHint,
+      // `{{` embed-query picker — discoverable entry to the visual query
+      // builder. Reuses the slash-command dispatch (`query` id →
+      // openQueryBuilder); hands off to QueryHint once the user types.
+      QueryPicker.configure({
+        onCommand: (item: PickerItem) => onSlashCommandRef.current?.(item),
+      }),
       CheckboxInputRule.configure({
         onCheckbox: (state: 'TODO' | 'DONE') => onCheckboxRef.current?.(state),
       }),

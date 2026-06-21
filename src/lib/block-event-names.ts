@@ -15,6 +15,7 @@ export const BLOCK_EVENTS = {
   OPEN_SCHEDULED_DATE_PICKER: 'open-scheduled-date-picker',
   TOGGLE_TODO_STATE: 'toggle-todo-state',
   OPEN_BLOCK_PROPERTIES: 'open-block-properties',
+  OPEN_QUERY_BUILDER: 'open-query-builder',
   DISCARD_BLOCK_EDIT: 'discard-block-edit',
   CYCLE_PRIORITY: 'cycle-priority',
   SET_PRIORITY_1: 'set-priority-1',

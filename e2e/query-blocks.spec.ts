@@ -67,6 +67,31 @@ test.describe('Query block creation', () => {
     await expect(firstBlock.locator('[data-testid="query-result"]')).toBeVisible({ timeout: 5000 })
   })
 
+  test('typing {{ opens the visual builder and inserts a query on save (#215)', async ({
+    page,
+  }) => {
+    await focusBlock(page)
+    await page.keyboard.press('ControlOrMeta+a')
+
+    // Typing `{{` surfaces the embed-query affordance in the suggestion list.
+    await page.keyboard.type('{{', { delay: 20 })
+    const list = page.locator('[data-testid="suggestion-list"]').last()
+    await expect(
+      list.locator('[data-testid="suggestion-item"]', { hasText: 'Insert query' }),
+    ).toBeVisible()
+
+    // Selecting it opens the visual builder (same path as /query, #215).
+    await page.keyboard.press('Enter')
+    const tagInput = page.getByLabel('Tag prefix')
+    await expect(tagInput).toBeVisible()
+
+    await tagInput.fill('work')
+    await page.getByRole('button', { name: 'Insert Query' }).click()
+
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    await expect(firstBlock.locator('[data-testid="query-result"]')).toBeVisible({ timeout: 5000 })
+  })
+
   test('/query block renders QueryResult after save', async ({ page }) => {
     await focusBlock(page)
 

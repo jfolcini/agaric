@@ -50,6 +50,7 @@ function makeOptions(
     handleToggleTodo: vi.fn(),
     handleTogglePriority: vi.fn(),
     handleShowProperties: vi.fn(),
+    handleOpenQueryBuilder: vi.fn(),
     rovingEditor: {
       editor: null,
       mount: vi.fn(),

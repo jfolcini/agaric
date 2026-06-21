@@ -764,12 +764,12 @@ describe('FormattingToolbar', () => {
       const sentinel = screen.getByTestId('toolbar-sentinel')
       expect(sentinel).toBeInTheDocument()
       expect(sentinel).toHaveAttribute('aria-hidden', 'true')
-      // Each item in the flattened list (19 buttons + 3 separators = 22)
+      // Each item in the flattened list (20 buttons + 3 separators = 23)
       // must have a measurable child carrying its data-toolbar-item-key.
       // (#213 PR4 added the insert-block-ref button; #215b added the
-      // table-insert grid picker.)
+      // table-insert grid picker; #215 added the insert-query button.)
       const measurableChildren = sentinel.querySelectorAll('[data-toolbar-item-key]')
-      expect(measurableChildren.length).toBe(22)
+      expect(measurableChildren.length).toBe(23)
     })
   })
 

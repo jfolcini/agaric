@@ -21,6 +21,7 @@ import {
   Highlighter,
   Info,
   Italic,
+  ListFilter,
   ListOrdered,
   Minus,
   Parentheses,
@@ -220,6 +221,19 @@ export function createRefsAndBlocks(editor: Editor): ToolbarButtonConfig[] {
       activeKey: 'blockquote',
       priority: 35,
       action: () => editor.chain().focus().toggleBlockquote().run(),
+    },
+    {
+      // #215 — embed a live query block. Opens the visual query builder for
+      // the focused block (one click), the mouse-first twin of the `/query`
+      // slash command and the `{{` picker. Distinct ListFilter icon (not the
+      // search magnifier) to signal "embedded query view", not find-in-notes.
+      // Long-tail insert: low priority so it overflows before high-frequency
+      // structure buttons under width pressure (#217).
+      icon: ListFilter,
+      label: 'toolbar.insertQuery',
+      tip: 'toolbar.queryTip',
+      priority: 30,
+      action: () => dispatchBlockEvent('OPEN_QUERY_BUILDER'),
     },
   ]
 }

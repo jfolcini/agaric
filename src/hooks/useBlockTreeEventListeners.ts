@@ -52,6 +52,7 @@ export interface UseBlockTreeEventListenersOptions {
   handleToggleTodo: (id: string) => void
   handleTogglePriority: (id: string) => void
   handleShowProperties: (id: string) => void
+  handleOpenQueryBuilder: () => void
   // Full handle (BlockTree passes the real `RovingEditorHandle`): the
   // date-picker handlers read `editor.state.selection`, while the structural
   // toolbar handlers (#253) need `editor.getJSON()` + `mount` to edit content.
@@ -70,6 +71,7 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
     handleToggleTodo,
     handleTogglePriority,
     handleShowProperties,
+    handleOpenQueryBuilder,
     rovingEditor,
     datePickerCursorPos,
     setDatePickerMode,
@@ -144,6 +146,13 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       handleShowProperties(blockId)
     }
 
+    // ── Toolbar / `{{` picker open-query-builder command (#215) ──────────
+    // openQueryBuilder targets the focused block itself, so the routed
+    // blockId is unused here.
+    const onOpenQueryBuilder: BlockCommandHandler = () => {
+      handleOpenQueryBuilder()
+    }
+
     // ── Structural toolbar inserts: ordered-list / divider / callout (#253) ──
     // Wire to the SAME content-edit path the matching slash commands use
     // (`useSlashCommandStructural`): build a minimal SlashCommandContext from
@@ -198,6 +207,7 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       OPEN_SCHEDULED_DATE_PICKER: openDatePicker('schedule'),
       TOGGLE_TODO_STATE: onToggleTodo,
       OPEN_BLOCK_PROPERTIES: onShowProperties,
+      OPEN_QUERY_BUILDER: onOpenQueryBuilder,
       INSERT_ORDERED_LIST: onOrderedList,
       INSERT_DIVIDER: onDivider,
       INSERT_CALLOUT: onCallout,
@@ -208,6 +218,7 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
     handleToggleTodo,
     handleTogglePriority,
     handleShowProperties,
+    handleOpenQueryBuilder,
     datePickerCursorPos,
     setDatePickerMode,
     setDatePickerOpen,
