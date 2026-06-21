@@ -193,7 +193,7 @@ export interface PageMetaRow {
  * a permissive no-op (the backend owns those, and FE tests that need them
  * mock at the IPC boundary directly).
  */
-function metaRowMatchesFilter(r: PageMetaRow, f: Record<string, unknown>): boolean {
+export function metaRowMatchesFilter(r: PageMetaRow, f: Record<string, unknown>): boolean {
   switch (f['type'] as string) {
     case 'Stub': {
       return r.childBlockCount === 0

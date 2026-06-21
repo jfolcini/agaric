@@ -1,0 +1,76 @@
+{
+  "$comment_schema": "Cross-impl golden vectors for the Pages `Orphan` filter primitive (#1908 slice 2, increment b). Shape: { rows[], scenarios[] }. Each row is a page; scenarios apply an AND-composed list of FilterPrimitive wire objects and assert the SET of matching page ids. Only the matching-id set is compared cross-impl (representation-stable). Asserted by BOTH src-tauri/.../pages_orphan_conformance_tests.rs (real query path) and src/lib/tauri-mock/__tests__/orphan-conformance.test.ts (mock metaRowMatchesFilter).",
+  "$comment_scope": "Covers the `Orphan` primitive — a page is an Orphan iff its materialised inbound_link_count is 0 AND it has NO outbound link to a block on a DIFFERENT page. Backend SQL (compile_orphan in src-tauri/src/filters/primitive.rs): `COALESCE(pc.inbound_link_count, 0) = 0 AND NOT EXISTS (… block_links where src.page_id = b.id AND tgt.page_id != b.id …)`. The mock evaluates `r.inboundLinkCount === 0 && !r.hasOutboundLink` (metaRowMatchesFilter in handlers.ts). Rows span the 2x2 of {inbound 0 / >0} x {hasOutboundLink true/false}. `Orphan` is paired against `HasNoInboundLinks` to show they DIFFER for a page with 0 inbound links but an outbound link (HasNoInboundLinks matches, Orphan does not).",
+  "$comment_seed": "Each row carries { id, title, inboundLinkCount, hasOutboundLink }. On the Rust side `inboundLinkCount` is materialised into pages_cache (child_block_count 0); `hasOutboundLink==true` inserts a block_links edge whose source is the page itself and whose target is a SENTINEL page (id 01ORPHTARGET000000000000000, NOT assigned to the test space) so `tgt.page_id != b.id` fires and the page is excluded from Orphan but still lives outside the result space.",
+  "rows": [
+    {
+      "id": "01ORPH0000000000000000000A",
+      "title": "Alpha",
+      "inboundLinkCount": 0,
+      "hasOutboundLink": false
+    },
+    {
+      "id": "01ORPH0000000000000000000B",
+      "title": "Beta",
+      "inboundLinkCount": 0,
+      "hasOutboundLink": true
+    },
+    {
+      "id": "01ORPH0000000000000000000C",
+      "title": "Gamma",
+      "inboundLinkCount": 3,
+      "hasOutboundLink": false
+    },
+    {
+      "id": "01ORPH0000000000000000000D",
+      "title": "Delta",
+      "inboundLinkCount": 5,
+      "hasOutboundLink": true
+    },
+    {
+      "id": "01ORPH0000000000000000000E",
+      "title": "Epsilon",
+      "inboundLinkCount": 0,
+      "hasOutboundLink": false
+    },
+    {
+      "id": "01ORPH0000000000000000000F",
+      "title": "Zeta",
+      "inboundLinkCount": 2,
+      "hasOutboundLink": true
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "Empty filter list — no constraint, every page passes",
+      "filters": [],
+      "expectedMatchingIds": [
+        "01ORPH0000000000000000000A",
+        "01ORPH0000000000000000000B",
+        "01ORPH0000000000000000000C",
+        "01ORPH0000000000000000000D",
+        "01ORPH0000000000000000000E",
+        "01ORPH0000000000000000000F"
+      ]
+    },
+    {
+      "name": "Orphan — inbound 0 AND no outbound link",
+      "filters": [{ "type": "Orphan" }],
+      "expectedMatchingIds": ["01ORPH0000000000000000000A", "01ORPH0000000000000000000E"]
+    },
+    {
+      "name": "HasNoInboundLinks — inbound 0 (looser than Orphan; includes the 0-inbound page with an outbound link)",
+      "filters": [{ "type": "HasNoInboundLinks" }],
+      "expectedMatchingIds": [
+        "01ORPH0000000000000000000A",
+        "01ORPH0000000000000000000B",
+        "01ORPH0000000000000000000E"
+      ]
+    },
+    {
+      "name": "AND-composition — Orphan AND HasNoInboundLinks (Orphan ⊂ HasNoInboundLinks, so equals Orphan alone)",
+      "filters": [{ "type": "Orphan" }, { "type": "HasNoInboundLinks" }],
+      "expectedMatchingIds": ["01ORPH0000000000000000000A", "01ORPH0000000000000000000E"]
+    }
+  ]
+}
