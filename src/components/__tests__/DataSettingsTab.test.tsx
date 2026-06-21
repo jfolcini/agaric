@@ -30,9 +30,34 @@ vi.mock('../../lib/export-graph', () => ({
 }))
 
 const mockImportMarkdown = vi.fn()
+// #1927 — post-import navigation resolves the imported page's title to an
+// id via `resolvePageByAlias`, then calls `useTabsStore.navigateToPage`.
+const mockResolvePageByAlias = vi.fn()
 
 vi.mock('../../lib/tauri', () => ({
   importMarkdown: (...args: unknown[]) => mockImportMarkdown(...args),
+  resolvePageByAlias: (...args: unknown[]) => mockResolvePageByAlias(...args),
+}))
+
+// #1927 — mock the tabs store so we can assert post-import navigation
+// without standing up the full multi-store navigation chain.
+const mockNavigateToPage = vi.fn()
+vi.mock('../../stores/tabs', () => ({
+  useTabsStore: (selector: (s: { navigateToPage: typeof mockNavigateToPage }) => unknown) =>
+    selector({ navigateToPage: mockNavigateToPage }),
+}))
+
+// #1935 — assert the per-file failure is logged at ERROR with a
+// filename-distinct message (so the rate-limiter doesn't suppress repeats).
+const mockLoggerError = vi.fn()
+const mockLoggerWarn = vi.fn()
+vi.mock('../../lib/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: (...args: unknown[]) => mockLoggerWarn(...args),
+    error: (...args: unknown[]) => mockLoggerError(...args),
+  },
 }))
 
 import { toast } from 'sonner'
@@ -49,6 +74,12 @@ const DEFAULT_TEST_SPACE: SpaceRow = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // `clearAllMocks` wipes call history but NOT queued `mockImplementationOnce`
+  // / `mockResolvedValueOnce` impls. A test that leaves an unconsumed `once`
+  // (e.g. the cancel test, whose 2nd file is never reached) would bleed it
+  // into the next test — reset the implementation queue explicitly.
+  mockImportMarkdown.mockReset()
+  mockResolvePageByAlias.mockReset()
   useSpaceStore.setState({
     currentSpaceId: DEFAULT_TEST_SPACE.id,
     availableSpaces: [DEFAULT_TEST_SPACE],
@@ -590,7 +621,9 @@ describe('DataSettingsTab', () => {
     await user.click(screen.getByTestId('import-details-toggle'))
     expect(screen.getAllByTestId('import-failure-item')).toHaveLength(7)
     // The marker strings are the actual failure messages, not an opaque count.
-    expect(screen.getByText('Failed to import f6.md')).toBeInTheDocument()
+    // #1935 — each row now appends the failure reason, so match on a
+    // substring (`<name>: <reason>`) rather than the reason-less string.
+    expect(screen.getByText(/Failed to import f6\.md: boom/)).toBeInTheDocument()
   })
 
   // #1928 — when every file fails, show an error-toned state and fire NO
@@ -650,7 +683,8 @@ describe('DataSettingsTab', () => {
     expect(toast.success).not.toHaveBeenCalled()
     // notify.retry routes through toast.error with a retry action.
     expect(toast.error).toHaveBeenCalled()
-    expect(screen.getByText('Failed to import bad.md')).toBeInTheDocument()
+    // #1935 — the failure row now appends the underlying reason.
+    expect(screen.getByText(/Failed to import bad\.md: boom/)).toBeInTheDocument()
   })
 
   // #1929 — the result region is a polite live region so the outcome is
@@ -751,5 +785,200 @@ describe('DataSettingsTab', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // #1927 — the folder/vault input must carry `webkitdirectory`; without
+  // it `file.webkitRelativePath` is always empty and the #1446
+  // folder→namespace mapping can never fire.
+  it('exposes a folder input carrying webkitdirectory (#1927)', () => {
+    render(<DataSettingsTab />)
+
+    const folderInput = screen.getByTestId('import-folder-input') as HTMLInputElement
+    // jsdom lowercases the attribute; assert presence (value is empty string).
+    expect(folderInput.hasAttribute('webkitdirectory')).toBe(true)
+
+    // A dedicated button drives it, distinct from "Choose Files".
+    expect(screen.getByTestId('import-folder-button')).toBeInTheDocument()
+  })
+
+  // #1927 — the import target space must be visible so the destination is
+  // not silent.
+  it('shows the import target space name (#1927)', () => {
+    render(<DataSettingsTab />)
+
+    const label = screen.getByTestId('import-target-space')
+    expect(label).toHaveTextContent('Importing into: Personal')
+  })
+
+  // #1935 — a failed file surfaces its actual error reason, not just the
+  // generic "Failed to import <name>".
+  it('renders the failure reason for a failed file (#1935)', async () => {
+    mockImportMarkdown.mockRejectedValueOnce(
+      // The IPC AppError wire shape: { kind, message }. Validation errors
+      // carry real text the user should see.
+      { kind: 'validation', message: 'space_id does not refer to a live space block' },
+    )
+
+    render(<DataSettingsTab />)
+
+    const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+    const file = new File(['# Hello'], 'bad.md', { type: 'text/markdown' })
+    Object.defineProperty(fileInput, 'files', { value: [file] })
+
+    await act(async () => {
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Failed to import bad.md: space_id does not refer to a live space block'),
+      ).toBeInTheDocument()
+    })
+  })
+
+  // #1935 — the per-file failure is logged at ERROR with a
+  // filename-distinct message so the logger's rate-limiter (keyed on
+  // module:message) doesn't suppress repeats across a multi-file import.
+  it('logs each file failure at error with a filename-distinct message (#1935)', async () => {
+    mockImportMarkdown
+      .mockRejectedValueOnce(new Error('boom-a'))
+      .mockRejectedValueOnce(new Error('boom-b'))
+
+    render(<DataSettingsTab />)
+
+    const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+    const file1 = new File(['x'], 'a.md', { type: 'text/markdown' })
+    const file2 = new File(['y'], 'b.md', { type: 'text/markdown' })
+    Object.defineProperty(fileInput, 'files', { value: [file1, file2] })
+
+    await act(async () => {
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    await waitFor(() => {
+      expect(mockLoggerError).toHaveBeenCalledTimes(2)
+    })
+    // logger.error(module, message, data, cause) — message MUST include the
+    // filename so the two calls have DISTINCT keys.
+    const messages = mockLoggerError.mock.calls.map((c) => c[1] as string)
+    expect(messages).toContain('file import failed: a.md')
+    expect(messages).toContain('file import failed: b.md')
+    expect(new Set(messages).size).toBe(2)
+    // It is an ERROR, never demoted to WARN for this code path.
+    expect(mockLoggerWarn).not.toHaveBeenCalled()
+  })
+
+  // #1927 — after a successful import the result panel offers a navigation
+  // action that resolves the imported page and calls navigateToPage.
+  it('navigates to the imported page from the View action (#1927)', async () => {
+    const user = userEvent.setup()
+    mockImportMarkdown.mockResolvedValueOnce({
+      page_title: 'My Imported Page',
+      blocks_created: 4,
+      properties_set: 0,
+      warnings: [],
+    })
+    mockResolvePageByAlias.mockResolvedValueOnce(['PAGE_ULID', 'My Imported Page'])
+
+    render(<DataSettingsTab />)
+
+    const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+    const file = new File(['# Hello'], 'page.md', { type: 'text/markdown' })
+    Object.defineProperty(fileInput, 'files', { value: [file] })
+
+    await act(async () => {
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    const viewBtn = await screen.findByTestId('import-view-button')
+    await user.click(viewBtn)
+
+    await waitFor(() => {
+      // Resolves the title (an alias) → id, scoped to the target space …
+      expect(mockResolvePageByAlias).toHaveBeenCalledWith({
+        alias: 'My Imported Page',
+        spaceId: DEFAULT_TEST_SPACE.id,
+      })
+      // … then reuses the app's navigation action.
+      expect(mockNavigateToPage).toHaveBeenCalledWith('PAGE_ULID', 'My Imported Page')
+    })
+  })
+
+  // #1927 — Cancel stops the loop between files and reports how many were
+  // imported before the abort.
+  it('cancels a multi-file import and reports partial progress (#1927)', async () => {
+    const user = userEvent.setup()
+    let resolveFirst: (v: unknown) => void = () => {}
+    mockImportMarkdown
+      .mockImplementationOnce(
+        () =>
+          new Promise((r) => {
+            resolveFirst = r
+          }),
+      )
+      // Second file should NEVER be reached once cancel is set before it.
+      .mockImplementationOnce(() => {
+        throw new Error('second file should not start after cancel')
+      })
+
+    render(<DataSettingsTab />)
+
+    const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+    const file1 = new File(['# A'], 'one.md', { type: 'text/markdown' })
+    const file2 = new File(['# B'], 'two.md', { type: 'text/markdown' })
+    Object.defineProperty(fileInput, 'files', { value: [file1, file2] })
+
+    await act(async () => {
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    // First file is in flight — the Cancel affordance is visible. Click it
+    // so the abort flag is set before the loop advances to file two.
+    const cancelBtn = await screen.findByTestId('import-cancel-button')
+    await user.click(cancelBtn)
+
+    // Now let the first file complete; the loop then sees the abort flag
+    // and breaks before starting the second file.
+    await act(async () => {
+      resolveFirst({ page_title: 'one', blocks_created: 1, properties_set: 0, warnings: [] })
+    })
+
+    // Only the first file ran.
+    expect(mockImportMarkdown).toHaveBeenCalledTimes(1)
+    // The cancellation toast reports how many imported before the abort.
+    await waitFor(() => {
+      expect(toast).toHaveBeenCalledWith('Import cancelled — 1 file imported.')
+    })
+  })
+
+  // #1927 — axe audit including the new folder button, target label, and
+  // Cancel control during an in-flight import.
+  it('has no a11y violations with the new import controls (#1927)', async () => {
+    let resolveImport: (v: unknown) => void = () => {}
+    mockImportMarkdown.mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          resolveImport = r
+        }),
+    )
+
+    const { container } = render(<DataSettingsTab />)
+
+    const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+    const file = new File(['# A'], 'one.md', { type: 'text/markdown' })
+    Object.defineProperty(fileInput, 'files', { value: [file] })
+
+    await act(async () => {
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    // Cancel control is mounted while importing — audit this state.
+    await screen.findByTestId('import-cancel-button')
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+
+    await act(async () => {
+      resolveImport({ page_title: 'one', blocks_created: 1, properties_set: 0, warnings: [] })
+    })
   })
 })

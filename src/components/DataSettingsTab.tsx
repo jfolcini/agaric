@@ -6,20 +6,37 @@
  *  - Export: download all pages as a ZIP of Markdown files
  */
 
-import { Download, Upload } from 'lucide-react'
+import { Download, FolderUp, Upload } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { isAppError } from '@/lib/app-error'
 import { notify } from '@/lib/notify'
 
 import { downloadBlob, exportGraphAsZip } from '../lib/export-graph'
 import { formatBytes } from '../lib/format'
 import { logger } from '../lib/logger'
-import { importMarkdown } from '../lib/tauri'
+import { importMarkdown, resolvePageByAlias } from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
+import { useTabsStore } from '../stores/tabs'
+
+/**
+ * Extract a user-facing reason from a failed import. The backend rejects
+ * with the serialised `AppError` wire shape (`{ kind, message }`); its
+ * `message` is already sanitized to a generic string for internal errors
+ * but carries the real text for `Validation` failures (e.g.
+ * "space_id does not refer to a live space block"). Reuse the project's
+ * {@link isAppError} guard rather than hand-rolling a shape check; fall
+ * back to `Error.message`/`String()` for non-IPC throws. (#1935)
+ */
+function importErrorReason(err: unknown): string {
+  if (isAppError(err)) return err.message
+  if (err instanceof Error) return err.message
+  return String(err)
+}
 
 /**
  * Aggregated outcome of a (possibly multi-file) import run, rendered by the
@@ -27,6 +44,17 @@ import { useSpaceStore } from '../stores/space'
  * hard `failures` separately from soft `warnings` (#1928) so the UI can show
  * distinct, actionable messaging for files that did not import at all.
  */
+interface FailedFile {
+  /** Source filename (basename) that threw and produced no page. */
+  name: string
+  /**
+   * User-facing reason extracted from the thrown error (#1935). Empty
+   * string when no reason could be derived, in which case the list falls
+   * back to the reason-less `data.importFailedFile` label.
+   */
+  reason: string
+}
+
 interface ImportRunResult {
   /** Page title (single file) or null for the multi-file placeholder. */
   pageTitle: string | null
@@ -35,8 +63,14 @@ interface ImportRunResult {
   propertiesSet: number
   /** Soft, per-file parse warnings; the file still imported. */
   warnings: string[]
-  /** Filenames that threw and produced no page. */
-  failures: string[]
+  /** Files that threw and produced no page, with their failure reason. */
+  failures: FailedFile[]
+  /**
+   * #1927 — the last successfully-imported page's title, so the result
+   * panel / success toast can offer a "View" action that navigates to it.
+   * `null` when nothing imported.
+   */
+  navTitle: string | null
 }
 
 /**
@@ -61,7 +95,17 @@ export function DataSettingsTab(): React.ReactElement {
   const { t } = useTranslation()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const availableSpaces = useSpaceStore((s) => s.availableSpaces)
+  const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // #1927 — second hidden input carrying `webkitdirectory` so the user
+  // can pick a whole folder/vault. The plain `fileInputRef` above keeps
+  // its `.md`-only single-file/multi-file behaviour; this one populates
+  // `file.webkitRelativePath` to drive the #1446 folder→namespace mapping.
+  const folderInputRef = useRef<HTMLInputElement>(null)
+  // #1927 — abort flag checked between files so a large vault import can
+  // be stopped. A ref (not state) so the running loop reads the latest
+  // value without re-subscribing/re-rendering each tick.
+  const cancelRef = useRef(false)
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<ImportRunResult | null>(null)
   // Whether the failure/warning detail list is expanded past the first N
@@ -93,6 +137,32 @@ export function DataSettingsTab(): React.ReactElement {
   // on disabled buttons in most browsers (`pointer-events: none`).
   const importHintId = useId()
 
+  // #1927 — navigate to a just-imported page. The backend `ImportResult`
+  // carries only the page title (no id), so resolve the title→id through
+  // `resolvePageByAlias` (a page's title is one of its aliases), scoped to
+  // the target space, then reuse the app's `navigateToPage` action. No-op
+  // if the title can't be resolved (e.g. the page was renamed out from
+  // under us) — the import itself already succeeded.
+  const goToImportedPage = useCallback(
+    async (title: string, spaceId: string) => {
+      try {
+        const hit = await resolvePageByAlias({ alias: title, spaceId })
+        if (hit) {
+          const [pageId, resolvedTitle] = hit
+          navigateToPage(pageId, resolvedTitle ?? title)
+        }
+      } catch (err) {
+        logger.error(
+          'DataSettingsTab',
+          `navigate to imported page failed: ${title}`,
+          undefined,
+          err,
+        )
+      }
+    },
+    [navigateToPage],
+  )
+
   const handleFileImport = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = e.target.files
@@ -116,6 +186,9 @@ export function DataSettingsTab(): React.ReactElement {
       setImportResult(null)
       setBlocksProcessed(0)
       setBytesProcessed(0)
+      // #1927 — clear any stale abort flag from a previous run before the
+      // loop starts so the Cancel button only affects THIS import.
+      cancelRef.current = false
       const fileArray = Array.from(files)
       setTotalFiles(fileArray.length)
 
@@ -128,11 +201,22 @@ export function DataSettingsTab(): React.ReactElement {
       // Hard failures: a file that threw and produced no page. Tracked
       // SEPARATELY from warnings (#1928) so we can show distinct messaging,
       // gate the success toast, and offer a retry of just the failed subset.
-      const failedFiles: string[] = []
+      // Each entry carries the failure reason (#1935) so the panel can show
+      // WHY the file failed, not just THAT it failed.
+      const failedFiles: FailedFile[] = []
       let succeededFiles = 0
       let lastTitle = ''
+      // #1927 — true once the user hits Cancel mid-loop.
+      let cancelled = false
 
       for (const [i, file] of fileArray.entries()) {
+        // #1927 — check the abort flag BETWEEN files. The currently
+        // in-flight `importMarkdown` (if any) still completes, but no
+        // further files are started; we report how many imported.
+        if (cancelRef.current) {
+          cancelled = true
+          break
+        }
         setCurrentFileIndex(i + 1)
         setCurrentFileName(file.name)
         // #128 — reset per-block progress for the new file.
@@ -173,11 +257,23 @@ export function DataSettingsTab(): React.ReactElement {
           succeededFiles += 1
           lastTitle = result.page_title
         } catch (err) {
-          logger.warn('DataSettingsTab', 'file import failed', { fileName: file.name }, err)
-          // Record the failing filename separately from soft warnings so the
-          // result panel can list and retry it, and so the success toast can
-          // be suppressed when nothing imported (#1928).
-          failedFiles.push(file.name)
+          // #1935 — a whole-file import failure is a real ERROR (not a
+          // recoverable warning), and the message MUST be per-file
+          // distinct: the logger's rate-limiter keys on `module:message`
+          // (logger.ts), so a constant message would suppress every
+          // failure after the 5th in a multi-file/vault import. Putting
+          // the filename IN the message string keeps each key unique.
+          logger.error(
+            'DataSettingsTab',
+            `file import failed: ${file.name}`,
+            { fileName: file.name },
+            err,
+          )
+          // Record the failing filename + reason separately from soft
+          // warnings so the result panel can list, explain (#1935), and
+          // retry it, and so the success toast can be suppressed when
+          // nothing imported (#1928).
+          failedFiles.push({ name: file.name, reason: importErrorReason(err) })
         }
         // Count bytes regardless of success — the user has waited on
         // this file either way, so the secondary line should reflect
@@ -187,6 +283,11 @@ export function DataSettingsTab(): React.ReactElement {
         setBytesProcessed(totalBytes)
       }
 
+      // #1927 — the title to navigate to after a successful import. We
+      // resolve it to a page id lazily in the View action (the result
+      // carries no page_id), so the toast/panel only need the title.
+      const navTitle = totalBlocks > 0 ? lastTitle : null
+
       setImportResult({
         pageTitle: fileArray.length === 1 ? lastTitle : null,
         fileCount: fileArray.length,
@@ -194,6 +295,7 @@ export function DataSettingsTab(): React.ReactElement {
         propertiesSet: totalProps,
         warnings: allWarnings,
         failures: failedFiles,
+        navTitle,
       })
       setDetailsExpanded(false)
       setCurrentFileIndex(null)
@@ -202,12 +304,30 @@ export function DataSettingsTab(): React.ReactElement {
       setCurrentFileBlocksDone(0)
       setCurrentFileBlocksTotal(0)
       setImporting(false)
+      cancelRef.current = false
 
       // Reset file input before any async toast handler so a retry can
       // re-open the picker without a stale value.
       e.target.value = ''
 
-      if (totalBlocks === 0) {
+      // #1927 — success toasts offer a "View" action so the user can jump
+      // straight to what they imported. Resolves the page title to an id
+      // via the same alias resolver SearchPanel/[[-picker use.
+      const viewAction =
+        navTitle != null
+          ? {
+              label: t('data.importViewAction'),
+              onClick: () => {
+                void goToImportedPage(navTitle, activeSpaceId)
+              },
+            }
+          : undefined
+
+      if (cancelled) {
+        // #1927 — user aborted mid-loop. Report how many imported before
+        // cancel rather than a generic success/error.
+        notify(t('data.importCancelled', { count: succeededFiles }))
+      } else if (totalBlocks === 0) {
         // Nothing imported — either every file failed or all files were
         // empty. Never fire a success toast here (#1928); surface an error.
         notify.error(
@@ -222,10 +342,12 @@ export function DataSettingsTab(): React.ReactElement {
           fileInputRef.current?.click(),
         )
       } else {
-        notify.success(t('data.importedMessage', { totalBlocks, count: succeededFiles }))
+        notify.success(t('data.importedMessage', { totalBlocks, count: succeededFiles }), {
+          action: viewAction,
+        })
       }
     },
-    [t],
+    [t, goToImportedPage],
   )
 
   const handleExportAll = useCallback(async () => {
@@ -249,6 +371,14 @@ export function DataSettingsTab(): React.ReactElement {
     setExporting(false)
   }, [t, currentSpaceId, availableSpaces])
 
+  // #1927 — name of the space an import will land in, for the target
+  // label below the controls. `null` when no space is active (the
+  // not-ready hint covers that case instead).
+  const currentSpaceName =
+    currentSpaceId == null
+      ? null
+      : (availableSpaces.find((s) => s.id === currentSpaceId)?.name ?? null)
+
   return (
     <div className="data-settings-tab space-y-6">
       <Card>
@@ -263,7 +393,7 @@ export function DataSettingsTab(): React.ReactElement {
         </CardHeader>
         <CardContent>
           <p className="text-xs text-muted-foreground mb-3">{t('data.importDesc')}</p>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <input
               type="file"
               accept=".md"
@@ -273,6 +403,21 @@ export function DataSettingsTab(): React.ReactElement {
               onChange={handleFileImport}
               data-testid="import-file-input"
               aria-label={t('data.importButton')}
+            />
+            {/* #1927 — second, separate input carrying `webkitdirectory`
+                so the OS opens a folder picker. This is what populates
+                `file.webkitRelativePath`, the only way the #1446
+                folder→namespace mapping can ever trigger; the `.md`-only
+                input above never sets it. `webkitdirectory` is not in the
+                React DOM typings, so spread it as a lowercased attribute. */}
+            <input
+              type="file"
+              {...{ webkitdirectory: '', directory: '' }}
+              ref={folderInputRef}
+              className="hidden"
+              onChange={handleFileImport}
+              data-testid="import-folder-input"
+              aria-label={t('data.importFolderButton')}
             />
             <Button
               variant="outline"
@@ -295,7 +440,42 @@ export function DataSettingsTab(): React.ReactElement {
               <Upload className="h-3.5 w-3.5" />{' '}
               {importing ? t('data.importingMessage') : t('data.importButton')}
             </Button>
+            {/* #1927 — folder/vault import affordance. Same gating + flow
+                as the files button; only the source input differs. */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => folderInputRef.current?.click()}
+              disabled={importing || currentSpaceId == null}
+              title={currentSpaceId == null ? t('data.importSpaceNotReady') : undefined}
+              aria-describedby={currentSpaceId == null ? importHintId : undefined}
+              data-testid="import-folder-button"
+            >
+              <FolderUp className="h-3.5 w-3.5" /> {t('data.importFolderButton')}
+            </Button>
+            {/* #1927 — Cancel is only shown while a run is in flight. It
+                sets the abort flag the file loop checks between files. */}
+            {importing && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  cancelRef.current = true
+                }}
+                data-testid="import-cancel-button"
+              >
+                {t('data.importCancelButton')}
+              </Button>
+            )}
           </div>
+          {/* #1927 — surface the import target so the destination space is
+              never silent. Only meaningful once a space is active (the
+              not-ready hint covers the null case). */}
+          {currentSpaceId != null && currentSpaceName != null && (
+            <p className="text-xs text-muted-foreground mt-2" data-testid="import-target-space">
+              {t('data.importTargetSpace', { name: currentSpaceName })}
+            </p>
+          )}
           {currentSpaceId == null && (
             // Visible inline hint on the
             // pre-bootstrap disabled state. `role="status"` +
@@ -388,8 +568,15 @@ export function DataSettingsTab(): React.ReactElement {
               // Derive presentation flags. `allFailed` (nothing imported, at
               // least one hard failure) drives the error-toned state instead
               // of a silent "0 blocks" line (#1928).
-              const { failures, warnings, blocksCreated, propertiesSet, fileCount, pageTitle } =
-                importResult
+              const {
+                failures,
+                warnings,
+                blocksCreated,
+                propertiesSet,
+                fileCount,
+                pageTitle,
+                navTitle,
+              } = importResult
               const allFailed = blocksCreated === 0 && failures.length > 0
               const hasDetail = failures.length > 0 || warnings.length > 0
               // Cap the at-rest list; the toggle reveals the rest.
@@ -420,6 +607,21 @@ export function DataSettingsTab(): React.ReactElement {
                         `, ${t('data.importResultProperties', { count: propertiesSet })}`}
                     </p>
                   )}
+                  {/* #1927 — post-import navigation: jump to what was
+                      imported (single file → that page; multi-file → the
+                      last imported page in the target space). */}
+                  {navTitle != null && currentSpaceId != null && (
+                    <button
+                      type="button"
+                      className="underline text-status-done-foreground"
+                      data-testid="import-view-button"
+                      onClick={() => {
+                        void goToImportedPage(navTitle, currentSpaceId)
+                      }}
+                    >
+                      {t('data.importViewAction')}
+                    </button>
+                  )}
                   {hasDetail && (
                     <details data-testid="import-result-details">
                       <summary className="cursor-pointer text-status-pending-foreground">
@@ -439,13 +641,21 @@ export function DataSettingsTab(): React.ReactElement {
                         className="mt-1 space-y-0.5 max-h-40 overflow-y-auto"
                         data-testid="import-result-detail-list"
                       >
-                        {shownFailures.map((name) => (
+                        {shownFailures.map(({ name, reason }, i) => (
                           <li
-                            key={`fail-${name}`}
+                            // A vault import can surface the same basename
+                            // from different folders, so index-qualify.
+                            // oxlint-disable-next-line react/no-array-index-key -- failure basenames can duplicate across folders; the list is render-only (no reorder/insert), so the positional index is a stable, unique key
+                            key={`fail-${i}-${name}`}
                             className="text-destructive"
                             data-testid="import-failure-item"
                           >
-                            {t('data.importFailedFile', { name })}
+                            {/* #1935 — show WHY the file failed when a reason
+                                was extracted; fall back to the reason-less
+                                label otherwise. */}
+                            {reason
+                              ? t('data.importFailedFileDetail', { name, reason })
+                              : t('data.importFailedFile', { name })}
                           </li>
                         ))}
                         {shownWarnings.map((warning, i) => (
