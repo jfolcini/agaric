@@ -11,7 +11,10 @@
  *   - `script` / `style` / `noscript` elements are removed (their text content
  *     must never leak into a block);
  *   - link hrefs are clamped to http(s) via `isValidHttpUrl` — a
- *     `javascript:`/`data:`/other-scheme link is de-linked to its plain text.
+ *     `javascript:`/`data:`/other-scheme link is de-linked to its plain text;
+ *   - image `src` is clamped to http(s) via the SAME `isValidHttpUrl` (#1439
+ *     Phase 2) — an inline `<img>` with a `javascript:`/`data:`/other-scheme
+ *     src is reduced to its alt text rather than emitting `![alt](badsrc)`.
  *
  * This module imports only `turndown` + `turndown-plugin-gfm`; it is itself
  * imported LAZILY (dynamic `import()`) from the paste handler so Turndown stays
@@ -57,6 +60,21 @@ export function createInlineTurndown(): {
       const href = (node as HTMLAnchorElement).getAttribute('href') ?? ''
       if (!isValidHttpUrl(href)) return content
       return `[${content}](${href})`
+    },
+  })
+
+  // Clamp inline image `src` to http(s) (#1439 Phase 2). Turndown's default
+  // image rule emits `![alt](src)` for ANY src; an untrusted `javascript:` /
+  // `data:` / other-scheme src must never round-trip into a block, so a
+  // non-http(s) src is reduced to the bare alt text instead.
+  service.addRule('safeImage', {
+    filter: 'img',
+    replacement: (_content, node) => {
+      const el = node as HTMLImageElement
+      const src = el.getAttribute('src') ?? ''
+      const alt = el.getAttribute('alt') ?? ''
+      if (!isValidHttpUrl(src)) return alt
+      return `![${alt}](${src})`
     },
   })
 

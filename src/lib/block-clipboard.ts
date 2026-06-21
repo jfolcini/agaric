@@ -22,6 +22,21 @@ import { computeSelectionRoots, getDragDescendants } from './tree-utils'
 /** Spaces per indent level — the repo's outline convention (2-space indent). */
 export const INDENT_UNIT = 2
 
+/**
+ * Sentinel standing in for a newline INSIDE a single block's content while it
+ * travels through the line-oriented outline (#1439 Phase 2). The outline is one
+ * line per block, but a pasted table / fenced code block is MULTI-LINE and must
+ * stay ONE block; `outlineToIndentedMarkdown` (`src/editor/html-to-blocks.ts`)
+ * encodes such a block's internal newlines as this sentinel, and
+ * {@link parseIndentedMarkdown} decodes them back to `\n` per block.
+ *
+ * `U+0000` (NUL) never legitimately appears in pasted clipboard text or in the
+ * outline our copy/serialize path emits, so the decode is a NO-OP for every
+ * existing caller (block copy, duplicate, context-menu paste) — only the
+ * HTML-paste multi-line blocks carry it.
+ */
+export const OUTLINE_NEWLINE_SENTINEL = '\u0000'
+
 // ── Human-readable reference rendering (export/clipboard only, #1440) ─────────
 
 /**
@@ -351,7 +366,14 @@ export function parseIndentedMarkdown(text: string): ParsedBlock[] {
 
   for (const rawLine of text.split('\n')) {
     if (rawLine.trim() === '') continue
-    const { level: rawLevel, content } = measureIndent(rawLine)
+    const { level: rawLevel, content: encodedContent } = measureIndent(rawLine)
+    // Decode any in-block newline sentinel back to a real `\n` so a multi-line
+    // table / code-fence block (#1439 Phase 2) is restored as one block's
+    // multi-line content. A NO-OP for every other caller — the sentinel never
+    // appears in copy/serialize output (see OUTLINE_NEWLINE_SENTINEL).
+    const content = encodedContent.includes(OUTLINE_NEWLINE_SENTINEL)
+      ? encodedContent.replaceAll(OUTLINE_NEWLINE_SENTINEL, '\n')
+      : encodedContent
     // Clamp the level so a block can be at most one level deeper than the
     // deepest currently-open ancestor (no orphaning jumps).
     const level = Math.min(rawLevel, stack.length)

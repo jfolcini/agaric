@@ -177,3 +177,190 @@ describe('outline → indented markdown → block tree', () => {
     expect(bold?.marks?.some((m) => m.type === 'bold')).toBe(true)
   })
 })
+
+// ── #1439 Phase 2: tables, code fences, images, blockquotes, task lists ───────
+
+/**
+ * Drive a single fragment through the FULL paste path — DOM walk → indented
+ * markdown (with the multi-line-block newline encoding) → `parseIndentedMarkdown`
+ * (decode) → per-block `parse` — and return the parsed block specs with each
+ * block's content reparsed to its top-level node. Mirrors what `pasteBlocks`
+ * does so the assertions cover the real round-trip, not just the converter.
+ */
+function pasteRoundTrip(html: string): { content: string; node: ReturnType<typeof parse> }[] {
+  const markdown = convertToMarkdown(html)
+  return parseIndentedMarkdown(markdown).map((b) => ({
+    content: b.content,
+    node: parse(b.content),
+  }))
+}
+
+describe('htmlBodyToOutline — tables (Phase 2)', () => {
+  it('emits a single GFM pipe-table block that re-parses to one table node', () => {
+    const html =
+      '<table><thead><tr><th>H1</th><th>H2</th></tr></thead>' +
+      '<tbody><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></tbody></table>'
+    const blocks = convert(html)
+    expect(blocks).toHaveLength(1)
+    // One block; its content is multi-line GFM with a separator row.
+    expect(blocks[0]?.content).toBe('| H1 | H2 |\n| --- | --- |\n| a | b |\n| c | d |')
+
+    // The multi-line block survives the line-oriented outline as ONE block …
+    const round = pasteRoundTrip(html)
+    expect(round).toHaveLength(1)
+    expect(round[0]?.content).toContain('\n') // newlines restored
+    // … and re-parses to a single table node with the right shape.
+    const doc = round[0]?.node
+    const table = doc?.content?.[0]
+    expect(table?.type).toBe('table')
+    expect((table as unknown as { content?: unknown[] }).content).toHaveLength(3) // header + 2 data rows
+  })
+
+  it('escapes a literal pipe inside a cell so it is not a column boundary', () => {
+    const blocks = convert('<table><tr><td>a|b</td><td>c</td></tr></table>')
+    expect(blocks[0]?.content).toContain('a\\|b')
+    // Re-parses to a single 2-column row (the escaped pipe stays in the cell).
+    const doc = parse(blocks[0]?.content ?? '')
+    const table = doc.content?.[0] as unknown as { content?: { content?: unknown[] }[] } | undefined
+    const row = table?.content?.[0]
+    expect(row?.content).toHaveLength(2)
+  })
+})
+
+describe('htmlBodyToOutline — fenced code blocks (Phase 2)', () => {
+  it('emits a fenced block carrying the language from a language-xxx class', () => {
+    const html = '<pre><code class="language-ts">const x = 1\nconst y = 2</code></pre>'
+    const blocks = convert(html)
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]?.content).toBe('```ts\nconst x = 1\nconst y = 2\n```')
+
+    const doc = parse(blocks[0]?.content ?? '')
+    const code = doc.content?.[0]
+    expect(code?.type).toBe('codeBlock')
+    expect((code as unknown as { attrs?: { language?: string } }).attrs?.language).toBe('ts')
+    expect((code as unknown as { content?: { text?: string }[] }).content?.[0]?.text).toBe(
+      'const x = 1\nconst y = 2',
+    )
+  })
+
+  it('grows the fence past a backtick run inside the code so it cannot close early', () => {
+    const html = '<pre><code>a ``` b</code></pre>'
+    const content = convert(html)[0]?.content ?? ''
+    // Fence is at least 4 backticks (longer than the inner ``` run).
+    expect(content.startsWith('````')).toBe(true)
+    const doc = parse(content)
+    const code = doc.content?.[0]
+    expect(code?.type).toBe('codeBlock')
+    expect(
+      (code as unknown as { content?: { text?: string }[] } | undefined)?.content?.[0]?.text,
+    ).toBe('a ``` b')
+  })
+
+  it('survives the outline round-trip as one code block', () => {
+    const round = pasteRoundTrip('<pre><code class="language-js">line1\nline2</code></pre>')
+    expect(round).toHaveLength(1)
+    expect(round[0]?.node.content?.[0]?.type).toBe('codeBlock')
+  })
+})
+
+describe('htmlBodyToOutline — images (Phase 2)', () => {
+  it('emits ![alt](src) for a block-level http(s) image', () => {
+    const blocks = convert('<img src="https://x.com/c.png" alt="cat">')
+    expect(blocks).toEqual([{ content: '![cat](https://x.com/c.png)', depth: 0 }])
+    const doc = parse(blocks[0]?.content ?? '')
+    expect(doc.content?.[0]?.content?.[0]).toEqual({
+      type: 'image',
+      attrs: { alt: 'cat', src: 'https://x.com/c.png' },
+    })
+  })
+
+  it('DROPS a javascript: image src (no block emitted)', () => {
+    expect(convert('<img src="javascript:alert(1)" alt="x">')).toEqual([])
+  })
+
+  it('DROPS a data: image src (no block emitted)', () => {
+    expect(convert('<img src="data:image/png;base64,AAAA" alt="x">')).toEqual([])
+  })
+
+  it('drops the src of an INLINE image with a javascript: scheme, keeping only alt', () => {
+    // An inline image (inside a paragraph) goes through Turndown's safeImage rule.
+    const blocks = convert('<p>see <img src="javascript:alert(1)" alt="bad"> here</p>')
+    expect(blocks[0]?.content).not.toContain('javascript:')
+    expect(blocks[0]?.content).not.toContain('](') // no image markdown emitted
+    expect(blocks[0]?.content).toContain('bad') // alt text survives
+  })
+
+  it('keeps an inline http(s) image as ![alt](src)', () => {
+    const blocks = convert('<p><img src="https://x.com/c.png" alt="cat"></p>')
+    expect(blocks[0]?.content).toBe('![cat](https://x.com/c.png)')
+  })
+})
+
+describe('htmlBodyToOutline — blockquotes (Phase 2)', () => {
+  it('emits a > -prefixed block that re-parses to a blockquote node', () => {
+    const blocks = convert('<blockquote><p>quoted line</p></blockquote>')
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]?.content).toBe('> quoted line')
+    const doc = parse(blocks[0]?.content ?? '')
+    expect(doc.content?.[0]?.type).toBe('blockquote')
+  })
+
+  it('prefixes every inner line of a multi-paragraph quote', () => {
+    const content = convert('<blockquote><p>one</p><p>two</p></blockquote>')[0]?.content ?? ''
+    expect(content).toBe('> one\n> two')
+    expect(parse(content).content?.[0]?.type).toBe('blockquote')
+  })
+})
+
+describe('htmlBodyToOutline — task lists (Phase 2)', () => {
+  it('emits - [ ] / - [x] items for a checkbox list (checked + unchecked)', () => {
+    const html =
+      '<ul>' +
+      '<li><input type="checkbox"> todo item</li>' +
+      '<li><input type="checkbox" checked> done item</li>' +
+      '</ul>'
+    expect(convert(html)).toEqual([
+      { content: '- [ ] todo item', depth: 0 },
+      { content: '- [x] done item', depth: 0 },
+    ])
+  })
+
+  it('each task line re-parses to a paragraph carrying the right todoState', () => {
+    const html =
+      '<ul><li><input type="checkbox"> a</li><li><input type="checkbox" checked> b</li></ul>'
+    const round = pasteRoundTrip(html)
+    expect(round).toHaveLength(2)
+    const a = round[0]?.node.content?.[0]
+    const b = round[1]?.node.content?.[0]
+    expect((a as unknown as { attrs?: { todoState?: string } }).attrs?.todoState).toBe('TODO')
+    expect((b as unknown as { attrs?: { todoState?: string } }).attrs?.todoState).toBe('DONE')
+  })
+
+  it('a non-task <ul> still produces plain bullets (no regression)', () => {
+    expect(convert('<ul><li>a</li><li>b</li></ul>')).toEqual([
+      { content: '- a', depth: 0 },
+      { content: '- b', depth: 0 },
+    ])
+  })
+})
+
+describe('outline newline encoding (Phase 2)', () => {
+  it('round-trips a multi-line block as ONE block without shredding it', () => {
+    const html = '<table><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>'
+    const markdown = convertToMarkdown(html)
+    // The encoded outline is a SINGLE line (no real newlines between block rows).
+    expect(markdown.split('\n')).toHaveLength(1)
+    // Decoding restores the real newlines into one block's content.
+    const parsed = parseIndentedMarkdown(markdown)
+    expect(parsed).toHaveLength(1)
+    expect(parsed[0]?.content.split('\n').length).toBeGreaterThan(1)
+  })
+
+  it('leaves single-line block content untouched (no sentinel present)', () => {
+    const parsed = parseIndentedMarkdown('plain one-liner\n  child line')
+    expect(parsed).toEqual([
+      { content: 'plain one-liner', parentIndex: null },
+      { content: 'child line', parentIndex: 0 },
+    ])
+  })
+})

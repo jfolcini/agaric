@@ -114,6 +114,66 @@ test.describe('HTML paste → markdown blocks (#1439)', () => {
     await expect(page.locator('a[href^="javascript:"]')).toHaveCount(0)
   })
 
+  test('pastes a Phase 2 snippet (table + code + image + task) as STRUCTURED blocks', async ({
+    page,
+  }) => {
+    const editor = await freshBlock(page)
+
+    const html =
+      '<table><thead><tr><th>Name</th><th>Qty</th></tr></thead>' +
+      '<tbody><tr><td>Apples</td><td>3</td></tr></tbody></table>' +
+      '<pre><code class="language-js">const answer = 42</code></pre>' +
+      '<img src="https://example.com/pic.png" alt="a picture">' +
+      '<ul><li><input type="checkbox"> open task</li>' +
+      '<li><input type="checkbox" checked> finished task</li></ul>'
+
+    await pasteHtml(editor, html, 'Name Qty Apples 3 const answer = 42 open task finished task')
+
+    // Table → a real <table> with the header + data cell text.
+    await expect(page.locator('table th', { hasText: 'Name' })).toBeVisible()
+    await expect(page.locator('table td', { hasText: 'Apples' })).toBeVisible()
+
+    // Fenced code → a <pre><code> carrying the raw code (not literal ``` text).
+    await expect(page.locator('pre code', { hasText: 'const answer = 42' })).toBeVisible()
+    await expect(
+      page.locator('[data-testid="sortable-block"]').filter({ hasText: '```js' }),
+    ).toHaveCount(0)
+
+    // Image → the `![alt](src)` parsed to an image node; the static read-mode
+    // renderer shows the external-image privacy placeholder (gated, no network
+    // request), labelled with the source domain. Its presence proves an image
+    // node was produced (not literal `![…](…)` text).
+    await expect(page.locator('[data-testid="image-external-blocked"]').first()).toBeVisible()
+    await expect(
+      page.locator('[data-testid="image-external-domain"]', { hasText: 'example.com' }),
+    ).toBeVisible()
+
+    // Task list → two separate task blocks. The `- [ ]` / `- [x]` markers are
+    // CONSUMED by the parser (recognised as tasks, not literal bullets), so the
+    // rendered rows show only the labels — never the literal `- [ ]` text.
+    await expect.poll(async () => await rowsWithText(page, 'open task').count()).toBeGreaterThan(0)
+    await expect
+      .poll(async () => await rowsWithText(page, 'finished task').count())
+      .toBeGreaterThan(0)
+    await expect(rowsWithText(page, 'open task').first()).not.toContainText('- [ ]')
+    await expect(rowsWithText(page, 'finished task').first()).not.toContainText('- [x]')
+  })
+
+  test('a javascript: image src is dropped (security)', async ({ page }) => {
+    const editor = await freshBlock(page)
+    await pasteHtml(
+      editor,
+      '<p>before</p><img src="javascript:alert(1)" alt="evil"><p>after</p>',
+      'before after',
+    )
+    // The surrounding paragraphs land, but the unsafe image is dropped at
+    // conversion time — no image node and no javascript: src ever reach the DOM.
+    await expect.poll(async () => await rowsWithText(page, 'before').count()).toBeGreaterThan(0)
+    await expect(page.locator('img[src^="javascript:"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="image-external-blocked"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="image-rendered"]')).toHaveCount(0)
+  })
+
   test('plain-text paste (no HTML) is unaffected — falls through (no regression)', async ({
     page,
   }) => {
