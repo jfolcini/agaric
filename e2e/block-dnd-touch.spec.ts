@@ -166,12 +166,12 @@ test.describe('Block drag-and-drop (touch / narrow viewport)', () => {
 
     const menu = page.getByRole('menu', { name: 'Block actions' })
     await expect(menu).toBeVisible()
-    // The structural-reorder actions are always present (Zoom is gated on
-    // hasChildren, so it is intentionally NOT asserted for a leaf block).
+    // The structural-reorder actions (Indent / Dedent / Move up/down) all live
+    // behind the "Move & arrange" disclosure (2026-06-20); expand it. (Zoom is
+    // not asserted here.)
+    await menu.getByRole('menuitem', { name: 'Move & arrange' }).click()
     await expect(menu.getByRole('menuitem', { name: 'Indent' })).toBeVisible()
     await expect(menu.getByRole('menuitem', { name: 'Dedent' })).toBeVisible()
-    // #1109 — Move up/down now live behind the "Move & arrange" disclosure; expand it.
-    await menu.getByRole('menuitem', { name: 'Move & arrange' }).click()
     await expect(menu.getByRole('menuitem', { name: 'Move Up' })).toBeVisible()
     const moveDown = menu.getByRole('menuitem', { name: 'Move Down' })
     await expect(moveDown).toBeVisible()

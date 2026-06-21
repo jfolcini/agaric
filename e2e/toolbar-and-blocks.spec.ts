@@ -574,12 +574,16 @@ test.describe('Block interactions', () => {
     const menu = page.locator('[role="menu"]')
     await expect(menu).toBeVisible()
 
-    // Verify menu items are present
+    // Top-level items present
     await expect(menu.locator('[role="menuitem"]', { hasText: 'Delete' })).toBeVisible()
-    await expect(menu.locator('[role="menuitem"]', { hasText: 'Indent' })).toBeVisible()
-    await expect(menu.locator('[role="menuitem"]', { hasText: 'Dedent' })).toBeVisible()
     await expect(menu.locator('[role="menuitem"]', { hasText: 'TODO' })).toBeVisible()
     await expect(menu.locator('[role="menuitem"]', { hasText: /priority/i })).toBeVisible()
+
+    // Indent / Dedent moved into the "Move & arrange" disclosure (2026-06-20);
+    // expand it to reveal them.
+    await menu.locator('[role="menuitem"]', { hasText: 'Move & arrange' }).click()
+    await expect(menu.locator('[role="menuitem"]', { hasText: 'Indent' })).toBeVisible()
+    await expect(menu.locator('[role="menuitem"]', { hasText: 'Dedent' })).toBeVisible()
   })
 
   test('Ctrl+Enter cycles task state', async ({ page }) => {

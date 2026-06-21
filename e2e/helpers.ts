@@ -224,8 +224,11 @@ export function activeMenu(page: Page): Locator {
 export async function deleteBlockViaContextMenu(page: Page, block: Locator): Promise<void> {
   await block.click({ button: 'right' })
   const menu = page.getByRole('menu', { name: 'Block actions' }).last()
-  // Exact match so this never resolves to the bulk "Delete N selected" label.
-  await menu.getByRole('menuitem', { name: 'Delete', exact: true }).click()
+  // Substring (non-exact) match: the menu item's accessible name carries its
+  // shortcut hint ("Delete … (when empty)"), so an exact "Delete" matches
+  // nothing. This helper is only used single-block (no active selection), so
+  // "Delete" is unambiguous — the bulk "Delete N selected" label never renders.
+  await menu.getByRole('menuitem', { name: 'Delete' }).click()
 }
 
 /** Active TipTap suggestion popup container (ReactRenderer portal). */
