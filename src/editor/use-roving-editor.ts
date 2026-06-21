@@ -48,6 +48,7 @@ import { CalloutBlockquote } from './extensions/callout-blockquote'
 import { CheckboxInputRule } from './extensions/checkbox-input-rule'
 import { EmojiPicker, emojiPickerPluginKey } from './extensions/emoji-picker'
 import { ExternalLink } from './extensions/external-link'
+import { HtmlPaste } from './extensions/html-paste'
 import { Image } from './extensions/image'
 import { MathBlock, MathInline } from './extensions/math'
 import { MermaidCodeBlockView } from './extensions/MermaidCodeBlockView'
@@ -475,6 +476,11 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       Heading.configure({ levels: [1, 2, 3, 4, 5, 6] }),
       HardBreak,
       History,
+      // #1439 — convert pasted clipboard HTML to Agaric markdown. MUST precede
+      // ExternalLink and TaskPaste in the handlePaste chain: it only claims the
+      // paste when there is usable `text/html`, otherwise returns false so those
+      // handlers (and the plain-text fallback) run unchanged.
+      HtmlPaste,
       ExternalLink,
       // #1437 — KaTeX math: inline `$…$` and block `$$…$$` atoms (lazy KaTeX).
       MathInline,
