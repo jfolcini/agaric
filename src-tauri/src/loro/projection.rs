@@ -503,6 +503,21 @@ pub async fn project_restore_block_to_sql(
     .bind(deleted_at_ref)
     .execute(&mut *conn)
     .await?;
+
+    // #1884: also restore UPWARD, mirroring `restore_block_inner`. The cohort
+    // CTE above only clears `deleted_at` downward, but the block's PARENT may
+    // itself be soft-deleted (delete child → later delete parent: the parent's
+    // cascade SKIPS the already-deleted child, so the child becomes a trash
+    // root). Restoring the child alone would leave it LIVE under a
+    // still-tombstoned, invisible parent — absent from both tree and trash.
+    // Restore the contiguous soft-deleted ancestor chain up to the nearest live
+    // ancestor (or root) so the command and op-replay/sql_only paths converge on
+    // identical settled state. The returned topmost id is unused here — page/
+    // space re-derivation runs in the via-loro arm; this projection only owns
+    // the `deleted_at` clear (the `sql_only` fallback's re-derivation is driven
+    // by its own caller).
+    crate::block_descendants::restore_deleted_ancestor_chain(&mut *conn, block_id).await?;
+
     // #1582: surface deep-tree truncation on the op-replay / sql_only
     // paths. The command path (`restore_block_inner`) already emits this
     // warn, but this projection — driven by both the via-loro op-replay

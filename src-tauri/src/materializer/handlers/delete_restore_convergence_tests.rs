@@ -454,3 +454,299 @@ async fn delete_restore_sql_only_fallback_converges_with_engine_arm() {
          engine={eng_res_distinct:?} fallback={fb_res_distinct:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// #1884 — live-orphan regression: delete child → delete parent → restore child.
+//
+// The reachable bug: deleting the CHILD first makes it a trash root; the later
+// DeleteBlock(parent) cascade SKIPS the already-deleted child (it only stamps
+// rows that are still live). Restoring the CHILD then cleared `deleted_at`
+// downward only, leaving the child LIVE under a still-tombstoned, invisible
+// PARENT — absent from both the tree (`list_children` filters
+// `deleted_at IS NULL`) and trash. The fix restores the contiguous soft-deleted
+// ancestor chain UPWARD, so the child reattaches to a LIVE parent.
+//
+// Both arms (engine via the real foreground pipeline + sql_only fallback)
+// must converge on the SETTLED reprojected state: child AND parent LIVE.
+// ---------------------------------------------------------------------------
+
+/// `(block_id, deleted_at IS NULL)` for parent + child, ordered by id. Used by
+/// the #1884 orphan scenario to assert both reconnect as LIVE after restore.
+async fn snapshot_parent_child_shape(pool: &SqlitePool) -> Vec<DeleteShapeRow> {
+    sqlx::query_as(
+        "SELECT id, deleted_at IS NULL FROM blocks \
+         WHERE id IN (?, ?) ORDER BY id",
+    )
+    .bind(PARENT_ID)
+    .bind(CHILD_ID)
+    .fetch_all(pool)
+    .await
+    .expect("snapshot parent/child shape")
+}
+
+/// Engine arm for the #1884 orphan scenario. Seeds parent → child through the
+/// real pipeline, then drives DeleteBlock(child), DeleteBlock(parent),
+/// RestoreBlock(child) through the FOREGROUND `apply_op_tx` engine path.
+/// Returns the parent/child soft-delete shape after the final restore + asserts
+/// the engine path ran (no sql_only fallback delta).
+async fn run_orphan_engine_arm() -> Vec<DeleteShapeRow> {
+    let dir = TempDir::new().expect("tempdir");
+    let pool = init_pool(&dir.path().join("orphan_engine.db"))
+        .await
+        .expect("init_pool");
+
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'tag', 'space', NULL, 0)",
+    )
+    .bind(SPACE_ID)
+    .execute(&pool)
+    .await
+    .expect("seed space block");
+    sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+        .bind(SPACE_ID)
+        .execute(&pool)
+        .await
+        .expect("register space");
+
+    let _state = crate::loro::shared::install_for_test();
+
+    create_via_loro(&pool, PAGE_ID, "page", None, 0).await;
+    sqlx::query("UPDATE blocks SET page_id = ?, space_id = ? WHERE id = ?")
+        .bind(PAGE_ID)
+        .bind(SPACE_ID)
+        .bind(PAGE_ID)
+        .execute(&pool)
+        .await
+        .expect("stamp page space");
+
+    for (id, parent) in [(PARENT_ID, PAGE_ID), (CHILD_ID, PARENT_ID)] {
+        create_via_loro(&pool, id, "content", Some(parent), 0).await;
+        sqlx::query("UPDATE blocks SET parent_id = ?, page_id = ?, space_id = ? WHERE id = ?")
+            .bind(parent)
+            .bind(PAGE_ID)
+            .bind(SPACE_ID)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .expect("stamp child parent/space");
+    }
+
+    let fallback_before = super::sql_only_fallback::count();
+
+    // 1) DeleteBlock(child) — child becomes a trash root.
+    let del_child = OpPayload::DeleteBlock(DeleteBlockPayload {
+        block_id: BlockId::from_trusted(CHILD_ID),
+    });
+    let del_child_record = crate::op_log::append_local_op(&pool, DEVICE_ID, del_child)
+        .await
+        .expect("append delete child");
+    let mut tx = pool.begin().await.expect("begin delete child");
+    super::apply_op_tx(&mut tx, &del_child_record)
+        .await
+        .expect("apply delete child");
+    tx.commit().await.expect("commit delete child");
+
+    // 2) DeleteBlock(parent) — cascade SKIPS the already-deleted child, so the
+    //    child keeps its OWN earlier `deleted_at` (a separate cohort) and the
+    //    parent gets a new one.
+    let del_parent = OpPayload::DeleteBlock(DeleteBlockPayload {
+        block_id: BlockId::from_trusted(PARENT_ID),
+    });
+    let del_parent_record = crate::op_log::append_local_op(&pool, DEVICE_ID, del_parent)
+        .await
+        .expect("append delete parent");
+    let mut tx = pool.begin().await.expect("begin delete parent");
+    super::apply_op_tx(&mut tx, &del_parent_record)
+        .await
+        .expect("apply delete parent");
+    tx.commit().await.expect("commit delete parent");
+
+    // Both DELETE ops must run the engine path (no fallback).
+    let fallback_after_deletes = super::sql_only_fallback::count();
+    assert_eq!(
+        fallback_after_deletes - fallback_before,
+        0,
+        "both DeleteBlock ops must run the engine path (no sql_only fallback); \
+         delete silently degraded to apply_delete_block_sql_only"
+    );
+
+    // 3) RestoreBlock(child) — must restore the child AND its tombstoned
+    //    ancestor chain (the parent) so the child reattaches to a LIVE parent.
+    //    `deleted_at_ref` carries the CHILD's own delete cohort timestamp.
+    let restore = OpPayload::RestoreBlock(RestoreBlockPayload {
+        block_id: BlockId::from_trusted(CHILD_ID),
+        deleted_at_ref: del_child_record.created_at,
+    });
+    let restore_record = crate::op_log::append_local_op(&pool, DEVICE_ID, restore)
+        .await
+        .expect("append restore child");
+    let mut tx = pool.begin().await.expect("begin restore child");
+    super::apply_op_tx(&mut tx, &restore_record)
+        .await
+        .expect("apply restore child");
+    tx.commit().await.expect("commit restore child");
+
+    // The RestoreBlock op LEGITIMATELY falls back to sql_only here: the
+    // resolution anchor is the child's parent, which is still soft-deleted at
+    // restore time, so `resolve_block_space` (filters `deleted_at IS NULL`)
+    // returns None and the via-loro arm routes to `apply_restore_block_sql_only`
+    // (which calls the SAME `project_restore_block_to_sql` projection). This is
+    // precisely the orphan path the fix targets; we therefore do NOT forbid the
+    // fallback for the restore step — the assertion above already pinned the
+    // engine path for the two deletes.
+    let fallback_after = super::sql_only_fallback::count();
+    assert_eq!(
+        fallback_after - fallback_after_deletes,
+        1,
+        "RestoreBlock of a child under a deleted parent must route via the \
+         sql_only restore (space-unresolved fallback), exercising the shared \
+         projection's upward ancestor restore"
+    );
+
+    snapshot_parent_child_shape(&pool).await
+}
+
+/// Fallback arm for the #1884 orphan scenario: NO engine. Seeds parent → child
+/// directly in SQL, then drives the `apply_delete_block_sql_only` /
+/// `apply_restore_block_sql_only` fns directly for the same op sequence.
+/// The child and parent are deleted with DISTINCT timestamps (separate
+/// cohorts) to mirror the production "delete child, later delete parent" order.
+async fn run_orphan_fallback_arm() -> Vec<DeleteShapeRow> {
+    const CHILD_DELETED_AT: i64 = 1_700_000_000_000;
+    const PARENT_DELETED_AT: i64 = 1_700_000_005_000;
+
+    let dir = TempDir::new().expect("tempdir");
+    let pool = init_pool(&dir.path().join("orphan_fallback.db"))
+        .await
+        .expect("init_pool");
+
+    seed_blocks_sql(&pool).await;
+
+    // Tag the PAGE so PARENT + CHILD inherit it. The PARENT's own
+    // `block_tag_inherited` row is swept when the parent is soft-deleted
+    // (`remove_subtree_inherited`); restoring the child must recompute
+    // inheritance rooted at the restored ANCESTOR (the parent), not just the
+    // child, or the restored parent comes back missing its inherited tag.
+    // This guards the #1884 inheritance re-rooting in the sql_only fallback
+    // path (`apply_restore_block_sql_only`), which is the path the via-loro
+    // arm ALWAYS routes to for the orphan case (space unresolved off the
+    // tombstoned parent).
+    const TAG_ID: &str = "01HZ0000000000000000DELTAG";
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'tag', 'page-tag', NULL, 0, ?, ?)",
+    )
+    .bind(TAG_ID)
+    .bind(TAG_ID)
+    .bind(SPACE_ID)
+    .execute(&pool)
+    .await
+    .expect("seed tag block");
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(PAGE_ID)
+        .bind(TAG_ID)
+        .execute(&pool)
+        .await
+        .expect("tag the page");
+    {
+        let mut conn = pool.acquire().await.expect("acquire");
+        crate::tag_inheritance::recompute_subtree_inheritance(&mut conn, PAGE_ID)
+            .await
+            .expect("seed inheritance");
+    }
+
+    // 1) DeleteBlock(child) at CHILD_DELETED_AT.
+    let mut conn = pool.acquire().await.expect("acquire");
+    apply_delete_block_sql_only(
+        &mut conn,
+        DeleteBlockPayload {
+            block_id: BlockId::from_trusted(CHILD_ID),
+        },
+        CHILD_DELETED_AT,
+    )
+    .await
+    .expect("apply_delete_block_sql_only child");
+    drop(conn);
+
+    // 2) DeleteBlock(parent) at PARENT_DELETED_AT — the cascade skips the
+    //    already-deleted child (its `deleted_at` is non-null), so the child
+    //    keeps CHILD_DELETED_AT.
+    let mut conn = pool.acquire().await.expect("acquire");
+    apply_delete_block_sql_only(
+        &mut conn,
+        DeleteBlockPayload {
+            block_id: BlockId::from_trusted(PARENT_ID),
+        },
+        PARENT_DELETED_AT,
+    )
+    .await
+    .expect("apply_delete_block_sql_only parent");
+    drop(conn);
+
+    // 3) RestoreBlock(child) with the CHILD's cohort ref — must clear the
+    //    child AND walk up to restore the parent.
+    let mut conn = pool.acquire().await.expect("acquire");
+    apply_restore_block_sql_only(
+        &mut conn,
+        RestoreBlockPayload {
+            block_id: BlockId::from_trusted(CHILD_ID),
+            deleted_at_ref: CHILD_DELETED_AT,
+        },
+    )
+    .await
+    .expect("apply_restore_block_sql_only child");
+    drop(conn);
+
+    // #1884 inheritance-convergence guard: the restored PARENT must regain its
+    // page-inherited tag row (swept at parent-delete time). Asserts the
+    // sql_only restore recomputes inheritance rooted at the restored ancestor.
+    let par_inh: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_tag_inherited WHERE block_id = ? AND tag_id = ?",
+    )
+    .bind(PARENT_ID)
+    .bind(TAG_ID)
+    .fetch_one(&pool)
+    .await
+    .expect("query parent inherited tag");
+    assert_eq!(
+        par_inh, 1,
+        "sql_only restore must re-inherit the page tag on the restored PARENT \
+         (inheritance recompute rooted at the restored ancestor, not the child)"
+    );
+
+    snapshot_parent_child_shape(&pool).await
+}
+
+/// #1884: restoring a child whose parent was deleted AFTER it must reconnect
+/// the child to a LIVE parent — restoring the soft-deleted ancestor chain
+/// upward — in BOTH the engine and sql_only arms. Without the upward restore
+/// the child becomes a live orphan under a tombstoned parent, absent from both
+/// the tree and trash.
+#[tokio::test]
+async fn restore_child_under_deleted_parent_restores_ancestor_chain() {
+    let engine_shape = run_orphan_engine_arm().await;
+    let fallback_shape = run_orphan_fallback_arm().await;
+
+    // ids sort lexicographically: ...DELCHD < ...DELPAR.
+    let expected: Vec<DeleteShapeRow> = vec![
+        (CHILD_ID.to_string(), true),  // child LIVE
+        (PARENT_ID.to_string(), true), // parent LIVE (ancestor chain restored)
+    ];
+
+    assert_eq!(
+        engine_shape, expected,
+        "engine arm: restoring the child must restore its deleted PARENT too \
+         (no live orphan); got {engine_shape:?}"
+    );
+    assert_eq!(
+        fallback_shape, expected,
+        "sql_only arm: restoring the child must restore its deleted PARENT too \
+         (no live orphan); got {fallback_shape:?}"
+    );
+    assert_eq!(
+        engine_shape, fallback_shape,
+        "engine and sql_only arms must converge on identical settled state; \
+         engine={engine_shape:?} fallback={fallback_shape:?}"
+    );
+}

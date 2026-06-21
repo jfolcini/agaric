@@ -440,8 +440,51 @@ pub(crate) async fn apply_restore_block_via_loro(
     }
 
     projection::project_restore_block_to_sql(conn, p.block_id.as_str(), p.deleted_at_ref).await?;
-    tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
+
+    // #1884: `project_restore_block_to_sql` also restores the contiguous
+    // soft-deleted ANCESTOR chain above the block (closing the live-orphan
+    // gap). Recompute tag inheritance from the TOPMOST now-live ancestor so
+    // the whole reconnected subtree — not just the block's own subtree — is
+    // refreshed, matching the command path (`restore_block_inner`). The walk
+    // climbs `parent_id` from the block to the highest live ancestor; with no
+    // restored ancestors it resolves to the block itself (unchanged
+    // behaviour).
+    let inheritance_root = topmost_live_ancestor(&mut *conn, p.block_id.as_str()).await?;
+    tag_inheritance::recompute_subtree_inheritance(&mut *conn, &inheritance_root).await?;
     Ok(())
+}
+
+/// #1884: id of the highest LIVE ancestor reachable by walking `parent_id`
+/// upward from `block_id` (the block itself if its parent is deleted/absent
+/// or the parent walk yields no higher live row). Used to root the
+/// tag-inheritance recompute after the ancestor chain has been restored, so
+/// the whole reconnected subtree is refreshed.
+///
+/// `depth < 100` bounds runaway recursion on corrupted `parent_id` chains
+/// (AGENTS.md invariant #9).
+pub(super) async fn topmost_live_ancestor(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+) -> Result<String, AppError> {
+    // Walk live ancestors upward; the deepest (greatest depth) is the
+    // topmost. All ancestors are live by this point (the chain was restored).
+    // dynamic-sql: recursive variable-depth ancestor walk; not expressible as
+    // a compile-checked `query!` macro.
+    let top = sqlx::query_scalar::<_, String>(
+        "WITH RECURSIVE live_anc(id, parent_id, depth) AS ( \
+             SELECT b.id, b.parent_id, 0 FROM blocks b \
+             WHERE b.id = ? AND b.deleted_at IS NULL \
+             UNION ALL \
+             SELECT p.id, p.parent_id, a.depth + 1 FROM blocks p \
+             INNER JOIN live_anc a ON p.id = a.parent_id \
+             WHERE p.deleted_at IS NULL AND a.depth < 100 \
+         ) \
+         SELECT id FROM live_anc ORDER BY depth DESC LIMIT 1",
+    )
+    .bind(block_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(top.unwrap_or_else(|| block_id.to_string()))
 }
 
 /// Apply PurgeBlock through the engine then run the SQL cascade.

@@ -320,6 +320,97 @@ where
     Ok(hit.is_some())
 }
 
+/// #1884: restore the contiguous soft-deleted ANCESTOR chain above a
+/// block being restored, up to (but not including) the nearest LIVE
+/// ancestor (or the root).
+///
+/// `restore_block_inner` and the op-replay projection
+/// ([`crate::loro::projection::project_restore_block_to_sql`]) both walk
+/// only DOWNWARD when clearing `deleted_at`. That leaves a reachable hole:
+/// delete a child, later delete its parent (the cascade SKIPS the
+/// already-deleted child, so the child becomes a trash root), then restore
+/// the child → it becomes LIVE under a still-tombstoned parent. Because
+/// `list_children` filters `deleted_at IS NULL`, such a block is absent from
+/// BOTH the tree and trash — a live orphan.
+///
+/// This helper closes the gap by walking UPWARD from the block's parent and
+/// clearing `deleted_at` on every contiguous soft-deleted ancestor. The walk
+/// stops naturally at the first LIVE ancestor (filtered out by
+/// `deleted_at IS NOT NULL` in both CTE members) and at the root
+/// (`parent_id IS NULL` → no further match), so a live ancestor is never
+/// touched and only the minimal tombstoned chain reconnecting the block to
+/// the live tree is restored. Both the command and projection paths call
+/// this so they converge on identical settled state.
+///
+/// Returns `Some(topmost_ancestor_id)` — the highest block in the restored
+/// chain (the one nearest the live anchor / root) — when any ancestor was
+/// restored, or `None` when the parent chain was already live (nothing to do).
+/// The caller can drive page/space re-derivation and tag-inheritance recompute
+/// from this id so the whole reconnected subtree is refreshed. Idempotent: a
+/// re-run finds the chain already live (`deleted_at IS NULL`), restores nothing,
+/// and returns `None`.
+///
+/// `depth < 100` bounds runaway recursion on corrupted `parent_id` chains
+/// (AGENTS.md invariant #9), mirroring the descendant/ancestor CTEs.
+pub async fn restore_deleted_ancestor_chain(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    // dynamic-sql: recursive ancestor CTE assembled at runtime; not
+    // expressible via the compile-checked `query!` macro form.
+    //
+    // Seed = the block's parent, included only when it is itself
+    // soft-deleted; the recursive arm walks `c.parent_id` upward while each
+    // ancestor remains soft-deleted. The set is therefore the contiguous
+    // tombstoned chain between the block and the nearest live ancestor.
+    macro_rules! deleted_chain_cte {
+        () => {
+            "WITH RECURSIVE deleted_chain(id, parent_id, depth) AS ( \
+                 SELECT b.id, b.parent_id, 0 FROM blocks b \
+                 WHERE b.id = (SELECT parent_id FROM blocks WHERE id = ?) \
+                   AND b.deleted_at IS NOT NULL \
+                 UNION ALL \
+                 SELECT p.id, p.parent_id, c.depth + 1 FROM blocks p \
+                 INNER JOIN deleted_chain c ON p.id = c.parent_id \
+                 WHERE p.deleted_at IS NOT NULL AND c.depth < 100 \
+             ) "
+        };
+    }
+
+    // Capture the topmost member (greatest depth) BEFORE the UPDATE — the
+    // walk's terminus is the highest tombstoned ancestor in the contiguous
+    // chain, i.e. the block whose own parent is live-or-NULL. `None` means the
+    // parent chain was already live, so there is nothing to restore.
+    // dynamic-sql: recursive deleted-ancestor CTE assembled from const
+    // fragments at runtime (variable-depth upward walk); not expressible as a
+    // compile-checked `query!` macro.
+    let topmost: Option<String> = sqlx::query_scalar::<_, String>(concat!(
+        deleted_chain_cte!(),
+        "SELECT id FROM deleted_chain ORDER BY depth DESC LIMIT 1",
+    ))
+    .bind(block_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+
+    if topmost.is_none() {
+        return Ok(None);
+    }
+
+    // dynamic-sql: recursive deleted-ancestor CTE assembled from const
+    // fragments at runtime; clears the contiguous tombstoned chain in one
+    // statement. Not expressible as a compile-checked `query!` macro.
+    sqlx::query(concat!(
+        deleted_chain_cte!(),
+        "UPDATE blocks SET deleted_at = NULL \
+         WHERE id IN (SELECT id FROM deleted_chain) AND deleted_at IS NOT NULL",
+    ))
+    .bind(block_id)
+    .execute(&mut *conn)
+    .await?;
+
+    Ok(topmost)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1082,6 +1082,21 @@ pub async fn restore_block_inner(
     .execute(&mut **tx)
     .await?;
 
+    // #1884: also restore UPWARD. The downward CTE above only clears
+    // `deleted_at` on the block and its descendants, but the block's PARENT
+    // may itself be soft-deleted (delete child → later delete parent: the
+    // parent's cascade SKIPS the already-deleted child, so the child becomes
+    // a trash root). Restoring the child alone would make it LIVE under a
+    // still-tombstoned, invisible parent — absent from both tree and trash.
+    // Walk up the contiguous soft-deleted ancestor chain to the nearest live
+    // ancestor (or root) and restore it, reconnecting the block to the live
+    // tree. Done BEFORE the page/space re-derivation below so it sees the
+    // restored ancestors. Returns the TOPMOST restored ancestor id (or `None`
+    // when the parent chain was already live), used below as the re-derivation
+    // root so the whole reconnected subtree is refreshed.
+    let restored_ancestor_top =
+        crate::block_descendants::restore_deleted_ancestor_chain(&mut tx, &block_id).await?;
+
     // Warn when the cascade walk hit the depth-100 cap so
     // an operator has a breadcrumb if a pathological tree silently
     // truncated the restore. The cap itself is preserved (invariant
@@ -1116,15 +1131,29 @@ pub async fn restore_block_inner(
     // `crate::commands::block_cleanup`.
     crate::commands::block_cleanup::rederive_page_and_space_ids(&mut tx, &block_id).await?;
 
+    // #1884: when an ancestor chain was also restored above, drive the
+    // re-derivation / inheritance / cache recompute from the TOPMOST restored
+    // ancestor, so the entire reconnected subtree — not just `block_id`'s —
+    // gets correct `page_id`/`space_id`, inherited tags, and page counts. When
+    // no ancestor was restored this resolves to `block_id` (unchanged
+    // behaviour).
+    let inheritance_root = restored_ancestor_top
+        .clone()
+        .unwrap_or_else(|| block_id.clone());
+    if inheritance_root != block_id {
+        crate::commands::block_cleanup::rederive_page_and_space_ids(&mut tx, &inheritance_root)
+            .await?;
+    }
+
     // P-4: Recompute inherited tags for restored subtree
-    crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &block_id).await?;
+    crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &inheritance_root).await?;
 
     // #417: symmetric to delete — refresh `pages_cache` counts for the
     // pages the restored subtree owns / links into, WITHOUT the full-table
     // pass. Run AFTER the restore UPDATE + `page_id` re-derivation above so
     // the count subqueries see `deleted_at IS NULL` and the corrected
     // `page_id` for every restored block.
-    let affected_pages = affected_pages_for_subtree(&mut tx, &block_id).await?;
+    let affected_pages = affected_pages_for_subtree(&mut tx, &inheritance_root).await?;
     crate::materializer::recompute_pages_cache_counts_for_pages(&mut tx, &affected_pages).await?;
 
     // Commit + fire-and-forget background cache dispatch.
