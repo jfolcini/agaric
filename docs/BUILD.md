@@ -159,7 +159,7 @@ cargo bench --bench interactive_slo              # perf SLOs at 100K blocks
 - **Frontend** tests use Vitest + jsdom + `@testing-library/react`. Every component test must include an `axe(container)` audit (enforced by the `axe-presence` prek hook).
 - **Backend** tests use `cargo-nextest` with insta snapshots. Materializer tests use the `test_pool()` + `TempDir` fixture; multi-thread runtime is `#[tokio::test(flavor = "multi_thread", worker_threads = 2)]`. Snapshot updates: `cargo insta review`.
 - **E2E** specs cover smoke flows, editor lifecycle, keyboard navigation, sync round-trip, and view dispatches. Specs live in `e2e/`.
-- **Bench gates**: `interactive_slo` enforces the product SLO of ≤200 ms p95 for interactive commands at 100K blocks. Per-command budgets live in the bench itself.
+- **Bench gates**: `interactive_slo` enforces the product SLO of ≤200 ms p95 for interactive commands at 100K blocks. Per-command budgets live in the bench itself. The scheduled `bench-compile` lane also **smoke-runs every bench once** (`--test`) so a drifted seed/fixture fails CI instead of rotting silently (#978 — validates fixtures, not perf). To reproduce locally before pushing, build once (`cd src-tauri && cargo bench --no-run`) then run each prebuilt `target/release/deps/<bench>-<hash> --test`; the exact loop and the cargo #6313 build-race it dodges are in `src-tauri/benches/AGENTS.md`.
 
 ## Pre-commit & CI
 

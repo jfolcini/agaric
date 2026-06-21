@@ -4,15 +4,45 @@ Criterion benches under `src-tauri/benches/`. They measure perf AND, for
 `interactive_slo`, enforce the product SLO (≤200 ms p95 @ 100K blocks; see
 `docs/architecture/operations.md` § Product SLO).
 
-## ⚠️ Only `interactive_slo` is actually RUN by CI
+## CI runs every bench: a `--test` smoke gate + the `interactive_slo` perf gate
 
-`scheduled-deep-checks.yml`'s `bench-compile` lane does `cargo bench --no-run`
-(compiles every bench) and then RUNS only `interactive_slo` (+ the `#[ignore]`d
-nextest perf gates). **Every other bench is compile-only — so it can be
-false-green: it compiles but panics the moment it runs**, because the
-hand-seeded raw-SQL fixtures drift from the schema and `--no-run` never executes
-them. `cargo check`/`--no-run` is NOT verification for a bench — you must RUN it.
-(History: #1233 — the whole suite had drifted; #1234 fixed `interactive_slo`.)
+`scheduled-deep-checks.yml`'s `bench-compile` lane does, in order:
+
+1. `cargo bench --no-run` — compiles every bench (catches compile bit-rot).
+2. **#978 seed/fixture smoke gate** — runs EVERY bench once with `--test`
+   (criterion's single-shot, no-measurement mode). A bench whose hand-seeded
+   raw-SQL fixture has drifted from the live schema **panics here and fails the
+   job** instead of rotting silently. This validates SEEDS/FIXTURES, not perf.
+3. `cargo bench --bench interactive_slo` — the WARM perf gate (the only bench
+   with a timing budget; `interactive_slo` is excluded from the cold `--test`
+   smoke loop so its `assert_under_budget` isn't tripped by cold timings).
+
+**History:** before #978 only `interactive_slo` actually RAN; every other bench
+was compile-only, so it could be false-green — it compiled but panicked the
+moment it ran, because the fixtures drifted from the schema and `--no-run` never
+executed them (#1233 — the whole suite had drifted; #1234 fixed `interactive_slo`).
+**`cargo check`/`--no-run` is NOT verification for a bench — you must RUN it**;
+the #978 smoke gate is how CI now does that for the whole suite.
+
+### Run the smoke gate locally before pushing
+
+Mirror exactly what CI does — build once, then run each prebuilt binary with
+`--test` (this dodges the cargo #6313 build-race; see next section):
+
+```bash
+cd src-tauri
+cargo bench --no-run                                  # one cohesive build
+for name in $(grep -A1 '^\[\[bench\]\]' Cargo.toml \
+    | sed -n 's/^name = "\(.*\)"/\1/p' | grep -vx interactive_slo); do
+  bin=$(ls -t "target/release/deps/${name}-"* | grep -vE '\.(d|so|dwp)$' | head -1)
+  echo "smoke $name"; "$bin" --test || { echo "FAILED: $name"; break; }
+done
+```
+
+A non-zero exit / `panicked at` is a real seed/fixture failure. Heads-up: the
+heavy 100K-seed benches (e.g. `cache_bench`) are SLOW under cold `--test` (no
+warmup — 10×+ inflation, see the COLD-timings note below); that's expected, not
+a hang. To smoke just one bench, run a single `"$bin" --test`.
 
 ## How to RUN/verify a bench reliably (avoid the E0308 flake)
 
