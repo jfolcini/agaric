@@ -147,6 +147,18 @@ pub(super) async fn apply_delete_block_sql_only(
 /// (kept pure), so this fallback invokes the SAME
 /// `tag_inheritance::recompute_subtree_inheritance` helper AFTER the
 /// projection, mirroring `apply_restore_block_via_loro` exactly.
+///
+/// #1884: `project_restore_block_to_sql` also restores the contiguous
+/// soft-deleted ANCESTOR chain above the block (closing the live-orphan
+/// gap). A restored ancestor had its OWN `block_tag_inherited` rows swept
+/// at delete time (`remove_subtree_inherited`), so the recompute must be
+/// rooted at the TOPMOST now-live ancestor — not the block itself — or the
+/// restored ancestors keep stale/missing inherited-tag rows. This is the
+/// PRIMARY orphan path: `apply_restore_block_via_loro` ALWAYS routes here
+/// when the parent is still tombstoned (space resolves off the parent,
+/// which is soft-deleted), so its own re-rooting at `topmost_live_ancestor`
+/// is bypassed and must be mirrored here to keep the command and
+/// projection paths converged on the derived `block_tag_inherited` view.
 pub(super) async fn apply_restore_block_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: RestoreBlockPayload,
@@ -157,7 +169,8 @@ pub(super) async fn apply_restore_block_sql_only(
         p.deleted_at_ref,
     )
     .await?;
-    tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
+    let inheritance_root = topmost_live_ancestor(&mut *conn, p.block_id.as_str()).await?;
+    tag_inheritance::recompute_subtree_inheritance(&mut *conn, &inheritance_root).await?;
     Ok(())
 }
 

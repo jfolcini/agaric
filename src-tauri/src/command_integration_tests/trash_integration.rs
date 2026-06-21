@@ -815,6 +815,149 @@ async fn batch_restore_restores_only_root_cohort_not_unrelated_trashed_child() {
     );
 }
 
+/// #1884 — live-orphan regression (command path). Delete a CHILD as its own
+/// trash root (T1), then delete its PARENT (T2; the cascade SKIPS the
+/// already-deleted child). Restoring the CHILD via `restore_block_inner` must
+/// also restore the soft-deleted PARENT — the contiguous tombstoned ancestor
+/// chain up to the nearest live ancestor — so the child reattaches to a LIVE
+/// parent instead of becoming a live orphan (absent from BOTH the tree, since
+/// `list_children` filters `deleted_at IS NULL`, AND trash).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_child_under_deleted_parent_restores_parent_chain() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "O1_PG", "page", "page", None, Some(1)).await;
+    insert_block(&pool, "O1_PAR", "content", "parent", Some("O1_PG"), Some(1)).await;
+    insert_block(&pool, "O1_CHD", "content", "child", Some("O1_PAR"), Some(1)).await;
+
+    // Tag the PAGE so the PARENT (and CHILD) inherit it. The parent's own
+    // `block_tag_inherited` row is swept when the parent is soft-deleted
+    // (`remove_subtree_inherited`); the restore must recompute inheritance
+    // rooted at the restored ancestor, not just the child, or the restored
+    // parent comes back missing its inherited tag (#1884 convergence guard).
+    insert_block(&pool, "O1_TAG", "tag", "page-tag", None, None).await;
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind("O1_PG")
+        .bind("O1_TAG")
+        .execute(&pool)
+        .await
+        .unwrap();
+    {
+        let mut conn = pool.acquire().await.unwrap();
+        crate::tag_inheritance::recompute_subtree_inheritance(&mut conn, "O1_PG")
+            .await
+            .unwrap();
+    }
+
+    // 1) delete the CHILD as its own root (T1).
+    delete_block_inner(&pool, DEV, &mat, "O1_CHD".into())
+        .await
+        .unwrap();
+    let child_t1 = get_block_inner(&pool, "O1_CHD".into())
+        .await
+        .unwrap()
+        .deleted_at
+        .expect("child must be soft-deleted at T1");
+
+    // 2) delete the PARENT (T2). Cascade marks parent + page-subtree but SKIPS
+    //    the already-deleted child (filters deleted_at IS NULL), so the child
+    //    keeps deleted_at = T1.
+    delete_block_inner(&pool, DEV, &mat, "O1_PAR".into())
+        .await
+        .unwrap();
+    let chd_after = get_block_inner(&pool, "O1_CHD".into())
+        .await
+        .unwrap()
+        .deleted_at;
+    assert_eq!(
+        chd_after,
+        Some(child_t1),
+        "child must retain its own T1 tombstone after the parent's T2 cascade"
+    );
+    assert!(
+        get_block_inner(&pool, "O1_PAR".into())
+            .await
+            .unwrap()
+            .deleted_at
+            .is_some(),
+        "parent must be soft-deleted before the restore"
+    );
+
+    // 3) restore the CHILD via the single-row command path with its OWN T1
+    //    cohort ref. The fix must walk UP and restore the deleted parent too.
+    restore_block_inner(&pool, DEV, &mat, "O1_CHD".into(), child_t1)
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // SETTLED state: child AND parent both LIVE; child reachable under a live
+    // parent (so it is NOT an orphan).
+    let chd = get_block_inner(&pool, "O1_CHD".into()).await.unwrap();
+    let par = get_block_inner(&pool, "O1_PAR".into()).await.unwrap();
+    assert!(
+        chd.deleted_at.is_none(),
+        "restored child must be live, got deleted_at={:?}",
+        chd.deleted_at
+    );
+    assert!(
+        par.deleted_at.is_none(),
+        "the child's deleted PARENT must be restored too (no live orphan), \
+         got deleted_at={:?}",
+        par.deleted_at
+    );
+    assert_eq!(
+        chd.parent_id.as_ref().map(BlockId::as_str),
+        Some("O1_PAR"),
+        "child must remain parented under O1_PAR"
+    );
+
+    // The child is reachable under its now-live parent: it is no longer absent
+    // from BOTH the tree and trash.
+    let live_children: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE parent_id = ? AND deleted_at IS NULL",
+    )
+    .bind("O1_PAR")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        live_children, 1,
+        "the restored child must be a LIVE child of its restored parent"
+    );
+
+    // #1884 convergence guard: the restored PARENT must regain its inherited
+    // tag from the page. Its `block_tag_inherited` row was swept at parent-
+    // delete time; the restore must recompute inheritance rooted at the
+    // restored ancestor (not just the child) or the parent comes back missing
+    // its inherited tag. Both parent and child must inherit O1_TAG.
+    let par_inh: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_tag_inherited WHERE block_id = ? AND tag_id = ?",
+    )
+    .bind("O1_PAR")
+    .bind("O1_TAG")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        par_inh, 1,
+        "restored PARENT must re-inherit the page tag (inheritance recompute \
+         must be rooted at the restored ancestor, not just the child)"
+    );
+    let chd_inh: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_tag_inherited WHERE block_id = ? AND tag_id = ?",
+    )
+    .bind("O1_CHD")
+    .bind("O1_TAG")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        chd_inh, 1,
+        "restored CHILD must inherit the page tag through its restored parent"
+    );
+}
+
 // ======================================================================
 // C9 (#345) — same-epoch-ms collision must not conflate two cascade roots.
 // ======================================================================
