@@ -43,6 +43,7 @@
 
 use sqlx::SqliteConnection;
 
+use crate::db::reserved_key_blocks_column;
 use crate::error::AppError;
 use crate::loro::engine::BlockSnapshot;
 use crate::op::{
@@ -205,48 +206,38 @@ pub async fn project_set_property_to_sql(
 ) -> Result<(), AppError> {
     if is_reserved_property_key(&payload.key) {
         let block_id = payload.block_id.as_str();
-        match payload.key.as_str() {
-            "todo_state" => {
-                sqlx::query!(
-                    "UPDATE blocks SET todo_state = ? WHERE id = ?",
-                    payload.value_text,
-                    block_id
-                )
-                .execute(&mut *conn)
-                .await?;
-            }
-            "priority" => {
-                sqlx::query!(
-                    "UPDATE blocks SET priority = ? WHERE id = ?",
-                    payload.value_text,
-                    block_id
-                )
-                .execute(&mut *conn)
-                .await?;
-            }
-            "due_date" => {
-                sqlx::query!(
-                    "UPDATE blocks SET due_date = ? WHERE id = ?",
-                    payload.value_date,
-                    block_id
-                )
-                .execute(&mut *conn)
-                .await?;
-            }
-            "scheduled_date" => {
-                sqlx::query!(
-                    "UPDATE blocks SET scheduled_date = ? WHERE id = ?",
-                    payload.value_date,
-                    block_id
-                )
-                .execute(&mut *conn)
-                .await?;
-            }
-            other => {
-                return Err(AppError::Validation(format!(
-                    "project_set_property_to_sql: unrecognised reserved key '{other}'",
-                )));
-            }
+        // #1893: route the reserved-key→`blocks`-column mapping through the
+        // single drift-tested helper (`reserved_key_blocks_column`,
+        // db/recovery.rs) instead of a hand-rolled `match`, so a missing key
+        // is a centralized concern rather than a per-site runtime
+        // `Validation`. The four `RESERVED_PROPERTY_KEYS` reaching this branch
+        // always resolve to a `Some(col)`; the `else` only fires if a key is
+        // added to the reserved set without a mapping arm (drift), preserving
+        // the prior catch-all's loud-error semantics.
+        if let Some(col) = reserved_key_blocks_column(&payload.key) {
+            // `col` is a fixed internal literal from the helper's allowlist,
+            // never user input — safe to interpolate. The date-typed keys
+            // carry their value in `value_date`; the others in `value_text`.
+            // (`space` has its own branch below and never reaches here.)
+            let col_value: Option<&str> = match payload.key.as_str() {
+                "due_date" | "scheduled_date" => payload.value_date.as_deref(),
+                _ => payload.value_text.as_deref(),
+            };
+            // dynamic-sql: column name `col` comes only from the
+            // reserved_key_blocks_column allowlist (a fixed internal literal,
+            // never user input); the value is bound. Mirrors recovery.rs.
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE blocks SET {col} = ? WHERE id = ?"
+            )))
+            .bind(col_value)
+            .bind(block_id)
+            .execute(&mut *conn)
+            .await?;
+        } else {
+            return Err(AppError::Validation(format!(
+                "project_set_property_to_sql: unrecognised reserved key '{}'",
+                payload.key,
+            )));
         }
     } else if payload.key == SPACE_PROPERTY_KEY {
         // #533 Phase 2: `space` is column-backed ONLY — project the logged
@@ -555,35 +546,27 @@ pub async fn project_delete_property_to_sql(
     key: &str,
 ) -> Result<(), AppError> {
     if is_reserved_property_key(key) {
-        match key {
-            "todo_state" => {
-                sqlx::query!("UPDATE blocks SET todo_state = NULL WHERE id = ?", block_id)
-                    .execute(&mut *conn)
-                    .await?;
-            }
-            "priority" => {
-                sqlx::query!("UPDATE blocks SET priority = NULL WHERE id = ?", block_id)
-                    .execute(&mut *conn)
-                    .await?;
-            }
-            "due_date" => {
-                sqlx::query!("UPDATE blocks SET due_date = NULL WHERE id = ?", block_id)
-                    .execute(&mut *conn)
-                    .await?;
-            }
-            "scheduled_date" => {
-                sqlx::query!(
-                    "UPDATE blocks SET scheduled_date = NULL WHERE id = ?",
-                    block_id
-                )
-                .execute(&mut *conn)
-                .await?;
-            }
-            other => {
-                return Err(AppError::Validation(format!(
-                    "project_delete_property_to_sql: unrecognised reserved key '{other}'",
-                )));
-            }
+        // #1893: route the reserved-key→`blocks`-column mapping through the
+        // single drift-tested helper (`reserved_key_blocks_column`,
+        // db/recovery.rs) instead of a hand-rolled `match`. The four
+        // `RESERVED_PROPERTY_KEYS` reaching this branch always resolve to a
+        // `Some(col)`; the `else` preserves the prior catch-all's loud-error
+        // semantics for a reserved key added without a mapping arm (drift).
+        if let Some(col) = reserved_key_blocks_column(key) {
+            // dynamic-sql: `col` is a fixed internal literal from the helper's
+            // allowlist, never user input — safe to interpolate. (`space` has
+            // its own branch below and never reaches here, so no page-group
+            // fan-out.)
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE blocks SET {col} = NULL WHERE id = ?"
+            )))
+            .bind(block_id)
+            .execute(&mut *conn)
+            .await?;
+        } else {
+            return Err(AppError::Validation(format!(
+                "project_delete_property_to_sql: unrecognised reserved key '{key}'",
+            )));
         }
     } else if key == SPACE_PROPERTY_KEY {
         // #533 Phase 2: `space` is column-backed only — project the logged
@@ -1488,6 +1471,64 @@ mod tests {
         assert_eq!(prop_row.0, None);
         assert_eq!(prop_row.1, Some(2.5));
         assert_eq!(prop_row.2, None);
+    }
+
+    /// #1893: a date-typed reserved key (`due_date`) must route through the
+    /// `reserved_key_blocks_column` helper to its dedicated `blocks` column,
+    /// picking the `value_date` payload field (not `value_text`). The sibling
+    /// `..._writes_typed_value_and_hot_path_column` test only exercises a
+    /// `value_text`-typed reserved key (`todo_state`), so this guards the
+    /// value-field selection branch the helper-based routing introduced.
+    #[tokio::test]
+    async fn project_set_property_date_reserved_key_writes_date_column_via_helper() {
+        let (pool, _dir) = fresh_pool().await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', '', NULL, 0)",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let due_payload = SetPropertyPayload {
+            block_id: BlockId::from_trusted(BLOCK_A),
+            key: "due_date".into(),
+            value_text: None,
+            value_num: None,
+            value_date: Some("2026-06-21".into()),
+            value_ref: None,
+            value_bool: None,
+        };
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_set_property_to_sql(&mut conn, &due_payload)
+            .await
+            .expect("project due_date");
+        drop(conn);
+
+        let row: (Option<String>,) = sqlx::query_as("SELECT due_date FROM blocks WHERE id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch due_date");
+        assert_eq!(
+            row.0,
+            Some("2026-06-21".into()),
+            "due_date column must be written from value_date via the helper-mapped column"
+        );
+
+        // The date key must NOT leak into block_properties.
+        let props_count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'due_date'",
+        )
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch props count");
+        assert_eq!(
+            props_count.0, 0,
+            "reserved date key must NOT write to block_properties"
+        );
     }
 
     /// #1253: a non-reserved `SetProperty` whose five typed value fields are

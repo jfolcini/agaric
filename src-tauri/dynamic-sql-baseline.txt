@@ -43,7 +43,7 @@
 4 src-tauri/src/lib.rs
 3 src-tauri/src/link_metadata/mod.rs
 2 src-tauri/src/loro/peer_epoch.rs
-4 src-tauri/src/loro/projection.rs
+6 src-tauri/src/loro/projection.rs
 4 src-tauri/src/loro/snapshot.rs
 2 src-tauri/src/maintenance.rs
 4 src-tauri/src/materializer/coordinator.rs
