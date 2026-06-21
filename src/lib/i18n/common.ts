@@ -322,6 +322,19 @@ export const common: Record<string, string> = {
   'data.importTitle': 'Import',
   'data.importDesc': 'Import Logseq or Markdown files as pages.',
   'data.importButton': 'Choose Files',
+  // #1927 — second affordance: a `webkitdirectory` picker so a whole
+  // folder/vault can be imported (folder hierarchy → page namespace).
+  'data.importFolderButton': 'Import Folder',
+  // #1927 — Cancel a long-running multi-file/vault import between files.
+  'data.importCancelButton': 'Cancel',
+  // #1927 — partial result after the user cancels a multi-file import.
+  'data.importCancelled_one': 'Import cancelled — {{count}} file imported.',
+  'data.importCancelled_other': 'Import cancelled — {{count}} files imported.',
+  // #1927 — show the target space near the controls so the destination
+  // is never silent.
+  'data.importTargetSpace': 'Importing into: {{name}}',
+  // #1927 — post-import navigation action (success toast + result panel).
+  'data.importViewAction': 'View',
   'data.importingMessage': 'Importing...',
   'data.importSpaceNotReady': 'Select a space before importing.',
   'data.importingProgress': 'Importing file {{index}} of {{total}}: {{name}}',
@@ -348,6 +361,9 @@ export const common: Record<string, string> = {
   'data.importWarningsHeading_one': '{{count}} warning',
   'data.importWarningsHeading_other': '{{count}} warnings',
   'data.importFailedFile': 'Failed to import {{name}}',
+  // #1935 — surface WHY a file failed (Validation errors carry real
+  // text; internal errors are already sanitized backend-side).
+  'data.importFailedFileDetail': 'Failed to import {{name}}: {{reason}}',
   'data.importShowAll': 'Show all',
   'data.importShowLess': 'Show less',
   // Accessible names for the two progress bars (#1929).
