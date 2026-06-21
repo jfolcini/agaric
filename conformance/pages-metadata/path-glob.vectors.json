@@ -1,0 +1,104 @@
+{
+  "$comment_schema": "see ./README.md for the fixture schema",
+  "$comment": "Shared golden vectors for the Pages `PathGlob` filter primitive (#1910). The SAME file is asserted by the Rust query path (src-tauri/.../pages_path_glob_conformance_tests.rs, driving the real list_pages_with_metadata_inner with a PathGlob filter through LOWER(title) GLOB ?) and the tauri-mock TS reimplementation (src/lib/search-query/__tests__/glob-conformance.test.ts, driving pageGlobFilterMatches). The backend uses the SQLite GLOB dialect after #1320-A (prepare_globs: top-level comma split -> validate -> bounded brace expansion -> `[`-aware substring wrap -> ASCII-only lowercase, then `LOWER(title) GLOB ?`). If backend semantics change, regenerate this file from the Rust side; the mock test then fails until glob-validate.ts is realigned. Only the SET of matching page ids is compared cross-impl (representation-stable). Scenarios exercise the seven divergence classes from #1910 (brace expansion, char classes/ranges, literal-bracket flip, substring-wrap trigger, validation/rejection, whitespace trimming, ASCII-only folding).",
+  "rows": [
+    { "id": "01GLOB0000000000000000000A", "title": "foo" },
+    { "id": "01GLOB0000000000000000000B", "title": "bar" },
+    { "id": "01GLOB0000000000000000000C", "title": "atest" },
+    { "id": "01GLOB0000000000000000000D", "title": "btest" },
+    { "id": "01GLOB0000000000000000000E", "title": "ctest" },
+    { "id": "01GLOB0000000000000000000F", "title": "Projects" },
+    { "id": "01GLOB0000000000000000000G", "title": "alpha/x" },
+    { "id": "01GLOB0000000000000000000H", "title": "beta/y" },
+    { "id": "01GLOB0000000000000000000J", "title": "Café" },
+    { "id": "01GLOB0000000000000000000K", "title": "report" }
+  ],
+  "scenarios": [
+    {
+      "name": "brace expansion — {foo,bar} unions two substring-wrapped globs",
+      "pattern": "{foo,bar}",
+      "exclude": false,
+      "expectedMatchingIds": ["01GLOB0000000000000000000A", "01GLOB0000000000000000000B"]
+    },
+    {
+      "name": "character class — [ab]test matches a/b prefix, not c",
+      "pattern": "[ab]test",
+      "exclude": false,
+      "expectedMatchingIds": ["01GLOB0000000000000000000C", "01GLOB0000000000000000000D"]
+    },
+    {
+      "name": "char class + ASCII fold — [pP]roj* matches Projects",
+      "pattern": "[pP]roj*",
+      "exclude": false,
+      "expectedMatchingIds": ["01GLOB0000000000000000000F"]
+    },
+    {
+      "name": "brace + path — {alpha,beta}/* matches both path prefixes",
+      "pattern": "{alpha,beta}/*",
+      "exclude": false,
+      "expectedMatchingIds": ["01GLOB0000000000000000000G", "01GLOB0000000000000000000H"]
+    },
+    {
+      "name": "exclude — not {foo,bar} keeps every other row",
+      "pattern": "{foo,bar}",
+      "exclude": true,
+      "expectedMatchingIds": [
+        "01GLOB0000000000000000000C",
+        "01GLOB0000000000000000000D",
+        "01GLOB0000000000000000000E",
+        "01GLOB0000000000000000000F",
+        "01GLOB0000000000000000000G",
+        "01GLOB0000000000000000000H",
+        "01GLOB0000000000000000000J",
+        "01GLOB0000000000000000000K"
+      ]
+    },
+    {
+      "name": "single char — ?ar matches bar only",
+      "pattern": "?ar",
+      "exclude": false,
+      "expectedMatchingIds": ["01GLOB0000000000000000000B"]
+    },
+    {
+      "name": "bare word substring (preserved) — repo wraps to *repo*",
+      "pattern": "repo",
+      "exclude": false,
+      "expectedMatchingIds": ["01GLOB0000000000000000000K"]
+    },
+    {
+      "name": "ASCII-only fold — café matches Café (é case preserved both sides)",
+      "pattern": "café",
+      "exclude": false,
+      "expectedMatchingIds": ["01GLOB0000000000000000000J"]
+    },
+    {
+      "name": "ASCII-only fold — ascii 'cafe' does NOT match 'Café' (e != é)",
+      "pattern": "cafe",
+      "exclude": false,
+      "expectedMatchingIds": []
+    },
+    {
+      "name": "whitespace-only — trimmed to nothing, constrains nothing",
+      "pattern": "   ",
+      "exclude": false,
+      "expectedMatchingIds": [
+        "01GLOB0000000000000000000A",
+        "01GLOB0000000000000000000B",
+        "01GLOB0000000000000000000C",
+        "01GLOB0000000000000000000D",
+        "01GLOB0000000000000000000E",
+        "01GLOB0000000000000000000F",
+        "01GLOB0000000000000000000G",
+        "01GLOB0000000000000000000H",
+        "01GLOB0000000000000000000J",
+        "01GLOB0000000000000000000K"
+      ]
+    }
+  ],
+  "invalid": [
+    { "name": "unbalanced opening bracket", "pattern": "a[b" },
+    { "name": "unbalanced closing bracket", "pattern": "closed]" },
+    { "name": "nested braces", "pattern": "{a,{b}}" },
+    { "name": "escape sequences not supported", "pattern": "\\{foo\\}" }
+  ]
+}

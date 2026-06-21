@@ -159,3 +159,191 @@ export function expandBraces(pattern: string): string[] {
   }
   return results
 }
+
+/**
+ * Maximum byte length of a single trimmed sub-entry. Mirrors
+ * `MAX_GLOB_LEN` in `src-tauri/src/fts/glob_filter.rs` — a DoS guard against
+ * a caller shipping a many-megabyte pattern. Measured in UTF-8 bytes (as the
+ * Rust side measures `str::len`) AFTER comma-split + trim.
+ */
+export const MAX_GLOB_LEN = 1024
+
+/** ASCII-only lowercase (A–Z → a–z), mirroring SQLite's ICU-free `LOWER()`. */
+export function asciiLowercase(input: string): string {
+  return input.replace(/[A-Z]/g, (c) => c.toLowerCase())
+}
+
+/**
+ * Split one raw entry on top-level commas only — commas inside a `{…}` group
+ * are brace alternatives and must NOT split the entry. Mirrors
+ * `split_top_level_commas` in `glob_filter.rs`.
+ */
+function splitTopLevelCommas(input: string): string[] {
+  const out: string[] = []
+  let depth = 0
+  let last = 0
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i]
+    if (ch === '{') depth++
+    else if (ch === '}') depth = Math.max(0, depth - 1)
+    else if (ch === ',' && depth === 0) {
+      out.push(input.slice(last, i))
+      last = i + 1
+    }
+  }
+  out.push(input.slice(last))
+  return out
+}
+
+/** Wrap a bare token in `*…*` for substring matching, matching `wrap_substring`. */
+function wrapSubstring(input: string): string {
+  return /[*?[]/.test(input) ? input : `*${input}*`
+}
+
+const UTF8 = new TextEncoder()
+
+/**
+ * Port of `prepare_globs` (`src-tauri/src/fts/glob_filter.rs`): turn raw glob
+ * entries into the SQL-ready, ASCII-lowercased GLOB pattern list the backend
+ * would bind into `LOWER(title) GLOB ?`. Each entry is split on top-level
+ * commas; each non-empty trimmed sub-entry is length-checked, validated
+ * (`validateGlob`), brace-expanded, substring-wrapped, then ASCII-lowercased.
+ *
+ * Throws an {@link Error} whose message carries the shared `InvalidGlob:`
+ * prefix on a malformed pattern — the same contract the backend surfaces as
+ * `AppError::Validation`. An all-whitespace input yields `[]` (the caller
+ * treats that as "no constraint").
+ */
+export function prepareGlobs(entries: string[]): string[] {
+  const out: string[] = []
+  for (const entry of entries) {
+    for (const raw of splitTopLevelCommas(entry)) {
+      const trimmed = raw.trim()
+      if (trimmed.length === 0) continue
+      if (UTF8.encode(trimmed).length > MAX_GLOB_LEN) {
+        throw new Error(
+          prefixed(
+            ValidationCode.InvalidGlob,
+            `pattern length ${UTF8.encode(trimmed).length} exceeds cap ${MAX_GLOB_LEN}`,
+          ),
+        )
+      }
+      const invalid = validateGlob(trimmed)
+      if (invalid) throw new Error(invalid.message)
+      const expanded = expandBraces(trimmed)
+      const patterns = expanded.length > 0 ? expanded : [trimmed]
+      for (const pat of patterns) {
+        out.push(asciiLowercase(wrapSubstring(pat)))
+      }
+    }
+    if (out.length > EXPANSION_CAP) {
+      throw new Error(
+        prefixed(ValidationCode.InvalidGlob, `expansion exceeded cap ${EXPANSION_CAP}`),
+      )
+    }
+  }
+  return out
+}
+
+/**
+ * Compile ONE already-prepared (brace-expanded, substring-wrapped,
+ * ASCII-lowercased) GLOB pattern into an anchored `RegExp` mirroring SQLite's
+ * `GLOB` operator:
+ *   - `*` → any run of chars (incl. empty), `?` → exactly one char;
+ *   - `[…]` is a character class — a leading `^` negates (SQLite uses `^`,
+ *     not `!`), `a-z` ranges and a literal leading `]` are honored;
+ *   - every other char is a literal; GLOB has NO escape char, so a backslash
+ *     is itself a literal.
+ * GLOB is case-SENSITIVE and whole-string-anchored; case-insensitivity is
+ * obtained upstream by ASCII-lowercasing BOTH the pattern (in
+ * {@link prepareGlobs}) and the title (via {@link asciiLowercase}), so the
+ * compiled regex carries no `i` flag.
+ */
+export function globToRegExp(glob: string): RegExp {
+  let src = '^'
+  let i = 0
+  while (i < glob.length) {
+    const ch = glob[i]
+    if (ch === undefined) break
+    if (ch === '*') {
+      src += '.*'
+      i++
+    } else if (ch === '?') {
+      src += '.'
+      i++
+    } else if (ch === '[') {
+      const cls = compileCharClass(glob, i)
+      if (cls === null) {
+        // Unterminated `[` — `validateGlob` rejects this upstream, but stay
+        // safe and treat the bracket as a literal.
+        src += '\\['
+        i++
+      } else {
+        src += cls.regex
+        i = cls.next
+      }
+    } else {
+      src += escapeRegexLiteral(ch)
+      i++
+    }
+  }
+  src += '$'
+  return new RegExp(src)
+}
+
+/** Compile a `[...]` GLOB class starting at `start`; null if unterminated. */
+function compileCharClass(glob: string, start: number): { regex: string; next: number } | null {
+  let j = start + 1
+  let negate = false
+  if (glob[j] === '^') {
+    negate = true
+    j++
+  }
+  let body = ''
+  // A `]` immediately after `[` or `[^` is a literal member, not the close.
+  if (glob[j] === ']') {
+    body += '\\]'
+    j++
+  }
+  while (j < glob.length && glob[j] !== ']') {
+    const c = glob[j]
+    if (c === undefined) break
+    // Preserve `-` (range) and `^` (literal mid-class); escape only the chars
+    // that are structurally special inside a JS regex class.
+    body += c === '\\' ? '\\\\' : c
+    j++
+  }
+  if (j >= glob.length) return null
+  return { regex: `[${negate ? '^' : ''}${body}]`, next: j + 1 }
+}
+
+/** Escape a single literal char for use outside a regex character class. */
+function escapeRegexLiteral(ch: string): string {
+  return ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * Evaluate one Pages `PathGlob` filter primitive against a page title,
+ * faithfully mirroring the backend's `compile_pages_filters` PathGlob branch
+ * (`src-tauri/src/commands/pages/metadata.rs`):
+ *   - the raw pattern is run through {@link prepareGlobs} as a single entry;
+ *   - a whitespace-only / fully-stripped pattern constrains nothing, so the
+ *     row passes (the backend `continue`s, emitting no clause);
+ *   - include (`exclude=false`): the title matches if it GLOB-matches ANY
+ *     prepared pattern; exclude (`exclude=true`): it must match NONE;
+ *   - an invalid glob makes the backend reject the whole query
+ *     (`AppError::Validation` → zero rows); the closest per-row approximation
+ *     is "no rows", so the row is dropped for both include and exclude.
+ */
+export function pageGlobFilterMatches(pattern: string, title: string, exclude: boolean): boolean {
+  let prepared: string[]
+  try {
+    prepared = prepareGlobs([pattern])
+  } catch {
+    return false
+  }
+  if (prepared.length === 0) return true
+  const hay = asciiLowercase(title)
+  const hit = prepared.some((p) => globToRegExp(p).test(hay))
+  return exclude ? !hit : hit
+}

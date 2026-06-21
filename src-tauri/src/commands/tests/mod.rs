@@ -9,6 +9,7 @@ mod list_pages_with_metadata_tests;
 mod metadata_filter_tests;
 mod page_cmd_tests;
 mod pages_metadata_conformance_tests;
+mod pages_path_glob_conformance_tests;
 mod property_cmd_tests;
 mod query_cmd_tests;
 mod search_blocks_struct_tests;
