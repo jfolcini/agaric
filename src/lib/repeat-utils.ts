@@ -23,8 +23,8 @@ export function formatRepeatLabel(value: string, t: TFunction): string {
     yearly: t('repeat.yearly'),
   }
   if (baseLabels[interval]) return `${baseLabels[interval]}${modeSuffix}`
-  // Custom interval: +3d, 2w, etc.
-  const match = interval.match(/^(\d+)([dwm])$/)
+  // Custom interval: +3d, 2w, +2y, etc.
+  const match = interval.match(/^(\d+)([dwmy])$/)
   if (match) {
     const n = Number.parseInt(match[1] as string, 10)
     const unitKey =
@@ -32,7 +32,9 @@ export function formatRepeatLabel(value: string, t: TFunction): string {
         ? 'repeat.everyDays'
         : match[2] === 'w'
           ? 'repeat.everyWeeks'
-          : 'repeat.everyMonths'
+          : match[2] === 'm'
+            ? 'repeat.everyMonths'
+            : 'repeat.everyYears'
     return `${t(unitKey, { count: n })}${modeSuffix}`
   }
   return value

@@ -72,6 +72,8 @@ export const block: Record<string, string> = {
   'repeat.everyWeeks_other': 'every {{count}} weeks',
   'repeat.everyMonths_one': 'every {{count}} month',
   'repeat.everyMonths_other': 'every {{count}} months',
+  'repeat.everyYears_one': 'every {{count}} year',
+  'repeat.everyYears_other': 'every {{count}} years',
   'callout.info': 'Info',
   'callout.warning': 'Warning',
   'callout.tip': 'Tip',
