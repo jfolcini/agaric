@@ -384,37 +384,17 @@ pub fn append_metadata_sql(
 ) -> Vec<MetaBind> {
     let mut binds: Vec<MetaBind> = Vec::new();
 
-    // #1280 B2 — `state` / `excluded_state` / `due_date` / `scheduled_date`
-    // are NO LONGER emitted here: they are compiled through `SearchProjection`
-    // (which delegates to the canonical A2 `PagesProjection` SQL) and spliced
-    // by `StructuralFilterBuilder::add_metadata` via the `_via_projection`
+    // #1280 B2 — `state` / `excluded_state` / `priority` / `excluded_priority`
+    // / `due_date` / `scheduled_date` are NO LONGER emitted here: they are
+    // compiled through `SearchProjection` (which delegates to the canonical A2
+    // `PagesProjection` SQL) and spliced by
+    // `StructuralFilterBuilder::add_metadata` via the `_via_projection`
     // helpers. The A2 SQL is byte-shape-identical to the legacy fragments this
     // function used to emit (`append_text_in_or_null` /
     // `append_text_not_in_or_not_null` / `append_date_predicate`), so the
-    // cutover is behaviour-preserving. PRIORITY and PROPERTY stay here:
-    // priority needs the not-yet-added multi-value `State`-style variant, and
-    // property's four-column (`value_text/num/date/ref`) OR diverges from the
-    // projection's single-column `value_text` match.
-
-    // priority ---------------------------------------------------------
-    append_text_in_or_null(
-        sql,
-        next_param,
-        &mut binds,
-        &meta.priority_values,
-        meta.priority_is_null,
-        &format!("{block_alias}.priority"),
-    );
-
-    // Excluded priority --------------------------------------
-    append_text_not_in_or_not_null(
-        sql,
-        next_param,
-        &mut binds,
-        &meta.excluded_priority_values,
-        meta.excluded_priority_not_null,
-        &format!("{block_alias}.priority"),
-    );
+    // cutover is behaviour-preserving. PROPERTY stays here: its four-column
+    // (`value_text/num/date/ref`) OR diverges from the projection's
+    // single-column `value_text` match.
 
     // property includes ------------------------------------------------
     for pf in &meta.property_includes {
@@ -547,104 +527,6 @@ fn parse_ulid(raw: &str) -> Option<String> {
         return None;
     }
     Some(raw.to_ascii_uppercase())
-}
-
-fn append_text_in_or_null(
-    sql: &mut String,
-    next_param: &mut usize,
-    binds: &mut Vec<MetaBind>,
-    values: &[String],
-    is_null: bool,
-    column: &str,
-) {
-    if values.is_empty() && !is_null {
-        return;
-    }
-    // Build the disjunction: (column IN (?, ?, ...) OR column IS NULL).
-    let mut parts: Vec<String> = Vec::new();
-    if !values.is_empty() {
-        let placeholders: Vec<String> = values
-            .iter()
-            .map(|_| {
-                let idx = *next_param;
-                *next_param += 1;
-                format!("?{idx}")
-            })
-            .collect();
-        parts.push(format!("{column} IN ({})", placeholders.join(", ")));
-        for v in values {
-            binds.push(MetaBind::Str(v.clone()));
-        }
-    }
-    if is_null {
-        parts.push(format!("{column} IS NULL"));
-    }
-    sql.push_str(&format!("\n           AND ({})", parts.join(" OR ")));
-}
-
-/// Emit the inverted clause for `not-state:` / `not-priority:`.
-///
-/// Shape: `(column IS NULL OR column NOT IN (?, ?, ...))`. The
-/// `IS NULL` branch is **always included by design** so a "blocks NOT
-/// in DONE" query returns blocks with no state set at all, not
-/// excludes them. The `not-state:none` sentinel flips
-/// `not_null = true` and emits `column IS NOT NULL` instead — that
-/// reads as "exclude blocks with no state".
-fn append_text_not_in_or_not_null(
-    sql: &mut String,
-    next_param: &mut usize,
-    binds: &mut Vec<MetaBind>,
-    values: &[String],
-    not_null: bool,
-    column: &str,
-) {
-    if values.is_empty() && !not_null {
-        return;
-    }
-    let mut parts: Vec<String> = Vec::new();
-    if !values.is_empty() {
-        // Defensive guard against the SQL three-valued
-        // `NOT IN (…, NULL)` trap. In SQL, `x NOT IN (a, b, NULL)` is
-        // NULL (never TRUE) for *every* non-matching `x`, because the
-        // comparison against the NULL element yields UNKNOWN — so a list
-        // containing a SQL NULL would silently drop ALL rows. Here the
-        // `values` are `&[String]`, so they can never carry a SQL NULL,
-        // and the `none` sentinel (the only thing that maps to a NULL
-        // predicate) is split out upstream in `prepare_metadata_with_today`
-        // into `not_null` before this fn is reached. The `IS NULL` branch
-        // below is therefore the SEPARATE, deliberate NULL handling — it
-        // is NOT part of the `IN` list. This filter+assert make the
-        // invariant explicit so a future refactor that lets a sentinel
-        // leak into `values` fails loudly in debug instead of silently
-        // returning zero rows.
-        debug_assert!(
-            values.iter().all(|v| !v.eq_ignore_ascii_case("none")),
-            "the `none` sentinel must be split out before reaching the NOT IN list"
-        );
-        let placeholders: Vec<String> = values
-            .iter()
-            .map(|_| {
-                let idx = *next_param;
-                *next_param += 1;
-                format!("?{idx}")
-            })
-            .collect();
-        // NULL-inclusive inversion: a row with `column IS NULL` is
-        // counted as "not in the excluded set". This `IS NULL` lives
-        // OUTSIDE the `IN (...)` list (see the note above) so the
-        // 3-valued `NOT IN (…, NULL)` trap cannot arise.
-        parts.push(format!(
-            "{column} IS NULL OR {column} NOT IN ({})",
-            placeholders.join(", ")
-        ));
-        for v in values {
-            binds.push(MetaBind::Str(v.clone()));
-        }
-    }
-    if not_null {
-        parts.push(format!("{column} IS NOT NULL"));
-    }
-    sql.push_str(&format!("\n           AND ({})", parts.join(" OR ")));
 }
 
 fn monday_of(d: NaiveDate) -> NaiveDate {
@@ -1014,36 +896,21 @@ mod tests {
         assert!(m.excluded_priority_values.is_empty());
     }
 
-    // #1280 B2 — the `state:` / `excluded_state` SQL emission moved OFF
-    // `append_metadata_sql` and onto `SearchProjection::compile_state` (which
-    // delegates to the canonical A2 `PagesProjection` SQL). The byte-shape of
-    // that SQL is proved by A2's projection oracle tests; the search-path
-    // wiring + row equivalence is proved by the B2 DB tests in `fts::tests`.
-    // The former `excluded_state_sql_emits_null_inclusive_not_in` /
-    // `excluded_state_none_sentinel_sql_emits_is_not_null` SQL-shape tests
-    // were retired here because `append_metadata_sql` no longer emits state.
-    // The RESOLUTION tests (`excluded_state_values_route_to_predicate` /
+    // #1280 B2 — the `state:` / `excluded_state` / `priority:` /
+    // `excluded_priority` SQL emission moved OFF `append_metadata_sql` and onto
+    // `SearchProjection::compile_state` / `compile_priority` (which delegate to
+    // the canonical A2 `PagesProjection` SQL). The byte-shape of that SQL is
+    // proved by A2's projection oracle tests + the `priority_*_via_projection`
+    // parity tests in `fts::filter_builder`; the search-path wiring + row
+    // equivalence is proved by the B2 DB tests in `fts::tests`. The former
+    // `excluded_state_sql_emits_null_inclusive_not_in` /
+    // `excluded_state_none_sentinel_sql_emits_is_not_null` /
+    // `excluded_priority_combined_with_values_and_null_sentinel` SQL-shape
+    // tests were retired here because `append_metadata_sql` no longer emits
+    // state or priority. The RESOLUTION tests
+    // (`excluded_state_values_route_to_predicate` /
     // `excluded_state_none_sentinel_flips_to_not_null`) remain — they cover
     // `prepare_metadata`, which is unchanged.
-
-    #[test]
-    fn excluded_priority_combined_with_values_and_null_sentinel() {
-        let meta = MetadataPredicates {
-            excluded_priority_values: vec!["1".into()],
-            excluded_priority_not_null: true,
-            ..Default::default()
-        };
-        let mut sql = String::new();
-        let mut p = 1usize;
-        let _ = append_metadata_sql(&mut sql, &mut p, &meta, "b");
-        // Single AND-clause with two OR-branches: NULL-inclusive
-        // NOT-IN clause OR `IS NOT NULL`. They compose into a
-        // tautology, but the SQL composition must still emit both
-        // for shape-correctness; the projection deduplicates
-        // upstream.
-        assert!(sql.contains("b.priority IS NULL OR b.priority NOT IN"));
-        assert!(sql.contains("b.priority IS NOT NULL"));
-    }
 
     // -----------------------------------------------------------------
     // `prop:` four-column matching

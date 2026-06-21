@@ -231,7 +231,7 @@ async fn seed_prop_ref(pool: &SqlitePool, block_id: &str, key: &str, ref_id: &st
 }
 
 /// Set the fixed `blocks.priority` column on a page block so a
-/// `Priority { priority }` filter (compiled to `b.priority = ?`) can
+/// `Priority { values }` filter (compiled to `(b.priority IN (?))`) can
 /// match. Mirrors migration 0012's fixed-field shape.
 async fn seed_priority(pool: &SqlitePool, block_id: &str, priority: &str) {
     sqlx::query("UPDATE blocks SET priority = ? WHERE id = ?")
@@ -1688,7 +1688,9 @@ async fn filter_priority_and_tag_compose_correctly_despite_cost_reorder() {
             PageSort::Alphabetical,
             vec![
                 FilterPrimitive::Priority {
-                    priority: "A".to_string(),
+                    values: vec!["A".to_string()],
+                    is_null: false,
+                    exclude: false,
                 },
                 FilterPrimitive::Tag {
                     tag: tag.to_string(),
@@ -2768,7 +2770,9 @@ async fn filter_priority_narrows_to_matching_priority() {
         filter_with(
             PageSort::Alphabetical,
             vec![FilterPrimitive::Priority {
-                priority: "A".to_string(),
+                values: vec!["A".to_string()],
+                is_null: false,
+                exclude: false,
             }],
         ),
         None,

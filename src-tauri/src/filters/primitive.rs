@@ -57,8 +57,17 @@ pub enum FilterPrimitive {
     LastEdited { spec: LastEditedSpec },
     /// Shared — block's owning page lives in this space.
     Space { space_id: String },
-    /// Shared — block's `priority` matches this value.
-    Priority { priority: String },
+    /// Shared — block's `priority` is in `values` (or IS NULL when
+    /// `is_null`). `exclude=true` negates the membership test. Multi-value
+    /// to support the chip vocabulary; the single-value backlink `Priority`
+    /// leaf routes to `{ values: [priority], is_null: false, exclude: false }`.
+    Priority {
+        values: Vec<String>,
+        #[serde(default)]
+        is_null: bool,
+        #[serde(default)]
+        exclude: bool,
+    },
     /// #1280 — block's `todo_state` is in `values` (or IS NULL when
     /// `is_null`). `exclude=true` negates the membership test. Multi-value
     /// to support the chip vocabulary; the single-value backlink `TodoState`
@@ -443,7 +452,7 @@ pub trait Projection {
     fn compile_has_property(&self, key: &str, predicate: &PropertyPredicate) -> WhereClause;
     fn compile_last_edited(&self, spec: &LastEditedSpec) -> WhereClause;
     fn compile_space(&self, space_id: &str) -> WhereClause;
-    fn compile_priority(&self, priority: &str) -> WhereClause;
+    fn compile_priority(&self, values: &[String], is_null: bool, exclude: bool) -> WhereClause;
 
     // #1280 — shared metadata primitives; default to `unsupported` so a
     // projection only opts in by overriding (currently `BacklinkProjection`).
@@ -525,7 +534,11 @@ pub trait Projection {
             }
             FilterPrimitive::LastEdited { spec } => self.compile_last_edited(spec),
             FilterPrimitive::Space { space_id } => self.compile_space(space_id),
-            FilterPrimitive::Priority { priority } => self.compile_priority(priority),
+            FilterPrimitive::Priority {
+                values,
+                is_null,
+                exclude,
+            } => self.compile_priority(values, *is_null, *exclude),
             FilterPrimitive::State {
                 values,
                 is_null,
@@ -1070,8 +1083,14 @@ impl Projection for PagesProjection {
     fn compile_space(&self, space_id: &str) -> WhereClause {
         WhereClause::new("b.space_id = ?", vec![Bind::Text(space_id.to_string())])
     }
-    fn compile_priority(&self, priority: &str) -> WhereClause {
-        WhereClause::new("b.priority = ?", vec![Bind::Text(priority.to_string())])
+    fn compile_priority(&self, values: &[String], is_null: bool, exclude: bool) -> WhereClause {
+        // Canonical Pages SQL for the `priority:` leaf, byte-shape identical
+        // to the LEGACY FTS metadata oracle (`append_text_in_or_null` /
+        // `append_text_not_in_or_not_null`, column `b.priority`) so routing
+        // the Search metadata path through this projection is a
+        // zero-behaviour-change cutover. See `compile_state` for the
+        // per-branch INCLUDE/EXCLUDE/is_null rationale (identical shape).
+        in_or_null("b.priority", values, is_null, exclude)
     }
     fn compile_state(&self, values: &[String], is_null: bool, exclude: bool) -> WhereClause {
         // #1280 — canonical Pages SQL for the `state:` leaf, byte-shape
@@ -1283,8 +1302,8 @@ impl Projection for SearchProjection {
     fn compile_space(&self, space_id: &str) -> WhereClause {
         PagesProjection.compile_space(space_id)
     }
-    fn compile_priority(&self, priority: &str) -> WhereClause {
-        WhereClause::new("b.priority = ?", vec![Bind::Text(priority.to_string())])
+    fn compile_priority(&self, values: &[String], is_null: bool, exclude: bool) -> WhereClause {
+        PagesProjection.compile_priority(values, is_null, exclude)
     }
     // #1280 B2 — the search metadata leaves (`state:` / `block-type:` /
     // `due-date:` / `scheduled:`) DELEGATE to the canonical `PagesProjection`
@@ -1402,7 +1421,9 @@ mod tests {
                 space_id: "s".into(),
             },
             FilterPrimitive::Priority {
-                priority: "A".into(),
+                values: vec!["A".into()],
+                is_null: false,
+                exclude: false,
             },
             FilterPrimitive::State {
                 values: vec!["TODO".into()],
@@ -1512,9 +1533,11 @@ mod tests {
         assert_eq!(where_tag.binds.len(), 1);
 
         let where_priority = p.compile(&FilterPrimitive::Priority {
-            priority: "A".into(),
+            values: vec!["A".into()],
+            is_null: false,
+            exclude: false,
         });
-        assert_eq!(where_priority.sql, "b.priority = ?");
+        assert_eq!(where_priority.sql, "(b.priority IN (?))");
 
         let where_space = p.compile(&FilterPrimitive::Space {
             space_id: "01SPACE0001".into(),
@@ -1881,7 +1904,9 @@ mod tests {
         // Priority — per-row equality, cheap (1).
         assert_eq!(
             FilterPrimitive::Priority {
-                priority: "A".into()
+                values: vec!["A".into()],
+                is_null: false,
+                exclude: false,
             }
             .cost_hint(),
             1

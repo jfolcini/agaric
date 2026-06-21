@@ -208,7 +208,26 @@ export function metaRowMatchesFilter(r: PageMetaRow, f: Record<string, unknown>)
       return blockTags.get(r.id)?.has(f['tag'] as string) ?? false
     }
     case 'Priority': {
-      return r.priority === (f['priority'] as string)
+      // Multi-value membership over `blocks.priority`, mirroring the REAL
+      // backend's `in_or_null("b.priority", values, is_null, exclude)`
+      // (src-tauri/src/filters/primitive.rs). INCLUDE: row matches if its
+      // priority is in `values` OR (is_null AND priority IS NULL). EXCLUDE:
+      // NULL-inclusive inversion — a NULL priority counts as "not in the
+      // excluded set", and `is_null` ADDS "priority IS NOT NULL". An empty,
+      // null-less set is a no-op (matches every row), mirroring the legacy
+      // helper's early return.
+      const values = (f['values'] as string[] | undefined) ?? []
+      const isNull = (f['is_null'] as boolean | undefined) ?? false
+      const exclude = (f['exclude'] as boolean | undefined) ?? false
+      if (values.length === 0 && !isNull) {
+        return true
+      }
+      const inValues = r.priority != null && values.includes(r.priority)
+      if (exclude) {
+        const notIn = r.priority == null || !inValues
+        return isNull ? notIn || r.priority != null : notIn
+      }
+      return inValues || (isNull && r.priority == null)
     }
     case 'PathGlob': {
       // SQLite-`GLOB` dialect parity (#1910): brace expansion, `[class]`

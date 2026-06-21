@@ -310,7 +310,7 @@ describe('FilterPrimitive vocabulary → canonical (lossless leaves)', () => {
     },
     {
       name: 'Priority',
-      filter: { type: 'Priority', priority: '2' },
+      filter: { type: 'Priority', values: ['2'], is_null: false, exclude: false },
       expected: { kind: 'priority', values: ['2'], exclude: false },
     },
     {

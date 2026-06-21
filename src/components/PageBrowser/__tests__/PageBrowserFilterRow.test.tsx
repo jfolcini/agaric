@@ -61,7 +61,7 @@ describe('pageFilterSummary', () => {
     ['Stub', { type: 'Stub' }, 'Stub'],
     ['HasNoInboundLinks', { type: 'HasNoInboundLinks' }, 'No inbound links'],
     ['Tag', { type: 'Tag', tag: 'urgent' }, 'tag: urgent'],
-    ['Priority', { type: 'Priority', priority: 'A' }, 'priority A'],
+    ['Priority', { type: 'Priority', values: ['A'], is_null: false, exclude: false }, 'priority A'],
     ['Space', { type: 'Space', space_id: 's-1' }, 'this space'],
     // PathGlob — both exclude values (D24 ships the path-exclude toggle, so the
     // Pages popover emits exclude=true too).

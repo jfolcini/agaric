@@ -717,7 +717,7 @@ export function filterPrimitiveToCanonical(filter: FilterPrimitive): FilterPredi
       return { kind: 'space', spaceId: filter.space_id }
     }
     case 'Priority': {
-      return { kind: 'priority', values: [filter.priority], exclude: false }
+      return { kind: 'priority', values: [...filter.values], exclude: filter.exclude ?? false }
     }
     case 'State': {
       return {
@@ -1061,15 +1061,18 @@ function canonicalPropertyToFilterPrimitive(
     : { type: 'HasProperty', key: predicate.key, predicate: predicate.predicate }
 }
 
-/** A canonical `priority` back to the single-valued, never-negated Pages leaf. */
+/** A canonical `priority` back to the Pages `Priority` leaf. */
 function canonicalPriorityToFilterPrimitive(
   predicate: Extract<FilterPredicate, { kind: 'priority' }>,
 ): FilterPrimitive | null {
-  // The Pages `Priority` wire leaf is single-valued and never negated.
-  const [only] = predicate.values
-  return !predicate.exclude && predicate.values.length === 1 && only !== undefined
-    ? { type: 'Priority', priority: only }
-    : null
+  // The Pages `Priority` wire leaf is now multi-value with an exclude flag
+  // (P3.1), mirroring `State`; priority has no is_null sentinel.
+  return {
+    type: 'Priority',
+    values: [...predicate.values],
+    is_null: false,
+    exclude: predicate.exclude,
+  }
 }
 
 /** A canonical `date` back to the Pages `DueDate` / `Scheduled` leaf (or null). */
