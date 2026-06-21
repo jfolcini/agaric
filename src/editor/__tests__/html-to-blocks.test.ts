@@ -225,6 +225,18 @@ describe('htmlBodyToOutline — tables (Phase 2)', () => {
     const row = table?.content?.[0]
     expect(row?.content).toHaveLength(2)
   })
+
+  it('escapes a trailing backslash so it cannot escape the column delimiter', () => {
+    // A literal `\` at the end of a cell must not shield the next `|` separator
+    // (CodeQL js/incomplete-sanitization). Backslash is escaped first → `\\`.
+    const blocks = convert('<table><tr><td>a\\</td><td>b</td></tr></table>')
+    expect(blocks[0]?.content).toContain('a\\\\')
+    // Re-parses to a single 2-column row — the delimiter survived.
+    const doc = parse(blocks[0]?.content ?? '')
+    const table = doc.content?.[0] as unknown as { content?: { content?: unknown[] }[] } | undefined
+    const row = table?.content?.[0]
+    expect(row?.content).toHaveLength(2)
+  })
 })
 
 describe('htmlBodyToOutline — fenced code blocks (Phase 2)', () => {

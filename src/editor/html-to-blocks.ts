@@ -81,9 +81,19 @@ function squashWhitespace(s: string): string {
  * Escape a table cell's inline markdown so a literal `|` inside the cell is not
  * read as a column separator (the parser unescapes `\|` → `|` per cell). Also
  * collapses whitespace so a multi-line cell stays on its single table row.
+ *
+ * Backslash is escaped FIRST (`\` → `\\`), before the pipe escape introduces
+ * its own backslashes: otherwise a literal trailing `\` in the cell content
+ * would escape the following column-delimiter `|` and silently merge two cells
+ * (the parser's `splitRowOnUnescapedPipes` treats `\x` as a verbatim pair).
+ * Escaping it first turns it into `\\` — a verbatim pair the splitter consumes
+ * without shielding the real separator. The parser only unescapes `\|` (not
+ * `\\`), so a literal backslash renders as `\\`; that fidelity nit is
+ * acceptable for the rare case of a backslash inside a pasted table cell, and
+ * is far better than dropping a column boundary.
  */
 function escapeTableCell(s: string): string {
-  return squashWhitespace(s).replace(/\|/g, '\\|')
+  return squashWhitespace(s).replace(/\\/g, '\\\\').replace(/\|/g, '\\|')
 }
 
 /**
