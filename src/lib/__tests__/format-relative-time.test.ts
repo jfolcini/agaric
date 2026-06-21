@@ -9,7 +9,7 @@
  *  - Future timestamps → "just now"
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { formatRelativeTime } from '../format-relative-time'
 
@@ -109,8 +109,19 @@ describe('formatRelativeTime', () => {
     // 0 is a valid past timestamp; consumers gate the null "never synced"
     // case themselves via t('sidebar.lastSyncedNever'), so the formatter must
     // still produce a relative string for 0 rather than anything special.
-    const result = formatRelativeTime(0, mockT as never)
-    expect(result).toBe(`sidebar.daysAgo:${Math.floor((Date.now() - 0) / 86_400_000)}`)
+    //
+    // Pin the clock so the expected day-count and the formatter's internal
+    // `Date.now()` read the SAME instant — otherwise a minute/midnight-boundary
+    // straddle between the two reads can flake the floor-of-days assertion.
+    vi.useFakeTimers()
+    try {
+      const fixedNow = new Date('2026-06-21T12:00:00Z')
+      vi.setSystemTime(fixedNow)
+      const result = formatRelativeTime(0, mockT as never)
+      expect(result).toBe(`sidebar.daysAgo:${Math.floor((fixedNow.getTime() - 0) / 86_400_000)}`)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
