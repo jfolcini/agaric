@@ -17,7 +17,6 @@
   "ignores": [
     "SESSION-LOG.md",
     "docs/session-log/**",
-    ".analysis/**",
     "node_modules/**",
     "dist/**",
     "src-tauri/target/**",
