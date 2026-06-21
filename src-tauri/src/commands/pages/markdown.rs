@@ -606,12 +606,125 @@ pub async fn export_page_markdown_inner(
         output.push_str("---\n\n");
     }
 
-    // Block content
+    // Block content (#1916).
+    //
+    // Each descendant must be emitted as `<indent>- <content>` where
+    // `<indent>` is `"  ".repeat(depth)` — the *exact* shape
+    // `import::parse_logseq_markdown` reconstructs (it derives block identity
+    // from the `- ` prefix and nesting depth from leading-spaces / 2). The
+    // pre-fix loop wrote raw content with no bullet and no indentation, so
+    // Agaric's own export collapsed to a single block on re-import.
+    //
+    // CRITICAL: `descendants` is ordered FLAT by `(position, id)` over the
+    // keyset — `position` is the *sibling* slot (dense within a parent), so
+    // two blocks under different parents can share a position and the global
+    // order does NOT guarantee parent-before-child (e.g. a child whose id
+    // sorts before its parent's). Emitting in that flat order would both
+    // mis-compute depth AND, worse, present a child bullet before its parent
+    // bullet, which the importer's document-order parent-stack would
+    // mis-reparent. So we re-order the subtree into DFS pre-order here:
+    // build `parent_id -> children` (children sorted by `(position, id)`,
+    // matching the read order), then walk depth-first from the page root.
+    // This guarantees every parent precedes its children and yields the
+    // correct depth for indentation.
+    let mut children_by_parent: HashMap<String, Vec<&BlockRow>> = HashMap::new();
     for block in &descendants {
+        let parent_key = block
+            .parent_id
+            .as_ref()
+            .map_or_else(|| page_id.to_string(), |p| p.clone().into_string());
+        children_by_parent
+            .entry(parent_key)
+            .or_default()
+            .push(block);
+    }
+    for children in children_by_parent.values_mut() {
+        // The read query already orders by `(COALESCE(position, sentinel),
+        // id)`; preserve that sibling order within each parent.
+        children.sort_by(|a, b| {
+            let pa = a.position.unwrap_or(NULL_POSITION_SENTINEL);
+            let pb = b.position.unwrap_or(NULL_POSITION_SENTINEL);
+            pa.cmp(&pb)
+                .then_with(|| a.id.clone().into_string().cmp(&b.id.clone().into_string()))
+        });
+    }
+
+    // Iterative DFS pre-order from the page root. A visited set guards against
+    // a pathological parent cycle (a block whose ancestor chain loops back) so
+    // export can never infinite-loop on corrupt data.
+    let mut visited: HashSet<String> = HashSet::new();
+    // Stack of (block, depth), pushed in reverse so siblings pop in order.
+    let mut stack: Vec<(&BlockRow, usize)> = Vec::new();
+    if let Some(roots) = children_by_parent.get(page_id) {
+        for child in roots.iter().rev() {
+            stack.push((child, 0));
+        }
+    }
+    while let Some((block, depth)) = stack.pop() {
+        let id = block.id.clone().into_string();
+        if !visited.insert(id.clone()) {
+            continue;
+        }
+
+        let indent = "  ".repeat(depth);
         let content = block.content.as_deref().unwrap_or("");
         let resolved = resolve_ulids_for_export(content, &tag_names, &page_titles);
-        output.push_str(&resolved);
-        output.push('\n');
+        output.push_str(&format!("{indent}- {resolved}\n"));
+
+        // #1916 — task metadata (TODO/DONE state, priority, scheduled/due
+        // dates) lives in the reserved `blocks` columns, not in
+        // `block_properties`, so it is invisible to the content render above.
+        // Emit each populated column as a `key:: value` property line indented
+        // one level under the bullet — the EXACT form the importer's property
+        // parser reads back (`parse_logseq_markdown` attaches a `key:: value`
+        // line to its owning block, and the apply path routes the reserved
+        // keys `todo_state` / `priority` / `due_date` / `scheduled_date` into
+        // their columns via `typed_property_args_for_string_value`). No new
+        // syntax is invented — these are ordinary Logseq property lines.
+        let prop_indent = "  ".repeat(depth + 1);
+        for (key, value) in [
+            ("todo_state", block.todo_state.as_deref()),
+            ("priority", block.priority.as_deref()),
+            ("scheduled_date", block.scheduled_date.as_deref()),
+            ("due_date", block.due_date.as_deref()),
+        ] {
+            if let Some(v) = value.filter(|s| !s.is_empty()) {
+                output.push_str(&format!("{prop_indent}{key}:: {v}\n"));
+            }
+        }
+
+        // Push this block's children (reversed so they pop in sibling order)
+        // at depth + 1.
+        if let Some(kids) = children_by_parent.get(&id) {
+            for kid in kids.iter().rev() {
+                stack.push((kid, depth + 1));
+            }
+        }
+    }
+
+    // Safety net: any descendant NOT reachable by DFS from the page root
+    // (e.g. an orphan whose `parent_id` points outside this subtree while its
+    // denormalised `page_id` still names this page) would otherwise be
+    // silently dropped — the pre-fix flat loop emitted every descendant. Emit
+    // such strays at depth 0 in the read order so the export stays lossless.
+    for block in &descendants {
+        let id = block.id.clone().into_string();
+        if visited.contains(&id) {
+            continue;
+        }
+        let content = block.content.as_deref().unwrap_or("");
+        let resolved = resolve_ulids_for_export(content, &tag_names, &page_titles);
+        output.push_str(&format!("- {resolved}\n"));
+        for (key, value) in [
+            ("todo_state", block.todo_state.as_deref()),
+            ("priority", block.priority.as_deref()),
+            ("scheduled_date", block.scheduled_date.as_deref()),
+            ("due_date", block.due_date.as_deref()),
+        ] {
+            if let Some(v) = value.filter(|s| !s.is_empty()) {
+                output.push_str(&format!("  {key}:: {v}\n"));
+            }
+        }
     }
 
     Ok(output)
@@ -1137,15 +1250,33 @@ pub async fn import_markdown_with_progress(
             .map(|(_, id)| id.clone())
             .unwrap_or(page_id.clone());
 
-        // Create the block inside the current chunk's transaction. A
-        // failure here aborts the import — `?` drops `tx` and rolls back
-        // the current chunk (earlier committed chunks survive).
+        // Create the block inside the current chunk's transaction.
         // #1446 Part B — rewrite inbound `[[Page Name]]` wiki-links to internal
         // `[[ULID]]` refs using the pre-resolved map. Names that were
         // ambiguous / unresolvable (absent from the map) keep their original
         // plain-text token; canonical `[[ULID]]` tokens are left untouched.
         let content = rewrite_inbound_page_links(&block.content, &resolved_page_links);
-        let (new_block, block_op) = create_block_in_tx(
+
+        // #1918 — a SINGLE problematic block must degrade gracefully
+        // (skip-and-warn) rather than `?`-abort the whole chunk/import. Two
+        // RECOVERABLE per-block validation conditions are skipped here:
+        //
+        //   1. The block would exceed `MAX_BLOCK_DEPTH` (a deeply-nested import
+        //      block whose absolute depth lands over the create-path bound —
+        //      the depth clamp now leaves page-root headroom, but a residual
+        //      over-deep block must still skip, not abort).
+        //   2. The block's content exceeds `MAX_CONTENT_LENGTH` (a single huge
+        //      block must not strand the rest of the import).
+        //
+        // Both conditions are surfaced by `create_block_in_tx` as
+        // `AppError::Validation` with a STABLE message, AND both checks run
+        // BEFORE any write inside `create_block_in_tx`, so on rejection the
+        // chunk transaction is still clean and we can keep importing. We match
+        // ONLY those two specific validation messages: every other error
+        // (`AppError::Database` / pool / connection / a NotFound parent / any
+        // other Validation) STILL propagates via the `?` below and aborts as
+        // before — this is not a blanket catch-all.
+        let create_result = create_block_in_tx(
             &mut tx,
             device_id,
             "content".into(),
@@ -1153,7 +1284,30 @@ pub async fn import_markdown_with_progress(
             Some(parent_id.clone()),
             None,
         )
-        .await?;
+        .await;
+        let (new_block, block_op) = match create_result {
+            Ok(pair) => pair,
+            Err(AppError::Validation(msg))
+                if msg.contains("maximum nesting depth")
+                    || (msg.contains("content length") && msg.contains("exceeds maximum")) =>
+            {
+                // Recoverable: skip just this block, warn, and keep the chunk
+                // open. The parent stack is NOT pushed, so any children of the
+                // skipped block re-parent onto the nearest surviving ancestor
+                // (matching the depth-clamp flattening semantics).
+                tracing::warn!(
+                    page = %page_title,
+                    depth = block.depth,
+                    reason = %msg,
+                    "import: skipping block that failed a recoverable validation check (#1918)"
+                );
+                warnings.push(format!(
+                    "1 block skipped during import (recoverable validation failure: {msg})"
+                ));
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
         blocks_created += 1;
         chunk_blocks += 1;
         tx.enqueue_background(block_op);

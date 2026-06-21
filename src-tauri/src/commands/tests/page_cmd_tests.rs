@@ -5135,3 +5135,386 @@ async fn import_export_namespace_and_wikilink_round_trip_1446() {
 
     mat.shutdown();
 }
+
+/// Helper: stamp the reserved task columns directly on a block row (the
+/// materializer would write these via `set_property_in_tx`; tests that use
+/// the raw `insert_block` helper seed them via SQL).
+async fn set_task_columns(
+    pool: &SqlitePool,
+    block_id: &str,
+    todo_state: Option<&str>,
+    priority: Option<&str>,
+    scheduled_date: Option<&str>,
+    due_date: Option<&str>,
+) {
+    sqlx::query(
+        "UPDATE blocks SET todo_state = ?, priority = ?, scheduled_date = ?, due_date = ? \
+         WHERE id = ?",
+    )
+    .bind(todo_state)
+    .bind(priority)
+    .bind(scheduled_date)
+    .bind(due_date)
+    .bind(block_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// #1916 — the exporter must emit each descendant block as
+/// `<indent>- <content>` (the EXACT shape the importer reconstructs), with
+/// indentation reflecting the block's tree depth. Pre-fix the loop wrote raw
+/// content with no bullet and no indent, so Agaric's own export collapsed to
+/// a single block on re-import.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_emits_bulleted_indented_block_content_1916() {
+    let (pool, _dir) = test_pool().await;
+    const PAGE: &str = "01AAAAAAAAAAAAAAAAAAA1916P";
+    const CHILD: &str = "01AAAAAAAAAAAAAAAAAA1916C1";
+    const GRAND: &str = "01AAAAAAAAAAAAAAAAAA1916G1";
+    insert_block(&pool, PAGE, "page", "Hierarchy Page", None, Some(1)).await;
+    insert_block(&pool, CHILD, "content", "Parent block", Some(PAGE), Some(1)).await;
+    insert_block(&pool, GRAND, "content", "Child block", Some(CHILD), Some(1)).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+
+    // Depth-0 block: `- Parent block`; depth-1 block: `  - Child block`.
+    assert!(
+        md.contains("- Parent block\n"),
+        "depth-0 block must be a bare bullet; got:\n{md}"
+    );
+    assert!(
+        md.contains("  - Child block\n"),
+        "depth-1 block must be indented two spaces; got:\n{md}"
+    );
+}
+
+/// #1916 — task metadata (TODO/DONE state, priority, scheduled/due dates)
+/// lives in reserved `blocks` columns and was silently dropped on export.
+/// The exporter must emit each populated column as an indented `key:: value`
+/// property line (the form the importer's property parser reads back).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_emits_task_metadata_as_property_lines_1916() {
+    let (pool, _dir) = test_pool().await;
+    const PAGE: &str = "01AAAAAAAAAAAAAAAAAAA1916T";
+    const TASK: &str = "01AAAAAAAAAAAAAAAAAA1916T1";
+    insert_block(&pool, PAGE, "page", "Task Page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        TASK,
+        "content",
+        "Write the report",
+        Some(PAGE),
+        Some(1),
+    )
+    .await;
+    set_task_columns(
+        &pool,
+        TASK,
+        Some("TODO"),
+        Some("A"),
+        Some("2026-06-21"),
+        Some("2026-06-28"),
+    )
+    .await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+
+    assert!(
+        md.contains("- Write the report\n"),
+        "bullet content; got:\n{md}"
+    );
+    // Task columns emitted as property lines indented one level under the bullet.
+    assert!(
+        md.contains("  todo_state:: TODO\n"),
+        "todo_state; got:\n{md}"
+    );
+    assert!(md.contains("  priority:: A\n"), "priority; got:\n{md}");
+    assert!(
+        md.contains("  scheduled_date:: 2026-06-21\n"),
+        "scheduled_date; got:\n{md}"
+    );
+    assert!(
+        md.contains("  due_date:: 2026-06-28\n"),
+        "due_date; got:\n{md}"
+    );
+}
+
+/// #1918 — a single over-deep import block must skip-and-warn, NOT abort the
+/// whole chunk. We hand-author markdown a single block of which exceeds
+/// `MAX_BLOCK_DEPTH` once the page-root offset is added, by forging a depth
+/// past the parser clamp is impossible (the parser clamps first), so instead
+/// we assert the broader contract: an import with a legitimately deep subtree
+/// (right at the clamp boundary) SUCCEEDS rather than aborting, and the page +
+/// surrounding blocks are durable.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_deeply_nested_does_not_abort_1918() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    // 30 levels deep — well past the clamp (19). Pre-fix the depth-20 clamp +
+    // page-root offset (=21) tripped MAX_BLOCK_DEPTH and `?`-aborted the whole
+    // import. Post-fix the clamp (19) leaves room, so this imports cleanly.
+    let mut md = String::from("# Deep Import\n\n");
+    for d in 0..30 {
+        md.push_str(&"  ".repeat(d));
+        md.push_str(&format!("- level {d}\n"));
+    }
+    md.push_str("- trailing sibling\n");
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        md,
+        Some("Deep Import.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .expect("a deep import must NOT abort (#1918)");
+
+    // The page and a healthy number of blocks must be durable (clamp flattens
+    // the deepest levels onto one another, but nothing is lost to an abort).
+    assert!(
+        result.blocks_created >= 20,
+        "deep import must create the bulk of its blocks, got {}",
+        result.blocks_created
+    );
+    let trailing: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'content' AND content = 'trailing sibling'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        trailing, 1,
+        "the trailing sibling after the deep subtree must survive (no abort)"
+    );
+    mat.shutdown();
+}
+
+/// #1918 — a single block whose content exceeds `MAX_CONTENT_LENGTH` (256 KiB)
+/// must skip-and-warn, leaving the rest of the import durable instead of
+/// aborting the whole chunk via `?`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_oversized_block_skips_and_warns_1918() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    // One huge block (> 256 KiB) sandwiched between two normal blocks.
+    let huge = "x".repeat(300 * 1024);
+    let md = format!("# Big Import\n\n- before\n- {huge}\n- after\n");
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        md,
+        Some("Big Import.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .expect("an oversized block must NOT abort the whole import (#1918)");
+
+    // The oversized block must NOT be durable...
+    let oversized: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE LENGTH(content) > 262144")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        oversized, 0,
+        "the oversized block must be skipped, not stored"
+    );
+    // ...while the two normal sibling blocks survive (no abort).
+    for c in ["before", "after"] {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM blocks WHERE block_type = 'content' AND content = ?",
+        )
+        .bind(c)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(n, 1, "normal block {c:?} must survive the skip");
+    }
+    // The skip is surfaced as an import warning (never silent).
+    assert!(
+        result.warnings.iter().any(|w| w.contains("skipped")),
+        "a skip warning must be surfaced; got {:?}",
+        result.warnings
+    );
+    mat.shutdown();
+}
+
+/// #1916/#1917/#1918 END-TO-END round-trip: build a page with nested blocks, a
+/// task block (TODO + scheduled), and frontmatter aliases+tags; export it to
+/// markdown; re-import as a NEW page; assert block count, hierarchy/depth,
+/// task metadata, and aliases/tags are ALL preserved.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_export_full_round_trip_1916_1917_1918() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    const SRC: &str = "01AAAAAAAAAAAAAAAAAAARTSRC";
+    const PARENT: &str = "01AAAAAAAAAAAAAAAAAARTPAR1";
+    const CHILD: &str = "01AAAAAAAAAAAAAAAAAARTCHL1";
+    const TASK: &str = "01AAAAAAAAAAAAAAAAAARTTSK1";
+    const TAG: &str = "01AAAAAAAAAAAAAAAAAARTTAG1";
+
+    // Source page assigned to the import space.
+    insert_block(&pool, SRC, "page", "Round Trip Source", None, Some(1)).await;
+    assign_to_space(&pool, SRC, TEST_SPACE_ID).await;
+
+    // Nested blocks: Parent → Child, and a sibling task block.
+    insert_block(&pool, PARENT, "content", "Parent node", Some(SRC), Some(1)).await;
+    insert_block(&pool, CHILD, "content", "Child node", Some(PARENT), Some(1)).await;
+    insert_block(
+        &pool,
+        TASK,
+        "content",
+        "Finish round-trip",
+        Some(SRC),
+        Some(2),
+    )
+    .await;
+    set_task_columns(&pool, TASK, Some("TODO"), None, Some("2026-06-21"), None).await;
+
+    // Aliases + a tag association.
+    insert_alias(&pool, SRC, "RTS").await;
+    insert_alias(&pool, SRC, "RoundTrip").await;
+    insert_block(&pool, TAG, "tag", "important", None, Some(1)).await;
+    assign_to_space(&pool, TAG, TEST_SPACE_ID).await;
+    insert_block_tag(&pool, SRC, TAG).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    // 1. Export.
+    let md = export_page_markdown_inner(&pool, SRC).await.unwrap();
+
+    // 2. Re-import as a NEW page.
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        md.clone(),
+        Some("Reimported RT.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .expect("round-trip re-import must succeed");
+    assert_eq!(result.page_title, "Reimported RT");
+
+    let new_page: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Reimported RT'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // 3a. Block count: 3 content blocks (Parent, Child, Task).
+    #[derive(sqlx::FromRow, Debug)]
+    struct BRow {
+        id: String,
+        content: Option<String>,
+        parent_id: Option<String>,
+        todo_state: Option<String>,
+        scheduled_date: Option<String>,
+    }
+    let all_blocks: Vec<BRow> = sqlx::query_as(
+        "SELECT id, content, parent_id, todo_state, scheduled_date \
+         FROM blocks WHERE page_id = ? AND id != ? AND block_type = 'content' \
+         AND deleted_at IS NULL ORDER BY position",
+    )
+    .bind(&new_page)
+    .bind(&new_page)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    // The exported `# Round Trip Source` heading is preserved as a depth-0
+    // content block on re-import (pre-existing importer behaviour — the page
+    // title itself comes from the filename, not the heading). Exclude that
+    // stray heading block; the three SEEDED blocks must all round-trip.
+    let blocks: Vec<&BRow> = all_blocks
+        .iter()
+        .filter(|b| !b.content.as_deref().unwrap_or("").starts_with("# "))
+        .collect();
+    assert_eq!(
+        blocks.len(),
+        3,
+        "exactly 3 seeded content blocks must round-trip; got {blocks:?}\nmd:\n{md}"
+    );
+
+    // 3b. Hierarchy/depth: Child's parent is Parent (depth preserved).
+    let parent = blocks
+        .iter()
+        .find(|b| b.content.as_deref() == Some("Parent node"))
+        .expect("Parent node present");
+    let child = blocks
+        .iter()
+        .find(|b| b.content.as_deref() == Some("Child node"))
+        .expect("Child node present");
+    assert_eq!(
+        child.parent_id.as_deref(),
+        Some(parent.id.as_str()),
+        "Child must re-parent under Parent (hierarchy preserved); got {blocks:?}"
+    );
+    // Parent must be a direct child of the page.
+    assert_eq!(
+        parent.parent_id.as_deref(),
+        Some(new_page.as_str()),
+        "Parent must be a direct child of the page; got {blocks:?}"
+    );
+
+    // 3c. Task metadata: TODO state + scheduled date preserved.
+    let task = blocks
+        .iter()
+        .find(|b| b.content.as_deref() == Some("Finish round-trip"))
+        .expect("task block present");
+    assert_eq!(
+        task.todo_state.as_deref(),
+        Some("TODO"),
+        "task TODO state must round-trip; got {task:?}"
+    );
+    assert_eq!(
+        task.scheduled_date.as_deref(),
+        Some("2026-06-21"),
+        "task scheduled_date must round-trip; got {task:?}"
+    );
+
+    // 3d. Aliases + tags preserved as page properties (the in-scope #1917
+    // representation: multi-value frontmatter re-imports through property
+    // storage as a single comma-joined value rather than being dropped).
+    let props: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT key, value_text FROM block_properties WHERE block_id = ? \
+         AND key IN ('aliases', 'tags')",
+    )
+    .bind(&new_page)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let by_key: std::collections::HashMap<&str, Option<&str>> = props
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_deref()))
+        .collect();
+    // Aliases are sorted on export by `ORDER BY alias` and re-imported as a
+    // single comma-joined scalar (the exported fence is `[RoundTrip, RTS]`).
+    assert_eq!(
+        by_key.get("aliases").copied().flatten(),
+        Some("RoundTrip, RTS"),
+        "aliases must round-trip (joined); got {props:?}"
+    );
+    assert_eq!(
+        by_key.get("tags").copied().flatten(),
+        Some("important"),
+        "tags must round-trip; got {props:?}"
+    );
+
+    mat.shutdown();
+}

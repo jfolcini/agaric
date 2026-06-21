@@ -10,14 +10,23 @@ use std::sync::LazyLock;
 
 /// Maximum block-tree depth permitted by the import parser.  Blocks
 /// nested below this level are flattened to this depth and a warning is
-/// emitted.  This is a deliberately conservative, import-specific limit:
-/// it sits well under the recursive-CTE depth bound of `depth < 100`
-/// enforced throughout the materialiser (Invariant #9; see AGENTS.md
-/// "Recursive CTEs over `blocks`").  It is *not* the same value as the
-/// CTE bound — clamping imports far earlier keeps real-world documents
-/// shallow and prevents pathologically deep imports from approaching
-/// query-time recursion limits.
-const MAX_IMPORT_DEPTH: usize = 20;
+/// emitted.  This is a deliberately conservative, import-specific limit
+/// that leaves room for the page-root offset the apply path adds.
+///
+/// #1918 — this MUST be `MAX_BLOCK_DEPTH - 1`, NOT `MAX_BLOCK_DEPTH`. The
+/// apply path nests every imported block UNDER the created page block: an
+/// import-depth-`D` block lands at absolute tree depth `D + 1` (the page is
+/// the depth-0 root). `create_block_in_tx` enforces `parent_depth + 1 <=
+/// MAX_BLOCK_DEPTH` (`block_ops.rs`), so a block clamped to import-depth
+/// `MAX_BLOCK_DEPTH` would land at absolute depth `MAX_BLOCK_DEPTH + 1` and
+/// be REJECTED — defeating the clamp's whole purpose (making deep imports
+/// safe) and previously `?`-aborting the entire chunk. Clamping one level
+/// shallower keeps the clamped block (plus the page-root offset) at-or-below
+/// the create-path bound. The value still sits far under the recursive-CTE
+/// depth bound of `depth < 100` enforced throughout the materialiser
+/// (Invariant #9; see AGENTS.md "Recursive CTEs over `blocks`").
+#[allow(clippy::cast_possible_truncation)] // MAX_BLOCK_DEPTH is a small positive constant; the cast cannot truncate.
+const MAX_IMPORT_DEPTH: usize = (crate::domain::block_ops::MAX_BLOCK_DEPTH as usize) - 1;
 
 /// A parsed block from the import.
 #[derive(Debug, Clone)]
@@ -249,8 +258,18 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
         let indent = line.len() - trimmed.len();
         let depth = indent / 2;
 
-        // Check if this is a list item (- prefix)
-        if let Some(text) = trimmed.strip_prefix("- ") {
+        // Check if this is a list item (- prefix). #1917: a bare `-` with no
+        // trailing space is an EMPTY bullet (Logseq/Obsidian emit these for an
+        // empty list item) — it must spawn its own empty block, not fold into
+        // the previous block's content as a continuation line. Handle both the
+        // `- text` and the bare `-` forms here.
+        if trimmed == "-" {
+            blocks.push(ParsedBlock {
+                content: String::new(),
+                depth,
+                properties: Vec::new(),
+            });
+        } else if let Some(text) = trimmed.strip_prefix("- ") {
             // Strip ((uuid)) block references -> plain text
             let (cleaned, removed) = strip_block_refs_counted(text);
             stripped_block_ref_count += removed;
@@ -436,19 +455,84 @@ fn strip_frontmatter(
         // blank lines between heading and fence (and any after the fence) are
         // immaterial — the line-based parser skips blanks.
         let trimmed_rest = rest.trim_start_matches('\n');
-        if trimmed_rest.starts_with("---")
-            && let Some(consumed) = parse_fence(trimmed_rest, frontmatter, warnings)
-        {
-            // Reassemble: heading line + the body after the fence.
-            let after_fence = &trimmed_rest[consumed..];
-            let mut out = String::with_capacity(heading.len() + after_fence.len());
-            out.push_str(heading);
-            out.push_str(after_fence);
-            return out;
+        if trimmed_rest.starts_with("---") {
+            // #1917 — parse the candidate fence into SCRATCH buffers first.
+            // A legitimate Logseq/Obsidian note can begin with an ATX heading
+            // (`# Something`) of genuine content, then later carry a `---…---`
+            // pair that is a thematic break / section divider, not page
+            // frontmatter. Excising that pair as "frontmatter" would silently
+            // delete content. We only treat the fenced block as frontmatter if
+            // it yields at least one valid `key: value` pair — the exact shape
+            // Agaric's own export always emits when it writes frontmatter (it
+            // never emits an empty fence). A `---…---` pair containing no
+            // scalar pairs is left in place as content.
+            let mut scratch_fm: Vec<(String, String)> = Vec::new();
+            let mut scratch_warn: Vec<String> = Vec::new();
+            if let Some(consumed) = parse_fence(trimmed_rest, &mut scratch_fm, &mut scratch_warn)
+                && !scratch_fm.is_empty()
+            {
+                frontmatter.extend(scratch_fm);
+                warnings.extend(scratch_warn);
+                // Reassemble: heading line + the body after the fence.
+                let after_fence = &trimmed_rest[consumed..];
+                let mut out = String::with_capacity(heading.len() + after_fence.len());
+                out.push_str(heading);
+                out.push_str(after_fence);
+                return out;
+            }
         }
     }
 
     normalized.to_string()
+}
+
+/// Parse a YAML inline flow sequence (`[a, b, "c, d"]`) into a single
+/// comma-joined scalar (#1917). Items are split on top-level commas (commas
+/// inside a quoted item do NOT split), each item is trimmed and unquoted via
+/// [`strip_yaml_quotes`], and empty items are dropped. The result is the
+/// canonical scalar form an exported `aliases: a, b` would carry, so a value
+/// parsed here round-trips identically whether it arrived as a flow sequence
+/// or as a plain scalar.
+fn parse_flow_sequence(raw: &str) -> String {
+    let inner = raw
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(raw);
+    let mut items: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut in_quote: Option<char> = None;
+    let mut prev_backslash = false;
+    for c in inner.chars() {
+        match in_quote {
+            Some(q) => {
+                current.push(c);
+                if c == q && !(q == '"' && prev_backslash) {
+                    in_quote = None;
+                }
+                prev_backslash = q == '"' && c == '\\' && !prev_backslash;
+            }
+            None => match c {
+                '"' | '\'' => {
+                    in_quote = Some(c);
+                    current.push(c);
+                    prev_backslash = false;
+                }
+                ',' => {
+                    let item = strip_yaml_quotes(current.trim());
+                    if !item.is_empty() {
+                        items.push(item.to_string());
+                    }
+                    current.clear();
+                }
+                _ => current.push(c),
+            },
+        }
+    }
+    let item = strip_yaml_quotes(current.trim());
+    if !item.is_empty() {
+        items.push(item.to_string());
+    }
+    items.join(", ")
 }
 
 fn parse_frontmatter(yaml: &str, warnings: &mut Vec<String>) -> Vec<(String, String)> {
@@ -513,6 +597,36 @@ fn parse_frontmatter(yaml: &str, warnings: &mut Vec<String>) -> Vec<(String, Str
         }};
     }
 
+    // Block-style sequence state (#1917): a `key:` line with no inline value
+    // followed by `- item` lines. Items are collected here and committed as a
+    // single comma-joined scalar — the same canonical representation the
+    // inline flow-sequence (`[a, b]`) path produces — so block-style and flow
+    // `aliases:`/`tags:` both round-trip through single-value property storage.
+    struct PendingSeq {
+        key: String,
+        items: Vec<String>,
+    }
+    let mut pending_seq: Option<PendingSeq> = None;
+
+    // Commit a finished block-style sequence into `pairs` (de-dup aware),
+    // joining its items into a comma-separated scalar. A sequence with no items
+    // (`key:` with nothing following) commits as an empty scalar, matching the
+    // prior `key:` (empty value) behaviour.
+    macro_rules! commit_seq {
+        ($s:expr) => {{
+            let s = $s;
+            let joined = s.items.join(", ");
+            if seen.insert(s.key.clone()) {
+                pairs.push((s.key, joined));
+            } else {
+                warnings.push(format!(
+                    "frontmatter key '{}' appears more than once; keeping the first value",
+                    s.key
+                ));
+            }
+        }};
+    }
+
     for raw in yaml.lines() {
         // While a block scalar is open, a MORE-INDENTED (or blank) line is
         // continuation content and must NOT be mis-counted as invalid. A line
@@ -550,12 +664,28 @@ fn parse_frontmatter(yaml: &str, warnings: &mut Vec<String>) -> Vec<(String, Str
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        // A bare `- item` line is a YAML sequence element belonging to a
-        // preceding `key:` with no inline value — block-style arrays are
-        // #1433 scope. Parse-and-ignore with a warning.
+        // A bare `- item` line is a YAML block-sequence element belonging to a
+        // preceding `key:` with no inline value (#1917). If a sequence is open
+        // (the preceding line was `key:`), append the item to it so block-style
+        // `aliases:` / `tags:` round-trip exactly as the inline `[a, b]` form
+        // does. A `- item` with NO open sequence (a stray bullet) is still
+        // parse-and-ignored with a warning. A bare `-` (empty element) is a
+        // no-op element.
         if line.starts_with("- ") || line == "-" {
-            skipped_array += 1;
+            if let Some(seq) = pending_seq.as_mut() {
+                let item = strip_yaml_quotes(line.strip_prefix("- ").unwrap_or("").trim());
+                if !item.is_empty() {
+                    seq.items.push(item.to_string());
+                }
+            } else {
+                skipped_array += 1;
+            }
             continue;
+        }
+        // Any non-sequence line ends an open block-style sequence: commit it
+        // before processing this line as an ordinary frontmatter entry.
+        if let Some(seq) = pending_seq.take() {
+            commit_seq!(seq);
         }
         let Some((key_raw, value_raw)) = line.split_once(':') else {
             // No colon: not a `key: value` scalar (e.g. a stray scalar or
@@ -590,14 +720,50 @@ fn parse_frontmatter(yaml: &str, warnings: &mut Vec<String>) -> Vec<(String, Str
             });
             continue;
         }
-        let value = strip_yaml_quotes(value_trimmed);
-        // Inline array/flow-collection syntax (`[a, b]` / `{a: b}`): out of
-        // scope (#1433). Parse-and-ignore with a warning rather than import
-        // the literal bracketed text as a scalar.
-        if (value.starts_with('[') && value.ends_with(']'))
-            || (value.starts_with('{') && value.ends_with('}'))
-        {
+        // Inline flow-sequence syntax (`[a, b]`) — #1917. The exporter writes
+        // `aliases: [..]` / `tags: [..]` as YAML flow sequences, so dropping
+        // them (the pre-fix behaviour) silently lost every exported alias/tag
+        // on re-import. Parse the flow items and join them into a single
+        // canonical scalar (`a, b`) — the SAME shape a re-export of the
+        // resulting text property would emit — so the value round-trips
+        // through the existing single-value property storage
+        // (`set_property_in_tx` stamps one row per key; duplicate keys would
+        // collapse under its INSERT-OR-REPLACE, so multiple pairs are NOT a
+        // viable representation — one joined value is). A flow MAPPING
+        // (`{a: b}`) has no single sensible scalar projection and stays
+        // skipped-with-warning.
+        if value_trimmed.starts_with('[') && value_trimmed.ends_with(']') {
+            let joined = parse_flow_sequence(value_trimmed);
+            if !seen.insert(key.to_string()) {
+                warnings.push(format!(
+                    "frontmatter key '{key}' appears more than once; keeping the first value"
+                ));
+                continue;
+            }
+            pairs.push((key.to_string(), joined));
+            continue;
+        }
+        if value_trimmed.starts_with('{') && value_trimmed.ends_with('}') {
             skipped_array += 1;
+            continue;
+        }
+
+        let value = strip_yaml_quotes(value_trimmed);
+        // An empty inline value (`key:`) may be the header of a block-style
+        // sequence whose `- item` elements follow on subsequent lines (#1917).
+        // Open a pending sequence keyed on this line; the `- item` branch above
+        // appends to it, and the next non-sequence line (or end of input)
+        // commits it. A `key:` with no following `- item` lines commits as an
+        // empty scalar (unchanged behaviour).
+        if value.is_empty() {
+            // Flush any sequence already open for a *different* key first.
+            if let Some(seq) = pending_seq.take() {
+                commit_seq!(seq);
+            }
+            pending_seq = Some(PendingSeq {
+                key: key.to_string(),
+                items: Vec::new(),
+            });
             continue;
         }
         if !seen.insert(key.to_string()) {
@@ -612,6 +778,10 @@ fn parse_frontmatter(yaml: &str, warnings: &mut Vec<String>) -> Vec<(String, Str
     // Flush a block scalar still open at end of input.
     if let Some(b) = block.take() {
         commit_block!(b);
+    }
+    // Flush a block-style sequence still open at end of input.
+    if let Some(seq) = pending_seq.take() {
+        commit_seq!(seq);
     }
 
     if skipped_array > 0 {
@@ -887,10 +1057,72 @@ bare line ((jkl-012)) too";
     }
 
     #[test]
-    fn parse_depth_clamped_at_20() {
+    fn parse_depth_clamped_at_max_import_depth() {
+        // #1918 — the clamp target is MAX_BLOCK_DEPTH - 1 (19), not 20, so the
+        // clamped block plus the page-root offset stays at-or-below the
+        // create-path MAX_BLOCK_DEPTH bound.
         let deep = format!("{}- Deep block", "  ".repeat(25));
         let output = parse_logseq_markdown(&deep);
-        assert_eq!(output.blocks[0].depth, 20);
+        assert_eq!(output.blocks[0].depth, MAX_IMPORT_DEPTH);
+        assert_eq!(MAX_IMPORT_DEPTH, 19, "clamp must leave room for page root");
+    }
+
+    /// #1917 — a bare `-` (empty bullet, no trailing space) is its OWN empty
+    /// block, not folded into the preceding block as a continuation line.
+    #[test]
+    fn parse_bare_dash_is_empty_block_not_continuation_1917() {
+        let output = parse_logseq_markdown("- First\n-\n- Third");
+        assert_eq!(
+            output.blocks.len(),
+            3,
+            "bare `-` must spawn its own empty block; got {:?}",
+            output.blocks
+        );
+        assert_eq!(output.blocks[0].content, "First");
+        assert_eq!(output.blocks[1].content, "", "bare `-` block is empty");
+        assert_eq!(output.blocks[2].content, "Third");
+    }
+
+    /// #1917 — a leading `# Heading` of genuine content followed by a
+    /// `---…---` thematic-break pair that is NOT page frontmatter (no
+    /// `key: value` scalars) must be preserved as content, not excised.
+    #[test]
+    fn import_thematic_break_after_heading_is_not_treated_as_frontmatter_1917() {
+        let md = "# Real Heading\n\n---\njust a divider line\n---\n\n- Body block";
+        let output = parse_logseq_markdown(md);
+        // No frontmatter should have been parsed out of the divider section.
+        assert!(
+            output.frontmatter.is_empty(),
+            "a thematic-break section must not be parsed as frontmatter; got {:?}",
+            output.frontmatter
+        );
+        // The heading and divider text must survive as content blocks.
+        let all: String = output
+            .blocks
+            .iter()
+            .map(|b| b.content.as_str())
+            .collect::<Vec<_>>()
+            .join("|");
+        assert!(
+            all.contains("Real Heading") && all.contains("just a divider line"),
+            "heading + divider content must be preserved; got blocks {:?}",
+            output.blocks
+        );
+    }
+
+    /// #1917 — the inverse: a real `# Title` + frontmatter fence (the Agaric
+    /// export shape, with at least one `key: value`) IS still excised and
+    /// parsed.
+    #[test]
+    fn import_real_frontmatter_after_heading_still_parsed_1917() {
+        let md = "# My Page\n\n---\naliases: [Foo, Bar]\n---\n\n- Body";
+        let output = parse_logseq_markdown(md);
+        assert_eq!(
+            output.frontmatter,
+            vec![("aliases".to_string(), "Foo, Bar".to_string())],
+            "a real frontmatter fence must still parse; got {:?}",
+            output.frontmatter
+        );
     }
 
     #[test]
@@ -1246,18 +1478,79 @@ bare line ((jkl-012)) too";
     /// An inline array value (`tags: [a, b]`) is parse-and-ignored (#1433
     /// scope) with a warning — it must NOT be imported as a literal text
     /// scalar, and must not crash.
+    /// #1917 — inline flow sequences (`[a, b]`) are now PRESERVED as a single
+    /// comma-joined scalar (the exporter writes `aliases`/`tags` as flow
+    /// sequences, so dropping them lost every exported alias/tag on re-import).
+    /// A flow MAPPING (`{..}`) has no scalar projection and stays
+    /// skipped-with-warning.
     #[test]
-    fn parse_frontmatter_array_value_is_ignored_with_warning_1432() {
+    fn parse_frontmatter_flow_sequence_is_preserved_as_joined_scalar_1917() {
         let mut warns: Vec<String> = Vec::new();
         let pairs = parse_frontmatter("tags: [a, b]\ncategory: notes", &mut warns);
         assert_eq!(
             pairs,
+            vec![
+                ("tags".to_string(), "a, b".to_string()),
+                ("category".to_string(), "notes".to_string()),
+            ],
+            "a flow sequence must be preserved as a comma-joined scalar; got {pairs:?}"
+        );
+        assert!(
+            warns.is_empty(),
+            "preserving a flow sequence must not warn; got {warns:?}"
+        );
+    }
+
+    /// #1917 — a flow sequence whose items are quoted (and contain a comma
+    /// inside the quotes) is split only on top-level commas and unquoted.
+    #[test]
+    fn parse_frontmatter_flow_sequence_quoted_items_split_top_level_only_1917() {
+        let mut warns: Vec<String> = Vec::new();
+        let pairs = parse_frontmatter(r#"aliases: [Alpha, "Beta, Inc", Gamma]"#, &mut warns);
+        assert_eq!(
+            pairs,
+            vec![("aliases".to_string(), "Alpha, Beta, Inc, Gamma".to_string())],
+            "quoted items must not split on their inner comma; got {pairs:?}"
+        );
+    }
+
+    /// #1917 — block-style sequences (`key:` then `- item` lines) round-trip
+    /// identically to the inline flow form.
+    #[test]
+    fn parse_frontmatter_block_sequence_is_preserved_as_joined_scalar_1917() {
+        let mut warns: Vec<String> = Vec::new();
+        let pairs = parse_frontmatter(
+            "aliases:\n  - First\n  - Second\ncategory: notes",
+            &mut warns,
+        );
+        assert_eq!(
+            pairs,
+            vec![
+                ("aliases".to_string(), "First, Second".to_string()),
+                ("category".to_string(), "notes".to_string()),
+            ],
+            "a block-style sequence must be preserved as a comma-joined scalar; got {pairs:?}"
+        );
+        assert!(
+            warns.is_empty(),
+            "preserving a block sequence must not warn; got {warns:?}"
+        );
+    }
+
+    /// #1917 — a flow MAPPING (`{a: b}`) is still skipped with a warning (no
+    /// sensible scalar projection).
+    #[test]
+    fn parse_frontmatter_flow_mapping_is_ignored_with_warning_1917() {
+        let mut warns: Vec<String> = Vec::new();
+        let pairs = parse_frontmatter("meta: {a: 1}\ncategory: notes", &mut warns);
+        assert_eq!(
+            pairs,
             vec![("category".to_string(), "notes".to_string())],
-            "the array line must be ignored; only the scalar survives; got {pairs:?}"
+            "a flow mapping must be ignored; only the scalar survives; got {pairs:?}"
         );
         assert!(
             warns.iter().any(|w| w.contains("array/collection syntax")),
-            "an array-syntax warning must be emitted; got {warns:?}"
+            "a mapping-syntax warning must be emitted; got {warns:?}"
         );
     }
 
@@ -1376,16 +1669,20 @@ bare line ((jkl-012)) too";
         let content = lines.join("\n");
         let output = parse_logseq_markdown(&content);
 
-        // All deep blocks should be clamped to 20
+        // All deep blocks should be clamped to MAX_IMPORT_DEPTH (#1918: 19)
         for block in &output.blocks[1..] {
-            assert_eq!(block.depth, 20, "block depth should be clamped to 20");
+            assert_eq!(
+                block.depth, MAX_IMPORT_DEPTH,
+                "block depth should be clamped to MAX_IMPORT_DEPTH"
+            );
         }
 
         // Warnings should contain a depth-clamping message
         assert_eq!(output.warnings.len(), 1, "should have exactly one warning");
         assert!(
-            output.warnings[0]
-                .contains("3 block(s) exceeded maximum depth of 20 and were flattened"),
+            output.warnings[0].contains(&format!(
+                "3 block(s) exceeded maximum depth of {MAX_IMPORT_DEPTH} and were flattened"
+            )),
             "warning message should describe clamped blocks, got: {}",
             output.warnings[0]
         );
