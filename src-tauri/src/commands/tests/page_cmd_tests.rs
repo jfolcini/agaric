@@ -1971,6 +1971,36 @@ async fn import_markdown_strips_block_refs() {
     mat.shutdown();
 }
 
+/// #1933 — a lossy import (block-references stripped) must surface the drop
+/// as an aggregate warning on the returned `ImportResult`, end-to-end through
+/// the command core, so the loss is diagnosable (and gets logged by the
+/// completion warn path). Pre-fix, block-ref stripping was entirely silent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_block_ref_strip_surfaces_warning_1933() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let content = "- See ((abc-123)) and ((def-456)) here";
+    let result =
+        import_markdown_inner(&pool, DEV, &mat, content.into(), None, TEST_SPACE_ID.into())
+            .await
+            .unwrap();
+
+    assert_eq!(result.blocks_created, 1, "block survives the strip");
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("((block-ref))") && w.contains("stripped")),
+        "stripped block-refs must surface an aggregate warning; got {:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn import_markdown_empty_content() {
     let (pool, _dir) = test_pool().await;

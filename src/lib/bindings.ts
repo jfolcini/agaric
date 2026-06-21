@@ -1996,11 +1996,32 @@ blocks_total: number } |
  */
 { kind: "complete"; page_title: string; blocks_created: number; properties_set: number };
 
-/**  Result of parsing a markdown file. */
+/**
+ *  Outcome of importing one markdown file: the created page plus aggregate
+ *  counts and any non-fatal diagnostics, returned by
+ *  [`import_markdown_with_progress`] and surfaced to the import UI.
+ */
 export type ImportResult = {
+	/**
+	 *  Title of the page block the import created (derived from the filename
+	 *  or the file's leading heading).
+	 */
 	page_title: string,
+	/**  Number of content blocks made durable by the import. */
 	blocks_created: number,
+	/**
+	 *  Number of page-level properties stamped onto the created page (e.g.
+	 *  from YAML frontmatter).
+	 */
 	properties_set: number,
+	/**
+	 *  Non-fatal diagnostics collected while importing. Carries both soft
+	 *  parse warnings (e.g. depth clamping, stripped `((block-ref))` tokens,
+	 *  ambiguous wiki-links left as plain text) and per-item skip notices
+	 *  (e.g. a frontmatter ref property that could not resolve to a page).
+	 *  Empty on a fully clean import. Surfaced to the user and logged at
+	 *  `warn!` on completion so a lossy import is never silent.
+	 */
 	warnings: string[],
 };
 

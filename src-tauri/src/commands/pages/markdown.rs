@@ -724,7 +724,16 @@ pub async fn import_markdown_inner(
 /// emit, so a consumer that sees `Started` but no `Complete` must treat the
 /// import as failed (possibly partially-applied per the chunk semantics
 /// above). Sends are best-effort (see [`ImportProgressSink`]).
-#[instrument(skip(pool, device_id, materializer, content, progress), err)]
+// #1934 — declare identifying span fields up front so the import span can be
+// filtered/grouped in logs by page title, target space, and size. `content`,
+// `progress`, and the heavy handles are `skip`-ped; `space_id` is recorded
+// here (it is an arg) while `page_title` / `blocks_total` are derived inside
+// and back-filled via `Span::current().record(...)` once known.
+#[instrument(
+    skip(pool, device_id, materializer, content, progress),
+    fields(page_title = tracing::field::Empty, blocks_total = tracing::field::Empty, space = %space_id),
+    err
+)]
 pub async fn import_markdown_with_progress(
     pool: &SqlitePool,
     device_id: &str,
@@ -734,6 +743,10 @@ pub async fn import_markdown_with_progress(
     space_id: String,
     progress: Option<&dyn ImportProgressSink>,
 ) -> Result<ImportResult, AppError> {
+    // #1934 — wall-clock measurement of the whole import so duration is
+    // observable in the field. Paired with the completion summary log below.
+    let started_at = std::time::Instant::now();
+
     // Normalize ULID to uppercase per AGENTS.md
     // invariant #8. Mirrors `create_page_in_space_inner` so a raw String
     // arg from MCP tools / sync replay / scripted imports can never land
@@ -762,6 +775,26 @@ pub async fn import_markdown_with_progress(
     // the transaction opens; if the import later fails, the consumer sees
     // no `Complete` and treats it as failed.
     let blocks_total = parse_output.blocks.len() as u64;
+
+    // #1934 — back-fill the identifying span fields now that the page title
+    // and block count are known, so every event emitted within this span (and
+    // the `err` line on failure) carries them.
+    let span = tracing::Span::current();
+    span.record("page_title", page_title.as_str());
+    span.record("blocks_total", blocks_total);
+
+    // #1932 — start-of-import log line. Until now the entire backend import
+    // path emitted nothing on the happy path, leaving a completed/partial
+    // import invisible in `agaric.log`. Structured fields (not interpolation)
+    // match the codebase logging baseline (e.g. `materializer/consumer.rs`).
+    tracing::info!(
+        page = %page_title,
+        blocks_total,
+        space = %space_id,
+        parse_warnings = parse_output.warnings.len(),
+        "import: starting markdown import"
+    );
+
     if let Some(sink) = progress {
         sink.emit(ImportProgressUpdate::Started {
             page_title: page_title.clone(),
@@ -917,6 +950,12 @@ pub async fn import_markdown_with_progress(
                     // a warning rather than abort the whole import — the
                     // human-readable title is surfaced in the warning so it
                     // is never silently lost.
+                    // #1933 — per-occurrence diagnostic for this lossy skip.
+                    tracing::debug!(
+                        key = %key,
+                        value = %value,
+                        "import: frontmatter ref property could not resolve; skipped (#1933)"
+                    );
                     warnings.push(format!(
                         "frontmatter ref property '{key}' could not resolve target \
                          '{value}' to a page in this space; skipped"
@@ -1014,6 +1053,12 @@ pub async fn import_markdown_with_progress(
                 // Ambiguous: two or more pages share this title in the space.
                 // Never guess which was meant — leave the token as plain text
                 // and surface a non-fatal warning.
+                // #1933 — per-occurrence diagnostic for this lossy transform
+                // (the `[[Name]]` link is dropped to plain text).
+                tracing::debug!(
+                    name = %name,
+                    "import: ambiguous wiki-link left as plain text (#1933)"
+                );
                 warnings.push(format!(
                     "wiki-link '[[{name}]]' matches multiple pages in this space; left as plain text"
                 ));
@@ -1026,6 +1071,10 @@ pub async fn import_markdown_with_progress(
     // only opened at a top-level (depth-0) subtree boundary, so a chunk
     // never splits a subtree (parent + all descendants commit together).
     let mut chunk_blocks: usize = 0;
+    // #1932 (OBS-LOG-05) — count committed chunks so a partial import (a
+    // mid-chunk abort) leaves a log trail of how many chunks/blocks were
+    // already made durable before the failure, rather than a lone error line.
+    let mut chunks_committed: u64 = 0;
 
     // Track parent stack: (depth, block_id). Survives chunk flushes
     // unchanged — every id in it refers to a block committed in this or an
@@ -1046,7 +1095,34 @@ pub async fn import_markdown_with_progress(
             // releasing the writer lock) and open a fresh one. A commit
             // failure here aborts the import; chunks already committed
             // survive (documented partial-import semantics).
-            tx.commit_and_dispatch(materializer).await?;
+            //
+            // #1934 — attach import context to a chunk-commit failure via an
+            // `error!` log (which chunk / how many blocks were durable when the
+            // abort happened), instead of a bare `Database error: …`. The error
+            // itself is routed through `AppError::from(sqlx::Error)` so the IPC
+            // `kind` discrimination is preserved (a writer-busy `PoolTimedOut`
+            // stays `pool_busy`, a `Conflict` stays `conflict`); flattening to
+            // `Internal` would have collapsed every commit failure to one kind
+            // and lost the frontend's retry affordance.
+            tx.commit_and_dispatch(materializer).await.map_err(|e| {
+                tracing::error!(
+                    page = %page_title,
+                    chunks_committed,
+                    blocks_created,
+                    error = %e,
+                    "import: chunk commit failed; committed chunks remain durable"
+                );
+                AppError::from(e)
+            })?;
+            chunks_committed += 1;
+            // #1932 (OBS-LOG-05) — per-chunk durability signal so a partial
+            // import is observable in the log.
+            tracing::debug!(
+                page = %page_title,
+                chunks_committed,
+                blocks_created,
+                "import: chunk committed (writer lock released)"
+            );
             tx = CommandTx::begin_immediate(pool, "import_markdown").await?;
             chunk_blocks = 0;
         }
@@ -1126,7 +1202,22 @@ pub async fn import_markdown_with_progress(
 
     // Commit + dispatch the final chunk's queued ops in FIFO order,
     // releasing the writer lock.
-    tx.commit_and_dispatch(materializer).await?;
+    //
+    // #1934 — attach import context to a final-commit failure via an `error!`
+    // log (block count / chunks already durable). The error is routed through
+    // `AppError::from(sqlx::Error)` so the IPC `kind` is preserved (e.g. a
+    // writer-busy `PoolTimedOut` stays `pool_busy`); flattening to `Internal`
+    // would have collapsed the discrimination the frontend relies on.
+    tx.commit_and_dispatch(materializer).await.map_err(|e| {
+        tracing::error!(
+            page = %page_title,
+            chunks_committed,
+            blocks_created,
+            error = %e,
+            "import: final chunk commit failed"
+        );
+        AppError::from(e)
+    })?;
 
     // #128 — `Complete` is emitted only after the final chunk commits, so
     // a consumer can treat it as the "whole import is durable" signal.
@@ -1138,6 +1229,34 @@ pub async fn import_markdown_with_progress(
             properties_set: properties_set.cast_unsigned(),
         });
     }
+
+    // #1932 (OBS-LOG-02) — log every collected diagnostic at WARN. Until now
+    // warnings lived only in the returned struct (frontend toast), so once the
+    // import dialog was dismissed there was no record that, e.g., blocks were
+    // flattened or a property/block-ref was dropped. Logging them makes every
+    // silently-skipped item recoverable from `agaric.log`.
+    if !warnings.is_empty() {
+        tracing::warn!(
+            page = %page_title,
+            count = warnings.len(),
+            warnings = ?warnings,
+            "import produced parse/apply diagnostics"
+        );
+    }
+
+    // #1932 / #1934 — completion summary line with the final counts and the
+    // measured elapsed time, so a completed import is no longer invisible in
+    // logs and its duration/size are observable in the field.
+    let elapsed_ms = started_at.elapsed().as_millis();
+    tracing::info!(
+        page = %page_title,
+        blocks_created,
+        properties_set,
+        warnings = warnings.len(),
+        chunks_committed = chunks_committed + 1,
+        elapsed_ms,
+        "import: completed markdown import"
+    );
 
     Ok(ImportResult {
         page_title,
