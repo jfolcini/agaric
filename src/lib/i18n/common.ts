@@ -327,7 +327,32 @@ export const common: Record<string, string> = {
   'data.importingProgress': 'Importing file {{index}} of {{total}}: {{name}}',
   'data.importingProgressDetail': '{{blocks}} blocks · {{bytes}} processed',
   'data.importingBlocks': 'Block {{done}} of {{total}}',
-  'data.importedMessage': 'Imported {{totalBlocks}} blocks from {{fileCount}} file(s)',
+  'data.importedMessage_one': 'Imported {{totalBlocks}} blocks from {{count}} file',
+  'data.importedMessage_other': 'Imported {{totalBlocks}} blocks from {{count}} files',
+  // Result-panel summary line. `count` is the number of blocks created so the
+  // i18next plural selector picks the right form; `title` is the page title
+  // (single file) or the multi-file placeholder (`data.importResultFilesTitle`).
+  'data.importResultSummary_one': 'Imported “{{title}}”: {{count}} block',
+  'data.importResultSummary_other': 'Imported “{{title}}”: {{count}} blocks',
+  'data.importResultProperties_one': '{{count}} property',
+  'data.importResultProperties_other': '{{count}} properties',
+  // Multi-file placeholder title used in place of a single page_title.
+  'data.importResultFilesTitle_one': '{{count}} file',
+  'data.importResultFilesTitle_other': '{{count}} files',
+  // Failure / warning surfacing (#1928).
+  'data.importNoContent': 'No content was imported.',
+  'data.importAllFailed_one': 'All {{count}} file failed to import.',
+  'data.importAllFailed_other': 'All {{count}} files failed to import.',
+  'data.importFailuresHeading_one': '{{count}} file failed to import',
+  'data.importFailuresHeading_other': '{{count}} files failed to import',
+  'data.importWarningsHeading_one': '{{count}} warning',
+  'data.importWarningsHeading_other': '{{count}} warnings',
+  'data.importFailedFile': 'Failed to import {{name}}',
+  'data.importShowAll': 'Show all',
+  'data.importShowLess': 'Show less',
+  // Accessible names for the two progress bars (#1929).
+  'data.importFileProgressLabel': 'File import progress',
+  'data.importBlockProgressLabel': 'Block import progress',
   'data.exportTitle': 'Export All Pages',
   'data.exportDesc': 'Download all pages as a ZIP of Markdown files.',
   'data.exportButton': 'Export All',

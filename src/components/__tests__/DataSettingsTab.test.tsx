@@ -529,4 +529,227 @@ describe('DataSettingsTab', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  // #1928 — soft parse warnings are surfaced as their actual strings in an
+  // expandable list, not just an opaque count.
+  it('renders warning strings in an expandable details list (#1928)', async () => {
+    mockImportMarkdown.mockResolvedValueOnce({
+      page_title: 'Doc',
+      blocks_created: 4,
+      properties_set: 0,
+      warnings: ['Dropped malformed YAML on line 2', 'Unrecognized property "foo"'],
+    })
+
+    render(<DataSettingsTab />)
+
+    const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+    const file = new File(['# Hello'], 'doc.md', { type: 'text/markdown' })
+    Object.defineProperty(fileInput, 'files', { value: [file] })
+
+    await act(async () => {
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    // The collapsible summary shows the warning count…
+    await waitFor(() => {
+      expect(screen.getByTestId('import-warnings-heading')).toHaveTextContent('2 warnings')
+    })
+    // …and the actual warning strings are rendered (a <details> renders its
+    // contents in the DOM even when collapsed).
+    expect(screen.getByText('Dropped malformed YAML on line 2')).toBeInTheDocument()
+    expect(screen.getByText('Unrecognized property "foo"')).toBeInTheDocument()
+    expect(screen.getByTestId('import-result-details')).toBeInTheDocument()
+  })
+
+  // #1928 — when many files fail, only the first N are shown until the user
+  // expands the list.
+  it('caps the failure list and reveals the rest on "Show all" (#1928)', async () => {
+    const user = userEvent.setup()
+    // 7 files, all fail → 7 failure rows, capped at 5 until expanded.
+    mockImportMarkdown.mockRejectedValue(new Error('boom'))
+
+    render(<DataSettingsTab />)
+
+    const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+    const files = Array.from(
+      { length: 7 },
+      (_, i) => new File(['x'], `f${i}.md`, { type: 'text/markdown' }),
+    )
+    Object.defineProperty(fileInput, 'files', { value: files })
+
+    await act(async () => {
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('import-result-details')).toBeInTheDocument()
+    })
+    // At rest: only the first 5 failure rows are rendered.
+    expect(screen.getAllByTestId('import-failure-item')).toHaveLength(5)
+
+    await user.click(screen.getByTestId('import-details-toggle'))
+    expect(screen.getAllByTestId('import-failure-item')).toHaveLength(7)
+    // The marker strings are the actual failure messages, not an opaque count.
+    expect(screen.getByText('Failed to import f6.md')).toBeInTheDocument()
+  })
+
+  // #1928 — when every file fails, show an error-toned state and fire NO
+  // success toast.
+  it('shows an error state and no success toast when every file fails (#1928)', async () => {
+    mockImportMarkdown.mockRejectedValue(new Error('boom'))
+
+    render(<DataSettingsTab />)
+
+    const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+    const file1 = new File(['x'], 'a.md', { type: 'text/markdown' })
+    const file2 = new File(['y'], 'b.md', { type: 'text/markdown' })
+    Object.defineProperty(fileInput, 'files', { value: [file1, file2] })
+
+    await act(async () => {
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('import-result-error')).toHaveTextContent(
+        'All 2 files failed to import.',
+      )
+    })
+    // No green success toast for a total failure.
+    expect(toast.success).not.toHaveBeenCalled()
+    // An error toast is surfaced instead.
+    expect(toast.error).toHaveBeenCalledWith('All 2 files failed to import.')
+  })
+
+  // #1928 — partial failure suppresses the success toast and offers a retry.
+  it('does not fire a success toast on partial failure (#1928)', async () => {
+    mockImportMarkdown
+      .mockResolvedValueOnce({
+        page_title: 'ok',
+        blocks_created: 3,
+        properties_set: 0,
+        warnings: [],
+      })
+      .mockRejectedValueOnce(new Error('boom'))
+
+    render(<DataSettingsTab />)
+
+    const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+    const file1 = new File(['x'], 'ok.md', { type: 'text/markdown' })
+    const file2 = new File(['y'], 'bad.md', { type: 'text/markdown' })
+    Object.defineProperty(fileInput, 'files', { value: [file1, file2] })
+
+    await act(async () => {
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('import-failures-heading')).toHaveTextContent(
+        '1 file failed to import',
+      )
+    })
+    expect(toast.success).not.toHaveBeenCalled()
+    // notify.retry routes through toast.error with a retry action.
+    expect(toast.error).toHaveBeenCalled()
+    expect(screen.getByText('Failed to import bad.md')).toBeInTheDocument()
+  })
+
+  // #1929 — the result region is a polite live region so the outcome is
+  // announced when the progress region clears.
+  it('wraps the import result in a polite status live region (#1929)', async () => {
+    mockImportMarkdown.mockResolvedValueOnce({
+      page_title: 'Doc',
+      blocks_created: 1,
+      properties_set: 0,
+      warnings: [],
+    })
+
+    render(<DataSettingsTab />)
+
+    const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+    const file = new File(['# Hello'], 'doc.md', { type: 'text/markdown' })
+    Object.defineProperty(fileInput, 'files', { value: [file] })
+
+    await act(async () => {
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    await waitFor(() => {
+      const region = screen.getByTestId('import-result')
+      expect(region).toHaveAttribute('role', 'status')
+      expect(region).toHaveAttribute('aria-live', 'polite')
+      expect(region).toHaveAttribute('aria-atomic', 'true')
+    })
+  })
+
+  // #1929 — both progress bars carry distinguishing accessible names.
+  it('gives both progress bars accessible names (#1929)', async () => {
+    let resolveImport: (v: unknown) => void = () => {}
+    mockImportMarkdown.mockImplementationOnce(
+      (
+        _c: string,
+        _f: string,
+        _s: string,
+        onProgress?: (u: { kind: string; blocks_total?: number; blocks_done?: number }) => void,
+      ) => {
+        onProgress?.({ kind: 'started', blocks_total: 3 })
+        onProgress?.({ kind: 'progress', blocks_done: 1, blocks_total: 3 })
+        return new Promise((resolve) => {
+          resolveImport = resolve
+        })
+      },
+    )
+
+    render(<DataSettingsTab />)
+
+    const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+    const file = new File(['- a\n- b\n- c'], 'big.md', { type: 'text/markdown' })
+    Object.defineProperty(fileInput, 'files', { value: [file] })
+
+    await act(async () => {
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    await waitFor(() => {
+      const fileBar = screen.getByTestId('import-progress-bar')
+      const blockBar = screen.getByTestId('import-block-progress-bar')
+      expect(fileBar).toHaveAccessibleName('File import progress')
+      expect(blockBar).toHaveAccessibleName('Block import progress')
+      // Distinct names so AT can tell the two bars apart.
+      expect(fileBar.getAttribute('aria-label')).not.toBe(blockBar.getAttribute('aria-label'))
+    })
+
+    await act(async () => {
+      resolveImport({ page_title: 'Big', blocks_created: 3, properties_set: 0, warnings: [] })
+    })
+  })
+
+  // #1929 — axe audit of the rendered result panel (with failures + warnings).
+  it('has no a11y violations with a populated result panel (#1929)', async () => {
+    mockImportMarkdown
+      .mockResolvedValueOnce({
+        page_title: 'ok',
+        blocks_created: 2,
+        properties_set: 1,
+        warnings: ['a warning'],
+      })
+      .mockRejectedValueOnce(new Error('boom'))
+
+    const { container } = render(<DataSettingsTab />)
+
+    const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+    const file1 = new File(['x'], 'ok.md', { type: 'text/markdown' })
+    const file2 = new File(['y'], 'bad.md', { type: 'text/markdown' })
+    Object.defineProperty(fileInput, 'files', { value: [file1, file2] })
+
+    await act(async () => {
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('import-result-details')).toBeInTheDocument()
+    })
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
 })

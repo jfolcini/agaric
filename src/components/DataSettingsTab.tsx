@@ -18,9 +18,26 @@ import { notify } from '@/lib/notify'
 import { downloadBlob, exportGraphAsZip } from '../lib/export-graph'
 import { formatBytes } from '../lib/format'
 import { logger } from '../lib/logger'
-import type { ImportResult } from '../lib/tauri'
 import { importMarkdown } from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
+
+/**
+ * Aggregated outcome of a (possibly multi-file) import run, rendered by the
+ * result panel. Unlike the backend `ImportResult` (one page), this carries
+ * hard `failures` separately from soft `warnings` (#1928) so the UI can show
+ * distinct, actionable messaging for files that did not import at all.
+ */
+interface ImportRunResult {
+  /** Page title (single file) or null for the multi-file placeholder. */
+  pageTitle: string | null
+  fileCount: number
+  blocksCreated: number
+  propertiesSet: number
+  /** Soft, per-file parse warnings; the file still imported. */
+  warnings: string[]
+  /** Filenames that threw and produced no page. */
+  failures: string[]
+}
 
 /**
  * Sanitize a space's display name for use inside an export
@@ -46,7 +63,10 @@ export function DataSettingsTab(): React.ReactElement {
   const availableSpaces = useSpaceStore((s) => s.availableSpaces)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [importing, setImporting] = useState(false)
-  const [importResult, setImportResult] = useState<ImportResult | null>(null)
+  const [importResult, setImportResult] = useState<ImportRunResult | null>(null)
+  // Whether the failure/warning detail list is expanded past the first N
+  // entries. Reset on each new import run.
+  const [detailsExpanded, setDetailsExpanded] = useState(false)
   // Per-file progress for multi-file imports — shows
   // `t('data.importingProgress', { index, total, name })` while the loop runs.
   const [currentFileIndex, setCurrentFileIndex] = useState<number | null>(null)
@@ -102,7 +122,14 @@ export function DataSettingsTab(): React.ReactElement {
       let totalBlocks = 0
       let totalProps = 0
       let totalBytes = 0
+      // Soft, per-file parse warnings reported by the backend (malformed
+      // YAML, dropped properties, …). The file still imported.
       const allWarnings: string[] = []
+      // Hard failures: a file that threw and produced no page. Tracked
+      // SEPARATELY from warnings (#1928) so we can show distinct messaging,
+      // gate the success toast, and offer a retry of just the failed subset.
+      const failedFiles: string[] = []
+      let succeededFiles = 0
       let lastTitle = ''
 
       for (const [i, file] of fileArray.entries()) {
@@ -143,10 +170,14 @@ export function DataSettingsTab(): React.ReactElement {
           totalBlocks += result.blocks_created
           totalProps += result.properties_set
           allWarnings.push(...result.warnings)
+          succeededFiles += 1
           lastTitle = result.page_title
         } catch (err) {
           logger.warn('DataSettingsTab', 'file import failed', { fileName: file.name }, err)
-          allWarnings.push(`Failed to import ${file.name}`)
+          // Record the failing filename separately from soft warnings so the
+          // result panel can list and retry it, and so the success toast can
+          // be suppressed when nothing imported (#1928).
+          failedFiles.push(file.name)
         }
         // Count bytes regardless of success — the user has waited on
         // this file either way, so the secondary line should reflect
@@ -157,11 +188,14 @@ export function DataSettingsTab(): React.ReactElement {
       }
 
       setImportResult({
-        page_title: fileArray.length === 1 ? lastTitle : `${fileArray.length} files`,
-        blocks_created: totalBlocks,
-        properties_set: totalProps,
+        pageTitle: fileArray.length === 1 ? lastTitle : null,
+        fileCount: fileArray.length,
+        blocksCreated: totalBlocks,
+        propertiesSet: totalProps,
         warnings: allWarnings,
+        failures: failedFiles,
       })
+      setDetailsExpanded(false)
       setCurrentFileIndex(null)
       setCurrentFileName('')
       setTotalFiles(0)
@@ -169,12 +203,27 @@ export function DataSettingsTab(): React.ReactElement {
       setCurrentFileBlocksTotal(0)
       setImporting(false)
 
-      if (totalBlocks > 0) {
-        notify.success(t('data.importedMessage', { totalBlocks, fileCount: files.length }))
-      }
-
-      // Reset file input
+      // Reset file input before any async toast handler so a retry can
+      // re-open the picker without a stale value.
       e.target.value = ''
+
+      if (totalBlocks === 0) {
+        // Nothing imported — either every file failed or all files were
+        // empty. Never fire a success toast here (#1928); surface an error.
+        notify.error(
+          failedFiles.length > 0
+            ? t('data.importAllFailed', { count: failedFiles.length })
+            : t('data.importNoContent'),
+        )
+      } else if (failedFiles.length > 0) {
+        // Partial failure: some files imported, some did not. Report the
+        // failures with a retry affordance rather than a green success toast.
+        notify.retry(t('data.importFailuresHeading', { count: failedFiles.length }), () =>
+          fileInputRef.current?.click(),
+        )
+      } else {
+        notify.success(t('data.importedMessage', { totalBlocks, count: succeededFiles }))
+      }
     },
     [t],
   )
@@ -302,6 +351,7 @@ export function DataSettingsTab(): React.ReactElement {
               <progress
                 className="w-full h-1 mt-2"
                 data-testid="import-progress-bar"
+                aria-label={t('data.importFileProgressLabel')}
                 value={currentFileIndex}
                 max={totalFiles}
               />
@@ -325,6 +375,7 @@ export function DataSettingsTab(): React.ReactElement {
                   <progress
                     className="w-full h-1 mt-1"
                     data-testid="import-block-progress-bar"
+                    aria-label={t('data.importBlockProgressLabel')}
                     value={currentFileBlocksDone}
                     max={currentFileBlocksTotal}
                   />
@@ -332,20 +383,99 @@ export function DataSettingsTab(): React.ReactElement {
               )}
             </>
           )}
-          {importResult && (
-            <div className="import-result mt-3 text-xs space-y-1" data-testid="import-result">
-              <p className="text-status-done-foreground">
-                Imported &ldquo;{importResult.page_title}&rdquo;: {importResult.blocks_created}{' '}
-                blocks
-                {importResult.properties_set > 0 && `, ${importResult.properties_set} properties`}
-              </p>
-              {importResult.warnings.length > 0 && (
-                <p className="text-status-pending-foreground">
-                  {importResult.warnings.length} warning(s)
-                </p>
-              )}
-            </div>
-          )}
+          {importResult &&
+            (() => {
+              // Derive presentation flags. `allFailed` (nothing imported, at
+              // least one hard failure) drives the error-toned state instead
+              // of a silent "0 blocks" line (#1928).
+              const { failures, warnings, blocksCreated, propertiesSet, fileCount, pageTitle } =
+                importResult
+              const allFailed = blocksCreated === 0 && failures.length > 0
+              const hasDetail = failures.length > 0 || warnings.length > 0
+              // Cap the at-rest list; the toggle reveals the rest.
+              const PREVIEW = 5
+              const shownFailures = detailsExpanded ? failures : failures.slice(0, PREVIEW)
+              const shownWarnings = detailsExpanded ? warnings : warnings.slice(0, PREVIEW)
+              const truncated = failures.length > PREVIEW || warnings.length > PREVIEW
+              const title = pageTitle ?? t('data.importResultFilesTitle', { count: fileCount })
+              return (
+                <div
+                  className="import-result mt-3 text-xs space-y-1"
+                  data-testid="import-result"
+                  // Announce the outcome once the progress region clears
+                  // (#1929), mirroring the not-ready hint pattern above.
+                  // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level status wrapper holding the summary <p> and the <details> list; <output> is inline-level and would change the block flow of the result region
+                  role="status"
+                  aria-live="polite"
+                  aria-atomic="true"
+                >
+                  {allFailed ? (
+                    <p className="text-destructive" data-testid="import-result-error">
+                      {t('data.importAllFailed', { count: failures.length })}
+                    </p>
+                  ) : (
+                    <p className="text-status-done-foreground">
+                      {t('data.importResultSummary', { title, count: blocksCreated })}
+                      {propertiesSet > 0 &&
+                        `, ${t('data.importResultProperties', { count: propertiesSet })}`}
+                    </p>
+                  )}
+                  {hasDetail && (
+                    <details data-testid="import-result-details">
+                      <summary className="cursor-pointer text-status-pending-foreground">
+                        {failures.length > 0 && (
+                          <span className="text-destructive" data-testid="import-failures-heading">
+                            {t('data.importFailuresHeading', { count: failures.length })}
+                          </span>
+                        )}
+                        {failures.length > 0 && warnings.length > 0 && ' · '}
+                        {warnings.length > 0 && (
+                          <span data-testid="import-warnings-heading">
+                            {t('data.importWarningsHeading', { count: warnings.length })}
+                          </span>
+                        )}
+                      </summary>
+                      <ul
+                        className="mt-1 space-y-0.5 max-h-40 overflow-y-auto"
+                        data-testid="import-result-detail-list"
+                      >
+                        {shownFailures.map((name) => (
+                          <li
+                            key={`fail-${name}`}
+                            className="text-destructive"
+                            data-testid="import-failure-item"
+                          >
+                            {t('data.importFailedFile', { name })}
+                          </li>
+                        ))}
+                        {shownWarnings.map((warning, i) => (
+                          <li
+                            // Warnings are free-form strings and may repeat, so
+                            // index-qualify the key to keep it stable+unique.
+                            // oxlint-disable-next-line react/no-array-index-key -- warning strings are free-form and may duplicate; the list is render-only (no reorder/insert), so the positional index is a stable, unique key
+                            key={`warn-${i}-${warning}`}
+                            className="text-status-pending-foreground"
+                            data-testid="import-warning-item"
+                          >
+                            {warning}
+                          </li>
+                        ))}
+                      </ul>
+                      {truncated && (
+                        <button
+                          type="button"
+                          className="mt-1 underline text-muted-foreground"
+                          data-testid="import-details-toggle"
+                          onClick={() => setDetailsExpanded((v) => !v)}
+                        >
+                          {detailsExpanded ? t('data.importShowLess') : t('data.importShowAll')}
+                        </button>
+                      )}
+                    </details>
+                  )}
+                </div>
+              )
+            })()}
         </CardContent>
       </Card>
 
