@@ -192,9 +192,9 @@ describe('createMarkToggles', () => {
 // ── createRefsAndBlocks ─────────────────────────────────────────────────
 
 describe('createRefsAndBlocks', () => {
-  it('returns 4 buttons', () => {
+  it('returns 5 buttons', () => {
     const buttons = createRefsAndBlocks(makeEditor())
-    expect(buttons).toHaveLength(4)
+    expect(buttons).toHaveLength(5)
   })
 
   it('each button has valid config shape', () => {
@@ -204,7 +204,7 @@ describe('createRefsAndBlocks', () => {
     }
   })
 
-  it('includes internalLink, insertBlockRef, insertTag, blockquote', () => {
+  it('includes internalLink, insertBlockRef, insertTag, blockquote, insertQuery', () => {
     const buttons = createRefsAndBlocks(makeEditor())
     const labels = buttons.map((b) => b.label)
     expect(labels).toEqual([
@@ -212,6 +212,7 @@ describe('createRefsAndBlocks', () => {
       'toolbar.insertBlockRef',
       'toolbar.insertTag',
       'toolbar.blockquote',
+      'toolbar.insertQuery',
     ])
   })
 
