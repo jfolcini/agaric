@@ -292,6 +292,57 @@ describe('TagList', () => {
         expect(screen.queryByText('to-delete')).not.toBeInTheDocument()
       })
     })
+
+    // #1883 — the delete dialog must be wired through the i18n ConfirmDialog
+    // API with the destructive variant so initial focus lands on the safe
+    // Cancel button (a reflex Enter dismisses, it does NOT hard-purge the tag).
+    it('renders the dialog with translated strings (not hardcoded English) and the destructive variant', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'i18n-tag')])
+
+      render(<TagList />)
+
+      expect(await screen.findByText('i18n-tag')).toBeInTheDocument()
+
+      const tagRow = screen.getByText('i18n-tag').closest('li') as HTMLElement
+      await user.click(findTrashButton(tagRow))
+
+      // Strings come from the i18n catalog (t()), not inline literals.
+      expect(await screen.findByText(t('tags.deleteTitle'))).toBeInTheDocument()
+      // The description interpolates the tag name via the {{name}} key.
+      expect(
+        screen.getByText(t('tags.deleteDescription', { name: 'i18n-tag' })),
+      ).toBeInTheDocument()
+
+      const cancelBtn = screen.getByRole('button', { name: t('tags.deleteCancel') })
+      const confirmBtn = screen.getByRole('button', {
+        name: new RegExp(`^${t('tags.deleteConfirm')}$`),
+      })
+      expect(cancelBtn).toBeInTheDocument()
+      expect(confirmBtn).toBeInTheDocument()
+
+      // Destructive variant: the confirm (Delete) button carries the
+      // destructive styling and initial focus is on the safe Cancel action.
+      expect(confirmBtn.className).toContain('destructive')
+      expect(cancelBtn).toHaveFocus()
+    })
+
+    it('has no a11y violations with the delete dialog open', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'a11y-delete', 1)])
+
+      const { container } = render(<TagList />)
+
+      const tag = await screen.findByText('a11y-delete')
+      const tagRow = tag.closest('li') as HTMLElement
+      await user.click(findTrashButton(tagRow))
+
+      // Ensure the dialog is mounted before running axe.
+      await screen.findByText(t('tags.deleteTitle'))
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
   })
 
   // UX #2: Tag rename dialog

@@ -392,10 +392,12 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         onOpenChange={(open) => {
           if (!open) setDeleteTarget(null)
         }}
-        title="Delete tag?"
-        description={`This will delete the tag \u201C${deleteTarget?.name}\u201D. This action cannot be undone. ${t('tags.deleteWarning')}`}
-        cancelLabel="Cancel"
-        actionLabel="Delete"
+        titleKey="tags.deleteTitle"
+        descriptionKey="tags.deleteDescription"
+        cancelKey="tags.deleteCancel"
+        confirmKey="tags.deleteConfirm"
+        values={{ name: deleteTarget?.name ?? '' }}
+        variant="destructive"
         onConfirm={handleConfirmDelete}
       />
     </div>
