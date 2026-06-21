@@ -583,14 +583,22 @@ async fn excluded_priority_inverts_priority_values() {
 }
 
 // =====================================================================
-// `prop:KEY=VALUE` four-column matching
+// `prop:KEY=VALUE` TYPED single-column matching (#properties-typed-always)
+//
+// Search property matching is TYPED: the user value is parsed to the single
+// most-specific `PropertyValue` (finite f64 → Num/value_num; ISO YYYY-MM-DD →
+// Date/value_date; otherwise Text/value_text) and only THAT column is compared
+// — the same shared `SearchProjection::compile_has_property` every other
+// surface uses. This SUPERSEDES the legacy untyped four-column OR (one value
+// bound four ways across value_text/num/date/ref simultaneously). `Ref` is NOT
+// auto-inferred (search has no ref syntax), so a bare ULID is now Text.
 // =====================================================================
 
 #[tokio::test]
 async fn prop_filter_matches_value_num_column() {
-    // Block with a numeric property `priority=1` stored in value_num.
-    // V1 missed this entirely (value_text-only);
-    // matches across all four columns with type coercion.
+    // Numeric property `score=1` stored in value_num. The value "1" infers to
+    // the typed `Num` variant → matches the value_num=1.0 row (typed Num
+    // matches value_num, same as every other surface).
     let (pool, _dir) = pool().await;
     seed_corpus(&pool).await;
     seed_property_num(&pool, B_TODO_P1, "score", 1.0).await;
@@ -621,6 +629,8 @@ async fn prop_filter_matches_value_num_column() {
 
 #[tokio::test]
 async fn prop_filter_matches_value_date_column() {
+    // An ISO `YYYY-MM-DD` value infers to the typed `Date` variant → matches
+    // `value_date` (typed Date, same as every other surface).
     let (pool, _dir) = pool().await;
     seed_corpus(&pool).await;
     seed_property_date(&pool, B_DOING_P1, "deadline", "2026-05-17").await;
@@ -646,13 +656,20 @@ async fn prop_filter_matches_value_date_column() {
 }
 
 #[tokio::test]
-async fn prop_filter_matches_value_ref_column_case_insensitive() {
+async fn prop_value_ref_is_not_auto_inferred_typed() {
+    // #properties-typed-always — BEHAVIOUR CHANGE (was
+    // `prop_filter_matches_value_ref_column_case_insensitive`): under the
+    // legacy untyped four-column OR, a 26-char ULID-shaped value was
+    // opportunistically matched against `value_ref` (uppercased). The typed
+    // rule does NOT auto-infer `Ref` — search has no ref syntax — so a bare
+    // ULID string is treated as ordinary `Text` and compared against
+    // `value_text` ONLY. The property here lives in `value_ref`, so the typed
+    // search no longer matches it: the empty result is the NEW, intended
+    // typed expectation.
     let (pool, _dir) = pool().await;
     seed_corpus(&pool).await;
     let target = "01HQBLMTA000000000000000FF";
     seed_property_ref(&pool, B_TODO_P1, "author", target).await;
-    // Lowercased user input must still match (ULIDs are normalised
-    // to uppercase per Agaric convention).
     let resp = search_blocks_inner(
         &pool,
         "alpha".into(),
@@ -669,14 +686,17 @@ async fn prop_filter_matches_value_ref_column_case_insensitive() {
     )
     .await
     .unwrap();
-    let ids: Vec<&str> = resp.items.iter().map(|r| r.id.as_str()).collect();
-    assert_eq!(ids, vec![B_TODO_P1]);
+    assert!(
+        resp.items.is_empty(),
+        "typed search matches a bare ULID as Text (value_text), NOT value_ref; \
+         the value_ref row must NOT match"
+    );
 }
 
 #[tokio::test]
 async fn prop_filter_text_value_still_matches_value_text() {
-    // Regression guard: v1 `value_text`-only behaviour is preserved
-    // for arbitrary string values.
+    // A non-numeric, non-ISO-date string infers to the typed `Text` variant →
+    // matches `value_text` (unchanged by #properties-typed-always).
     let (pool, _dir) = pool().await;
     seed_corpus(&pool).await;
     // status=blocked is already seeded for B_TODO_P1 + B_DOING_P1.
@@ -704,9 +724,10 @@ async fn prop_filter_text_value_still_matches_value_text() {
 
 #[tokio::test]
 async fn prop_filter_numeric_value_does_not_match_text_column() {
-    // `prop:status=1` must NOT match `status=blocked` even though
-    // SQLite's text-vs-numeric affinity rules are nuanced. The
-    // four-column OR keeps each branch type-safe.
+    // `prop:status=1` infers the typed `Num` variant → compares `value_num`
+    // ONLY. No row has a numeric `status`, so the result is empty: the typed
+    // single-column match keeps numeric and text values from cross-matching
+    // (`status=blocked` is in value_text, never consulted for a Num query).
     let (pool, _dir) = pool().await;
     seed_corpus(&pool).await;
     let resp = search_blocks_inner(
