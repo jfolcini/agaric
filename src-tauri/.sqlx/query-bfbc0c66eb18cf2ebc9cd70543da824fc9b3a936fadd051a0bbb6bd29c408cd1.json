@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) FROM blocks b\n           WHERE block_type = ?1 AND deleted_at IS NULL\n             AND (?2 IS NULL OR b.space_id = ?2)\n             AND NOT EXISTS (\n                  SELECT 1 FROM block_properties bp\n                  WHERE bp.block_id = b.id\n                    AND bp.key = 'view_type'\n                    AND bp.value_text = 'query-view')",
+  "describe": {
+    "columns": [
+      {
+        "name": "COUNT(*)",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "bfbc0c66eb18cf2ebc9cd70543da824fc9b3a936fadd051a0bbb6bd29c408cd1"
+}

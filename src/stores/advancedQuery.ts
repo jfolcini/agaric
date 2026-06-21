@@ -103,6 +103,113 @@ export function builderTreeToFilterExpr(root: BuilderGroupNode): FilterExpr {
 }
 
 /**
+ * #1460 saved-views — INVERSE of {@link compileNode}: rebuild a builder
+ * {@link BuilderNode} from a wire `FilterExpr`.
+ *
+ * `compileNode` applies `Not` as the OUTERMOST wrapper (after the leaf/group
+ * is built), so deserialization peels a leading `Not` and sets `negated=true`
+ * on the node it wraps. A doubled `Not` (which our own compile never emits, but
+ * a hand-written / future spec could) toggles back to `negated=false` so the
+ * 3-valued semantics stay faithful. The remaining shapes map 1:1:
+ *   - `Leaf{primitive}`        → leaf node
+ *   - `And{children}` / `Or`   → group node carrying that op
+ *
+ * `allocId` mints a fresh, store-unique React-key id per node (the store passes
+ * a closure over its monotonic `nextAddId`); ids are otherwise compile-invisible
+ * (`compileNode` drops them), so any unique sequence round-trips identically.
+ */
+function filterExprToBuilderNode(expr: FilterExpr, allocId: () => number): BuilderNode {
+  if (expr.type === 'Not') {
+    const inner = filterExprToBuilderNode(expr.child, allocId)
+    return { ...inner, negated: !inner.negated }
+  }
+  if (expr.type === 'Leaf') {
+    return { kind: 'leaf', id: allocId(), primitive: expr.primitive, negated: false }
+  }
+  // And | Or — a group node.
+  return {
+    kind: 'group',
+    id: allocId(),
+    op: expr.type,
+    negated: false,
+    children: expr.children.map((child) => filterExprToBuilderNode(child, allocId)),
+  }
+}
+
+/**
+ * #1460 saved-views — rebuild a root builder {@link BuilderGroupNode} from a
+ * persisted wire `FilterExpr` (the inverse of {@link builderTreeToFilterExpr}).
+ *
+ * The builder invariant is that the ROOT is always a group. Trees produced by
+ * our own builder therefore always serialize to a group-shaped root
+ * (`And`/`Or`, optionally wrapped in a single `Not`), which round-trips exactly.
+ * A defensive fallback wraps any non-group root expr (a bare `Leaf`, or a `Not`
+ * peeling down to a leaf) in a synthetic root `And` group so the invariant holds
+ * for hand-authored / foreign specs without throwing.
+ */
+export function filterExprToBuilderTree(expr: FilterExpr, allocId: () => number): BuilderGroupNode {
+  const node = filterExprToBuilderNode(expr, allocId)
+  if (node.kind === 'group') return node
+  // Non-group root (defensive): wrap the leaf in a fresh root `And` group.
+  return { kind: 'group', id: allocId(), op: 'And', negated: false, children: [node] }
+}
+
+/**
+ * #1460 saved-views — serialized shape stored in a saved view's `query_spec`
+ * property (a JSON string). Captures everything the builder + D2 controls
+ * produce EXCEPT pagination (cursor/limit), so a load fully reconstructs the
+ * working state.
+ */
+export interface SavedQuerySpec {
+  /** The compiled wire `FilterExpr` (from {@link builderTreeToFilterExpr}). */
+  filter: FilterExpr
+  /** Ordered sort keys (empty ⇒ engine default keyset). */
+  sort: SortKey[]
+  /** Full-text term (empty string ⇒ no FTS intersect). */
+  fulltext: string
+  /** Grouping directive, or `null` for the FLAT path. */
+  group_by: GroupSpec | null
+  /** Global / grouped aggregates. */
+  aggregates: AggregateSpec[]
+}
+
+/**
+ * Serialize the current builder tree + controls into a {@link SavedQuerySpec}
+ * (ready to `JSON.stringify` into the `query_spec` property).
+ */
+export function serializeQuerySpec(
+  builder: BuilderGroupNode,
+  controls: AdvancedQueryControls,
+): SavedQuerySpec {
+  return {
+    filter: builderTreeToFilterExpr(builder),
+    sort: controls.sort,
+    fulltext: controls.fulltext,
+    group_by: controls.groupBy,
+    aggregates: controls.aggregates,
+  }
+}
+
+/**
+ * Parse a persisted `query_spec` JSON string into a {@link SavedQuerySpec}.
+ * Throws on malformed JSON or a missing/invalid `filter` field so callers can
+ * surface a load error toast rather than hydrate a half-built view.
+ */
+export function parseQuerySpec(raw: string): SavedQuerySpec {
+  const parsed = JSON.parse(raw) as Partial<SavedQuerySpec>
+  if (parsed == null || typeof parsed !== 'object' || parsed.filter == null) {
+    throw new Error('saved view query_spec is missing its filter expression')
+  }
+  return {
+    filter: parsed.filter,
+    sort: Array.isArray(parsed.sort) ? parsed.sort : [],
+    fulltext: typeof parsed.fulltext === 'string' ? parsed.fulltext : '',
+    group_by: parsed.group_by ?? null,
+    aggregates: Array.isArray(parsed.aggregates) ? parsed.aggregates : [],
+  }
+}
+
+/**
  * The non-chip working set of an advanced query: the controls D2 exposes on top
  * of the flat chip conjunction. Held per-space alongside `filtersBySpace` and,
  * like the chips, NOT persisted (a transient working set cleared on restart).
@@ -157,6 +264,12 @@ interface AdvancedQueryState {
   setGroupBy: (spaceKey: string, groupBy: GroupSpec | null) => void
   /** Replace the aggregate specs for the space. */
   setAggregates: (spaceKey: string, aggregates: AggregateSpec[]) => void
+  /**
+   * #1460 saved-views — atomically replace a space's builder tree AND controls
+   * from a deserialized {@link SavedQuerySpec}. Fresh React-key ids are minted
+   * from `nextAddId` so the loaded tree never collides with existing node keys.
+   */
+  loadView: (spaceKey: string, spec: SavedQuerySpec) => void
 }
 
 /**
@@ -487,4 +600,26 @@ export const useAdvancedQueryStore = create<AdvancedQueryState>()((set) => ({
     set((state) => ({ controlsBySpace: patchControls(state, spaceKey, { groupBy }) })),
   setAggregates: (spaceKey, aggregates) =>
     set((state) => ({ controlsBySpace: patchControls(state, spaceKey, { aggregates }) })),
+  loadView: (spaceKey, spec) =>
+    set((state) => {
+      // Mint fresh React-key ids from the shared monotonic counter so the
+      // hydrated tree's node keys never collide with existing/other-space nodes.
+      let id = state.nextAddId
+      const allocId = (): number => {
+        id += 1
+        return id
+      }
+      const builder = filterExprToBuilderTree(spec.filter, allocId)
+      const controls: AdvancedQueryControls = {
+        fulltext: spec.fulltext,
+        sort: spec.sort,
+        groupBy: spec.group_by,
+        aggregates: spec.aggregates,
+      }
+      return {
+        nextAddId: id,
+        buildersBySpace: { ...state.buildersBySpace, [spaceKey]: builder },
+        controlsBySpace: { ...state.controlsBySpace, [spaceKey]: controls },
+      }
+    }),
 }))

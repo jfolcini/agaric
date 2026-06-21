@@ -164,7 +164,12 @@ async fn count_blocks_by_type(
     let count: i64 = sqlx::query_scalar!(
         r#"SELECT COUNT(*) FROM blocks b
            WHERE block_type = ?1 AND deleted_at IS NULL
-             AND (?2 IS NULL OR b.space_id = ?2)"#,
+             AND (?2 IS NULL OR b.space_id = ?2)
+             AND NOT EXISTS (
+                  SELECT 1 FROM block_properties bp
+                  WHERE bp.block_id = b.id
+                    AND bp.key = 'view_type'
+                    AND bp.value_text = 'query-view')"#,
         block_type,
         space_id,
     )

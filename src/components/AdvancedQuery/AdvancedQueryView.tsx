@@ -18,21 +18,25 @@
  */
 
 import type React from 'react'
-import { useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
+import { RenameDialog } from '@/components/dialogs/RenameDialog'
 import { QueryResultList } from '@/components/query/QueryResultList'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useAdvancedQuery } from '@/hooks/useAdvancedQuery'
+import { notify } from '@/lib/notify'
+import { createBlock, setProperty } from '@/lib/tauri'
 import type { AggregateSpec, FilterPrimitive, GroupSpec, SortKey } from '@/lib/tauri'
 import {
   type BuilderPath,
   builderTreeToFilterExpr,
   selectAdvancedQueryBuilderForSpace,
   selectAdvancedQueryControlsForSpace,
+  serializeQuerySpec,
   useAdvancedQueryStore,
 } from '@/stores/advancedQuery'
 import { LEGACY_SPACE_KEY, useSpaceStore } from '@/stores/space'
@@ -41,6 +45,7 @@ import { AggregateSummary } from './AggregateSummary'
 import { FilterGroup } from './FilterGroup'
 import { GroupedResults } from './GroupedResults'
 import { QueryControlsBar } from './QueryControlsBar'
+import { QUERY_SPEC_KEY, QUERY_VIEW_MARKER, SavedViews, VIEW_TYPE_KEY } from './SavedViews'
 
 export interface AdvancedQueryViewProps {
   /** Navigate to a block's parent page (wired through from the app shell). */
@@ -111,6 +116,36 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
   const handleAggregatesChange = (aggregates: AggregateSpec[]): void =>
     setAggregates(spaceKey, aggregates)
 
+  // #1460 saved-views: "Save view" prompts for a name, writes a marker block
+  // (content = name) + its serialized `query_spec`, then bumps the refresh
+  // token so the picker re-lists.
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false)
+  const [savedViewsRefresh, setSavedViewsRefresh] = useState(0)
+
+  const handleSaveView = useCallback(
+    async (name: string): Promise<void> => {
+      try {
+        const spec = serializeQuerySpec(builder, controls)
+        const block = await createBlock({
+          blockType: 'content',
+          content: name,
+          ...(currentSpaceId != null && { spaceId: currentSpaceId }),
+        })
+        await setProperty({ blockId: block.id, key: VIEW_TYPE_KEY, valueText: QUERY_VIEW_MARKER })
+        await setProperty({
+          blockId: block.id,
+          key: QUERY_SPEC_KEY,
+          valueText: JSON.stringify(spec),
+        })
+        notify.success(t('advancedQuery.savedViews.saved', { name }))
+        setSavedViewsRefresh((n) => n + 1)
+      } catch {
+        notify.error(t('advancedQuery.savedViews.saveError'))
+      }
+    },
+    [builder, controls, currentSpaceId, t],
+  )
+
   const isGrouped = groups != null
   // Empty when: flat mode with no rows, OR grouped mode with no groups.
   const isEmpty = isGrouped ? groups.length === 0 : results.length === 0
@@ -152,6 +187,35 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
           onGroupByChange={handleGroupByChange}
           aggregates={controls.aggregates}
           onAggregatesChange={handleAggregatesChange}
+        />
+
+        {/* #1460 saved-views: save the current query + browse saved views. */}
+        <div className="advanced-query-saved flex flex-col gap-2">
+          <div>
+            <Button
+              variant="outline"
+              size="xs"
+              onClick={() => setSaveDialogOpen(true)}
+              aria-label={t('advancedQuery.savedViews.saveTitle')}
+            >
+              {t('advancedQuery.savedViews.save')}
+            </Button>
+          </div>
+          <SavedViews
+            spaceKey={spaceKey}
+            spaceId={currentSpaceId}
+            refreshToken={savedViewsRefresh}
+          />
+        </div>
+
+        <RenameDialog
+          open={saveDialogOpen}
+          onOpenChange={setSaveDialogOpen}
+          onConfirm={(name) => void handleSaveView(name)}
+          currentName=""
+          title={t('advancedQuery.savedViews.save')}
+          description={t('advancedQuery.savedViews.namePrompt')}
+          ariaLabel={t('advancedQuery.savedViews.namePrompt')}
         />
       </div>
 
