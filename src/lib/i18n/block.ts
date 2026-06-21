@@ -7,8 +7,6 @@
  */
 
 export const block: Record<string, string> = {
-  'block.actionsSheetDescription': 'Choose an action to perform on this block.',
-  'block.actionsSheetTitle': 'Block actions',
   'block.reorder': 'Reorder block (drag or use keyboard)',
   'block.reorderTip': 'Reorder — Ctrl+Shift+↑/↓',
   'block.reorderTouchHint': 'Press and hold to drag',
@@ -19,8 +17,6 @@ export const block: Record<string, string> = {
   'block.selectTip': 'Select — Ctrl+Click to multi-select, Shift+Click for range',
   'block.delete': 'Delete block',
   'block.history': 'Block history',
-  'block.moreActionsLabel': 'More block actions',
-  'block.moreActionsEnumerated': 'More actions: {{actions}}',
   'block.collapseChildren': 'Collapse children',
   'block.expandChildren': 'Expand children',
   'block.collapseTip': 'Collapse (Ctrl+.)',
