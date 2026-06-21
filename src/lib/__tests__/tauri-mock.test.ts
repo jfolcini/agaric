@@ -3608,6 +3608,97 @@ describe('list_pages_with_metadata — compound filters', () => {
 })
 
 // ---------------------------------------------------------------------------
+// list_pages_with_metadata — sort ordering (#1886)
+//
+// `compareMetaRows` in the mock is a behavioural reimplementation of the
+// backend's per-sort `ORDER BY` (`src-tauri/src/commands/pages/metadata.rs`).
+// The existing filter tests deliberately `.toSorted()` away the mock's order,
+// and the cursor tests use the non-default sorts only to drive pagination — so
+// the comparator's DIRECTION and (id ASC) tiebreak had no direct assertion. A
+// silent flip there would keep every suite green while the mock diverged from
+// the backend. These lock the contract: each mode's returned order must equal
+// an independently-spelled-out expected ordering of the same rows.
+// ---------------------------------------------------------------------------
+
+describe('list_pages_with_metadata — sort ordering (#1886)', () => {
+  type Row = Record<string, unknown>
+
+  const allPages = (sort: string): Row[] =>
+    (
+      invoke('list_pages_with_metadata', {
+        filter: { spaceId: 'SPACE_PERSONAL', sort, filters: [] },
+        cursor: null,
+        limit: 100,
+      }) as MetaPageResp
+    ).items as Row[]
+
+  // The expected ordering contract, spelled out independently of the mock's
+  // `compareMetaRows` (mirrors the backend `ORDER BY` for each mode): a primary
+  // key, then `id ASC` as the deterministic tiebreak. Written by hand here on
+  // purpose — if the mock comparator drifts from this contract, the handler's
+  // output order stops matching and the test fails.
+  function expectedComparator(sort: string): (x: Row, y: Row) => number {
+    const id = (r: Row) => String(r['id'])
+    const tiebreak = (x: Row, y: Row) => id(x).localeCompare(id(y))
+    return (x, y) => {
+      let primary = 0
+      switch (sort) {
+        case 'alphabetical': {
+          // content ASC, case-insensitive
+          primary = String(x['content'] ?? '')
+            .toLowerCase()
+            .localeCompare(String(y['content'] ?? '').toLowerCase())
+          break
+        }
+        case 'recently-modified': {
+          // most recent first → lastModifiedAt DESC
+          primary = String(y['lastModifiedAt'] ?? '').localeCompare(
+            String(x['lastModifiedAt'] ?? ''),
+          )
+          break
+        }
+        case 'most-linked': {
+          // highest inbound count first → DESC
+          primary = Number(y['inboundLinkCount']) - Number(x['inboundLinkCount'])
+          break
+        }
+        case 'most-content': {
+          // most child blocks first → DESC
+          primary = Number(y['childBlockCount']) - Number(x['childBlockCount'])
+          break
+        }
+      }
+      return primary !== 0 ? primary : tiebreak(x, y)
+    }
+  }
+
+  for (const sort of ['alphabetical', 'recently-modified', 'most-linked', 'most-content']) {
+    it(`orders the full page set per the ${sort} contract (with id tiebreak)`, () => {
+      const items = allPages(sort)
+      // Non-trivial set so the ordering assertion isn't vacuous.
+      expect(items.length).toBeGreaterThanOrEqual(3)
+      // Returned order must equal the independently-specified expected order of
+      // the same rows. `id ASC` makes the comparator a total order (ids unique),
+      // so this pins direction + tiebreak exactly.
+      expect(items).toEqual(items.toSorted(expectedComparator(sort)))
+    })
+  }
+
+  it('alphabetical order is case-insensitively non-decreasing by title', () => {
+    const titles = allPages('alphabetical').map((r) => String(r['content'] ?? '').toLowerCase())
+    expect(titles).toEqual([...titles].toSorted((a, b) => a.localeCompare(b)))
+  })
+
+  it('id tiebreak is ascending when the primary key ties (most-linked: all-zero seed links)', () => {
+    // Pages with no inbound links all share inboundLinkCount 0, so most-linked
+    // collapses entirely onto the id tiebreak — a direct probe of the tiebreak.
+    const items = allPages('most-linked').filter((r) => Number(r['inboundLinkCount']) === 0)
+    const ids = items.map((r) => String(r['id']))
+    expect(ids).toEqual([...ids].toSorted((a, b) => a.localeCompare(b)))
+  })
+})
+
+// ---------------------------------------------------------------------------
 // list_pages_with_metadata — inbound link count + same-page exclusion
 // The mock's `pageLinkStats` mirrors the backend's
 // `pages_cache.inbound_link_count` (migration 0070): an edge counts toward a
