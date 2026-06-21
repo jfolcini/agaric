@@ -1687,6 +1687,140 @@ bare line ((jkl-012)) too";
             output.warnings[0]
         );
     }
+
+    // ------------------------------------------------------------------
+    // #1922 — additive coverage for previously-untested import-path
+    // behaviors. These PIN current behavior (no production change); a
+    // regression that alters them now fails CI.
+    // ------------------------------------------------------------------
+
+    /// #1922 (`no-frontmatter-duplicate-key-warning-test`) — the SCALAR
+    /// de-dup path: a repeated plain-scalar key keeps the FIRST value and
+    /// emits an "appears more than once" warning (import.rs scalar path).
+    #[test]
+    fn parse_frontmatter_duplicate_scalar_key_keeps_first_and_warns_1922() {
+        let mut warns: Vec<String> = Vec::new();
+        let pairs = parse_frontmatter("title: A\ntitle: B", &mut warns);
+        assert_eq!(
+            pairs,
+            vec![("title".to_string(), "A".to_string())],
+            "a duplicate scalar key must keep the FIRST value; got {pairs:?}"
+        );
+        assert_eq!(
+            warns.len(),
+            1,
+            "exactly one duplicate-key warning expected; got {warns:?}"
+        );
+        assert!(
+            warns[0].contains("appears more than once")
+                && warns[0].contains("keeping the first value"),
+            "warning must name the keep-first de-dup semantics; got {warns:?}"
+        );
+    }
+
+    /// #1922 (`no-frontmatter-duplicate-key-warning-test`) — the
+    /// BLOCK-SCALAR de-dup path (`commit_block!`): a duplicate block-scalar
+    /// key (`note: |` twice) keeps the first captured value and warns.
+    #[test]
+    fn parse_frontmatter_duplicate_block_scalar_key_keeps_first_and_warns_1922() {
+        let mut warns: Vec<String> = Vec::new();
+        let pairs = parse_frontmatter("note: |\n  x\nnote: |\n  y", &mut warns);
+        assert_eq!(
+            pairs,
+            vec![("note".to_string(), "x".to_string())],
+            "a duplicate block-scalar key must keep the FIRST captured value; got {pairs:?}"
+        );
+        assert_eq!(
+            warns.len(),
+            1,
+            "exactly one duplicate-key warning expected; got {warns:?}"
+        );
+        assert!(
+            warns[0].contains("appears more than once")
+                && warns[0].contains("keeping the first value"),
+            "block-scalar duplicate must warn with keep-first semantics; got {warns:?}"
+        );
+    }
+
+    /// #1922 (`no-direct-helper-unit-tests`) — `strip_yaml_quotes` only
+    /// strips when BOTH ends match the SAME quote char. Pins the edge cases:
+    /// matched pair stripped, mismatched/single/too-short left verbatim,
+    /// empty-quoted collapses to empty.
+    #[test]
+    fn strip_yaml_quotes_edge_cases_1922() {
+        // Matched double / single quotes: one layer removed.
+        assert_eq!(strip_yaml_quotes("\"abc\""), "abc");
+        assert_eq!(strip_yaml_quotes("'abc'"), "abc");
+        // Empty quoted string -> empty.
+        assert_eq!(strip_yaml_quotes("\"\""), "");
+        assert_eq!(strip_yaml_quotes("''"), "");
+        // Mismatched quote chars: NOT stripped (both ends must match).
+        assert_eq!(strip_yaml_quotes("\"abc'"), "\"abc'");
+        assert_eq!(strip_yaml_quotes("'abc\""), "'abc\"");
+        // A single leading/trailing quote with no closing partner: untouched.
+        assert_eq!(strip_yaml_quotes("\"abc"), "\"abc");
+        assert_eq!(strip_yaml_quotes("abc\""), "abc\"");
+        // 1-char string (len < 2): never stripped, even a lone quote.
+        assert_eq!(strip_yaml_quotes("\""), "\"");
+        assert_eq!(strip_yaml_quotes("x"), "x");
+        // No quotes at all: returned verbatim.
+        assert_eq!(strip_yaml_quotes("plain"), "plain");
+    }
+
+    /// #1922 (`no-direct-helper-unit-tests`) — `parse_block_scalar_indicator`
+    /// edge cases asserted at the HELPER level (the existing _1590 tests only
+    /// hit it indirectly): folded vs literal flag, chomp_strip flag, the
+    /// indent-digit form (`|2`), order-independence (`>2-`), trailing-comment
+    /// tolerance (`| # literal`), and rejection of non-block-scalar values.
+    #[test]
+    fn parse_block_scalar_indicator_edge_cases_1922() {
+        // Literal `|` -> folded == false, chomp_strip == false.
+        let lit = parse_block_scalar_indicator("|").expect("`|` is a block scalar");
+        assert!(!lit.folded, "`|` is literal (not folded)");
+        assert!(!lit.chomp_strip, "`|` has no strip chomp");
+        // Folded `>` -> folded == true.
+        let fold = parse_block_scalar_indicator(">").expect("`>` is a block scalar");
+        assert!(fold.folded, "`>` is folded");
+        assert!(!fold.chomp_strip);
+        // Strip chomping `|-` -> chomp_strip == true, literal.
+        let strip = parse_block_scalar_indicator("|-").expect("`|-` is a block scalar");
+        assert!(!strip.folded);
+        assert!(strip.chomp_strip, "`|-` sets strip chomp");
+        // Keep chomping `>+` -> folded, no strip.
+        let keep = parse_block_scalar_indicator(">+").expect("`>+` is a block scalar");
+        assert!(keep.folded);
+        assert!(!keep.chomp_strip, "`+` (keep) is not strip");
+        // Indent digit `|2` -> accepted, literal, no strip.
+        let indent = parse_block_scalar_indicator("|2").expect("`|2` is a block scalar");
+        assert!(!indent.folded);
+        assert!(!indent.chomp_strip);
+        // Order-independent `>2-` -> folded + strip.
+        let mixed = parse_block_scalar_indicator(">2-").expect("`>2-` is a block scalar");
+        assert!(mixed.folded);
+        assert!(mixed.chomp_strip, "`>2-` carries the `-` strip indicator");
+        // Trailing comment tolerated: `| # literal block`.
+        let commented =
+            parse_block_scalar_indicator("| # literal block").expect("trailing comment tolerated");
+        assert!(!commented.folded);
+        assert!(!commented.chomp_strip);
+        // Rejections: not a block-scalar header -> None.
+        assert!(
+            parse_block_scalar_indicator("x").is_none(),
+            "`x` is a plain scalar, not a block header"
+        );
+        assert!(
+            parse_block_scalar_indicator("|x").is_none(),
+            "`|x` carries garbage after the indicator"
+        );
+        assert!(
+            parse_block_scalar_indicator("||").is_none(),
+            "`||` is not a valid block-scalar header"
+        );
+        assert!(
+            parse_block_scalar_indicator("").is_none(),
+            "an empty value is not a block-scalar header"
+        );
+    }
 }
 
 /// Line-ending normalization in front of the YAML

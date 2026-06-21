@@ -5136,6 +5136,255 @@ async fn import_export_namespace_and_wikilink_round_trip_1446() {
     mat.shutdown();
 }
 
+// ======================================================================
+// #1922 — additive coverage for previously-untested import-path behaviors.
+// These PIN the CURRENT behavior end-to-end (no production change); a
+// regression that alters them now fails CI.
+// ======================================================================
+
+/// #1922 (`no-hashtag-test`) — pins the import-side handling of
+/// Logseq/Obsidian `#tag` / `#[[Tag With Space]]` tokens. The import body
+/// path runs ONLY `rewrite_inbound_page_links`, whose HUMAN_PAGE_LINK_RE
+/// matches ANY `[[…]]` substring. Current (nuanced) behavior:
+///   - `#project` — a bare hashtag with no brackets — has no `[[…]]` to match,
+///     so it stays LITERAL text and is NEVER turned into a tag association.
+///   - `#[[My Topic]]` — the `[[My Topic]]` portion DOES match the inbound
+///     wiki-link pre-pass, which CREATES a "My Topic" page and rewrites the
+///     name to a canonical `[[ULID]]` ref. So the `#` survives but the bracket
+///     payload becomes a page reference, not a literal tag.
+/// Either way NO `block_tags` (tag-association) rows are created and NO
+/// `tag`-type block is materialized — the exporter's `#[ULID]`→`#tagname`
+/// resolution has no inverse on import. This test pins that asymmetry.
+///
+/// NOTE: the `#[[My Topic]]` → page-ref rewrite is a quirk (a hashtag's
+/// bracket payload is silently re-homed as a PAGE link, not a tag); it is
+/// pinned here as current behavior, not endorsed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_hashtags_no_tag_rows_1922() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        "- see #project and #[[My Topic]]".into(),
+        Some("Tags.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        result.blocks_created, 1,
+        "single content block created (the imported page itself is separate)"
+    );
+
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND deleted_at IS NULL \
+         ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    // The bare `#project` hashtag stays literal (no brackets → no rewrite).
+    assert!(
+        content.starts_with("see #project and #[["),
+        "bare `#project` stays literal and the `#` before `[[…]]` survives; got {content:?}"
+    );
+    // The `[[My Topic]]` payload was wiki-link-resolved to a canonical ULID
+    // ref (26-char Crockford ULID), NOT left as literal `My Topic`.
+    assert!(
+        !content.contains("My Topic"),
+        "the `[[My Topic]]` payload is rewritten to a `[[ULID]]` ref, not kept \
+         literal; got {content:?}"
+    );
+    let inner = content
+        .trim_start_matches("see #project and #[[")
+        .trim_end_matches("]]");
+    assert_eq!(
+        inner.len(),
+        26,
+        "the rewritten payload is a 26-char ULID page-ref; got {content:?}"
+    );
+
+    // A "My Topic" PAGE was created by the inbound wiki-link pre-pass.
+    let my_topic_pages: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND content = 'My Topic' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        my_topic_pages, 1,
+        "the `[[My Topic]]` inside the hashtag created exactly one page"
+    );
+
+    // The crux of the asymmetry: NO `block_tags` association rows and NO
+    // `tag`-type blocks result from importing `#tag` content.
+    let tag_links: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_tags")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        tag_links, 0,
+        "importing `#tag` content must create NO block_tags (tag-association) rows"
+    );
+    let tag_blocks: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE block_type = 'tag'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        tag_blocks, 0,
+        "importing `#tag` content must create NO tag blocks"
+    );
+
+    mat.shutdown();
+}
+
+/// #1922 (`no-namespace-collision-import-test`) — `import_markdown_inner`
+/// ALWAYS creates a brand-new page block from the derived (namespaced) title;
+/// there is NO de-dup / merge against an existing page with the same title in
+/// the same space. So seeding `Project/Backend/API` and then importing
+/// `Project/Backend/API.md` yields TWO same-title pages. This pins the
+/// create-new contract (and the wiki-link ambiguity it can create), the exact
+/// duplicate-title condition the inbound resolver treats as ambiguous.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_namespaced_title_collision_creates_duplicate_page_1922() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    // Pre-seed a page whose title is exactly the namespaced title the import
+    // will derive, in the SAME space.
+    const EXISTING: &str = "01AAAAAAAAAAAAAAAAAAAAEXST";
+    insert_block(
+        &pool,
+        EXISTING,
+        "page",
+        "Project/Backend/API",
+        None,
+        Some(0),
+    )
+    .await;
+    assign_to_test_space(&pool, EXISTING).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        "- body".into(),
+        Some("Project/Backend/API.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        result.page_title, "Project/Backend/API",
+        "import derives the namespaced title from the folder path"
+    );
+
+    // Current behavior: NO de-dup — the import created a SECOND page with the
+    // identical title, so two same-title pages now exist.
+    let same_title_pages: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' \
+         AND content = 'Project/Backend/API' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        same_title_pages, 2,
+        "import creates a NEW page unconditionally — no merge/de-dup against \
+         the pre-existing same-title page"
+    );
+
+    mat.shutdown();
+}
+
+/// #1922 (`no-frontmatter-without-listmarker-body-import-test`) — a raw
+/// Obsidian-style file with frontmatter at the very TOP of the file (Case 1
+/// of `strip_frontmatter`) followed by NON-bullet prose. The existing _1432
+/// round-trip test feeds EXPORT-shaped markdown (`# Title` first → Case 2),
+/// so the top-of-file position with body content was never exercised
+/// end-to-end. This pins both halves of Case 1: (a) the frontmatter scalar is
+/// stamped as a PAGE property, and (b) the prose line becomes a content block.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_top_of_file_frontmatter_with_prose_body_1922() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    // True Case 1: the file STARTS with the `---` fence, then a single prose
+    // line (no `# Heading`, no `- ` bullet). `category` is an unseeded,
+    // non-reserved key → with no typed def it routes to `value_text`.
+    let md = "---\ncategory: notes\n---\nSome prose paragraph";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        md.into(),
+        Some("Obsidian Note.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.page_title, "Obsidian Note");
+    assert_eq!(
+        result.blocks_created, 1,
+        "the prose paragraph becomes one content block"
+    );
+    assert_eq!(
+        result.properties_set, 1,
+        "the top-of-file frontmatter `category` is stamped as a page property"
+    );
+
+    let page_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Obsidian Note'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // (a) The page carries the `category` property (default text routing).
+    let category: Option<String> = sqlx::query_scalar(
+        "SELECT value_text FROM block_properties WHERE block_id = ? AND key = 'category'",
+    )
+    .bind(&page_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        category.as_deref(),
+        Some("notes"),
+        "top-of-file frontmatter property must be stamped on the page (value_text)"
+    );
+
+    // (b) The prose line landed as a content block under the page.
+    let body: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND parent_id = ? \
+         AND deleted_at IS NULL ORDER BY id DESC LIMIT 1",
+    )
+    .bind(&page_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        body, "Some prose paragraph",
+        "non-bullet prose after top-of-file frontmatter must import as a content block"
+    );
+
+    mat.shutdown();
+}
+
 /// Helper: stamp the reserved task columns directly on a block row (the
 /// materializer would write these via `set_property_in_tx`; tests that use
 /// the raw `insert_block` helper seed them via SQL).
