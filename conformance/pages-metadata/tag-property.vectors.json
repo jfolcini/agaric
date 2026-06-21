@@ -1,0 +1,147 @@
+{
+  "$comment_schema": "Cross-impl golden vectors for the Pages Tag + HasProperty filter primitives (#1908 slice 2, increment c). Shape: { rows[], scenarios[] }. Each row is a page carrying a set of tags and a list of typed properties; scenarios apply an AND-composed list of FilterPrimitive wire objects and assert the SET of matching page ids. Only the matching-id set is compared cross-impl (representation-stable). Asserted by BOTH src-tauri/src/commands/tests/pages_tag_property_conformance_tests.rs (real query path) and src/lib/tauri-mock/__tests__/tag-property-conformance.test.ts (mock metaRowMatchesFilter / hasPropertyMatches).",
+  "$comment_scope": "Covers Tag plus the HasProperty predicates the mock actually implements: Exists, NotExists, Eq, Ne — for BOTH Text and Ref values. The ordered/LIKE predicates (Lt/Gt/Lte/Gte/Contains/StartsWith) are DELIBERATELY excluded: the mock's hasPropertyMatches returns true (default branch) for them, a known un-implemented gap tracked by a separate #1908 follow-up. Including them here would (correctly) fail the conformance gate. Tag reads block_tags (mock: blockTags map); HasProperty reads block_properties (mock: properties map). Ref values compare value_ref, Text values compare value_text.",
+  "$comment_seeding": "Both impls seed mock/db state directly (no canonical fixtures). Rust: block_tags rows reference tag blocks (block_type='tag'), block_properties Ref values reference a real target block — both inserted via INSERT OR IGNORE before the join row, because foreign_keys=ON. Mock: blockTags.set(id, Set(tags)) and properties.set(id, Map(key -> {value_text|value_ref})), cleared per scenario.",
+  "rows": [
+    {
+      "id": "01TAGP0000000000000000000A",
+      "title": "Alpha",
+      "tags": ["t-work"],
+      "properties": [{ "key": "status", "value": { "type": "Text", "value": "done" } }]
+    },
+    {
+      "id": "01TAGP0000000000000000000B",
+      "title": "Beta",
+      "tags": ["t-work"],
+      "properties": [
+        { "key": "assignee", "value": { "type": "Ref", "value": "01TAGP000000000000000REF01" } }
+      ]
+    },
+    {
+      "id": "01TAGP0000000000000000000C",
+      "title": "Gamma",
+      "tags": ["t-personal"],
+      "properties": [{ "key": "status", "value": { "type": "Text", "value": "open" } }]
+    },
+    {
+      "id": "01TAGP0000000000000000000D",
+      "title": "Delta",
+      "tags": ["t-work", "t-personal"],
+      "properties": [
+        { "key": "status", "value": { "type": "Text", "value": "done" } },
+        { "key": "assignee", "value": { "type": "Ref", "value": "01TAGP000000000000000REF01" } }
+      ]
+    },
+    {
+      "id": "01TAGP0000000000000000000E",
+      "title": "Epsilon",
+      "tags": [],
+      "properties": []
+    },
+    {
+      "id": "01TAGP0000000000000000000F",
+      "title": "Zeta",
+      "tags": [],
+      "properties": [{ "key": "status", "value": { "type": "Text", "value": "open" } }]
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "Tag t-work — pages tagged t-work",
+      "filters": [{ "type": "Tag", "tag": "t-work" }],
+      "expectedMatchingIds": [
+        "01TAGP0000000000000000000A",
+        "01TAGP0000000000000000000B",
+        "01TAGP0000000000000000000D"
+      ]
+    },
+    {
+      "name": "Tag t-missing — no page carries it",
+      "filters": [{ "type": "Tag", "tag": "t-missing" }],
+      "expectedMatchingIds": []
+    },
+    {
+      "name": "HasProperty Exists status",
+      "filters": [{ "type": "HasProperty", "key": "status", "predicate": { "type": "Exists" } }],
+      "expectedMatchingIds": [
+        "01TAGP0000000000000000000A",
+        "01TAGP0000000000000000000C",
+        "01TAGP0000000000000000000D",
+        "01TAGP0000000000000000000F"
+      ]
+    },
+    {
+      "name": "HasProperty NotExists status",
+      "filters": [{ "type": "HasProperty", "key": "status", "predicate": { "type": "NotExists" } }],
+      "expectedMatchingIds": ["01TAGP0000000000000000000B", "01TAGP0000000000000000000E"]
+    },
+    {
+      "name": "HasProperty Eq Text status=done",
+      "filters": [
+        {
+          "type": "HasProperty",
+          "key": "status",
+          "predicate": { "type": "Eq", "value": { "type": "Text", "value": "done" } }
+        }
+      ],
+      "expectedMatchingIds": ["01TAGP0000000000000000000A", "01TAGP0000000000000000000D"]
+    },
+    {
+      "name": "HasProperty Ne Text status=done (absent OR different)",
+      "filters": [
+        {
+          "type": "HasProperty",
+          "key": "status",
+          "predicate": { "type": "Ne", "value": { "type": "Text", "value": "done" } }
+        }
+      ],
+      "expectedMatchingIds": [
+        "01TAGP0000000000000000000B",
+        "01TAGP0000000000000000000C",
+        "01TAGP0000000000000000000E",
+        "01TAGP0000000000000000000F"
+      ]
+    },
+    {
+      "name": "HasProperty Eq Ref assignee=REF01",
+      "filters": [
+        {
+          "type": "HasProperty",
+          "key": "assignee",
+          "predicate": {
+            "type": "Eq",
+            "value": { "type": "Ref", "value": "01TAGP000000000000000REF01" }
+          }
+        }
+      ],
+      "expectedMatchingIds": ["01TAGP0000000000000000000B", "01TAGP0000000000000000000D"]
+    },
+    {
+      "name": "HasProperty Ne Ref assignee=REF01 (absent OR different)",
+      "filters": [
+        {
+          "type": "HasProperty",
+          "key": "assignee",
+          "predicate": {
+            "type": "Ne",
+            "value": { "type": "Ref", "value": "01TAGP000000000000000REF01" }
+          }
+        }
+      ],
+      "expectedMatchingIds": [
+        "01TAGP0000000000000000000A",
+        "01TAGP0000000000000000000C",
+        "01TAGP0000000000000000000E",
+        "01TAGP0000000000000000000F"
+      ]
+    },
+    {
+      "name": "AND-composition — Tag t-work AND HasProperty Exists status",
+      "filters": [
+        { "type": "Tag", "tag": "t-work" },
+        { "type": "HasProperty", "key": "status", "predicate": { "type": "Exists" } }
+      ],
+      "expectedMatchingIds": ["01TAGP0000000000000000000A", "01TAGP0000000000000000000D"]
+    }
+  ]
+}

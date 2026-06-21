@@ -1,0 +1,150 @@
+{
+  "$comment_schema": "Cross-impl golden vectors for the Pages filter-primitive evaluation (#1908 slice 2, increment a). Shape: { rows[], scenarios[] }. Each row is a page; scenarios apply an AND-composed list of FilterPrimitive wire objects and assert the SET of matching page ids. Only the matching-id set is compared cross-impl (representation-stable). Asserted by BOTH src-tauri/.../pages_filter_primitive_conformance_tests.rs (real query path) and src/lib/tauri-mock/__tests__/filter-primitive-conformance.test.ts (mock metaRowMatchesFilter).",
+  "$comment_scope": "Covers the PURE-over-row primitives evaluable without global mock state: Stub, HasNoInboundLinks, Priority, LastEdited(Range), plus AND-composition. LastEdited Rolling/OlderThan are intentionally excluded — they resolve against the wall clock ('now' / new Date()), so a golden fixture cannot pin them. Orphan (link seeding) and Tag/HasProperty (mock-state seeding) are separate #1908 increments.",
+  "$comment_dates": "lastModifiedAt and Range bounds are full RFC 3339 UTC (…Z), identically formatted, so the mock's lexical ISO compare equals the backend's epoch-ms compare. Row timestamps are kept clear of the bounds (no boundary-exact values) so both comparison methods agree unambiguously. A null lastModifiedAt seeds NO op_log row on the Rust side.",
+  "rows": [
+    {
+      "id": "01FILT0000000000000000000A",
+      "title": "Alpha",
+      "childBlockCount": 0,
+      "inboundLinkCount": 0,
+      "priority": "high",
+      "lastModifiedAt": "2026-02-10T12:00:00Z"
+    },
+    {
+      "id": "01FILT0000000000000000000B",
+      "title": "Beta",
+      "childBlockCount": 3,
+      "inboundLinkCount": 4,
+      "priority": "medium",
+      "lastModifiedAt": "2026-02-20T08:00:00Z"
+    },
+    {
+      "id": "01FILT0000000000000000000C",
+      "title": "Gamma",
+      "childBlockCount": 0,
+      "inboundLinkCount": 5,
+      "priority": "high",
+      "lastModifiedAt": "2026-03-15T00:00:00Z"
+    },
+    {
+      "id": "01FILT0000000000000000000D",
+      "title": "Delta",
+      "childBlockCount": 2,
+      "inboundLinkCount": 1,
+      "priority": "low",
+      "lastModifiedAt": "2026-01-05T00:00:00Z"
+    },
+    {
+      "id": "01FILT0000000000000000000E",
+      "title": "Epsilon",
+      "childBlockCount": 0,
+      "inboundLinkCount": 0,
+      "priority": null,
+      "lastModifiedAt": "2026-02-28T23:00:00Z"
+    },
+    {
+      "id": "01FILT0000000000000000000F",
+      "title": "Zeta",
+      "childBlockCount": 1,
+      "inboundLinkCount": 2,
+      "priority": "high",
+      "lastModifiedAt": null
+    },
+    {
+      "id": "01FILT0000000000000000000G",
+      "title": "Eta",
+      "childBlockCount": 0,
+      "inboundLinkCount": 3,
+      "priority": "medium",
+      "lastModifiedAt": "2026-04-01T00:00:00Z"
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "Empty filter list — no constraint, every page passes",
+      "filters": [],
+      "expectedMatchingIds": [
+        "01FILT0000000000000000000A",
+        "01FILT0000000000000000000B",
+        "01FILT0000000000000000000C",
+        "01FILT0000000000000000000D",
+        "01FILT0000000000000000000E",
+        "01FILT0000000000000000000F",
+        "01FILT0000000000000000000G"
+      ]
+    },
+    {
+      "name": "Stub — childBlockCount == 0",
+      "filters": [{ "type": "Stub" }],
+      "expectedMatchingIds": [
+        "01FILT0000000000000000000A",
+        "01FILT0000000000000000000C",
+        "01FILT0000000000000000000E",
+        "01FILT0000000000000000000G"
+      ]
+    },
+    {
+      "name": "HasNoInboundLinks — inboundLinkCount == 0",
+      "filters": [{ "type": "HasNoInboundLinks" }],
+      "expectedMatchingIds": ["01FILT0000000000000000000A", "01FILT0000000000000000000E"]
+    },
+    {
+      "name": "Priority high (NULL priority excluded)",
+      "filters": [{ "type": "Priority", "priority": "high" }],
+      "expectedMatchingIds": [
+        "01FILT0000000000000000000A",
+        "01FILT0000000000000000000C",
+        "01FILT0000000000000000000F"
+      ]
+    },
+    {
+      "name": "Priority medium",
+      "filters": [{ "type": "Priority", "priority": "medium" }],
+      "expectedMatchingIds": ["01FILT0000000000000000000B", "01FILT0000000000000000000G"]
+    },
+    {
+      "name": "Priority low",
+      "filters": [{ "type": "Priority", "priority": "low" }],
+      "expectedMatchingIds": ["01FILT0000000000000000000D"]
+    },
+    {
+      "name": "LastEdited Range — February 2026 (null lastModified excluded)",
+      "filters": [
+        {
+          "type": "LastEdited",
+          "spec": {
+            "type": "Range",
+            "start": "2026-02-01T00:00:00Z",
+            "end": "2026-02-28T23:59:59Z"
+          }
+        }
+      ],
+      "expectedMatchingIds": [
+        "01FILT0000000000000000000A",
+        "01FILT0000000000000000000B",
+        "01FILT0000000000000000000E"
+      ]
+    },
+    {
+      "name": "AND-composition — Stub AND Priority high",
+      "filters": [{ "type": "Stub" }, { "type": "Priority", "priority": "high" }],
+      "expectedMatchingIds": ["01FILT0000000000000000000A", "01FILT0000000000000000000C"]
+    },
+    {
+      "name": "AND-composition — HasNoInboundLinks AND LastEdited Range February",
+      "filters": [
+        { "type": "HasNoInboundLinks" },
+        {
+          "type": "LastEdited",
+          "spec": {
+            "type": "Range",
+            "start": "2026-02-01T00:00:00Z",
+            "end": "2026-02-28T23:59:59Z"
+          }
+        }
+      ],
+      "expectedMatchingIds": ["01FILT0000000000000000000A", "01FILT0000000000000000000E"]
+    }
+  ]
+}

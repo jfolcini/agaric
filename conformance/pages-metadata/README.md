@@ -49,10 +49,13 @@ exception and is asserted for the count sorts.
 ## Scope (staged, per #1886)
 
 - **In:** the four wire sorts — ordering + cursor discriminator (`position`/`seq`).
-- **Out (follow-up #1908):** the remaining filter-primitive evaluation parity
-  (`Tag` / `HasProperty` / `LastEdited`), and recently-modified key-slot
-  byte-equality. `alphabetical` is intentionally excluded — it never crosses the
-  wire (`pageSortWireFor('alphabetical')` returns `'default'`).
+- **Out:** recently-modified key-slot byte-equality, and the `HasProperty`
+  comparison / `LIKE` predicates (`Lt`/`Gt`/`Lte`/`Gte`/`Contains`/`StartsWith`),
+  which the mock does not yet implement (tracked in #1913). `alphabetical` is
+  intentionally excluded — it never crosses the wire
+  (`pageSortWireFor('alphabetical')` returns `'default'`). The filter-primitive
+  evaluation parity (#1908) is otherwise covered — see "Filter primitives",
+  "`Orphan` filter", and "`Tag` / `HasProperty` filters" below.
 
 ## `PathGlob` filter (#1910)
 
@@ -74,3 +77,69 @@ stable). Each `scenarios[]` entry has `{ pattern, exclude, expectedMatchingIds }
 `invalid[]` lists patterns both sides must reject with the shared `InvalidGlob:`
 prefix (the backend as `AppError::Validation`, the mock by dropping every row).
 Scenarios exercise the seven divergence classes catalogued in #1910.
+
+## Filter primitives (#1908, slice 2 / increment a)
+
+`filters.vectors.json` is the third fixture under the same contract, locking the
+Pages **filter-primitive evaluation** — the `metaRowMatchesFilter` re-implementation
+in `handlers.ts` that `scripts/check-tauri-mock-parity.mjs` never checks for
+behaviour. This increment covers the primitives evaluable **purely over a
+`PageMetaRow`** without global mock state: `Stub`, `HasNoInboundLinks`, `Priority`,
+and `LastEdited`'s `Range` variant, plus **AND-composition** across a primitive
+list.
+
+- **Rust** — `src-tauri/src/commands/tests/pages_filter_primitive_conformance_tests.rs`
+  seeds `pages_cache` counts, `blocks.priority`, and `op_log.created_at`, then
+  drives the real `list_pages_with_metadata_inner` with the fixture's
+  `FilterPrimitive` list (each primitive compiled to SQL in
+  `src-tauri/src/filters/primitive.rs`).
+- **TypeScript** — `src/lib/tauri-mock/__tests__/filter-primitive-conformance.test.ts`
+  drives `metaRowMatchesFilter` (now exported from `handlers.ts`), AND-composing
+  the same list.
+
+Each `scenarios[]` entry is `{ name, filters: FilterPrimitive[], expectedMatchingIds }`;
+only the matching-id **set** is compared cross-impl. `LastEdited` bounds and row
+timestamps are identically-formatted RFC 3339 UTC, so the mock's lexical-ISO
+compare equals the backend's epoch-ms compare; values are kept clear of the
+bounds so both methods agree. `Rolling` / `OlderThan` are **excluded** — they
+resolve against the wall clock (`now` / `new Date()`), which a golden fixture
+cannot pin.
+
+## `Orphan` filter (#1908, slice b)
+
+`orphan.vectors.json` locks the `Orphan` primitive — a page with **no inbound
+links AND no outbound link**. The backend (`compile_orphan` in
+`src-tauri/src/filters/primitive.rs`) reads `pages_cache.inbound_link_count = 0`
+AND a `NOT EXISTS` over `block_links` (an outbound link is any edge from a block
+on the page to a block on a *different* page); the mock evaluates
+`r.inboundLinkCount === 0 && !r.hasOutboundLink`.
+
+- **Rust** — `pages_orphan_conformance_tests.rs` seeds `inbound_link_count`
+  directly into `pages_cache` and, for outbound rows, a real `block_links` row
+  from the page to a **sentinel target page** that is *not* assigned to the test
+  space (so it never appears in results yet still satisfies `tgt.page_id != b.id`).
+- **TypeScript** — `orphan-conformance.test.ts` sets `inboundLinkCount` /
+  `hasOutboundLink` on the `PageMetaRow` and drives `metaRowMatchesFilter`.
+
+Rows cover the full 2×2 of {inbound 0 / >0} × {outbound yes / no}; a scenario
+pairs `Orphan` against `HasNoInboundLinks` to show `Orphan ⊂ HasNoInboundLinks`
+(a 0-inbound page *with* an outbound link is not an orphan). Only inbound **count**
+and outbound **presence** cross the comparison, so both are representation-stable.
+
+## `Tag` / `HasProperty` filters (#1908, slice c)
+
+`tag-property.vectors.json` locks the two state-backed primitives. `Tag`
+(`b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?)`) and `HasProperty`
+(`block_properties` predicates) are evaluated by the mock over its global
+`blockTags` / `properties` maps (exported from `seed.ts`).
+
+- **Rust** — `pages_tag_property_conformance_tests.rs` seeds `block_tags` (with a
+  `block_type='tag'` block per tag id, FK-safe) and `block_properties`
+  (`value_text` / `value_ref`, with the ref target block seeded first).
+- **TypeScript** — `tag-property-conformance.test.ts` seeds the `blockTags` /
+  `properties` maps (cleared per scenario) and drives `metaRowMatchesFilter`.
+
+Scope is the predicates the mock implements and #1908 names: `Exists`,
+`NotExists`, `Eq`, `Ne` — for both `Text` and `Ref` values. The comparison /
+`LIKE` predicates (`Lt`/`Gt`/`Lte`/`Gte`/`Contains`/`StartsWith`) are a known
+mock gap, deliberately out of scope and tracked in **#1913**.
