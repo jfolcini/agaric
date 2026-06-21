@@ -182,7 +182,12 @@ describe('AddFilterPopover', () => {
     await openPopover(user)
 
     await user.click(screen.getByRole('button', { name: '1' }))
-    expect(onAddFilter).toHaveBeenCalledWith({ type: 'Priority', priority: '1' })
+    expect(onAddFilter).toHaveBeenCalledWith({
+      type: 'Priority',
+      values: ['1'],
+      is_null: false,
+      exclude: false,
+    })
   })
 
   it('emits a Tag primitive through the inline editor', async () => {

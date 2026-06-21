@@ -351,7 +351,9 @@ export function AddFilterPopover({
                       variant="outline"
                       size="xs"
                       className="text-xs"
-                      onClick={() => emit({ type: 'Priority', priority: p })}
+                      onClick={() =>
+                        emit({ type: 'Priority', values: [p], is_null: false, exclude: false })
+                      }
                     >
                       {p}
                     </Button>

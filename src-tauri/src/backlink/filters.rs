@@ -881,7 +881,9 @@ pub(crate) fn compile_backlink_filter<'a>(
 
             BacklinkFilter::Priority { level } => {
                 let prim = FilterPrimitive::Priority {
-                    priority: level.clone(),
+                    values: vec![level.clone()],
+                    is_null: false,
+                    exclude: false,
                 };
                 Ok(BacklinkProjection::to_compiled(
                     BacklinkProjection.compile(&prim),

@@ -76,7 +76,7 @@ const PAGE_BROWSER_FILTERS: { name: string; filter: FilterPrimitive }[] = [
     name: 'LastEdited older',
     filter: { type: 'LastEdited', spec: { type: 'OlderThan', days: 30 } },
   },
-  { name: 'Priority', filter: { type: 'Priority', priority: '1' } },
+  { name: 'Priority', filter: { type: 'Priority', values: ['1'], is_null: false, exclude: false } },
   // --- advanced group ------------------------------------------------------
   // State — multi-value, with the include / exclude / none(is_null) sentinels.
   {
@@ -253,9 +253,6 @@ describe('canonicalToFilterPrimitive — non-Pages canonical kinds return null',
       predicate: { type: 'Exists' },
       exclude: true,
     },
-    // negated / multi priority is not a single-value Pages Priority leaf.
-    { kind: 'priority', values: ['1'], exclude: true },
-    { kind: 'priority', values: ['1', '2'], exclude: false },
     // created/lastEdited date fields are carried by other canonical kinds here.
     { kind: 'date', field: 'created', predicate: { type: 'IsNull' } },
     { kind: 'date', field: 'lastEdited', predicate: { type: 'IsNull' } },

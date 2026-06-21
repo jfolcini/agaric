@@ -91,7 +91,7 @@
     },
     {
       "name": "Priority high (NULL priority excluded)",
-      "filters": [{ "type": "Priority", "priority": "high" }],
+      "filters": [{ "type": "Priority", "values": ["high"] }],
       "expectedMatchingIds": [
         "01FILT0000000000000000000A",
         "01FILT0000000000000000000C",
@@ -100,12 +100,12 @@
     },
     {
       "name": "Priority medium",
-      "filters": [{ "type": "Priority", "priority": "medium" }],
+      "filters": [{ "type": "Priority", "values": ["medium"] }],
       "expectedMatchingIds": ["01FILT0000000000000000000B", "01FILT0000000000000000000G"]
     },
     {
       "name": "Priority low",
-      "filters": [{ "type": "Priority", "priority": "low" }],
+      "filters": [{ "type": "Priority", "values": ["low"] }],
       "expectedMatchingIds": ["01FILT0000000000000000000D"]
     },
     {
@@ -128,7 +128,7 @@
     },
     {
       "name": "AND-composition — Stub AND Priority high",
-      "filters": [{ "type": "Stub" }, { "type": "Priority", "priority": "high" }],
+      "filters": [{ "type": "Stub" }, { "type": "Priority", "values": ["high"] }],
       "expectedMatchingIds": ["01FILT0000000000000000000A", "01FILT0000000000000000000C"]
     },
     {

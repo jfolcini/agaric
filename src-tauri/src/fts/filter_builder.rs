@@ -283,6 +283,45 @@ impl StructuralFilterBuilder {
         self.add_projection_clause(prefix, &wc.sql, &wc.binds);
     }
 
+    /// `priority:` membership filter routed through [`SearchProjection`]
+    /// (`compile_priority`, which delegates to the canonical A2
+    /// `PagesProjection` SQL over `b.priority`). Replaces the legacy
+    /// `append_metadata_sql` emission of the `b.priority IN (…) / IS NULL`
+    /// include clause and the `b.priority IS NULL OR … NOT IN (…)` exclude
+    /// clause. The A2 SQL is byte-shape-identical to the legacy
+    /// `append_text_in_or_null` / `append_text_not_in_or_not_null` oracle, so
+    /// this is a zero-behaviour-change cutover at the result level.
+    ///
+    /// Exactly mirrors [`add_state_via_projection`](Self::add_state_via_projection):
+    /// legacy priority carries BOTH an include set (`priority_values` /
+    /// `priority_is_null`) and an exclude set (`excluded_priority_values` /
+    /// `excluded_priority_not_null`); the caller emits TWO primitives — an
+    /// include `Priority { exclude: false }` and an exclude
+    /// `Priority { exclude: true }`, feeding each here. An empty include (no
+    /// values, not is_null) is a no-op, matching the legacy helper's early
+    /// return.
+    pub(super) fn add_priority_via_projection(
+        &mut self,
+        prefix: &str,
+        values: &[String],
+        is_null: bool,
+        exclude: bool,
+    ) {
+        // Mirror the legacy helpers' early return: emit nothing when there is
+        // no predicate at all (empty values AND no null/not-null flag), so the
+        // generated SQL stays byte-identical to the legacy no-clause case.
+        if values.is_empty() && !is_null {
+            return;
+        }
+        let prim = FilterPrimitive::Priority {
+            values: values.to_vec(),
+            is_null,
+            exclude,
+        };
+        let wc = SearchProjection.compile(&prim);
+        self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+    }
+
     /// #1280 B2 — `block-type:` equality filter routed through
     /// [`SearchProjection`] (`compile_block_type` → canonical A2
     /// `PagesProjection` SQL). Replaces the legacy inline `add_block_type`
@@ -489,16 +528,15 @@ impl StructuralFilterBuilder {
     /// [`add_block_type`](Self::add_block_type) differs between the FTS
     /// and the toggle builders — the caller drives that order.
     pub(super) fn add_metadata(&mut self, metadata: &MetadataPredicates, alias: &str) {
-        // #1280 B2 — `state:` / `due-date:` / `scheduled:` are now routed
-        // through `SearchProjection` (which delegates to the canonical A2
-        // `PagesProjection` SQL), the same way `last-edited:` already is.
-        // These projections emit a hardcoded `b.` alias, so — like
+        // #1280 B2 — `state:` / `priority:` / `due-date:` / `scheduled:` are
+        // now routed through `SearchProjection` (which delegates to the
+        // canonical A2 `PagesProjection` SQL), the same way `last-edited:`
+        // already is. These projections emit a hardcoded `b.` alias, so — like
         // `last-edited:` — they require `alias == "b"` (all three FTS builders
         // splice metadata with `"b"`). `append_metadata_sql` no longer emits
-        // them; it shrank to PRIORITY (needs a multi-value variant not yet
-        // added) and PROPERTY (its four-column `value_text/num/date/ref` OR
-        // diverges from the projection's single-column `value_text` match), so
-        // BOTH stay on the legacy path for now.
+        // them; it shrank to PROPERTY only (its four-column
+        // `value_text/num/date/ref` OR diverges from the projection's
+        // single-column `value_text` match), which stays on the legacy path.
         debug_assert_eq!(
             alias, "b",
             "state/due/scheduled/last_edited projections emit a hardcoded `b.` \
@@ -524,8 +562,26 @@ impl StructuralFilterBuilder {
             true,
         );
 
-        // The remaining legacy metadata (priority, excluded_priority, property
-        // includes / excludes) still flows through `append_metadata_sql`.
+        // INCLUDE priority (`priority_values` / `priority_is_null`) and the
+        // symmetric EXCLUDE priority (`excluded_priority_values` /
+        // `excluded_priority_not_null`) mirror the state two-clause shape. Each
+        // splice is a no-op when its set is empty (mirrors the legacy helpers'
+        // early return).
+        self.add_priority_via_projection(
+            LAST_EDITED_PREFIX,
+            &metadata.priority_values,
+            metadata.priority_is_null,
+            false,
+        );
+        self.add_priority_via_projection(
+            LAST_EDITED_PREFIX,
+            &metadata.excluded_priority_values,
+            metadata.excluded_priority_not_null,
+            true,
+        );
+
+        // The remaining legacy metadata (property includes / excludes) still
+        // flows through `append_metadata_sql`.
         let meta_binds = append_metadata_sql(&mut self.sql, &mut self.next_param, metadata, alias);
         for mb in meta_binds {
             self.binds.push(ScalarBind::Meta(mb));
@@ -1009,6 +1065,85 @@ mod tests {
     fn state_empty_via_projection_is_noop() {
         let mut fb = StructuralFilterBuilder::new(6);
         fb.add_state_via_projection(FTS_PREFIX, &[], false, false);
+        assert_eq!(fb.sql(), "");
+        assert_eq!(fb.next_param(), 6);
+        assert_eq!(fb.bind_count(), 0);
+    }
+
+    // ── priority via projection — parity with the legacy `b.priority` oracle ──
+    //
+    // The projection-built priority SQL must be byte-shape-identical to the
+    // legacy `append_text_in_or_null` / `append_text_not_in_or_not_null`
+    // fragments over `b.priority` (the fragments `append_metadata_sql` used to
+    // emit before the multi-value `Priority` cutover). These mirror the
+    // `state_*_via_projection_*` snapshots above, on the `b.priority` column.
+
+    /// Single value: priority INCLUDE compiles to the canonical
+    /// `(b.priority IN (?))` shape, one bind, one placeholder consumed —
+    /// result-equivalent to the legacy single-value `b.priority = ?` emission.
+    #[test]
+    fn priority_single_via_projection_snapshot() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_priority_via_projection(FTS_PREFIX, &["A".to_string()], false, false);
+        assert_eq!(fb.sql(), "\n           AND (b.priority IN (?6))");
+        assert_eq!(fb.next_param(), 7);
+        assert_eq!(fb.bind_count(), 1);
+        assert!(matches!(fb.binds.first(), Some(ScalarBind::Str(s)) if s == "A"));
+    }
+
+    /// Multi value: priority INCLUDE compiles to `(b.priority IN (?,?))` with
+    /// one bind per value and contiguous renumbered placeholders — byte-shape
+    /// identical to the legacy `append_text_in_or_null` multi-value fragment.
+    #[test]
+    fn priority_multi_via_projection_snapshot() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_priority_via_projection(
+            FTS_PREFIX,
+            &["A".to_string(), "B".to_string()],
+            false,
+            false,
+        );
+        assert_eq!(fb.sql(), "\n           AND (b.priority IN (?6, ?7))");
+        assert_eq!(fb.next_param(), 8);
+        assert_eq!(fb.bind_count(), 2);
+        assert!(matches!(fb.binds.first(), Some(ScalarBind::Str(s)) if s == "A"));
+    }
+
+    /// `priority:none` (IS NULL, no values) compiles to the bare
+    /// `(b.priority IS NULL)` — no placeholder consumed, matching the legacy
+    /// `append_text_in_or_null` is_null branch.
+    #[test]
+    fn priority_none_via_projection_snapshot() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_priority_via_projection(FTS_PREFIX, &[], true, false);
+        assert_eq!(fb.sql(), "\n           AND (b.priority IS NULL)");
+        assert_eq!(fb.next_param(), 6);
+        assert_eq!(fb.bind_count(), 0);
+    }
+
+    /// EXCLUDE compiles to the NULL-inclusive inversion
+    /// `(b.priority IS NULL OR b.priority NOT IN (…))` — the `IS NULL` branch
+    /// OUTSIDE the `NOT IN` list (3-valued trap guard); `is_null=true` adds the
+    /// `IS NOT NULL` branch (the `not-priority:none` sentinel). Byte-shape
+    /// identical to the legacy `append_text_not_in_or_not_null` fragment.
+    #[test]
+    fn priority_exclude_via_projection_snapshot() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_priority_via_projection(FTS_PREFIX, &["A".to_string()], true, true);
+        assert_eq!(
+            fb.sql(),
+            "\n           AND (b.priority IS NULL OR b.priority NOT IN (?6) OR b.priority IS NOT NULL)"
+        );
+        assert_eq!(fb.next_param(), 7);
+        assert_eq!(fb.bind_count(), 1);
+    }
+
+    /// An empty, null-less priority include is a no-op (mirrors the legacy
+    /// helper's early return) — no clause, no placeholder consumed.
+    #[test]
+    fn priority_empty_via_projection_is_noop() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_priority_via_projection(FTS_PREFIX, &[], false, false);
         assert_eq!(fb.sql(), "");
         assert_eq!(fb.next_param(), 6);
         assert_eq!(fb.bind_count(), 0);

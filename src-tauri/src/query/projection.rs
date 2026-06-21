@@ -89,8 +89,8 @@ impl Projection for QueryProjection {
     fn compile_space(&self, space_id: &str) -> WhereClause {
         PagesProjection.compile_space(space_id)
     }
-    fn compile_priority(&self, priority: &str) -> WhereClause {
-        PagesProjection.compile_priority(priority)
+    fn compile_priority(&self, values: &[String], is_null: bool, exclude: bool) -> WhereClause {
+        PagesProjection.compile_priority(values, is_null, exclude)
     }
 
     // ── #1280 metadata leaves — delegate to PagesProjection. ──

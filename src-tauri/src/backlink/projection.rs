@@ -145,9 +145,37 @@ impl Projection for BacklinkProjection {
         WhereClause::unsupported()
     }
 
-    fn compile_priority(&self, priority: &str) -> WhereClause {
-        // Backlink `Priority` leaf: `b.priority = ?`.
-        WhereClause::new("b.priority = ?", vec![Bind::Text(priority.to_string())])
+    fn compile_priority(&self, values: &[String], is_null: bool, exclude: bool) -> WhereClause {
+        // The routed backlink `Priority{level}` leaf is exactly
+        // `{ values: [level], is_null: false, exclude: false }` → the legacy
+        // `b.priority = ?` with one text bind. The multi-value / is_null /
+        // exclude generalisations mirror `compile_state` but are not on the
+        // byte-identity path the resolver exercises today.
+        if values.is_empty() && !is_null {
+            // No selection at all matches the resolver's empty-set semantics.
+            return WhereClause::new("1=0", Vec::new());
+        }
+        if !exclude && is_null && values.is_empty() {
+            return WhereClause::new("b.priority IS NULL", Vec::new());
+        }
+        if values.len() == 1 && !is_null && !exclude {
+            return WhereClause::new("b.priority = ?", vec![Bind::Text(values[0].clone())]);
+        }
+        // General multi-value form: `b.priority IN (?, ?, …)` optionally
+        // OR-ed with `IS NULL`, optionally negated by `exclude`.
+        let placeholders = std::iter::repeat_n("?", values.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut term = format!("b.priority IN ({placeholders})");
+        if is_null {
+            term = format!("({term} OR b.priority IS NULL)");
+        }
+        let sql = if exclude {
+            format!("NOT COALESCE(({term}), 0)")
+        } else {
+            term
+        };
+        WhereClause::new(sql, values.iter().cloned().map(Bind::Text).collect())
     }
 
     fn compile_state(&self, values: &[String], is_null: bool, exclude: bool) -> WhereClause {
@@ -533,7 +561,9 @@ mod tests {
     #[test]
     fn priority_byte_identical() {
         let cf = routed(&FilterPrimitive::Priority {
-            priority: "A".into(),
+            values: vec!["A".into()],
+            is_null: false,
+            exclude: false,
         });
         assert_eq!(cf.sql, "b.priority = ?");
         assert_eq!(cf.binds, vec![FilterBind::Text("A".into())]);

@@ -1774,8 +1774,13 @@ export type FilterPrimitive =
 { type: "LastEdited"; spec: LastEditedSpec } |
 /**  Shared — block's owning page lives in this space. */
 { type: "Space"; space_id: string } |
-/**  Shared — block's `priority` matches this value. */
-{ type: "Priority"; priority: string } |
+/**
+ *  Shared — block's `priority` is in `values` (or IS NULL when
+ *  `is_null`). `exclude=true` negates the membership test. Multi-value
+ *  to support the chip vocabulary; the single-value backlink `Priority`
+ *  leaf routes to `{ values: [priority], is_null: false, exclude: false }`.
+ */
+{ type: "Priority"; values: string[]; is_null?: boolean; exclude?: boolean } |
 /**
  *  #1280 — block's `todo_state` is in `values` (or IS NULL when
  *  `is_null`). `exclude=true` negates the membership test. Multi-value

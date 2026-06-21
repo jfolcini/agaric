@@ -251,7 +251,7 @@ export function pageFilterSummary(
       return t('pageBrowser.filter.summarySpace')
     }
     case 'Priority': {
-      return t('pageBrowser.filter.summaryPriority', { priority: filter.priority })
+      return t('pageBrowser.filter.summaryPriority', { priority: filter.values.join(', ') })
     }
     case 'State': {
       return stateSummary(filter, t)
