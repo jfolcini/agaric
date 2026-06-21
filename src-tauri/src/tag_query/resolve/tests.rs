@@ -365,6 +365,89 @@ async fn resolve_prefix_escapes_like_wildcards() {
     assert!(result.contains("BLK_1"));
     assert!(!result.contains("BLK_2"));
 }
+
+#[test]
+fn prefix_has_like_metachars_detects_specials() {
+    // Plain prefixes (no metachars) take the fast plain-LIKE path.
+    assert!(!prefix_has_like_metachars("work/"));
+    assert!(!prefix_has_like_metachars("proj-alpha"));
+    assert!(!prefix_has_like_metachars(""));
+    // `%`, `_`, and `\` force the escaped + ESCAPE path.
+    assert!(prefix_has_like_metachars("100%"));
+    assert!(prefix_has_like_metachars("a_b"));
+    assert!(prefix_has_like_metachars("c\\d"));
+}
+
+/// (a) No-metacharacter prefix uses the plain `LIKE 'prefix%'` path and
+/// still matches exactly the tags it should (and nothing more). This
+/// guards the branch that drops `ESCAPE '\'` for the index-range fast
+/// path (#1891 item 1).
+#[tokio::test]
+async fn resolve_prefix_plain_path_matches_only_intended_tags() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TAG_WA", "tag", "work/a").await;
+    insert_block(&pool, "TAG_WB", "tag", "work/b").await;
+    insert_block(&pool, "TAG_OTHER", "tag", "worse").await; // shares "wor" but not "work/"
+    insert_tag_cache(&pool, "TAG_WA", "work/a", 1).await;
+    insert_tag_cache(&pool, "TAG_WB", "work/b", 1).await;
+    insert_tag_cache(&pool, "TAG_OTHER", "worse", 1).await;
+    insert_block(&pool, "BLK_1", "content", "one").await;
+    insert_block(&pool, "BLK_2", "content", "two").await;
+    insert_block(&pool, "BLK_3", "content", "three").await;
+    insert_tag_assoc(&pool, "BLK_1", "TAG_WA").await;
+    insert_tag_assoc(&pool, "BLK_2", "TAG_WB").await;
+    insert_tag_assoc(&pool, "BLK_3", "TAG_OTHER").await;
+    let result: FxHashSet<String> = resolve_expr(&pool, &TagExpr::Prefix("work/".into()), false)
+        .await
+        .unwrap();
+    assert_eq!(result.len(), 2, "only work/a and work/b match");
+    assert!(result.contains("BLK_1"));
+    assert!(result.contains("BLK_2"));
+    assert!(
+        !result.contains("BLK_3"),
+        "'worse' must NOT match the 'work/' prefix"
+    );
+}
+
+/// (b) A prefix containing BOTH `%` and `_` must match ONLY the literal
+/// tag — those metacharacters are escaped and matched literally, NOT
+/// treated as LIKE wildcards. Guards the correctness of the metacharacter
+/// branch retained alongside the plain fast path.
+#[tokio::test]
+async fn resolve_prefix_percent_and_underscore_match_literally() {
+    let (pool, _dir) = test_pool().await;
+    // Literal tag the prefix should match.
+    insert_block(&pool, "TAG_LIT", "tag", "a%_b").await;
+    // Decoy: if `%`/`_` were treated as wildcards, "aXYb" would match
+    // (`%` = any run, `_` = single char); it must NOT.
+    insert_block(&pool, "TAG_WILD", "tag", "aXYb").await;
+    // Another decoy that shares the literal "a" but diverges after.
+    insert_block(&pool, "TAG_NEAR", "tag", "azzz").await;
+    insert_tag_cache(&pool, "TAG_LIT", "a%_b", 1).await;
+    insert_tag_cache(&pool, "TAG_WILD", "aXYb", 1).await;
+    insert_tag_cache(&pool, "TAG_NEAR", "azzz", 1).await;
+    insert_block(&pool, "BLK_LIT", "content", "literal").await;
+    insert_block(&pool, "BLK_WILD", "content", "wild").await;
+    insert_block(&pool, "BLK_NEAR", "content", "near").await;
+    insert_tag_assoc(&pool, "BLK_LIT", "TAG_LIT").await;
+    insert_tag_assoc(&pool, "BLK_WILD", "TAG_WILD").await;
+    insert_tag_assoc(&pool, "BLK_NEAR", "TAG_NEAR").await;
+    // Prefix "a%_" must match only the literal "a%_b" tag.
+    let result: FxHashSet<String> = resolve_expr(&pool, &TagExpr::Prefix("a%_".into()), false)
+        .await
+        .unwrap();
+    assert_eq!(
+        result.len(),
+        1,
+        "only the literal 'a%_b' tag matches, got {result:?}"
+    );
+    assert!(result.contains("BLK_LIT"));
+    assert!(
+        !result.contains("BLK_WILD"),
+        "'%'/'_' must not act as wildcards"
+    );
+    assert!(!result.contains("BLK_NEAR"));
+}
 #[tokio::test]
 async fn resolve_tag_with_inheritance_includes_descendants() {
     let (pool, _dir) = test_pool().await;

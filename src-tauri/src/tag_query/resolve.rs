@@ -71,11 +71,31 @@ pub(crate) async fn resolve_tag_leaves(
     }
 }
 
+/// Does `prefix` contain any character that has special meaning inside a
+/// `LIKE` pattern (`%`, `_`) or the escape character (`\`) itself?
+///
+/// When it does NOT, the prefix can be bound verbatim with a trailing `%`
+/// and a plain `LIKE 'prefix%'` (no `ESCAPE` clause). SQLite then applies
+/// the `LIKE`→range optimization and probes `idx_tags_cache_name_nocase`
+/// instead of scanning every row of `tags_cache`. The unconditional
+/// `ESCAPE '\'` form defeats that optimization (#1891 item 1).
+///
+/// When it DOES, we keep the [`escape_like`] + `ESCAPE '\'` form so the
+/// metacharacters match literally — correctness is identical to before.
+#[must_use]
+fn prefix_has_like_metachars(prefix: &str) -> bool {
+    prefix.contains(['%', '_', '\\'])
+}
+
 /// Resolve a tag-name prefix to the set of `block_id`s whose tags match
 /// The prefix, honouring the inline-ref union semantics.
 ///
-/// `prefix` is the raw user-supplied prefix; LIKE wildcards (`%`, `_`,
-/// `\`) inside it are escaped via [`escape_like`] before binding.
+/// `prefix` is the raw user-supplied prefix. When it contains LIKE
+/// wildcards (`%`, `_`) or the escape char (`\`), those are escaped via
+/// [`escape_like`] and matched with `ESCAPE '\'` so they match literally.
+/// For the common metacharacter-free prefix we bind it verbatim and use a
+/// plain `LIKE 'prefix%'` (no `ESCAPE`) so SQLite can use the index range
+/// — both forms select exactly the same tags.
 ///
 /// See [`resolve_tag_leaves`] for the shared semantics. This is
 /// the single source of truth for the prefix leaf SQL — both
@@ -93,54 +113,111 @@ pub(crate) async fn resolve_tag_prefix_leaves(
     prefix: &str,
     include_inherited: bool,
 ) -> Result<Vec<String>, AppError> {
-    let escaped = format!("{}%", escape_like(prefix));
-    if include_inherited {
-        let rows = sqlx::query_scalar!(
-            "SELECT DISTINCT bt.block_id \
-             FROM tags_cache tc \
-             JOIN block_tags bt ON bt.tag_id = tc.tag_id \
-             JOIN blocks b ON b.id = bt.block_id \
-             WHERE tc.name LIKE ?1 ESCAPE '\\' \
-               AND b.deleted_at IS NULL \
-             UNION \
-             SELECT DISTINCT bti.block_id \
-             FROM tags_cache tc \
-             JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
-             JOIN blocks b ON b.id = bti.block_id \
-             WHERE tc.name LIKE ?1 ESCAPE '\\' \
-               AND b.deleted_at IS NULL \
-             UNION \
-             SELECT DISTINCT btr.source_id AS block_id \
-             FROM tags_cache tc \
-             JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
-             JOIN blocks b ON b.id = btr.source_id \
-             WHERE tc.name LIKE ?1 ESCAPE '\\' \
-               AND b.deleted_at IS NULL",
-            escaped
-        )
-        .fetch_all(pool)
-        .await?;
-        Ok(rows)
+    // Metacharacter-free prefixes bind verbatim and use a plain
+    // `LIKE 'prefix%'` (no ESCAPE) so SQLite applies the LIKE→range
+    // optimization on `idx_tags_cache_name_nocase` (#1891 item 1).
+    // Prefixes containing `%`/`_`/`\` keep the escaped + `ESCAPE '\'`
+    // form so those characters match literally — same tags either way.
+    if prefix_has_like_metachars(prefix) {
+        let escaped = format!("{}%", escape_like(prefix));
+        if include_inherited {
+            let rows = sqlx::query_scalar!(
+                "SELECT DISTINCT bt.block_id \
+                 FROM tags_cache tc \
+                 JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+                 JOIN blocks b ON b.id = bt.block_id \
+                 WHERE tc.name LIKE ?1 ESCAPE '\\' \
+                   AND b.deleted_at IS NULL \
+                 UNION \
+                 SELECT DISTINCT bti.block_id \
+                 FROM tags_cache tc \
+                 JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
+                 JOIN blocks b ON b.id = bti.block_id \
+                 WHERE tc.name LIKE ?1 ESCAPE '\\' \
+                   AND b.deleted_at IS NULL \
+                 UNION \
+                 SELECT DISTINCT btr.source_id AS block_id \
+                 FROM tags_cache tc \
+                 JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
+                 JOIN blocks b ON b.id = btr.source_id \
+                 WHERE tc.name LIKE ?1 ESCAPE '\\' \
+                   AND b.deleted_at IS NULL",
+                escaped
+            )
+            .fetch_all(pool)
+            .await?;
+            Ok(rows)
+        } else {
+            let rows = sqlx::query_scalar!(
+                "SELECT DISTINCT bt.block_id \
+                 FROM tags_cache tc \
+                 JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+                 JOIN blocks b ON b.id = bt.block_id \
+                 WHERE tc.name LIKE ?1 ESCAPE '\\' \
+                   AND b.deleted_at IS NULL \
+                 UNION \
+                 SELECT DISTINCT btr.source_id AS block_id \
+                 FROM tags_cache tc \
+                 JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
+                 JOIN blocks b ON b.id = btr.source_id \
+                 WHERE tc.name LIKE ?1 ESCAPE '\\' \
+                   AND b.deleted_at IS NULL",
+                escaped
+            )
+            .fetch_all(pool)
+            .await?;
+            Ok(rows)
+        }
     } else {
-        let rows = sqlx::query_scalar!(
-            "SELECT DISTINCT bt.block_id \
-             FROM tags_cache tc \
-             JOIN block_tags bt ON bt.tag_id = tc.tag_id \
-             JOIN blocks b ON b.id = bt.block_id \
-             WHERE tc.name LIKE ?1 ESCAPE '\\' \
-               AND b.deleted_at IS NULL \
-             UNION \
-             SELECT DISTINCT btr.source_id AS block_id \
-             FROM tags_cache tc \
-             JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
-             JOIN blocks b ON b.id = btr.source_id \
-             WHERE tc.name LIKE ?1 ESCAPE '\\' \
-               AND b.deleted_at IS NULL",
-            escaped
-        )
-        .fetch_all(pool)
-        .await?;
-        Ok(rows)
+        let pattern = format!("{prefix}%");
+        if include_inherited {
+            let rows = sqlx::query_scalar!(
+                "SELECT DISTINCT bt.block_id \
+                 FROM tags_cache tc \
+                 JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+                 JOIN blocks b ON b.id = bt.block_id \
+                 WHERE tc.name LIKE ?1 \
+                   AND b.deleted_at IS NULL \
+                 UNION \
+                 SELECT DISTINCT bti.block_id \
+                 FROM tags_cache tc \
+                 JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
+                 JOIN blocks b ON b.id = bti.block_id \
+                 WHERE tc.name LIKE ?1 \
+                   AND b.deleted_at IS NULL \
+                 UNION \
+                 SELECT DISTINCT btr.source_id AS block_id \
+                 FROM tags_cache tc \
+                 JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
+                 JOIN blocks b ON b.id = btr.source_id \
+                 WHERE tc.name LIKE ?1 \
+                   AND b.deleted_at IS NULL",
+                pattern
+            )
+            .fetch_all(pool)
+            .await?;
+            Ok(rows)
+        } else {
+            let rows = sqlx::query_scalar!(
+                "SELECT DISTINCT bt.block_id \
+                 FROM tags_cache tc \
+                 JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+                 JOIN blocks b ON b.id = bt.block_id \
+                 WHERE tc.name LIKE ?1 \
+                   AND b.deleted_at IS NULL \
+                 UNION \
+                 SELECT DISTINCT btr.source_id AS block_id \
+                 FROM tags_cache tc \
+                 JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
+                 JOIN blocks b ON b.id = btr.source_id \
+                 WHERE tc.name LIKE ?1 \
+                   AND b.deleted_at IS NULL",
+                pattern
+            )
+            .fetch_all(pool)
+            .await?;
+            Ok(rows)
+        }
     }
 }
 
