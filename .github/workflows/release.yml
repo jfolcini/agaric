@@ -518,13 +518,20 @@ jobs:
           [ ${#sigs[@]} -eq 1 ] || { echo "::error::expected exactly 1 NSIS .sig, found ${#sigs[@]}"; exit 1; }
           gh release upload "${GITHUB_REF_NAME}" "${sigs[0]}" --clobber
 
-      # macOS: the bundler ALREADY emits the updater archive
-      # `bundle/macos/Agaric_<arch>.app.tar.gz` (arch = `x64` | `aarch64`) even
-      # with `createUpdaterArtifacts=false` — verified against the real 0.6.6
-      # release assets — it just never gets a `.sig`. So we sign Tauri's own
-      # canonical tarball in place rather than re-rolling our own (avoids a
-      # duplicate asset and guarantees the archive layout the updater unpacks).
-      # The arch token already disambiguates the two macos-15 matrix cells.
+      # macOS: tauri-action ALREADY produces the updater archive and uploads it
+      # to the release as `Agaric_<arch>.app.tar.gz` (arch = `x64` | `aarch64`)
+      # even with `createUpdaterArtifacts=false` — it just never gets a `.sig`.
+      # The `_<arch>` token only exists on the RELEASE ASSET: tauri-action adds
+      # it when it renames the file during upload. The bundler's on-disk name is
+      # the arch-less `bundle/macos/Agaric.app.tar.gz` (confirmed by the 0.6.7
+      # build log: "Packaging ... into .../Agaric.app.tar.gz"). The earlier
+      # `Agaric_*.app.tar.gz` glob therefore matched zero files on disk and
+      # failed every macOS release (it conflated the release-asset name with the
+      # on-disk one). Sign the bundler's canonical on-disk tarball in place —
+      # signing covers the bytes, not the filename, so the `.sig` is valid for
+      # the renamed release asset. Each macos-15 cell sees exactly one
+      # `Agaric.app.tar.gz`; the upload step below re-attaches the arch token so
+      # the two cells' signatures don't collide on the release.
       - name: Sign updater payload (macOS app.tar.gz)
         if: matrix.platform == 'macos-15'
         env:
@@ -535,7 +542,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          tarballs=("$BUNDLE_DIR"/Agaric_*.app.tar.gz)
+          tarballs=("$BUNDLE_DIR"/*.app.tar.gz)
           [ ${#tarballs[@]} -eq 1 ] || { echo "::error::expected exactly 1 bundler app.tar.gz, found ${#tarballs[@]}"; exit 1; }
           npm run tauri -- signer sign "${tarballs[0]}"
           test -f "${tarballs[0]}.sig"
@@ -545,15 +552,29 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/macos
+          TARGET: ${{ matrix.target }}
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
           # Only the `.sig` is uploaded here; tauri-action already uploaded the
-          # `.app.tar.gz` payload itself during its bundle step.
-          sigs=("$BUNDLE_DIR"/Agaric_*.app.tar.gz.sig)
+          # `.app.tar.gz` payload itself (renamed to `Agaric_<arch>.app.tar.gz`)
+          # during its bundle step. The bundler's on-disk signature is the
+          # arch-less `Agaric.app.tar.gz.sig`, so re-attach the same arch token
+          # tauri-action used before uploading: both macos-15 cells otherwise
+          # write the identical basename (clobbering each other on the release),
+          # and generate-latest-json pairs each `.sig` with its payload by the
+          # `Agaric_<arch>.app.tar.gz.sig` name.
+          sigs=("$BUNDLE_DIR"/*.app.tar.gz.sig)
           [ ${#sigs[@]} -eq 1 ] || { echo "::error::expected exactly 1 app.tar.gz .sig, found ${#sigs[@]}"; exit 1; }
-          gh release upload "${GITHUB_REF_NAME}" "${sigs[0]}" --clobber
+          case "$TARGET" in
+            x86_64-apple-darwin)  arch=x64 ;;
+            aarch64-apple-darwin) arch=aarch64 ;;
+            *) echo "::error::unexpected macOS target $TARGET"; exit 1 ;;
+          esac
+          dest="$RUNNER_TEMP/Agaric_${arch}.app.tar.gz.sig"
+          cp "${sigs[0]}" "$dest"
+          gh release upload "${GITHUB_REF_NAME}" "$dest" --clobber
 
       # PEND-40 #5: SLSA build provenance attestations for every released
       # desktop bundle. Each `subject-path` glob is narrowed to the file
