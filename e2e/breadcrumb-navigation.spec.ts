@@ -118,15 +118,12 @@ test.describe('Breadcrumb navigation — BlockZoomBar zoom trail', () => {
       })
       .toBeGreaterThan(0)
 
-    // Capture GS_3's block id — the deepest non-leaf in our hierarchy,
-    // which is what we zoom into. We deliberately zoom into GS_3 rather
-    // than GS_4 (the actual leaf) because `SortableBlockWrapper`
-    // suppresses the "Zoom in" context-menu entry on blocks with no
-    // children (`onZoomIn={hasChildren ? onZoomIn : undefined}`); zoom
-    // is a children-scoping operation, so leaves are not zoomable. The
-    // breadcrumb-trail behaviour the test exercises (Home + every
-    // ancestor + the zoomed block as the active crumb) is identical
-    // whether the leaf or its parent is the zoom target.
+    // Capture GS_3's block id — a non-leaf in our hierarchy, which is what
+    // we zoom into. Zoom works on any block now (the menu's "Zoom in" is
+    // ungated as of 2026-06-20), so GS_3 vs GS_4 is arbitrary here; we keep
+    // GS_3 because the breadcrumb-trail behaviour the test exercises (Home +
+    // every ancestor + the zoomed block as the active crumb) reads most
+    // clearly with at least one ancestor between it and the leaf.
     const leafBlock = blocks.nth(2)
     const leafId = await leafBlock.getAttribute('data-block-id')
     expect(leafId).toBe(gs3Id)
