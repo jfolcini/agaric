@@ -27,12 +27,11 @@
 //! the `search_fts` builder (11-space indent) and the toggle builders
 //! (13-space indent).
 
-use super::metadata_filter::{
-    DatePredicate as MetaDatePredicate, MetaBind, MetadataPredicates, append_metadata_sql,
-};
-use crate::domain::search_types::{DateOp, SearchFilter};
+use super::metadata_filter::{DatePredicate as MetaDatePredicate, MetadataPredicates};
+use crate::domain::search_types::{DateOp, SearchFilter, SearchPropertyFilter};
 use crate::filters::primitive::{
-    Bind, DatePredicate, FilterPrimitive, LastEditedSpec, Projection, SearchProjection,
+    Bind, DatePredicate, FilterPrimitive, LastEditedSpec, Projection, PropertyPredicate,
+    PropertyValue, SearchProjection,
 };
 
 /// #1280 B2 — bridge the search-side resolved [`MetaDatePredicate`]
@@ -62,6 +61,40 @@ fn meta_date_to_primitive(pred: &MetaDatePredicate) -> DatePredicate {
     }
 }
 
+/// #properties-typed-always — infer the most-specific [`PropertyValue`] from
+/// a `prop:KEY=VALUE` search token's raw string, selecting ONE typed column
+/// instead of the legacy untyped four-column OR.
+///
+/// **Value-typing rule (the behaviour change):**
+/// 1. If the raw parses as a finite `f64` → [`PropertyValue::Num`]
+///    (compared against `block_properties.value_num`, bound as
+///    [`Bind::Real`]). Non-finite spellings (`inf`/`NaN`) are rejected by the
+///    `is_finite()` filter — mirroring the legacy `parse_prop_value` #383
+///    guard — and fall through to the next rule.
+/// 2. Else if the raw is a valid ISO `YYYY-MM-DD` date (the SAME
+///    `NaiveDate::parse_from_str(_, "%Y-%m-%d")` check the legacy
+///    `parse_prop_value` used) → [`PropertyValue::Date`] (compared against
+///    `value_date`).
+/// 3. Else → [`PropertyValue::Text`] (compared against `value_text`).
+///
+/// [`PropertyValue::Ref`] is deliberately NOT inferred: search has no ref
+/// syntax, and a 26-char ULID-shaped string is treated as ordinary text. (The
+/// legacy untyped path matched `value_ref` opportunistically; under the typed
+/// rule a bare ULID is Text and matches `value_text` only.)
+fn infer_property_value(raw: &str) -> PropertyValue {
+    if let Some(n) = raw.parse::<f64>().ok().filter(|n| n.is_finite()) {
+        return PropertyValue::Num { value: n };
+    }
+    if chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d").is_ok() {
+        return PropertyValue::Date {
+            value: raw.to_string(),
+        };
+    }
+    PropertyValue::Text {
+        value: raw.to_string(),
+    }
+}
+
 /// #1320-C / #1280 B2 — `AND ` glue prefix for the projection-routed
 /// metadata clauses (`last-edited:`, and now `state:` / `due-date:` /
 /// `scheduled:`). Matches the 11-space indentation `append_metadata_sql`
@@ -80,14 +113,12 @@ pub(super) enum ScalarBind {
     /// An integer value (the `COUNT(DISTINCT)` ALL-tags target, or a
     /// `LIMIT` cap).
     I64(i64),
-    /// #1280 — a real (`f64`) value. Reachable-but-unused on the FTS side
-    /// for now (the routed search primitives emit only `Text`/`Int`); added
-    /// so the [`Bind`] → `ScalarBind` mapping stays exhaustive after the
-    /// `Bind::Real` variant landed for `BacklinkProjection`.
+    /// #1280 — a real (`f64`) value. Now reachable on the FTS side: the
+    /// typed `prop:KEY=VALUE` search filter routes a numeric value through
+    /// [`SearchProjection::compile_has_property`], whose `Num` variant emits
+    /// a [`Bind::Real`] (#properties-typed-always). Also used by the
+    /// `BacklinkProjection`-shaped binds.
     F64(f64),
-    /// A metadata predicate bind produced by [`append_metadata_sql`];
-    /// carries its own affinity dispatch via [`MetaBind::bind`].
-    Meta(MetaBind),
 }
 
 /// Owns the dynamic `WHERE`-clause fragment, the running 1-based `?N`
@@ -322,6 +353,71 @@ impl StructuralFilterBuilder {
         self.add_projection_clause(prefix, &wc.sql, &wc.binds);
     }
 
+    /// #properties-typed-always — a `prop:KEY=VALUE` (or excluded
+    /// `not-prop:`) search filter routed through [`SearchProjection`]
+    /// (`compile_has_property`, the SAME typed compiler every other surface
+    /// — Pages browser, advanced query, backlinks — already uses).
+    ///
+    /// This REPLACES the legacy untyped `append_property_match` four-column OR
+    /// (`value_text`/`value_num`/`value_date`/`value_ref` matched
+    /// simultaneously with one user value bound four ways). Search property
+    /// matching is now TYPED: the user's value is parsed to the single
+    /// most-specific [`PropertyValue`] and only that one column is compared.
+    ///
+    /// The [`SearchPropertyFilter`] → [`PropertyPredicate`] mapping:
+    /// - empty value, include → `Exists` (key presence)
+    /// - empty value, exclude → `NotExists`
+    /// - non-empty value, include → `Eq { value: <typed> }`
+    /// - non-empty value, exclude → `Ne { value: <typed> }`
+    ///
+    /// The compiled fragment emits the hardcoded `b.id` alias the three FTS
+    /// builders use (the projection's `EXISTS (SELECT 1 FROM block_properties
+    /// WHERE block_id = b.id …)` form), so it is alias-compatible verbatim.
+    pub(super) fn add_property_via_projection(&mut self, prefix: &str, pf: &SearchPropertyFilter) {
+        self.add_property_predicate(prefix, pf, false);
+    }
+
+    /// #properties-typed-always — excluded sibling of
+    /// [`add_property_via_projection`](Self::add_property_via_projection):
+    /// empty value compiles to `NotExists`, non-empty to `Ne { value }`.
+    pub(super) fn add_excluded_property_via_projection(
+        &mut self,
+        prefix: &str,
+        pf: &SearchPropertyFilter,
+    ) {
+        self.add_property_predicate(prefix, pf, true);
+    }
+
+    /// Shared body for the include / exclude property splices: build the
+    /// typed [`PropertyPredicate`], compile via the projection, splice.
+    fn add_property_predicate(&mut self, prefix: &str, pf: &SearchPropertyFilter, exclude: bool) {
+        // BE-8: bind the trimmed key so a whitespace-padded `prop:` key (which
+        // the empty-key guard already trims before its is-empty check) matches
+        // the stored, un-padded key instead of silently matching nothing. This
+        // preserves the legacy `append_property_match` key-trim behaviour.
+        let key = pf.key.trim();
+        let predicate = if pf.value.is_empty() {
+            if exclude {
+                PropertyPredicate::NotExists
+            } else {
+                PropertyPredicate::Exists
+            }
+        } else {
+            let value = infer_property_value(&pf.value);
+            if exclude {
+                PropertyPredicate::Ne { value }
+            } else {
+                PropertyPredicate::Eq { value }
+            }
+        };
+        let prim = FilterPrimitive::HasProperty {
+            key: key.to_string(),
+            predicate,
+        };
+        let wc = SearchProjection.compile(&prim);
+        self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+    }
+
     /// #1280 B2 — `block-type:` equality filter routed through
     /// [`SearchProjection`] (`compile_block_type` → canonical A2
     /// `PagesProjection` SQL). Replaces the legacy inline `add_block_type`
@@ -522,25 +618,27 @@ impl StructuralFilterBuilder {
         }
     }
 
-    /// Splice the metadata predicates into the fragment via the
-    /// shared [`append_metadata_sql`], recording each returned bind in
-    /// declaration order. The relative position of this call vs
+    /// Splice the metadata predicates into the fragment by compiling each
+    /// leaf through [`SearchProjection`], recording each bind in declaration
+    /// order. The relative position of this call vs
     /// [`add_block_type`](Self::add_block_type) differs between the FTS
     /// and the toggle builders — the caller drives that order.
     pub(super) fn add_metadata(&mut self, metadata: &MetadataPredicates, alias: &str) {
-        // #1280 B2 — `state:` / `priority:` / `due-date:` / `scheduled:` are
-        // now routed through `SearchProjection` (which delegates to the
-        // canonical A2 `PagesProjection` SQL), the same way `last-edited:`
-        // already is. These projections emit a hardcoded `b.` alias, so — like
-        // `last-edited:` — they require `alias == "b"` (all three FTS builders
-        // splice metadata with `"b"`). `append_metadata_sql` no longer emits
-        // them; it shrank to PROPERTY only (its four-column
-        // `value_text/num/date/ref` OR diverges from the projection's
-        // single-column `value_text` match), which stays on the legacy path.
+        // #1280 B2 / #properties-typed-always — EVERY metadata leaf (`state:` /
+        // `priority:` / `due-date:` / `scheduled:` / `last-edited:` and now
+        // `prop:`) is routed through `SearchProjection` (which delegates to the
+        // canonical A2 `PagesProjection` SQL). These projections emit a
+        // hardcoded `b.` / `b.id` alias, so they require `alias == "b"` (all
+        // three FTS builders splice metadata with `"b"`). The legacy
+        // `append_metadata_sql` four-column property OR has been DELETED — its
+        // single user value was bound four ways against
+        // `value_text/num/date/ref` (untyped); property now matches a SINGLE
+        // typed column chosen from the inferred `PropertyValue`, identical to
+        // every other surface.
         debug_assert_eq!(
             alias, "b",
-            "state/due/scheduled/last_edited projections emit a hardcoded `b.` \
-             alias; the metadata block alias must be `b`"
+            "state/due/scheduled/last_edited/property projections emit a \
+             hardcoded `b.` alias; the metadata block alias must be `b`"
         );
 
         // INCLUDE state (`state_values` / `state_is_null`) and the symmetric
@@ -580,11 +678,17 @@ impl StructuralFilterBuilder {
             true,
         );
 
-        // The remaining legacy metadata (property includes / excludes) still
-        // flows through `append_metadata_sql`.
-        let meta_binds = append_metadata_sql(&mut self.sql, &mut self.next_param, metadata, alias);
-        for mb in meta_binds {
-            self.binds.push(ScalarBind::Meta(mb));
+        // #properties-typed-always — property includes / excludes now route
+        // through `SearchProjection::compile_has_property` (TYPED single-column
+        // match), the same way every other surface compiles them. This
+        // replaces the legacy untyped `append_metadata_sql` four-column OR.
+        // Each entry consumes its own `?N` placeholder slots via
+        // `add_projection_clause`.
+        for pf in &metadata.property_includes {
+            self.add_property_via_projection(LAST_EDITED_PREFIX, pf);
+        }
+        for pf in &metadata.property_excludes {
+            self.add_excluded_property_via_projection(LAST_EDITED_PREFIX, pf);
         }
 
         // due_date / scheduled_date predicates routed through the projection.
@@ -615,7 +719,6 @@ impl StructuralFilterBuilder {
                 ScalarBind::Str(s) => query.bind(s),
                 ScalarBind::I64(n) => query.bind(n),
                 ScalarBind::F64(n) => query.bind(n),
-                ScalarBind::Meta(mb) => mb.bind(query),
             };
         }
         query
@@ -648,15 +751,16 @@ impl StructuralFilterBuilder {
 ///   `value` → `Exists` (key-presence-only).
 /// - `space_id` (non-empty) → [`FilterPrimitive::Space`].
 ///
-/// **Production routing note:** only the `Space` primitive is actually
-/// routed through `SearchProjection` in `fts_fetch_rows` today (see
-/// [`StructuralFilterBuilder::add_space_via_projection`]). The `Tag` and
-/// `HasProperty` primitives this adapter produces are NOT yet routed: their
-/// `SearchProjection` SQL is not byte-identical to the legacy fragments
-/// (Tag = `COUNT(DISTINCT)` ALL-semantics; property = `prop:` four-column
-/// OR with a `bp.` alias), so cutting them over would change behaviour. The
-/// adapter emits them anyway so the full shared lift is available for the
-/// follow-up PR and so the parity test can assert the divergence explicitly.
+/// **Status:** this adapter is now TEST-ONLY documentation of the
+/// shared-subset lift; production no longer calls it. Each routed leaf now
+/// has its own dedicated `add_*_via_projection` splice in
+/// [`StructuralFilterBuilder`] (`Space`, `Tag`, and — since
+/// #properties-typed-always — property via
+/// [`add_property_via_projection`](StructuralFilterBuilder::add_property_via_projection)).
+/// NOTE: the property branch here hardcodes the untyped `Eq { Text }` lift;
+/// the PRODUCTION property path infers the typed `PropertyValue`
+/// (`infer_property_value`) instead — this adapter is not the production
+/// property router and is kept only so its test pins the lift ordering.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn search_filter_to_primitives(filter: &SearchFilter) -> Vec<FilterPrimitive> {
     use crate::filters::primitive::{PropertyPredicate, PropertyValue};
@@ -848,79 +952,221 @@ mod tests {
         );
     }
 
-    /// HasProperty (both Exists and Eq-text) does NOT compile
-    /// byte-identically: the legacy `prop:` fragment uses a `bp.`-aliased
-    /// sub-select and (for a value) a four-column OR across
-    /// `value_text` / `value_num` / `value_date` / `value_ref`;
-    /// `SearchProjection` emits an un-aliased `value_text`-only sub-select.
-    /// This is WHY HasProperty is excluded from the cutover.
+    // ── #properties-typed-always — search property is now TYPED ──────────
+    //
+    // These REPLACE the former `projection_has_property_diverges_from_legacy_
+    // kept_legacy` test. The legacy `prop:KEY=VALUE` four-column OR
+    // (`value_text`/`value_num`/`value_date`/`value_ref` matched at once) has
+    // been DELETED. The search property filter now compiles to the SAME typed
+    // single-column SQL as `SearchProjection::compile_has_property` — the
+    // shared compiler every other surface (Pages browser, advanced query,
+    // backlinks) already uses. Each snapshot proves
+    // `add_property_via_projection` / `add_excluded_property_via_projection`
+    // splice EXACTLY the projection's `compile_has_property` output (modulo the
+    // builder's `?N` renumbering + the metadata `AND ` glue prefix), for the
+    // value-typing rule: finite f64 → `value_num` (Bind::Real); ISO date →
+    // `value_date`; otherwise `value_text`; empty value → key-presence
+    // Exists/NotExists; excluded → NotExists / Ne.
+
+    /// Helper: compile a `HasProperty` primitive through the projection and
+    /// return the builder-renumbered fragment (prefix-stripped) it should
+    /// produce, so each parity test asserts the splice == the projection.
+    fn projection_property_fragment(
+        pf: &SearchPropertyFilter,
+        exclude: bool,
+    ) -> StructuralFilterBuilder {
+        let mut routed = StructuralFilterBuilder::new(6);
+        if exclude {
+            routed.add_excluded_property_via_projection(FTS_PREFIX, pf);
+        } else {
+            routed.add_property_via_projection(FTS_PREFIX, pf);
+        }
+        routed
+    }
+
+    /// Text value → `value_text = ?` single-column match (typed Text). One
+    /// key bind + one text value bind.
     #[test]
-    fn projection_has_property_diverges_from_legacy_kept_legacy() {
-        use crate::domain::search_types::SearchPropertyFilter;
+    fn property_text_via_projection_matches_compile_has_property() {
         use crate::filters::primitive::{FilterPrimitive, PropertyPredicate, PropertyValue};
-        use crate::fts::metadata_filter::{MetadataPredicates, append_metadata_sql};
-
-        // --- Exists (key-presence only) ---
-        let mut legacy_exists = String::new();
-        let mut np = 6;
-        let meta_exists = MetadataPredicates {
-            property_includes: vec![SearchPropertyFilter {
-                key: "kind".into(),
-                value: String::new(),
-            }],
-            ..Default::default()
+        let pf = SearchPropertyFilter {
+            key: "status".into(),
+            value: "draft".into(),
         };
-        append_metadata_sql(&mut legacy_exists, &mut np, &meta_exists, "b");
-        let proj_exists = SearchProjection.compile(&FilterPrimitive::HasProperty {
-            key: "kind".into(),
-            predicate: PropertyPredicate::Exists,
-        });
-        assert!(
-            legacy_exists.contains("block_properties bp") && legacy_exists.contains("bp.key = ?"),
-            "legacy property uses a `bp.`-aliased sub-select"
-        );
-        assert!(
-            !proj_exists.sql.contains("bp."),
-            "projection property is un-aliased"
-        );
-        assert_ne!(
-            legacy_exists.trim_start().trim_start_matches("AND "),
-            proj_exists.sql,
-            "Exists fragments diverge — HasProperty MUST stay legacy"
-        );
-
-        // --- Eq { Text } ---
-        let mut legacy_eq = String::new();
-        let mut np2 = 6;
-        let meta_eq = MetadataPredicates {
-            property_includes: vec![SearchPropertyFilter {
-                key: "kind".into(),
-                value: "note".into(),
-            }],
-            ..Default::default()
-        };
-        append_metadata_sql(&mut legacy_eq, &mut np2, &meta_eq, "b");
-        let proj_eq = SearchProjection.compile(&FilterPrimitive::HasProperty {
-            key: "kind".into(),
+        let routed = projection_property_fragment(&pf, false);
+        // Oracle: the projection compiled directly with the typed predicate.
+        let oracle = SearchProjection.compile(&FilterPrimitive::HasProperty {
+            key: "status".into(),
             predicate: PropertyPredicate::Eq {
                 value: PropertyValue::Text {
-                    value: "note".into(),
+                    value: "draft".into(),
                 },
             },
         });
+        // Builder splices `prefix + renumber(oracle.sql)`; reproduce that.
+        let expected_sql = format!("{FTS_PREFIX}{}", renumber_from(&oracle.sql, 6));
+        assert_eq!(routed.sql(), expected_sql, "typed Text fragment parity");
         assert!(
-            legacy_eq.contains("value_num") && legacy_eq.contains("value_ref"),
-            "legacy `prop:KEY=VALUE` is a four-column OR"
+            routed.sql().contains("key = ?6 AND value_text = ?7"),
+            "Text compiles to a single value_text column match, got: {}",
+            routed.sql()
         );
         assert!(
-            !proj_eq.sql.contains("value_num"),
-            "projection Eq-text compares value_text only"
+            !routed.sql().contains("value_num") && !routed.sql().contains("value_ref"),
+            "typed Text must NOT emit the legacy four-column OR"
         );
-        assert_ne!(
-            legacy_eq.trim_start().trim_start_matches("AND "),
-            proj_eq.sql,
-            "Eq-text fragments diverge — HasProperty MUST stay legacy"
+        assert_eq!(routed.bind_count(), 2, "key + value");
+        assert!(matches!(routed.binds.first(), Some(ScalarBind::Str(s)) if s == "status"));
+        assert!(matches!(routed.binds.get(1), Some(ScalarBind::Str(s)) if s == "draft"));
+    }
+
+    /// Numeric value → `value_num = ?` (typed Num), bound as a REAL
+    /// ([`ScalarBind::F64`] ← [`Bind::Real`]), NOT stringified.
+    #[test]
+    fn property_num_via_projection_binds_real() {
+        let pf = SearchPropertyFilter {
+            key: "score".into(),
+            value: "1".into(),
+        };
+        let routed = projection_property_fragment(&pf, false);
+        assert!(
+            routed.sql().contains("key = ?6 AND value_num = ?7"),
+            "finite f64 value compiles to a value_num column match, got: {}",
+            routed.sql()
         );
+        assert_eq!(routed.bind_count(), 2);
+        assert!(matches!(routed.binds.first(), Some(ScalarBind::Str(s)) if s == "score"));
+        // The numeric value keeps its REAL affinity (Bind::Real → F64).
+        assert!(
+            matches!(routed.binds.get(1), Some(ScalarBind::F64(n)) if (n - 1.0).abs() < f64::EPSILON),
+            "numeric value must bind as REAL (Bind::Real), got a non-F64 bind"
+        );
+    }
+
+    /// ISO-date value → `value_date = ?` (typed Date), bound as text.
+    #[test]
+    fn property_iso_date_via_projection_matches_value_date() {
+        let pf = SearchPropertyFilter {
+            key: "deadline".into(),
+            value: "2026-05-17".into(),
+        };
+        let routed = projection_property_fragment(&pf, false);
+        assert!(
+            routed.sql().contains("key = ?6 AND value_date = ?7"),
+            "ISO YYYY-MM-DD value compiles to a value_date column match, got: {}",
+            routed.sql()
+        );
+        assert!(matches!(routed.binds.get(1), Some(ScalarBind::Str(s)) if s == "2026-05-17"));
+    }
+
+    /// Empty value, include → `EXISTS … key = ?` key-presence (Exists).
+    #[test]
+    fn property_empty_value_via_projection_is_exists() {
+        let pf = SearchPropertyFilter {
+            key: "notes".into(),
+            value: String::new(),
+        };
+        let routed = projection_property_fragment(&pf, false);
+        assert!(
+            routed.sql().contains(
+                "EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?6)"
+            ),
+            "empty value → key-presence EXISTS, got: {}",
+            routed.sql()
+        );
+        assert!(!routed.sql().contains("NOT EXISTS"));
+        assert_eq!(routed.bind_count(), 1, "key only");
+    }
+
+    /// Excluded entry, empty value → `NOT EXISTS` (NotExists); non-empty →
+    /// `NOT EXISTS … value_text = ?` (Ne).
+    #[test]
+    fn property_excluded_via_projection_is_not_exists_and_ne() {
+        // empty → NotExists
+        let pf_empty = SearchPropertyFilter {
+            key: "archived".into(),
+            value: String::new(),
+        };
+        let routed_empty = projection_property_fragment(&pf_empty, true);
+        assert!(
+            routed_empty.sql().contains(
+                "NOT EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?6)"
+            ),
+            "excluded empty → NotExists, got: {}",
+            routed_empty.sql()
+        );
+
+        // non-empty → Ne over the typed column
+        let pf_val = SearchPropertyFilter {
+            key: "archived".into(),
+            value: "true".into(),
+        };
+        let routed_val = projection_property_fragment(&pf_val, true);
+        assert!(
+            routed_val.sql().contains("NOT EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?6 AND value_text = ?7)"),
+            "excluded non-empty → Ne (single typed column), got: {}",
+            routed_val.sql()
+        );
+        assert!(
+            !routed_val.sql().contains("value_num"),
+            "Ne must NOT emit the legacy four-column OR"
+        );
+    }
+
+    /// BE-8 — a whitespace-padded `prop:` key binds as its TRIMMED form (the
+    /// key-trim moved from the deleted `append_property_match` into
+    /// `add_property_predicate`).
+    #[test]
+    fn property_key_is_trimmed_via_projection() {
+        let pf = SearchPropertyFilter {
+            key: "  owner  ".into(),
+            value: "me".into(),
+        };
+        let routed = projection_property_fragment(&pf, false);
+        assert!(
+            matches!(routed.binds.first(), Some(ScalarBind::Str(s)) if s == "owner"),
+            "padded key must bind trimmed to `owner`"
+        );
+    }
+
+    /// #383 — a non-finite numeric spelling (`inf`/`NaN`) is NOT inferred as
+    /// `Num` (the `is_finite()` filter rejects it); it falls through to Text,
+    /// so it compiles to a `value_text` match rather than `value_num`.
+    #[test]
+    fn property_non_finite_falls_through_to_text() {
+        for raw in ["inf", "NaN", "infinity"] {
+            let pf = SearchPropertyFilter {
+                key: "k".into(),
+                value: raw.into(),
+            };
+            let routed = projection_property_fragment(&pf, false);
+            assert!(
+                routed.sql().contains("value_text = ?7"),
+                "non-finite {raw:?} must be Text, got: {}",
+                routed.sql()
+            );
+            assert!(
+                !routed.sql().contains("value_num"),
+                "non-finite {raw:?} must NOT bind value_num"
+            );
+        }
+    }
+
+    /// Left-to-right `?` → `?N` renumber that the builder applies, so the
+    /// parity tests can reconstruct the expected spliced fragment from the
+    /// projection's bare-`?` SQL. Mirrors `add_projection_clause`.
+    fn renumber_from(sql: &str, mut next: usize) -> String {
+        let mut out = String::new();
+        for ch in sql.chars() {
+            if ch == '?' {
+                out.push('?');
+                out.push_str(&next.to_string());
+                next += 1;
+            } else {
+                out.push(ch);
+            }
+        }
+        out
     }
 
     /// The adapter lifts ONLY the shared subset (Tag / HasProperty / Space)
