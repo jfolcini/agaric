@@ -60,6 +60,14 @@ describe('formatRepeatLabel', () => {
     expect(formatRepeatLabel('1w', t)).toBe('every 1 week')
   })
 
+  it('returns "every 2 years" for +2y', () => {
+    expect(formatRepeatLabel('+2y', t)).toBe('every 2 years')
+  })
+
+  it('returns "every 1 year" for 1y (singular)', () => {
+    expect(formatRepeatLabel('1y', t)).toBe('every 1 year')
+  })
+
   // Verify the function reads from the i18n bundle rather than
   // hardcoded English literals — swapping a key changes the output.
   it('uses translated strings from the i18n bundle', () => {
