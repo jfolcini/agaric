@@ -2711,6 +2711,59 @@ describe('import_markdown', () => {
     }
     expect(pages.items.some((p) => p['content'] === 'Unique Import Test')).toBe(true)
   })
+
+  it('returns a representative non-empty warning so the result UI is exercised', () => {
+    const result = invoke('import_markdown', {
+      content: '# Warned Page\n\nBody',
+      filename: null,
+    }) as Record<string, unknown>
+    expect(Array.isArray(result['warnings'])).toBe(true)
+    expect((result['warnings'] as string[]).length).toBeGreaterThan(0)
+  })
+
+  it('counts inline `key:: value` lines as properties_set', () => {
+    const result = invoke('import_markdown', {
+      content: '# Props Page\n\nstatus:: done\npriority:: high\nplain line',
+      filename: null,
+    }) as Record<string, unknown>
+    expect(result['properties_set']).toBe(2)
+  })
+
+  it('reports properties_set: 0 when there are no `key:: value` lines', () => {
+    const result = invoke('import_markdown', {
+      content: '# No Props\n\nJust a plain paragraph',
+      filename: null,
+    }) as Record<string, unknown>
+    expect(result['properties_set']).toBe(0)
+  })
+
+  it('emits started/progress/complete over the progress channel (#128)', () => {
+    const events: Array<Record<string, unknown>> = []
+    // Mimic the `Channel` surface the FE wrapper passes: an object whose
+    // `onmessage` getter returns the consumer callback.
+    const progress = { onmessage: (u: Record<string, unknown>) => events.push(u) }
+    const result = invoke('import_markdown', {
+      content: '# Progress Page\n\nLine one\nLine two',
+      filename: null,
+      progress,
+    }) as Record<string, unknown>
+
+    expect(events[0]).toMatchObject({ kind: 'started', blocks_total: 2 })
+    expect(events.filter((e) => e['kind'] === 'progress')).toHaveLength(2)
+    expect(events.at(-1)).toMatchObject({
+      kind: 'complete',
+      page_title: 'Progress Page',
+      blocks_created: 2,
+    })
+    // The terminal `complete` mirrors the returned result counts.
+    expect(events.at(-1)).toMatchObject({ blocks_created: result['blocks_created'] })
+  })
+
+  it('does not throw when no progress channel is supplied', () => {
+    expect(() =>
+      invoke('import_markdown', { content: '# No Channel\n\nBody', filename: null }),
+    ).not.toThrow()
+  })
 })
 
 // ---------------------------------------------------------------------------
