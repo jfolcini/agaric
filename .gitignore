@@ -68,6 +68,13 @@ agaric-release.apk.idsig
 # Claude Code runtime state (per-machine; settings.json + hooks/ are tracked)
 .claude/scheduled_tasks.lock
 .claude/settings.local.json
+# Ephemeral review/workflow scratch artifacts (per-machine, never committed)
+.claude/confirmed.json
+.claude/create-review-issues.py
+.claude/issue-creation*
+.claude/review*.json
+.claude/verify_results.json
+.claude/wf-*.js
 # Added by code-review-graph
 .code-review-graph/
 
