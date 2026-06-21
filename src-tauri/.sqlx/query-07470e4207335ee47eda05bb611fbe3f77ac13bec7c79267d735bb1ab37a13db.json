@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id as \"id: crate::ulid::ActiveBlockId\", block_type, content, parent_id as \"parent_id: crate::ulid::BlockId\", position,\n                deleted_at,\n                 todo_state, priority, due_date, scheduled_date,\n                page_id as \"page_id: crate::ulid::BlockId\"\n         FROM blocks b\n         WHERE block_type = ?1 AND deleted_at IS NULL\n           AND (?2 IS NULL OR id > ?3)\n           AND (?5 IS NULL OR b.space_id = ?5)\n         ORDER BY id ASC\n         LIMIT ?4",
+  "query": "SELECT id as \"id: crate::ulid::ActiveBlockId\", block_type, content, parent_id as \"parent_id: crate::ulid::BlockId\", position,\n                deleted_at,\n                 todo_state, priority, due_date, scheduled_date,\n                page_id as \"page_id: crate::ulid::BlockId\"\n         FROM blocks b\n         WHERE block_type = ?1 AND deleted_at IS NULL\n           AND (?2 IS NULL OR id > ?3)\n           AND (?5 IS NULL OR b.space_id = ?5)\n           AND NOT EXISTS (\n                SELECT 1 FROM block_properties bp\n                WHERE bp.block_id = b.id\n                  AND bp.key = 'view_type'\n                  AND bp.value_text = 'query-view')\n         ORDER BY id ASC\n         LIMIT ?4",
   "describe": {
     "columns": [
       {
@@ -142,5 +142,5 @@
       true
     ]
   },
-  "hash": "a39bb2234038d7b188665beaee027badf1f5a5a8da1f50437d6d6067d1ab6b89"
+  "hash": "07470e4207335ee47eda05bb611fbe3f77ac13bec7c79267d735bb1ab37a13db"
 }

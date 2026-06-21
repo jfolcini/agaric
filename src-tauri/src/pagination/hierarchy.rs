@@ -102,6 +102,13 @@ pub async fn list_children(
 /// SQL fragment definition.
 ///
 /// Uses index `idx_blocks_type(block_type, deleted_at)`.
+///
+/// #1460 — saved-view marker blocks (a `block_properties` row with
+/// `key = 'view_type'` and `value_text = 'query-view'`) are excluded so
+/// they never pollute the normal block/page listings the UI drives. The
+/// dedicated `query_by_property(view_type = 'query-view')` path is
+/// unaffected and still lists them. `count_blocks_by_type` mirrors this
+/// predicate so the "X of Y" progress chip stays consistent.
 pub async fn list_by_type(
     pool: &SqlitePool,
     block_type: &str,
@@ -129,6 +136,11 @@ pub async fn list_by_type(
          WHERE block_type = ?1 AND deleted_at IS NULL
            AND (?2 IS NULL OR id > ?3)
            AND (?5 IS NULL OR b.space_id = ?5)
+           AND NOT EXISTS (
+                SELECT 1 FROM block_properties bp
+                WHERE bp.block_id = b.id
+                  AND bp.key = 'view_type'
+                  AND bp.value_text = 'query-view')
          ORDER BY id ASC
          LIMIT ?4"#,
         block_type,  // ?1

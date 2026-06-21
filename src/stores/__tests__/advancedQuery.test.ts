@@ -1,13 +1,16 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import type { AggregateSpec, FilterPrimitive, GroupSpec, SortKey } from '@/lib/tauri'
+import type { AggregateSpec, FilterExpr, FilterPrimitive, GroupSpec, SortKey } from '@/lib/tauri'
 
 import {
   type BuilderGroupNode,
   builderTreeToFilterExpr,
+  filterExprToBuilderTree,
+  parseQuerySpec,
   selectAdvancedQueryBuilderForSpace,
   selectAdvancedQueryControlsForSpace,
   selectAdvancedQueryFiltersForSpace,
+  serializeQuerySpec,
   useAdvancedQueryStore,
 } from '../advancedQuery'
 
@@ -296,5 +299,222 @@ describe('advancedQuery store — nested builder', () => {
     expect(
       selectAdvancedQueryBuilderForSpace(useAdvancedQueryStore.getState(), 'SPACE_B').children[0],
     ).toMatchObject({ primitive: TAG('b') })
+  })
+})
+
+// --- #1460 saved-views: FilterExpr ↔ builder round-trip + load/serialize ------
+
+/** Allocator that hands out 1, 2, 3, … so test assertions can predict ids. */
+function seqAllocId(): () => number {
+  let n = 0
+  return () => {
+    n += 1
+    return n
+  }
+}
+
+/** Strip the React-key-only `id` fields so two trees can be compared by shape. */
+function stripIds(node: BuilderGroupNode): unknown {
+  const walk = (n: BuilderGroupNode['children'][number]): unknown =>
+    n.kind === 'leaf'
+      ? { kind: 'leaf', primitive: n.primitive, negated: n.negated }
+      : { kind: 'group', op: n.op, negated: n.negated, children: n.children.map(walk) }
+  return { kind: 'group', op: node.op, negated: node.negated, children: node.children.map(walk) }
+}
+
+describe('filterExprToBuilderTree (inverse of builderTreeToFilterExpr)', () => {
+  it('rebuilds a root And group with leaves', () => {
+    const expr: FilterExpr = {
+      type: 'And',
+      children: [{ type: 'Leaf', primitive: TAG('a') }],
+    }
+    const tree = filterExprToBuilderTree(expr, seqAllocId())
+    expect(tree).toEqual({
+      kind: 'group',
+      id: 1,
+      op: 'And',
+      negated: false,
+      children: [{ kind: 'leaf', id: 2, primitive: TAG('a'), negated: false }],
+    })
+  })
+
+  it('peels an outer Not into a negated group node', () => {
+    const expr: FilterExpr = {
+      type: 'Not',
+      child: { type: 'Or', children: [{ type: 'Leaf', primitive: TAG('x') }] },
+    }
+    const tree = filterExprToBuilderTree(expr, seqAllocId())
+    expect(tree.op).toBe('Or')
+    expect(tree.negated).toBe(true)
+    expect(tree.children[0]).toMatchObject({ kind: 'leaf', primitive: TAG('x'), negated: false })
+  })
+
+  it('peels a Not wrapping a leaf into a negated leaf', () => {
+    const expr: FilterExpr = {
+      type: 'And',
+      children: [{ type: 'Not', child: { type: 'Leaf', primitive: TAG('y') } }],
+    }
+    const tree = filterExprToBuilderTree(expr, seqAllocId())
+    expect(tree.children[0]).toMatchObject({
+      kind: 'leaf',
+      primitive: TAG('y'),
+      negated: true,
+    })
+  })
+
+  it('wraps a non-group root expr (bare leaf) in a synthetic And root', () => {
+    const expr: FilterExpr = { type: 'Leaf', primitive: TAG('z') }
+    const tree = filterExprToBuilderTree(expr, seqAllocId())
+    expect(tree.kind).toBe('group')
+    expect(tree.op).toBe('And')
+    expect(tree.children).toHaveLength(1)
+    expect(tree.children[0]).toMatchObject({ kind: 'leaf', primitive: TAG('z') })
+  })
+
+  it('round-trips: build → compile → save JSON → load → compile = identical wire shape', () => {
+    // A reasonably nested tree exercising And/Or/Not + leaves.
+    const root: BuilderGroupNode = {
+      kind: 'group',
+      id: 0,
+      op: 'And',
+      negated: false,
+      children: [
+        { kind: 'leaf', id: 1, primitive: TAG('a'), negated: false },
+        {
+          kind: 'group',
+          id: 2,
+          op: 'Or',
+          negated: true,
+          children: [
+            { kind: 'leaf', id: 3, primitive: TAG('b'), negated: false },
+            { kind: 'leaf', id: 4, primitive: TAG('c'), negated: true },
+          ],
+        },
+      ],
+    }
+
+    const wire1 = builderTreeToFilterExpr(root)
+    const json = JSON.stringify(wire1)
+    const reloaded = filterExprToBuilderTree(JSON.parse(json) as FilterExpr, seqAllocId())
+    const wire2 = builderTreeToFilterExpr(reloaded)
+
+    // The compiled wire shape is byte-identical across the round-trip.
+    expect(wire2).toEqual(wire1)
+    // And the rebuilt tree matches the original up to React-key ids.
+    expect(stripIds(reloaded)).toEqual(stripIds(root))
+  })
+})
+
+describe('serializeQuerySpec / parseQuerySpec', () => {
+  const sort: SortKey[] = [{ source: { type: 'Column', name: 'created' }, desc: true }]
+  const groupBy: GroupSpec = { key: { type: 'Tag' } }
+  const aggregates: AggregateSpec[] = [{ op: 'count' }]
+
+  it('serializes builder + controls into a SavedQuerySpec', () => {
+    const builder: BuilderGroupNode = {
+      kind: 'group',
+      id: 0,
+      op: 'And',
+      negated: false,
+      children: [{ kind: 'leaf', id: 1, primitive: TAG('a'), negated: false }],
+    }
+    const spec = serializeQuerySpec(builder, {
+      fulltext: 'hello',
+      sort,
+      groupBy,
+      aggregates,
+    })
+    expect(spec).toEqual({
+      filter: { type: 'And', children: [{ type: 'Leaf', primitive: TAG('a') }] },
+      sort,
+      fulltext: 'hello',
+      group_by: groupBy,
+      aggregates,
+    })
+  })
+
+  it('parses a query_spec JSON string back into a SavedQuerySpec', () => {
+    const raw = JSON.stringify({
+      filter: { type: 'And', children: [] },
+      sort,
+      fulltext: 'x',
+      group_by: groupBy,
+      aggregates,
+    })
+    expect(parseQuerySpec(raw)).toEqual({
+      filter: { type: 'And', children: [] },
+      sort,
+      fulltext: 'x',
+      group_by: groupBy,
+      aggregates,
+    })
+  })
+
+  it('defaults missing optional fields when parsing', () => {
+    const raw = JSON.stringify({ filter: { type: 'And', children: [] } })
+    expect(parseQuerySpec(raw)).toEqual({
+      filter: { type: 'And', children: [] },
+      sort: [],
+      fulltext: '',
+      group_by: null,
+      aggregates: [],
+    })
+  })
+
+  it('throws on a query_spec missing its filter', () => {
+    expect(() => parseQuerySpec(JSON.stringify({ sort: [] }))).toThrow(/filter/)
+  })
+
+  it('throws on malformed JSON', () => {
+    expect(() => parseQuerySpec('{not json')).toThrow()
+  })
+})
+
+describe('advancedQuery store — loadView (#1460)', () => {
+  it('atomically hydrates builder + controls from a spec with fresh ids', () => {
+    // Seed a pre-existing node so we can assert the loaded ids don't collide.
+    useAdvancedQueryStore.getState().addLeaf(SPACE, [], TAG('seed'))
+    const before = useAdvancedQueryStore.getState().nextAddId
+
+    const spec = {
+      filter: {
+        type: 'And' as const,
+        children: [{ type: 'Leaf' as const, primitive: TAG('loaded') }],
+      },
+      sort: [{ source: { type: 'Column' as const, name: 'created' as const }, desc: false }],
+      fulltext: 'q',
+      group_by: { key: { type: 'Page' as const } },
+      aggregates: [{ op: 'count' as const }],
+    }
+    useAdvancedQueryStore.getState().loadView(SPACE, spec)
+
+    const builder = selectAdvancedQueryBuilderForSpace(useAdvancedQueryStore.getState(), SPACE)
+    expect(builder.op).toBe('And')
+    expect(builder.children).toHaveLength(1)
+    expect(builder.children[0]).toMatchObject({ kind: 'leaf', primitive: TAG('loaded') })
+
+    const controls = selectAdvancedQueryControlsForSpace(useAdvancedQueryStore.getState(), SPACE)
+    expect(controls.fulltext).toBe('q')
+    expect(controls.sort).toEqual(spec.sort)
+    expect(controls.groupBy).toEqual(spec.group_by)
+    expect(controls.aggregates).toEqual(spec.aggregates)
+
+    // Counter advanced past the prior value (fresh, non-colliding ids).
+    expect(useAdvancedQueryStore.getState().nextAddId).toBeGreaterThan(before)
+  })
+
+  it('replaces an existing tree entirely (no leftover children)', () => {
+    useAdvancedQueryStore.getState().addLeaf(SPACE, [], TAG('old1'))
+    useAdvancedQueryStore.getState().addLeaf(SPACE, [], TAG('old2'))
+    useAdvancedQueryStore.getState().loadView(SPACE, {
+      filter: { type: 'Or', children: [] },
+      sort: [],
+      fulltext: '',
+      group_by: null,
+      aggregates: [],
+    })
+    const builder = selectAdvancedQueryBuilderForSpace(useAdvancedQueryStore.getState(), SPACE)
+    expect(builder.op).toBe('Or')
+    expect(builder.children).toHaveLength(0)
   })
 })
