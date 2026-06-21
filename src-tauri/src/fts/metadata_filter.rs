@@ -90,11 +90,11 @@ pub struct MetadataPredicates {
     /// `NOT EXISTS (...)` sub-select.
     pub property_excludes: Vec<SearchPropertyFilter>,
     /// #1320-C — resolved `last-edited:` time-window predicate. `None`
-    /// means "no filter". Unlike the other fields here, this one is NOT
-    /// emitted by `append_metadata_sql` — it is compiled through
-    /// `SearchProjection::compile_last_edited` and spliced via the
-    /// builder's `add_last_edited_via_projection` (the projection emits
-    /// hardcoded `b.id` references, so it bypasses the alias-parameterised
+    /// means "no filter". Like every metadata field here (P3.x), this is
+    /// compiled through the projection — `SearchProjection::compile_last_edited`
+    /// — and spliced via the builder's `add_last_edited_via_projection` (the
+    /// projection emits hardcoded `b.id` references, so it bypasses the
+    /// alias-parameterised
     /// metadata SQL). Carried on this bundle purely so it threads through
     /// every search surface (FTS / regex / filter-only / partitioned)
     /// alongside the rest of the metadata, with no new function signatures.
@@ -112,7 +112,8 @@ pub enum DatePredicate {
     Op { op: DateOp, date: String },
 }
 
-/// Typed bind values emitted by [`append_metadata_sql`].
+/// Typed bind values emitted by [`untyped_property_clause`] (the search
+/// property leaf).
 ///
 /// Property `prop:` matching now spans four typed columns
 /// (`value_text` / `value_num` / `value_date` / `value_ref`), so the
@@ -354,82 +355,40 @@ fn resolve_named_range(range: NamedDateRange, today: NaiveDate) -> DatePredicate
     }
 }
 
-/// Append the metadata-predicate SQL clauses to `sql` and return the
-/// ordered list of bind values the caller must `.bind()` after the
-/// existing positional parameters.
+/// Compile one `prop:KEY[=VALUE]` filter into a bare-`?` SQL fragment plus
+/// its ordered [`MetaBind`]s, ready to be spliced through
+/// [`crate::fts::filter_builder::StructuralFilterBuilder::add_property_via_projection`]
+/// (which renumbers the bare `?` to the running `?N` slots and records the
+/// binds in declaration order).
 ///
-/// `next_param` is mutated in lock-step so the caller can keep
-/// appending further clauses after this. `block_alias` is the parent
-/// table alias (`"b"` in `search_fts`; same in `regex_mode_query`).
+/// This is the search-surface property leaf. It deliberately does NOT route
+/// through [`crate::filters::primitive::Projection::compile_has_property`]:
+/// that projection method is a *typed* single-column match (`Eq { Text }`
+/// compares `value_text` only), whereas the search path is an **untyped
+/// four-column OR** — a `prop:KEY=VALUE` matches whichever of the four
+/// user-facing typed columns (`value_text` / `value_num` / `value_date` /
+/// `value_ref`) the property happens to live in. Reconciling the two onto
+/// `compile_has_property` would CHANGE search match results (e.g.
+/// `prop:n=1` would stop matching a `value_num = 1.0` row), so the untyped
+/// semantics are preserved verbatim here.
 ///
-/// The SQL shape mirrors the plan's design section:
-///
-/// ```text
-/// AND <state IS NULL / IN (...) clause>
-/// AND <priority IS NULL / IN (...) clause>
-/// AND <due_date predicate>
-/// AND <scheduled_date predicate>
-/// AND EXISTS (SELECT 1 FROM block_properties …)   -- include
-/// AND NOT EXISTS (SELECT 1 FROM block_properties …) -- exclude
-/// ```
-///
-/// Each `EXISTS` carries its own `key=?` / `value_text=?` clause; the
-/// `(key, value_text)` partial index `idx_block_props_key_text`
-/// (migration 0004) covers it.
-pub fn append_metadata_sql(
-    sql: &mut String,
-    next_param: &mut usize,
-    meta: &MetadataPredicates,
-    block_alias: &str,
-) -> Vec<MetaBind> {
-    let mut binds: Vec<MetaBind> = Vec::new();
-
-    // #1280 B2 — `state` / `excluded_state` / `priority` / `excluded_priority`
-    // / `due_date` / `scheduled_date` are NO LONGER emitted here: they are
-    // compiled through `SearchProjection` (which delegates to the canonical A2
-    // `PagesProjection` SQL) and spliced by
-    // `StructuralFilterBuilder::add_metadata` via the `_via_projection`
-    // helpers. The A2 SQL is byte-shape-identical to the legacy fragments this
-    // function used to emit (`append_text_in_or_null` /
-    // `append_text_not_in_or_not_null` / `append_date_predicate`), so the
-    // cutover is behaviour-preserving. PROPERTY stays here: its four-column
-    // (`value_text/num/date/ref`) OR diverges from the projection's
-    // single-column `value_text` match.
-
-    // property includes ------------------------------------------------
-    for pf in &meta.property_includes {
-        append_property_match(sql, next_param, &mut binds, pf, block_alias, false);
-    }
-
-    // property excludes ------------------------------------------------
-    for pf in &meta.property_excludes {
-        append_property_match(sql, next_param, &mut binds, pf, block_alias, true);
-    }
-
-    binds
-}
-
-/// Emit one `[NOT ]EXISTS` clause for a `prop:KEY=VALUE`
-/// filter that matches across all four user-facing typed columns
-/// (`value_text` / `value_num` / `value_date` / `value_ref`).
-///
-/// For `pf.value.is_empty()`, falls back to the key-presence-only
-/// Shape (pre- behaviour). Otherwise emits a four-way OR with
-/// type-coerced bind variants — `value_num` / `value_date` /
-/// `value_ref` bind as `NULL` when the user's value doesn't parse as
-/// that type, so the corresponding branch evaluates to `NULL`
-/// (FALSE in `WHERE`) and only the `value_text` branch matches for
+/// For `pf.value.is_empty()` it emits the key-presence-only shape. Otherwise
+/// it emits the four-way OR with type-coerced bind variants — `value_num` /
+/// `value_date` / `value_ref` bind as SQL `NULL` when the user's value
+/// doesn't parse as that type, so the corresponding branch evaluates to
+/// `NULL` (FALSE in `WHERE`) and only the `value_text` branch matches for
 /// arbitrary strings (the v1 behaviour). The `block_properties`
-/// `exactly_one_value` CHECK (migration 0062) guarantees at most one
-/// branch can ever fire per row.
-fn append_property_match(
-    sql: &mut String,
-    next_param: &mut usize,
-    binds: &mut Vec<MetaBind>,
+/// `exactly_one_value` CHECK (migration 0062) guarantees at most one branch
+/// can ever fire per row.
+///
+/// The fragment references the block table via the hardcoded `b.` alias the
+/// three FTS builders share (matching the other `_via_projection` helpers);
+/// the caller AND-joins it under its own `prefix` glue.
+#[must_use]
+pub fn untyped_property_clause(
     pf: &SearchPropertyFilter,
-    block_alias: &str,
     exclude: bool,
-) {
+) -> (String, Vec<MetaBind>) {
     let keyword = if exclude { "NOT EXISTS" } else { "EXISTS" };
 
     // BE-8: bind the trimmed key so a whitespace-padded `prop:` key (which the
@@ -437,45 +396,35 @@ fn append_property_match(
     // stored, un-padded key instead of silently matching nothing.
     let key = pf.key.trim();
 
-    let key_idx = *next_param;
-    *next_param += 1;
-
     if pf.value.is_empty() {
-        sql.push_str(&format!(
-            "\n           AND {keyword} (SELECT 1 FROM block_properties bp \
-              WHERE bp.block_id = {block_alias}.id AND bp.key = ?{key_idx})"
-        ));
-        binds.push(MetaBind::Str(key.to_string()));
-        return;
+        let sql = format!(
+            "{keyword} (SELECT 1 FROM block_properties bp \
+              WHERE bp.block_id = b.id AND bp.key = ?)"
+        );
+        return (sql, vec![MetaBind::Str(key.to_string())]);
     }
 
-    let text_idx = *next_param;
-    *next_param += 1;
-    let num_idx = *next_param;
-    *next_param += 1;
-    let date_idx = *next_param;
-    *next_param += 1;
-    let ref_idx = *next_param;
-    *next_param += 1;
-
-    sql.push_str(&format!(
-        "\n           AND {keyword} (SELECT 1 FROM block_properties bp \
-          WHERE bp.block_id = {block_alias}.id \
-            AND bp.key = ?{key_idx} \
+    let sql = format!(
+        "{keyword} (SELECT 1 FROM block_properties bp \
+          WHERE bp.block_id = b.id \
+            AND bp.key = ? \
             AND ( \
-                 (bp.value_text IS NOT NULL AND bp.value_text = ?{text_idx}) \
-              OR (bp.value_num  IS NOT NULL AND bp.value_num  = ?{num_idx}) \
-              OR (bp.value_date IS NOT NULL AND bp.value_date = ?{date_idx}) \
-              OR (bp.value_ref  IS NOT NULL AND bp.value_ref  = ?{ref_idx}) \
+                 (bp.value_text IS NOT NULL AND bp.value_text = ?) \
+              OR (bp.value_num  IS NOT NULL AND bp.value_num  = ?) \
+              OR (bp.value_date IS NOT NULL AND bp.value_date = ?) \
+              OR (bp.value_ref  IS NOT NULL AND bp.value_ref  = ?) \
             ))"
-    ));
+    );
 
     let parsed = parse_prop_value(&pf.value);
-    binds.push(MetaBind::Str(key.to_string()));
-    binds.push(MetaBind::Str(pf.value.clone()));
-    binds.push(MetaBind::NullableF64(parsed.num));
-    binds.push(MetaBind::NullableStr(parsed.date));
-    binds.push(MetaBind::NullableStr(parsed.ref_));
+    let binds = vec![
+        MetaBind::Str(key.to_string()),
+        MetaBind::Str(pf.value.clone()),
+        MetaBind::NullableF64(parsed.num),
+        MetaBind::NullableStr(parsed.date),
+        MetaBind::NullableStr(parsed.ref_),
+    ];
+    (sql, binds)
 }
 
 /// Parsed-variant bundle for one `prop:KEY=VALUE` user input.
@@ -592,9 +541,13 @@ mod tests {
             ..Default::default()
         };
         let m = prepare_metadata_with_today(&f, fixed_today()).unwrap();
-        let mut sql = String::new();
-        let mut next_param = 1usize;
-        let binds = append_metadata_sql(&mut sql, &mut next_param, &m, "b");
+        let mut binds: Vec<MetaBind> = Vec::new();
+        for pf in &m.property_includes {
+            binds.extend(untyped_property_clause(pf, false).1);
+        }
+        for pf in &m.property_excludes {
+            binds.extend(untyped_property_clause(pf, true).1);
+        }
         let str_binds: Vec<&str> = binds
             .iter()
             .filter_map(|b| match b {
@@ -918,21 +871,19 @@ mod tests {
 
     #[test]
     fn prop_text_value_binds_four_columns() {
-        let meta = MetadataPredicates {
-            property_includes: vec![SearchPropertyFilter {
+        let (sql, binds) = untyped_property_clause(
+            &SearchPropertyFilter {
                 key: "status".into(),
                 value: "draft".into(),
-            }],
-            ..Default::default()
-        };
-        let mut sql = String::new();
-        let mut p = 1usize;
-        let binds = append_metadata_sql(&mut sql, &mut p, &meta, "b");
-        // Four-way OR with all four column branches present.
-        assert!(sql.contains("bp.value_text IS NOT NULL AND bp.value_text = ?2"));
-        assert!(sql.contains("bp.value_num  IS NOT NULL AND bp.value_num  = ?3"));
-        assert!(sql.contains("bp.value_date IS NOT NULL AND bp.value_date = ?4"));
-        assert!(sql.contains("bp.value_ref  IS NOT NULL AND bp.value_ref  = ?5"));
+            },
+            false,
+        );
+        // Four-way OR with all four column branches present (bare `?` —
+        // renumbering happens in the builder's splice).
+        assert!(sql.contains("bp.value_text IS NOT NULL AND bp.value_text = ?"));
+        assert!(sql.contains("bp.value_num  IS NOT NULL AND bp.value_num  = ?"));
+        assert!(sql.contains("bp.value_date IS NOT NULL AND bp.value_date = ?"));
+        assert!(sql.contains("bp.value_ref  IS NOT NULL AND bp.value_ref  = ?"));
         // 1 key + 4 typed value binds = 5 binds.
         assert_eq!(binds.len(), 5);
         // "draft" parses as text only → num / date / ref are NULL.
@@ -945,16 +896,13 @@ mod tests {
 
     #[test]
     fn prop_numeric_value_binds_num_variant() {
-        let meta = MetadataPredicates {
-            property_includes: vec![SearchPropertyFilter {
+        let (sql, binds) = untyped_property_clause(
+            &SearchPropertyFilter {
                 key: "priority".into(),
                 value: "1".into(),
-            }],
-            ..Default::default()
-        };
-        let mut sql = String::new();
-        let mut p = 1usize;
-        let binds = append_metadata_sql(&mut sql, &mut p, &meta, "b");
+            },
+            false,
+        );
         // value_text bind is always the verbatim user input.
         assert!(matches!(&binds[1], MetaBind::Str(s) if s == "1"));
         // value_num bind is Some(1.0).
@@ -969,16 +917,13 @@ mod tests {
 
     #[test]
     fn prop_iso_date_value_binds_date_variant() {
-        let meta = MetadataPredicates {
-            property_includes: vec![SearchPropertyFilter {
+        let (sql, binds) = untyped_property_clause(
+            &SearchPropertyFilter {
                 key: "due-date".into(),
                 value: "2026-05-17".into(),
-            }],
-            ..Default::default()
-        };
-        let mut sql = String::new();
-        let mut p = 1usize;
-        let binds = append_metadata_sql(&mut sql, &mut p, &meta, "b");
+            },
+            false,
+        );
         // value_text bind is verbatim.
         assert!(matches!(&binds[1], MetaBind::Str(s) if s == "2026-05-17"));
         // num bind: "2026-05-17" is NOT a number — f64 parse fails.
@@ -994,16 +939,13 @@ mod tests {
     fn prop_ulid_value_binds_ref_variant_uppercased() {
         let lower = "01hkq2rwwwgm34rtgfe9xcryz4";
         assert_eq!(lower.len(), 26);
-        let meta = MetadataPredicates {
-            property_includes: vec![SearchPropertyFilter {
+        let (sql, binds) = untyped_property_clause(
+            &SearchPropertyFilter {
                 key: "author".into(),
                 value: lower.into(),
-            }],
-            ..Default::default()
-        };
-        let mut sql = String::new();
-        let mut p = 1usize;
-        let binds = append_metadata_sql(&mut sql, &mut p, &meta, "b");
+            },
+            false,
+        );
         // value_text bind is verbatim (case-preserving v1 behaviour).
         assert!(matches!(&binds[1], MetaBind::Str(s) if s == lower));
         // ref bind: uppercase form for ULID column convention.
@@ -1014,19 +956,18 @@ mod tests {
 
     #[test]
     fn prop_empty_value_is_key_presence_only() {
-        let meta = MetadataPredicates {
-            property_includes: vec![SearchPropertyFilter {
+        let (sql, binds) = untyped_property_clause(
+            &SearchPropertyFilter {
                 key: "notes".into(),
                 value: String::new(),
-            }],
-            ..Default::default()
-        };
-        let mut sql = String::new();
-        let mut p = 1usize;
-        let binds = append_metadata_sql(&mut sql, &mut p, &meta, "b");
-        // Key-only EXISTS clause (no value-coercion four-way OR).
+            },
+            false,
+        );
+        // Key-only EXISTS clause (no value-coercion four-way OR; bare `?`).
         assert!(
-            sql.contains("EXISTS (SELECT 1 FROM block_properties bp WHERE bp.block_id = b.id AND bp.key = ?1)"),
+            sql.contains(
+                "EXISTS (SELECT 1 FROM block_properties bp WHERE bp.block_id = b.id AND bp.key = ?)"
+            ),
             "got SQL: {sql}",
         );
         // Single bind: the key.
@@ -1036,22 +977,19 @@ mod tests {
 
     #[test]
     fn prop_exclude_emits_not_exists_with_four_column_or() {
-        let meta = MetadataPredicates {
-            property_excludes: vec![SearchPropertyFilter {
+        let (sql, _binds) = untyped_property_clause(
+            &SearchPropertyFilter {
                 key: "archived".into(),
                 value: "true".into(),
-            }],
-            ..Default::default()
-        };
-        let mut sql = String::new();
-        let mut p = 1usize;
-        let _ = append_metadata_sql(&mut sql, &mut p, &meta, "b");
-        assert!(sql.contains("AND NOT EXISTS (SELECT 1 FROM block_properties bp"));
-        // Same four-column OR shape as the include path.
-        assert!(sql.contains("bp.value_text IS NOT NULL AND bp.value_text = ?2"));
-        assert!(sql.contains("bp.value_num  IS NOT NULL AND bp.value_num  = ?3"));
-        assert!(sql.contains("bp.value_date IS NOT NULL AND bp.value_date = ?4"));
-        assert!(sql.contains("bp.value_ref  IS NOT NULL AND bp.value_ref  = ?5"));
+            },
+            true,
+        );
+        assert!(sql.contains("NOT EXISTS (SELECT 1 FROM block_properties bp"));
+        // Same four-column OR shape as the include path (bare `?`).
+        assert!(sql.contains("bp.value_text IS NOT NULL AND bp.value_text = ?"));
+        assert!(sql.contains("bp.value_num  IS NOT NULL AND bp.value_num  = ?"));
+        assert!(sql.contains("bp.value_date IS NOT NULL AND bp.value_date = ?"));
+        assert!(sql.contains("bp.value_ref  IS NOT NULL AND bp.value_ref  = ?"));
     }
 
     #[test]

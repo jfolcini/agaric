@@ -1010,7 +1010,9 @@ struct RegexScanRow {
 /// those filters", recency-ordered. This helper builds the SAME
 /// structural-filter SQL as [`regex_mode_query`] (deduped/UPPERCASE tag
 /// ids with the `COUNT(DISTINCT)` ALL-tags predicate, space_id,
-/// include/exclude page globs, [`append_metadata_sql`], optional
+/// include/exclude page globs, the metadata predicates (state / priority /
+/// due / scheduled / last-edited / property, all routed through the
+/// projection splices in [`super::filter_builder`]), optional
 /// `block_type`) but:
 ///
 ///   * compiles NO regex and applies NO post-filter — every
