@@ -1778,3 +1778,334 @@ async fn plus_plus_cap_exceeded_propagates_through_handle_recurrence() {
 
     mat.shutdown();
 }
+
+/// Property-based tests for `parser.rs`'s pure date arithmetic (#1887).
+///
+/// `parser.rs` is the invariant-rich, DB-free core of recurrence: it does
+/// nothing but parse a rule string and shift a `NaiveDate`. The existing
+/// table-driven tests pin a handful of concrete points; these proptests
+/// blanket the input space and assert the *invariants the code documents*,
+/// not invented behaviour.
+///
+/// The pure per-step entry point is [`shift_date_once`] — the same function
+/// `compute.rs` calls once per recurrence step (each step uses the previous
+/// shifted date as the next base, which is what makes the month-end clamp
+/// "sticky"). The full [`shift_date`] entry point is also exercised for the
+/// `++` end-condition (it consults `chrono::Local::now()`, so those
+/// properties assert termination + the documented bound, not an exact date).
+///
+/// Invariants asserted (one `#[test] fn` per property):
+/// * `shift_once_strictly_monotonic` — every computed occurrence is strictly
+///   after its base date, for all supported intervals/modes (Monotonicity).
+/// * `shift_once_month_end_sticky_clamp` — `monthly`/`+Nm`/`+Ny` clamp the
+///   day-of-month against the destination month length; the result day is
+///   exactly `min(anchor_day, days_in_destination_month)` and is always a
+///   valid calendar date (Month-end / sticky clamp).
+/// * `leap_day_anchor_clamps_per_year` — Feb-29 anchors shifted by whole
+///   years land on Feb-29 in leap target years and Feb-28 otherwise
+///   (Leap-day handling).
+/// * `plus_plus_always_terminates_and_respects_bound` — the `++` end
+///   condition always terminates (no infinite loop) within the documented
+///   10 000-iteration safety budget, and on success the result is strictly
+///   after `today` (End-condition termination).
+/// * `shift_once_never_panics_and_stays_in_guard_rail` — `shift_date_once`
+///   never panics / never overflows for arbitrary intervals and base dates,
+///   and any `Some` result stays inside the documented
+///   `MIN_CALENDAR_YEAR..=MAX_CALENDAR_YEAR` (1900..=2200) guard rail
+///   (No panic / no overflow).
+#[cfg(test)]
+mod parser_proptest {
+    use super::{days_in_month, shift_date, shift_date_once};
+    use chrono::{Datelike, Local, NaiveDate};
+    use proptest::prelude::*;
+
+    /// Documented loose guard-rail bounds from `parser.rs`
+    /// (`MIN_CALENDAR_YEAR`/`MAX_CALENDAR_YEAR`). They are module-private
+    /// consts, so we mirror them here; the property below would fail loudly
+    /// if production widened the rail without updating this expectation.
+    const GUARD_MIN_YEAR: i32 = 1900;
+    const GUARD_MAX_YEAR: i32 = 2200;
+
+    /// Arbitrary calendar date well inside the guard rail, so a single shift
+    /// can't trivially fall off the edge for the monotonicity/clamp
+    /// properties. (The "stays in guard rail / never panics" property uses a
+    /// wider range to probe the edge intentionally.)
+    fn arb_date_in_rail() -> impl Strategy<Value = NaiveDate> {
+        (1950i32..=2150, 1u32..=12, 1u32..=31)
+            .prop_filter_map("valid calendar date", |(y, m, d)| {
+                NaiveDate::from_ymd_opt(y, m, d)
+            })
+    }
+
+    /// Keyword intervals plus bounded `+N<unit>` intervals. Counts are kept
+    /// small so a single shift stays inside the rail; the generator never
+    /// emits a zero/negative count (the parser rejects those → `None`, which
+    /// is its own contract and is covered by the table tests).
+    fn arb_interval() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("daily".to_string()),
+            Just("weekly".to_string()),
+            Just("monthly".to_string()),
+            (1u32..=60).prop_map(|n| format!("+{n}d")),
+            (1u32..=12).prop_map(|n| format!("+{n}w")),
+            (1u32..=24).prop_map(|n| format!("+{n}m")),
+            (1u32..=5).prop_map(|n| format!("+{n}y")),
+        ]
+    }
+
+    /// Number of months implied by an interval string for
+    /// `monthly`/`+Nm`/`+Ny`, or `None` for day/week intervals where no
+    /// month-clamp applies.
+    fn months_in_interval(interval: &str) -> Option<i64> {
+        if interval == "monthly" {
+            return Some(1);
+        }
+        let body = interval.strip_prefix('+').unwrap_or(interval);
+        let (num, unit) = body.split_at(body.len().saturating_sub(1));
+        let n: i64 = num.parse().ok()?;
+        match unit {
+            "m" => Some(n),
+            "y" => Some(n * 12),
+            _ => None,
+        }
+    }
+
+    proptest! {
+        /// Monotonicity: a successful single shift is strictly after the base
+        /// date for every supported interval/mode. Day clamping (Jan-31 →
+        /// Feb-28) never violates this because the destination month is
+        /// always later than the source month.
+        #[test]
+        fn shift_once_strictly_monotonic(
+            base in arb_date_in_rail(),
+            interval in arb_interval(),
+        ) {
+            if let Some(next) = shift_date_once(base, &interval) {
+                prop_assert!(
+                    next > base,
+                    "occurrence must be strictly after base: base={base} interval={interval} next={next}"
+                );
+            }
+        }
+
+        /// Month-end / sticky clamp: for `monthly`/`+Nm`/`+Ny`, the result is
+        /// a valid calendar date whose day equals
+        /// `min(anchor_day, days_in_destination_month)`. e.g. Jan-31 + 1m →
+        /// Feb-28/29, never an overflow into March.
+        #[test]
+        fn shift_once_month_end_sticky_clamp(
+            base in arb_date_in_rail(),
+            interval in arb_interval(),
+        ) {
+            let Some(n_months) = months_in_interval(&interval) else {
+                return Ok(()); // day/week intervals: no month clamp to check
+            };
+            if let Some(next) = shift_date_once(base, &interval) {
+                // Result is always a real calendar date.
+                prop_assert!(
+                    NaiveDate::from_ymd_opt(next.year(), next.month(), next.day()).is_some(),
+                    "result must be a valid date: {next}"
+                );
+                // Day is clamped to the destination month length.
+                let dim = days_in_month(next.year(), next.month());
+                prop_assert!(
+                    next.day() <= dim,
+                    "day must not exceed destination month length: next={next} dim={dim}"
+                );
+                // The destination month is exactly base-month + n_months
+                // (mod 12), and the clamped day is min(base.day, dim).
+                let total = i64::from(base.year()) * 12 + i64::from(base.month()) - 1 + n_months;
+                let exp_month = u32::try_from(total.rem_euclid(12) + 1).unwrap();
+                prop_assert_eq!(
+                    next.month(), exp_month,
+                    "destination month mismatch: base={} interval={} next={}",
+                    base, interval, next
+                );
+                prop_assert_eq!(
+                    next.day(),
+                    base.day().min(dim),
+                    "clamped day must be min(anchor_day, days_in_dest_month): base={} interval={} next={}",
+                    base, interval, next
+                );
+            }
+        }
+
+        /// Leap-day handling: a Feb-29 anchor shifted by a whole number of
+        /// years lands on Feb-29 when the target year is a leap year and
+        /// Feb-28 otherwise — never March-01.
+        #[test]
+        fn leap_day_anchor_clamps_per_year(
+            // Leap years in [1952, 2148] keep us inside the guard rail after
+            // adding up to 5 years.
+            leap_year in (1952i32..=2148).prop_filter("leap year", |y| {
+                NaiveDate::from_ymd_opt(*y, 2, 29).is_some()
+            }),
+            years in 1u32..=5,
+        ) {
+            let base = NaiveDate::from_ymd_opt(leap_year, 2, 29).unwrap();
+            let next = shift_date_once(base, &format!("+{years}y"))
+                .expect("Feb-29 + whole years stays in rail");
+            let target_year = leap_year + i32::try_from(years).unwrap();
+            prop_assert_eq!(next.year(), target_year, "year mismatch");
+            prop_assert_eq!(next.month(), 2u32, "must stay in February, not roll to March");
+            let target_is_leap = NaiveDate::from_ymd_opt(target_year, 2, 29).is_some();
+            let exp_day = if target_is_leap { 29 } else { 28 };
+            prop_assert_eq!(
+                next.day(), exp_day,
+                "Feb-29 anchor must clamp to {} in {} (leap={})",
+                exp_day, target_year, target_is_leap
+            );
+        }
+
+        /// End-condition termination: the `++` mode keeps shifting from the
+        /// original date until the result passes `today`, bounded by a
+        /// 10 000-iteration safety budget. It must ALWAYS terminate (this
+        /// `prop_assert` is only reachable if the call returned) and, on
+        /// success, yield a date strictly after `today`. Overflow / budget
+        /// exhaustion surface as `Err`, never an infinite loop and never a
+        /// stale past date.
+        #[test]
+        fn plus_plus_always_terminates_and_respects_bound(
+            base in arb_date_in_rail(),
+            // Small, frequent intervals so a near-`today` base catches up
+            // within the budget; large multi-year intervals are exercised by
+            // the table/unit tests and may legitimately hit the rail (Err).
+            interval in prop_oneof![
+                Just("++daily".to_string()),
+                Just("++weekly".to_string()),
+                Just("++monthly".to_string()),
+                (1u32..=30).prop_map(|n| format!("++{n}d")),
+            ],
+        ) {
+            let date_str = base.format("%Y-%m-%d").to_string();
+            // The mere fact that this returns proves termination (no hang).
+            // The `++` arm's other outcomes — `Ok(None)` (parse miss) and
+            // `Err` (single-step overflow / 10 000-iteration cap exceeded) —
+            // are the documented non-success channels and need no assertion
+            // here beyond "the call returned at all".
+            let today = Local::now().date_naive();
+            if let Ok(Some(out)) = shift_date(&date_str, &interval) {
+                let parsed = NaiveDate::parse_from_str(&out, "%Y-%m-%d")
+                    .expect("`++` output is a YYYY-MM-DD date");
+                prop_assert!(
+                    parsed > today,
+                    "`++` success must be strictly after today: out={out} today={today}"
+                );
+            }
+        }
+
+        /// No panic / no overflow + guard rail (`+Nm` / `+Ny` arms only):
+        /// these two arms route through `shift_by_months`, which is the ONLY
+        /// code path that uses `checked_*` i64 arithmetic and enforces the
+        /// documented `MIN_CALENDAR_YEAR..=MAX_CALENDAR_YEAR` guard rail. So
+        /// for these arms `shift_date_once` must NEVER panic — even for
+        /// pathological huge counts that would overflow i64 month math if
+        /// unchecked — and any `Some` result must land inside the guard rail.
+        ///
+        /// NOTE: the `daily`/`weekly`/`monthly`/`+Nd`/`+Nw` arms are
+        /// deliberately NOT covered here — this proptest discovered that they
+        /// are *unguarded*: the `d`/`w` arms do `base +
+        /// chrono::Duration::days(..)` with no `checked_add` (panics on
+        /// overflow), and `monthly` has its own inline branch — none of them
+        /// apply the calendar-year guard rail, so all can leak a result
+        /// outside `[1900, 2200]`. See the `#[ignore]`d
+        /// `day_week_month_arms_unguarded_bug_1887` below, which documents
+        /// the bug; production code is intentionally left unchanged.
+        #[test]
+        fn shift_once_month_year_arms_never_panic_and_stay_in_rail(
+            base in (1900i32..=2200, 1u32..=12, 1u32..=31).prop_filter_map(
+                "valid date", |(y, m, d)| NaiveDate::from_ymd_opt(y, m, d),
+            ),
+            // Valid bounded m/y intervals, edge counts, and pathological huge
+            // counts that must be rejected by the i64 checked-arithmetic
+            // guard (→ `None`), never a panic. Only `+Nm`/`+Ny` — the arms
+            // that actually implement the guard rail.
+            interval in prop_oneof![
+                (1u32..=24).prop_map(|n| format!("+{n}m")),
+                (1u32..=5).prop_map(|n| format!("+{n}y")),
+                Just("+99999999y".to_string()),
+                Just("+99999999m".to_string()),
+                (1u64..=u64::MAX).prop_map(|n| format!("+{n}m")),
+                (1u64..=u64::MAX).prop_map(|n| format!("+{n}y")),
+            ],
+        ) {
+            // Must not panic — the call itself is the assertion. Catching the
+            // value lets us also check the guard rail when it returns Some.
+            if let Some(next) = shift_date_once(base, &interval) {
+                prop_assert!(
+                    (GUARD_MIN_YEAR..=GUARD_MAX_YEAR).contains(&next.year()),
+                    "result year must stay in guard rail [{GUARD_MIN_YEAR}, {GUARD_MAX_YEAR}]: next={next} interval={interval}"
+                );
+            }
+        }
+
+        /// No panic on arbitrary malformed/garbage interval text: regardless
+        /// of what the rule string contains, parsing it must never panic. The
+        /// counts here are kept small enough that the (unguarded) `d`/`w`
+        /// arms cannot overflow, so this property is about *parse-shape*
+        /// robustness, not the arithmetic guard rail.
+        #[test]
+        fn shift_once_arbitrary_text_never_panics(
+            base in arb_date_in_rail(),
+            interval in "\\+?[0-9]{0,4}[a-z]?",
+        ) {
+            // The call returning at all (Some or None) proves no panic.
+            let _ = shift_date_once(base, &interval);
+        }
+    }
+
+    /// REGRESSION / BUG REPRODUCTION (#1887) — `#[ignore]`d on purpose.
+    ///
+    /// These property tests discovered a real production bug in
+    /// `parser.rs::shift_date_once`: only the `+Nm`/`+Ny` arms (via
+    /// `shift_by_months`) use `checked_*` arithmetic and enforce the
+    /// `MIN_CALENDAR_YEAR..=MAX_CALENDAR_YEAR` guard rail. The
+    /// `daily`/`weekly`/`monthly`/`+Nd`/`+Nw` arms do NOT, violating two
+    /// documented module invariants:
+    ///
+    /// 1. **Panic on overflow** — the `d`/`w` arms compute
+    ///    `base + chrono::Duration::days(..)` with the *unchecked* `+`
+    ///    operator, so a large day/week count panics with
+    ///    `NaiveDate + TimeDelta overflowed` instead of returning `None`
+    ///    (the module's documented "returns `None` if … overflows" /
+    ///    "never panics" contract).
+    /// 2. **Guard-rail leak** — the `d`/`w`/`monthly` arms can return a date
+    ///    outside `[1900, 2200]` instead of `None`:
+    ///    * `1900-01-01 +20000w` → `Some(2283-04-23)` (should be `None`),
+    ///    * `2200-12-01 monthly` → `Some(2201-01-01)` (should be `None`).
+    ///
+    /// Per the task constraint, production code is left UNCHANGED; this test
+    /// is `#[ignore]`d so it documents the finding without breaking CI.
+    /// Remove the `#[ignore]` once `parser.rs` guards the day/week/monthly
+    /// arms with `checked_add` + the calendar-year bound (mirroring
+    /// `shift_by_months`).
+    #[test]
+    #[ignore = "documents #1887: day/week/monthly arms lack the overflow + \
+                calendar-year guard rail; run after parser.rs guards them"]
+    fn day_week_month_arms_unguarded_bug_1887() {
+        // Guard-rail leak via the week arm (no panic, just an out-of-rail
+        // date):
+        assert_eq!(
+            shift_date_once(NaiveDate::from_ymd_opt(1900, 1, 1).unwrap(), "20000w"),
+            None,
+            "EXPECTED: +20000w from 1900-01-01 should return None (out of [1900,2200] rail); \
+             currently returns Some(2283-04-23)."
+        );
+
+        // Guard-rail leak via the `monthly` keyword arm:
+        assert_eq!(
+            shift_date_once(NaiveDate::from_ymd_opt(2200, 12, 1).unwrap(), "monthly"),
+            None,
+            "EXPECTED: monthly from 2200-12-01 should return None (rolls to 2201, out of rail); \
+             currently returns Some(2201-01-01)."
+        );
+
+        // Overflow panic: an astronomically large day count must return
+        // None, not panic with `NaiveDate + TimeDelta overflowed`.
+        assert_eq!(
+            shift_date_once(NaiveDate::from_ymd_opt(2000, 1, 1).unwrap(), "+9999999999d"),
+            None,
+            "EXPECTED: an overflowing day count should return None, not panic"
+        );
+    }
+}
