@@ -122,7 +122,7 @@ Peer-to-peer sync over local WiFi — no cloud server needed. Every operation is
 | **Windows** | Windows 10 version 1803 (April 2018 Update) or later. WebView2 is installed automatically by the bundled installer; older Windows (7, 8, 8.1) is not supported because Microsoft does not ship WebView2 for it. |
 | **macOS** | macOS 11 Big Sur or later (Apple Silicon native; Intel via Rosetta-free SDK build). |
 | **Linux** | glibc 2.31+ (Ubuntu 20.04+ / Debian 11+ / Fedora 33+); `libwebkit2gtk-4.1` runtime. The AppImage bundles GTK; the `.deb` declares the WebKit dep. |
-| **Android** | Android 11 (API 30) and above. |
+| **Android** | Android 11 (API 30) and above, **64-bit ARM (`arm64-v8a`) only** — x86 / x86-64 (most emulators, some Chromebooks) and 32-bit-only devices are not supported. |
 
 ## Install
 
@@ -133,6 +133,10 @@ Desktop bundles are **not code-signed** (see [docs/BUILD.md § Signing posture](
 - **macOS (Gatekeeper)** — right-click the app → *Open* → *Open* in the dialog. Alternatively, clear the quarantine flag from a terminal: `xattr -dr com.apple.quarantine /Applications/Agaric.app`.
 - **Windows (SmartScreen)** — click *More info* → *Run anyway*. WebView2 is installed automatically by the bundled installer.
 - **Linux** — the AppImage bundles GTK; the `.deb` declares the `libwebkit2gtk-4.1` runtime dependency.
+
+The Android `.apk` **is** signed, but it is distributed outside the Play Store, so first install requires sideloading:
+
+- **Android** — enable *Install unknown apps* for the browser or file manager you use to open the `.apk`, then tap the downloaded file. Updates must be signed with the same key; if an update is rejected with a signature error, uninstall the previous build first.
 
 ## Development
 
