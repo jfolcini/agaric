@@ -175,6 +175,7 @@ export function TrashView(): React.ReactElement {
   const handleBatchRestore = useCallback(async () => {
     const selectedBlocks = blocks.filter((b) => selected.has(b.id) && b.deleted_at)
     if (selectedBlocks.length === 0) return
+    setConfirmBatchRestore(false)
     let restored = 0
     try {
       restored = await restoreBlocksByIds(selectedBlocks.map((b) => b.id))
@@ -184,11 +185,16 @@ export function TrashView(): React.ReactElement {
         }
       }
     } catch (err) {
-      logger.warn('TrashView', 'Batch restore failed', { count: selectedBlocks.length }, err)
+      // Surface the failure (matching the single-item path) and KEEP the
+      // selection so the user can retry — clearing it here would silently
+      // discard the user's selection on an error they couldn't see.
+      logger.error('TrashView', 'Batch restore failed', { count: selectedBlocks.length }, err)
+      notify.error(t('trash.batchRestoreFailed'))
+      announce(t('announce.batchRestoreFailed'))
+      return
     }
     reload()
     clearSelection()
-    setConfirmBatchRestore(false)
     if (restored > 0) {
       notify.success(t('trash.batchRestored', { count: restored }))
       announce(t('announce.batchRestored', { count: restored }))
@@ -232,15 +238,21 @@ export function TrashView(): React.ReactElement {
   const handleBatchPurge = useCallback(async () => {
     const selectedIds = Array.from(selected)
     if (selectedIds.length === 0) return
+    setConfirmBatchPurge(false)
     let purged = 0
     try {
       purged = await purgeBlocksByIds(selectedIds)
     } catch (err) {
-      logger.warn('TrashView', 'Batch purge failed', { count: selectedIds.length }, err)
+      // Surface the failure (matching the single-item path) and KEEP the
+      // selection so the user can retry — clearing it here would silently
+      // discard the user's selection on an error they couldn't see.
+      logger.error('TrashView', 'Batch purge failed', { count: selectedIds.length }, err)
+      notify.error(t('trash.batchPurgeFailed'))
+      announce(t('announce.batchPurgeFailed'))
+      return
     }
     reload()
     clearSelection()
-    setConfirmBatchPurge(false)
     if (purged > 0) {
       notify.success(t('trash.batchPurged', { count: purged }))
       announce(t('announce.batchPurged', { count: purged }))

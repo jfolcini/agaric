@@ -150,6 +150,8 @@ export const common: Record<string, string> = {
   'announce.restoreAllFailed': 'Restore all failed',
   'announce.restoreFailed': 'Restore failed',
   'announce.purgeFailed': 'Purge failed',
+  'announce.batchRestoreFailed': 'Batch restore failed',
+  'announce.batchPurgeFailed': 'Batch purge failed',
   'announce.opsReverted_one': '{{count}} operation reverted',
   'announce.opsReverted_other': '{{count}} operations reverted',
   'announce.revertFailed': 'Revert failed',

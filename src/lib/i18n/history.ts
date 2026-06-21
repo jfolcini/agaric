@@ -106,6 +106,8 @@ export const history: Record<string, string> = {
   'trash.deletedPage': '(deleted page)',
   'trash.batchRestored': '{{count}} blocks restored',
   'trash.batchPurged': '{{count}} blocks permanently deleted',
+  'trash.batchRestoreFailed': 'Failed to restore selected blocks',
+  'trash.batchPurgeFailed': 'Failed to purge selected blocks',
   'trash.batchPurgeDescription':
     'This action cannot be undone. {{count}} blocks will be permanently deleted.',
   'trash.batchPurgeTitle': 'Permanently delete {{count}} items?',

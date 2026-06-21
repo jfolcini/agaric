@@ -100,7 +100,11 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
         },
       )
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Camera access denied'
+      // Log the raw error for debugging, but surface a translated, user-facing
+      // message to the aria-live region (raw `err.message` is untranslated and
+      // often a cryptic browser/library string). #1888
+      logger.warn('QrScanner', 'Camera initialization failed', undefined, err)
+      const message = t('qrScanner.cameraError')
       setError(message)
       setScanning(false)
       scannerInstanceRef.current = null
