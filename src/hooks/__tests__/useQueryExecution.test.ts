@@ -3,11 +3,13 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '../../__tests__/fixtures'
+import { encodeInlineQueryPayload } from '../../lib/inline-query-spec'
 import {
   dispatchQuery,
   fetchBacklinksQuery,
   fetchFilteredQuery,
   fetchPropertyQuery,
+  fetchRichInlineQuery,
   fetchTagQuery,
   QueryValidationError,
   useQueryExecution,
@@ -771,5 +773,69 @@ describe('dispatchQuery', () => {
         tagFilters: [],
       }),
     ).rejects.toThrow(/Unknown query type: unknown/)
+  })
+})
+
+describe('useQueryExecution — structured (v2) inline queries', () => {
+  it('routes a v2 payload through run_advanced_query, not the legacy IPCs', async () => {
+    const expression = encodeInlineQueryPayload({
+      filter: {
+        type: 'Or',
+        children: [
+          { type: 'Leaf', primitive: { type: 'Priority', values: ['high'] } },
+          { type: 'Leaf', primitive: { type: 'Tag', tag: 'T1' } },
+        ],
+      },
+      table: false,
+    })
+
+    const seen: string[] = []
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      seen.push(cmd)
+      if (cmd === 'run_advanced_query') {
+        return {
+          rows: [makeBlock({ id: 'B1', content: 'Rich match', parent_id: 'P1', page_id: 'P1' })],
+          nextCursor: null,
+          hasMore: false,
+          totalCount: 1,
+        }
+      }
+      if (cmd === 'batch_resolve') {
+        return [{ id: 'P1', title: 'My Page', block_type: 'page', deleted: false }]
+      }
+      return null
+    })
+
+    const { result } = renderHook(() => useQueryExecution({ expression }))
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    expect(result.current.results).toHaveLength(1)
+    expect(result.current.results[0]?.content).toBe('Rich match')
+    expect(result.current.error).toBeNull()
+    // The rich engine was used; no legacy tag/property/filtered IPC fired.
+    expect(seen).toContain('run_advanced_query')
+    expect(seen).not.toContain('query_by_tags')
+    expect(seen).not.toContain('query_by_property')
+    expect(seen).not.toContain('filtered_blocks_query')
+  })
+
+  it('fetchRichInlineQuery maps the engine response to the fetch-result shape', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'run_advanced_query') {
+        return {
+          rows: [makeBlock({ id: 'B2', content: 'row' })],
+          nextCursor: 'CURSOR',
+          hasMore: true,
+          totalCount: 9,
+        }
+      }
+      return null
+    })
+    const out = await fetchRichInlineQuery({ type: 'And', children: [] }, undefined, 'SPACE')
+    expect(out.items).toHaveLength(1)
+    expect(out.nextCursor).toBe('CURSOR')
+    expect(out.hasMore).toBe(true)
   })
 })
