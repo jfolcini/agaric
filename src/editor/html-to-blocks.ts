@@ -352,6 +352,16 @@ function walkChildren(
       continue
     }
 
+    if (tag === 'HR') {
+      // A thematic break becomes a `---` divider block; the parser's
+      // `parseHorizontalRule` rebuilds the `horizontalRule` node. Without this
+      // the `<hr>` is silently dropped and the blocks on either side merge,
+      // losing the divider on paste (#1960 lossless-HTML-paste constraint).
+      flushInline()
+      out.push({ content: '---', depth })
+      continue
+    }
+
     if (BLOCK_CONTAINER_TAGS.has(tag)) {
       // A wrapper element: flush any pending inline text, then descend so its
       // block children are emitted at the SAME depth (the wrapper is not itself

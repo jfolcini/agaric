@@ -1103,20 +1103,24 @@
 }
 
 /* Heading styles inside the editor */
+/* Heading sizes mirror the read-only view's HEADING_CLASSES
+   (RichContentRenderer/context.ts) exactly — including the responsive
+   `sm:` step — so a heading looks identical in the editor and the rendered
+   view at every breakpoint (#1960 editor↔view parity). h5/h6 already match. */
 .ProseMirror h1 {
-  @apply text-2xl font-bold;
+  @apply text-xl font-bold sm:text-2xl;
   margin: 0;
 }
 .ProseMirror h2 {
-  @apply text-xl font-bold;
+  @apply text-lg font-bold sm:text-xl;
   margin: 0;
 }
 .ProseMirror h3 {
-  @apply text-lg font-semibold;
+  @apply text-base font-semibold sm:text-lg;
   margin: 0;
 }
 .ProseMirror h4 {
-  @apply text-base font-semibold;
+  @apply text-sm font-semibold sm:text-base;
   margin: 0;
 }
 .ProseMirror h5 {
@@ -1135,6 +1139,26 @@
 }
 .ProseMirror pre code {
   @apply bg-transparent p-0 text-sm font-mono;
+}
+
+/* Lists and the thematic break inside the editor. Without these, edit-mode
+   bullet/ordered lists and dividers fell back to raw browser defaults — a
+   different marker style, indent, and rule weight than the read-only view,
+   which uses `list-disc/list-decimal list-inside` (RichContentRenderer/marks/
+   {block,orderedList}.tsx) and `my-2 border-t border-border`
+   (marks/horizontalRule.tsx). These rules mirror that look so a list or
+   divider reads the same whether you're editing it or reading it
+   (#1960 editor↔view parity). */
+.ProseMirror ul {
+  @apply list-disc list-inside;
+  margin: 0;
+}
+.ProseMirror ol {
+  @apply list-decimal list-inside;
+  margin: 0;
+}
+.ProseMirror hr {
+  @apply my-2 border-t border-border;
 }
 
 /* Inline code inside the editor — visible background so the user
