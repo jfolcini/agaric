@@ -30,6 +30,11 @@ import type { RefObject } from 'react'
 import { useEffect, useRef } from 'react'
 import type { StoreApi } from 'zustand'
 
+import {
+  type BlockTypeToken,
+  convertBlockContent,
+  stripBlockMarker,
+} from '@/lib/block-type-convert'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
@@ -189,10 +194,27 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       const raw = (detail as { type?: string } | undefined)?.type
       const type = raw && CALLOUT_TYPES.has(raw) ? raw : 'info'
       const ctx = buildCtx(blockId)
+      // #1960 — strip any existing block marker first so re-applying a callout
+      // (e.g. changing an existing callout's type via the Turn-into contextual
+      // picker) REPLACES the marker rather than nesting `> [!X] > [!Y] …`.
       void applyContentEdit(
         ctx,
-        `> [!${type.toUpperCase()}] ${readCurrentContent(ctx)}`,
+        `> [!${type.toUpperCase()}] ${stripBlockMarker(readCurrentContent(ctx))}`,
         'slash.calloutFailed',
+      )
+    }
+
+    // #1960 — Turn-into menu: convert the focused block to `detail.type`
+    // (a BlockTypeToken) via the shared markdown convert + content-edit path,
+    // identical to the slash `/turn-*` family and the context-menu Turn-into.
+    const onTurnInto: BlockCommandHandler = (blockId, detail) => {
+      const type = (detail as { type?: BlockTypeToken } | undefined)?.type
+      if (!type) return
+      const ctx = buildCtx(blockId)
+      void applyContentEdit(
+        ctx,
+        convertBlockContent(readCurrentContent(ctx), type),
+        'slash.turnIntoFailed',
       )
     }
 
@@ -230,6 +252,7 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       INSERT_ORDERED_LIST: onOrderedList,
       INSERT_DIVIDER: onDivider,
       INSERT_CALLOUT: onCallout,
+      TURN_INTO_BLOCK: onTurnInto,
     })
   }, [
     rootParentId,

@@ -63,7 +63,7 @@ test.describe('Formatting shortcuts', () => {
 
   test('Ctrl+Shift+C toggles code block', async ({ page }) => {
     await openPage(page, 'Getting Started')
-    await focusBlock(page)
+    const editor = await focusBlock(page)
 
     // Press Ctrl+Shift+C to toggle code block
     await page.keyboard.down('Control')
@@ -72,9 +72,9 @@ test.describe('Formatting shortcuts', () => {
     await page.keyboard.up('Shift')
     await page.keyboard.up('Control')
 
-    // Verify Code block button shows aria-pressed="true"
-    const codeBlockBtn = page.getByRole('button', { name: 'Code block' })
-    await expect(codeBlockBtn).toHaveAttribute('aria-pressed', 'true')
+    // #1960 — the toolbar no longer has a code button (Code block lives in the
+    // Turn into menu), so verify the code block on the editor itself.
+    await expect(editor.locator('pre')).toBeVisible()
   })
 })
 

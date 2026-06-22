@@ -24,6 +24,9 @@ export const BLOCK_EVENTS = {
   INSERT_ORDERED_LIST: 'insert-ordered-list',
   INSERT_DIVIDER: 'insert-divider',
   INSERT_CALLOUT: 'insert-callout',
+  // #1960 — Turn-into menu: convert the focused block's type. `detail.type` is
+  // a BlockTypeToken; the handler runs `convertBlockContent` + `applyContentEdit`.
+  TURN_INTO_BLOCK: 'turn-into-block',
   // #1439 — converted clipboard-HTML outline (multi-block). The editor's
   // HTML-paste handler emits the indented-markdown outline; the focused
   // BlockTree materializes it via `pasteBlocks(focusedBlockId, markdown)`.

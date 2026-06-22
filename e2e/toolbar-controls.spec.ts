@@ -33,7 +33,6 @@
 import type { Page } from '@playwright/test'
 
 import {
-  activePopover,
   activeSheet,
   expect,
   focusBlock,
@@ -156,11 +155,12 @@ test.describe('Secondary selector popovers (#1170)', () => {
     await page.keyboard.press('Control+a')
     await editor.pressSequentially('heading text')
 
-    // Open the heading-level popover and pick H2.
-    await page.getByRole('button', { name: 'Heading level' }).click()
-    const pop = activePopover(page)
-    await expect(pop).toBeVisible()
-    await pop.getByRole('button', { name: 'H2', exact: true }).click()
+    // #1960 — open the Turn into menu and pick Heading 2.
+    await page
+      .locator('[data-testid="block-editor"]')
+      .getByRole('button', { name: 'Turn into', exact: true })
+      .click()
+    await page.getByRole('menuitemradio', { name: 'Heading 2' }).click()
 
     // Active in the live editor.
     await expect(editor.locator('h2')).toBeVisible()
@@ -188,19 +188,26 @@ test.describe('Secondary selector popovers (#1170)', () => {
     await page.keyboard.press('Control+a')
     await page.keyboard.press('Delete')
 
-    // Open the code-block-language popover; picking a language toggles the
-    // block into a code block with that language in one chain.
-    await page.getByRole('button', { name: 'Code block language' }).click()
-    const pop = activePopover(page)
-    await expect(pop).toBeVisible()
-    // Filter to a single match, then click it (CODE_LANGUAGES includes rust).
-    await pop.getByRole('textbox').fill('rust')
-    await pop.getByRole('button', { name: 'rust', exact: true }).click()
-
-    // The block is now a code block (editor shows a <pre>), and the toolbar
-    // trigger reports the active language short code "RS".
+    // #1960 — Turn into → Code block, then re-open Turn into to set the
+    // language via the contextual picker (shown only while the block is code).
+    const blockEditor = page.locator('[data-testid="block-editor"]')
+    await blockEditor.getByRole('button', { name: 'Turn into', exact: true }).click()
+    await page.getByRole('menuitemradio', { name: 'Code block' }).click()
     await expect(editor.locator('pre')).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Code block language' })).toContainText('RS')
+
+    // Place the caret inside the new code block so the contextual language
+    // picker appears when Turn into re-opens (it keys off the active block).
+    // The editor's active-state read is rAF-coalesced (#1489), so let the
+    // selection propagate to the toolbar before re-opening.
+    await editor.locator('pre').click()
+    await page.waitForTimeout(250)
+    await blockEditor.getByRole('button', { name: 'Turn into', exact: true }).click()
+    const langInput = page.getByRole('textbox', { name: 'Code block language' })
+    await langInput.fill('rust')
+    await page.getByRole('button', { name: 'rust', exact: true }).click()
+
+    // Still a code block after the language is applied.
+    await expect(editor.locator('pre')).toBeVisible()
   })
 
   test('Insert-table picker: pick 3×3 → a <table> with 3 columns inserts, persists', async ({

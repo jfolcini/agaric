@@ -165,17 +165,14 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
     await page.keyboard.press('Control+a')
     await page.keyboard.press('Delete')
 
-    // Toggle code block via Ctrl+Shift+C (toolbar no longer has a plain
-    // "Code block" button — only a "Code block language" picker.
-    // Ctrl+Shift+C is the bound shortcut, see keyboard-config.ts).
+    // Toggle code block via Ctrl+Shift+C (#1960 — the toolbar no longer has
+    // any code button; Code block lives in the Turn into menu. Ctrl+Shift+C is
+    // the bound shortcut, see keyboard-config.ts). Verify on the editor itself.
     await page.keyboard.press('Control+Shift+KeyC')
-    await expect(page.getByRole('button', { name: 'Code block language' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    )
+    await expect(editor.locator('pre')).toBeVisible()
 
     // Type code content into the (now-empty) code block
-    await editor.type('const x = 42')
+    await editor.pressSequentially('const x = 42')
 
     // Save by blurring the editor (click the app header — idempotent,
     // non-focusable element). Enter within a code block inserts a

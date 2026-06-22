@@ -19,13 +19,9 @@ import {
   Code,
   FileSymlink,
   Highlighter,
-  Info,
   Italic,
   ListFilter,
-  ListOrdered,
-  Minus,
   Parentheses,
-  Quote,
   Redo2,
   Settings2,
   Strikethrough,
@@ -211,18 +207,6 @@ export function createRefsAndBlocks(editor: Editor): ToolbarButtonConfig[] {
       },
     },
     {
-      // #265 — blockquote is a long-tail structural insert with a `/quote`
-      // slash twin (the canonical home). Demoted below the high-frequency
-      // structure (heading 65 / code block 55 / ordered list 50) so it drops
-      // into the overflow popover first under width pressure (#217).
-      icon: Quote,
-      label: 'toolbar.blockquote',
-      tip: 'toolbar.blockquoteTip',
-      activeKey: 'blockquote',
-      priority: 35,
-      action: () => editor.chain().focus().toggleBlockquote().run(),
-    },
-    {
       // #215 — embed a live query block. Opens the visual query builder for
       // the focused block (one click), the mouse-first twin of the `/query`
       // slash command and the `{{` picker. Distinct ListFilter icon (not the
@@ -238,36 +222,16 @@ export function createRefsAndBlocks(editor: Editor): ToolbarButtonConfig[] {
   ]
 }
 
+/**
+ * #1960 — the structure buttons (ordered list / divider / callout) were folded
+ * into the "Turn into" popover (`TurnIntoMenu`), which now owns every block-type
+ * transform. The group is intentionally empty: group 1 of the toolbar now holds
+ * only the table-insert picker (and the contextual table-ops trigger), which are
+ * inserts requiring dimensions, not block-type conversions. Kept as a function
+ * (rather than deleted) so the group plumbing in `items.ts` stays uniform.
+ */
 export function createStructureButtons(): ToolbarButtonConfig[] {
-  return [
-    {
-      // #265 — ordered list is one of the high-frequency structural inserts
-      // kept inline (heading / code block / list). Priority unchanged at 50.
-      icon: ListOrdered,
-      label: 'toolbar.orderedList',
-      tip: 'toolbar.orderedListTip',
-      priority: 50,
-      action: () => dispatchBlockEvent('INSERT_ORDERED_LIST'),
-    },
-    {
-      // #265 — divider is a long-tail structural insert with a `/divider`
-      // slash twin. Demoted (50 → 35) into the overflow popover first.
-      icon: Minus,
-      label: 'toolbar.divider',
-      tip: 'toolbar.dividerTip',
-      priority: 35,
-      action: () => dispatchBlockEvent('INSERT_DIVIDER'),
-    },
-    {
-      // #265 — callout is a long-tail structural insert with a `/callout`
-      // slash twin. Demoted (40 → 30) so it is the first structure to overflow.
-      icon: Info,
-      label: 'toolbar.callout',
-      tip: 'toolbar.calloutTip',
-      priority: 30,
-      action: () => dispatchBlockEvent('INSERT_CALLOUT'),
-    },
-  ]
+  return []
 }
 
 export function createMetadataButtons(): ToolbarButtonConfig[] {

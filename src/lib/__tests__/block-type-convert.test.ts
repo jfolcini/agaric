@@ -38,6 +38,11 @@ describe('detectBlockType', () => {
     ['> a quote', 'quote'],
     ['> [!WARNING] careful', 'callout'],
     ['1. first', 'numbered-list'],
+    ['- a bullet', 'bullet-list'],
+    ['* a bullet', 'bullet-list'],
+    ['+ a bullet', 'bullet-list'],
+    // `---` (divider) must NOT be read as a bullet — BULLET_RE requires a space.
+    ['---', 'paragraph'],
     ['```\ncode\n```', 'code'],
   ])('detects %j as %s', (content, expected) => {
     expect(detectBlockType(content)).toBe(expected)
@@ -68,6 +73,13 @@ describe('convertBlockContent', () => {
     expect(convertBlockContent('heads up', 'callout')).toBe('> [!INFO] heads up')
   })
 
+  it('converts to a bullet list and round-trips off it', () => {
+    expect(convertBlockContent('do this', 'bullet-list')).toBe('- do this')
+    // bullet → numbered strips the `- ` marker first
+    expect(convertBlockContent('- do this', 'numbered-list')).toBe('1. do this')
+    expect(convertBlockContent('- do this', 'paragraph')).toBe('do this')
+  })
+
   it('wraps content in a fenced code block', () => {
     expect(convertBlockContent('const x = 1', 'code')).toBe('```\nconst x = 1\n```')
   })
@@ -82,6 +94,7 @@ describe('turnIdToBlockType', () => {
     expect(turnIdToBlockType('turn-paragraph')).toBe('paragraph')
     expect(turnIdToBlockType('turn-h2')).toBe('h2')
     expect(turnIdToBlockType('turn-numbered-list')).toBe('numbered-list')
+    expect(turnIdToBlockType('turn-bullet-list')).toBe('bullet-list')
     expect(turnIdToBlockType('turn-callout')).toBe('callout')
   })
 

@@ -1,43 +1,52 @@
 /**
- * E2E for the structural toolbar buttons (#253).
+ * E2E for the structural transforms in the "Turn into" menu (#253, #1960).
  *
- * Regression guard: the Ordered list / Divider / Callout toolbar buttons
- * dispatch `INSERT_ORDERED_LIST` / `INSERT_DIVIDER` / `INSERT_CALLOUT` DOM
- * events. These previously had NO consumer, so the buttons were silent
- * no-ops. The fix wires them in `useBlockTreeEventListeners` to the same
- * content-edit path the matching slash commands use. These tests click the
- * real buttons and assert the focused block's content actually changes.
+ * The standalone Ordered list / Divider / Callout toolbar buttons were
+ * REPLACED by the Turn into (Pilcrow) menu (#1960). These tests open that menu
+ * and click the entries — which dispatch `TURN_INTO_BLOCK` / `INSERT_DIVIDER`
+ * to the same content-edit path the matching slash commands use — and assert
+ * the focused block's content actually changes.
  */
 
 import { expect, test } from '@playwright/test'
 
 import { focusBlock, openPage, saveBlock, waitForBoot } from './helpers'
 
-test.describe('Structural toolbar inserts (#253)', () => {
+/** Open the Turn into popover from the focused block's toolbar. */
+async function openTurnInto(page: import('@playwright/test').Page) {
+  await page
+    .locator('[data-testid="block-editor"]')
+    .getByRole('button', { name: 'Turn into', exact: true })
+    .click()
+}
+
+test.describe('Structural transforms via Turn into (#253, #1960)', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
 
-  test('Divider button turns the focused block into a horizontal rule', async ({ page }) => {
+  test('Divider entry turns the focused block into a horizontal rule', async ({ page }) => {
     await openPage(page, 'Getting Started')
     const editor = await focusBlock(page)
     await page.keyboard.press('Control+a')
-    await editor.type('divider test')
+    await editor.pressSequentially('divider test')
 
-    await page.getByRole('button', { name: 'Divider' }).click()
+    await openTurnInto(page)
+    await page.getByRole('menuitem', { name: 'Divider' }).click()
     await saveBlock(page)
 
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await expect(firstBlock.locator('[data-testid="horizontal-rule"]')).toBeVisible()
   })
 
-  test('Ordered list button prefixes the focused block with "1. "', async ({ page }) => {
+  test('Ordered list entry prefixes the focused block with "1. "', async ({ page }) => {
     await openPage(page, 'Getting Started')
     const editor = await focusBlock(page)
     await page.keyboard.press('Control+a')
-    await editor.type('first item')
+    await editor.pressSequentially('first item')
 
-    await page.getByRole('button', { name: 'Ordered list' }).click()
+    await openTurnInto(page)
+    await page.getByRole('menuitemradio', { name: 'Ordered list' }).click()
     await saveBlock(page)
 
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
@@ -46,16 +55,30 @@ test.describe('Structural toolbar inserts (#253)', () => {
     await expect(ol).toContainText('first item')
   })
 
-  test('Callout button opens the type picker and applies the chosen variant', async ({ page }) => {
+  test('Bullet list entry prefixes the focused block with "- " (#1959)', async ({ page }) => {
     await openPage(page, 'Getting Started')
     const editor = await focusBlock(page)
     await page.keyboard.press('Control+a')
-    await editor.type('heads up')
+    await editor.pressSequentially('a bullet')
 
-    // #215 — the Callout button now opens a variant picker; pick "info".
-    // (Full per-variant + callout-block coverage lives in callout-picker.spec.ts.)
-    await page.getByRole('button', { name: 'Callout' }).click()
-    await page.getByTestId('callout-type-info').click()
+    await openTurnInto(page)
+    await page.getByRole('menuitemradio', { name: 'Bullet list' }).click()
+    await saveBlock(page)
+
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    const ul = firstBlock.locator('ul')
+    await expect(ul).toBeVisible()
+    await expect(ul).toContainText('a bullet')
+  })
+
+  test('Callout entry converts the focused block to a callout', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+    const editor = await focusBlock(page)
+    await page.keyboard.press('Control+a')
+    await editor.pressSequentially('heads up')
+
+    await openTurnInto(page)
+    await page.getByRole('menuitemradio', { name: 'Callout' }).click()
 
     const quote = editor.locator('blockquote')
     await expect(quote).toBeVisible()

@@ -220,31 +220,42 @@ describe('FormattingToolbar', () => {
       expect(toolbar).toBeInTheDocument()
     })
 
-    it('renders all eighteen always-visible buttons', () => {
+    it('renders the always-visible buttons; standalone block buttons are replaced by Turn into', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
-      expect(screen.getByRole('button', { name: t('toolbar.format') })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('toolbar.internalLink') })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('toolbar.insertTag') })).toBeInTheDocument()
-      expect(
-        screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') }),
-      ).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('toolbar.blockquote') })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('toolbar.headingLevel') })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('toolbar.orderedList') })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('toolbar.divider') })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('toolbar.callout') })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('toolbar.cyclePriority') })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('toolbar.insertDate') })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('toolbar.setDueDate') })).toBeInTheDocument()
-      expect(
-        screen.getByRole('button', { name: t('toolbar.setScheduledDate') }),
-      ).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('toolbar.todoToggle') })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('toolbar.properties') })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('toolbar.undo') })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('toolbar.redo') })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('toolbar.discard') })).toBeInTheDocument()
+      // Present: Format + Turn into (#1960) lead the toolbar, then refs,
+      // metadata, and history.
+      for (const key of [
+        'toolbar.format',
+        'toolbar.turnInto',
+        'toolbar.internalLink',
+        'toolbar.insertTag',
+        'toolbar.cyclePriority',
+        'toolbar.insertDate',
+        'toolbar.setDueDate',
+        'toolbar.setScheduledDate',
+        'toolbar.todoToggle',
+        'toolbar.properties',
+        'toolbar.undo',
+        'toolbar.redo',
+        'toolbar.discard',
+      ]) {
+        expect(screen.getByRole('button', { name: t(key) })).toBeInTheDocument()
+      }
+
+      // #1960 — the standalone block buttons were REPLACED by the Turn into
+      // menu, so they no longer exist as toolbar buttons. (Their transforms
+      // live inside the Turn into popover as menuitemradio entries, not buttons.)
+      for (const key of [
+        'toolbar.codeBlockLanguage',
+        'toolbar.blockquote',
+        'toolbar.headingLevel',
+        'toolbar.orderedList',
+        'toolbar.divider',
+        'toolbar.callout',
+      ]) {
+        expect(screen.queryByRole('button', { name: t(key) })).toBeNull()
+      }
     })
 
     it('exposes the mark toggles via the Format popover, not as inline buttons', () => {
@@ -337,55 +348,60 @@ describe('FormattingToolbar', () => {
       expect(mockRedo).toHaveBeenCalled() // no-args by contract
       expect(mockRun).toHaveBeenCalled() // no-args by contract
     })
-
-    it('toggles blockquote via editor chain on pointerdown', () => {
-      render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.blockquote') }))
-
-      expect(mockToggleBlockquote).toHaveBeenCalled() // no-args by contract
-      expect(mockRun).toHaveBeenCalled() // no-args by contract
-    })
   })
 
-  // ── Code block popover ──────────────────────────────────────────────
+  // ── Turn into menu (#1960) ───────────────────────────────────────────
 
-  describe('code block popover', () => {
-    it('renders icon-only when inactive — no persistent "Code" text label (#1958)', () => {
+  describe('turn into menu', () => {
+    it('renders the Turn into button', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') })
-      // #1958 — the old persistent "Code" text made the resting button too
-      // wide; it is now icon-only (icon-xs footprint), like the heading button.
-      expect(btn.textContent).not.toContain('Code')
-      expect(btn.className).toContain('size-6')
+      expect(screen.getByRole('button', { name: t('toolbar.turnInto') })).toBeInTheDocument()
     })
 
-    it('shows the language short-code badge when active in a code block (#1958)', () => {
-      mockEditorState.codeBlock = true
-      mockEditorState.codeBlockLanguage = 'typescript'
+    it('lists block-type transforms as menuitemradio entries', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') })
-      expect(btn.textContent).toContain('TS')
+      // The Popover mock always renders content, so the menu is in the DOM.
+      const menu = screen.getByRole('menu', { name: t('toolbar.turnInto') })
+      for (const key of [
+        'contextMenu.turnIntoType.bulletList',
+        'contextMenu.turnIntoType.numberedList',
+        'contextMenu.turnIntoType.quote',
+        'contextMenu.turnIntoType.code',
+        'contextMenu.turnIntoType.callout',
+      ]) {
+        expect(within(menu).getByRole('menuitemradio', { name: t(key) })).toBeInTheDocument()
+      }
     })
 
-    it('toggles code block via editor chain', () => {
+    it('dispatches turn-into-block with the chosen type on pointerdown', () => {
+      const events: CustomEvent[] = []
+      const handler = (e: Event) => events.push(e as CustomEvent)
+      document.addEventListener('turn-into-block', handler)
       render(<FormattingToolbar editor={makeEditor()} />)
-      // Code block button is a popover — click opens it, select "Plain text" to toggle
-      const btn = screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') })
-      fireEvent.pointerDown(btn)
-      // The popover content shows language options including "Plain text"
-      const popoverContents = screen.getAllByTestId('popover-content')
-      const codeBlockPopover = popoverContents.find((el) =>
-        el.textContent?.includes('Plain text'),
-      ) as HTMLElement
-      expect(codeBlockPopover).toBeInTheDocument()
+      fireEvent.pointerDown(
+        screen.getByRole('menuitemradio', { name: t('contextMenu.turnIntoType.bulletList') }),
+      )
+      document.removeEventListener('turn-into-block', handler)
+      expect(events).toHaveLength(1)
+      expect(events[0]?.detail).toEqual({ type: 'bullet-list' })
     })
 
-    it('shows Code block as pressed when active', () => {
-      mockEditorState.codeBlock = true
+    it('dispatches insert-divider for the Divider entry', () => {
+      const events: CustomEvent[] = []
+      const handler = (e: Event) => events.push(e as CustomEvent)
+      document.addEventListener('insert-divider', handler)
       render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') })
-      expect(btn).toHaveAttribute('aria-pressed', 'true')
-      expect(btn.className).toContain('bg-accent')
+      fireEvent.pointerDown(screen.getByRole('menuitem', { name: t('toolbar.divider') }))
+      document.removeEventListener('insert-divider', handler)
+      expect(events).toHaveLength(1)
+    })
+
+    it('marks the active block type as checked', () => {
+      mockEditorState.headingLevel = 2
+      render(<FormattingToolbar editor={makeEditor()} />)
+      expect(
+        screen.getByRole('menuitemradio', { name: t('contextMenu.turnIntoType.h2') }),
+      ).toHaveAttribute('aria-checked', 'true')
     })
   })
 
@@ -553,16 +569,10 @@ describe('FormattingToolbar', () => {
     it('all buttons have correct aria-labels', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
+      expect(screen.getByRole('button', { name: t('toolbar.format') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.turnInto') })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: t('toolbar.internalLink') })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: t('toolbar.insertTag') })).toBeInTheDocument()
-      expect(
-        screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') }),
-      ).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('toolbar.blockquote') })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('toolbar.headingLevel') })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('toolbar.orderedList') })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('toolbar.divider') })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('toolbar.callout') })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: t('toolbar.cyclePriority') })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: t('toolbar.insertDate') })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: t('toolbar.setDueDate') })).toBeInTheDocument()
@@ -647,117 +657,6 @@ describe('FormattingToolbar', () => {
       document.removeEventListener('toggle-todo-state', spy)
     })
   })
-
-  // ── Structure buttons (Ordered List, Divider, Callout) ─────────
-
-  describe('structure buttons', () => {
-    it('renders Ordered list button with aria-label', () => {
-      render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: t('toolbar.orderedList') })
-      expect(btn).toBeInTheDocument()
-      expect(btn).toHaveAttribute('aria-label', t('toolbar.orderedList'))
-    })
-
-    it('renders Divider button with aria-label', () => {
-      render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: t('toolbar.divider') })
-      expect(btn).toBeInTheDocument()
-      expect(btn).toHaveAttribute('aria-label', t('toolbar.divider'))
-    })
-
-    it('renders Callout button with aria-label', () => {
-      render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: t('toolbar.callout') })
-      expect(btn).toBeInTheDocument()
-      expect(btn).toHaveAttribute('aria-label', t('toolbar.callout'))
-    })
-
-    it('dispatches insert-ordered-list event on pointerdown', () => {
-      const spy = vi.fn()
-      document.addEventListener('insert-ordered-list', spy)
-      render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.orderedList') }))
-      expect(spy).toHaveBeenCalledOnce()
-      document.removeEventListener('insert-ordered-list', spy)
-    })
-
-    it('dispatches insert-divider event on pointerdown', () => {
-      const spy = vi.fn()
-      document.addEventListener('insert-divider', spy)
-      render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.divider') }))
-      expect(spy).toHaveBeenCalledOnce()
-      document.removeEventListener('insert-divider', spy)
-    })
-
-    it('callout button opens a type picker; selecting a variant dispatches insert-callout with the type (#215)', () => {
-      const spy = vi.fn()
-      document.addEventListener('insert-callout', spy as EventListener)
-      render(<FormattingToolbar editor={makeEditor()} />)
-      // The button now opens a popover of the 5 variants (mock renders content
-      // inline); selecting one dispatches the chosen type.
-      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.callout') }))
-      fireEvent.pointerDown(screen.getByTestId('callout-type-warning'))
-      expect(spy).toHaveBeenCalledOnce()
-      expect((spy.mock.calls[0]?.[0] as CustomEvent | undefined)?.detail).toEqual({
-        type: 'warning',
-      })
-      document.removeEventListener('insert-callout', spy as EventListener)
-    })
-
-    it('prevents default on pointerdown to preserve editor focus', () => {
-      render(<FormattingToolbar editor={makeEditor()} />)
-      for (const label of [t('toolbar.orderedList'), t('toolbar.divider'), t('toolbar.callout')]) {
-        const btn = screen.getByRole('button', { name: label })
-        const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
-        const prevented = !btn.dispatchEvent(event)
-        expect(prevented).toBe(true)
-      }
-    })
-
-    it('passes axe audit with structure buttons', async () => {
-      const { container } = render(<FormattingToolbar editor={makeEditor()} />)
-      expect(await axe(container)).toHaveNoViolations()
-    })
-  })
-
-  // ── #613: Heading dropdown ────────────────────────────────────────────
-
-  describe('heading dropdown', () => {
-    it('renders heading button and shows level when heading is active', () => {
-      mockEditorState.headingLevel = 2
-      render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: t('toolbar.headingLevel') })
-      expect(btn).toBeInTheDocument()
-      expect(btn).toHaveAttribute('aria-pressed', 'true')
-      expect(btn.className).toContain('bg-accent')
-      expect(btn.textContent).toContain('2')
-    })
-
-    it('heading button uses icon-xs size matching other toolbar buttons', () => {
-      render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: t('toolbar.headingLevel') })
-      // icon-xs size class includes size-6
-      expect(btn.className).toContain('size-6')
-    })
-
-    it('shows H1-H6 and Paragraph options in popover content', () => {
-      render(<FormattingToolbar editor={makeEditor()} />)
-      // The popover content is always rendered in our mock
-      const popoverContents = screen.getAllByTestId('popover-content')
-      // Identify the heading popover by content (order-independent — #1958 added
-      // the leading Format popover) — it is the one listing the heading levels.
-      const headingPopover = popoverContents.find((el) =>
-        el.textContent?.includes('H1'),
-      ) as HTMLElement
-      expect(headingPopover).toBeInTheDocument()
-      for (let i = 1; i <= 6; i++) {
-        expect(headingPopover.textContent).toContain(`H${i}`)
-      }
-      expect(headingPopover.textContent).toContain(t('toolbar.paragraph'))
-    })
-  })
-
   // ── #590-A4: Discard button ───────────────────────────────────────────
 
   describe('discard button', () => {
@@ -798,13 +697,13 @@ describe('FormattingToolbar', () => {
       const sentinel = screen.getByTestId('toolbar-sentinel')
       expect(sentinel).toBeInTheDocument()
       expect(sentinel).toHaveAttribute('aria-hidden', 'true')
-      // Each item in the flattened list (21 buttons + 3 separators = 24)
-      // must have a measurable child carrying its data-toolbar-item-key.
-      // (#213 PR4 added the insert-block-ref button; #215b added the
-      // table-insert grid picker; #215 added the insert-query button; #1958
-      // added the leading Format popover.)
+      // Each item in the flattened list (16 buttons + 3 separators = 19) must
+      // have a measurable child carrying its data-toolbar-item-key. #1960
+      // replaced the 6 standalone block buttons (code/heading/blockquote/
+      // ordered-list/divider/callout) with the single Format + Turn into pair,
+      // dropping the count from 21 buttons to 16.
       const measurableChildren = sentinel.querySelectorAll('[data-toolbar-item-key]')
-      expect(measurableChildren.length).toBe(24)
+      expect(measurableChildren.length).toBe(19)
     })
   })
 
@@ -959,22 +858,6 @@ describe('FormattingToolbar', () => {
         restore()
       }
     })
-
-    it('callout overflow row opens the type picker; selecting a variant dispatches the type (#215)', async () => {
-      const restore = withTightLayout(120)
-      try {
-        const spy = vi.fn()
-        document.addEventListener('insert-callout', spy as EventListener)
-        render(<FormattingToolbar editor={makeEditor()} />)
-        await screen.findByRole('button', { name: t('toolbar.more') })
-        fireEvent.pointerDown(screen.getByTestId('callout-type-tip'))
-        expect((spy.mock.calls[0]?.[0] as CustomEvent | undefined)?.detail).toEqual({ type: 'tip' })
-        document.removeEventListener('insert-callout', spy as EventListener)
-      } finally {
-        restore()
-      }
-    })
-
     it('overflow popover uses MenuPopoverContent canonical width via data-editor-portal', async () => {
       const restore = withTightLayout(120)
       try {
@@ -990,229 +873,6 @@ describe('FormattingToolbar', () => {
       } finally {
         restore()
       }
-    })
-
-    it('heading popover inside overflow closes both popovers on H2 selection', async () => {
-      const restore = withTightLayout(120)
-      try {
-        render(<FormattingToolbar editor={makeEditor()} />)
-        await screen.findByRole('button', { name: t('toolbar.more') })
-
-        const moreBtn = screen.getByRole('button', { name: t('toolbar.more') })
-        fireEvent.pointerDown(moreBtn)
-        expect(moreBtn).toHaveAttribute('aria-expanded', 'true')
-
-        const overflowMenu = screen.getByTestId('toolbar-overflow-menu')
-        const headingBtn = Array.from(overflowMenu.querySelectorAll('button')).find(
-          (b) => b.getAttribute('aria-label') === t('toolbar.headingLevel'),
-        ) as HTMLElement | undefined
-        expect(headingBtn).toBeDefined()
-
-        const headingPopover = (headingBtn as Element).closest('[data-popover]') as HTMLElement
-
-        expect(headingPopover).toHaveAttribute('data-open', 'false')
-
-        fireEvent.pointerDown(headingBtn as Element)
-        expect(headingPopover).toHaveAttribute('data-open', 'true')
-
-        const h2Btn = Array.from(headingPopover.querySelectorAll('button')).find(
-          (b) => b.textContent === 'H2',
-        ) as HTMLElement | undefined
-        expect(h2Btn).toBeDefined()
-        fireEvent.pointerDown(h2Btn as Element)
-
-        expect(headingPopover).toHaveAttribute('data-open', 'false')
-        expect(overflowMenu.closest('[data-popover]')).toHaveAttribute('data-open', 'false')
-      } finally {
-        restore()
-      }
-    })
-
-    it('code block popover inside overflow closes both popovers on Plain text selection', async () => {
-      const restore = withTightLayout(120)
-      try {
-        render(<FormattingToolbar editor={makeEditor()} />)
-        await screen.findByRole('button', { name: t('toolbar.more') })
-
-        const moreBtn = screen.getByRole('button', { name: t('toolbar.more') })
-        fireEvent.pointerDown(moreBtn)
-
-        const overflowMenu = screen.getByTestId('toolbar-overflow-menu')
-        const codeBtn = Array.from(overflowMenu.querySelectorAll('button')).find(
-          (b) => b.getAttribute('aria-label') === t('toolbar.codeBlockLanguage'),
-        ) as HTMLElement | undefined
-        expect(codeBtn).toBeDefined()
-
-        const codePopover = (codeBtn as Element).closest('[data-popover]') as HTMLElement
-
-        expect(codePopover).toHaveAttribute('data-open', 'false')
-
-        fireEvent.pointerDown(codeBtn as Element)
-        expect(codePopover).toHaveAttribute('data-open', 'true')
-
-        const plainTextBtn = Array.from(codePopover.querySelectorAll('button')).find(
-          (b) => b.textContent === 'Plain text',
-        ) as HTMLElement | undefined
-        expect(plainTextBtn).toBeDefined()
-        fireEvent.pointerDown(plainTextBtn as Element)
-
-        expect(codePopover).toHaveAttribute('data-open', 'false')
-        expect(overflowMenu.closest('[data-popover]')).toHaveAttribute('data-open', 'false')
-      } finally {
-        restore()
-      }
-    })
-  })
-
-  // ── Code block language popover ────────────────────────────────
-
-  describe('code block language popover', () => {
-    it('renders code block language popover button', () => {
-      render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') })
-      expect(btn).toBeInTheDocument()
-    })
-
-    it('opens code block language popover on click', () => {
-      render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') })
-      const popover = btn.closest('[data-popover]') as HTMLElement
-      expect(popover).toHaveAttribute('data-open', 'false')
-
-      fireEvent.pointerDown(btn)
-
-      const popoverAfter = screen
-        .getByRole('button', { name: t('toolbar.codeBlockLanguage') })
-        .closest('[data-popover]') as HTMLElement
-      expect(popoverAfter).toHaveAttribute('data-open', 'true')
-    })
-
-    it('shows language options in popover content', () => {
-      render(<FormattingToolbar editor={makeEditor()} />)
-      const popoverContents = screen.getAllByTestId('popover-content')
-      // The code block popover is the first PopoverContent now (External Link
-      // Moved to SelectionBubbleMenu in Layer A).
-      const codeBlockPopover = popoverContents.find((el) =>
-        el.textContent?.includes('Plain text'),
-      ) as HTMLElement
-      expect(codeBlockPopover).toBeInTheDocument()
-      for (const lang of ['javascript', 'typescript', 'python', 'rust', 'bash', 'sql']) {
-        expect(codeBlockPopover.textContent).toContain(lang)
-      }
-      expect(codeBlockPopover.textContent).toContain('Plain text')
-    })
-
-    it('shows active language highlight', () => {
-      mockEditorState.codeBlock = true
-      mockEditorState.codeBlockLanguage = 'python'
-      render(<FormattingToolbar editor={makeEditor()} />)
-
-      const popoverContents = screen.getAllByTestId('popover-content')
-      const codeBlockPopover = popoverContents.find((el) =>
-        el.textContent?.includes('Plain text'),
-      ) as HTMLElement
-      // Find the python button inside the popover
-      const buttons = codeBlockPopover.querySelectorAll('button')
-      const pythonBtn = Array.from(buttons).find((b) => b.textContent === 'python')
-      expect(pythonBtn).toBeDefined()
-      expect(pythonBtn?.className).toContain('bg-accent')
-    })
-
-    it('selects a language when not in code block', () => {
-      mockEditorState.codeBlock = false
-      render(<FormattingToolbar editor={makeEditor()} />)
-
-      const popoverContents = screen.getAllByTestId('popover-content')
-      const codeBlockPopover = popoverContents.find((el) =>
-        el.textContent?.includes('Plain text'),
-      ) as HTMLElement
-      const buttons = codeBlockPopover.querySelectorAll('button')
-      const jsBtn = Array.from(buttons).find((b) => b.textContent === 'javascript')
-      expect(jsBtn).toBeDefined()
-
-      fireEvent.pointerDown(jsBtn as HTMLElement)
-
-      expect(mockToggleCodeBlock).toHaveBeenCalled() // no-args by contract
-      expect(mockUpdateAttributes).toHaveBeenCalledWith('codeBlock', { language: 'javascript' })
-    })
-
-    it('updates language when already in code block', () => {
-      mockEditorState.codeBlock = true
-      mockEditorState.codeBlockLanguage = 'python'
-      render(<FormattingToolbar editor={makeEditor()} />)
-
-      const popoverContents = screen.getAllByTestId('popover-content')
-      const codeBlockPopover = popoverContents.find((el) =>
-        el.textContent?.includes('Plain text'),
-      ) as HTMLElement
-      const buttons = codeBlockPopover.querySelectorAll('button')
-      const rustBtn = Array.from(buttons).find((b) => b.textContent === 'rust')
-      expect(rustBtn).toBeDefined()
-
-      fireEvent.pointerDown(rustBtn as HTMLElement)
-
-      expect(mockToggleCodeBlock).not.toHaveBeenCalled()
-      expect(mockUpdateAttributes).toHaveBeenCalledWith('codeBlock', { language: 'rust' })
-    })
-
-    it('shows short language label when active', () => {
-      mockEditorState.codeBlock = true
-      mockEditorState.codeBlockLanguage = 'javascript'
-      render(<FormattingToolbar editor={makeEditor()} />)
-
-      const btn = screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') })
-      expect(btn.textContent).toContain('JS')
-    })
-
-    it('shows short label for typescript', () => {
-      mockEditorState.codeBlock = true
-      mockEditorState.codeBlockLanguage = 'typescript'
-      render(<FormattingToolbar editor={makeEditor()} />)
-
-      const btn = screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') })
-      expect(btn.textContent).toContain('TS')
-    })
-
-    it('does not show short label when no language is set', () => {
-      mockEditorState.codeBlock = true
-      mockEditorState.codeBlockLanguage = ''
-      render(<FormattingToolbar editor={makeEditor()} />)
-
-      const btn = screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') })
-      // Should only have the icon, no text label
-      expect(btn.querySelector('.text-\\[10px\\]')).toBeNull()
-    })
-
-    it('a11y: no violations with code block popover open', async () => {
-      mockEditorState.codeBlock = true
-      mockEditorState.codeBlockLanguage = 'python'
-      const { container } = render(<FormattingToolbar editor={makeEditor()} />)
-
-      // Open the popover
-      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') }))
-
-      expect(await axe(container)).toHaveNoViolations()
-    })
-  })
-
-  // ── editor portals carry viewport-clamp ───────────────────
-  // Each `data-editor-portal` PopoverContent must declare
-  // `max-w-[calc(100vw-2rem)]` so it never overflows the viewport on
-  // narrow screens (mirrors the Radix baseline in `ui/popover.tsx`).
-  describe('viewport-clamp class on editor portals', () => {
-    it('code-block language popover carries max-w-[calc(100vw-2rem)]', () => {
-      render(<FormattingToolbar editor={makeEditor()} />)
-      const popovers = screen.getAllByTestId('popover-content')
-      // Code-block popover is the first PopoverContent (External link moved
-      // To SelectionBubbleMenu in Layer A).
-      expect(popovers[0]?.className).toContain('max-w-[calc(100vw-2rem)]')
-    })
-
-    it('heading-level popover carries max-w-[calc(100vw-2rem)]', () => {
-      render(<FormattingToolbar editor={makeEditor()} />)
-      const popovers = screen.getAllByTestId('popover-content')
-      // Heading popover is the second PopoverContent.
-      expect(popovers[1]?.className).toContain('max-w-[calc(100vw-2rem)]')
     })
   })
 
