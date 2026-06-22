@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { EMOJI, EMOJI_GROUPS, groupedEmoji, searchEmoji } from '../emoji-data'
+import { emojiByShortcode, EMOJI, EMOJI_GROUPS, groupedEmoji, searchEmoji } from '../emoji-data'
 
 describe('emoji-data', () => {
   it('ships the full categorized Unicode set (~1900 emoji, 9 CLDR groups)', () => {
@@ -10,6 +10,19 @@ describe('emoji-data', () => {
     expect(EMOJI_GROUPS).toContain('Smileys & Emotion')
     expect(EMOJI_GROUPS).toContain('Flags')
     expect(EMOJI_GROUPS.length).toBe(9)
+  })
+
+  // #281 — `:shortcode:` closing-colon auto-replace lookup.
+  it('emojiByShortcode resolves an exact shortcode (case-insensitive) and null otherwise', () => {
+    const joy = EMOJI.find((e) => e.name === 'joy')
+    expect(joy).toBeDefined()
+    expect(emojiByShortcode('joy')).toBe(joy?.char)
+    // Case-insensitive — users may type `:JOY:`.
+    expect(emojiByShortcode('JOY')).toBe(joy?.char)
+    // Unknown shortcode → null (so the input rule leaves the text untouched).
+    expect(emojiByShortcode('definitely_not_an_emoji_xyz')).toBeNull()
+    // Keywords are NOT matched (deterministic 1:1 replacement only).
+    expect(emojiByShortcode('')).toBeNull()
   })
 
   it('every entry has a non-empty char, a clean shortcode name, and a keyword array', () => {

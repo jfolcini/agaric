@@ -782,6 +782,7 @@ export function BlockTree({
     handleTogglePriority,
     handleShowProperties,
     handleOpenQueryBuilder: openQueryBuilder,
+    handleOpenEmojiPicker: openEmojiPicker,
     rovingEditor,
     datePickerCursorPos,
     setDatePickerMode,

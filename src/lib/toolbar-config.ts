@@ -24,6 +24,7 @@ import {
   Parentheses,
   Redo2,
   Settings2,
+  Smile,
   Strikethrough,
   Underline,
   Undo2,
@@ -218,6 +219,18 @@ export function createRefsAndBlocks(editor: Editor): ToolbarButtonConfig[] {
       tip: 'toolbar.queryTip',
       priority: 30,
       action: () => dispatchBlockEvent('OPEN_QUERY_BUILDER'),
+    },
+    {
+      // #281 — open the browse-grid emoji picker (the mouse-first twin of the
+      // `:` typeahead and the `/emoji` slash command). Routes through the
+      // focus-keyed block bus so the dialog targets the focused block and
+      // inserts at its caret. Long-tail insert: low priority so it overflows
+      // before high-frequency structure buttons under width pressure.
+      icon: Smile,
+      label: 'toolbar.emoji',
+      tip: 'toolbar.emojiTip',
+      priority: 40,
+      action: () => dispatchBlockEvent('OPEN_EMOJI_PICKER'),
     },
   ]
 }

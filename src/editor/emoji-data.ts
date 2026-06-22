@@ -74,3 +74,18 @@ export function searchEmoji(query: string, limit = 24): EmojiEntry[] {
 export function groupedEmoji(): readonly EmojiGroupBucket[] {
   return GROUPED
 }
+
+/**
+ * Exact-shortcode → emoji lookup, built once. Keyed on the canonical `name`
+ * (lowercased) ONLY — NOT keywords — so the `:smile:` closing-colon input rule
+ * (#281) is a deterministic 1:1 replacement (a keyword like "happy" maps to
+ * many emoji and must stay typeahead-only).
+ */
+const BY_SHORTCODE: ReadonlyMap<string, string> = new Map(
+  EMOJI.map((e) => [e.name.toLowerCase(), e.char]),
+)
+
+/** Return the native emoji for an exact shortcode `name`, or null if unknown. */
+export function emojiByShortcode(name: string): string | null {
+  return BY_SHORTCODE.get(name.toLowerCase()) ?? null
+}

@@ -51,6 +51,7 @@ function makeOptions(
     handleTogglePriority: vi.fn(),
     handleShowProperties: vi.fn(),
     handleOpenQueryBuilder: vi.fn(),
+    handleOpenEmojiPicker: vi.fn(),
     rovingEditor: {
       editor: null,
       mount: vi.fn(),
