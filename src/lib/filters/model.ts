@@ -704,6 +704,14 @@ export function filterPrimitiveToCanonical(filter: FilterPrimitive): FilterPredi
     case 'Tag': {
       return { kind: 'tag', by: 'name', name: filter.tag }
     }
+    case 'TagOrRef': {
+      // Ref-inclusive tag (block_tags ∪ block_tag_refs). The canonical model has
+      // no ref-inclusive distinction, so it projects to the same flat `tag`
+      // category as `Tag` for display/search; `TagOrRef` is produced only by the
+      // inline-query reroute and is never round-tripped back from the canonical
+      // UI, so the lost distinction is inert.
+      return { kind: 'tag', by: 'name', name: filter.tag }
+    }
     case 'PathGlob': {
       return { kind: 'pathGlob', pattern: filter.pattern, exclude: filter.exclude }
     }

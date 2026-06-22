@@ -1380,30 +1380,37 @@ describe('StaticBlock', () => {
     })
 
     it('shows error when batchResolve rejects after successful query', async () => {
-      mockedInvoke
-        .mockResolvedValueOnce({
-          items: [
-            {
-              id: 'BLK_RES_1',
-              parent_id: 'PARENT_1',
-              page_id: 'PARENT_1',
-              content: 'Result block',
-              position: 0,
-              block_type: 'text',
-              created_at: '2024-01-01T00:00:00Z',
-              updated_at: '2024-01-01T00:00:00Z',
-              deleted_at: null,
-              todo_state: null,
-              priority: null,
-              due_date: null,
-              scheduled_date: null,
-            },
-          ],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        })
-        .mockRejectedValueOnce(new Error('Batch resolve failed'))
+      // The tag query reroutes through the rich engine: list_tags_by_prefix →
+      // run_advanced_query (succeeds) → batch_resolve (rejects).
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_tags_by_prefix') return []
+        if (cmd === 'run_advanced_query') {
+          return {
+            rows: [
+              {
+                id: 'BLK_RES_1',
+                parent_id: 'PARENT_1',
+                page_id: 'PARENT_1',
+                content: 'Result block',
+                position: 0,
+                block_type: 'text',
+                created_at: '2024-01-01T00:00:00Z',
+                updated_at: '2024-01-01T00:00:00Z',
+                deleted_at: null,
+                todo_state: null,
+                priority: null,
+                due_date: null,
+                scheduled_date: null,
+              },
+            ],
+            nextCursor: null,
+            hasMore: false,
+            totalCount: null,
+          }
+        }
+        if (cmd === 'batch_resolve') throw new Error('Batch resolve failed')
+        return null
+      })
       render(
         <StaticBlock blockId="B1" content="{{query type:tag expr:project}}" onFocus={vi.fn()} />,
       )
@@ -1411,7 +1418,11 @@ describe('StaticBlock', () => {
     })
 
     it('shows generic fallback for non-Error rejection in query', async () => {
-      mockedInvoke.mockRejectedValueOnce('string error without Error wrapper')
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_tags_by_prefix') return []
+        if (cmd === 'run_advanced_query') throw 'string error without Error wrapper'
+        return null
+      })
       render(
         <StaticBlock blockId="B1" content="{{query type:tag expr:project}}" onFocus={vi.fn()} />,
       )
@@ -1419,7 +1430,11 @@ describe('StaticBlock', () => {
     })
 
     it('query block remains clickable after invoke rejection', async () => {
-      mockedInvoke.mockRejectedValueOnce(new Error('Service down'))
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_tags_by_prefix') return []
+        if (cmd === 'run_advanced_query') throw new Error('Service down')
+        return null
+      })
       const onFocus = vi.fn()
       const user = userEvent.setup()
       render(<StaticBlock blockId="B1" content="{{query type:tag expr:test}}" onFocus={onFocus} />)
@@ -1429,7 +1444,11 @@ describe('StaticBlock', () => {
     })
 
     it('has no a11y violations when query invoke fails', async () => {
-      mockedInvoke.mockRejectedValueOnce(new Error('Service unavailable'))
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_tags_by_prefix') return []
+        if (cmd === 'run_advanced_query') throw new Error('Service unavailable')
+        return null
+      })
       const { container } = render(
         <StaticBlock blockId="B1" content="{{query type:tag expr:test}}" onFocus={vi.fn()} />,
       )

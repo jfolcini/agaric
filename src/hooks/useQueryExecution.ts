@@ -1,5 +1,6 @@
 import { type Dispatch, type SetStateAction, useCallback, useEffect, useRef, useState } from 'react'
 
+import { resolveLegacyQueryToFilterExpr } from '@/lib/inline-query-resolve'
 import { decodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { logger } from '@/lib/logger'
 import { parseDate } from '@/lib/parse-date'
@@ -10,6 +11,7 @@ import {
   filteredBlocksQuery,
   listBlocks,
   listBlocksLimit,
+  listTagsByPrefix,
   paginationLimit,
   queryByProperty,
   queryByTags,
@@ -225,6 +227,32 @@ export async function fetchRichInlineQuery(
   }
 }
 
+/**
+ * Resolve which execution path an inline query uses and run it (#1951 P2):
+ * structured `v2:` payloads and faithfully-translatable legacy text queries run
+ * through the rich `run_advanced_query` engine; anything the translator refuses
+ * keeps the original legacy per-type dispatch. Exported for the legacy↔rich
+ * equivalence tests.
+ */
+export async function resolveInlineQuery(
+  expression: string,
+  pageCursor?: string,
+  spaceId?: string | null,
+): Promise<QueryFetchResult> {
+  const structured = decodeInlineQueryPayload(expression)
+  if (structured) {
+    return await fetchRichInlineQuery(structured.filter, pageCursor, spaceId)
+  }
+  const parsed = parseQueryExpression(expression)
+  const resolved = await resolveLegacyQueryToFilterExpr(parsed, {
+    resolveTagPrefix: async (prefix) => (await listTagsByPrefix({ prefix })).map((t) => t.tag_id),
+  })
+  if (resolved.filterExpr != null) {
+    return await fetchRichInlineQuery(resolved.filterExpr, pageCursor, spaceId)
+  }
+  return await dispatchQuery(parsed, pageCursor, spaceId)
+}
+
 /** Resolve parent-page titles for a batch of blocks into a fresh Map. */
 async function resolvePageTitles(items: BlockRow[]): Promise<Map<string, string>> {
   const parentIds = items.map((b) => b.page_id).filter((id): id is string => id != null)
@@ -350,13 +378,15 @@ export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryEx
           if (myReqId === reqIdRef.current) setError('Query expression is empty')
           return
         }
-        // A structured (`v2:`) payload runs through the rich engine; any other
-        // payload is a legacy text query and keeps the existing dispatch path
-        // unchanged (back-compat: `decodeInlineQueryPayload` returns null for it).
-        const structured = decodeInlineQueryPayload(expression)
-        const result = structured
-          ? await fetchRichInlineQuery(structured.filter, pageCursor, currentSpaceId)
-          : await dispatchQuery(parseQueryExpression(expression), pageCursor, currentSpaceId)
+        // Resolve the execution path (#1951 P2):
+        //   1. A structured (`v2:`) payload runs through the rich engine.
+        //   2. A legacy text query is translated to a `FilterExpr` and ALSO run
+        //      through the rich engine when faithfully expressible
+        //      (`resolveLegacyQueryToFilterExpr`).
+        //   3. Anything the translator refuses (backlinks, non-eq reserved
+        //      filters, key-only, unknown) keeps the original legacy dispatch —
+        //      so those blocks render exactly as before.
+        const result = await resolveInlineQuery(expression, pageCursor, currentSpaceId)
         if (myReqId !== reqIdRef.current) return
         applyQueryResult(result, isLoadMore, { setResults, setCursor, setHasMore })
         const titles = await resolvePageTitles(result.items)

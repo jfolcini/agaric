@@ -146,9 +146,10 @@ describe('QueryResult', () => {
 
   it('renders tag query results', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_tags') {
+      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'run_advanced_query') {
         return {
-          items: [
+          rows: [
             {
               id: 'B1',
               block_type: 'content',
@@ -163,9 +164,9 @@ describe('QueryResult', () => {
               page_id: 'P1',
             },
           ],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
         }
       }
       if (cmd === 'batch_resolve') {
@@ -182,8 +183,9 @@ describe('QueryResult', () => {
 
   it('renders empty state when no results', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_tags') {
-        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'run_advanced_query') {
+        return { rows: [], nextCursor: null, hasMore: false, totalCount: null }
       }
       return null
     })
@@ -205,9 +207,10 @@ describe('QueryResult', () => {
 
   it('collapses and expands results', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_tags') {
+      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'run_advanced_query') {
         return {
-          items: [
+          rows: [
             {
               id: 'B1',
               block_type: 'content',
@@ -222,9 +225,9 @@ describe('QueryResult', () => {
               page_id: null,
             },
           ],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
         }
       }
       return {}
@@ -249,9 +252,10 @@ describe('QueryResult', () => {
   it('navigates when clicking a result item', async () => {
     const onNavigate = vi.fn()
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_tags') {
+      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'run_advanced_query') {
         return {
-          items: [
+          rows: [
             {
               id: 'B1',
               block_type: 'content',
@@ -266,9 +270,9 @@ describe('QueryResult', () => {
               page_id: 'P1',
             },
           ],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
         }
       }
       if (cmd === 'batch_resolve') {
@@ -288,9 +292,9 @@ describe('QueryResult', () => {
 
   it('renders property query results', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_property') {
+      if (cmd === 'run_advanced_query') {
         return {
-          items: [
+          rows: [
             {
               id: 'B1',
               block_type: 'content',
@@ -305,9 +309,9 @@ describe('QueryResult', () => {
               page_id: 'P1',
             },
           ],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -419,11 +423,12 @@ describe('QueryResult', () => {
   it('Retry button re-invokes the query on click', async () => {
     let callCount = 0
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_tags') {
+      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'run_advanced_query') {
         callCount++
         if (callCount === 1) throw new Error('first failure')
         return {
-          items: [
+          rows: [
             {
               id: 'B1',
               block_type: 'content',
@@ -438,9 +443,9 @@ describe('QueryResult', () => {
               page_id: null,
             },
           ],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -474,9 +479,10 @@ describe('QueryResult', () => {
   // PageLink breadcrumb navigation
   it('clicking page title in breadcrumb navigates to the page via PageLink', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_tags') {
+      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'run_advanced_query') {
         return {
-          items: [
+          rows: [
             {
               id: 'B1',
               block_type: 'content',
@@ -491,9 +497,9 @@ describe('QueryResult', () => {
               page_id: 'P1',
             },
           ],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
         }
       }
       if (cmd === 'batch_resolve') {
@@ -594,8 +600,12 @@ describe('QueryResult – table mode', () => {
 
   function mockTagResults(items: ReturnType<typeof makeBlock>[]) {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_tags') {
-        return { items, next_cursor: null, has_more: false }
+      // `type:tag` reroutes through the rich `run_advanced_query` engine
+      // (P2). The tag-prefix resolution IPC returns no exact matches; the
+      // rows below are what the rich engine yields for this query.
+      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'run_advanced_query') {
+        return { rows: items, nextCursor: null, hasMore: false, totalCount: null }
       }
       if (cmd === 'batch_resolve') {
         return [{ id: 'P1', title: 'Project Page', block_type: 'page', deleted: false }]
@@ -606,9 +616,10 @@ describe('QueryResult – table mode', () => {
 
   it('renders as list by default (no table:true)', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_tags') {
+      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'run_advanced_query') {
         return {
-          items: [
+          rows: [
             makeBlock({
               id: 'B1',
               content: 'Task A',
@@ -617,9 +628,9 @@ describe('QueryResult – table mode', () => {
               todo_state: 'TODO',
             }),
           ],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -851,16 +862,16 @@ describe('buildFilters', () => {
 /* ------------------------------------------------------------------ */
 
 describe('QueryResult – multi-filter (filtered)', () => {
-  // Shorthand `property:key=value` and `tag:prefix`
-  // syntax (and their AND combinations) parse to `type: 'filtered'` and
-  // dispatch to a single `filtered_blocks_query` IPC. The legacy
-  // per-sub-filter `query_by_property` / `query_by_tags` fan-out + JS
-  // intersection no longer exists.
-  it('single property shorthand filter dispatches to filtered_blocks_query', async () => {
+  // Shorthand `property:key=value` and `tag:prefix` syntax (and their AND
+  // combinations) now reroute through the rich `run_advanced_query` engine
+  // (P2). The parsed `type: 'filtered'` shape is translated to a single
+  // `And` `FilterExpr`; the legacy `filtered_blocks_query` IPC no longer
+  // fires for faithfully-translatable shapes.
+  it('single property shorthand filter dispatches to run_advanced_query', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'filtered_blocks_query') {
+      if (cmd === 'run_advanced_query') {
         return {
-          items: [
+          rows: [
             makeBlock({
               id: 'B1',
               content: 'TODO task',
@@ -869,9 +880,9 @@ describe('QueryResult – multi-filter (filtered)', () => {
               todo_state: 'TODO',
             }),
           ],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -883,31 +894,36 @@ describe('QueryResult – multi-filter (filtered)', () => {
     expect(await screen.findByText(/TODO task/)).toBeInTheDocument()
     expect(screen.getByText('1 result')).toBeInTheDocument()
 
-    // Verify filtered_blocks_query was called with the marshalled
-    // FilteredBlocksPropertyFilter shape.
+    // Verify run_advanced_query was called exactly once with an `And`
+    // FilterExpr whose only child is the `State` row-column predicate.
+    const advCalls = mockedInvoke.mock.calls.filter((c) => c[0] === 'run_advanced_query')
+    expect(advCalls).toHaveLength(1)
     expect(mockedInvoke).toHaveBeenCalledWith(
-      'filtered_blocks_query',
+      'run_advanced_query',
       expect.objectContaining({
-        propertyFilters: [
-          expect.objectContaining({
-            key: 'todo_state',
-            valueText: 'TODO',
-            operator: 'eq',
+        request: expect.objectContaining({
+          filter: expect.objectContaining({
+            type: 'And',
+            children: [
+              {
+                type: 'Leaf',
+                primitive: expect.objectContaining({ type: 'State', values: ['TODO'] }),
+              },
+            ],
           }),
-        ],
-        scope: { kind: 'global' },
+        }),
       }),
     )
   })
 
   it('multiple property filters produce AND semantics', async () => {
-    // AND-intersection is now SQL-side. The mock
+    // AND-intersection is now SQL-side via the rich engine. The mock
     // returns the post-intersection result set directly; there is no
     // per-sub-filter fan-out to model.
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'filtered_blocks_query') {
+      if (cmd === 'run_advanced_query') {
         return {
-          items: [
+          rows: [
             makeBlock({
               id: 'B1',
               content: 'High-pri TODO',
@@ -917,9 +933,9 @@ describe('QueryResult – multi-filter (filtered)', () => {
               priority: '1',
             }),
           ],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -932,23 +948,38 @@ describe('QueryResult – multi-filter (filtered)', () => {
     expect(await screen.findByText(/High-pri TODO/)).toBeInTheDocument()
     expect(screen.getByText('1 result')).toBeInTheDocument()
 
-    // Both property filters are forwarded in a single IPC.
+    // Both property filters are forwarded in a single IPC as an `And` of
+    // the two row-column predicates.
     expect(mockedInvoke).toHaveBeenCalledWith(
-      'filtered_blocks_query',
+      'run_advanced_query',
       expect.objectContaining({
-        propertyFilters: [
-          expect.objectContaining({ key: 'todo_state', valueText: 'TODO', operator: 'eq' }),
-          expect.objectContaining({ key: 'priority', valueText: '1', operator: 'eq' }),
-        ],
+        request: expect.objectContaining({
+          filter: expect.objectContaining({
+            type: 'And',
+            children: [
+              {
+                type: 'Leaf',
+                primitive: expect.objectContaining({ type: 'State', values: ['TODO'] }),
+              },
+              {
+                type: 'Leaf',
+                primitive: expect.objectContaining({ type: 'Priority', values: ['1'] }),
+              },
+            ],
+          }),
+        }),
       }),
     )
   })
 
-  it('tag + property combination dispatches a single filtered_blocks_query', async () => {
+  it('tag + property combination dispatches a single run_advanced_query', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'filtered_blocks_query') {
+      if (cmd === 'list_tags_by_prefix') {
+        return [{ tag_id: 'TAG_PX', name: 'project-x', usage_count: 3, updated_at: '2025-01-01' }]
+      }
+      if (cmd === 'run_advanced_query') {
         return {
-          items: [
+          rows: [
             makeBlock({
               id: 'B1',
               content: 'Tagged TODO',
@@ -957,9 +988,9 @@ describe('QueryResult – multi-filter (filtered)', () => {
               todo_state: 'TODO',
             }),
           ],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -971,15 +1002,25 @@ describe('QueryResult – multi-filter (filtered)', () => {
     expect(await screen.findByText(/Tagged TODO/)).toBeInTheDocument()
     expect(screen.getByText('1 result')).toBeInTheDocument()
 
-    // Both tag + property filters are forwarded in one IPC.
+    // Both tag + property filters are forwarded in one IPC as an `And` of
+    // the `State` predicate and the resolved tag `Or`.
     expect(mockedInvoke).toHaveBeenCalledWith(
-      'filtered_blocks_query',
+      'run_advanced_query',
       expect.objectContaining({
-        propertyFilters: [
-          expect.objectContaining({ key: 'todo_state', valueText: 'TODO', operator: 'eq' }),
-        ],
-        tagFilters: expect.objectContaining({
-          prefixes: ['project-x'],
+        request: expect.objectContaining({
+          filter: expect.objectContaining({
+            type: 'And',
+            children: expect.arrayContaining([
+              {
+                type: 'Leaf',
+                primitive: expect.objectContaining({ type: 'State', values: ['TODO'] }),
+              },
+              expect.objectContaining({
+                type: 'Or',
+                children: [{ type: 'Leaf', primitive: { type: 'TagOrRef', tag: 'TAG_PX' } }],
+              }),
+            ]),
+          }),
         }),
       }),
     )
@@ -987,9 +1028,9 @@ describe('QueryResult – multi-filter (filtered)', () => {
 
   it('renders results from filtered query in table mode', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'filtered_blocks_query') {
+      if (cmd === 'run_advanced_query') {
         return {
-          items: [
+          rows: [
             makeBlock({
               id: 'B1',
               content: 'Filtered task',
@@ -999,9 +1040,9 @@ describe('QueryResult – multi-filter (filtered)', () => {
               priority: '1',
             }),
           ],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
         }
       }
       if (cmd === 'batch_resolve') {
@@ -1022,12 +1063,12 @@ describe('QueryResult – multi-filter (filtered)', () => {
   })
 
   it('shows empty state when filtered query returns no rows', async () => {
-    // Empty state simply means the SQL EXISTS
+    // Empty state simply means the rich engine's AND
     // intersection produced zero rows. No per-sub-filter mocking
     // needed.
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'filtered_blocks_query') {
-        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      if (cmd === 'run_advanced_query') {
+        return { rows: [], nextCursor: null, hasMore: false, totalCount: null }
       }
       if (cmd === 'batch_resolve') return []
       return null
@@ -1099,28 +1140,33 @@ describe('QueryResult – error paths', () => {
   })
 
   it('shows error when batchResolve rejects after successful tag query', async () => {
-    mockedInvoke
-      .mockResolvedValueOnce({
-        items: [
-          {
-            id: 'B1',
-            block_type: 'content',
-            content: 'Result block',
-            parent_id: 'P1',
-            position: 1,
-            deleted_at: null,
-            todo_state: null,
-            priority: null,
-            due_date: null,
-            scheduled_date: null,
-            page_id: 'P1',
-          },
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
-      .mockRejectedValueOnce(new Error('Batch resolve failed'))
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'run_advanced_query') {
+        return {
+          rows: [
+            {
+              id: 'B1',
+              block_type: 'content',
+              content: 'Result block',
+              parent_id: 'P1',
+              position: 1,
+              deleted_at: null,
+              todo_state: null,
+              priority: null,
+              due_date: null,
+              scheduled_date: null,
+              page_id: 'P1',
+            },
+          ],
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
+        }
+      }
+      if (cmd === 'batch_resolve') throw new Error('Batch resolve failed')
+      return null
+    })
 
     render(<QueryResult expression="type:tag expr:project" />)
 
@@ -1128,28 +1174,32 @@ describe('QueryResult – error paths', () => {
   })
 
   it('shows error when batchResolve rejects after successful property query', async () => {
-    mockedInvoke
-      .mockResolvedValueOnce({
-        items: [
-          {
-            id: 'B1',
-            block_type: 'content',
-            content: 'Priority task',
-            parent_id: 'P2',
-            position: 1,
-            deleted_at: null,
-            todo_state: 'TODO',
-            priority: '1',
-            due_date: null,
-            scheduled_date: null,
-            page_id: 'P2',
-          },
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
-      .mockRejectedValueOnce(new Error('Resolution service down'))
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'run_advanced_query') {
+        return {
+          rows: [
+            {
+              id: 'B1',
+              block_type: 'content',
+              content: 'Priority task',
+              parent_id: 'P2',
+              position: 1,
+              deleted_at: null,
+              todo_state: 'TODO',
+              priority: '1',
+              due_date: null,
+              scheduled_date: null,
+              page_id: 'P2',
+            },
+          ],
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
+        }
+      }
+      if (cmd === 'batch_resolve') throw new Error('Resolution service down')
+      return null
+    })
 
     render(<QueryResult expression="type:property key:priority value:1" />)
 
@@ -1157,7 +1207,11 @@ describe('QueryResult – error paths', () => {
   })
 
   it('shows generic fallback for non-Error rejection', async () => {
-    mockedInvoke.mockRejectedValueOnce('string error without Error wrapper')
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_tags_by_prefix') throw 'string error without Error wrapper'
+      if (cmd === 'run_advanced_query') throw 'string error without Error wrapper'
+      return null
+    })
 
     render(<QueryResult expression="type:tag expr:project" />)
 
@@ -1172,14 +1226,15 @@ describe('QueryResult – error paths', () => {
 describe('QueryResult – pagination', () => {
   it('load more button appears when has_more is true', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_tags') {
+      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'run_advanced_query') {
         return {
-          items: [
+          rows: [
             makeBlock({ id: 'B1', content: 'First page item', parent_id: 'P1', page_id: 'P1' }),
           ],
-          next_cursor: 'cursor1',
-          has_more: true,
-          total_count: null,
+          nextCursor: 'cursor1',
+          hasMore: true,
+          totalCount: null,
         }
       }
       if (cmd === 'batch_resolve') {
@@ -1200,14 +1255,15 @@ describe('QueryResult – pagination', () => {
   // (which would mislead vs. the AdvancedQueryView true total).
   it('labels the count as partial when has_more is true', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_tags') {
+      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'run_advanced_query') {
         return {
-          items: [
+          rows: [
             makeBlock({ id: 'B1', content: 'First page item', parent_id: 'P1', page_id: 'P1' }),
           ],
-          next_cursor: 'cursor1',
-          has_more: true,
-          total_count: null,
+          nextCursor: 'cursor1',
+          hasMore: true,
+          totalCount: null,
         }
       }
       if (cmd === 'batch_resolve') {
@@ -1227,21 +1283,22 @@ describe('QueryResult – pagination', () => {
   it('shows the exact count (not partial) once the last page is loaded', async () => {
     let callCount = 0
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_tags') {
+      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'run_advanced_query') {
         callCount++
         if (callCount === 1) {
           return {
-            items: [makeBlock({ id: 'B1', content: 'First page item', parent_id: null })],
-            next_cursor: 'cursor1',
-            has_more: true,
-            total_count: null,
+            rows: [makeBlock({ id: 'B1', content: 'First page item', parent_id: null })],
+            nextCursor: 'cursor1',
+            hasMore: true,
+            totalCount: null,
           }
         }
         return {
-          items: [makeBlock({ id: 'B2', content: 'Second page item', parent_id: null })],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
+          rows: [makeBlock({ id: 'B2', content: 'Second page item', parent_id: null })],
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -1264,12 +1321,13 @@ describe('QueryResult – pagination', () => {
 
   it('load more button is hidden when has_more is false', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_tags') {
+      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'run_advanced_query') {
         return {
-          items: [makeBlock({ id: 'B1', content: 'Only page', parent_id: null })],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
+          rows: [makeBlock({ id: 'B1', content: 'Only page', parent_id: null })],
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
         }
       }
       return null
@@ -1284,21 +1342,22 @@ describe('QueryResult – pagination', () => {
   it('clicking load more fetches next page and accumulates results', async () => {
     let callCount = 0
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_tags') {
+      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'run_advanced_query') {
         callCount++
         if (callCount === 1) {
           return {
-            items: [makeBlock({ id: 'B1', content: 'First page item', parent_id: null })],
-            next_cursor: 'cursor1',
-            has_more: true,
-            total_count: null,
+            rows: [makeBlock({ id: 'B1', content: 'First page item', parent_id: null })],
+            nextCursor: 'cursor1',
+            hasMore: true,
+            totalCount: null,
           }
         }
         return {
-          items: [makeBlock({ id: 'B2', content: 'Second page item', parent_id: null })],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
+          rows: [makeBlock({ id: 'B2', content: 'Second page item', parent_id: null })],
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -1516,14 +1575,15 @@ describe('QueryResult – expression pills', () => {
 /* ------------------------------------------------------------------ */
 
 describe('QueryResult – operator syntax', () => {
-  // Shorthand `property:key{op}value` parses as
-  // `type: 'filtered'` and forwards each filter inside the
-  // `filtered_blocks_query` IPC's `propertyFilters` array. The operator
-  // travels in the marshalled `FilteredBlocksPropertyFilter.operator`.
-  it('forwards operator "gt" inside filtered_blocks_query for property:due_date>today', async () => {
+  // Shorthand `property:key{op}value` parses as `type: 'filtered'` and now
+  // reroutes through the rich `run_advanced_query` engine. The reserved
+  // `due_date` key with an ordered operator maps to a `DueDate` predicate;
+  // the operator becomes the `DatePredicate` variant (`gt → After`,
+  // `lte → OnOrBefore`, `eq → On`).
+  it('forwards operator "gt" inside run_advanced_query for property:due_date>today', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'filtered_blocks_query') {
-        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      if (cmd === 'run_advanced_query') {
+        return { rows: [], nextCursor: null, hasMore: false, totalCount: null }
       }
       return null
     })
@@ -1532,30 +1592,39 @@ describe('QueryResult – operator syntax', () => {
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith(
-        'filtered_blocks_query',
+        'run_advanced_query',
         expect.objectContaining({
-          propertyFilters: [
-            expect.objectContaining({
-              key: 'due_date',
-              operator: 'gt',
+          request: expect.objectContaining({
+            filter: expect.objectContaining({
+              type: 'And',
+              children: [
+                {
+                  type: 'Leaf',
+                  primitive: {
+                    type: 'DueDate',
+                    predicate: expect.objectContaining({ type: 'After' }),
+                  },
+                },
+              ],
             }),
-          ],
+          }),
         }),
       )
     })
 
-    // Verify "today" was resolved to an ISO date string
-    const call = mockedInvoke.mock.calls.find((c) => c[0] === 'filtered_blocks_query')
-    const args = call?.[1] as { propertyFilters: Array<Record<string, unknown>> }
-    const pf = args.propertyFilters[0] as Record<string, unknown>
-    expect(pf['valueDate']).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-    expect(pf['valueText']).toBeNull()
+    // Verify "today" was resolved to an ISO date string in the predicate.
+    const call = mockedInvoke.mock.calls.find((c) => c[0] === 'run_advanced_query')
+    const args = call?.[1] as { request: { filter: { children: Array<Record<string, unknown>> } } }
+    const leaf = args.request.filter.children[0] as {
+      primitive: { predicate: Record<string, unknown> }
+    }
+    expect(leaf.primitive.predicate['date']).toMatch(/^\d{4}-\d{2}-\d{2}$/)
   })
 
-  it('forwards operator "lte" inside filtered_blocks_query for property:due_date<=2025-12-31', async () => {
+  it('forwards operator "lte" inside run_advanced_query for property:due_date<=2025-12-31', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'filtered_blocks_query') {
-        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      if (cmd === 'run_advanced_query') {
+        return { rows: [], nextCursor: null, hasMore: false, totalCount: null }
       }
       return null
     })
@@ -1564,15 +1633,22 @@ describe('QueryResult – operator syntax', () => {
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith(
-        'filtered_blocks_query',
+        'run_advanced_query',
         expect.objectContaining({
-          propertyFilters: [
-            expect.objectContaining({
-              key: 'due_date',
-              operator: 'lte',
-              valueDate: '2025-12-31',
+          request: expect.objectContaining({
+            filter: expect.objectContaining({
+              type: 'And',
+              children: [
+                {
+                  type: 'Leaf',
+                  primitive: {
+                    type: 'DueDate',
+                    predicate: { type: 'OnOrBefore', date: '2025-12-31' },
+                  },
+                },
+              ],
             }),
-          ],
+          }),
         }),
       )
     })
@@ -1580,14 +1656,14 @@ describe('QueryResult – operator syntax', () => {
 
   it('backward compatible: property:key=value still works with operator "eq"', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'filtered_blocks_query') {
+      if (cmd === 'run_advanced_query') {
         return {
-          items: [
+          rows: [
             makeBlock({ id: 'B1', content: 'Eq result', parent_id: null, todo_state: 'TODO' }),
           ],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -1598,24 +1674,30 @@ describe('QueryResult – operator syntax', () => {
 
     expect(await screen.findByText(/Eq result/)).toBeInTheDocument()
 
+    // The reserved `todo_state` eq filter maps to a `State` set-membership
+    // predicate carried inside the rich engine's `And` FilterExpr.
     expect(mockedInvoke).toHaveBeenCalledWith(
-      'filtered_blocks_query',
+      'run_advanced_query',
       expect.objectContaining({
-        propertyFilters: [
-          expect.objectContaining({
-            key: 'todo_state',
-            valueText: 'TODO',
-            operator: 'eq',
+        request: expect.objectContaining({
+          filter: expect.objectContaining({
+            type: 'And',
+            children: [
+              {
+                type: 'Leaf',
+                primitive: expect.objectContaining({ type: 'State', values: ['TODO'] }),
+              },
+            ],
           }),
-        ],
+        }),
       }),
     )
   })
 
   it('resolves relative date "today" to ISO date string', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'filtered_blocks_query') {
-        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      if (cmd === 'run_advanced_query') {
+        return { rows: [], nextCursor: null, hasMore: false, totalCount: null }
       }
       return null
     })
@@ -1623,13 +1705,19 @@ describe('QueryResult – operator syntax', () => {
     render(<QueryResult expression="property:due_date>today" />)
 
     await waitFor(() => {
-      const call = mockedInvoke.mock.calls.find((c) => c[0] === 'filtered_blocks_query')
+      const call = mockedInvoke.mock.calls.find((c) => c[0] === 'run_advanced_query')
       expect(call).toBeDefined()
-      const args = call?.[1] as { propertyFilters: Array<Record<string, unknown>> }
-      const pf = args.propertyFilters[0] as Record<string, unknown>
-      // "today" should be resolved to an ISO date (YYYY-MM-DD)
-      expect(pf['valueDate']).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-      expect(pf['valueText']).toBeNull()
+      const args = call?.[1] as {
+        request: {
+          filter: { children: Array<{ primitive: { predicate: Record<string, unknown> } }> }
+        }
+      }
+      const predicate = args.request.filter.children[0]?.primitive.predicate as Record<
+        string,
+        unknown
+      >
+      // "today" should be resolved to an ISO date (YYYY-MM-DD) on the predicate.
+      expect(predicate['date']).toMatch(/^\d{4}-\d{2}-\d{2}$/)
     })
   })
 
@@ -1700,12 +1788,13 @@ describe('QueryResult – Edit Query button', () => {
 
   function mockTagResultsWithBlock() {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_tags') {
+      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'run_advanced_query') {
         return {
-          items: [makeBlock({ id: 'B1', content: 'Result item', parent_id: 'P1', page_id: 'P1' })],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
+          rows: [makeBlock({ id: 'B1', content: 'Result item', parent_id: 'P1', page_id: 'P1' })],
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
         }
       }
       if (cmd === 'batch_resolve') {
