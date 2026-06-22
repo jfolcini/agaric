@@ -227,6 +227,10 @@ export function metaRowMatchesFilter(r: PageMetaRow, f: Record<string, unknown>)
       // Ref-inclusive: attached `block_tags` ∪ inline `block_tag_refs`.
       return refInclusiveTags(r.id).has(f['tag'] as string)
     }
+    case 'ChildOf': {
+      // Direct children of a block (`b.parent_id = ?`) — the legacy backlinks set.
+      return r.parentId === (f['parent'] as string)
+    }
     case 'Priority': {
       // Multi-value membership over `blocks.priority`, mirroring the REAL
       // backend's `in_or_null("b.priority", values, is_null, exclude)`

@@ -111,6 +111,13 @@ impl Projection for BacklinkProjection {
         )
     }
 
+    fn compile_child_of(&self, parent: &str) -> WhereClause {
+        // Direct-children leaf is never routed to the backlink surface; emit
+        // the defined-but-unused shared `b.parent_id = ?` fragment so `compile`
+        // stays total.
+        WhereClause::new("b.parent_id = ?", vec![Bind::Text(parent.to_string())])
+    }
+
     fn compile_path_glob(&self, _pattern: &str, _exclude: bool) -> WhereClause {
         WhereClause::unsupported()
     }

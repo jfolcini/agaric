@@ -338,11 +338,11 @@ describe('QueryResult', () => {
     expect(await screen.findByText(/empty/i)).toBeInTheDocument()
   })
 
-  it('renders backlinks query results', async () => {
+  it('renders backlinks query results (reroutes to ChildOf via run_advanced_query)', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') {
+      if (cmd === 'run_advanced_query') {
         return {
-          items: [
+          rows: [
             {
               id: 'B1',
               block_type: 'content',
@@ -357,9 +357,9 @@ describe('QueryResult', () => {
               page_id: 'TARGET1',
             },
           ],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
         }
       }
       if (cmd === 'batch_resolve') return []
