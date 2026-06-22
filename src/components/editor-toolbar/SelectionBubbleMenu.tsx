@@ -261,6 +261,12 @@ export function SelectionBubbleMenu({
       onKeyDown={roving.onKeyDown}
       onFocus={roving.onFocus}
       editor={editor}
+      // #1958 — open the bubble BELOW the selection (end/last line) rather than
+      // above it. The always-visible FormattingToolbar sits at the top edge of
+      // `.block-editor`; an upward-opening bubble overlapped it. `flip` (on by
+      // default) still lifts the bubble above the selection only when there is
+      // no room below (near the viewport bottom).
+      options={{ placement: 'bottom', offset: 8 }}
       shouldShow={({ state: editorState }) =>
         // #925 f4 — never float the bubble on touch; it collides with the OS
         // selection handles. Mobile formatting goes through FormattingToolbar.

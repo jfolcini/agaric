@@ -6,9 +6,10 @@
  * separately in `SelectionBubbleMenu.test.tsx`.
  *
  * Validates:
- *  - Renders all 17 always-visible buttons (Internal link, Tag, Blockquote,
- *    Code block, Heading, Ordered list, Divider, Callout, Cycle priority,
- *    Date, Due Date, Scheduled Date, TODO, Properties, Undo, Redo, Discard)
+ *  - Renders all 18 always-visible buttons (Format, Internal link, Tag,
+ *    Blockquote, Code block, Heading, Ordered list, Divider, Callout, Cycle
+ *    priority, Date, Due Date, Scheduled Date, TODO, Properties, Undo, Redo,
+ *    Discard)
  *  - Active states get aria-pressed=true + bg-accent
  *  - Undo/Redo disabled state reflects editor.can()
  *  - Clicking buttons calls the correct editor chain commands
@@ -19,7 +20,7 @@
  *  - a11y: role=toolbar, aria-labels, axe audit
  */
 
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import type React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -219,9 +220,10 @@ describe('FormattingToolbar', () => {
       expect(toolbar).toBeInTheDocument()
     })
 
-    it('renders all seventeen always-visible buttons', () => {
+    it('renders all eighteen always-visible buttons', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
+      expect(screen.getByRole('button', { name: t('toolbar.format') })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: t('toolbar.internalLink') })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: t('toolbar.insertTag') })).toBeInTheDocument()
       expect(
@@ -245,15 +247,33 @@ describe('FormattingToolbar', () => {
       expect(screen.getByRole('button', { name: t('toolbar.discard') })).toBeInTheDocument()
     })
 
-    it('does not render the moved mark toggles or external link', () => {
+    it('exposes the mark toggles via the Format popover, not as inline buttons', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      // Bold / Italic / Code / Strike / Highlight / External Link all live in
-      // SelectionBubbleMenu now (Layer A).
-      expect(screen.queryByRole('button', { name: t('toolbar.bold') })).toBeNull()
-      expect(screen.queryByRole('button', { name: t('toolbar.italic') })).toBeNull()
-      expect(screen.queryByRole('button', { name: t('toolbar.code') })).toBeNull()
-      expect(screen.queryByRole('button', { name: t('toolbar.strikethrough') })).toBeNull()
-      expect(screen.queryByRole('button', { name: t('toolbar.highlight') })).toBeNull()
+      // #1958 — the mark toggles live inside the Format popover (and the
+      // selection bubble), never as inline toolbar buttons. The Popover mock
+      // always renders its content, so the toggles are in the DOM — but scoped
+      // to the Format group, not the toolbar surface itself.
+      const formatGroup = screen.getByRole('toolbar', { name: t('toolbar.format') })
+      expect(
+        within(formatGroup).getByRole('button', { name: t('toolbar.bold') }),
+      ).toBeInTheDocument()
+      expect(
+        within(formatGroup).getByRole('button', { name: t('toolbar.italic') }),
+      ).toBeInTheDocument()
+      expect(
+        within(formatGroup).getByRole('button', { name: t('toolbar.code') }),
+      ).toBeInTheDocument()
+      expect(
+        within(formatGroup).getByRole('button', { name: t('toolbar.strikethrough') }),
+      ).toBeInTheDocument()
+      expect(
+        within(formatGroup).getByRole('button', { name: t('toolbar.highlight') }),
+      ).toBeInTheDocument()
+      expect(
+        within(formatGroup).getByRole('button', { name: t('toolbar.underline') }),
+      ).toBeInTheDocument()
+      // External Link still lives ONLY in the selection bubble — not in the
+      // Format popover or the toolbar.
       expect(screen.queryByRole('button', { name: t('toolbar.link') })).toBeNull()
     })
 
@@ -330,10 +350,21 @@ describe('FormattingToolbar', () => {
   // ── Code block popover ──────────────────────────────────────────────
 
   describe('code block popover', () => {
-    it('shows a persistent "Code" label so the button does not read as icon-only (#215 P2-8)', () => {
+    it('renders icon-only when inactive — no persistent "Code" text label (#1958)', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       const btn = screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') })
-      expect(btn.textContent).toContain('Code')
+      // #1958 — the old persistent "Code" text made the resting button too
+      // wide; it is now icon-only (icon-xs footprint), like the heading button.
+      expect(btn.textContent).not.toContain('Code')
+      expect(btn.className).toContain('size-6')
+    })
+
+    it('shows the language short-code badge when active in a code block (#1958)', () => {
+      mockEditorState.codeBlock = true
+      mockEditorState.codeBlockLanguage = 'typescript'
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const btn = screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') })
+      expect(btn.textContent).toContain('TS')
     })
 
     it('toggles code block via editor chain', () => {
@@ -714,8 +745,11 @@ describe('FormattingToolbar', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       // The popover content is always rendered in our mock
       const popoverContents = screen.getAllByTestId('popover-content')
-      // The heading popover is the second popover-content (after code block)
-      const headingPopover = popoverContents[1] as HTMLElement
+      // Identify the heading popover by content (order-independent — #1958 added
+      // the leading Format popover) — it is the one listing the heading levels.
+      const headingPopover = popoverContents.find((el) =>
+        el.textContent?.includes('H1'),
+      ) as HTMLElement
       expect(headingPopover).toBeInTheDocument()
       for (let i = 1; i <= 6; i++) {
         expect(headingPopover.textContent).toContain(`H${i}`)
@@ -764,12 +798,13 @@ describe('FormattingToolbar', () => {
       const sentinel = screen.getByTestId('toolbar-sentinel')
       expect(sentinel).toBeInTheDocument()
       expect(sentinel).toHaveAttribute('aria-hidden', 'true')
-      // Each item in the flattened list (20 buttons + 3 separators = 23)
+      // Each item in the flattened list (21 buttons + 3 separators = 24)
       // must have a measurable child carrying its data-toolbar-item-key.
       // (#213 PR4 added the insert-block-ref button; #215b added the
-      // table-insert grid picker; #215 added the insert-query button.)
+      // table-insert grid picker; #215 added the insert-query button; #1958
+      // added the leading Format popover.)
       const measurableChildren = sentinel.querySelectorAll('[data-toolbar-item-key]')
-      expect(measurableChildren.length).toBe(23)
+      expect(measurableChildren.length).toBe(24)
     })
   })
 
@@ -1057,7 +1092,9 @@ describe('FormattingToolbar', () => {
       const popoverContents = screen.getAllByTestId('popover-content')
       // The code block popover is the first PopoverContent now (External Link
       // Moved to SelectionBubbleMenu in Layer A).
-      const codeBlockPopover = popoverContents[0] as HTMLElement
+      const codeBlockPopover = popoverContents.find((el) =>
+        el.textContent?.includes('Plain text'),
+      ) as HTMLElement
       expect(codeBlockPopover).toBeInTheDocument()
       for (const lang of ['javascript', 'typescript', 'python', 'rust', 'bash', 'sql']) {
         expect(codeBlockPopover.textContent).toContain(lang)
@@ -1071,7 +1108,9 @@ describe('FormattingToolbar', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
       const popoverContents = screen.getAllByTestId('popover-content')
-      const codeBlockPopover = popoverContents[0] as HTMLElement
+      const codeBlockPopover = popoverContents.find((el) =>
+        el.textContent?.includes('Plain text'),
+      ) as HTMLElement
       // Find the python button inside the popover
       const buttons = codeBlockPopover.querySelectorAll('button')
       const pythonBtn = Array.from(buttons).find((b) => b.textContent === 'python')
@@ -1084,7 +1123,9 @@ describe('FormattingToolbar', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
       const popoverContents = screen.getAllByTestId('popover-content')
-      const codeBlockPopover = popoverContents[0] as HTMLElement
+      const codeBlockPopover = popoverContents.find((el) =>
+        el.textContent?.includes('Plain text'),
+      ) as HTMLElement
       const buttons = codeBlockPopover.querySelectorAll('button')
       const jsBtn = Array.from(buttons).find((b) => b.textContent === 'javascript')
       expect(jsBtn).toBeDefined()
@@ -1101,7 +1142,9 @@ describe('FormattingToolbar', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
       const popoverContents = screen.getAllByTestId('popover-content')
-      const codeBlockPopover = popoverContents[0] as HTMLElement
+      const codeBlockPopover = popoverContents.find((el) =>
+        el.textContent?.includes('Plain text'),
+      ) as HTMLElement
       const buttons = codeBlockPopover.querySelectorAll('button')
       const rustBtn = Array.from(buttons).find((b) => b.textContent === 'rust')
       expect(rustBtn).toBeDefined()
