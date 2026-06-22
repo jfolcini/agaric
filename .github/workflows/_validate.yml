@@ -308,7 +308,7 @@ jobs:
         # the cargo-tests job (the only consumer); this job needs the
         # lint/audit set. `prek` joined the manifest list upstream so it
         # moved off the cargo-install fallback below.
-        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
+        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
         with:
           tool: cargo-deny,cargo-machete,cargo-audit,sqruff,typos-cli,zizmor,taplo-cli,prek
 
@@ -499,7 +499,7 @@ jobs:
         # Only the tools the reduced doc-hook set needs — no cargo-deny /
         # sqruff / zizmor / taplo / cargo-audit (those gate code, which a
         # docs-only diff does not touch).
-        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
+        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
         with:
           tool: prek,typos-cli
 
@@ -920,7 +920,7 @@ jobs:
         # don't have to swap runners. Output is lcov (industry standard,
         # consumable by Codecov / coveralls / VSCode coverage gutters) plus
         # a JSON summary the step below renders as a markdown table.
-        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
+        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
         with:
           tool: cargo-nextest,cargo-llvm-cov
 
@@ -1148,7 +1148,7 @@ jobs:
       - name: Install cargo-nextest via prebuilt binary (PEND-39 C1)
         # nextest is the test runner for the UDS smoke test below. Prebuilt
         # binary via taiki-e/install-action keeps cold-cache cost tiny.
-        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
+        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
         with:
           tool: cargo-nextest
 
