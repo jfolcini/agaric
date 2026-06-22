@@ -6,10 +6,9 @@
  */
 
 import type React from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { FilterGroup } from '@/components/AdvancedQuery/FilterGroup'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -49,6 +48,13 @@ import {
   setGroupOpInTree,
   toggleNegateInTree,
 } from '@/stores/advancedQuery'
+
+// The nested-builder UI (and its AddFilterPopover subtree) is only needed when
+// the user opens Advanced mode, so it is lazy-loaded to keep it off the entry
+// chunk's critical path (#750 bundle budget).
+const FilterGroup = lazy(() =>
+  import('@/components/AdvancedQuery/FilterGroup').then((m) => ({ default: m.FilterGroup })),
+)
 
 /** Total number of leaf (condition) nodes in a builder tree. */
 function countLeaves(node: BuilderNode): number {
@@ -469,16 +475,18 @@ export function QueryBuilderModal({
           {mode === 'advanced' && (
             <div className="space-y-2">
               <p className="text-xs text-muted-foreground">{t('queryBuilder.advanced.hint')}</p>
-              <FilterGroup
-                node={builderRoot}
-                path={[]}
-                depth={0}
-                onAddLeaf={handleAddLeaf}
-                onAddGroup={handleAddGroup}
-                onRemoveNode={handleRemoveNode}
-                onSetGroupOp={handleSetGroupOp}
-                onToggleNegate={handleToggleNegate}
-              />
+              <Suspense fallback={<div className="text-xs text-muted-foreground">…</div>}>
+                <FilterGroup
+                  node={builderRoot}
+                  path={[]}
+                  depth={0}
+                  onAddLeaf={handleAddLeaf}
+                  onAddGroup={handleAddGroup}
+                  onRemoveNode={handleRemoveNode}
+                  onSetGroupOp={handleSetGroupOp}
+                  onToggleNegate={handleToggleNegate}
+                />
+              </Suspense>
               <p className="text-xs text-muted-foreground" data-testid="advanced-filter-count">
                 {advancedLeafCount === 0
                   ? t('queryBuilder.advanced.empty')
