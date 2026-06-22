@@ -251,6 +251,51 @@ export function metaRowMatchesFilter(r: PageMetaRow, f: Record<string, unknown>)
 }
 
 /**
+ * Recursively evaluate a wire `FilterExpr` tree against one row, mirroring the
+ * backend engine's boolean composition over the shared per-primitive predicate
+ * matrix (`compile_filter_expr` → And/Or/Not/Leaf):
+ *   - `Leaf` → the single-primitive predicate (`metaRowMatchesFilter`)
+ *   - `And`  → EVERY child matches; an empty `And` is TRUE (the engine's `1=1`)
+ *   - `Or`   → AT LEAST ONE child matches; an empty `Or` is FALSE (`1=0`)
+ *   - `Not`  → set complement (the backend's 3-valued `NOT COALESCE(...,0)`
+ *     collapses to boolean here because the mock's per-row predicate is already
+ *     2-valued)
+ *
+ * Leaves delegate to the conformance-guarded `metaRowMatchesFilter`, so the
+ * tree-walk inherits the same per-primitive faithfulness AND the same
+ * documented permissive no-op for engine-only primitives the mock does not
+ * model (those leaves return `true`, so a tree that references them over-matches
+ * rather than silently dropping rows). The combinators themselves are the
+ * engine's exact boolean identities, so this layer adds no new drift surface
+ * beyond the already-pinned per-primitive matrix.
+ */
+export function metaRowMatchesExpr(r: PageMetaRow, expr: Record<string, unknown>): boolean {
+  switch (expr['type'] as string) {
+    case 'Leaf': {
+      return metaRowMatchesFilter(
+        r,
+        (expr['primitive'] as Record<string, unknown> | undefined) ?? {},
+      )
+    }
+    case 'And': {
+      const children = (expr['children'] as Array<Record<string, unknown>> | undefined) ?? []
+      return children.every((c) => metaRowMatchesExpr(r, c))
+    }
+    case 'Or': {
+      const children = (expr['children'] as Array<Record<string, unknown>> | undefined) ?? []
+      return children.some((c) => metaRowMatchesExpr(r, c))
+    }
+    case 'Not': {
+      return !metaRowMatchesExpr(r, (expr['child'] as Record<string, unknown> | undefined) ?? {})
+    }
+    default: {
+      // Unknown node kind: permissive, matching the per-primitive no-op default.
+      return true
+    }
+  }
+}
+
+/**
  * Map a wire `PropertyValue` (`{ type, value }`) to the `block_properties`
  * column it compares against plus its comparand, mirroring the backend's
  * `property_value_column` 4-way mapping (D26 / #1280):
@@ -959,20 +1004,22 @@ export const HANDLERS: Record<string, Handler> = {
     return { blocks: items, truncated: false, total: items.length }
   },
 
-  // #1280 — advanced-query engine. The mock cannot compile a `FilterExpr`
-  // tree to SQL, so it returns an empty page in the backend's wire shape
-  // ({ rows, nextCursor, hasMore, totalCount }) by default. D2 added the
-  // advanced-query UI controls (fulltext/sort/group-by/aggregates); to let the
-  // component/hook tests exercise the GROUPED + AGGREGATE response paths, the
-  // handler now SYNTHESISES `groups`/`aggregates` from the request shape rather
-  // than compiling SQL:
+  // #1280 — advanced-query engine. The mock cannot compile a `FilterExpr` tree
+  // to SQL, so it INTERPRETS it in TypeScript instead. The GROUPED + AGGREGATE
+  // response paths are still SYNTHESISED from the request shape (the mock does
+  // not compute real buckets/folds yet):
   //   - `aggregates` requested → echo one `AggregateResult` per spec, with a
   //     deterministic stub value (`count` ⇒ `count`, fold ops ⇒ `value`).
   //   - `groupBy` requested → return a single synthetic group bucket keyed by a
   //     rendered label, carrying the per-group aggregates (same shape) and an
   //     empty `rows` page (the GROUPED contract).
-  // The default (no groupBy / no aggregates) stays the empty flat page so
-  // existing command-parity callers are unaffected.
+  // The FLAT path (no `groupBy`) now evaluates the `FilterExpr` against every
+  // active, in-space block via `metaRowMatchesExpr` (which reuses the
+  // conformance-guarded per-primitive matrix) and returns the matched blocks in
+  // the engine's `b.id ASC` keyset-tiebreaker order, keyset-paginated. The mock
+  // applies the tiebreaker only — full `SortKey` ordering is a follow-up — but
+  // this lets dev-preview + e2e exercise `AdvancedQueryView` against real seed
+  // data instead of an always-empty page.
   run_advanced_query: (args) => {
     const request = ((args as Record<string, unknown>)['request'] ?? {}) as Record<string, unknown>
     const aggSpecs = (request['aggregates'] as Array<Record<string, unknown>> | undefined) ?? []
@@ -1012,11 +1059,60 @@ export const HANDLERS: Record<string, Handler> = {
       }
     }
 
+    // FLAT structural path: evaluate the `FilterExpr` against every active,
+    // in-space block. An omitted filter defaults to the engine's TRUE
+    // expression (`And { children: [] }`), so a filterless query returns the
+    // whole space.
+    const filterExpr = (request['filter'] as Record<string, unknown> | undefined) ?? {
+      type: 'And',
+      children: [],
+    }
+    const spaceId = request['spaceId'] as string
+    const limit = Math.min(Number((request['limit'] as number | null | undefined) ?? 50), 100)
+    const edges = deriveLinkEdges(blocks)
+    const matched: Record<string, unknown>[] = []
+    for (const b of blocks.values()) {
+      if (b['deleted_at']) continue
+      if (!fbqInSpace(b, spaceId)) continue
+      // Page-aggregate primitives (child/inbound counts) need the block's own
+      // page subtree; non-page blocks have no `page_id === id` descendants, so
+      // those counts are 0 — matching the backend's per-row `b.*` evaluation.
+      const descendants = Array.from(blocks.values()).filter(
+        (d) => d['page_id'] === b['id'] && !d['deleted_at'] && d['id'] !== b['id'],
+      )
+      const row = buildPageMetaRow(b, descendants, edges)
+      if (metaRowMatchesExpr(row, filterExpr)) matched.push(b)
+    }
+    // Stable `b.id ASC` keyset order (the engine's terminal tiebreaker).
+    matched.sort((x, y) => (x['id'] as string).localeCompare(y['id'] as string))
+
+    // Keyset cursor over the id order: skip up to AND INCLUDING the anchor id.
+    let startIdx = 0
+    if (cursor != null) {
+      let anchorId: string | null = null
+      try {
+        anchorId = (JSON.parse(atob(cursor)) as Record<string, unknown>)['id'] as string
+      } catch {
+        anchorId = null
+      }
+      if (anchorId != null) {
+        const idx = matched.findIndex((b) => b['id'] === anchorId)
+        if (idx >= 0) startIdx = idx + 1
+      }
+    }
+    const slice = matched.slice(startIdx, startIdx + limit + 1)
+    const hasMore = slice.length > limit
+    const pageRows = hasMore ? slice.slice(0, limit) : slice
+    const lastRow = pageRows.at(-1)
+    const nextCursor =
+      hasMore && lastRow ? btoa(JSON.stringify({ id: lastRow['id'] as string })) : null
     return {
-      rows: [],
-      nextCursor: null,
-      hasMore: false,
-      totalCount: 0,
+      rows: pageRows,
+      nextCursor,
+      hasMore,
+      // total_count is first-page-only (null on cursor pages); the filtered-set
+      // size is invariant across cursor pages, mirroring the pages handler.
+      totalCount: cursor != null ? null : matched.length,
       ...(aggregateResults.length > 0 ? { aggregates: aggregateResults } : {}),
     }
   },
