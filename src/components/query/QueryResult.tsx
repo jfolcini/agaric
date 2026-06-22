@@ -14,6 +14,7 @@ import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { Spinner } from '@/components/ui/spinner'
 import { useQueryExecution } from '@/hooks/useQueryExecution'
 import { useQuerySorting } from '@/hooks/useQuerySorting'
+import { countFilterLeaves, decodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { OPERATOR_SYMBOLS, parseQueryExpression } from '@/lib/query-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import type { BlockRow } from '@/lib/tauri'
@@ -45,6 +46,21 @@ export function detectColumns(_results: BlockRow[]): TableColumn[] {
 
 /** Render query expression as styled filter pills. */
 function QueryExpressionPills({ expression }: { expression: string }): React.ReactElement {
+  const { t } = useTranslation()
+
+  // A structured (`v2:`) query has an opaque base64 payload, so the legacy text
+  // pills don't apply — show a single labelled badge with the condition count.
+  const structured = decodeInlineQueryPayload(expression)
+  if (structured) {
+    return (
+      <span className="flex flex-1 flex-wrap items-center gap-1">
+        <Badge tone="default">
+          {t('query.advancedQueryLabel', { count: countFilterLeaves(structured.filter) })}
+        </Badge>
+      </span>
+    )
+  }
+
   const parsed = parseQueryExpression(expression)
   const pills: React.ReactNode[] = []
 
@@ -140,8 +156,12 @@ export function QueryResult({
   } = useQueryExecution({ expression })
   const { sortedResults, sortKey, sortDir, handleColumnSort } = useQuerySorting({ results })
 
-  const { params } = parseQueryExpression(expression)
-  const tableMode = params['table'] === 'true'
+  // A structured (`v2:`) query carries its table flag in the decoded spec; a
+  // legacy text query carries `table:true` as a parsed param.
+  const structured = decodeInlineQueryPayload(expression)
+  const tableMode = structured
+    ? structured.table
+    : parseQueryExpression(expression).params['table'] === 'true'
 
   const columns = useMemo(() => detectColumns(results), [results])
 

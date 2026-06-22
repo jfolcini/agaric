@@ -6,7 +6,7 @@
  */
 
 import type React from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -29,10 +29,38 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { encodeInlineQueryPayload, decodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { logger } from '@/lib/logger'
 import { parseQueryExpression } from '@/lib/query-utils'
+import type { FilterPrimitive } from '@/lib/tauri'
 import { listPropertyDefs } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
+import {
+  addGroupToTree,
+  addLeafToTree,
+  builderTreeToFilterExpr,
+  type BuilderGroupNode,
+  type BuilderNode,
+  type BuilderPath,
+  filterExprToBuilderTree,
+  makeEmptyRoot,
+  removeNodeFromTree,
+  setGroupOpInTree,
+  toggleNegateInTree,
+} from '@/stores/advancedQuery'
+
+// The nested-builder UI (and its AddFilterPopover subtree) is only needed when
+// the user opens Advanced mode, so it is lazy-loaded to keep it off the entry
+// chunk's critical path (#750 bundle budget).
+const FilterGroup = lazy(() =>
+  import('@/components/AdvancedQuery/FilterGroup').then((m) => ({ default: m.FilterGroup })),
+)
+
+/** Total number of leaf (condition) nodes in a builder tree. */
+function countLeaves(node: BuilderNode): number {
+  if (node.kind === 'leaf') return 1
+  return node.children.reduce((sum, child) => sum + countLeaves(child), 0)
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -86,6 +114,11 @@ export function QueryBuilderModal({
   const { t } = useTranslation()
 
   // ---- State ----
+  // `simple` is the legacy 3-type form (emits a `type:… key:…` text query);
+  // `advanced` is the nested And/Or/Not builder (emits a structured `v2:` payload
+  // executed by the rich engine). Defaults to simple so existing flows/tests are
+  // unchanged; editing a `v2:` block switches to advanced automatically.
+  const [mode, setMode] = useState<'simple' | 'advanced'>('simple')
   const [queryType, setQueryType] = useState<QueryType>('tag')
   const radioRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const [tagExpr, setTagExpr] = useState('')
@@ -95,6 +128,28 @@ export function QueryBuilderModal({
   const [backlinkTarget, setBacklinkTarget] = useState('')
   const [showAsTable, setShowAsTable] = useState(false)
   const [knownPropertyKeys, setKnownPropertyKeys] = useState<string[]>([])
+
+  // ---- Advanced (nested-builder) state ----
+  // A LOCAL builder tree (the modal edits one block's query, so it does NOT use
+  // the per-space advancedQuery store). Node ids are React-key-only and compile
+  // away, so a local monotonic counter is sufficient (see `makeEmptyRoot`).
+  const [builderRoot, setBuilderRoot] = useState<BuilderGroupNode>(() => makeEmptyRoot(0))
+  const idRef = useRef(0)
+  const nextId = (): number => {
+    idRef.current += 1
+    return idRef.current
+  }
+  const handleAddLeaf = (path: BuilderPath, primitive: FilterPrimitive): void =>
+    setBuilderRoot((root) => addLeafToTree(root, path, primitive, nextId()))
+  const handleAddGroup = (path: BuilderPath): void =>
+    setBuilderRoot((root) => addGroupToTree(root, path, nextId()))
+  const handleRemoveNode = (path: BuilderPath): void =>
+    setBuilderRoot((root) => removeNodeFromTree(root, path))
+  const handleSetGroupOp = (path: BuilderPath, op: 'And' | 'Or'): void =>
+    setBuilderRoot((root) => setGroupOpInTree(root, path, op))
+  const handleToggleNegate = (path: BuilderPath): void =>
+    setBuilderRoot((root) => toggleNegateInTree(root, path))
+  const advancedLeafCount = countLeaves(builderRoot)
 
   // ---- Load known property definitions for datalist autocomplete + validation ----
   // `listPropertyDefs` is paginated; the modal is single-page-by-design —
@@ -118,6 +173,15 @@ export function QueryBuilderModal({
   // ---- Parse initial expression (for editing existing queries) ----
   useEffect(() => {
     if (!initialExpression) return
+    // A structured `v2:` block opens straight into the advanced builder with its
+    // tree rehydrated; a legacy text block opens the simple form as before.
+    const structured = decodeInlineQueryPayload(initialExpression)
+    if (structured) {
+      setMode('advanced')
+      setBuilderRoot(filterExprToBuilderTree(structured.filter, nextId))
+      setShowAsTable(structured.table)
+      return
+    }
     const parsed = parseQueryExpression(initialExpression)
     if (parsed.type === 'tag') {
       setQueryType('tag')
@@ -136,6 +200,17 @@ export function QueryBuilderModal({
 
   // ---- Expression generation ----
   const expression = useMemo(() => {
+    // Advanced mode emits the structured `v2:` payload run by the rich engine.
+    // An empty tree (no leaves) is not a meaningful saved query, so it is
+    // treated as invalid (empty string) — same gate as the simple form's empty
+    // inputs.
+    if (mode === 'advanced') {
+      if (advancedLeafCount === 0) return ''
+      return encodeInlineQueryPayload({
+        filter: builderTreeToFilterExpr(builderRoot),
+        table: showAsTable,
+      })
+    }
     let expr = ''
     if (queryType === 'tag') {
       if (!tagExpr.trim()) return ''
@@ -156,6 +231,9 @@ export function QueryBuilderModal({
     if (showAsTable) expr += ' table:true'
     return expr
   }, [
+    mode,
+    advancedLeafCount,
+    builderRoot,
     queryType,
     tagExpr,
     propertyKey,
@@ -258,35 +336,52 @@ export function QueryBuilderModal({
         </DialogHeader>
 
         <DialogBody>
-          {/* ---- Query Type Selector ---- */}
-          <div
-            className="flex gap-2"
-            role="radiogroup"
-            aria-label={t('queryBuilder.typeLabel')}
-            tabIndex={-1}
-            onKeyDown={handleRadioGroupKeyDown}
-          >
-            {QUERY_TYPES.map((type) => (
+          {/* ---- Mode toggle (Simple text form vs. nested And/Or/Not builder) ---- */}
+          <div className="flex gap-2" aria-label={t('queryBuilder.mode.label')}>
+            {(['simple', 'advanced'] as const).map((m) => (
               <Button
-                key={type}
-                ref={(el) => {
-                  radioRefs.current[type] = el
-                }}
-                variant={queryType === type ? 'default' : 'outline'}
+                key={m}
+                variant={mode === m ? 'default' : 'outline'}
                 size="sm"
-                // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="radio" on a styled <Button> inside a roving-tabindex radiogroup; a native <input type="radio"> would lose the Button styling and the aria-checked/roving-focus toggle behavior
-                role="radio"
-                aria-checked={queryType === type}
-                tabIndex={queryType === type ? 0 : -1}
-                onClick={() => setQueryType(type)}
+                aria-pressed={mode === m}
+                onClick={() => setMode(m)}
               >
-                {t(`queryBuilder.type.${type}`)}
+                {t(`queryBuilder.mode.${m}`)}
               </Button>
             ))}
           </div>
 
+          {/* ---- Query Type Selector (simple mode) ---- */}
+          {mode === 'simple' && (
+            <div
+              className="flex gap-2"
+              role="radiogroup"
+              aria-label={t('queryBuilder.typeLabel')}
+              tabIndex={-1}
+              onKeyDown={handleRadioGroupKeyDown}
+            >
+              {QUERY_TYPES.map((type) => (
+                <Button
+                  key={type}
+                  ref={(el) => {
+                    radioRefs.current[type] = el
+                  }}
+                  variant={queryType === type ? 'default' : 'outline'}
+                  size="sm"
+                  // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="radio" on a styled <Button> inside a roving-tabindex radiogroup; a native <input type="radio"> would lose the Button styling and the aria-checked/roving-focus toggle behavior
+                  role="radio"
+                  aria-checked={queryType === type}
+                  tabIndex={queryType === type ? 0 : -1}
+                  onClick={() => setQueryType(type)}
+                >
+                  {t(`queryBuilder.type.${type}`)}
+                </Button>
+              ))}
+            </div>
+          )}
+
           {/* ---- Tag Query Form ---- */}
-          {queryType === 'tag' && (
+          {mode === 'simple' && queryType === 'tag' && (
             <div className="space-y-2">
               <Label htmlFor="qb-tag-prefix">{t('queryBuilder.tagPrefix')}</Label>
               <Input
@@ -299,7 +394,7 @@ export function QueryBuilderModal({
           )}
 
           {/* ---- Property Query Form ---- */}
-          {queryType === 'property' && (
+          {mode === 'simple' && queryType === 'property' && (
             <div className="space-y-2">
               <Label htmlFor="qb-prop-key">{t('queryBuilder.propertyKey')}</Label>
               <Input
@@ -361,7 +456,7 @@ export function QueryBuilderModal({
           )}
 
           {/* ---- Backlinks Query Form ---- */}
-          {queryType === 'backlinks' && (
+          {mode === 'simple' && queryType === 'backlinks' && (
             <div className="space-y-2">
               <Label htmlFor="qb-backlink-target">{t('queryBuilder.backlinkTarget')}</Label>
               <Input
@@ -372,6 +467,30 @@ export function QueryBuilderModal({
               />
               <p className="text-xs text-muted-foreground">
                 {t('queryBuilder.backlinkTargetHelper')}
+              </p>
+            </div>
+          )}
+
+          {/* ---- Advanced (nested And/Or/Not) builder ---- */}
+          {mode === 'advanced' && (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">{t('queryBuilder.advanced.hint')}</p>
+              <Suspense fallback={<div className="text-xs text-muted-foreground">…</div>}>
+                <FilterGroup
+                  node={builderRoot}
+                  path={[]}
+                  depth={0}
+                  onAddLeaf={handleAddLeaf}
+                  onAddGroup={handleAddGroup}
+                  onRemoveNode={handleRemoveNode}
+                  onSetGroupOp={handleSetGroupOp}
+                  onToggleNegate={handleToggleNegate}
+                />
+              </Suspense>
+              <p className="text-xs text-muted-foreground" data-testid="advanced-filter-count">
+                {advancedLeafCount === 0
+                  ? t('queryBuilder.advanced.empty')
+                  : t('queryBuilder.advanced.filterCount', { count: advancedLeafCount })}
               </p>
             </div>
           )}
@@ -389,8 +508,9 @@ export function QueryBuilderModal({
             </Label>
           </div>
 
-          {/* ---- Expression Preview ---- */}
-          {expression && (
+          {/* ---- Expression Preview (simple mode only — the advanced builder is
+              its own visual preview, and its `v2:` payload is opaque base64) ---- */}
+          {mode === 'simple' && expression && (
             <div className="space-y-1">
               <Label>{t('queryBuilder.preview')}</Label>
               {humanReadable && (

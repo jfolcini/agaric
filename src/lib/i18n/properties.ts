@@ -16,6 +16,10 @@ export const properties: Record<string, string> = {
   'query.resultCount_other': '{{count}} results',
   'query.resultCountPartial_one': 'first {{count}} loaded',
   'query.resultCountPartial_other': 'first {{count}} loaded',
+  // Label for a structured (`v2:`) inline query, whose payload is opaque
+  // base64 — show the condition count rather than the raw expression.
+  'query.advancedQueryLabel_one': 'Advanced query · {{count}} condition',
+  'query.advancedQueryLabel_other': 'Advanced query · {{count}} conditions',
   // #1280 D1 — advanced-query surface.
   'advancedQuery.noResults': 'No blocks match these filters',
   'advancedQuery.totalCount_one': '{{count}} matching block',
@@ -147,6 +151,13 @@ export const properties: Record<string, string> = {
   'queryBuilder.cancelButton': 'Cancel',
   'queryBuilder.editButton': 'Edit query',
   'queryBuilder.saveFailed': 'Failed to update query',
+  'queryBuilder.mode.label': 'Builder mode',
+  'queryBuilder.mode.simple': 'Simple',
+  'queryBuilder.mode.advanced': 'Advanced',
+  'queryBuilder.advanced.hint': 'Combine conditions with AND / OR / NOT and nested groups.',
+  'queryBuilder.advanced.empty': 'Add at least one filter to build an advanced query.',
+  'queryBuilder.advanced.filterCount_one': '{{count}} filter',
+  'queryBuilder.advanced.filterCount_other': '{{count}} filters',
   'property.drawerTitle': 'Block Properties',
   'property.drawerDescription':
     'View, edit and add properties for this block (status, priority, dates, custom fields).',

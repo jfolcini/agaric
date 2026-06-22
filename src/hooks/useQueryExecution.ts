@@ -1,9 +1,10 @@
 import { type Dispatch, type SetStateAction, useCallback, useEffect, useRef, useState } from 'react'
 
+import { decodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { logger } from '@/lib/logger'
 import { parseDate } from '@/lib/parse-date'
 import { type PropertyFilter, parseQueryExpression } from '@/lib/query-utils'
-import type { BlockRow, FilteredBlocksPropertyFilter } from '@/lib/tauri'
+import type { BlockRow, FilterExpr, FilteredBlocksPropertyFilter } from '@/lib/tauri'
 import {
   batchResolve,
   filteredBlocksQuery,
@@ -12,6 +13,7 @@ import {
   paginationLimit,
   queryByProperty,
   queryByTags,
+  runAdvancedQuery,
 } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
@@ -198,6 +200,31 @@ export async function dispatchQuery(
   }
 }
 
+/**
+ * Execute a structured (`v2:`) inline query through the rich `run_advanced_query`
+ * engine. The engine's `QueryResultRow` is wire-compatible with `BlockRow`
+ * (identical columns plus an optional `score`), so the rows render through the
+ * exact same `QueryResultList`/`QueryResultTable` path as the legacy fetch
+ * helpers — only the data source differs.
+ */
+export async function fetchRichInlineQuery(
+  filter: FilterExpr,
+  pageCursor?: string,
+  spaceId?: string | null,
+): Promise<QueryFetchResult> {
+  const response = await runAdvancedQuery({
+    spaceId: spaceId ?? '',
+    filter,
+    limit: PAGE_SIZE,
+    ...(pageCursor != null ? { cursor: pageCursor } : {}),
+  })
+  return {
+    items: response.rows as unknown as BlockRow[],
+    nextCursor: response.nextCursor,
+    hasMore: response.hasMore,
+  }
+}
+
 /** Resolve parent-page titles for a batch of blocks into a fresh Map. */
 async function resolvePageTitles(items: BlockRow[]): Promise<Map<string, string>> {
   const parentIds = items.map((b) => b.page_id).filter((id): id is string => id != null)
@@ -323,8 +350,13 @@ export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryEx
           if (myReqId === reqIdRef.current) setError('Query expression is empty')
           return
         }
-        const parsed = parseQueryExpression(expression)
-        const result = await dispatchQuery(parsed, pageCursor, currentSpaceId)
+        // A structured (`v2:`) payload runs through the rich engine; any other
+        // payload is a legacy text query and keeps the existing dispatch path
+        // unchanged (back-compat: `decodeInlineQueryPayload` returns null for it).
+        const structured = decodeInlineQueryPayload(expression)
+        const result = structured
+          ? await fetchRichInlineQuery(structured.filter, pageCursor, currentSpaceId)
+          : await dispatchQuery(parseQueryExpression(expression), pageCursor, currentSpaceId)
         if (myReqId !== reqIdRef.current) return
         applyQueryResult(result, isLoadMore, { setResults, setCursor, setHasMore })
         const titles = await resolvePageTitles(result.items)

@@ -30,6 +30,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { QueryBuilderModal } from '@/components/dialogs/QueryBuilderModal'
+import { decodeInlineQueryPayload, encodeInlineQueryPayload } from '@/lib/inline-query-spec'
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
@@ -724,6 +725,61 @@ describe('QueryBuilderModal', () => {
 
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  describe('advanced (nested-builder) mode', () => {
+    it('switching to Advanced reveals the builder and hides the simple form', async () => {
+      const user = userEvent.setup()
+      render(<QueryBuilderModal {...defaultProps} />)
+
+      await user.click(screen.getByRole('button', { name: /^advanced$/i }))
+
+      // The empty builder hint is shown; the simple type selector is gone.
+      expect(screen.getByText(/add at least one filter/i)).toBeInTheDocument()
+      expect(screen.queryByRole('radiogroup', { name: /query type/i })).not.toBeInTheDocument()
+      // Save is disabled while the builder has no conditions.
+      expect(screen.getByRole('button', { name: /insert query/i })).toBeDisabled()
+    })
+
+    it('opens an existing v2 block straight into Advanced mode, pre-populated', () => {
+      const payload = encodeInlineQueryPayload({
+        filter: {
+          type: 'Or',
+          children: [
+            { type: 'Leaf', primitive: { type: 'Priority', values: ['high'] } },
+            { type: 'Leaf', primitive: { type: 'Tag', tag: 'T1' } },
+          ],
+        },
+        table: false,
+      })
+      render(<QueryBuilderModal {...defaultProps} initialExpression={payload} />)
+
+      // Advanced toggle is active and the two conditions are counted.
+      expect(screen.getByRole('button', { name: /^advanced$/i })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      )
+      expect(screen.getByTestId('advanced-filter-count')).toHaveTextContent(/2 filters/i)
+    })
+
+    it('saving an edited v2 block emits a v2 payload that round-trips', async () => {
+      const user = userEvent.setup()
+      const onSave = vi.fn()
+      const filter = {
+        type: 'And' as const,
+        children: [
+          { type: 'Leaf' as const, primitive: { type: 'Priority' as const, values: ['high'] } },
+        ],
+      }
+      const payload = encodeInlineQueryPayload({ filter, table: false })
+      render(<QueryBuilderModal {...defaultProps} onSave={onSave} initialExpression={payload} />)
+
+      await user.click(screen.getByRole('button', { name: /update query/i }))
+
+      expect(onSave).toHaveBeenCalledTimes(1)
+      const saved = onSave.mock.calls[0]?.[0] as string
+      expect(decodeInlineQueryPayload(saved)?.filter).toEqual(filter)
     })
   })
 })

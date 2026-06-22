@@ -7,6 +7,7 @@ import { axe } from 'vitest-axe'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { detectColumns, QueryResult } from '@/components/query/QueryResult'
+import { encodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { buildFilters, parseQueryExpression } from '@/lib/query-utils'
 import { useNavigationStore } from '@/stores/navigation'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
@@ -1859,6 +1860,69 @@ describe('QueryResult – Edit Query button', () => {
     await waitFor(async () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  describe('structured (v2) inline queries', () => {
+    it('renders an advanced-query badge and runs the rich engine', async () => {
+      const expression = encodeInlineQueryPayload({
+        filter: {
+          type: 'Or',
+          children: [
+            { type: 'Leaf', primitive: { type: 'Priority', values: ['high'] } },
+            { type: 'Leaf', primitive: { type: 'Tag', tag: 'T1' } },
+          ],
+        },
+        table: false,
+      })
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'run_advanced_query') {
+          return {
+            rows: [makeBlock({ id: 'B1', content: 'Rich row', parent_id: 'P1', page_id: 'P1' })],
+            nextCursor: null,
+            hasMore: false,
+            totalCount: 1,
+          }
+        }
+        if (cmd === 'batch_resolve') {
+          return [{ id: 'P1', title: 'Page', block_type: 'page', deleted: false }]
+        }
+        return null
+      })
+
+      render(<QueryResult expression={expression} />)
+
+      // The opaque base64 payload renders as a labelled "Advanced query" badge,
+      // not as raw legacy pills.
+      expect(await screen.findByText(/advanced query · 2 conditions/i)).toBeInTheDocument()
+      expect(await screen.findByText('Rich row')).toBeInTheDocument()
+      // The rich engine ran; no legacy tag/property IPC fired.
+      const cmds = mockedInvoke.mock.calls.map((c) => c[0])
+      expect(cmds).toContain('run_advanced_query')
+      expect(cmds).not.toContain('query_by_tags')
+    })
+
+    it('honours the table flag from the decoded v2 spec', async () => {
+      const expression = encodeInlineQueryPayload({
+        filter: { type: 'Leaf', primitive: { type: 'Priority', values: ['high'] } },
+        table: true,
+      })
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'run_advanced_query') {
+          return {
+            rows: [makeBlock({ id: 'B1', content: 'Cell', parent_id: 'P1', page_id: 'P1' })],
+            nextCursor: null,
+            hasMore: false,
+            totalCount: 1,
+          }
+        }
+        if (cmd === 'batch_resolve') return []
+        return null
+      })
+
+      render(<QueryResult expression={expression} />)
+      // Table mode renders a table rather than the list.
+      expect(await screen.findByRole('table')).toBeInTheDocument()
     })
   })
 })
