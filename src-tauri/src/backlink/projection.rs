@@ -100,6 +100,17 @@ impl Projection for BacklinkProjection {
         )
     }
 
+    fn compile_tag_or_ref(&self, tag: &str) -> WhereClause {
+        // Like `compile_tag`, the ref-inclusive tag leaf is never routed to
+        // the backlink surface; emit the defined-but-unused shared
+        // UNION fragment so `compile` stays total.
+        WhereClause::new(
+            "b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ? \
+             UNION SELECT source_id FROM block_tag_refs WHERE tag_id = ?)",
+            vec![Bind::Text(tag.to_string()), Bind::Text(tag.to_string())],
+        )
+    }
+
     fn compile_path_glob(&self, _pattern: &str, _exclude: bool) -> WhereClause {
         WhereClause::unsupported()
     }

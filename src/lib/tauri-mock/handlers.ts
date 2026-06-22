@@ -19,6 +19,7 @@ import {
   attachmentBytes,
   attachments,
   blocks,
+  blockTagRefs,
   blockTags,
   fakeId,
   type MockOpLogEntry,
@@ -30,6 +31,21 @@ import {
   propertyDefs,
   pushOp,
 } from './seed'
+
+/**
+ * Ref-INCLUSIVE tag set for a block: ATTACHED tags (`block_tags`) ∪ inline tag
+ * REFERENCES (`block_tag_refs`). This is the set legacy tag queries
+ * (`query_by_tags`, `filtered_blocks_query`) and the rich `TagOrRef` primitive
+ * match against; the attached-only `Tag` primitive uses `blockTags` directly.
+ */
+function refInclusiveTags(blockId: string): Set<string> {
+  const attached = blockTags.get(blockId)
+  const refs = blockTagRefs.get(blockId)
+  if (!refs || refs.size === 0) return attached ?? new Set()
+  const union = new Set(attached ?? [])
+  for (const t of refs) union.add(t)
+  return union
+}
 
 type Handler = (args: unknown) => unknown
 
@@ -207,6 +223,10 @@ export function metaRowMatchesFilter(r: PageMetaRow, f: Record<string, unknown>)
     case 'Tag': {
       return blockTags.get(r.id)?.has(f['tag'] as string) ?? false
     }
+    case 'TagOrRef': {
+      // Ref-inclusive: attached `block_tags` ∪ inline `block_tag_refs`.
+      return refInclusiveTags(r.id).has(f['tag'] as string)
+    }
     case 'Priority': {
       // Multi-value membership over `blocks.priority`, mirroring the REAL
       // backend's `in_or_null("b.priority", values, is_null, exclude)`
@@ -243,6 +263,77 @@ export function metaRowMatchesFilter(r: PageMetaRow, f: Record<string, unknown>)
     }
     case 'LastEdited': {
       return lastEditedMatches(r, f['spec'] as Record<string, unknown> | undefined)
+    }
+    case 'State': {
+      // Multi-value membership over `blocks.todo_state`, identical shape to
+      // `Priority` (mirrors the backend's `in_or_null("b.todo_state", …)`).
+      const values = (f['values'] as string[] | undefined) ?? []
+      const isNull = (f['is_null'] as boolean | undefined) ?? false
+      const exclude = (f['exclude'] as boolean | undefined) ?? false
+      if (values.length === 0 && !isNull) return true
+      const inValues = r.todoState != null && values.includes(r.todoState)
+      if (exclude) {
+        const notIn = r.todoState == null || !inValues
+        return isNull ? notIn || r.todoState != null : notIn
+      }
+      return inValues || (isNull && r.todoState == null)
+    }
+    case 'BlockType': {
+      // Membership over `blocks.block_type`; `exclude` negates. Empty set is a
+      // no-op (matches every row), mirroring the backend's early return.
+      const values = (f['values'] as string[] | undefined) ?? []
+      const exclude = (f['exclude'] as boolean | undefined) ?? false
+      if (values.length === 0) return true
+      const inValues = values.includes(r.blockType)
+      return exclude ? !inValues : inValues
+    }
+    case 'DueDate': {
+      return datePredicateMatches(r.dueDate, f['predicate'] as Record<string, unknown> | undefined)
+    }
+    case 'Scheduled': {
+      return datePredicateMatches(
+        r.scheduledDate,
+        f['predicate'] as Record<string, unknown> | undefined,
+      )
+    }
+    default: {
+      return true
+    }
+  }
+}
+
+/**
+ * Evaluate a wire `DatePredicate` against a stored `YYYY-MM-DD` date string,
+ * mirroring the backend's date-column comparison (`DueDate` / `Scheduled`). ISO
+ * day strings sort lexically, so string comparison is date comparison. `On` is
+ * exact-day equality (day-granular columns), matching the legacy `value_date =`
+ * semantics; `Between` is half-open `[from, to)`.
+ */
+function datePredicateMatches(
+  v: string | null,
+  pred: Record<string, unknown> | undefined,
+): boolean {
+  const t = pred?.['type'] as string | undefined
+  if (t === 'IsNull') return v == null
+  if (v == null) return false
+  switch (t) {
+    case 'Before': {
+      return v < (pred?.['date'] as string)
+    }
+    case 'After': {
+      return v > (pred?.['date'] as string)
+    }
+    case 'OnOrBefore': {
+      return v <= (pred?.['date'] as string)
+    }
+    case 'OnOrAfter': {
+      return v >= (pred?.['date'] as string)
+    }
+    case 'On': {
+      return v === (pred?.['date'] as string)
+    }
+    case 'Between': {
+      return v >= (pred?.['from'] as string) && v < (pred?.['to'] as string)
     }
     default: {
       return true
@@ -813,8 +904,10 @@ function fbqTagFilterMatches(
   if (tagIds.length === 0 && prefixes.length === 0) return true
 
   const allIds = [...tagIds, ...fbqResolvePrefixTagIds(prefixes)]
-  const tags = blockTags.get(b['id'] as string)
-  if (!tags || tags.size === 0) return false
+  // Ref-inclusive (`block_tags` ∪ `block_tag_refs`), mirroring the backend's
+  // `filtered_blocks_query_inner` tag clause.
+  const tags = refInclusiveTags(b['id'] as string)
+  if (tags.size === 0) return false
   return mode === 'and' ? allIds.every((tid) => tags.has(tid)) : allIds.some((tid) => tags.has(tid))
 }
 
@@ -2307,8 +2400,10 @@ export const HANDLERS: Record<string, Handler> = {
         const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
         if (ownerSpace !== spaceId) return false
       }
-      const tags = blockTags.get(b['id'] as string)
-      if (!tags || tags.size === 0) return false
+      // Ref-inclusive (`block_tags` ∪ `block_tag_refs`), mirroring
+      // `query_by_tags_inner`.
+      const tags = refInclusiveTags(b['id'] as string)
+      if (tags.size === 0) return false
       if (allTagIds.length === 0) return false
       if (mode === 'or') {
         return allTagIds.some((tid) => tags.has(tid))

@@ -26,13 +26,16 @@ beforeEach(() => {
 describe('useQueryExecution', () => {
   it('fetches tag query results and resolves page titles', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_tags') {
+      if (cmd === 'run_advanced_query') {
         return {
-          items: [makeBlock({ id: 'B1', content: 'Tagged block', parent_id: 'P1', page_id: 'P1' })],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
+          rows: [makeBlock({ id: 'B1', content: 'Tagged block', parent_id: 'P1', page_id: 'P1' })],
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
         }
+      }
+      if (cmd === 'list_tags_by_prefix') {
+        return [{ tag_id: 'TAG_PROJECT', name: 'project', usage_count: 1, updated_at: '' }]
       }
       if (cmd === 'batch_resolve') {
         return [{ id: 'P1', title: 'My Page', block_type: 'page', deleted: false }]
@@ -56,12 +59,12 @@ describe('useQueryExecution', () => {
 
   it('fetches property query results', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_property') {
+      if (cmd === 'run_advanced_query') {
         return {
-          items: [makeBlock({ id: 'B1', content: 'Priority task', priority: '1' })],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
+          rows: [makeBlock({ id: 'B1', content: 'Priority task', priority: '1' })],
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -93,8 +96,8 @@ describe('useQueryExecution', () => {
     ]
 
     mockedInvoke.mockImplementation((async (cmd: string) => {
-      if (cmd === 'filtered_blocks_query') {
-        return { items: intersected, next_cursor: null, has_more: false }
+      if (cmd === 'run_advanced_query') {
+        return { rows: intersected, nextCursor: null, hasMore: false, totalCount: null }
       }
       if (cmd === 'batch_resolve') return []
       return null
@@ -112,12 +115,15 @@ describe('useQueryExecution', () => {
     expect(result.current.results[0]?.id).toBe('B1')
     expect(result.current.error).toBeNull()
 
-    // Exactly ONE filter IPC fires (was N pre-Tier-2.10b).
+    // Exactly ONE rich-engine IPC fires (the filtered AND reroutes to
+    // `run_advanced_query`, which resolves the conjunction in SQL).
+    const richCalls = mockedInvoke.mock.calls.filter((c) => c[0] === 'run_advanced_query')
+    expect(richCalls).toHaveLength(1)
+    // No fan-out to the legacy filter endpoints.
     const filterCalls = mockedInvoke.mock.calls.filter((c) => c[0] === 'filtered_blocks_query')
-    expect(filterCalls).toHaveLength(1)
-    // No fan-out to the legacy single-filter endpoints.
     const propertyCalls = mockedInvoke.mock.calls.filter((c) => c[0] === 'query_by_property')
     const tagCalls = mockedInvoke.mock.calls.filter((c) => c[0] === 'query_by_tags')
+    expect(filterCalls).toHaveLength(0)
     expect(propertyCalls).toHaveLength(0)
     expect(tagCalls).toHaveLength(0)
   })
@@ -180,22 +186,25 @@ describe('useQueryExecution', () => {
   it('handles pagination with handleLoadMore', async () => {
     let callCount = 0
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_tags') {
+      if (cmd === 'run_advanced_query') {
         callCount++
         if (callCount === 1) {
           return {
-            items: [makeBlock({ id: 'B1', content: 'First' })],
-            next_cursor: 'cursor1',
-            has_more: true,
-            total_count: null,
+            rows: [makeBlock({ id: 'B1', content: 'First' })],
+            nextCursor: 'cursor1',
+            hasMore: true,
+            totalCount: null,
           }
         }
         return {
-          items: [makeBlock({ id: 'B2', content: 'Second' })],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
+          rows: [makeBlock({ id: 'B2', content: 'Second' })],
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
         }
+      }
+      if (cmd === 'list_tags_by_prefix') {
+        return [{ tag_id: 'TAG_PROJECT', name: 'project', usage_count: 1, updated_at: '' }]
       }
       if (cmd === 'batch_resolve') return []
       return null
@@ -273,13 +282,16 @@ describe('useQueryExecution', () => {
 
   it('re-fetches when expression changes', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_tags') {
+      if (cmd === 'run_advanced_query') {
         return {
-          items: [makeBlock({ id: 'B1', content: 'Result' })],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
+          rows: [makeBlock({ id: 'B1', content: 'Result' })],
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
         }
+      }
+      if (cmd === 'list_tags_by_prefix') {
+        return [{ tag_id: 'TAG_X', name: 'x', usage_count: 1, updated_at: '' }]
       }
       if (cmd === 'batch_resolve') return []
       return null
@@ -293,12 +305,16 @@ describe('useQueryExecution', () => {
       expect(result.current.loading).toBe(false)
     })
 
-    const firstCallCount = mockedInvoke.mock.calls.filter((c) => c[0] === 'query_by_tags').length
+    const firstCallCount = mockedInvoke.mock.calls.filter(
+      (c) => c[0] === 'run_advanced_query',
+    ).length
 
     rerender({ expression: 'type:tag expr:beta' })
 
     await waitFor(() => {
-      const newCallCount = mockedInvoke.mock.calls.filter((c) => c[0] === 'query_by_tags').length
+      const newCallCount = mockedInvoke.mock.calls.filter(
+        (c) => c[0] === 'run_advanced_query',
+      ).length
       expect(newCallCount).toBeGreaterThan(firstCallCount)
     })
   })
@@ -336,7 +352,7 @@ describe('useQueryExecution', () => {
     let tagCallCount = 0
 
     mockedInvoke.mockImplementation(((cmd: string): Promise<unknown> => {
-      if (cmd === 'query_by_tags') {
+      if (cmd === 'run_advanced_query') {
         tagCallCount++
         if (tagCallCount === 1) {
           return new Promise((resolve) => {
@@ -346,6 +362,9 @@ describe('useQueryExecution', () => {
         return new Promise((resolve) => {
           resolveBeta = resolve
         })
+      }
+      if (cmd === 'list_tags_by_prefix') {
+        return Promise.resolve([{ tag_id: 'TAG_X', name: 'x', usage_count: 1, updated_at: '' }])
       }
       if (cmd === 'batch_resolve') return Promise.resolve([])
       return Promise.resolve(null)
@@ -358,16 +377,29 @@ describe('useQueryExecution', () => {
     // First fetch (alpha) is in flight.
     expect(result.current.loading).toBe(true)
 
+    // The reroute resolves the tag prefix (`list_tags_by_prefix`) on a
+    // microtask BEFORE the controlled `run_advanced_query` promise is
+    // created, so flush microtasks until alpha's `run_advanced_query`
+    // has been issued (its resolver captured).
+    await waitFor(() => {
+      expect(resolveAlpha).toBeDefined()
+    })
+
     // Re-render with beta BEFORE alpha resolves: this triggers fetch #2.
     rerender({ expression: 'type:tag expr:beta' })
+
+    // Likewise wait for beta's `run_advanced_query` to be issued.
+    await waitFor(() => {
+      expect(resolveBeta).toBeDefined()
+    })
 
     // Beta resolves FIRST (the "newer, faster" fetch).
     await act(async () => {
       resolveBeta?.({
-        items: [makeBlock({ id: 'B1', content: 'beta-result' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+        rows: [makeBlock({ id: 'B1', content: 'beta-result' })],
+        nextCursor: null,
+        hasMore: false,
+        totalCount: null,
       })
     })
 
@@ -382,10 +414,10 @@ describe('useQueryExecution', () => {
     // beta's payload. With the guard it must be a no-op.
     await act(async () => {
       resolveAlpha?.({
-        items: [makeBlock({ id: 'A1', content: 'alpha-result' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+        rows: [makeBlock({ id: 'A1', content: 'alpha-result' })],
+        nextCursor: null,
+        hasMore: false,
+        totalCount: null,
       })
       await Promise.resolve()
     })

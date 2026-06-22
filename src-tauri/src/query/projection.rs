@@ -77,6 +77,9 @@ impl Projection for QueryProjection {
     fn compile_tag(&self, tag: &str) -> WhereClause {
         PagesProjection.compile_tag(tag)
     }
+    fn compile_tag_or_ref(&self, tag: &str) -> WhereClause {
+        PagesProjection.compile_tag_or_ref(tag)
+    }
     fn compile_path_glob(&self, pattern: &str, exclude: bool) -> WhereClause {
         PagesProjection.compile_path_glob(pattern, exclude)
     }

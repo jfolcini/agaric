@@ -37,6 +37,11 @@ use std::collections::HashSet;
 pub enum FilterPrimitive {
     /// Shared — block carries this tag id directly.
     Tag { tag: String },
+    /// Shared — block carries `tag` via an ATTACHED `block_tags` row OR an
+    /// inline `block_tag_refs` reference (`source_id`). The ref-inclusive tag
+    /// semantics the legacy `query_by_tags`/`filtered_blocks_query` paths use;
+    /// `Tag` is attached-only.
+    TagOrRef { tag: String },
     /// Shared — page name matches the GLOB pattern. `exclude=true`
     /// becomes a `NOT IN (...)` sub-select; otherwise an `IN (...)`.
     PathGlob { pattern: String, exclude: bool },
@@ -448,6 +453,7 @@ pub trait Projection {
         Self: Sized;
 
     fn compile_tag(&self, tag: &str) -> WhereClause;
+    fn compile_tag_or_ref(&self, tag: &str) -> WhereClause;
     fn compile_path_glob(&self, pattern: &str, exclude: bool) -> WhereClause;
     fn compile_has_property(&self, key: &str, predicate: &PropertyPredicate) -> WhereClause;
     fn compile_last_edited(&self, spec: &LastEditedSpec) -> WhereClause;
@@ -526,6 +532,7 @@ pub trait Projection {
     {
         match p {
             FilterPrimitive::Tag { tag } => self.compile_tag(tag),
+            FilterPrimitive::TagOrRef { tag } => self.compile_tag_or_ref(tag),
             FilterPrimitive::PathGlob { pattern, exclude } => {
                 self.compile_path_glob(pattern, *exclude)
             }
@@ -617,6 +624,10 @@ impl FilterPrimitive {
     pub fn cost_hint(&self) -> u8 {
         match self {
             FilterPrimitive::Tag { .. }
+            // `TagOrRef` is the ref-inclusive sibling of `Tag`: a UNION of two
+            // index-backed sub-selects (`block_tags.tag_id` +
+            // `idx_block_tag_refs_tag`) — same index-backed tier as `Tag`.
+            | FilterPrimitive::TagOrRef { .. }
             | FilterPrimitive::HasProperty { .. }
             | FilterPrimitive::Space { .. }
             | FilterPrimitive::Stub
@@ -670,6 +681,8 @@ impl FilterPrimitive {
     pub fn allowed_key(&self) -> &'static str {
         match self {
             FilterPrimitive::Tag { .. } => "tag",
+            // Ref-inclusive tag leaf — shares the `tag` allowed-key with `Tag`.
+            FilterPrimitive::TagOrRef { .. } => "tag",
             FilterPrimitive::PathGlob { .. } => "path",
             FilterPrimitive::HasProperty { .. } => "has-property",
             FilterPrimitive::LastEdited { .. } => "last-edited",
@@ -897,6 +910,13 @@ impl Projection for PagesProjection {
         WhereClause::new(
             "b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?)",
             vec![Bind::Text(tag.to_string())],
+        )
+    }
+    fn compile_tag_or_ref(&self, tag: &str) -> WhereClause {
+        WhereClause::new(
+            "b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ? \
+             UNION SELECT source_id FROM block_tag_refs WHERE tag_id = ?)",
+            vec![Bind::Text(tag.to_string()), Bind::Text(tag.to_string())],
         )
     }
     fn compile_path_glob(&self, pattern: &str, exclude: bool) -> WhereClause {
@@ -1265,6 +1285,15 @@ impl Projection for SearchProjection {
             vec![Bind::Text(tag.to_string())],
         )
     }
+    fn compile_tag_or_ref(&self, tag: &str) -> WhereClause {
+        // Mirrors `compile_tag`'s `b.id` alias (Search's tag leaf, like Pages,
+        // keys on `b.id`); ref-inclusive UNION of attached + inline refs.
+        WhereClause::new(
+            "b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ? \
+             UNION SELECT source_id FROM block_tag_refs WHERE tag_id = ?)",
+            vec![Bind::Text(tag.to_string()), Bind::Text(tag.to_string())],
+        )
+    }
     fn compile_path_glob(&self, pattern: &str, exclude: bool) -> WhereClause {
         // #1320 Search keeps the LEGACY `LOWER(title) GLOB ?`
         // dialect verbatim (NOT the Pages `COLLATE NOCASE LIKE` form), so
@@ -1406,6 +1435,7 @@ mod tests {
     fn every_primitive_allowed_key_belongs_to_a_surface_set() {
         let all = [
             FilterPrimitive::Tag { tag: "t".into() },
+            FilterPrimitive::TagOrRef { tag: "t".into() },
             FilterPrimitive::PathGlob {
                 pattern: "p".into(),
                 exclude: false,
@@ -1484,6 +1514,7 @@ mod tests {
             #[allow(clippy::match_same_arms)]
             match prim {
                 FilterPrimitive::Tag { .. }
+                | FilterPrimitive::TagOrRef { .. }
                 | FilterPrimitive::PathGlob { .. }
                 | FilterPrimitive::HasProperty { .. }
                 | FilterPrimitive::LastEdited { .. }
@@ -1878,6 +1909,43 @@ mod tests {
         let search = SearchProjection.compile(&tag);
         assert_eq!(pages.sql, search.sql);
         assert_eq!(pages.binds, search.binds);
+    }
+
+    #[test]
+    fn tag_or_ref_emits_union_of_attached_and_inline_refs() {
+        // `TagOrRef` is the ref-inclusive sibling of `Tag`: it must UNION the
+        // attached `block_tags` rows with the inline `block_tag_refs`
+        // (`source_id`) references, binding the tag id TWICE (once per
+        // sub-select). `Tag` stays attached-only.
+        let prim = FilterPrimitive::TagOrRef {
+            tag: "01TAG000000000000000000T1".into(),
+        };
+        for proj_sql in [
+            PagesProjection.compile(&prim),
+            SearchProjection.compile(&prim),
+            crate::query::QueryProjection.compile(&prim),
+        ] {
+            assert!(proj_sql.sql.contains("block_tags"));
+            assert!(proj_sql.sql.contains("UNION"));
+            assert!(proj_sql.sql.contains("block_tag_refs"));
+            assert!(proj_sql.sql.contains("source_id"));
+            assert_eq!(proj_sql.binds.len(), 2, "tag id bound once per sub-select");
+            assert_eq!(
+                proj_sql.binds,
+                vec![
+                    Bind::Text("01TAG000000000000000000T1".into()),
+                    Bind::Text("01TAG000000000000000000T1".into()),
+                ]
+            );
+        }
+
+        // `TagOrRef` is ref-INCLUSIVE; plain `Tag` stays attached-only (no
+        // UNION / no `block_tag_refs`).
+        let attached_only = PagesProjection.compile(&FilterPrimitive::Tag {
+            tag: "01TAG000000000000000000T1".into(),
+        });
+        assert!(!attached_only.sql.contains("UNION"));
+        assert!(!attached_only.sql.contains("block_tag_refs"));
     }
 
     #[test]

@@ -1754,6 +1754,13 @@ export type FilterPrimitive =
 /**  Shared — block carries this tag id directly. */
 { type: "Tag"; tag: string } |
 /**
+ *  Shared — block carries `tag` via an ATTACHED `block_tags` row OR an
+ *  inline `block_tag_refs` reference (`source_id`). The ref-inclusive tag
+ *  semantics the legacy `query_by_tags`/`filtered_blocks_query` paths use;
+ *  `Tag` is attached-only.
+ */
+{ type: "TagOrRef"; tag: string } |
+/**
  *  Shared — page name matches the GLOB pattern. `exclude=true`
  *  becomes a `NOT IN (...)` sub-select; otherwise an `IN (...)`.
  */

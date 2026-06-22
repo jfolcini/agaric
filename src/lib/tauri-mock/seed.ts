@@ -35,8 +35,14 @@ export const blocks = new Map<string, Record<string, unknown>>()
 // Property store: block_id → key → PropertyRow
 export const properties = new Map<string, Map<string, Record<string, unknown>>>()
 
-// Block-tag associations: block_id → Set<tag_id>
+// Block-tag associations (ATTACHED tags): block_id → Set<tag_id>
 export const blockTags = new Map<string, Set<string>>()
+
+// Inline tag REFERENCES (`block_tag_refs.source_id → tag_id`): a block whose
+// body references `#tag` without the tag being explicitly attached. Legacy tag
+// queries match `block_tags UNION block_tag_refs`, so the mock models both to
+// stay faithful to the backend. `source_id → Set<tag_id>`.
+export const blockTagRefs = new Map<string, Set<string>>()
 
 // Property definitions store
 export const propertyDefs = new Map<string, Record<string, unknown>>()
