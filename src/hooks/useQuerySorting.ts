@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 
+import { columnValue } from '@/lib/query-result-columns'
 import type { BlockRow } from '@/lib/tauri'
 
 export type SortDirection = 'asc' | 'desc'
@@ -15,6 +16,9 @@ export function compareValues(a: string | null, b: string | null, dir: SortDirec
 
 interface UseQuerySortingOptions {
   results: BlockRow[]
+  /** Per-block custom-property values, so custom-property columns sort by
+   * their displayed value. Defaults to empty. */
+  customProps?: Map<string, Map<string, string>> | undefined
 }
 
 interface UseQuerySortingResult {
@@ -24,21 +28,21 @@ interface UseQuerySortingResult {
   handleColumnSort: (key: string) => void
 }
 
+const EMPTY_CUSTOM_PROPS = new Map<string, Map<string, string>>()
+
 export function useQuerySorting(options: UseQuerySortingOptions): UseQuerySortingResult {
-  const { results } = options
+  const { results, customProps = EMPTY_CUSTOM_PROPS } = options
   const [sortKey, setSortKey] = useState<string | null>(null)
   const [sortDir, setSortDir] = useState<SortDirection>('asc')
 
   const sortedResults = useMemo(() => {
     if (!sortKey) return results
     return [...results].toSorted((a, b) => {
-      const aVal =
-        sortKey === 'content' ? a.content : (a[sortKey as keyof BlockRow] as string | null)
-      const bVal =
-        sortKey === 'content' ? b.content : (b[sortKey as keyof BlockRow] as string | null)
-      return compareValues(aVal ?? null, bVal ?? null, sortDir)
+      const aVal = columnValue(a, sortKey, customProps)
+      const bVal = columnValue(b, sortKey, customProps)
+      return compareValues(aVal, bVal, sortDir)
     })
-  }, [results, sortKey, sortDir])
+  }, [results, sortKey, sortDir, customProps])
 
   const handleColumnSort = useCallback((key: string) => {
     setSortKey((prev) => {
