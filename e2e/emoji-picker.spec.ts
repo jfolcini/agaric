@@ -39,6 +39,33 @@ test.describe('Inline emoji picker — `:` trigger (#130)', () => {
     await expect(editor).not.toContainText(':joy')
   })
 
+  test('typing a full `:joy:` (closing colon) auto-replaces to the emoji', async ({ page }) => {
+    // #281 — the input rule converts a COMPLETED `:shortcode:` the instant the
+    // closing colon is typed (Slack/GitHub style), no Enter / popup selection.
+    const editor = await focusBlock(page)
+    await page.keyboard.press('End')
+    await page.keyboard.type(' :joy:', { delay: 30 })
+
+    await expect(editor).toContainText(JOY)
+    await expect(editor).not.toContainText(':joy')
+    // The suggestion popup is dismissed once the text is replaced.
+    await expect(page.locator('[data-testid="suggestion-popup"]')).toHaveCount(0)
+  })
+
+  test('the toolbar emoji button opens the browse-grid picker', async ({ page }) => {
+    // #281 — the mouse-first twin of the `:` typeahead. The button dispatches
+    // OPEN_EMOJI_PICKER, which opens the same dialog `/emoji` does.
+    await focusBlock(page)
+    let emojiBtn = page.getByRole('button', { name: /emoji/i }).first()
+    if (!(await emojiBtn.isVisible().catch(() => false))) {
+      // It can sit in the overflow popover under width pressure.
+      await page.getByRole('button', { name: 'More', exact: true }).click()
+      emojiBtn = page.getByRole('button', { name: /emoji/i }).first()
+    }
+    await emojiBtn.click()
+    await expect(page.locator('[data-testid="emoji-picker"]')).toBeVisible()
+  })
+
   test('`::` still opens the property picker, not emoji (coexistence)', async ({ page }) => {
     await focusBlock(page)
     await page.keyboard.press('End')

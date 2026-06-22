@@ -19,11 +19,12 @@
  *      property picker.
  */
 
-import { Extension } from '@tiptap/core'
+import { Extension, InputRule } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 
+import { pushEmojiRecent } from '../../hooks/useEmojiRecents'
 import { isEmojiPickerEnabled } from '../../lib/editor-preferences'
-import { searchEmoji } from '../emoji-data'
+import { emojiByShortcode, searchEmoji } from '../emoji-data'
 import type { PickerItem } from '../SuggestionList'
 import { createPickerPlugin } from './picker-plugin'
 
@@ -59,6 +60,39 @@ export const EmojiPicker = Extension.create({
           const emoji = item.emoji ?? item.label
           // Replace `:query` with the native emoji literal.
           editor.chain().focus().deleteRange(range).insertContent(emoji).run()
+          // Feed the recents strip so the browse-grid picker surfaces emoji the
+          // user inserted by typing too (not just via the dialog).
+          pushEmojiRecent(emoji)
+        },
+      }),
+    ]
+  },
+
+  /**
+   * `:shortcode:` closing-colon auto-replace (#281). The suggestion popup above
+   * fires as the user types `:joy`; this rule additionally converts a COMPLETED
+   * `:joy:` (Slack/GitHub style) the instant the closing colon is typed. Exact
+   * `name` match only (deterministic 1:1), gated by the same enable preference,
+   * and it preserves any leading whitespace the boundary regex consumed.
+   */
+  addInputRules() {
+    return [
+      new InputRule({
+        // `:` + >=2 of [word | + | -] + `:`, anchored to start-or-whitespace so
+        // `http://a:b:` / `3:30:` and the `::` property trigger never fire.
+        find: /(?:^|\s):([A-Za-z0-9_+-]{2,}):$/,
+        handler: ({ state, range, match }) => {
+          if (!isEmojiPickerEnabled()) return null
+          const name = match[1]
+          if (name == null) return null
+          const emoji = emojiByShortcode(name)
+          if (emoji == null) return null
+          // Replace only the `:name:` token, not any leading whitespace the
+          // boundary alternation matched.
+          const from = range.to - (name.length + 2)
+          state.tr.insertText(emoji, from, range.to)
+          pushEmojiRecent(emoji)
+          return undefined
         },
       }),
     ]

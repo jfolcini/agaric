@@ -58,6 +58,7 @@ export interface UseBlockTreeEventListenersOptions {
   handleTogglePriority: (id: string) => void
   handleShowProperties: (id: string) => void
   handleOpenQueryBuilder: () => void
+  handleOpenEmojiPicker: () => void
   // Full handle (BlockTree passes the real `RovingEditorHandle`): the
   // date-picker handlers read `editor.state.selection`, while the structural
   // toolbar handlers (#253) need `editor.getJSON()` + `mount` to edit content.
@@ -77,6 +78,7 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
     handleTogglePriority,
     handleShowProperties,
     handleOpenQueryBuilder,
+    handleOpenEmojiPicker,
     rovingEditor,
     datePickerCursorPos,
     setDatePickerMode,
@@ -156,6 +158,12 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
     // blockId is unused here.
     const onOpenQueryBuilder: BlockCommandHandler = () => {
       handleOpenQueryBuilder()
+    }
+
+    // #281 — toolbar emoji button opens the browse-grid dialog for the focused
+    // block (targets the focused block itself, so the routed blockId is unused).
+    const onOpenEmojiPicker: BlockCommandHandler = () => {
+      handleOpenEmojiPicker()
     }
 
     // ── Structural toolbar inserts: ordered-list / divider / callout (#253) ──
@@ -249,6 +257,7 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       TOGGLE_TODO_STATE: onToggleTodo,
       OPEN_BLOCK_PROPERTIES: onShowProperties,
       OPEN_QUERY_BUILDER: onOpenQueryBuilder,
+      OPEN_EMOJI_PICKER: onOpenEmojiPicker,
       INSERT_ORDERED_LIST: onOrderedList,
       INSERT_DIVIDER: onDivider,
       INSERT_CALLOUT: onCallout,
@@ -261,6 +270,7 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
     handleTogglePriority,
     handleShowProperties,
     handleOpenQueryBuilder,
+    handleOpenEmojiPicker,
     datePickerCursorPos,
     setDatePickerMode,
     setDatePickerOpen,
