@@ -345,6 +345,51 @@ describe('QueryResultTable', () => {
     expect(placeholders).toHaveLength(2)
   })
 
+  it('renders custom-property column values from the customProps map', () => {
+    const columns: TableColumn[] = [
+      { key: 'content', label: 'Content' },
+      { key: 'prop:area', label: 'area', propKey: 'area' },
+    ]
+    const customProps = new Map([['B1', new Map([['area', 'frontend']])]])
+
+    render(
+      <QueryResultTable
+        results={[makeBlock({ id: 'B1', content: 'Task' })]}
+        columns={columns}
+        pageTitles={new Map()}
+        sortKey={null}
+        sortDir="asc"
+        onColumnSort={vi.fn()}
+        customProps={customProps}
+      />,
+    )
+
+    const table = screen.getByRole('table')
+    expect(within(table).getByText('area')).toBeInTheDocument()
+    expect(within(table).getByText('frontend')).toBeInTheDocument()
+  })
+
+  it('renders em-dash for a custom-property column with no value on the block', () => {
+    const columns: TableColumn[] = [
+      { key: 'content', label: 'Content' },
+      { key: 'prop:area', label: 'area', propKey: 'area' },
+    ]
+
+    render(
+      <QueryResultTable
+        results={[makeBlock({ id: 'B1', content: 'Task' })]}
+        columns={columns}
+        pageTitles={new Map()}
+        sortKey={null}
+        sortDir="asc"
+        onColumnSort={vi.fn()}
+        customProps={new Map()}
+      />,
+    )
+
+    expect(screen.getByText('—')).toBeInTheDocument()
+  })
+
   it('renders em-dash placeholder for empty-string property values', () => {
     const columns: TableColumn[] = [
       { key: 'content', label: 'Content' },

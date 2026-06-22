@@ -151,6 +151,7 @@ export const properties: Record<string, string> = {
   'queryBuilder.cancelButton': 'Cancel',
   'queryBuilder.editButton': 'Edit query',
   'queryBuilder.saveFailed': 'Failed to update query',
+  'queryBuilder.propertiesFailed': 'Failed to load query result properties',
   'queryBuilder.mode.label': 'Builder mode',
   'queryBuilder.mode.simple': 'Simple',
   'queryBuilder.mode.advanced': 'Advanced',

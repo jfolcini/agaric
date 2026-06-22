@@ -11,6 +11,9 @@ import type { BlockRow } from '@/lib/tauri'
 export interface TableColumn {
   key: string
   label: string
+  /** When set, this is a custom-property column whose cell value is read from
+   * the `customProps` side map under this key (rather than off `BlockRow`). */
+  propKey?: string
 }
 
 export type SortDirection = 'asc' | 'desc'
@@ -32,6 +35,9 @@ export interface QueryResultTableProps {
   onNavigate?: ((pageId: string) => void) | undefined
   /** Resolve block title by ID. */
   resolveBlockTitle?: ((id: string) => string) | undefined
+  /** Per-block custom-property values (blockId → key → display value), used to
+   * fill custom-property columns. Defaults to empty. */
+  customProps?: Map<string, Map<string, string>> | undefined
 }
 
 export function QueryResultTable({
@@ -43,6 +49,7 @@ export function QueryResultTable({
   onColumnSort,
   onNavigate,
   resolveBlockTitle,
+  customProps,
 }: QueryResultTableProps): React.ReactElement {
   const { t } = useTranslation()
   return (
@@ -103,7 +110,9 @@ export function QueryResultTable({
                       </button>
                     ) : (
                       <span className="text-muted-foreground">
-                        {(block[col.key as keyof BlockRow] as string) || '\u2014'}
+                        {(col.propKey
+                          ? customProps?.get(block.id)?.get(col.propKey)
+                          : (block[col.key as keyof BlockRow] as string)) || '\u2014'}
                       </span>
                     )}
                   </td>

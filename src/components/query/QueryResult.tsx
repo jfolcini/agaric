@@ -1,12 +1,13 @@
 import { Pencil, Search } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { QueryBuilderModal } from '@/components/dialogs/QueryBuilderModal'
 import { QueryResultList } from '@/components/query/QueryResultList'
+import type { TableColumn } from '@/components/query/QueryResultTable'
 import { QueryResultTable } from '@/components/query/QueryResultTable'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -15,16 +16,11 @@ import { Spinner } from '@/components/ui/spinner'
 import { useQueryExecution } from '@/hooks/useQueryExecution'
 import { useQuerySorting } from '@/hooks/useQuerySorting'
 import { countFilterLeaves, decodeInlineQueryPayload } from '@/lib/inline-query-spec'
+import { buildCustomPropsMap, deriveCustomColumns } from '@/lib/query-result-columns'
 import { OPERATOR_SYMBOLS, parseQueryExpression } from '@/lib/query-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import type { BlockRow } from '@/lib/tauri'
-import { editBlock } from '@/lib/tauri'
-
-/** Column definition for table mode. */
-interface TableColumn {
-  key: string
-  label: string
-}
+import { editBlock, getBatchProperties } from '@/lib/tauri'
 
 /** Known block property keys that can become table columns. */
 const KNOWN_PROPERTY_KEYS: { key: keyof BlockRow; label: string }[] = [
@@ -34,14 +30,18 @@ const KNOWN_PROPERTY_KEYS: { key: keyof BlockRow; label: string }[] = [
   { key: 'scheduled_date', label: 'Scheduled' },
 ]
 
-/** Auto-detect which columns to show based on result data. */
-export function detectColumns(_results: BlockRow[]): TableColumn[] {
-  // Always include known columns even when sparse so users
-  // see the schema, not the data. Missing values render as `—` in
-  // QueryResultTable. The `_results` parameter is preserved for API
-  // stability; future heuristics may reintroduce data-driven
-  // detection for non-known columns.
-  return [{ key: 'content', label: 'Content' }, ...KNOWN_PROPERTY_KEYS]
+/** Build the table column set: the fixed Content + known-property columns,
+ * followed by data-driven columns for any custom properties present on the
+ * result blocks (sorted alphabetically). */
+export function detectColumns(
+  results: BlockRow[],
+  customProps: Map<string, Map<string, string>>,
+): TableColumn[] {
+  return [
+    { key: 'content', label: 'Content' },
+    ...KNOWN_PROPERTY_KEYS,
+    ...deriveCustomColumns(results, customProps),
+  ]
 }
 
 /** Render query expression as styled filter pills. */
@@ -154,7 +154,6 @@ export function QueryResult({
     handleLoadMore,
     fetchResults,
   } = useQueryExecution({ expression })
-  const { sortedResults, sortKey, sortDir, handleColumnSort } = useQuerySorting({ results })
 
   // A structured (`v2:`) query carries its table flag in the decoded spec; a
   // legacy text query carries `table:true` as a parsed param.
@@ -163,7 +162,39 @@ export function QueryResult({
     ? structured.table
     : parseQueryExpression(expression).params['table'] === 'true'
 
-  const columns = useMemo(() => detectColumns(results), [results])
+  // Custom (non-reserved) properties are not carried on `BlockRow`; fetch them
+  // for the result blocks only in table mode, where they become columns.
+  const [customProps, setCustomProps] = useState<Map<string, Map<string, string>>>(new Map())
+  const resultIdsKey = results.map((b) => b.id).join(',')
+  useEffect(() => {
+    if (!tableMode || results.length === 0) {
+      setCustomProps(new Map())
+      return
+    }
+    let cancelled = false
+    void getBatchProperties(results.map((b) => b.id))
+      .then((batch) => {
+        if (!cancelled) setCustomProps(buildCustomPropsMap(batch))
+      })
+      .catch((err) => {
+        // A property-fetch failure should not blank the table; fall back to
+        // the fixed columns and surface the error to the IPC reporter.
+        if (!cancelled) setCustomProps(new Map())
+        reportIpcError('QueryResult', 'queryBuilder.propertiesFailed', err, t, { blockId })
+      })
+    return () => {
+      cancelled = true
+    }
+    // resultIdsKey captures the result-set identity; tableMode gates the fetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tableMode, resultIdsKey, t, blockId])
+
+  const { sortedResults, sortKey, sortDir, handleColumnSort } = useQuerySorting({
+    results,
+    customProps,
+  })
+
+  const columns = useMemo(() => detectColumns(results, customProps), [results, customProps])
 
   const handleBuilderSave = useCallback(
     async (newExpression: string) => {
@@ -271,6 +302,7 @@ export function QueryResult({
               onColumnSort={handleColumnSort}
               onNavigate={onNavigate}
               resolveBlockTitle={resolveBlockTitle}
+              customProps={customProps}
             />
           )}
           {!loading && !error && (

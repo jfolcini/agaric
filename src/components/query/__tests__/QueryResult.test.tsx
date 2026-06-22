@@ -528,77 +528,69 @@ describe('QueryResult', () => {
 /* ------------------------------------------------------------------ */
 
 describe('detectColumns', () => {
-  // DetectColumns now always returns Content + every known
-  // property column regardless of whether the data populates them.
-  // Missing values are rendered as `—` placeholders in QueryResultTable.
+  const KNOWN = ['content', 'todo_state', 'priority', 'due_date', 'scheduled_date']
+  const noProps = new Map<string, Map<string, string>>()
+
+  // DetectColumns always returns Content + every known property column
+  // regardless of whether the data populates them. Missing values are
+  // rendered as `—` placeholders in QueryResultTable.
   it('returns all known columns even when no properties are set', () => {
-    const blocks = [
-      {
-        id: 'B1',
-        block_type: 'content',
-        content: 'Hello',
-        parent_id: null,
-        position: 1,
-        deleted_at: null,
-        todo_state: null,
-        priority: null,
-        due_date: null,
-        scheduled_date: null,
-        page_id: null,
-      },
-    ]
-    const cols = detectColumns(blocks)
-    expect(cols.map((c) => c.key)).toEqual([
-      'content',
-      'todo_state',
-      'priority',
-      'due_date',
-      'scheduled_date',
-    ])
+    const blocks = [makeBlock({ id: 'B1', content: 'Hello' })]
+    const cols = detectColumns(blocks, noProps)
+    expect(cols.map((c) => c.key)).toEqual(KNOWN)
   })
 
-  it('returns the same columns when properties are populated', () => {
+  it('returns the known columns when reserved fields are populated', () => {
     const blocks = [
-      {
+      makeBlock({
         id: 'B1',
-        block_type: 'content',
         content: 'Task',
-        parent_id: null,
-        position: 1,
-        deleted_at: null,
         todo_state: 'TODO',
         priority: '1',
         due_date: '2025-01-01',
-        scheduled_date: null,
-        page_id: null,
-      },
+      }),
     ]
-    const cols = detectColumns(blocks)
-    expect(cols.map((c) => c.key)).toEqual([
-      'content',
-      'todo_state',
-      'priority',
-      'due_date',
-      'scheduled_date',
-    ])
+    const cols = detectColumns(blocks, noProps)
+    expect(cols.map((c) => c.key)).toEqual(KNOWN)
   })
 
   it('returns all known columns for an empty result set', () => {
-    const cols = detectColumns([])
-    expect(cols.map((c) => c.key)).toEqual([
-      'content',
-      'todo_state',
-      'priority',
-      'due_date',
-      'scheduled_date',
+    const cols = detectColumns([], noProps)
+    expect(cols.map((c) => c.key)).toEqual(KNOWN)
+  })
+
+  // Custom (non-reserved) properties are appended as data-driven columns,
+  // sorted alphabetically, after the fixed known columns.
+  it('appends a column per custom property, sorted, after the known columns', () => {
+    const blocks = [makeBlock({ id: 'B1' }), makeBlock({ id: 'B2' })]
+    const customProps = new Map<string, Map<string, string>>([
+      ['B1', new Map([['status', 'open']])],
+      ['B2', new Map([['area', 'frontend']])],
     ])
+    const cols = detectColumns(blocks, customProps)
+    expect(cols.map((c) => c.key)).toEqual([...KNOWN, 'prop:area', 'prop:status'])
+    const areaCol = cols.find((c) => c.key === 'prop:area')
+    expect(areaCol).toMatchObject({ label: 'area', propKey: 'area' })
+  })
+
+  it('does not duplicate a custom column shared across blocks', () => {
+    const blocks = [makeBlock({ id: 'B1' }), makeBlock({ id: 'B2' })]
+    const customProps = new Map<string, Map<string, string>>([
+      ['B1', new Map([['area', 'frontend']])],
+      ['B2', new Map([['area', 'backend']])],
+    ])
+    const cols = detectColumns(blocks, customProps)
+    expect(cols.map((c) => c.key)).toEqual([...KNOWN, 'prop:area'])
   })
 })
 
 describe('QueryResult – table mode', () => {
   const TABLE_EXPRESSION = 'type:tag expr:project table:true'
 
-  function mockTagResults(items: ReturnType<typeof makeBlock>[]) {
+  function mockTagResults(
+    items: ReturnType<typeof makeBlock>[],
+    batchProperties: Record<string, unknown[]> = {},
+  ) {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       // `type:tag` reroutes through the rich `run_advanced_query` engine
       // (P2). The tag-prefix resolution IPC returns no exact matches; the
@@ -609,6 +601,9 @@ describe('QueryResult – table mode', () => {
       }
       if (cmd === 'batch_resolve') {
         return [{ id: 'P1', title: 'Project Page', block_type: 'page', deleted: false }]
+      }
+      if (cmd === 'get_batch_properties') {
+        return batchProperties
       }
       return null
     })

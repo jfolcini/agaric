@@ -157,4 +157,34 @@ describe('useQuerySorting', () => {
     expect(result.current.sortDir).toBe('desc')
     expect(result.current.sortedResults.map((b) => b.priority)).toEqual([null, '2', '1'])
   })
+
+  it('sorts by a custom-property column via the customProps map', () => {
+    const results = [blockA, blockB, blockC]
+    const customProps = new Map([
+      ['A', new Map([['area', 'gamma']])],
+      ['B', new Map([['area', 'alpha']])],
+      ['C', new Map([['area', 'beta']])],
+    ])
+    const { result } = renderHook(() => useQuerySorting({ results, customProps }))
+
+    act(() => {
+      result.current.handleColumnSort('prop:area')
+    })
+
+    // Ascending by the custom 'area' value: alpha (B), beta (C), gamma (A).
+    expect(result.current.sortedResults.map((b) => b.id)).toEqual(['B', 'C', 'A'])
+  })
+
+  it('sorts blocks missing the custom property last in ascending', () => {
+    const results = [blockA, blockB]
+    const customProps = new Map([['B', new Map([['area', 'fe']])]])
+    const { result } = renderHook(() => useQuerySorting({ results, customProps }))
+
+    act(() => {
+      result.current.handleColumnSort('prop:area')
+    })
+
+    // A has no 'area' → null → sorts last ascending.
+    expect(result.current.sortedResults.map((b) => b.id)).toEqual(['B', 'A'])
+  })
 })
