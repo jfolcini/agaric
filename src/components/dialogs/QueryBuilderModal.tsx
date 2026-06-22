@@ -337,7 +337,7 @@ export function QueryBuilderModal({
 
         <DialogBody>
           {/* ---- Mode toggle (Simple text form vs. nested And/Or/Not builder) ---- */}
-          <div className="flex gap-2" aria-label={t('queryBuilder.mode.label')}>
+          <div className="flex flex-wrap gap-2" aria-label={t('queryBuilder.mode.label')}>
             {(['simple', 'advanced'] as const).map((m) => (
               <Button
                 key={m}
@@ -354,7 +354,7 @@ export function QueryBuilderModal({
           {/* ---- Query Type Selector (simple mode) ---- */}
           {mode === 'simple' && (
             <div
-              className="flex gap-2"
+              className="flex flex-wrap gap-2"
               role="radiogroup"
               aria-label={t('queryBuilder.typeLabel')}
               tabIndex={-1}

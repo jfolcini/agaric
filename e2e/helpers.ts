@@ -136,6 +136,143 @@ test.afterEach(({ page }) => {
 export { expect }
 
 // ---------------------------------------------------------------------------
+// Horizontal-overflow assertion (mobile responsiveness sweep — #1966).
+//
+// A surface "overflows" on mobile when its content is wider than the viewport
+// (or, for a dialog/sheet, wider than the modal's own content box), forcing a
+// horizontal scrollbar or bleeding content off-screen. The canonical signal is
+// `scrollWidth > clientWidth` on the scroll root.
+//
+// Intentional horizontal scroll regions (wide tables, code/mermaid blocks,
+// carousels marked `overflow-x-auto`/`-scroll`) clip their own overflow and so
+// do NOT expand an ancestor's `scrollWidth`; a document- or dialog-level check
+// therefore does not false-positive on them. On failure we walk the subtree to
+// list the widest offending elements (skipping those inside a scroll container)
+// so the culprit row is obvious instead of a bare width mismatch.
+// ---------------------------------------------------------------------------
+
+/** One element that extends past its root's right edge. */
+interface OverflowOffender {
+  tag: string
+  cls: string
+  text: string
+  right: number
+  limit: number
+}
+
+/**
+ * Assert that `target` (a dialog/sheet/element locator) — or the whole document
+ * when `target` is omitted — does not overflow horizontally at the current
+ * viewport. The error message lists the widest offending elements with their
+ * classes and text so the responsible row is immediately identifiable.
+ *
+ * `label` is only used to make the failure message say WHICH surface broke.
+ */
+export async function expectNoHorizontalOverflow(
+  page: Page,
+  target?: Locator,
+  label = 'document',
+): Promise<void> {
+  const TOLERANCE = 1 // sub-pixel layout rounding headroom
+
+  // In-page collector for a dialog/sheet element. Returns the scroll/client
+  // widths plus the worst offenders (in-flow elements whose right edge passes the
+  // limit and that are NOT inside an intentional horizontal-scroll container).
+  const collectFromElement = (root: Element, tol: number) => {
+    const limit = root.getBoundingClientRect().right
+    const scrollWidth = root.scrollWidth
+    const clientWidth = root.clientWidth
+
+    const offenders: OverflowOffender[] = []
+    if (scrollWidth > clientWidth + tol) {
+      for (const node of Array.from(root.querySelectorAll('*'))) {
+        const style = getComputedStyle(node)
+        // Fixed/sticky elements don't expand the scroll box; skip as noise.
+        if (style.position === 'fixed' || style.position === 'sticky') continue
+        // Skip anything living inside an intentional horizontal scroller.
+        let inScroll = false
+        let p: Element | null = node.parentElement
+        while (p && p !== root) {
+          const ox = getComputedStyle(p).overflowX
+          if (ox === 'auto' || ox === 'scroll') {
+            inScroll = true
+            break
+          }
+          p = p.parentElement
+        }
+        if (inScroll) continue
+        const r = node.getBoundingClientRect()
+        if (r.width === 0 || r.height === 0) continue
+        if (r.right > limit + tol) {
+          offenders.push({
+            tag: node.tagName.toLowerCase(),
+            cls: typeof node.className === 'string' ? node.className : '',
+            text: (node.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 50),
+            right: Math.round(r.right),
+            limit: Math.round(limit),
+          })
+        }
+      }
+    }
+    return { scrollWidth, clientWidth, limit, offenders }
+  }
+
+  const result = target
+    ? await target.evaluate(collectFromElement, TOLERANCE)
+    : await page.evaluate((tol) => {
+        const root = document.documentElement
+        const limit = window.innerWidth
+        const scrollWidth = root.scrollWidth
+        const clientWidth = root.clientWidth
+        const offenders: OverflowOffender[] = []
+        if (scrollWidth > clientWidth + tol) {
+          for (const node of Array.from(document.body.querySelectorAll<HTMLElement>('*'))) {
+            const style = getComputedStyle(node)
+            if (style.position === 'fixed' || style.position === 'sticky') continue
+            let inScroll = false
+            let p: HTMLElement | null = node.parentElement
+            while (p && p !== document.body) {
+              const ox = getComputedStyle(p).overflowX
+              if (ox === 'auto' || ox === 'scroll') {
+                inScroll = true
+                break
+              }
+              p = p.parentElement
+            }
+            if (inScroll) continue
+            const r = node.getBoundingClientRect()
+            if (r.width === 0 || r.height === 0) continue
+            if (r.right > limit + tol) {
+              offenders.push({
+                tag: node.tagName.toLowerCase(),
+                cls: typeof node.className === 'string' ? node.className : '',
+                text: (node.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 50),
+                right: Math.round(r.right),
+                limit: Math.round(limit),
+              })
+            }
+          }
+        }
+        return { scrollWidth, clientWidth, limit, offenders }
+      }, TOLERANCE)
+
+  const worst = result.offenders
+    .toSorted((a: OverflowOffender, b: OverflowOffender) => b.right - a.right)
+    .slice(0, 6)
+    .map(
+      (o: OverflowOffender) =>
+        `    <${o.tag} class="${o.cls}"> right=${o.right} > ${o.limit}  "${o.text}"`,
+    )
+    .join('\n')
+
+  const detail = worst ? `\n  Widest offenders:\n${worst}` : ''
+  expect(
+    result.scrollWidth,
+    `Horizontal overflow on ${label}: scrollWidth=${result.scrollWidth} > clientWidth=${result.clientWidth}.${detail}`,
+  ).toBeLessThanOrEqual(result.clientWidth + TOLERANCE)
+}
+
+// ---------------------------------------------------------------------------
 // Portal-scoped locator helpers.
 //
 // Radix UI primitives render Dialog / AlertDialog / Popover / Sheet / Tooltip

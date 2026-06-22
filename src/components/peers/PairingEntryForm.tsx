@@ -148,12 +148,12 @@ export function PairingEntryForm({
 
       {/* Entry mode toggle: QR scan (recommended) vs manual passphrase.
           QR is faster and signposted as the recommended path. */}
-      <div className="pairing-entry-toggle flex gap-2 mb-4 justify-center">
+      <div className="pairing-entry-toggle flex flex-col gap-2 mb-4 sm:flex-row sm:justify-center">
         <Button
           variant={entryMode === 'scan' ? 'default' : 'outline'}
           size="sm"
           onClick={() => onEntryModeChange('scan')}
-          className="touch-target"
+          className="touch-target w-full sm:w-auto"
         >
           <Camera className="h-4 w-4 mr-1" />
           {t('pairing.scanQrCodeButton')}
@@ -165,7 +165,7 @@ export function PairingEntryForm({
           variant={entryMode === 'manual' ? 'default' : 'outline'}
           size="sm"
           onClick={() => onEntryModeChange('manual')}
-          className="touch-target"
+          className="touch-target w-full sm:w-auto"
         >
           {t('pairing.typePassphraseButton')}
         </Button>
