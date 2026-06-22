@@ -106,6 +106,25 @@ test.describe('Query block creation', () => {
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await expect(firstBlock.locator('[data-testid="query-result"]')).toBeVisible({ timeout: 5000 })
   })
+
+  // A structured `v2:` block (authored by the advanced nested builder) is a
+  // base64url payload that runs through the rich `run_advanced_query` engine.
+  // `{filter: And[]}` is the match-everything tree, so it renders a QueryResult
+  // labelled as an Advanced query against the seed space.
+  test('structured v2 query block renders via the rich engine', async ({ page }) => {
+    await focusBlock(page)
+    await page.keyboard.press('ControlOrMeta+a')
+    await page.keyboard.type('{{query v2:eyJmaWx0ZXIiOnsidHlwZSI6IkFuZCIsImNoaWxkcmVuIjpbXX19}}', {
+      delay: 20,
+    })
+    await saveBlock(page)
+
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    const result = firstBlock.locator('[data-testid="query-result"]')
+    await expect(result).toBeVisible({ timeout: 5000 })
+    // The opaque payload renders as the labelled Advanced-query badge, not raw text.
+    await expect(result.getByText(/Advanced query/i)).toBeVisible()
+  })
 })
 
 // ===========================================================================
