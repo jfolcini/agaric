@@ -239,7 +239,10 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
 
   return (
     <div className={cn('flex flex-col gap-2', className)} data-testid="emoji-picker">
-      <div className="flex items-center gap-2">
+      {/* On a narrow phone sheet the 6 skin-tone swatches crowd the search box
+          (and run flush to the edge), so stack them below the full-width search
+          on small widths and only sit them inline from `sm` up. */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
         <Input
           type="search"
           value={query}

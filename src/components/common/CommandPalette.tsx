@@ -981,7 +981,9 @@ export function PaletteBody({
       {showMobileEscalation && (
         <MobileEscalationButton onEscalate={() => escalate(trimmedQuery)} t={t} />
       )}
-      {mode === 'search' && !linkMode && <PaletteFooterHint t={t} />}
+      {/* The footer surfaces ↵/⌘↵/esc keyboard chips; on touch (mobile search
+          sheet) they're not actionable, so only show on desktop. */}
+      {mode === 'search' && !linkMode && !isMobile && <PaletteFooterHint t={t} />}
       {actionMenu != null && (
         <PaletteActionMenu
           anchor={actionMenu.rect}
