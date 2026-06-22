@@ -978,6 +978,50 @@ describe('round-trip: serialize(parse(s)) === s', () => {
   })
 })
 
+// -- #1960: "Turn into" menu — per-style markdown round-trip ------------------
+// A single auditable matrix mapping every block style the "Turn into" menu can
+// produce (TURN_INTO_OPTIONS in lib/slash-commands.ts) plus the Divider insert
+// to a lossless markdown parse↔serialize round-trip. This guards the hard
+// constraint in #1960: everything the unified formatting surface can apply MUST
+// round-trip losslessly through markdown-parse ↔ markdown-serialize. Some rows
+// overlap dedicated suites above by design — this block is the one place that
+// proves the *menu's* full surface is covered.
+describe('"Turn into" menu — per-style markdown round-trip (#1960)', () => {
+  const perStyle: [string, string][] = [
+    ['Text (paragraph)', 'plain paragraph text'],
+    ['H1', '# Heading one'],
+    ['H2', '## Heading two'],
+    ['H3', '### Heading three'],
+    ['Bullet list', '- bullet item'],
+    ['Ordered list', '1. ordered item'],
+    ['Quote', '> quoted text'],
+    ['Code block', '```\ncode line\n```'],
+    ['Code block with language', '```typescript\nconst x = 1\n```'],
+    ['Callout', '> [!INFO] callout body'],
+    ['Divider', '---'],
+  ]
+  for (const [name, md] of perStyle) {
+    it(`${name} round-trips losslessly`, () => {
+      expect(serialize(parse(md))).toBe(md)
+    })
+  }
+
+  // The same styles, this time carrying inline marks in their body, must also
+  // survive untouched (divider is bodyless, so it is excluded here).
+  const withMarks: [string, string][] = [
+    ['H2 with marks', '## **bold** and *italic*'],
+    ['Bullet with marks', '- **bold** item'],
+    ['Ordered with marks', '1. *italic* item'],
+    ['Quote with marks', '> **strong** quote'],
+    ['Callout with marks', '> [!TIP] **important**'],
+  ]
+  for (const [name, md] of withMarks) {
+    it(`${name} round-trips losslessly`, () => {
+      expect(serialize(parse(md))).toBe(md)
+    })
+  }
+})
+
 // -- nested lists (sinkListItem) ----------------------------------------------
 // Regression for #1513: a list item can legally contain a nested list (its
 // content is `paragraph block*`, Tab is bound to sinkListItem). The old flat

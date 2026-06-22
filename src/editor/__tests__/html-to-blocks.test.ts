@@ -386,3 +386,57 @@ describe('outline newline encoding (Phase 2)', () => {
     ])
   })
 })
+
+// ── #1960: "Turn into" styles — HTML paste parity ────────────────────────────
+// Every block style the "Turn into" menu can apply that ALSO has an HTML
+// representation must survive an HTML paste: the clipboard fragment must walk
+// to markdown that re-parses to the correct block node (the #1960 hard
+// constraint covers the HTML paste/export path, not just markdown). Callout has
+// no standard HTML element, so it is intentionally absent here — it is reached
+// via markdown (`> [!INFO]`) and the slash/turn-into path, both covered by the
+// markdown round-trip suite.
+describe('"Turn into" styles — HTML paste parity (#1960)', () => {
+  /** First top-level node type produced by pasting a single-block fragment. */
+  function firstNodeType(html: string): string | undefined {
+    return pasteRoundTrip(html)[0]?.node.content?.[0]?.type
+  }
+
+  it('paragraph: <p> → paragraph node', () => {
+    expect(firstNodeType('<p>plain text</p>')).toBe('paragraph')
+  })
+
+  it('heading: <h1>/<h2>/<h3> → heading node with matching level', () => {
+    for (const level of [1, 2, 3] as const) {
+      const block = pasteRoundTrip(`<h${level}>Title</h${level}>`)[0]
+      const node = block?.node.content?.[0]
+      expect(node?.type).toBe('heading')
+      expect((node as { attrs?: { level?: number } }).attrs?.level).toBe(level)
+    }
+  })
+
+  it('bullet list: <ul><li> → bulletList node', () => {
+    expect(firstNodeType('<ul><li>item</li></ul>')).toBe('bulletList')
+  })
+
+  it('ordered list: <ol><li> → orderedList node', () => {
+    expect(firstNodeType('<ol><li>item</li></ol>')).toBe('orderedList')
+  })
+
+  it('quote: <blockquote> → blockquote node (no callout type)', () => {
+    const node = pasteRoundTrip('<blockquote>quoted</blockquote>')[0]?.node.content?.[0]
+    expect(node?.type).toBe('blockquote')
+    expect((node as { attrs?: { calloutType?: string } }).attrs?.calloutType).toBeFalsy()
+  })
+
+  it('code block: <pre><code> → codeBlock node', () => {
+    expect(firstNodeType('<pre><code>const x = 1</code></pre>')).toBe('codeBlock')
+  })
+
+  it('divider: <hr> → horizontalRule node (not dropped)', () => {
+    const blocks = pasteRoundTrip('<p>a</p><hr><p>b</p>')
+    // The divider is preserved between the two paragraphs (regression guard:
+    // it used to be silently dropped, merging the surrounding blocks).
+    const types = blocks.map((b) => b.node.content?.[0]?.type)
+    expect(types).toEqual(['paragraph', 'horizontalRule', 'paragraph'])
+  })
+})
