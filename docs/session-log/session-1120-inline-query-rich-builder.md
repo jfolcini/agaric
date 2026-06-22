@@ -56,3 +56,27 @@ builder. So the design is **dual-read, back-compat-safe**:
 - Optional: open a faithfully-translatable LEGACY block directly into the Advanced
   builder (an upgrade path) — deliberately deferred to keep legacy-edit behavior
   and its tests stable.
+
+## Continuation (2026-06-22)
+
+The "Stage A dropped" decision above was reversed on user instruction
+("retroactively reroute every legacy block through the rich engine … don't
+preserve bugs").
+
+- **#1962 — reroute legacy inline `{{query}}` through the rich engine.** Added a
+  conservative translator (`inline-query-resolve.ts`) that maps faithfully-
+  translatable legacy shapes to a `FilterExpr` and runs them through
+  `run_advanced_query`; non-faithful shapes fall back to legacy dispatch. New
+  backend primitives `TagOrRef` (ref-inclusive tag match) and `ChildOf`
+  (backlinks). A legacy↔rich equivalence harness is the faithfulness arbiter;
+  adversarial review caught three real drifts (tag ref-inclusion, `prop!=v`
+  over-match via `And[Exists, Ne]`, reserved-date `!=` fallback) and a real
+  `listTagsByPrefix` positional-arg bug. Merged.
+- **#1963 — data-driven custom-property columns in inline query tables.** Table
+  mode now appends a column per custom (non-reserved) property present on the
+  result blocks, fetched via the existing `getBatchProperties` IPC. Closes the
+  "table with properties as columns" gap (previously a fixed Status/Priority/
+  Due/Scheduled set). Frontend-only; full vitest suite green (14,246).
+
+Remaining gap from the feature-status review: inline queries are discoverable
+in-app but lack an end-user how-to doc.
