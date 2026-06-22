@@ -374,63 +374,27 @@ describe('BlockGutterControls (touch / pointer:coarse)', () => {
     resetMaxTouchPoints()
   })
 
-  // ── touch drag handle long-press hint ─────────────────────
-  it('drag handle aria-label surfaces the long-press hint on touch', () => {
-    renderWithTooltip(<BlockGutterControls blockId="B1" />)
-
-    const dragHandle = screen.getByTestId('drag-handle')
-    expect(dragHandle).toHaveAttribute('aria-label', t('block.reorderTouchHint'))
-  })
-
-  // ── #918: the touch grip must be a real, hittable, drag-activating target ──
-  it('touch drag grip is hittable at rest with touch-action:none and a comfortable hit area (#918)', () => {
-    const dragListeners = { onPointerDown: vi.fn() }
+  // #1968: the touch drag activator moved OUT of the gutter onto the leading
+  // collapse chevron (or, on leaves, a small bullet) — see
+  // `BlockCollapseControl`. On touch the gutter therefore renders NO drag grip;
+  // it only ever shows the selection checkbox, and only while a selection is
+  // active. (The grip's touch-target / touch-action / long-press-hint behavior
+  // is now covered by the BlockCollapseControl tests.)
+  it('renders no drag grip on touch (activator moved to the chevron/bullet)', () => {
     renderWithTooltip(
       <BlockGutterControls
         blockId="B1"
+        onSelect={vi.fn()}
         dragAttributes={{ 'data-dnd-activator': 'grip' } as never}
-        dragListeners={dragListeners}
+        dragListeners={{ onPointerDown: vi.fn() }}
       />,
     )
 
-    const dragHandle = screen.getByTestId('drag-handle')
-    // Visible & interactive at rest — NOT the hover-hidden desktop contract.
-    expect(dragHandle.className).not.toContain('opacity-0')
-    expect(dragHandle.className).not.toContain('pointer-events-none')
-    // ≥44×44 hit area (WCAG 2.5.5) + touch-action:none so the gesture starts a
-    // drag instead of a scroll.
-    expect(dragHandle.className).toContain('touch-target')
-    expect(dragHandle.className).toContain('touch-none')
-    // The grip is the dnd-kit activator: it carries the attributes + listeners.
-    expect(dragHandle).toHaveAttribute('data-dnd-activator', 'grip')
-    fireEvent.pointerDown(dragHandle)
-    expect(dragListeners.onPointerDown).toHaveBeenCalledTimes(1)
-  })
-
-  // ── #996: coarse-pointer icon legibility ──────────────────────────
-  // A 16px glyph in the WCAG 44px box reads as floaty; bump the touch grip icon
-  // to 20px on coarse pointers (desktop p-0.5/16px unchanged).
-  it('touch grip icon scales to 20px on coarse pointers (#996)', () => {
-    renderWithTooltip(<BlockGutterControls blockId="B1" />)
-
-    const grip = screen.getByTestId('grip-vertical-icon')
-    expect(grip.getAttribute('class')).toContain('[@media(pointer:coarse)]:h-5')
-    expect(grip.getAttribute('class')).toContain('[@media(pointer:coarse)]:w-5')
-  })
-
-  // #996: the touch grip paints no visible button background at rest — bg only
-  // appears on active so the region reads as ambient chrome.
-  it('touch grip has no resting background (#996)', () => {
-    renderWithTooltip(<BlockGutterControls blockId="B1" />)
-
-    const grip = screen.getByTestId('drag-handle')
-    // Grip: only active:bg-accent (no unconditional bg-* utility).
-    expect(grip.className).toContain('active:bg-accent')
-    expect(grip.className.split(/\s+/).some((c) => c.startsWith('bg-'))).toBe(false)
+    expect(screen.queryByTestId('drag-handle')).not.toBeInTheDocument()
   })
 
   it('passes axe audit in touch mode', async () => {
-    const { container } = renderWithTooltip(<BlockGutterControls blockId="B1" />)
+    const { container } = renderWithTooltip(<BlockGutterControls blockId="B1" onSelect={vi.fn()} />)
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()

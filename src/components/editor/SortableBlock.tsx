@@ -28,6 +28,7 @@ import { AttachmentList } from '@/components/attachments/AttachmentList'
 import { BlockContextMenu } from '@/components/editor/BlockContextMenu'
 import { BlockGutterControls } from '@/components/editor/BlockGutterControls'
 import {
+  BlockCollapseControl,
   BlockInlineControls,
   BlockMetadataRow,
   type BlockMetadataRowProps,
@@ -57,9 +58,6 @@ import { usePageBlockStoreOptional } from '@/stores/page-blocks'
 
 /** Pixels of left padding per depth level. */
 export const INDENT_WIDTH = 24
-
-/** Fixed width for the gutter so positions never shift. */
-const GUTTER_WIDTH = 'w-[68px]'
 
 /**
  * The mobile swipe-gesture affordances (delete backdrop, indent/outdent
@@ -323,20 +321,21 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
         />
       )}
 
-      {/* ── Narrow gutter — drag handle (+ select checkbox) ────── */}
-      {/* #918: On a fine-pointer device the gutter collapses to 0px on
-            narrow viewports (`max-md`) and reveals its controls on hover.
-            On a touch device there is no hover, and `BlockGutterControls`
-            renders a dedicated touch drag handle — collapsing to `w-0`
-            clipped that handle to zero width, leaving nothing hittable to
-            start a drag. So we only apply the touch-collapse classes when
-            the pointer is *not* coarse; on touch the gutter keeps its real
-            width and the touch grip stays a hittable target. */}
+      {/* ── Leading control lane — drag handle (desktop) + collapse
+            chevron / drag bullet (touch) ──────────────────────────── */}
+      {/* #1968: one tight, right-aligned lane replaces the old fixed 68px
+            gutter + reserved chevron placeholder. It reserves exactly TWO
+            control slots on desktop (drag handle + chevron) and ONE 44px
+            touch-target slot on touch (the chevron — or a leaf bullet —
+            which IS the drag activator, since the desktop handle is gone on
+            phones). `justify-end` keeps the glyphs hugging the text: on a
+            childless desktop block the hover-revealed drag handle simply
+            fills the text-adjacent slot, so sibling text stays aligned with
+            no empty gap and no placeholder. */}
       <div
         className={cn(
-          GUTTER_WIDTH,
-          'relative z-10 flex-shrink-0 flex items-center gap-1 justify-end',
-          !isTouchDevice && 'max-md:w-0 max-md:overflow-hidden',
+          'block-control-lane relative z-10 flex flex-shrink-0 items-center justify-end gap-0.5',
+          isTouchDevice ? 'min-w-11' : 'min-w-12',
         )}
       >
         <BlockGutterControls
@@ -351,17 +350,21 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
           // this is gone; the override now rides on each gutter Tooltip.
           tooltipDelayDuration={500}
         />
+        <BlockCollapseControl
+          blockId={blockId}
+          hasChildren={hasChildren}
+          isCollapsed={isCollapsed}
+          isTouch={isTouchDevice}
+          onToggleCollapse={onToggleCollapse}
+          // On touch the chevron (or leaf bullet) is the drag activator; on
+          // desktop the handle above stays the activator, so leave these unset.
+          dragAttributes={isTouchDevice ? attributes : undefined}
+          dragListeners={isTouchDevice ? listeners : undefined}
+        />
       </div>
 
-      {/* ── Inline controls — chevron (reserved slot) + task checkbox ── */}
-      <BlockInlineControls
-        blockId={blockId}
-        hasChildren={hasChildren}
-        isCollapsed={isCollapsed}
-        onToggleCollapse={onToggleCollapse}
-        todoState={todoState}
-        onToggleTodo={onToggleTodo}
-      />
+      {/* ── Inline controls — task checkbox, leading the block text ── */}
+      <BlockInlineControls blockId={blockId} todoState={todoState} onToggleTodo={onToggleTodo} />
 
       {/* ── Property edit popover / key rename ────────────────── */}
       <BlockPropertyEditor

@@ -48,13 +48,21 @@ async function handleFor(page: import('@playwright/test').Page, index: number) {
   return handle
 }
 
-/** Ctrl+Click a block's static surface to toggle it into the selection. */
+/**
+ * Ctrl+Click a block's static surface to toggle it into the selection.
+ *
+ * Click the leading-text corner rather than the geometric centre: a block whose
+ * text contains an inline link/reference chip can have that chip sitting at the
+ * centre, and a Ctrl+click on a chip is consumed by the chip (it does not toggle
+ * the selection). The top-left of `block-static` is reliably the start of the
+ * plain text for these seed blocks.
+ */
 async function ctrlSelect(page: import('@playwright/test').Page, index: number) {
   await page
     .locator('[data-testid="sortable-block"]')
     .nth(index)
     .locator('[data-testid="block-static"]')
-    .click({ modifiers: ['Control'] })
+    .click({ modifiers: ['Control'], position: { x: 8, y: 8 } })
 }
 
 test.describe('Block drag-and-drop (multi-select, #914)', () => {
