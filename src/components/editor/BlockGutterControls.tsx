@@ -41,24 +41,6 @@ import { useBlockStore } from '@/stores/blocks'
 const GUTTER_BUTTON_BASE =
   'flex-shrink-0 p-0.5 rounded-sm text-muted-foreground opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto transition-opacity focus-ring-visible active:scale-95 touch-target'
 
-/**
- * Touch drag-handle grip (#918).
- *
- * Unlike the desktop gutter buttons, the touch grip must be *visible and
- * hittable at rest* — coarse-pointer devices have no hover to reveal it, and
- * it is the only element carrying the dnd-kit drag listeners. We therefore do
- * NOT inherit `GUTTER_BUTTON_BASE` (which hides controls behind hover /
- * `pointer-events-none`). Instead:
- *  - `touch-target` guarantees a ≥44×44 hit area (WCAG 2.5.5).
- *  - `touch-action: none` (via `touch-none`) stops the browser from claiming
- *    the press-drag as a scroll gesture so the dnd-kit activator can start the
- *    drag. The handle is the activator, so the touch-action must live here.
- *  - It is calm at rest (muted, low-contrast grip) and firms up on
- *    press/active, so it reads as intentional chrome, not a permanent button.
- */
-const TOUCH_DRAG_HANDLE_CLASS =
-  'drag-handle touch-none flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground/60 active:text-foreground active:bg-accent transition-colors focus-ring-visible active:scale-95 touch-target cursor-grab'
-
 /* ── GutterButton ───────────────────────────────────────────────── */
 
 interface GutterButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -243,45 +225,16 @@ export const BlockGutterControls = React.memo(
       />
     )
 
-    // ── Touch render — checkbox + drag grip ─────────────────────────
+    // ── Touch render — checkbox only ────────────────────────────────
+    // #1968: the touch drag handle is gone. The drag activator now lives on the
+    // leading collapse chevron (or, on leaves, a small bullet) — see
+    // `BlockCollapseControl`. So on touch this gutter renders ONLY the
+    // selection checkbox, and only while a multi-selection is active.
     if (isTouch) {
-      // Multiselect mode on touch: keep ONLY the select checkbox (extend the
-      // selection). History/Delete/move ops are reached via the long-press
-      // context menu, which applies to the whole selection.
-      if (hasSelection) {
-        return <div className="flex flex-col items-end gap-1">{selectCheckbox}</div>
-      }
-      // On touch, the @dnd-kit PointerSensor requires a press-and-hold before the
-      // drag activates; the desktop tooltip never fires on touch UAs, so the hint
-      // lives in `aria-label`.
-      // #918: render the grip as a plain, always-visible button (NOT the
-      // hover-hidden `GutterButton`) so it is hittable at rest on touch. This
-      // button is the dnd-kit drag activator, so the listeners — and the
-      // `touch-action: none` that lets them win the gesture over scrolling —
-      // must live here.
-      const touchDragHandle = (
-        <button
-          type="button"
-          className={TOUCH_DRAG_HANDLE_CLASS}
-          aria-label={t('block.reorderTouchHint')}
-          data-testid="drag-handle"
-          aria-keyshortcuts={t('block.reorderKeyshortcuts')}
-          data-context-trigger="true"
-          {...dragAttributes}
-          {...dragListeners}
-          // #966 — same pre-drag focus capture as the desktop handle (see above).
-          onPointerDown={handleDragHandlePointerDown}
-        >
-          {/* #996: bump to 20px on coarse pointers so the grip reads as a solid
-            affordance, not a floaty 16px glyph in the 44px box. */}
-          <GripVertical className="h-4 w-4 [@media(pointer:coarse)]:h-5 [@media(pointer:coarse)]:w-5" />
-        </button>
-      )
-      return (
-        <div className="flex flex-col items-end gap-1">
-          {selectCheckbox}
-          {touchDragHandle}
-        </div>
+      return selectCheckbox ? (
+        <div className="flex flex-col items-end gap-1">{selectCheckbox}</div>
+      ) : (
+        <></>
       )
     }
 

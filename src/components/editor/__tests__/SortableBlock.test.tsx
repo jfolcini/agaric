@@ -548,7 +548,7 @@ describe('SortableBlock collapse/expand chevron', () => {
     expect(screen.queryByTestId('chevron-right-icon')).not.toBeInTheDocument()
   })
 
-  it('always renders the chevron placeholder spacer on leaves (hasChildren false)', () => {
+  it('reserves the control lane (no placeholder span) on leaves so text stays aligned', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -559,12 +559,13 @@ describe('SortableBlock collapse/expand chevron', () => {
       />,
     )
 
-    const inlineControls = container.querySelector('.inline-controls')
-    // The chevron slot is reserved on EVERY leaf via an aria-hidden <span>
-    // with `w-5 h-5`, so the block text stays aligned whether or not the row
-    // has children. (The gating on `anyBlockHasChildren` was removed.)
-    const spacer = inlineControls?.querySelector('span.w-5.h-5[aria-hidden]')
-    expect(spacer).toBeInTheDocument()
+    // #1968: the old aria-hidden `w-5 h-5` placeholder is gone. Alignment now
+    // comes from the lane reserving a fixed 2-slot min-width (desktop), with the
+    // hover-revealed drag handle filling the text-adjacent slot via justify-end.
+    expect(container.querySelector('span.w-5.h-5[aria-hidden]')).not.toBeInTheDocument()
+    const lane = container.querySelector('.block-control-lane')
+    expect(lane?.className).toContain('min-w-12')
+    expect(lane?.className).toContain('justify-end')
   })
 
   it('applies rotate-90 class when expanded (not collapsed)', () => {
@@ -1017,7 +1018,7 @@ describe('gutter alignment', () => {
         hasChildren
       />,
     )
-    const gutter = container.querySelector('.w-\\[68px\\]')
+    const gutter = container.querySelector('.block-control-lane')
     expect(gutter).toBeInTheDocument()
     expect(gutter?.className).toContain('items-center')
   })
@@ -1538,7 +1539,7 @@ describe('SortableBlock inline controls', () => {
     expect(container.querySelector('.inline-controls')).toBeInTheDocument()
   })
 
-  it('chevron is inside inline-controls, not the gutter', () => {
+  it('chevron is inside the control lane, not the inline-controls (#1968)', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1549,9 +1550,12 @@ describe('SortableBlock inline controls', () => {
       />,
     )
 
+    // #1968: the chevron moved into the gutter control lane (co-located with the
+    // drag handle); the inline-controls now holds only the task marker.
+    const lane = container.querySelector('.block-control-lane')
+    expect(lane?.querySelector('.collapse-toggle')).toBeInTheDocument()
     const inlineControls = container.querySelector('.inline-controls')
-    const collapseBtn = inlineControls?.querySelector('.collapse-toggle')
-    expect(collapseBtn).toBeInTheDocument()
+    expect(inlineControls?.querySelector('.collapse-toggle')).not.toBeInTheDocument()
   })
 
   it('checkbox is inside inline-controls', () => {
@@ -1598,7 +1602,7 @@ describe('SortableBlock inline controls', () => {
       />,
     )
 
-    const gutter = container.querySelector('.w-\\[68px\\]')
+    const gutter = container.querySelector('.block-control-lane')
     expect(gutter).toBeInTheDocument()
   })
 
@@ -1616,7 +1620,7 @@ describe('SortableBlock inline controls', () => {
     expect(wrapper?.className).toContain('gap-1')
   })
 
-  it('gutter uses gap-1 around the drag handle', () => {
+  it('control lane uses a tight gap-0.5 between drag handle and chevron (#1968)', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1626,8 +1630,8 @@ describe('SortableBlock inline controls', () => {
       />,
     )
 
-    const gutter = container.querySelector('.w-\\[68px\\]')
-    expect(gutter?.className).toContain('gap-1')
+    const gutter = container.querySelector('.block-control-lane')
+    expect(gutter?.className).toContain('gap-0.5')
   })
 
   it('gutter holds only the drag handle (no delete button, no spacer) at rest', () => {
@@ -1642,7 +1646,7 @@ describe('SortableBlock inline controls', () => {
       </TestBlockActionsOverride>,
     )
 
-    const gutter = container.querySelector('.w-\\[68px\\]')
+    const gutter = container.querySelector('.block-control-lane')
     // Delete moved to the context menu; the multi-select checkbox is omitted
     // unless a selection is active. So at rest the gutter has exactly one
     // child: the drag handle button.
@@ -3003,7 +3007,7 @@ describe('SortableBlock vertical alignment', () => {
     )
 
     // Find gutter via w-[68px] class selector
-    const gutter = container.querySelector('.w-\\[68px\\]')
+    const gutter = container.querySelector('.block-control-lane')
     expect(gutter?.className).toContain('items-center')
 
     // inline-controls has items-center
@@ -3069,7 +3073,7 @@ describe('SortableBlock vertical alignment', () => {
     expect(chevron.classList.contains('w-4')).toBe(true)
   })
 
-  it('gutter and inline-controls use same gap value', () => {
+  it('control lane and inline-controls each set an explicit gap (#1968)', () => {
     const { container } = render(
       <SortableBlock
         blockId="B1"
@@ -3080,11 +3084,12 @@ describe('SortableBlock vertical alignment', () => {
       />,
     )
 
-    const gutter = container.querySelector('.w-\\[68px\\]')
+    const gutter = container.querySelector('.block-control-lane')
     const inlineControls = container.querySelector('.inline-controls')
 
-    // Both containers use the same gap-1 value
-    expect(gutter?.className).toContain('gap-1')
+    // #1968: the lane tightened to gap-0.5 (drag + chevron pack snugly); the
+    // inline-controls keep their gap-1 rhythm for the task marker + metadata.
+    expect(gutter?.className).toContain('gap-0.5')
     expect(inlineControls?.className).toContain('gap-1')
   })
 
@@ -3585,7 +3590,7 @@ describe('SortableBlock heading alignment', () => {
         rovingEditor={makeRovingEditor()}
       />,
     )
-    const gutter = container.querySelector(`.w-\\[68px\\]`)
+    const gutter = container.querySelector(`.block-control-lane`)
     expect(gutter?.className).toContain('items-center')
 
     const inlineControls = container.querySelector('.inline-controls')
@@ -3601,7 +3606,7 @@ describe('SortableBlock heading alignment', () => {
         rovingEditor={makeRovingEditor()}
       />,
     )
-    const gutter = container.querySelector(`.w-\\[68px\\]`)
+    const gutter = container.querySelector(`.block-control-lane`)
     expect(gutter?.className).toContain('items-center')
 
     const inlineControls = container.querySelector('.inline-controls')
@@ -3617,7 +3622,7 @@ describe('SortableBlock heading alignment', () => {
         rovingEditor={makeRovingEditor()}
       />,
     )
-    const gutter = container.querySelector(`.w-\\[68px\\]`)
+    const gutter = container.querySelector(`.block-control-lane`)
     expect(gutter?.className).toContain('items-center')
 
     const inlineControls = container.querySelector('.inline-controls')
@@ -3633,7 +3638,7 @@ describe('SortableBlock heading alignment', () => {
         rovingEditor={makeRovingEditor()}
       />,
     )
-    const gutter = container.querySelector(`.w-\\[68px\\]`)
+    const gutter = container.querySelector(`.block-control-lane`)
     expect(gutter?.className).toContain('items-center')
   })
 })
@@ -3708,12 +3713,12 @@ describe('SortableBlock mobile gutter hidden', () => {
     expect(dragHandle.className).not.toContain('max-sm:pointer-events-auto')
   })
 
-  // #918: on a *fine-pointer* (desktop / mouse) device the narrow gutter still
-  // collapses to 0px below `md` and reveals its controls on hover — that
-  // behaviour is unchanged. The touch case (where the collapse is suppressed so
-  // the drag grip stays hittable) is covered in the dedicated touch describe
-  // block below.
-  it('gutter container has fine-pointer touch-collapse classes (desktop unchanged)', () => {
+  // #1968: the old 68px gutter collapsed to 0px below `md` (#918) to claw back
+  // horizontal space on narrow windows. The redesigned lane is already tight
+  // (two control slots), and it now also hosts the collapse chevron — which must
+  // NOT be clipped away — so the collapse-to-0 behaviour is gone. The lane keeps
+  // a stable reserved width instead.
+  it('control lane reserves a tight fixed width and no longer collapses below md', () => {
     render(
       <TestBlockActionsOverride actions={{ onDelete: vi.fn(), onShowHistory: vi.fn() }}>
         <SortableBlock
@@ -3727,11 +3732,9 @@ describe('SortableBlock mobile gutter hidden', () => {
 
     const dragHandle = screen.getByTestId('drag-handle')
     const gutterDiv = dragHandle.parentElement as HTMLElement
-    // Collapse widened from max-sm (<640px) to max-md (<768px) so
-    // the 68-px gutter no longer forces horizontal overflow on portrait
-    // tablets and narrow desktop windows.
-    expect(gutterDiv.className).toContain('max-md:w-0')
-    expect(gutterDiv.className).toContain('max-md:overflow-hidden')
+    expect(gutterDiv.className).toContain('min-w-12')
+    expect(gutterDiv.className).not.toContain('max-md:w-0')
+    expect(gutterDiv.className).not.toContain('w-[68px]')
   })
 
   it('outer wrapper has max-sm:items-start for vertical alignment', () => {
@@ -4014,7 +4017,7 @@ describe(' responsive layout', () => {
     expect(swipeContent).toHaveClass('w-full')
   })
 
-  it('gutter collapses below md (not sm), matching the mobile breakpoint', () => {
+  it('control lane reserves a tight 2-slot width and never collapses (#1968)', () => {
     render(
       <TestBlockActionsOverride actions={{ onDelete: vi.fn(), onShowHistory: vi.fn() }}>
         <SortableBlock
@@ -4026,17 +4029,16 @@ describe(' responsive layout', () => {
       </TestBlockActionsOverride>,
     )
 
-    // The gutter is the parent of the drag handle, and also carries the
-    // fixed w-[68px] class from GUTTER_WIDTH.
+    // #1968: the lane is the parent of the drag handle. It replaces the fixed
+    // 68px gutter (+ its responsive collapse) with a tight reserved min-width
+    // and stays put at every breakpoint — the chevron lives here and must not be
+    // clipped away.
     const dragHandle = screen.getByTestId('drag-handle')
     const gutter = dragHandle.parentElement as HTMLElement
-    expect(gutter.className).toContain('w-[68px]')
-    expect(gutter).toHaveClass('max-md:w-0')
-    expect(gutter).toHaveClass('max-md:overflow-hidden')
-    // The old sm-only collapse must be gone — it caused 68px overflow
-    // at 640..767px viewports.
+    expect(gutter.className).toContain('min-w-12')
+    expect(gutter.className).not.toContain('w-[68px]')
+    expect(gutter.className).not.toContain('max-md:w-0')
     expect(gutter.className).not.toContain('max-sm:w-0')
-    expect(gutter.className).not.toContain('max-sm:overflow-hidden')
   })
 })
 

@@ -43,7 +43,7 @@ vi.mock('@/components/properties/DateChipEditor', () => ({
 }))
 
 import { BlockGutterControls } from '@/components/editor/BlockGutterControls'
-import { BlockInlineControls } from '@/components/editor/BlockInlineControls'
+import { BlockCollapseControl } from '@/components/editor/BlockInlineControls'
 import { BlockListItem } from '@/components/editor/BlockListItem'
 import { AddPropertyPopover } from '@/components/properties/AddPropertyPopover'
 
@@ -151,9 +151,14 @@ describe('#216 B — drag handle a11y (BlockGutterControls)', () => {
     expect(handle.getAttribute('aria-label')?.length ?? 0).toBeGreaterThan(0)
   })
 
-  it('exposes aria-keyshortcuts on the touch drag handle too', () => {
+  // #1968: on touch the drag activator moved off the gutter onto the leading
+  // chevron / leaf bullet (BlockCollapseControl). It still exposes the reorder
+  // keyshortcuts so AT users can move blocks without the gesture.
+  it('exposes aria-keyshortcuts on the touch drag activator (BlockCollapseControl)', () => {
     setCoarse(true)
-    renderWithTooltip(<BlockGutterControls blockId="b1" />)
+    renderWithTooltip(
+      <BlockCollapseControl blockId="b1" hasChildren={false} isCollapsed={false} isTouch />,
+    )
     expect(screen.getByTestId('drag-handle')).toHaveAttribute(
       'aria-keyshortcuts',
       'Control+Shift+ArrowUp Control+Shift+ArrowDown',
@@ -161,18 +166,21 @@ describe('#216 B — drag handle a11y (BlockGutterControls)', () => {
   })
 })
 
-describe('#216 C4 — colour-blind collapse cue (BlockInlineControls)', () => {
+// #1968: the collapse chevron (and its colour-blind cue) moved out of
+// BlockInlineControls into the gutter lane as `BlockCollapseControl`.
+describe('#216 C4 — colour-blind collapse cue (BlockCollapseControl)', () => {
   const baseProps = {
     blockId: 'b1',
     hasChildren: true,
     isCollapsed: false,
+    isTouch: false,
     onToggleCollapse: vi.fn(),
-    todoState: null,
-    onToggleTodo: vi.fn(),
   }
 
   it('adds a non-rotation cue when collapsed', () => {
-    renderWithTooltip(<BlockInlineControls {...baseProps} isCollapsed onToggleCollapse={vi.fn()} />)
+    renderWithTooltip(
+      <BlockCollapseControl {...baseProps} isCollapsed onToggleCollapse={vi.fn()} />,
+    )
     const toggle = screen.getByTestId('collapse-toggle')
     expect(toggle).toHaveAttribute('data-collapsed', 'true')
     expect(toggle.className).toMatch(/bg-muted/)
@@ -181,7 +189,7 @@ describe('#216 C4 — colour-blind collapse cue (BlockInlineControls)', () => {
 
   it('does not show the cue when expanded', () => {
     renderWithTooltip(
-      <BlockInlineControls {...baseProps} isCollapsed={false} onToggleCollapse={vi.fn()} />,
+      <BlockCollapseControl {...baseProps} isCollapsed={false} onToggleCollapse={vi.fn()} />,
     )
     const toggle = screen.getByTestId('collapse-toggle')
     expect(toggle).toHaveAttribute('data-collapsed', 'false')
