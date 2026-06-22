@@ -29,9 +29,14 @@
  *     `filtered_blocks_query` marshals them; explicit `type:property` is an exact
  *     text match (no date inference), mirroring `query_by_property`.
  *
- * Not translatable (→ legacy fallback): `type:backlinks` (children-of-block, no
- * engine primitive), key-only reserved filters, non-date `due/scheduled`
- * comparisons, and any unrecognised shape.
+ *   - `type:backlinks target:X` → `ChildOf { parent: X }` (`b.parent_id = X`),
+ *     the direct children the legacy `list_blocks(parent_id=…)` path returns.
+ *   - custom-key `!=` → `And[HasProperty{Exists}, HasProperty{Ne}]` (presence +
+ *     inequality), matching legacy `EXISTS(value != ?)`.
+ *
+ * Not translatable (→ legacy fallback): non-`eq` comparisons on the reserved
+ * membership columns (`priority`/`todo_state`), `!=` on reserved DATE columns
+ * (no `NotOn` predicate), key-only reserved filters, and any unrecognised shape.
  */
 
 import type { DatePredicate, PropertyPredicate, PropertyValue } from './bindings'
@@ -112,46 +117,65 @@ function toPropertyPredicate(
   }
 }
 
+/** Wrap a primitive as a `Leaf` expression. */
+function leaf(primitive: FilterPrimitive): FilterExpr {
+  return { type: 'Leaf', primitive }
+}
+
 /**
- * Translate one property filter to a primitive, or `null` when not faithfully
+ * Translate one property filter to a `FilterExpr`, or `null` when not faithfully
  * expressible. `dateInfer` controls whether a non-reserved value is parsed as a
  * date (`filtered` shorthand) or treated as exact text (explicit
  * `type:property`).
  */
-function propertyFilterToPrimitive(pf: PropertyFilter, dateInfer: boolean): FilterPrimitive | null {
+function propertyFilterToExpr(pf: PropertyFilter, dateInfer: boolean): FilterExpr | null {
   const op = pf.operator ?? 'eq'
   const isEq = op === 'eq'
 
   if (pf.key === 'todo_state') {
+    // Membership only — no comparison/`!=` on the row column.
     if (!isEq) return null
-    return { type: 'State', values: [pf.value], is_null: false, exclude: false }
+    return leaf({ type: 'State', values: [pf.value], is_null: false, exclude: false })
   }
   if (pf.key === 'priority') {
     if (!isEq) return null
-    return { type: 'Priority', values: [pf.value], is_null: false, exclude: false }
+    return leaf({ type: 'Priority', values: [pf.value], is_null: false, exclude: false })
   }
   if (pf.key === 'due_date' || pf.key === 'scheduled_date') {
+    // No `NotOn` date predicate exists, and `!=` on a nullable date column has
+    // NULL-handling that the engine's predicates don't reproduce → keep legacy.
+    if (op === 'neq') return null
     const date = parseDate(pf.value)
     if (date == null) return null // legacy text-compares the row field; keep legacy
     const predicate = toDatePredicate(op, date)
-    return pf.key === 'due_date' ? { type: 'DueDate', predicate } : { type: 'Scheduled', predicate }
+    return leaf(
+      pf.key === 'due_date' ? { type: 'DueDate', predicate } : { type: 'Scheduled', predicate },
+    )
   }
-
-  // `!=` diverges: legacy `filtered_blocks_query` compiles it as
-  // `EXISTS(value != ?)` (requires the property to be PRESENT), but the rich
-  // `HasProperty { Ne }` is `NOT EXISTS(value = ?)` (which also matches blocks
-  // that LACK the property). Keep `!=` on the legacy path to avoid that
-  // over-match. (`<`/`>`/`<=`/`>=` are presence-requiring on both sides, so they
-  // stay faithful.)
-  if (op === 'neq') return null
 
   // Custom key → block_properties. `filtered` date-infers the value; explicit
   // `type:property` uses an exact text match.
   const date = dateInfer ? parseDate(pf.value) : null
-  const predicate = date
-    ? toPropertyPredicate(op, { type: 'Date', value: date })
-    : toPropertyPredicate(op, { type: 'Text', value: pf.value })
-  return { type: 'HasProperty', key: pf.key, predicate }
+  const value: PropertyValue = date
+    ? { type: 'Date', value: date }
+    : { type: 'Text', value: pf.value }
+
+  // `!=` needs PRESENCE: legacy `filtered_blocks_query` compiles it as
+  // `EXISTS(value != ?)` (the property must exist), but the bare rich
+  // `HasProperty { Ne }` is `NOT EXISTS(value = ?)` — which also matches blocks
+  // that LACK the property. Compose presence + inequality: `Exists AND Ne`
+  // (properties are single-valued per key, so this is exact).
+  if (op === 'neq') {
+    return {
+      type: 'And',
+      children: [
+        leaf({ type: 'HasProperty', key: pf.key, predicate: { type: 'Exists' } }),
+        leaf({ type: 'HasProperty', key: pf.key, predicate: { type: 'Ne', value } }),
+      ],
+    }
+  }
+
+  return leaf({ type: 'HasProperty', key: pf.key, predicate: toPropertyPredicate(op, value) })
 }
 
 /**
@@ -180,18 +204,26 @@ export async function resolveLegacyQueryToFilterExpr(
   const reasons: string[] = []
   const children: FilterExpr[] = []
 
-  // Backlinks = children of a block — no structural FilterPrimitive expresses it.
-  if (parsed.type === 'backlinks') reasons.push('backlinks-has-no-engine-primitive')
+  // Backlinks = the DIRECT CHILDREN of the target block (legacy
+  // `list_blocks(parent_id=target)`), expressed by the `ChildOf` primitive.
+  if (parsed.type === 'backlinks') {
+    const target = parsed.params['target']
+    if (target != null && target !== '') {
+      children.push(leaf({ type: 'ChildOf', parent: target }))
+    } else {
+      reasons.push('backlinks-missing-target')
+    }
+  }
   if (parsed.type === 'unknown') reasons.push('unknown-query-shape')
 
   // Shorthand property filters (the `filtered` path) — date-inferred.
   for (const pf of parsed.propertyFilters) {
-    const primitive = propertyFilterToPrimitive(pf, true)
-    if (primitive == null) {
+    const expr = propertyFilterToExpr(pf, true)
+    if (expr == null) {
       reasons.push(`property-not-expressible:${pf.key}:${pf.operator ?? 'eq'}`)
       continue
     }
-    children.push({ type: 'Leaf', primitive })
+    children.push(expr)
   }
 
   // Explicit `type:property key:X value:Y operator:op` lands in `params` — exact
@@ -217,11 +249,11 @@ export async function resolveLegacyQueryToFilterExpr(
       const date = parsed.params['date']
       const pf: PropertyFilter = { key, value: date ?? value, operator }
       // Explicit form: only date-infer when an explicit `date:` param was given.
-      const primitive = propertyFilterToPrimitive(pf, date != null)
-      if (primitive == null) {
+      const expr = propertyFilterToExpr(pf, date != null)
+      if (expr == null) {
         reasons.push(`explicit-property-not-expressible:${key}:${operator}`)
       } else {
-        children.push({ type: 'Leaf', primitive })
+        children.push(expr)
       }
     }
   }

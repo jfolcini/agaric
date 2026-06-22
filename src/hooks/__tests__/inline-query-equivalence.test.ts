@@ -54,6 +54,7 @@ const B4 = id('B4') // custom: project=beta
 const B5 = id('B5') // todo DONE
 const B6 = id('B6') // custom date: deadline=2025-06-01
 const B7 = id('B7') // tagged work ONLY via an inline block_tag_refs reference
+const B8 = id('B8') // custom: context=beta (present, == beta)
 const BX = id('BX') // OTHER space — must never appear
 
 function clearMock(): void {
@@ -116,6 +117,8 @@ beforeEach(() => {
   childBlock(B6, PAGE, {})
   setProp(B6, 'deadline', { value_date: '2025-06-01' })
   childBlock(B7, PAGE, {})
+  childBlock(B8, PAGE, {})
+  setProp(B8, 'context', { value_text: 'beta' }) // present but == beta (excluded by !=beta)
   // Other-space block tagged work + priority 1 — must never leak into SPACE.
   childBlock(BX, PAGE_OTHER, { priority: '1' })
 
@@ -157,6 +160,11 @@ describe('legacy ↔ rich inline-query equivalence', () => {
     'property:priority=1 property:todo_state=TODO',
     'property:context=@office tag:work',
     'type:property key:context value:@office',
+    // Custom `!=`: present-and-not-equal (B2 has context=@office), excluding
+    // both the matching-value block (B8: context=beta) and absent-key blocks.
+    'property:context!=beta',
+    // Backlinks: the direct children of PAGE (all of B1..B8).
+    `type:backlinks target:${PAGE}`,
   ]
 
   for (const expr of TRANSLATABLE) {
@@ -188,18 +196,17 @@ describe('legacy ↔ rich inline-query equivalence', () => {
     }
   })
 
-  it('keeps non-translatable shapes on the legacy path (fallback)', async () => {
-    const backlinks = await resolveLegacyQueryToFilterExpr(
-      parseQueryExpression(`type:backlinks target:${PAGE}`),
-      deps,
-    )
-    expect(backlinks.filterExpr).toBeNull()
-    expect(backlinks.reasons).toContain('backlinks-has-no-engine-primitive')
-
+  it('keeps genuinely non-translatable shapes on the legacy path (fallback)', async () => {
+    // Comparison on a reserved membership column has no engine primitive.
     const nonEq = await resolveLegacyQueryToFilterExpr(
       parseQueryExpression('property:priority>1'),
       deps,
     )
     expect(nonEq.filterExpr).toBeNull()
+    expect(nonEq.reasons).toContain('property-not-expressible:priority:gt')
+
+    // Unknown shapes never compile to match-all.
+    const unknown = await resolveLegacyQueryToFilterExpr(parseQueryExpression('type:invalid'), deps)
+    expect(unknown.filterExpr).toBeNull()
   })
 })

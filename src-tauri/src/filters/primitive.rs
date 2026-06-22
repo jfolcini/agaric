@@ -42,6 +42,9 @@ pub enum FilterPrimitive {
     /// semantics the legacy `query_by_tags`/`filtered_blocks_query` paths use;
     /// `Tag` is attached-only.
     TagOrRef { tag: String },
+    /// Shared — block's `parent_id` equals `parent` (its direct children).
+    /// Mirrors the legacy `list_blocks(parent_id=…)` backlinks path.
+    ChildOf { parent: String },
     /// Shared — page name matches the GLOB pattern. `exclude=true`
     /// becomes a `NOT IN (...)` sub-select; otherwise an `IN (...)`.
     PathGlob { pattern: String, exclude: bool },
@@ -454,6 +457,7 @@ pub trait Projection {
 
     fn compile_tag(&self, tag: &str) -> WhereClause;
     fn compile_tag_or_ref(&self, tag: &str) -> WhereClause;
+    fn compile_child_of(&self, parent: &str) -> WhereClause;
     fn compile_path_glob(&self, pattern: &str, exclude: bool) -> WhereClause;
     fn compile_has_property(&self, key: &str, predicate: &PropertyPredicate) -> WhereClause;
     fn compile_last_edited(&self, spec: &LastEditedSpec) -> WhereClause;
@@ -533,6 +537,7 @@ pub trait Projection {
         match p {
             FilterPrimitive::Tag { tag } => self.compile_tag(tag),
             FilterPrimitive::TagOrRef { tag } => self.compile_tag_or_ref(tag),
+            FilterPrimitive::ChildOf { parent } => self.compile_child_of(parent),
             FilterPrimitive::PathGlob { pattern, exclude } => {
                 self.compile_path_glob(pattern, *exclude)
             }
@@ -628,6 +633,9 @@ impl FilterPrimitive {
             // index-backed sub-selects (`block_tags.tag_id` +
             // `idx_block_tag_refs_tag`) — same index-backed tier as `Tag`.
             | FilterPrimitive::TagOrRef { .. }
+            // `ChildOf` is `b.parent_id = ?`, served by the `parent_id`
+            // index — an index-backed equality, same tier as `Tag`.
+            | FilterPrimitive::ChildOf { .. }
             | FilterPrimitive::HasProperty { .. }
             | FilterPrimitive::Space { .. }
             | FilterPrimitive::Stub
@@ -683,6 +691,9 @@ impl FilterPrimitive {
             FilterPrimitive::Tag { .. } => "tag",
             // Ref-inclusive tag leaf — shares the `tag` allowed-key with `Tag`.
             FilterPrimitive::TagOrRef { .. } => "tag",
+            // Direct-children structural leaf — advanced-query-only key
+            // (see `QUERY_ALLOWED_KEYS`), the legacy backlinks reroute target.
+            FilterPrimitive::ChildOf { .. } => "child-of",
             FilterPrimitive::PathGlob { .. } => "path",
             FilterPrimitive::HasProperty { .. } => "has-property",
             FilterPrimitive::LastEdited { .. } => "last-edited",
@@ -918,6 +929,9 @@ impl Projection for PagesProjection {
              UNION SELECT source_id FROM block_tag_refs WHERE tag_id = ?)",
             vec![Bind::Text(tag.to_string()), Bind::Text(tag.to_string())],
         )
+    }
+    fn compile_child_of(&self, parent: &str) -> WhereClause {
+        WhereClause::new("b.parent_id = ?", vec![Bind::Text(parent.to_string())])
     }
     fn compile_path_glob(&self, pattern: &str, exclude: bool) -> WhereClause {
         // #1320-A — Pages now uses the SAME `LOWER(title) GLOB ?` dialect as
@@ -1294,6 +1308,11 @@ impl Projection for SearchProjection {
             vec![Bind::Text(tag.to_string()), Bind::Text(tag.to_string())],
         )
     }
+    fn compile_child_of(&self, parent: &str) -> WhereClause {
+        // Mirrors `compile_tag`'s `b` block alias; `parent_id` is a column on
+        // the block row, so the direct-children predicate is identical to Pages.
+        WhereClause::new("b.parent_id = ?", vec![Bind::Text(parent.to_string())])
+    }
     fn compile_path_glob(&self, pattern: &str, exclude: bool) -> WhereClause {
         // #1320 Search keeps the LEGACY `LOWER(title) GLOB ?`
         // dialect verbatim (NOT the Pages `COLLATE NOCASE LIKE` form), so
@@ -1436,6 +1455,7 @@ mod tests {
         let all = [
             FilterPrimitive::Tag { tag: "t".into() },
             FilterPrimitive::TagOrRef { tag: "t".into() },
+            FilterPrimitive::ChildOf { parent: "p".into() },
             FilterPrimitive::PathGlob {
                 pattern: "p".into(),
                 exclude: false,
@@ -1515,6 +1535,7 @@ mod tests {
             match prim {
                 FilterPrimitive::Tag { .. }
                 | FilterPrimitive::TagOrRef { .. }
+                | FilterPrimitive::ChildOf { .. }
                 | FilterPrimitive::PathGlob { .. }
                 | FilterPrimitive::HasProperty { .. }
                 | FilterPrimitive::LastEdited { .. }
@@ -1946,6 +1967,28 @@ mod tests {
         });
         assert!(!attached_only.sql.contains("UNION"));
         assert!(!attached_only.sql.contains("block_tag_refs"));
+    }
+
+    #[test]
+    fn child_of_emits_parent_id_equality() {
+        // `ChildOf` is the direct-children structural leaf: it compiles to a
+        // plain `b.parent_id = ?` equality (one Text bind), mirroring the
+        // legacy `list_blocks(parent_id=…)` backlinks path, identical across
+        // every surface (`parent_id` is a column on the block row).
+        let prim = FilterPrimitive::ChildOf {
+            parent: "01PARENT0000000000000000P1".into(),
+        };
+        for proj_sql in [
+            PagesProjection.compile(&prim),
+            SearchProjection.compile(&prim),
+            crate::query::QueryProjection.compile(&prim),
+        ] {
+            assert_eq!(proj_sql.sql, "b.parent_id = ?");
+            assert_eq!(
+                proj_sql.binds,
+                vec![Bind::Text("01PARENT0000000000000000P1".into())],
+            );
+        }
     }
 
     #[test]

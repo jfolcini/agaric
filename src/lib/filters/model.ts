@@ -712,6 +712,12 @@ export function filterPrimitiveToCanonical(filter: FilterPrimitive): FilterPredi
       // UI, so the lost distinction is inert.
       return { kind: 'tag', by: 'name', name: filter.tag }
     }
+    case 'ChildOf': {
+      // Structural parent-child relation (b.parent_id = ?). No flat canonical
+      // category; produced only by the inline backlinks reroute and never
+      // round-tripped from the canonical UI.
+      return null
+    }
     case 'PathGlob': {
       return { kind: 'pathGlob', pattern: filter.pattern, exclude: filter.exclude }
     }

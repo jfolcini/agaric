@@ -1761,6 +1761,11 @@ export type FilterPrimitive =
  */
 { type: "TagOrRef"; tag: string } |
 /**
+ *  Shared — block's `parent_id` equals `parent` (its direct children).
+ *  Mirrors the legacy `list_blocks(parent_id=…)` backlinks path.
+ */
+{ type: "ChildOf"; parent: string } |
+/**
  *  Shared — page name matches the GLOB pattern. `exclude=true`
  *  becomes a `NOT IN (...)` sub-select; otherwise an `IN (...)`.
  */

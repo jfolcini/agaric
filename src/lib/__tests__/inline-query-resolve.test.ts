@@ -129,15 +129,23 @@ describe('resolveLegacyQueryToFilterExpr — structural mapping', () => {
     expect(filterExpr?.type).toBe('And')
     expect(filterExpr?.type === 'And' && filterExpr.children).toHaveLength(2)
   })
+
+  it('backlinks → ChildOf (direct children of the target)', async () => {
+    const { filterExpr, reasons } = await resolve('type:backlinks target:01ABC')
+    expect(reasons).toEqual([])
+    expect(filterExpr).toEqual({
+      type: 'And',
+      children: [{ type: 'Leaf', primitive: { type: 'ChildOf', parent: '01ABC' } }],
+    })
+  })
 })
 
 describe('resolveLegacyQueryToFilterExpr — conservative fallback (legacy)', () => {
   const fallbackCases: Array<[string, string]> = [
-    ['type:backlinks target:01ABC', 'backlinks-has-no-engine-primitive'],
     ['property:priority>1', 'property-not-expressible:priority:gt'],
     ['property:todo_state!=DONE', 'property-not-expressible:todo_state:neq'],
-    // `!=` on a custom key stays legacy (rich `Ne` over-matches absent keys).
-    ['property:context!=beta', 'property-not-expressible:context:neq'],
+    // `!=` on a reserved DATE key stays legacy (no NotOn predicate + NULL semantics).
+    ['property:due_date!=2025-01-01', 'property-not-expressible:due_date:neq'],
     ['type:invalid', 'no-translatable-content'],
   ]
 
@@ -162,6 +170,33 @@ describe('resolveLegacyQueryToFilterExpr — conservative fallback (legacy)', ()
             key: 'label',
             predicate: { type: 'Gte', value: { type: 'Text', value: 'beta' } },
           },
+        },
+      ],
+    })
+  })
+
+  it('custom-key != → presence-requiring inequality (Exists AND Ne)', async () => {
+    const { filterExpr, reasons } = await resolve('property:context!=beta')
+    expect(reasons).toEqual([])
+    expect(filterExpr).toEqual({
+      type: 'And',
+      children: [
+        {
+          type: 'And',
+          children: [
+            {
+              type: 'Leaf',
+              primitive: { type: 'HasProperty', key: 'context', predicate: { type: 'Exists' } },
+            },
+            {
+              type: 'Leaf',
+              primitive: {
+                type: 'HasProperty',
+                key: 'context',
+                predicate: { type: 'Ne', value: { type: 'Text', value: 'beta' } },
+              },
+            },
+          ],
         },
       ],
     })

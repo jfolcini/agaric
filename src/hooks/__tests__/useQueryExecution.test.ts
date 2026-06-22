@@ -128,11 +128,13 @@ describe('useQueryExecution', () => {
     expect(tagCalls).toHaveLength(0)
   })
 
-  it('fetches backlinks query results', async () => {
+  it('fetches backlinks query results (reroutes to ChildOf via run_advanced_query)', async () => {
+    const seen: string[] = []
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') {
+      seen.push(cmd)
+      if (cmd === 'run_advanced_query') {
         return {
-          items: [
+          rows: [
             makeBlock({
               id: 'B1',
               content: 'Child block',
@@ -140,9 +142,9 @@ describe('useQueryExecution', () => {
               page_id: 'TARGET1',
             }),
           ],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -160,6 +162,9 @@ describe('useQueryExecution', () => {
     expect(result.current.results).toHaveLength(1)
     expect(result.current.results[0]?.content).toBe('Child block')
     expect(result.current.error).toBeNull()
+    // Backlinks-with-target reroutes through the rich engine, not legacy list_blocks.
+    expect(seen).toContain('run_advanced_query')
+    expect(seen).not.toContain('list_blocks')
   })
 
   it('sets error for unknown query type', async () => {

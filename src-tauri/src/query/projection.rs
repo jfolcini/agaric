@@ -65,6 +65,9 @@ pub static QUERY_ALLOWED_KEYS: std::sync::LazyLock<HashSet<&'static str>> =
             "links-to",
             "linked-from",
             "has-parent-matching",
+            // Direct-children structural leaf — the legacy backlinks reroute
+            // target (`b.parent_id = ?`).
+            "child-of",
         ])
     });
 
@@ -79,6 +82,9 @@ impl Projection for QueryProjection {
     }
     fn compile_tag_or_ref(&self, tag: &str) -> WhereClause {
         PagesProjection.compile_tag_or_ref(tag)
+    }
+    fn compile_child_of(&self, parent: &str) -> WhereClause {
+        PagesProjection.compile_child_of(parent)
     }
     fn compile_path_glob(&self, pattern: &str, exclude: bool) -> WhereClause {
         PagesProjection.compile_path_glob(pattern, exclude)
