@@ -17,6 +17,7 @@ import { PropertyChip } from '@/components/properties/PropertyChip'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { type BLOCK_EVENTS, dispatchBlockEvent } from '@/lib/block-events'
 import { dueDateColor, formatCompactDate, MONTH_SHORT } from '@/lib/date-utils'
 import { capturePreDragFocus } from '@/lib/pre-drag-focus'
@@ -564,6 +565,15 @@ export const BlockInlineControls = React.memo(
     // (co-located with the drag handle as `BlockCollapseControl`), so this
     // component now renders only the task marker.
     const hasSelection = useBlockStore((s) => s.selectedBlockIds.length > 0)
+    const isTouch = useIsTouch()
+
+    // The empty (no-state) task marker reveals on hover, but `touch-target`
+    // reserves a 44px slot on coarse pointers even at `opacity-0` — dead space
+    // left of every block's text on phones (there is no hover to reveal it, and
+    // tasks are set via the long-press menu / slash command). So on touch we
+    // render the marker ONLY when the block actually has a task state; desktop
+    // keeps the hover-to-add affordance.
+    const showTaskMarker = !hasSelection && (!isTouch || !!todoState)
 
     return (
       <div
@@ -573,7 +583,7 @@ export const BlockInlineControls = React.memo(
       >
         {/* Fix 6: in multiselect mode the task checkbox is suppressed on every
           row (only the gutter select checkbox shows). */}
-        {!hasSelection && (
+        {showTaskMarker && (
           <TaskMarkerButton blockId={blockId} todoState={todoState} onToggleTodo={onToggleTodo} />
         )}
       </div>

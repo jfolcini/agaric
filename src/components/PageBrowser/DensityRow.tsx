@@ -173,7 +173,11 @@ function PropertyFlagBadge({ token, label }: PropertyFlagBadgeProps): React.Reac
   return (
     <span
       data-page-flag={token}
-      className="inline-flex shrink-0 items-center rounded-md border border-border/60 px-1.5 py-0 text-[10px] font-medium text-muted-foreground"
+      // #1966 mobile: hide the property-flag badges on narrow rows so the page
+      // title (which truncates) keeps usable width instead of collapsing to a
+      // few characters. Counts + flags return at `sm`+; the short relative-time
+      // stays.
+      className="inline-flex shrink-0 items-center rounded-md border border-border/60 px-1.5 py-0 text-[10px] font-medium text-muted-foreground max-sm:hidden"
     >
       #{label}
     </span>
@@ -353,13 +357,13 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
               )}
             >
               {showInbound && (
-                <span data-metadata-inbound>
+                <span data-metadata-inbound className="max-sm:hidden">
                   <span aria-hidden="true">{`${inboundLinkCount} ↗`}</span>
                   <span className="sr-only">{inboundText}</span>
                 </span>
               )}
               {showChildren && (
-                <span data-metadata-children>
+                <span data-metadata-children className="max-sm:hidden">
                   <span aria-hidden="true">{`${childBlockCount} ⊟`}</span>
                   <span className="sr-only">{childrenText}</span>
                 </span>
