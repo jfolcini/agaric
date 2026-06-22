@@ -396,6 +396,28 @@ describe('#759 mobile Sheet a11y description', () => {
     expect(dialog).toHaveAccessibleDescription(t('sidebar.mobileDescription'))
   })
 
+  it('clips the collapsed icon rail so labels cannot bleed past it (#1967)', () => {
+    render(
+      <SidebarProvider>
+        <Sidebar collapsible="icon">
+          <SidebarContent>Content</SidebarContent>
+        </Sidebar>
+      </SidebarProvider>,
+    )
+
+    // The fixed 48px icon rail must hard-clip its content; without
+    // `overflow-hidden` a menu label can paint a few pixels past the rail edge.
+    const container = document.querySelector(
+      '[data-mobile-rail="true"] [data-slot="sidebar-container"]',
+    )
+    expect(container).not.toBeNull()
+    expect(container).toHaveClass('overflow-hidden')
+
+    const inner = container?.querySelector('[data-slot="sidebar-inner"]')
+    expect(inner).toHaveClass('overflow-hidden')
+    expect(inner).toHaveClass('min-w-0')
+  })
+
   it('opened mobile Sheet passes axe', async () => {
     renderMobileSidebar()
 

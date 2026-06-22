@@ -438,7 +438,7 @@ export function PdfViewerDialog({
         {/* Annotation toolbar — only when the dialog can persist a copy. */}
         {canAnnotate && !loading && !error && numPages > 0 && (
           <div
-            className="flex items-center justify-center gap-2 pb-2"
+            className="flex flex-wrap items-center justify-center gap-2 pb-2"
             data-testid="pdf-annotation-toolbar"
           >
             <Button
@@ -523,7 +523,10 @@ export function PdfViewerDialog({
         </div>
 
         {!loading && !error && numPages > 0 && (
-          <div className="flex items-center justify-center gap-4 pt-2" data-testid="pdf-nav">
+          <div
+            className="flex flex-wrap items-center justify-center gap-4 pt-2"
+            data-testid="pdf-nav"
+          >
             <Button
               variant="outline"
               size="icon-sm"

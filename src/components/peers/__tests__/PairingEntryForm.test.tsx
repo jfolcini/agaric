@@ -107,6 +107,24 @@ describe('PairingEntryForm', () => {
     expect(buttons[1]?.textContent).toMatch(/Type passphrase/i)
   })
 
+  // #1966 — on narrow phones the two toggle buttons (the QR button carries an
+  // icon + label + "Recommended" badge) must stack vertically instead of
+  // overflowing the dialog. The row is column-first and only goes horizontal at
+  // the `sm` breakpoint, with each button full-width while stacked.
+  it('stacks the entry-mode toggle vertically on narrow viewports', () => {
+    render(<PairingEntryForm {...defaultProps} />)
+
+    const toggle = document.querySelector('.pairing-entry-toggle')
+    expect(toggle).toHaveClass('flex-col')
+    expect(toggle).toHaveClass('sm:flex-row')
+
+    const buttons = toggle?.querySelectorAll('button') ?? []
+    for (const button of buttons) {
+      expect(button).toHaveClass('w-full')
+      expect(button).toHaveClass('sm:w-auto')
+    }
+  })
+
   // Signpost QR as the recommended path with a Badge inside the
   // QR scan button.
   it('renders a "Recommended" Badge inside the QR scan button', () => {

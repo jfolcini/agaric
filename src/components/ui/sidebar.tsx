@@ -249,7 +249,7 @@ const Sidebar = ({
           <div
             data-slot="sidebar-container"
             className={cn(
-              'fixed inset-y-0 z-10 flex h-svh w-(--sidebar-width-icon)',
+              'fixed inset-y-0 z-10 flex h-svh w-(--sidebar-width-icon) overflow-hidden',
               side === 'left' ? 'left-0 border-r' : 'right-0 border-l',
               className,
             )}
@@ -257,7 +257,7 @@ const Sidebar = ({
             <div
               data-sidebar="sidebar"
               data-slot="sidebar-inner"
-              className="flex h-full w-full flex-col bg-sidebar"
+              className="flex h-full w-full min-w-0 flex-col overflow-hidden bg-sidebar"
             >
               {children}
             </div>
