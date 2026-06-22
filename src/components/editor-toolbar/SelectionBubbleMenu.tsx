@@ -284,7 +284,13 @@ export function SelectionBubbleMenu({
       role="toolbar"
       aria-label={t('toolbar.selectionFormatting')}
       aria-controls={blockId ? `editor-${blockId}` : undefined}
-      className="selection-bubble-menu flex items-center gap-0.5 rounded-md border border-border bg-popover px-1 py-0.5 shadow-(--shadow-floating) animate-in fade-in-0 zoom-in-95 duration-fast ease-smooth"
+      // #1958 — `z-50` so the bubble paints above sibling blocks. Now that it
+      // opens BELOW the selection it overlaps the following block, whose
+      // `sortable-block` is a later sibling in the same `block-tree` (z-10)
+      // stacking context and would otherwise paint on top — intercepting clicks
+      // on the mark buttons. A z-index lifts the (position:absolute) bubble
+      // above those z-auto siblings within that context.
+      className="selection-bubble-menu z-50 flex items-center gap-0.5 rounded-md border border-border bg-popover px-1 py-0.5 shadow-(--shadow-floating) animate-in fade-in-0 zoom-in-95 duration-fast ease-smooth"
       data-testid="selection-bubble-menu"
     >
       {markToggles.map((btn) => {
