@@ -73,7 +73,7 @@ jobs:
       desktop: ${{ steps.diff.outputs.desktop }}
       android: ${{ steps.diff.outputs.android }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           # Full history so the three-dot `base...head` diff below can resolve
           # the merge-base. A shallow clone (the old `fetch-depth: 2`) lacks the
@@ -222,7 +222,7 @@ jobs:
     timeout-minutes: 50
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -370,7 +370,7 @@ jobs:
     # n=1). +50% headroom + round up → 45 min.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
