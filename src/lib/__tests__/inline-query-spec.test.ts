@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   type InlineQuerySpec,
+  countFilterLeaves,
   decodeInlineQueryPayload,
   encodeInlineQueryPayload,
   INLINE_QUERY_V2_PREFIX,
@@ -82,5 +83,12 @@ describe('inline-query-spec', () => {
 
   it('recognises the v2 marker', () => {
     expect(isInlineQueryV2(encodeInlineQueryPayload({ filter: NESTED, table: false }))).toBe(true)
+  })
+
+  it('counts leaf conditions across And/Or/Not', () => {
+    // NESTED has 3 leaves (Priority, Tag, State-under-Not).
+    expect(countFilterLeaves(NESTED)).toBe(3)
+    expect(countFilterLeaves({ type: 'And', children: [] })).toBe(0)
+    expect(countFilterLeaves({ type: 'Leaf', primitive: { type: 'Orphan' } })).toBe(1)
   })
 })

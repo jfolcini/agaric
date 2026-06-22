@@ -92,3 +92,19 @@ export function decodeInlineQueryPayload(payload: string): InlineQuerySpec | nul
 export function isInlineQueryV2(payload: string): boolean {
   return payload.trim().startsWith(INLINE_QUERY_V2_PREFIX)
 }
+
+/** Count the leaf (single-primitive) conditions in a `FilterExpr` tree. */
+export function countFilterLeaves(expr: FilterExpr): number {
+  switch (expr.type) {
+    case 'Leaf': {
+      return 1
+    }
+    case 'Not': {
+      return countFilterLeaves(expr.child)
+    }
+    default: {
+      // And | Or — sum over children.
+      return expr.children.reduce((sum, child) => sum + countFilterLeaves(child), 0)
+    }
+  }
+}
