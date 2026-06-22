@@ -24,6 +24,8 @@ export const toolbar: Record<string, string> = {
   'toolbar.discard': 'Discard changes',
   'toolbar.formatting': 'Formatting',
   'toolbar.selectionFormatting': 'Selection formatting',
+  'toolbar.format': 'Format',
+  'toolbar.formatTip': 'Text formatting',
   'toolbar.internalLink': 'Internal link',
   'toolbar.insertBlockRef': 'Block reference',
   'toolbar.insertQuery': 'Insert query',

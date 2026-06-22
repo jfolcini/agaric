@@ -47,6 +47,13 @@ export function buildToolbarItems(
   }
 
   // Group 0 — refs + blocks + popover triggers
+  // #1958 — the Format popover (inline mark toggles, applied at the caret with
+  // no selection) leads the group at near-top priority so it survives overflow
+  // collapse at any realistic width: it is the primary text-formatting
+  // affordance and the only mark access on touch (where the selection bubble is
+  // suppressed). Kept just below Undo/Redo (100), whose never-overflow
+  // invariant has priority under extreme width pressure.
+  pushButton('toolbar.format', 0, 95, true)
   for (const c of refsAndBlocks) pushButton(c.label, 0, c.priority ?? 0)
   pushButton('toolbar.codeBlockLanguage', 0, 90, true)
   pushButton('toolbar.headingLevel', 0, 90, true)

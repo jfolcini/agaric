@@ -1,10 +1,13 @@
 /**
  * FormattingToolbar — always-visible toolbar rendered above the active editor.
  *
- * Buttons (post Layer A): Internal Link, Tag, Blockquote | Code Block,
+ * Buttons (post Layer A): Format, Internal Link, Tag, Blockquote | Code Block,
  * Heading | Ordered List, Divider, Callout | Cycle Priority, Date, Due Date,
- * Scheduled Date, TODO, Properties | Undo, Redo, Discard. The 5 mark toggles
- * + External Link live in `SelectionBubbleMenu` (Layer A).
+ * Scheduled Date, TODO, Properties | Undo, Redo, Discard. The mark toggles
+ * + External Link live in `SelectionBubbleMenu` (Layer A); the leading
+ * "Format" popover (#1958) re-exposes those same mark toggles so they can be
+ * applied at the caret with no selection (and on touch, where the bubble is
+ * suppressed).
  *
  * Layer B: each button carries a `priority` (see
  * `src/lib/toolbar-config.ts`). When the container is narrow enough that not
@@ -47,6 +50,7 @@ import { renderCyclePriority } from './FormattingToolbar/MetadataGroup'
 import {
   renderCalloutButton,
   renderCodeBlockButton,
+  renderFormatButton,
   renderHeadingButton,
   renderTableOpsButton,
   renderTablePickerButton,
@@ -83,6 +87,7 @@ export function FormattingToolbar({
   // Pin the touch instance to the bottom of the layout viewport and lift it
   // above the keyboard via `visualViewport`. Desktop keeps the inline layout.
   const isTouch = useIsTouch()
+  const [formatPopoverOpen, setFormatPopoverOpen] = useState(false)
   const [headingPopoverOpen, setHeadingPopoverOpen] = useState(false)
   const [codeBlockPopoverOpen, setCodeBlockPopoverOpen] = useState(false)
   const [calloutPopoverOpen, setCalloutPopoverOpen] = useState(false)
@@ -179,6 +184,15 @@ export function FormattingToolbar({
       )
     }
     switch (item.key) {
+      case 'toolbar.format': {
+        return renderFormatButton({
+          editor,
+          mode,
+          t,
+          open: formatPopoverOpen,
+          setOpen: setFormatPopoverOpen,
+        })
+      }
       case 'toolbar.codeBlockLanguage': {
         return renderCodeBlockButton({
           editor,

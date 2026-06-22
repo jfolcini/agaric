@@ -10,11 +10,12 @@
  */
 
 import type { Editor } from '@tiptap/react'
-import { FileCode2, Heading, Info, Table, Table2 } from 'lucide-react'
+import { FileCode2, Heading, Info, Table, Table2, Type } from 'lucide-react'
 import type React from 'react'
 
 import { CalloutTypeSelector } from '@/components/editor-toolbar/CalloutTypeSelector'
 import { CodeLanguageSelector } from '@/components/editor-toolbar/CodeLanguageSelector'
+import { FormatMenu } from '@/components/editor-toolbar/FormatMenu'
 import { HeadingLevelSelector } from '@/components/editor-toolbar/HeadingLevelSelector'
 import { TablePicker } from '@/components/editor-toolbar/TablePicker'
 import { LANG_SHORT, toolbarActiveClass } from '@/lib/toolbar-config'
@@ -24,6 +25,96 @@ import { TableOpsSelector } from '../TableOpsSelector'
 import { Button } from '../ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover'
 import { type RenderMode, Tip, tooltipWithShortcut } from './shared'
+
+interface FormatButtonProps {
+  editor: Editor
+  mode: RenderMode
+  t: (key: string) => string
+  open: boolean
+  setOpen: (next: boolean | ((prev: boolean) => boolean)) => void
+}
+
+/**
+ * Render the "Format" popover trigger (#1958). Opens a `FormatMenu` holding the
+ * inline mark toggles so formatting can be applied at the caret WITHOUT a
+ * selection (and on touch, where the selection bubble is suppressed). Mirrors
+ * the callout / table popover triggers; unlike them it needs no overflow-close
+ * callback because the mark toggles intentionally keep the popover open so the
+ * user can stack several marks.
+ */
+export function renderFormatButton({
+  editor,
+  mode,
+  t,
+  open,
+  setOpen,
+}: FormatButtonProps): React.ReactElement {
+  if (mode === 'sentinel') {
+    return (
+      <Button variant="ghost" size="icon-xs" aria-hidden tabIndex={-1}>
+        <Type className="h-3.5 w-3.5" />
+      </Button>
+    )
+  }
+
+  const trigger =
+    mode === 'overflow' ? (
+      <Button
+        variant="ghost"
+        size="sm"
+        aria-label={t('toolbar.format')}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        className="justify-start text-sm w-full [@media(pointer:coarse)]:min-h-11"
+        onPointerDown={(e) => {
+          e.preventDefault()
+          setOpen((prev) => !prev)
+        }}
+      >
+        <Type className="h-3.5 w-3.5 mr-2" />
+        <span>{t('toolbar.format')}</span>
+      </Button>
+    ) : (
+      <Tip label={t('toolbar.formatTip')}>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label={t('toolbar.format')}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          onPointerDown={(e) => {
+            e.preventDefault()
+            setOpen((prev) => !prev)
+          }}
+        >
+          <Type className="h-3.5 w-3.5" />
+        </Button>
+      </Tip>
+    )
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverAnchor asChild>{trigger}</PopoverAnchor>
+      <PopoverContent
+        align="start"
+        className="w-auto max-w-[calc(100vw-2rem)] p-1"
+        data-editor-portal
+        // #1958 — keep focus in the editor while the Format popover is open
+        // (don't auto-focus the popover on open, don't snap focus back to the
+        // trigger on close). The mark toggles run `editor.chain().focus()
+        // .toggle…()`, which set a STORED mark at an empty caret; if Radix
+        // pulled focus into the popover and then returned it to the trigger,
+        // the editor would blur and drop that stored mark before the user
+        // could type. This mirrors the selection bubble, which never steals
+        // focus from the editor.
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        onCloseAutoFocus={(e) => e.preventDefault()}
+      >
+        <FormatMenu editor={editor} />
+      </PopoverContent>
+    </Popover>
+  )
+}
 
 interface CodeBlockButtonProps {
   editor: Editor
@@ -53,25 +144,37 @@ export function renderCodeBlockButton({
   setOpen,
   onOverflowClose,
 }: CodeBlockButtonProps): React.ReactElement {
-  // #215 P2-8 — persistent label so the inactive button doesn't read as
-  // icon-only/disabled. Active state surfaces the language short code.
-  const codeBlockLabel =
-    isCodeBlock && codeBlockLanguage ? (LANG_SHORT[codeBlockLanguage] ?? codeBlockLanguage) : 'Code'
+  // #1958 — the inline button is icon-only (mirroring the heading trigger); a
+  // persistent "Code" text label made the resting button too wide. The active
+  // language short-code is still surfaced as a compact badge so a focused code
+  // block reads its language at a glance.
+  const langBadge =
+    isCodeBlock && codeBlockLanguage ? (LANG_SHORT[codeBlockLanguage] ?? codeBlockLanguage) : null
 
   if (mode === 'sentinel') {
     // Just the button shape — skip Popover wrapper to avoid duplicating
     // popover content in the DOM. Must match the real button's footprint so
     // `useToolbarOverflow`'s width measurement stays accurate.
-    return (
+    return langBadge ? (
       <Button
         variant="ghost"
-        size="sm"
+        size="xs"
         aria-hidden
         tabIndex={-1}
-        className={cn('h-7 gap-1 px-1.5 text-xs', isCodeBlock && toolbarActiveClass)}
+        className={cn('gap-1 px-1.5', toolbarActiveClass)}
       >
         <FileCode2 className="h-3.5 w-3.5" />
-        <span className="font-medium">{codeBlockLabel}</span>
+        <span className="font-bold">{langBadge}</span>
+      </Button>
+    ) : (
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        aria-hidden
+        tabIndex={-1}
+        className={cn(isCodeBlock && toolbarActiveClass)}
+      >
+        <FileCode2 className="h-3.5 w-3.5" />
       </Button>
     )
   }
@@ -96,28 +199,40 @@ export function renderCodeBlockButton({
       >
         <FileCode2 className="h-3.5 w-3.5 mr-2" />
         <span>{t('toolbar.codeBlockLanguage')}</span>
-        {isCodeBlock && codeBlockLanguage && (
-          <span className="ml-auto text-xs font-bold">
-            {LANG_SHORT[codeBlockLanguage] ?? codeBlockLanguage}
-          </span>
-        )}
+        {langBadge && <span className="ml-auto text-xs font-bold">{langBadge}</span>}
       </Button>
     ) : (
       <Tip label={tipLabel}>
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-label={t('toolbar.codeBlockLanguage')}
-          aria-pressed={isCodeBlock}
-          className={cn('h-7 gap-1 px-1.5 text-xs', isCodeBlock && toolbarActiveClass)}
-          onPointerDown={(e) => {
-            e.preventDefault()
-            setOpen((prev) => !prev)
-          }}
-        >
-          <FileCode2 className="h-3.5 w-3.5" />
-          <span className="font-medium">{codeBlockLabel}</span>
-        </Button>
+        {langBadge ? (
+          <Button
+            variant="ghost"
+            size="xs"
+            aria-label={t('toolbar.codeBlockLanguage')}
+            aria-pressed={isCodeBlock}
+            className={cn('gap-1 px-1.5', toolbarActiveClass)}
+            onPointerDown={(e) => {
+              e.preventDefault()
+              setOpen((prev) => !prev)
+            }}
+          >
+            <FileCode2 className="h-3.5 w-3.5" />
+            <span className="font-bold">{langBadge}</span>
+          </Button>
+        ) : (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={t('toolbar.codeBlockLanguage')}
+            aria-pressed={isCodeBlock}
+            className={cn(isCodeBlock && toolbarActiveClass)}
+            onPointerDown={(e) => {
+              e.preventDefault()
+              setOpen((prev) => !prev)
+            }}
+          >
+            <FileCode2 className="h-3.5 w-3.5" />
+          </Button>
+        )}
       </Tip>
     )
 
