@@ -35,6 +35,7 @@ import {
   LayoutTemplate,
   Lightbulb,
   Link2,
+  List,
   ListOrdered,
   MapPin,
   Minus,
@@ -253,6 +254,12 @@ export const SLASH_COMMANDS: PickerItem[] = [
     label: 'NUMBERED LIST — Insert ordered list',
     category: 'slashCommand.categories.structure',
     icon: ListOrdered,
+  },
+  {
+    id: 'bullet-list',
+    label: 'BULLET LIST — Insert unordered list',
+    category: 'slashCommand.categories.structure',
+    icon: List,
   },
   {
     id: 'divider',
@@ -610,6 +617,7 @@ export const TURN_INTO_OPTIONS: TurnIntoOption[] = [
     label: 'Ordered list',
     icon: ListOrdered,
   },
+  { id: 'turn-bullet-list', blockType: 'bullet-list', label: 'Bullet list', icon: List },
   { id: 'turn-callout', blockType: 'callout', label: 'Callout', icon: Info },
 ]
 

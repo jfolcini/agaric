@@ -127,6 +127,7 @@ describe('TURN_INTO commands (#264)', () => {
       'quote',
       'code',
       'numbered-list',
+      'bullet-list',
       'callout',
     ])
   })

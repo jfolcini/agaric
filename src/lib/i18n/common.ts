@@ -224,6 +224,7 @@ export const common: Record<string, string> = {
   'contextMenu.turnIntoType.quote': 'Quote',
   'contextMenu.turnIntoType.code': 'Code block',
   'contextMenu.turnIntoType.numberedList': 'Ordered list',
+  'contextMenu.turnIntoType.bulletList': 'Bullet list',
   'contextMenu.turnIntoType.callout': 'Callout',
   'sidebar.properties': 'Properties',
   'shortcuts.title': 'Quick Reference',

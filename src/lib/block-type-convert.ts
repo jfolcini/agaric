@@ -30,6 +30,7 @@ export type BlockTypeToken =
   | 'quote'
   | 'code'
   | 'numbered-list'
+  | 'bullet-list'
   | 'callout'
 
 const HEADING_RE = /^(#{1,6})\s+/
@@ -69,6 +70,7 @@ export function detectBlockType(content: string): BlockTypeToken {
   }
   if (QUOTE_RE.test(line)) return 'quote'
   if (ORDERED_RE.test(line)) return 'numbered-list'
+  if (BULLET_RE.test(line)) return 'bullet-list'
   return 'paragraph'
 }
 
@@ -119,6 +121,9 @@ export function convertBlockContent(content: string, type: BlockTypeToken): stri
     case 'numbered-list': {
       return `1. ${text}`
     }
+    case 'bullet-list': {
+      return `- ${text}`
+    }
     case 'callout': {
       return `> [!INFO] ${text}`
     }
@@ -143,6 +148,7 @@ export function turnIdToBlockType(id: string): BlockTypeToken | null {
     case 'quote':
     case 'code':
     case 'numbered-list':
+    case 'bullet-list':
     case 'callout': {
       return token
     }

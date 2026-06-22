@@ -37,6 +37,11 @@ async function handleNumberedList(ctx: SlashCommandContext): Promise<void> {
   await applyContentEdit(ctx, newContent, 'slash.numberedListFailed')
 }
 
+async function handleBulletList(ctx: SlashCommandContext): Promise<void> {
+  const newContent = `- ${readCurrentContent(ctx)}`
+  await applyContentEdit(ctx, newContent, 'slash.bulletListFailed')
+}
+
 /**
  * #264 — `/turn <type>` converts the current block to the target block type,
  * reusing the shared `convertBlockContent` so the conversion logic is not
@@ -132,6 +137,7 @@ export function useSlashCommandStructural(): SlashHandlerTables {
         // directly is a no-op (the user picks a concrete target type).
         turn: () => {},
         'numbered-list': (ctx) => handleNumberedList(ctx),
+        'bullet-list': (ctx) => handleBulletList(ctx),
         // #976 (item 13) — duplicate the current block + its subtree.
         duplicate: (ctx) => handleDuplicate(ctx),
         divider: (ctx) => handleDivider(ctx),

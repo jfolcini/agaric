@@ -54,9 +54,12 @@ export function buildToolbarItems(
   // suppressed). Kept just below Undo/Redo (100), whose never-overflow
   // invariant has priority under extreme width pressure.
   pushButton('toolbar.format', 0, 95, true)
+  // #1960 — "Turn into" (Pilcrow) popover hosts every block-type transform,
+  // REPLACING the standalone Heading / Code-block / Callout / Blockquote /
+  // Ordered-list / Divider buttons (now redundant). Sits just after Format at
+  // near-top priority so both survive overflow collapse.
+  pushButton('toolbar.turnInto', 0, 94, true)
   for (const c of refsAndBlocks) pushButton(c.label, 0, c.priority ?? 0)
-  pushButton('toolbar.codeBlockLanguage', 0, 90, true)
-  pushButton('toolbar.headingLevel', 0, 90, true)
   out.push({ kind: 'separator', key: 'sep-0', group: 0, priority: 0 })
 
   // Group 1 — structure

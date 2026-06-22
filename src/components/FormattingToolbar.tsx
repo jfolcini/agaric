@@ -48,12 +48,10 @@ import { cn } from '@/lib/utils'
 import { buildConfigByKey, buildToolbarItems } from './FormattingToolbar/items'
 import { renderCyclePriority } from './FormattingToolbar/MetadataGroup'
 import {
-  renderCalloutButton,
-  renderCodeBlockButton,
   renderFormatButton,
-  renderHeadingButton,
   renderTableOpsButton,
   renderTablePickerButton,
+  renderTurnIntoButton,
 } from './FormattingToolbar/RefsAndBlocksGroup'
 import { type RenderMode, renderConfigButton, Tip } from './FormattingToolbar/shared'
 import { Button } from './ui/button'
@@ -88,9 +86,7 @@ export function FormattingToolbar({
   // above the keyboard via `visualViewport`. Desktop keeps the inline layout.
   const isTouch = useIsTouch()
   const [formatPopoverOpen, setFormatPopoverOpen] = useState(false)
-  const [headingPopoverOpen, setHeadingPopoverOpen] = useState(false)
-  const [codeBlockPopoverOpen, setCodeBlockPopoverOpen] = useState(false)
-  const [calloutPopoverOpen, setCalloutPopoverOpen] = useState(false)
+  const [turnIntoPopoverOpen, setTurnIntoPopoverOpen] = useState(false)
   const [tableOpsPopoverOpen, setTableOpsPopoverOpen] = useState(false)
   const [tablePickerPopoverOpen, setTablePickerPopoverOpen] = useState(false)
   const [overflowPopoverOpen, setOverflowPopoverOpen] = useState(false)
@@ -193,36 +189,13 @@ export function FormattingToolbar({
           setOpen: setFormatPopoverOpen,
         })
       }
-      case 'toolbar.codeBlockLanguage': {
-        return renderCodeBlockButton({
+      case 'toolbar.turnInto': {
+        return renderTurnIntoButton({
           editor,
           mode,
           t,
-          isCodeBlock: state.codeBlock,
-          codeBlockLanguage: state.codeBlockLanguage,
-          open: codeBlockPopoverOpen,
-          setOpen: setCodeBlockPopoverOpen,
-          onOverflowClose: closeOverflow,
-        })
-      }
-      case 'toolbar.headingLevel': {
-        return renderHeadingButton({
-          editor,
-          mode,
-          t,
-          headingLevel: state.headingLevel,
-          open: headingPopoverOpen,
-          setOpen: setHeadingPopoverOpen,
-          onOverflowClose: closeOverflow,
-        })
-      }
-      case 'toolbar.callout': {
-        return renderCalloutButton({
-          mode,
-          t,
-          open: calloutPopoverOpen,
-          setOpen: setCalloutPopoverOpen,
-          onOverflowClose: closeOverflow,
+          open: turnIntoPopoverOpen,
+          setOpen: setTurnIntoPopoverOpen,
         })
       }
       case 'toolbar.tableOps': {

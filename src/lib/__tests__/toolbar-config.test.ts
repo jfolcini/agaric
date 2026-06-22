@@ -192,9 +192,9 @@ describe('createMarkToggles', () => {
 // ── createRefsAndBlocks ─────────────────────────────────────────────────
 
 describe('createRefsAndBlocks', () => {
-  it('returns 5 buttons', () => {
+  it('returns 4 buttons', () => {
     const buttons = createRefsAndBlocks(makeEditor())
-    expect(buttons).toHaveLength(5)
+    expect(buttons).toHaveLength(4)
   })
 
   it('each button has valid config shape', () => {
@@ -204,28 +204,17 @@ describe('createRefsAndBlocks', () => {
     }
   })
 
-  it('includes internalLink, insertBlockRef, insertTag, blockquote, insertQuery', () => {
+  // #1960 — blockquote moved to the Turn into menu, so this group is now just
+  // the inline ref/insert buttons (no block-type toggle).
+  it('includes internalLink, insertBlockRef, insertTag, insertQuery', () => {
     const buttons = createRefsAndBlocks(makeEditor())
     const labels = buttons.map((b) => b.label)
     expect(labels).toEqual([
       'toolbar.internalLink',
       'toolbar.insertBlockRef',
       'toolbar.insertTag',
-      'toolbar.blockquote',
       'toolbar.insertQuery',
     ])
-  })
-
-  // #265 — blockquote is a long-tail structural insert with a `/quote` slash
-  // twin (its canonical home), so it is demoted below the refs/blocks that
-  // have no slash-only equivalent and drops into the overflow popover first.
-  it('demotes blockquote below the refs/blocks so it overflows first (#265)', () => {
-    const byLabel = Object.fromEntries(createRefsAndBlocks(makeEditor()).map((b) => [b.label, b]))
-    const blockquote = byLabel['toolbar.blockquote']?.priority ?? 0
-    const internalLink = byLabel['toolbar.internalLink']?.priority ?? 0
-    const insertTag = byLabel['toolbar.insertTag']?.priority ?? 0
-    expect(blockquote).toBeLessThan(internalLink)
-    expect(blockquote).toBeLessThan(insertTag)
   })
 
   // #213 PR 4 — block-ref creation parity (mirrors the page-link button).
@@ -331,46 +320,11 @@ describe('createRefsAndBlocks', () => {
 // ── createStructureButtons ──────────────────────────────────────────────
 
 describe('createStructureButtons', () => {
-  it('returns 3 buttons', () => {
-    const buttons = createStructureButtons()
-    expect(buttons).toHaveLength(3)
-  })
-
-  it('each button has valid config shape', () => {
-    const buttons = createStructureButtons()
-    for (const btn of buttons) {
-      assertValidConfig(btn)
-    }
-  })
-
-  it('includes orderedList, divider, callout', () => {
-    const buttons = createStructureButtons()
-    const labels = buttons.map((b) => b.label)
-    expect(labels).toEqual(['toolbar.orderedList', 'toolbar.divider', 'toolbar.callout'])
-  })
-
-  // #265 — structural-insert overflow trim. The slash menu is the canonical
-  // home for structural inserts; only the high-frequency ordered-list stays
-  // toward the front of the bar, while the long-tail divider/callout twins are
-  // demoted so they collapse into the overflow popover first (relieving #217).
-  it('keeps the high-frequency ordered list ahead of the long-tail divider/callout', () => {
-    const byLabel = Object.fromEntries(createStructureButtons().map((b) => [b.label, b]))
-    const orderedList = byLabel['toolbar.orderedList']?.priority ?? 0
-    const divider = byLabel['toolbar.divider']?.priority ?? 0
-    const callout = byLabel['toolbar.callout']?.priority ?? 0
-    expect(orderedList).toBeGreaterThan(divider)
-    expect(orderedList).toBeGreaterThan(callout)
-    // Callout is the first structural insert to overflow.
-    expect(callout).toBeLessThanOrEqual(divider)
-  })
-
-  it('actions dispatch block events', () => {
-    const spy = vi.fn()
-    document.addEventListener('insert-ordered-list', spy)
-    const buttons = createStructureButtons()
-    buttons[0]?.action()
-    expect(spy).toHaveBeenCalledOnce()
-    document.removeEventListener('insert-ordered-list', spy)
+  // #1960 — ordered-list / divider / callout moved into the Turn into menu
+  // (TurnIntoMenu); this group is now empty. Group 1 of the toolbar holds only
+  // the table-insert picker, wired separately in items.ts.
+  it('returns no buttons (structure transforms moved to Turn into)', () => {
+    expect(createStructureButtons()).toEqual([])
   })
 })
 

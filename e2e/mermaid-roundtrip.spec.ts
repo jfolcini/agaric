@@ -32,14 +32,23 @@ test.describe('Mermaid diagram round-trip (#1438)', () => {
     page,
   }) => {
     const editor = await focusBlock(page)
-    // Author the Mermaid source, then turn the block into a mermaid code block
-    // via the toolbar language picker.
+    // Author the Mermaid source, then turn the block into a mermaid code block.
+    // #1960 — Turn into → Code block, then re-open Turn into; the contextual
+    // language picker appears for code blocks. Use the custom-language path.
     await page.keyboard.press('Control+a')
     await page.keyboard.press('Delete')
-    await editor.type('graph TD; A-->B;')
-    await page.keyboard.press('Control+a')
+    await editor.pressSequentially('graph TD; A-->B;')
 
-    await page.getByRole('button', { name: 'Code block language' }).first().click()
+    const blockEditor = page.locator('[data-testid="block-editor"]')
+    await blockEditor.getByRole('button', { name: 'Turn into', exact: true }).click()
+    await page.getByRole('menuitemradio', { name: 'Code block' }).click()
+    await expect(editor.locator('pre')).toBeVisible()
+
+    // Caret into the code block so Turn into surfaces the language picker.
+    // Active-state read is rAF-coalesced (#1489) — let it propagate.
+    await editor.locator('pre').click()
+    await page.waitForTimeout(250)
+    await blockEditor.getByRole('button', { name: 'Turn into', exact: true }).click()
     const langInput = page.getByRole('textbox', { name: 'Code block language' })
     await expect(langInput).toBeVisible()
     await langInput.fill('mermaid')
