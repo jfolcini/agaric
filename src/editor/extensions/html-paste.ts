@@ -23,9 +23,11 @@
  * handler, so it stays out of the main chunk and only loads on the first HTML
  * paste.
  *
- * MVP scope: headings, paragraphs, lists (incl. nesting), links, and
- * bold/italic/code/strike marks. Tables, fenced code blocks, images,
- * blockquotes/callouts and task lists are deliberately left to a follow-up.
+ * Scope: headings, paragraphs, lists (incl. nesting), links, and
+ * bold/italic/code/strike marks (#1439 MVP); plus tables, fenced code blocks,
+ * images, blockquotes/callouts and task lists (#1439 Phase 2). See
+ * `html-to-blocks.ts` for the per-construct emission and the multi-line-block
+ * (table / code fence) outline encoding.
  */
 
 import { Extension } from '@tiptap/core'
@@ -137,11 +139,16 @@ async function convertAndInsert(view: EditorView, html: string, plainText: strin
 }
 
 /**
- * A block line that must become its OWN typed block (heading / bullet / ordered
- * item), never inlined into the current paragraph.
+ * A block that must become its OWN typed block, never inlined into the current
+ * paragraph: a heading / bullet / ordered item / task (#1439), or — Phase 2 —
+ * a multi-line construct (table, fenced code block; they carry a `\n`) or a
+ * block-level table / code-fence / blockquote / image leader. Inlining any of
+ * these would corrupt them, so they always route through the block-paste path.
  */
 function isStructuralLine(content: string): boolean {
-  return /^(#{1,6} |- |\d+\. )/.test(content)
+  // Multi-line content is always a standalone block (table / code fence).
+  if (content.includes('\n')) return true
+  return /^(#{1,6} |- |\d+\. |[-*] \[[ xX/-]\]|\||```|>|!\[)/.test(content)
 }
 
 /** Insert single-line markdown as inline PM content (marks) at the caret. */
