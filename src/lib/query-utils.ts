@@ -279,6 +279,10 @@ function propertyFilterToPrimitive(pf: PropertyFilter): FilterPrimitive | null {
     return { type: 'Priority', values: [pf.value], is_null: false, exclude: false }
   }
   if (pf.key === 'due_date') {
+    // The engine has no `!=` date predicate; `due_date!=X` would otherwise be
+    // mistranslated to an exact-day `On` match (the semantic opposite), so we
+    // refuse it and the caller keeps the legacy path.
+    if (pf.operator === 'neq') return null
     return { type: 'DueDate', predicate: toDatePredicate(pf) }
   }
   return { type: 'HasProperty', key: pf.key, predicate: toPropertyPredicate(pf) }

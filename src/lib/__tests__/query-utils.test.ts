@@ -456,5 +456,11 @@ describe('legacyQueryToFilterExpr', () => {
       expect(filterExpr).toBeNull()
       expect(reasons).toContain('property-operator-not-expressible:priority:gt')
     })
+
+    it('refuses due_date != (no != date primitive exists)', () => {
+      const { filterExpr, reasons } = translate('property:due_date!=2025-01-01')
+      expect(filterExpr).toBeNull()
+      expect(reasons).toContain('property-operator-not-expressible:due_date:neq')
+    })
   })
 })
