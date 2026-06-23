@@ -140,7 +140,7 @@ fn bench_import_markdown_inner(c: &mut Criterion) {
                             .await
                             .unwrap();
 
-                            assert_eq!(result.blocks_created, n as i64);
+                            assert_eq!(result.blocks_created, n);
 
                             materializer.shutdown();
                             drop(dir);

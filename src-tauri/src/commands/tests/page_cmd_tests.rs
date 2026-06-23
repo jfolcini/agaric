@@ -2504,7 +2504,7 @@ async fn import_markdown_multi_chunk_tree_matches_single_chunk() {
 
     assert_eq!(result.page_title, "BigFlat");
     assert_eq!(
-        result.blocks_created, n_i64,
+        result.blocks_created, n as u64,
         "all blocks must be created across chunks"
     );
     assert!(result.warnings.is_empty());
@@ -2649,7 +2649,7 @@ async fn import_markdown_commits_chunks_visible_to_separate_reader_662() {
     )
     .await
     .unwrap();
-    assert_eq!(result.blocks_created, n_i64);
+    assert_eq!(result.blocks_created, n as u64);
 
     // Signal the poller and collect the max partial count it observed.
     done.notify_one();

@@ -120,7 +120,12 @@ const ULID_BODY_RE = /^[0-9A-Z]{26}$/
  * bare ULID (handled verbatim — see {@link ULID_BODY_RE}). Non-greedy so
  * `[[A]] [[B]]` matches twice, not once across the gap.
  */
-const HUMAN_PAGE_LINK_RE = /\[\[([^\]\n]+?)\]\]/g
+// #1920 — exported so the cross-language parity test
+// (`src/lib/__tests__/page-link-re-parity.test.ts`) can assert it matches the
+// SAME boundaries as the CANONICAL Rust `HUMAN_PAGE_LINK_RE` in
+// `src-tauri/src/commands/pages/markdown.rs`. The two MUST stay byte-for-byte
+// identical; change both together.
+export const HUMAN_PAGE_LINK_RE = /\[\[([^\]\n]+?)\]\]/g
 
 /**
  * Human-readable tag on the way IN: `#tag` / `#nested/tag`. The name is a run of

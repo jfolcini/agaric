@@ -471,9 +471,9 @@ pub(crate) async fn create_block_in_tx(
 /// trivially unit-testable. The full `PropertyDefinition` struct carries
 /// `key` and `created_at` fields that the validation logic does not need;
 /// this slimmer view keeps the helper signature minimal.
-struct PropertyDeclaration {
-    value_type: String,
-    options: Option<String>,
+pub(crate) struct PropertyDeclaration {
+    pub(crate) value_type: String,
+    pub(crate) options: Option<String>,
 }
 
 /// Validate a [`SetPropertyPayload`] against the reserved-key shape rules
@@ -637,19 +637,12 @@ pub(crate) async fn set_property_in_tx(
     value_ref: Option<String>,
     value_bool: Option<bool>,
 ) -> Result<(BlockRow, op_log::OpRecord), AppError> {
-    // 1. Build and validate the payload before touching the DB.
-    // Validation logic lives in `validate_property_value`
-    //    above. The `property_definitions` row is pre-fetched here so the
-    //    helper stays sync and unit-testable.
-    let prop_payload = SetPropertyPayload {
-        block_id: BlockId::from_trusted(&block_id),
-        key: key.to_owned(),
-        value_text: value_text.clone(),
-        value_num,
-        value_date: value_date.clone(),
-        value_ref: value_ref.clone().map(BlockId::from),
-        value_bool,
-    };
+    // Thin wrapper (#1921): fetch the key's `property_definitions` row (the
+    // current behaviour) and delegate. A "clear" (all-null) write needs no
+    // declaration, so the lookup is skipped exactly as before. Callers that
+    // ALREADY hold the declaration (e.g. the batched import frontmatter path)
+    // call [`set_property_in_tx_with_declaration`] directly to avoid the
+    // per-key round-trip.
     let is_clear = value_text.is_none()
         && value_num.is_none()
         && value_date.is_none()
@@ -668,6 +661,58 @@ pub(crate) async fn set_property_in_tx(
             value_type: row.value_type,
             options: row.options,
         })
+    };
+    set_property_in_tx_with_declaration(
+        tx,
+        device_id,
+        block_id,
+        key,
+        value_text,
+        value_num,
+        value_date,
+        value_ref,
+        value_bool,
+        declaration,
+    )
+    .await
+}
+
+/// Core of [`set_property_in_tx`] with the `property_definitions` declaration
+/// supplied by the caller (#1921).
+///
+/// Extracted so a caller that has ALREADY fetched the declaration — e.g. the
+/// import frontmatter loop, which batches every key's `(value_type, options)`
+/// in one `json_each` query — can skip the per-key `SELECT … WHERE key = ?`
+/// round-trip [`set_property_in_tx`] otherwise issues. Behaviour is identical:
+/// the wrapper fetches the row and delegates here, so all existing callers are
+/// unaffected. `declaration` MUST be `None` for an all-null ("clear") write
+/// (matching the wrapper's `is_clear` skip) and otherwise the row for `key`
+/// (or `None` when `key` is undeclared — a permissive custom key).
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn set_property_in_tx_with_declaration(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    device_id: &str,
+    block_id: String,
+    key: &str,
+    value_text: Option<String>,
+    value_num: Option<f64>,
+    value_date: Option<String>,
+    value_ref: Option<String>,
+    value_bool: Option<bool>,
+    declaration: Option<PropertyDeclaration>,
+) -> Result<(BlockRow, op_log::OpRecord), AppError> {
+    // 1. Build and validate the payload before touching the DB.
+    // Validation logic lives in `validate_property_value`
+    //    above. The `property_definitions` row is supplied by the caller so the
+    //    helper stays sync and unit-testable.
+    let prop_payload = SetPropertyPayload {
+        block_id: BlockId::from_trusted(&block_id),
+        key: key.to_owned(),
+        value_text: value_text.clone(),
+        value_num,
+        value_date: value_date.clone(),
+        value_ref: value_ref.clone().map(BlockId::from),
+        value_bool,
     };
     validate_property_value(&prop_payload, declaration.as_ref())?;
 

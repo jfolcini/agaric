@@ -41,6 +41,12 @@ use super::super::*;
 ///
 /// `pub(crate)` so chunk-boundary tests can size a multi-chunk import
 /// relative to the threshold instead of hardcoding the number.
+///
+/// #1921 — chunking bounds only the writer-lock *hold time* (it commits +
+/// releases the lock periodically); it does NOT bound the per-block
+/// sibling-reproject cost incurred when each block is created. That reproject
+/// cost is a separate concern tracked on its own and is unaffected by this
+/// threshold.
 pub(crate) const IMPORT_CHUNK_BLOCKS: usize = 500;
 
 /// Matches a HUMAN-readable wiki-link token `[[Page Name]]` on import (#1446
@@ -49,7 +55,15 @@ pub(crate) const IMPORT_CHUNK_BLOCKS: usize = 500;
 /// token whose body is a canonical 26-char Crockford-base32 ULID is left
 /// untouched (it is already an internal `[[ULID]]` ref) — the resolver checks
 /// the captured body against [`crate::cache::PAGE_LINK_RE`] before rewriting.
-/// Mirrors the frontend `HUMAN_PAGE_LINK_RE` used by the paste path (#1484).
+///
+/// #1920 — this Rust regex (`\[\[([^\]\n]+?)\]\]`) is the CANONICAL source for
+/// the inbound wiki-link grammar. It is mirrored byte-for-byte by the frontend
+/// `HUMAN_PAGE_LINK_RE` in `src/lib/block-clipboard.ts` (the paste path,
+/// #1484). The two implement the SAME rule — `[[Page]]` → ULID,
+/// create-if-missing, ambiguous duplicate titles stay plain text — so any
+/// change to the pattern MUST be made in both. A cross-language parity test
+/// over a shared fixture pins them together (`page_link_re_parity_*` here and
+/// `page-link-re-parity.test.ts` in the frontend).
 static HUMAN_PAGE_LINK_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
     regex::Regex::new(r"\[\[([^\]\n]+?)\]\]").expect("invalid human page-link regex")
 });
@@ -80,6 +94,10 @@ fn collect_inbound_page_link_names(blocks: &[import::ParsedBlock]) -> Vec<String
     use std::collections::BTreeSet;
     let mut names: BTreeSet<String> = BTreeSet::new();
     for block in blocks {
+        // #1921 — skip the regex scan for link-free blocks (the common case).
+        if !block.content.contains("[[") {
+            continue;
+        }
         for cap in HUMAN_PAGE_LINK_RE.captures_iter(&block.content) {
             let name = cap[1].trim();
             // Skip canonical `[[ULID]]` bodies — they are already internal refs.
@@ -98,6 +116,13 @@ fn collect_inbound_page_link_names(blocks: &[import::ParsedBlock]) -> Vec<String
 /// failure) is left as its original plain-text token — nothing is dropped.
 /// Canonical `[[ULID]]` tokens already in the content are left untouched.
 fn rewrite_inbound_page_links(content: &str, resolved: &HashMap<String, String>) -> String {
+    // #1921 fast-path: a block with no `[[` can carry no wiki-link, so skip the
+    // regex scan + capture/replace work entirely. Behaviour is identical for
+    // link-free blocks (the regex would have matched nothing and returned the
+    // content unchanged anyway).
+    if !content.contains("[[") {
+        return content.to_string();
+    }
     HUMAN_PAGE_LINK_RE
         .replace_all(content, |caps: &regex::Captures<'_>| {
             let whole = &caps[0];
@@ -121,7 +146,10 @@ fn resolve_ulids_for_export(
     tag_names: &HashMap<String, String>,
     page_titles: &HashMap<String, String>,
 ) -> String {
-    use crate::fts::{PAGE_LINK_RE, TAG_REF_RE};
+    // #1920 — `crate::cache` is the canonical definition site for both regexes;
+    // `crate::fts::strip` imports them for FTS stripping. Reference the
+    // canonical cache path here rather than going through `fts`.
+    use crate::cache::{PAGE_LINK_RE, TAG_REF_RE};
 
     // Replace #[ULID] → #tagname
     let result = TAG_REF_RE
@@ -147,6 +175,19 @@ fn resolve_ulids_for_export(
             }
         })
         .into_owned()
+}
+
+/// One projected `block_properties` row destined for the exported YAML
+/// frontmatter (#384). A row stores its value in exactly one of the typed
+/// columns; the emit loop in [`export_page_markdown_inner`] picks the populated
+/// one. Lifted to module scope (#1920) from the function body for readability.
+struct FrontmatterRow {
+    key: String,
+    value_text: Option<String>,
+    value_date: Option<String>,
+    value_num: Option<f64>,
+    value_ref: Option<String>,
+    value_bool: Option<i64>,
 }
 
 /// Export a page and its full descendant subtree as a Markdown string with
@@ -175,7 +216,9 @@ pub async fn export_page_markdown_inner(
     pool: &SqlitePool,
     page_id: &str,
 ) -> Result<String, AppError> {
-    use crate::fts::{PAGE_LINK_RE, TAG_REF_RE};
+    // #1920 — canonical path (`crate::cache` defines these; `crate::fts::strip`
+    // imports them for its own use).
+    use crate::cache::{PAGE_LINK_RE, TAG_REF_RE};
     use std::collections::HashSet;
 
     // Validate ULID format upfront so malformed inputs surface
@@ -372,14 +415,6 @@ pub async fn export_page_markdown_inner(
     // #384: also project value_ref and value_num so numeric and
     // page-reference properties render instead of silently dropping to
     // empty (the old query only selected value_text + value_date).
-    struct FrontmatterRow {
-        key: String,
-        value_text: Option<String>,
-        value_date: Option<String>,
-        value_num: Option<f64>,
-        value_ref: Option<String>,
-        value_bool: Option<i64>,
-    }
     let property_rows = sqlx::query!(
         r#"SELECT key AS "key!", value_text, value_date, value_num, value_ref,
                   value_bool AS "value_bool: i64"
@@ -495,79 +530,9 @@ pub async fn export_page_markdown_inner(
     // YAML double-quoted scalar with `\`, `"` and all control characters
     // (`\n`, `\t`, `\r`, and `\xNN` for the rest) escaped, which is valid for
     // *any* string. Legacy scalar property values keep their verbatim
-    // emission below.
-    fn yaml_looks_like_special_token(s: &str) -> bool {
-        // YAML 1.1 boolean / null tokens (the common spellings parsers accept).
-        const RESERVED: &[&str] = &[
-            "null", "Null", "NULL", "~", "true", "True", "TRUE", "false", "False", "FALSE", "yes",
-            "Yes", "YES", "no", "No", "NO", "on", "On", "ON", "off", "Off", "OFF",
-        ];
-        if RESERVED.contains(&s) {
-            return true;
-        }
-        // Numeric-looking scalars (int / float / hex / octal / inf / nan).
-        // A bare numeric value would round-trip as a number, not a string, so
-        // we quote it. Be conservative: any token that parses as i64 or f64,
-        // or matches the common hex / sexagesimal-free special forms.
-        if s.parse::<i64>().is_ok() || s.parse::<f64>().is_ok() {
-            return true;
-        }
-        matches!(
-            s,
-            ".inf" | ".Inf" | ".INF" | "-.inf" | "+.inf" | ".nan" | ".NaN" | ".NAN"
-        ) || s
-            .strip_prefix("0x")
-            .is_some_and(|h| !h.is_empty() && h.chars().all(|c| c.is_ascii_hexdigit() || c == '_'))
-            || s.strip_prefix("0o").is_some_and(|o| {
-                !o.is_empty() && o.chars().all(|c| ('0'..='7').contains(&c) || c == '_')
-            })
-    }
-    fn yaml_flow_item(s: &str) -> String {
-        let plain_safe = !s.is_empty()
-            && s == s.trim()
-            && !yaml_looks_like_special_token(s)
-            // First char must not be a YAML indicator that changes meaning.
-            && !s.starts_with([
-                '-', '?', ':', ',', '[', ']', '{', '}', '#', '&', '*', '!', '|', '>', '\'', '"',
-                '%', '@', '`', ' ',
-            ])
-            // No flow-significant, comment, mapping, or control characters.
-            && s.chars().all(|c| {
-                !matches!(c, ',' | '[' | ']' | '{' | '}' | ':' | '#' | '"' | '\'')
-                    && !c.is_control()
-            });
-        if plain_safe {
-            return s.to_string();
-        }
-        let mut escaped = String::with_capacity(s.len() + 2);
-        escaped.push('"');
-        for c in s.chars() {
-            match c {
-                '\\' => escaped.push_str("\\\\"),
-                '"' => escaped.push_str("\\\""),
-                '\n' => escaped.push_str("\\n"),
-                '\t' => escaped.push_str("\\t"),
-                '\r' => escaped.push_str("\\r"),
-                c if c.is_control() => {
-                    // YAML double-quoted escapes: `\xNN` (8-bit) covers C0 and
-                    // DEL; C1 controls (U+0080..=U+009F) need `\uNNNN`.
-                    let cp = c as u32;
-                    if cp <= 0xFF {
-                        escaped.push_str(&format!("\\x{cp:02X}"));
-                    } else {
-                        escaped.push_str(&format!("\\u{cp:04X}"));
-                    }
-                }
-                c => escaped.push(c),
-            }
-        }
-        escaped.push('"');
-        escaped
-    }
-    fn yaml_flow_sequence(items: &[String]) -> String {
-        let inner: Vec<String> = items.iter().map(|s| yaml_flow_item(s)).collect();
-        format!("[{}]", inner.join(", "))
-    }
+    // emission below. #1920 — the emit helpers now live in `markdown_yaml`
+    // (symmetric with the import-side `strip_yaml_quotes`).
+    use super::markdown_yaml::yaml_flow_sequence;
 
     if !properties.is_empty() || !aliases.is_empty() || !tag_names_fm.is_empty() {
         output.push_str("---\n");
@@ -989,8 +954,8 @@ pub async fn import_markdown_with_progress(
     .await?;
     tx.enqueue_background(page_space_op);
 
-    let mut blocks_created: i64 = 0;
-    let mut properties_set: i64 = 0;
+    let mut blocks_created: u64 = 0;
+    let mut properties_set: u64 = 0;
     // Parse-time diagnostics (e.g. depth clamping, frontmatter array/invalid
     // lines). Per-row write failures are reported via `Err(AppError)` instead
     // — see the doc note. Made mutable so the frontmatter apply step below can
@@ -1008,18 +973,51 @@ pub async fn import_markdown_with_progress(
     // written into the FIRST chunk (alongside the page + space property),
     // before the block loop opens any new chunk, so they share the page's
     // atomic write.
+    //
+    // #1920 (A7) / #1921 (B1) — batch the property-definition lookup. Pre-fix
+    // the loop ran `SELECT value_type FROM property_definitions WHERE key = ?`
+    // once PER key, and `set_property_in_tx` then re-queried `value_type,
+    // options` for the SAME key a second time. We now fetch every distinct
+    // frontmatter key's `(value_type, options)` in ONE `json_each(?1)` query
+    // (the exporter's established batched idiom) into a map, drive the loop
+    // from it, and pass the pre-fetched declaration straight into
+    // `set_property_in_tx_with_declaration` — eliminating BOTH round-trips.
+    // A key absent from the map is undeclared (declaration `None`), preserving
+    // the missing-key behaviour exactly.
+    let frontmatter_decls: HashMap<String, (Option<String>, Option<String>)> = {
+        let distinct_keys: std::collections::BTreeSet<&str> = parse_output
+            .frontmatter
+            .iter()
+            .map(|(k, _)| k.as_str())
+            .collect();
+        if distinct_keys.is_empty() {
+            HashMap::new()
+        } else {
+            let keys: Vec<&str> = distinct_keys.into_iter().collect();
+            let keys_json = serde_json::to_string(&keys)?;
+            let rows = sqlx::query!(
+                r#"SELECT key AS "key!", value_type, options
+                   FROM property_definitions
+                   WHERE key IN (SELECT value FROM json_each(?1))"#,
+                keys_json,
+            )
+            .fetch_all(&mut **tx)
+            .await?;
+            rows.into_iter()
+                .map(|r| (r.key, (Some(r.value_type), r.options)))
+                .collect()
+        }
+    };
+
     for (key, value) in &parse_output.frontmatter {
-        // Registry-aware coercion: look up the declared `value_type` so a
-        // `number` / `boolean` / `date` value round-trips into the right
-        // typed column instead of always landing as text. `ref`-typed values
-        // are special-cased below (the exporter renders refs as the target
-        // page's *title*, not its ULID, so we reverse-resolve the title).
-        let value_type: Option<String> = sqlx::query_scalar!(
-            "SELECT value_type FROM property_definitions WHERE key = ?",
-            key,
-        )
-        .fetch_optional(&mut **tx)
-        .await?;
+        // Registry-aware coercion: consult the declared `value_type` (from the
+        // batched map above) so a `number` / `boolean` / `date` value
+        // round-trips into the right typed column instead of always landing as
+        // text. `ref`-typed values are special-cased below (the exporter
+        // renders refs as the target page's *title*, not its ULID, so we
+        // reverse-resolve the title).
+        let (value_type, options): (Option<String>, Option<String>) =
+            frontmatter_decls.get(key).cloned().unwrap_or((None, None));
 
         let (value_text, value_num, value_date, value_ref, value_bool) =
             if value_type.as_deref() == Some("ref") {
@@ -1083,7 +1081,19 @@ pub async fn import_markdown_with_progress(
                 )
             };
 
-        let (_page_block, prop_op) = set_property_in_tx(
+        // #1921 (B1) — reuse the declaration already fetched into the batched
+        // map instead of letting `set_property_in_tx` re-query it. A key with
+        // no `property_definitions` row stays undeclared (`None`), matching the
+        // wrapper's behaviour. Frontmatter always sets a value (never a clear),
+        // so a declared key carries a real declaration here.
+        let declaration =
+            value_type
+                .clone()
+                .map(|vt| crate::domain::block_ops::PropertyDeclaration {
+                    value_type: vt,
+                    options: options.clone(),
+                });
+        let (_page_block, prop_op) = crate::domain::block_ops::set_property_in_tx_with_declaration(
             &mut tx,
             device_id,
             page_id.clone(),
@@ -1093,6 +1103,7 @@ pub async fn import_markdown_with_progress(
             value_date,
             value_ref,
             value_bool,
+            declaration,
         )
         .await?;
         properties_set += 1;
@@ -1319,9 +1330,7 @@ pub async fn import_markdown_with_progress(
         // durability signal).
         if let Some(sink) = progress {
             sink.emit(ImportProgressUpdate::Progress {
-                // `blocks_created` is a monotonically incremented counter,
-                // always >= 0 — `cast_unsigned` documents that intent.
-                blocks_done: blocks_created.cast_unsigned(),
+                blocks_done: blocks_created,
                 blocks_total,
             });
         }
@@ -1330,6 +1339,14 @@ pub async fn import_markdown_with_progress(
         // owning block — a block and its properties are never split across
         // a chunk boundary (properties are emitted immediately after the
         // block create, before the next depth-0 flush check).
+        //
+        // #1921 — body-block properties INTENTIONALLY do NOT share the
+        // frontmatter declaration map: they use the string-value coercion
+        // (`typed_property_args_for_string_value`, not the registry-aware
+        // variant) and their key set is unbounded across all imported blocks,
+        // so they keep using the `set_property_in_tx` wrapper (one declaration
+        // fetch per write). Only the bounded, registry-coerced FRONTMATTER keys
+        // are pre-fetched and reused above.
         for (key, value) in &block.properties {
             // #623 — build the correct typed `PropertyValue` shape per key:
             // reserved date keys (`due_date`/`scheduled_date`) must hit the
@@ -1379,8 +1396,8 @@ pub async fn import_markdown_with_progress(
     if let Some(sink) = progress {
         sink.emit(ImportProgressUpdate::Complete {
             page_title: page_title.clone(),
-            blocks_created: blocks_created.cast_unsigned(),
-            properties_set: properties_set.cast_unsigned(),
+            blocks_created,
+            properties_set,
         });
     }
 
@@ -1465,4 +1482,70 @@ pub async fn import_markdown(
     )
     .await
     .map_err(sanitize_internal_error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #1920 — cross-language parity fixture for the inbound wiki-link regex.
+    /// `HUMAN_PAGE_LINK_RE` (the CANONICAL Rust source) must match these exact
+    /// boundaries; the TS mirror `HUMAN_PAGE_LINK_RE` in
+    /// `src/lib/block-clipboard.ts` is pinned to the SAME fixture by
+    /// `src/lib/__tests__/page-link-re-parity.test.ts`. Keep the two in sync:
+    /// any change here must be mirrored there (and in both regexes).
+    ///
+    /// Each case is `(input, expected_inner_captures)` — the run of group-1
+    /// (inner-name) matches the regex produces, in order.
+    #[test]
+    fn page_link_re_parity_boundaries_1920() {
+        let cases: &[(&str, &[&str])] = &[
+            ("[[A]]", &["A"]),
+            ("[[A B]]", &["A B"]),
+            ("[[A]] text [[B]]", &["A", "B"]),
+            // Non-greedy: `[[a[[b]]` → the first `]]` closes the match opened at
+            // the LAST `[[`, so the inner capture is `a[[b`.
+            ("[[a[[b]]", &["a[[b"]),
+            // Empty `[[]]` — the inner is `[^\]\n]+?` (one-or-more), so an empty
+            // body does NOT match.
+            ("[[]]", &[]),
+            // A newline inside the brackets prevents a match (body excludes
+            // `\n`).
+            ("[[A\nB]]", &[]),
+        ];
+        for (input, expected) in cases {
+            let got: Vec<String> = HUMAN_PAGE_LINK_RE
+                .captures_iter(input)
+                .map(|c| c[1].to_string())
+                .collect();
+            let got_refs: Vec<&str> = got.iter().map(String::as_str).collect();
+            assert_eq!(
+                got_refs.as_slice(),
+                *expected,
+                "wiki-link match boundaries for {input:?} must match the TS mirror"
+            );
+        }
+    }
+
+    /// #1921 — a block with no `[[` is returned UNCHANGED by
+    /// `rewrite_inbound_page_links` (the fast path), with no allocation-visible
+    /// difference in the result.
+    #[test]
+    fn rewrite_inbound_page_links_fast_path_returns_unchanged_1921() {
+        let resolved: HashMap<String, String> = HashMap::new();
+        let content = "a plain block with no wiki link, just #tag-ish text";
+        assert_eq!(
+            rewrite_inbound_page_links(content, &resolved),
+            content,
+            "a link-free block must be returned unchanged"
+        );
+        // And a block WITH a link still rewrites via the resolved map.
+        let mut resolved2: HashMap<String, String> = HashMap::new();
+        resolved2.insert("Target".to_string(), "01ABC".to_string());
+        assert_eq!(
+            rewrite_inbound_page_links("see [[Target]] here", &resolved2),
+            "see [[01ABC]] here",
+            "a resolved name must be rewritten to its ULID ref"
+        );
+    }
 }

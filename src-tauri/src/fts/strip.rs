@@ -84,9 +84,10 @@ fn strip_inline_markup(content: &str) -> String {
 
 // `TAG_REF_RE` and `PAGE_LINK_RE` were canonicalised in
 // `cache::mod` so the cache-rebuild and FTS-strip paths share a single
-// regex compilation. The re-exports below preserve this module's public
-// names (`crate::fts::TAG_REF_RE` / `crate::fts::PAGE_LINK_RE`) for
-// downstream consumers (e.g. `commands::pages::resolve_ulids_for_export`).
+// regex compilation. They are imported here for this module's own strip
+// functions (below); `commands::pages` references the canonical
+// `crate::cache` path directly (#1920), so they are not re-exported at
+// the `fts` level.
 
 /// Matches tag references: `#[ULID]`. Re-exports the canonical regex
 /// owned by `crate::cache`.
