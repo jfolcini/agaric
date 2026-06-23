@@ -1456,9 +1456,11 @@ async fn import_markdown_frontmatter_round_trips_typed_page_properties_1432() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         md.clone(),
         Some("Reimported.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .unwrap();
@@ -1599,9 +1601,11 @@ async fn import_markdown_frontmatter_ref_is_space_scoped_1432() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         md.into(),
         Some("Imported Page.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .expect("cross-space title collision must NOT abort the import");
@@ -1846,9 +1850,11 @@ async fn import_markdown_creates_page_and_blocks() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         content.into(),
         Some("TestPage.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .unwrap();
@@ -1883,9 +1889,11 @@ async fn import_markdown_handles_properties() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         content.into(),
         Some("Props.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .unwrap();
@@ -1915,9 +1923,11 @@ async fn import_markdown_due_date_stores_as_date() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         content.into(),
         Some("Dated.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .expect("a due_date:: line must NOT abort the whole import (#623)");
@@ -1954,10 +1964,18 @@ async fn import_markdown_strips_block_refs() {
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
 
     let content = "- See ((abc-123-def)) for details";
-    let result =
-        import_markdown_inner(&pool, DEV, &mat, content.into(), None, TEST_SPACE_ID.into())
-            .await
-            .unwrap();
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        content.into(),
+        None,
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         result.blocks_created, 1,
@@ -1983,10 +2001,18 @@ async fn import_markdown_block_ref_strip_surfaces_warning_1933() {
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
 
     let content = "- See ((abc-123)) and ((def-456)) here";
-    let result =
-        import_markdown_inner(&pool, DEV, &mat, content.into(), None, TEST_SPACE_ID.into())
-            .await
-            .unwrap();
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        content.into(),
+        None,
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(result.blocks_created, 1, "block survives the strip");
     assert!(
@@ -2012,9 +2038,11 @@ async fn import_markdown_empty_content() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         String::new(),
         Some("Empty.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .unwrap();
@@ -2065,9 +2093,11 @@ async fn import_markdown_emits_started_progress_complete() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         content.into(),
         Some("Streamed.md".into()),
         TEST_SPACE_ID.into(),
+        None,
         Some(&sink),
     )
     .await
@@ -2136,9 +2166,11 @@ async fn import_markdown_progress_empty_file_started_then_complete() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         String::new(),
         Some("Empty.md".into()),
         TEST_SPACE_ID.into(),
+        None,
         Some(&sink),
     )
     .await
@@ -2193,9 +2225,11 @@ async fn import_markdown_progress_failure_emits_no_complete() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         "- Block 1\n- Block 2".into(),
         Some("Fails.md".into()),
         TEST_SPACE_ID.into(),
+        None,
         Some(&sink),
     )
     .await;
@@ -2242,9 +2276,11 @@ async fn import_markdown_single_transaction() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         content.into(),
         Some("TxTest.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .unwrap();
@@ -2400,9 +2436,11 @@ async fn import_markdown_aborts_on_first_validation_error_l30() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         content.into(),
         Some("AbortTest.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await;
 
@@ -2495,9 +2533,11 @@ async fn import_markdown_multi_chunk_tree_matches_single_chunk() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         content,
         Some("BigFlat.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .unwrap();
@@ -2642,9 +2682,11 @@ async fn import_markdown_commits_chunks_visible_to_separate_reader_662() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         content,
         Some("LockRelease.md".into()),
         TEST_SPACE_ID.into(),
+        None,
         None,
     )
     .await
@@ -2712,9 +2754,11 @@ async fn import_markdown_stamps_space_property() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         content.into(),
         Some("StampTest.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .expect("happy-path import must succeed");
@@ -2775,9 +2819,11 @@ async fn import_markdown_rejects_invalid_space() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         "- Block 1".into(),
         Some("RejectTest.md".into()),
         bogus,
+        None,
     )
     .await;
 
@@ -4905,9 +4951,11 @@ async fn import_resolves_existing_wikilink_to_ulid_1446() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         md.into(),
         Some("Notes.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .unwrap();
@@ -4943,9 +4991,11 @@ async fn import_creates_missing_wikilink_target_and_links_1446() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         md.into(),
         Some("Notes.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .unwrap();
@@ -4996,9 +5046,11 @@ async fn import_ambiguous_wikilink_left_plain_1446() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         md.into(),
         Some("Notes.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .unwrap();
@@ -5039,9 +5091,11 @@ async fn import_folder_path_maps_to_namespace_title_1446() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         "- body".into(),
         Some("Project/Backend/API.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .unwrap();
@@ -5105,9 +5159,11 @@ async fn import_export_namespace_and_wikilink_round_trip_1446() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         md,
         Some("Project/Backend/API.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .unwrap();
@@ -5166,9 +5222,11 @@ async fn import_markdown_hashtags_no_tag_rows_1922() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         "- see #project and #[[My Topic]]".into(),
         Some("Tags.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .unwrap();
@@ -5264,9 +5322,11 @@ async fn import_inline_bare_tag_links_and_round_trips_1924() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         "- track this #projectx today".into(),
         Some("Notes.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .unwrap();
@@ -5327,9 +5387,11 @@ async fn import_inline_multiword_tag_links_and_round_trips_1924() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         "- a #[[my tag]] here".into(),
         Some("MW.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .unwrap();
@@ -5379,9 +5441,11 @@ async fn import_inline_multiword_tag_links_and_round_trips_1924() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         "- echo #[[my tag]]".into(),
         Some("MW2.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .unwrap();
@@ -5439,9 +5503,11 @@ async fn import_tag_does_not_reuse_cross_space_tag_1924() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         "- ship #project".into(),
         Some("CS.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .unwrap();
@@ -5498,9 +5564,11 @@ async fn import_tag_inside_code_fence_stays_literal_1924() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         md_in.into(),
         Some("Code.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .unwrap();
@@ -5545,9 +5613,11 @@ async fn import_heading_line_is_not_a_tag_1924() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         "- # Heading text".into(),
         Some("H.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .unwrap();
@@ -5585,9 +5655,11 @@ async fn import_tag_case_folds_to_single_tag_1924() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         "- one #Foo\n- two #foo".into(),
         Some("Case.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .unwrap();
@@ -5654,9 +5726,11 @@ async fn import_namespaced_title_collision_creates_duplicate_page_1922() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         "- body".into(),
         Some("Project/Backend/API.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .unwrap();
@@ -5706,9 +5780,11 @@ async fn import_top_of_file_frontmatter_with_prose_body_1922() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         md.into(),
         Some("Obsidian Note.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .unwrap();
@@ -5894,9 +5970,11 @@ async fn import_deeply_nested_does_not_abort_1918() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         md,
         Some("Deep Import.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .expect("a deep import must NOT abort (#1918)");
@@ -5939,9 +6017,11 @@ async fn import_oversized_block_skips_and_warns_1918() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         md,
         Some("Big Import.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .expect("an oversized block must NOT abort the whole import (#1918)");
@@ -6027,9 +6107,11 @@ async fn import_export_full_round_trip_1916_1917_1918() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         md.clone(),
         Some("Reimported RT.md".into()),
         TEST_SPACE_ID.into(),
+        None,
     )
     .await
     .expect("round-trip re-import must succeed");
@@ -6141,4 +6223,481 @@ async fn import_export_full_round_trip_1916_1917_1918() {
     );
 
     mat.shutdown();
+}
+
+// ======================================================================
+// #1925 — import attachments referenced by Logseq/Obsidian vaults
+// ======================================================================
+
+use crate::import::VaultFile;
+
+/// Read every `attachments` row (id, block_id, fs_path, content_hash) for the
+/// page imported into the test space, ordered by id. Module-local helper.
+async fn attachment_rows(pool: &SqlitePool) -> Vec<(String, String, String, Option<String>)> {
+    sqlx::query_as::<_, (String, String, String, Option<String>)>(
+        "SELECT id, block_id, fs_path, content_hash FROM attachments \
+         WHERE deleted_at IS NULL ORDER BY id ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// Content of the single content block (non-page) on the imported page.
+async fn content_block_texts(pool: &SqlitePool) -> Vec<String> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND deleted_at IS NULL \
+         ORDER BY position ASC, id ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// #1925 — an Obsidian embed `![[diagram.png]]` with a matching `VaultFile`
+/// ingests an attachment row, rewrites the block to `![](attachment:<id>)`, and
+/// writes the bytes to disk.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_obsidian_embed_ingests_and_rewrites_1925() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let app_data_dir = _dir.path();
+
+    let bytes: Vec<u8> = vec![0x89, b'P', b'N', b'G', 1, 2, 3, 4];
+    let vault = vec![VaultFile {
+        path: "assets/diagram.png".into(),
+        bytes: bytes.clone(),
+    }];
+
+    let content = "- here is a diagram ![[diagram.png]] inline";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        content.into(),
+        Some("Diagram.md".into()),
+        TEST_SPACE_ID.into(),
+        Some(vault),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.blocks_created, 1);
+    assert!(
+        result.warnings.is_empty(),
+        "clean import has no warnings; got {:?}",
+        result.warnings
+    );
+    settle(&mat).await;
+
+    let rows = attachment_rows(&pool).await;
+    assert_eq!(rows.len(), 1, "exactly one attachment row created");
+    let (att_id, block_id, fs_path, _hash) = &rows[0];
+
+    // The block content was rewritten to the canonical attachment ref.
+    let texts = content_block_texts(&pool).await;
+    assert_eq!(texts.len(), 1);
+    assert_eq!(
+        texts[0],
+        format!("here is a diagram ![](attachment:{att_id}) inline"),
+        "embed must be rewritten to ![](attachment:<id>)"
+    );
+
+    // The attachment is owned by the content block it appeared in.
+    let block_text: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(block_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        block_text.contains(&format!("attachment:{att_id}")),
+        "attachment owned by the rewritten content block"
+    );
+
+    // Bytes are on disk.
+    let on_disk = std::fs::read(app_data_dir.join(fs_path)).unwrap();
+    assert_eq!(on_disk, bytes, "stored bytes match the vault file");
+
+    mat.shutdown();
+}
+
+/// #1925 — a standard markdown image `![alt](assets/img.png)` with a matching
+/// file imports + rewrites, preserving the alt text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_image_preserves_alt_1925() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let app_data_dir = _dir.path();
+
+    let bytes: Vec<u8> = vec![9, 8, 7, 6, 5];
+    let vault = vec![VaultFile {
+        path: "assets/img.png".into(),
+        bytes: bytes.clone(),
+    }];
+
+    let content = "- a picture ![my caption](assets/img.png) end";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        content.into(),
+        Some("Pic.md".into()),
+        TEST_SPACE_ID.into(),
+        Some(vault),
+    )
+    .await
+    .unwrap();
+    assert!(result.warnings.is_empty(), "got {:?}", result.warnings);
+    settle(&mat).await;
+
+    let rows = attachment_rows(&pool).await;
+    assert_eq!(rows.len(), 1);
+    let att_id = &rows[0].0;
+
+    let texts = content_block_texts(&pool).await;
+    assert_eq!(
+        texts[0],
+        format!("a picture ![my caption](attachment:{att_id}) end"),
+        "alt text must be preserved in the rewritten ref"
+    );
+    let on_disk = std::fs::read(app_data_dir.join(&rows[0].2)).unwrap();
+    assert_eq!(on_disk, bytes);
+
+    mat.shutdown();
+}
+
+/// #1925 — a referenced file absent from `vault_files` warns (not-found) and the
+/// import still succeeds with the original ref left intact.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_missing_attachment_warns_and_keeps_ref_1925() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let app_data_dir = _dir.path();
+
+    // Vault carries a DIFFERENT file, so the ref does not match.
+    let vault = vec![VaultFile {
+        path: "assets/other.png".into(),
+        bytes: vec![1, 2, 3],
+    }];
+
+    let content = "- ref to ![[missing.png]] here";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        content.into(),
+        Some("Missing.md".into()),
+        TEST_SPACE_ID.into(),
+        Some(vault),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.blocks_created, 1, "import still succeeds");
+    settle(&mat).await;
+
+    assert!(
+        attachment_rows(&pool).await.is_empty(),
+        "no attachment ingested for a missing ref"
+    );
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("missing.png") && w.contains("not be found")
+                || (w.contains("missing.png") && w.contains("not found"))),
+        "a not-found warning must be surfaced; got {:?}",
+        result.warnings
+    );
+    let texts = content_block_texts(&pool).await;
+    assert_eq!(
+        texts[0], "ref to ![[missing.png]] here",
+        "the original ref is left intact"
+    );
+
+    mat.shutdown();
+}
+
+/// #1925 — two blocks referencing the SAME bytes ingest TWO independent
+/// `attachments` rows (one per owning block). Cross-block dedup is intentionally
+/// NOT performed: `attachments.block_id` is `ON DELETE CASCADE`, so a single
+/// shared row would dangle the peer block's ref when the owner is deleted, and a
+/// cross-space peer would never receive the `AddAttachment` op. Each block's ref
+/// points to ITS OWN attachment id and each row has its own bytes on disk.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_ingests_per_block_no_cross_block_dedup_1925() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let app_data_dir = _dir.path();
+
+    let bytes: Vec<u8> = vec![42, 42, 42, 42];
+    // Two distinct vault files carrying the SAME bytes (e.g. duplicated asset).
+    let vault = vec![
+        VaultFile {
+            path: "assets/a.png".into(),
+            bytes: bytes.clone(),
+        },
+        VaultFile {
+            path: "assets/b.png".into(),
+            bytes: bytes.clone(),
+        },
+    ];
+
+    let content = "- first ![[a.png]]\n- second ![[b.png]]";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        content.into(),
+        Some("PerBlock.md".into()),
+        TEST_SPACE_ID.into(),
+        Some(vault),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.blocks_created, 2);
+    settle(&mat).await;
+
+    let rows = attachment_rows(&pool).await;
+    assert_eq!(
+        rows.len(),
+        2,
+        "two owning blocks ingest two independent attachment rows, got {rows:?}"
+    );
+    // Distinct ids, each owned by a distinct block, each with bytes on disk.
+    assert_ne!(rows[0].0, rows[1].0, "attachment rows must be distinct");
+    assert_ne!(
+        rows[0].1, rows[1].1,
+        "each attachment owned by a distinct block"
+    );
+    for (_id, _block, fs_path, _hash) in &rows {
+        let abs = app_data_dir.join(fs_path);
+        let on_disk = std::fs::read(&abs).expect("attachment bytes written to disk");
+        assert_eq!(on_disk, bytes, "each row stores its own copy of the bytes");
+    }
+
+    // Each block's ref points to its OWN attachment id.
+    let texts = content_block_texts(&pool).await;
+    assert_eq!(texts.len(), 2);
+    let ids: Vec<String> = rows.iter().map(|r| r.0.clone()).collect();
+    assert!(
+        ids.iter()
+            .any(|id| texts[0] == format!("first ![](attachment:{id})")),
+        "first block rewritten to one of the new ids, got {:?}",
+        texts[0]
+    );
+    assert!(
+        ids.iter()
+            .any(|id| texts[1] == format!("second ![](attachment:{id})")),
+        "second block rewritten to one of the new ids, got {:?}",
+        texts[1]
+    );
+
+    mat.shutdown();
+}
+
+/// #1925 — the SAME ref appearing TWICE in ONE block ingests exactly ONE
+/// attachment row, and both occurrences rewrite to that single `attachment:<id>`.
+/// This is the only dedup performed (within a single owning block ⇒ same CASCADE
+/// lifetime ⇒ safe).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_dedups_repeated_ref_within_one_block_1925() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let app_data_dir = _dir.path();
+
+    let bytes: Vec<u8> = vec![7, 7, 7, 7];
+    let vault = vec![VaultFile {
+        path: "assets/a.png".into(),
+        bytes: bytes.clone(),
+    }];
+
+    // One block, same embed referenced twice.
+    let content = "- here ![[a.png]] and again ![[a.png]] end";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        content.into(),
+        Some("RepeatRef.md".into()),
+        TEST_SPACE_ID.into(),
+        Some(vault),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.blocks_created, 1);
+    settle(&mat).await;
+
+    let rows = attachment_rows(&pool).await;
+    assert_eq!(
+        rows.len(),
+        1,
+        "a ref repeated within one block ingests one row, got {rows:?}"
+    );
+    let att_id = &rows[0].0;
+
+    let texts = content_block_texts(&pool).await;
+    assert_eq!(texts.len(), 1);
+    assert_eq!(
+        texts[0],
+        format!("here ![](attachment:{att_id}) and again ![](attachment:{att_id}) end"),
+        "both occurrences rewrite to the single ingested id"
+    );
+
+    mat.shutdown();
+}
+
+/// #1925 — `vault_files = None` behaves exactly as before: no attachments, the
+/// embed/image refs are left literal (guards the default no-op path).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_none_vault_files_is_noop_1925() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let app_data_dir = _dir.path();
+
+    let content = "- has ![[x.png]] and ![alt](assets/y.png)";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        content.into(),
+        Some("NoVault.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.blocks_created, 1);
+    assert!(result.warnings.is_empty(), "got {:?}", result.warnings);
+    settle(&mat).await;
+
+    assert!(
+        attachment_rows(&pool).await.is_empty(),
+        "None vault_files ingests nothing"
+    );
+    let texts = content_block_texts(&pool).await;
+    assert_eq!(
+        texts[0], "has ![[x.png]] and ![alt](assets/y.png)",
+        "refs are left literal with no vault files"
+    );
+
+    mat.shutdown();
+}
+
+/// #1925 — a `![[x.png]]` inside a fenced code block stays literal (no ingest,
+/// no rewrite), even when a matching vault file is supplied.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_code_fence_embed_stays_literal_1925() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let app_data_dir = _dir.path();
+
+    let vault = vec![VaultFile {
+        path: "assets/x.png".into(),
+        bytes: vec![1, 2, 3, 4],
+    }];
+
+    // A fenced code block — the parser flags its block(s) `is_code`, so the
+    // attachment detection skips them (mirroring the #1924 inline-tag skip).
+    let content = "- ```\n  ![[x.png]]\n  ```";
+    import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        content.into(),
+        Some("Code.md".into()),
+        TEST_SPACE_ID.into(),
+        Some(vault),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    assert!(
+        attachment_rows(&pool).await.is_empty(),
+        "a `![[x.png]]` inside a code fence must not be ingested"
+    );
+    let any_rewritten = content_block_texts(&pool)
+        .await
+        .iter()
+        .any(|t| t.contains("attachment:"));
+    assert!(!any_rewritten, "code-fence embed must stay literal");
+
+    mat.shutdown();
+}
+
+/// #1925 — unit coverage for the pure detection + match + mime helpers.
+#[test]
+fn attachment_ref_detection_and_match_rules_1925() {
+    use crate::import::{detect_attachment_refs, guess_attachment_mime, match_vault_file};
+
+    // Skips absolute URLs / data: / attachment: refs; captures embeds + images.
+    let content = "![[a.png]] ![alt](assets/b.png) ![x](https://h/c.png) \
+                   ![y](data:image/png;base64,Zm9v) ![z](attachment:01ABC)";
+    let refs = detect_attachment_refs(content, &[]);
+    let got: Vec<(&str, &str)> = refs
+        .iter()
+        .map(|r| (r.alt.as_str(), r.original_ref.as_str()))
+        .collect();
+    assert_eq!(
+        got,
+        vec![("", "a.png"), ("alt", "assets/b.png")],
+        "only the embed + relative image are detected; got {got:?}"
+    );
+
+    // Inline-code span suppresses detection.
+    let refs2 = detect_attachment_refs("`![[a.png]]`", &[(0, 12)]);
+    assert!(refs2.is_empty(), "ref inside inline code is skipped");
+
+    // Match: exact path equality wins over basename.
+    let vault = vec![
+        VaultFile {
+            path: "other/a.png".into(),
+            bytes: vec![1],
+        },
+        VaultFile {
+            path: "assets/a.png".into(),
+            bytes: vec![2],
+        },
+    ];
+    assert_eq!(
+        match_vault_file("assets/a.png", &vault),
+        Some((1, false)),
+        "exact relative-path match"
+    );
+    // Basename fallback (Obsidian `![[a.png]]` carries only the basename) —
+    // ambiguous across two files, picks the first deterministically.
+    assert_eq!(
+        match_vault_file("a.png", &vault),
+        Some((0, true)),
+        "basename fallback picks first + flags ambiguous"
+    );
+    assert_eq!(match_vault_file("nope.png", &vault), None);
+
+    // Mime guess.
+    assert_eq!(guess_attachment_mime("x/y.PNG"), "image/png");
+    assert_eq!(guess_attachment_mime("a.pdf"), "application/pdf");
+    assert_eq!(
+        guess_attachment_mime("a.unknownext"),
+        "application/octet-stream"
+    );
 }

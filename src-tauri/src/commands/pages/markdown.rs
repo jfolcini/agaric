@@ -13,7 +13,7 @@ use tauri::State;
 use crate::db::{CommandTx, ReadPool, WriteCtx};
 use crate::error::AppError;
 use crate::import;
-use crate::import::{ImportProgressSink, ImportProgressUpdate, ImportResult};
+use crate::import::{ImportProgressSink, ImportProgressUpdate, ImportResult, VaultFile};
 use crate::materializer::Materializer;
 use crate::pagination::{BlockRow, Cursor, NULL_POSITION_SENTINEL, PageRequest};
 use crate::ulid::{BlockId, PageId};
@@ -135,7 +135,14 @@ fn collect_inbound_page_link_names(blocks: &[import::ParsedBlock]) -> Vec<String
             // created) and the matching rewrite guard below leaves the token in
             // place for the tag rewrite. The check is byte-safe — a `#` is a
             // single ASCII byte, so `[..start]` ending with `'#'` is exact.
-            if block.content[..whole.start()].ends_with('#') {
+            //
+            // #1925 — a `[[...]]` immediately preceded by `!` is an Obsidian
+            // EMBED `![[file]]` (an attachment ref), NOT a page link. Skip it
+            // here so no page is created and the embed token survives intact for
+            // the attachment detection/ingest pass.
+            if block.content[..whole.start()].ends_with('#')
+                || block.content[..whole.start()].ends_with('!')
+            {
                 continue;
             }
             let name = cap[1].trim();
@@ -171,7 +178,11 @@ fn rewrite_inbound_page_links(content: &str, resolved: &HashMap<String, String>)
             // tag form. Leave it untouched here so the tag rewrite (which runs
             // separately) turns it into a `#[ULID]` tag ref, not a page ref.
             // `m.start()` is the absolute byte offset within `content`.
-            if content[..m.start()].ends_with('#') {
+            //
+            // #1925 — likewise a `!`-prefixed `![[file]]` is an Obsidian embed
+            // (attachment ref), not a page link: leave it for the attachment
+            // pass.
+            if content[..m.start()].ends_with('#') || content[..m.start()].ends_with('!') {
                 return whole.to_string();
             }
             // Already an internal `[[ULID]]` ref — keep verbatim.
@@ -905,14 +916,22 @@ pub async fn export_page_markdown_inner(
 /// parse diagnostics from [`import::parse_logseq_markdown`] (e.g. depth
 /// clamping). Savepoint-based partial recovery was considered and rejected
 /// as too invasive for the available signal.
-#[instrument(skip(pool, device_id, materializer, content), err)]
+#[instrument(
+    skip(pool, device_id, materializer, content, app_data_dir, vault_files),
+    err
+)]
+#[allow(clippy::too_many_arguments)]
 pub async fn import_markdown_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
+    app_data_dir: &std::path::Path,
     content: String,
     filename: Option<String>,
     space_id: String,
+    // #1925 — referenced sibling files' bytes. `None`/empty ⇒ exactly the
+    // pre-#1925 behaviour (no attachment ingest).
+    vault_files: Option<Vec<VaultFile>>,
 ) -> Result<ImportResult, AppError> {
     // Progress-free path (MCP tools, sync replay, scripted imports, tests
     // / benches). The Tauri command calls
@@ -921,9 +940,11 @@ pub async fn import_markdown_inner(
         pool,
         device_id,
         materializer,
+        app_data_dir,
         content,
         filename,
         space_id,
+        vault_files,
         None,
     )
     .await
@@ -1001,17 +1022,22 @@ pub async fn import_markdown_inner(
 // here (it is an arg) while `page_title` / `blocks_total` are derived inside
 // and back-filled via `Span::current().record(...)` once known.
 #[instrument(
-    skip(pool, device_id, materializer, content, progress),
+    skip(pool, device_id, materializer, content, progress, app_data_dir, vault_files),
     fields(page_title = tracing::field::Empty, blocks_total = tracing::field::Empty, space = %space_id),
     err
 )]
+#[allow(clippy::too_many_arguments)]
 pub async fn import_markdown_with_progress(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
+    app_data_dir: &std::path::Path,
     content: String,
     filename: Option<String>,
     space_id: String,
+    // #1925 — referenced sibling files' bytes. `None`/empty ⇒ no attachment
+    // ingest (exact pre-#1925 behaviour).
+    vault_files: Option<Vec<VaultFile>>,
     progress: Option<&dyn ImportProgressSink>,
 ) -> Result<ImportResult, AppError> {
     // #1934 — wall-clock measurement of the whole import so duration is
@@ -1516,6 +1542,19 @@ pub async fn import_markdown_with_progress(
     // only opened at a top-level (depth-0) subtree boundary, so a chunk
     // never splits a subtree (parent + all descendants commit together).
     let mut chunk_blocks: usize = 0;
+    // #1925 — attachment refs detected per committed content block, collected
+    // DURING the block loop but ingested AFTER the import writer tx fully
+    // commits (see the post-commit phase below). Each entry is (block_id,
+    // detected refs in that block's content). The block content is written with
+    // its ORIGINAL refs here; the post-commit phase ingests the matched bytes
+    // and edits the block content to the canonical `attachment:<id>` form. This
+    // sequencing is what avoids the deadlock: `add_attachment_with_bytes_inner`
+    // is pool-based and opens its OWN writer tx, which would deadlock against
+    // the held `import_markdown` IMMEDIATE tx — so NO attachment ingest runs
+    // while any import chunk tx is open. `vault_files` empty/None ⇒ this stays
+    // empty and the whole phase is a no-op.
+    let vault_files: Vec<VaultFile> = vault_files.unwrap_or_default();
+    let mut pending_attachments: Vec<(String, Vec<import::AttachmentRef>)> = Vec::new();
     // #1932 (OBS-LOG-05) — count committed chunks so a partial import (a
     // mid-chunk abort) leaves a log trail of how many chunks/blocks were
     // already made durable before the failure, rather than a lone error line.
@@ -1602,6 +1641,19 @@ pub async fn import_markdown_with_progress(
             rewrite_inbound_tags(&content, &resolved_tag_tokens)
         };
 
+        // #1925 — detect attachment refs in this block's (already
+        // tag/link-rewritten) content, to be ingested + rewritten AFTER the
+        // import tx commits. A code block keeps its `![[...]]`/`![](...)` text
+        // literal (skipped here, mirroring the inline-tag skip). Detection only
+        // runs when the caller supplied vault files; with none it is a no-op.
+        let detected_attachment_refs: Vec<import::AttachmentRef> =
+            if vault_files.is_empty() || block.is_code {
+                Vec::new()
+            } else {
+                let spans = import::inline_code_spans(&content);
+                import::detect_attachment_refs(&content, &spans)
+            };
+
         // #1918 — a SINGLE problematic block must degrade gracefully
         // (skip-and-warn) rather than `?`-abort the whole chunk/import. Two
         // RECOVERABLE per-block validation conditions are skipped here:
@@ -1656,7 +1708,14 @@ pub async fn import_markdown_with_progress(
         blocks_created += 1;
         chunk_blocks += 1;
         tx.enqueue_background(block_op);
-        parent_stack.push((block.depth, new_block.id.clone().into_string()));
+        let new_block_id = new_block.id.clone().into_string();
+        parent_stack.push((block.depth, new_block_id.clone()));
+
+        // #1925 — record this block's detected attachment refs against its now
+        // committed-pending id. Ingested + rewritten in the post-commit phase.
+        if !detected_attachment_refs.is_empty() {
+            pending_attachments.push((new_block_id, detected_attachment_refs));
+        }
 
         // #128 — per-block progress tick. Emitted inside the loop so a
         // large file shows forward motion; the rows are not yet committed
@@ -1723,6 +1782,195 @@ pub async fn import_markdown_with_progress(
         );
         AppError::from(e)
     })?;
+
+    // #1925 — attachment ingest + content rewrite phase. Runs HERE, AFTER the
+    // import writer tx has fully committed and released the writer lock, so it
+    // never overlaps the held IMMEDIATE tx. `add_attachment_with_bytes_inner`
+    // and `edit_block_inner` are both pool-based (each opens its OWN
+    // `BEGIN IMMEDIATE` tx); running them inside the import tx would deadlock on
+    // the single SQLite writer lock — sequencing them strictly after the final
+    // commit is what makes this safe.
+    //
+    // OWNERSHIP: each attachment is owned by the CONTENT block it appears in
+    // (the block's `block_id` FK), matching editor semantics — an attachment's
+    // lifecycle follows its owning block (delete the block, the attachment GCs).
+    // The block already exists + is committed (durable) by the time we ingest,
+    // so the FK is satisfied and the rewrite is a normal `edit_block_inner`.
+    //
+    // DEDUP: ingest a FRESH attachment per owning block (matching the editor's
+    // `add_attachment_inner`, which does not dedup). The ONLY dedup here is
+    // within a single block: the same `original_ref` appearing multiple times
+    // in ONE block ingests once and both rewrites share that id — safe because
+    // the duplicates share the same owning block and thus the same CASCADE
+    // lifetime. Cross-page/cross-block asset dedup is intentionally DEFERRED:
+    // it needs attachment refcounting/GC the schema lacks (`attachments.block_id`
+    // is `ON DELETE CASCADE` and not space-scoped, so reusing one row across
+    // blocks would dangle peers when the owner block is deleted, and cross-space
+    // peers would never receive the `AddAttachment` op). Tracked separately.
+    //
+    // Warnings (not-found, oversized, disallowed mime, ingest failure, and any
+    // transient DB read/write error) are pushed to `warnings` and NEVER abort
+    // the import — a missing/bad attachment leaves the original ref. This phase
+    // runs AFTER the chunked tx commit, so an aborting `?` would turn a durable
+    // import into a hard failure and suppress the `Complete` event; every DB
+    // op below therefore warn-and-continues instead.
+    if !pending_attachments.is_empty() {
+        for (block_id, refs) in &pending_attachments {
+            // Per-BLOCK cache: original_ref → resolved `attachment:<id>` for
+            // refs already ingested for THIS block, so a ref repeated within the
+            // SAME block ingests once. NOT carried across blocks.
+            let mut block_ingested: HashMap<String, String> = HashMap::new();
+            // Per-block ref → canonical-token map for the rewrite below.
+            let mut block_rewrites: Vec<(import::AttachmentRef, String)> = Vec::new();
+
+            for att in refs {
+                // Already ingested for this block (same original ref string).
+                if let Some(attachment_id) = block_ingested.get(&att.original_ref) {
+                    block_rewrites.push((att.clone(), attachment_id.clone()));
+                    continue;
+                }
+
+                // Match the ref against the supplied vault files.
+                let Some((idx, ambiguous)) =
+                    import::match_vault_file(&att.original_ref, &vault_files)
+                else {
+                    warnings.push(format!(
+                        "referenced attachment '{}' was not found among the imported \
+                         vault files; left as-is",
+                        att.original_ref
+                    ));
+                    continue;
+                };
+                if ambiguous {
+                    warnings.push(format!(
+                        "attachment ref '{}' matched multiple vault files by basename; \
+                         used the first match",
+                        att.original_ref
+                    ));
+                }
+                let vf = &vault_files[idx];
+                let filename = vf
+                    .path
+                    .rsplit(['/', '\\'])
+                    .next()
+                    .unwrap_or(&vf.path)
+                    .to_string();
+                let mime_type = import::guess_attachment_mime(&vf.path);
+
+                // Size guard (mirrors the attachment ingest's 50 MB limit). On
+                // an oversized file: warn + skip (leave the original ref).
+                // `i64::try_from` avoids the `usize as i64` wrap; a length that
+                // doesn't fit i64 is by definition over the limit.
+                let size_bytes = i64::try_from(vf.bytes.len()).unwrap_or(i64::MAX);
+                if size_bytes > crate::commands::MAX_ATTACHMENT_SIZE {
+                    warnings.push(format!(
+                        "attachment '{}' ({} bytes) exceeds the maximum size; skipped",
+                        att.original_ref,
+                        vf.bytes.len()
+                    ));
+                    continue;
+                }
+
+                // Fresh ingest, owned by this content block. A failure
+                // (disallowed mime, write error, transient DB error, etc.)
+                // degrades to warn+skip so a single bad asset never fails the
+                // (already durable) import.
+                let attachment_id =
+                    match crate::commands::attachments::add_attachment_with_bytes_inner(
+                        pool,
+                        device_id,
+                        materializer,
+                        app_data_dir,
+                        BlockId::from_trusted(block_id),
+                        filename,
+                        mime_type,
+                        vf.bytes.clone(),
+                    )
+                    .await
+                    {
+                        Ok(row) => row.id.into_string(),
+                        Err(e) => {
+                            tracing::warn!(
+                                reference = %att.original_ref,
+                                error = %e,
+                                "import: attachment ingest failed; leaving original ref (#1925)"
+                            );
+                            warnings.push(format!(
+                                "attachment '{}' could not be imported ({e}); left as-is",
+                                att.original_ref
+                            ));
+                            continue;
+                        }
+                    };
+
+                block_ingested.insert(att.original_ref.clone(), attachment_id.clone());
+                block_rewrites.push((att.clone(), attachment_id));
+            }
+
+            if block_rewrites.is_empty() {
+                continue;
+            }
+
+            // Rewrite this block's content: each matched ref's full token
+            // (`![[file]]` / `![alt](path)`) → canonical `![alt](attachment:<id>)`,
+            // preserving the original alt text. Fetch the CURRENT content (it is
+            // the durable, tag/link-rewritten version) and replace tokens in it.
+            // A transient DB read error here must NOT abort the (already
+            // durable) import — warn + skip the rewrite instead of `?`.
+            let current: Option<String> = match sqlx::query_scalar!(
+                "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL",
+                block_id,
+            )
+            .fetch_optional(pool)
+            .await
+            {
+                Ok(row) => row.flatten(),
+                Err(e) => {
+                    tracing::warn!(
+                        block_id = %block_id,
+                        error = %e,
+                        "import: attachment-ref content re-fetch failed (#1925)"
+                    );
+                    warnings.push(format!(
+                        "block '{block_id}' attachment refs could not be rewritten \
+                         (content re-fetch failed: {e})"
+                    ));
+                    continue;
+                }
+            };
+            let Some(mut new_content) = current else {
+                // Block vanished (concurrent delete) — nothing to rewrite.
+                continue;
+            };
+            for (att, attachment_id) in &block_rewrites {
+                let canonical = format!("![{}](attachment:{})", att.alt, attachment_id);
+                new_content = new_content.replacen(&att.full_match, &canonical, 1);
+            }
+
+            // Edit via the normal in-tx content-update path (opens its own
+            // writer tx — safe now the import tx is committed). A rewrite
+            // failure degrades to warn rather than aborting the (already
+            // durable) import.
+            if let Err(e) = crate::commands::blocks::crud::edit_block_inner(
+                pool,
+                device_id,
+                materializer,
+                BlockId::from_trusted(block_id),
+                new_content,
+            )
+            .await
+            {
+                tracing::warn!(
+                    block_id = %block_id,
+                    error = %e,
+                    "import: attachment-ref content rewrite failed (#1925)"
+                );
+                warnings.push(format!(
+                    "block '{block_id}' attachment refs could not be rewritten ({e})"
+                ));
+            }
+        }
+    }
 
     // #128 — `Complete` is emitted only after the final chunk commits, so
     // a consumer can treat it as the "whole import is durable" signal.
@@ -1799,19 +2047,31 @@ pub async fn export_page_markdown(
 #[tauri::command]
 #[specta::specta]
 pub async fn import_markdown(
+    app: tauri::AppHandle,
     content: String,
     filename: Option<String>,
     space_id: String,
+    // #1925 — referenced vault files' bytes. `None`/omitted ⇒ no attachment
+    // ingest (the pre-#1925 behaviour). PR 2 wires the frontend picker to
+    // pre-scan + supply only the referenced siblings.
+    vault_files: Option<Vec<VaultFile>>,
     progress: tauri::ipc::Channel<ImportProgressUpdate>,
     ctx: State<'_, WriteCtx>,
 ) -> Result<ImportResult, AppError> {
+    use tauri::Manager;
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
     import_markdown_with_progress(
         ctx.pool(),
         ctx.device_id(),
         ctx.materializer(),
+        &app_data_dir,
         content,
         filename,
         space_id,
+        vault_files,
         Some(&progress),
     )
     .await

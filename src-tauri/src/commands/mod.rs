@@ -421,7 +421,11 @@ pub(crate) fn ensure_batch_within_cap(subject: &str, len: usize) -> Result<(), A
 }
 
 /// Maximum allowed attachment size (50 MB).
-const MAX_ATTACHMENT_SIZE: i64 = 50 * 1024 * 1024;
+///
+/// #1925 — `pub(crate)` so the markdown importer can pre-check a referenced
+/// vault file's size (warn + skip oversized) before handing it to the
+/// bytes-based attachment ingest, which re-checks against the same constant.
+pub(crate) const MAX_ATTACHMENT_SIZE: i64 = 50 * 1024 * 1024;
 
 /// Allowed MIME type patterns for attachments.
 /// Patterns ending with `/*` match any subtype under that top-level type.
