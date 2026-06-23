@@ -755,6 +755,11 @@ function isEscapableChar(ch: string): boolean {
     // `<` is escapable so a literal `<u>`/`</u>` in text (serialized as `\<u>`)
     // round-trips as text instead of opening an underline mark (#211 P2-5).
     ch === '<' ||
+    // `>` is escapable so a paragraph beginning with `> ` (or a bare `>`)
+    // round-trips as text (serialized `\> `) instead of re-parsing as a
+    // blockquote. Symmetric with `-` (#1436): no serializer output contained a
+    // literal `\>` before, so accepting it here cannot break an existing pair.
+    ch === '>' ||
     // `:` is escapable so the serializer can defuse a bare `http(s)://…` URL
     // that lives in PLAIN (unlinked) text — emitting the scheme colon as `\:`
     // breaks the `://` autolink trigger on reparse while `\:` round-trips back

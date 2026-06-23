@@ -542,18 +542,24 @@ function serializeParagraph(node: ParagraphNode, onUnknownNode?: (type: string) 
   // the paragraph into a heading / ordered list / bullet list, and the second
   // serialize then escapes the marker — a byte drift. Escape the marker on the
   // way out so the text stays a paragraph. The parser accepts `\#`, `\.` and
-  // `\-` as literal escapes (`-` was made escapable for #1436; `\>` is still
-  // NOT recognized, but the parser only produces a blockquote from `> `, and
-  // `escapeText` already escapes a leading `|` table gate plus every literal
-  // `*` (so a `* ` bullet marker can never lead a paragraph). Heading,
-  // ordered-list and bullet-list (`- `) are the remaining gaps closed here.
-  // Only the START of the paragraph can trigger a block production (hard-break
-  // continuation lines are consumed by the paragraph parser before any block
-  // production sees them).
+  // `\-`, `\>` as literal escapes (`-` was made escapable for #1436, `>` for
+  // the blockquote gap). `escapeText` already escapes a leading `|` table gate
+  // plus every literal `*` (so a `* ` bullet marker can never lead a
+  // paragraph). Heading, ordered list, bullet list (`- `), blockquote (`> ` or
+  // a bare `>`) and the all-dashes horizontal rule (`---`) are the gaps closed
+  // here. Only the START of the paragraph can trigger a block production
+  // (hard-break continuation lines are consumed by the paragraph parser before
+  // any block production sees them).
   const escaped = result
     .replace(/^(\d+)\. /, '$1\\. ')
     .replace(/^(#{1,6}) /, '\\$1 ')
     .replace(/^- /, '\\- ')
+    // Horizontal rule: a line of only 3+ dashes (`/^-{3,}$/`). Escaping the
+    // first dash (`\---`) drops out of the rule pattern; the parser unescapes
+    // `\-` back to `-`, so the run survives as paragraph text.
+    .replace(/^(-{3,})$/, '\\$1')
+    // Blockquote: `> ` or a bare `>`. `\>` round-trips to `>` (parser change).
+    .replace(/^>( |$)/, '\\>$1')
   // The task prefix (#1435) is prepended AFTER block-marker escaping so the
   // leading-`-` escape only sees the user text, never our own `- [ ] ` marker.
   return taskPrefix + escaped
