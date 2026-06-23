@@ -24,6 +24,18 @@
  */
 
 import { useVirtualizer } from '@tanstack/react-virtual'
+import {
+  Apple,
+  Flag,
+  Hand,
+  Hash,
+  type LucideIcon,
+  Leaf,
+  Lightbulb,
+  Plane,
+  Smile,
+  Trophy,
+} from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -44,6 +56,23 @@ const HEADER_PX = 28
 type GridRow =
   | { kind: 'header'; group: string; key: string }
   | { kind: 'emoji'; entries: EmojiEntry[]; key: string }
+
+/**
+ * Icon per CLDR group for the category-jump tab strip. Keyed on the exact group
+ * names the generator emits (`EMOJI_GROUPS`), so a renamed/added group surfaces
+ * as a missing icon (caught by the test) rather than a silent wrong glyph.
+ */
+const GROUP_ICONS: Readonly<Record<string, LucideIcon>> = {
+  'Smileys & Emotion': Smile,
+  'People & Body': Hand,
+  'Animals & Nature': Leaf,
+  'Food & Drink': Apple,
+  'Travel & Places': Plane,
+  Activities: Trophy,
+  Objects: Lightbulb,
+  Symbols: Hash,
+  Flags: Flag,
+}
 
 /**
  * Flatten the (optionally searched) emoji into virtualizable rows: a header
@@ -91,13 +120,30 @@ export interface EmojiPickerProps {
 export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: EmojiPickerProps) {
   const { t } = useTranslation()
   const [query, setQuery] = useState('')
-  const { recents, push } = useEmojiRecents()
+  const { frequent, push } = useEmojiRecents()
   const [skinTone, setSkinTone] = useLocalStoragePreference<SkinToneId>(SKIN_TONE_KEY, 'default', {
     source: 'EmojiPicker',
   })
 
   const scrollRef = useRef<HTMLDivElement>(null)
-  const { rows } = useMemo(() => buildRows(query), [query])
+  const { rows, total } = useMemo(() => buildRows(query), [query])
+  const isSearching = query.trim() !== ''
+  const noResults = isSearching && total === 0
+
+  // Category-jump targets: the header-row index of each group, in render order.
+  // Empty while searching (groups don't apply to a flat ranked result list), so
+  // the tab strip hides. Drives both the jump click and the active-tab highlight.
+  const categoryTargets = useMemo(() => {
+    if (isSearching) return [] as Array<{ group: string; Icon: LucideIcon; index: number }>
+    const out: Array<{ group: string; Icon: LucideIcon; index: number }> = []
+    rows.forEach((row, index) => {
+      if (row.kind === 'header') {
+        const Icon = GROUP_ICONS[row.group] ?? Smile
+        out.push({ group: row.group, Icon, index })
+      }
+    })
+    return out
+  }, [rows, isSearching])
 
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -218,8 +264,16 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
     [focused, emojiRowIndices, entriesAtRow, focusCell],
   )
 
-  const showRecents = query.trim() === '' && recents.length > 0
+  const showFrequent = query.trim() === '' && frequent.length > 0
   const focusedRowIndex = emojiRowIndices[focused.r]
+
+  // Jump the grid to a group's header and pin it at the top of the viewport.
+  const jumpToCategory = useCallback(
+    (index: number) => {
+      virtualizer.scrollToIndex(index, { align: 'start' })
+    },
+    [virtualizer],
+  )
 
   // Current group pinned at the top of the scroll viewport (sticky header).
   // Derived from the first visible row's nearest preceding header; suppressed
@@ -260,20 +314,54 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
         <SkinToneSelector value={skinTone} onChange={setSkinTone} />
       </div>
 
-      {showRecents && (
+      {/* Category-jump tab strip (#286 polish). Hidden while searching (the
+          flat ranked result list has no group structure). Each tab scrolls the
+          grid to its group header; the active group highlights as you scroll. */}
+      {categoryTargets.length > 0 && (
+        <div
+          role="tablist"
+          aria-label={t('emojiPicker.categories')}
+          data-testid="emoji-categories"
+          className="flex items-center gap-0.5 border-b pb-1"
+        >
+          {categoryTargets.map(({ group, Icon, index }) => {
+            const active = group === activeGroup
+            return (
+              <button
+                key={group}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                aria-label={group}
+                title={group}
+                data-active={active}
+                onClick={() => jumpToCategory(index)}
+                className={cn(
+                  'grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-ring-visible',
+                  active && 'bg-accent text-foreground',
+                )}
+              >
+                <Icon className="size-4" aria-hidden="true" />
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {showFrequent && (
         <div>
           <p className="px-1 pb-1 text-xs font-medium text-muted-foreground">
-            {t('emojiPicker.recents')}
+            {t('emojiPicker.frequentlyUsed')}
           </p>
           {/* oxlint-disable jsx-a11y/prefer-tag-over-role -- ARIA grid row + gridcells; an emoji picker is not tabular data, and <table>/<tr>/<td> here would inject table semantics + break the flex-wrap layout */}
           <div
             className="flex flex-wrap gap-0.5"
             role="row"
-            aria-label={t('emojiPicker.recentsRow')}
+            aria-label={t('emojiPicker.frequentlyUsedRow')}
           >
-            {recents.slice(0, COLUMNS).map((char) => (
+            {frequent.slice(0, COLUMNS).map((char) => (
               <button
-                key={`recent-${char}`}
+                key={`frequent-${char}`}
                 type="button"
                 role="gridcell"
                 aria-label={char}
@@ -316,6 +404,14 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
           tabIndex={-1}
           onKeyDown={handleGridKeyDown}
         >
+          {noResults && (
+            <p
+              data-testid="emoji-no-results"
+              className="px-3 py-10 text-center text-sm text-muted-foreground"
+            >
+              {t('emojiPicker.noResults', { query: query.trim() })}
+            </p>
+          )}
           <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
             {virtualItems.map((vi) => {
               const row = rows[vi.index]
