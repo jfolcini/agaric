@@ -2182,7 +2182,11 @@ export async function importMarkdown(
   const channel = new Channel<ImportProgressUpdate>()
   // oxlint-disable-next-line unicorn/prefer-add-event-listener -- Tauri `Channel` is an IPC primitive, not a DOM EventTarget; it only exposes an `onmessage` setter (no `addEventListener`)
   if (onProgress) channel.onmessage = onProgress
-  return unwrap(await commands.importMarkdown(content, filename ?? null, spaceId, channel))
+  // #1925 — `vaultFiles` (referenced attachment bytes) is passed `null` here:
+  // PR 1 ships the backend ingest/rewrite only. PR 2 wires the frontend
+  // `webkitdirectory` picker to pre-scan the vault and supply just the
+  // referenced sibling files. `null` ⇒ exactly the pre-#1925 behaviour.
+  return unwrap(await commands.importMarkdown(content, filename ?? null, spaceId, null, channel))
 }
 
 // ---------------------------------------------------------------------------

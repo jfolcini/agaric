@@ -496,7 +496,7 @@ export const commands = {
 	 *  `Channel<ImportProgressUpdate>` (mirroring `start_sync`); sends are
 	 *  best-effort, so a dropped channel never aborts the import.
 	 */
-	importMarkdown: (content: string, filename: string | null, spaceId: string, progress: Channel<ImportProgressUpdate>) => typedError<ImportResult, AppError>(__TAURI_INVOKE("import_markdown", { content, filename, spaceId, progress })),
+	importMarkdown: (content: string, filename: string | null, spaceId: string, vaultFiles: VaultFile[] | null, progress: Channel<ImportProgressUpdate>) => typedError<ImportResult, AppError>(__TAURI_INVOKE("import_markdown", { content, filename, spaceId, vaultFiles, progress })),
 	/**  Tauri command: add an attachment to a block. Delegates to [`add_attachment_inner`]. */
 	addAttachment: (blockId: BlockId, filename: string, mimeType: string, sizeBytes: number, fsPath: string) => typedError<AttachmentRow, AppError>(__TAURI_INVOKE("add_attachment", { blockId, filename, mimeType, sizeBytes, fsPath })),
 	/**
@@ -3448,6 +3448,34 @@ export type UndoResult = {
 	new_op_type: string,
 	/**  Whether this was a redo (true) or undo (false). */
 	is_redo: boolean,
+};
+
+/**
+ *  A single referenced sibling file carried over IPC for an attachment-aware
+ *  import (#1925).
+ *
+ *  The frontend (PR 2) pre-scans the picked Logseq/Obsidian vault, collects ONLY
+ *  the files actually referenced by the markdown being imported (image embeds,
+ *  `assets/...` refs, etc.), reads each into a browser `ArrayBuffer`, and sends
+ *  the `{ path, bytes }` pairs alongside the markdown `content`. The backend
+ *  matches each in-content attachment ref against this list, ingests the matched
+ *  bytes as an attachment (deduping by `content_hash`), and rewrites the ref to
+ *  the canonical `attachment:<id>` form.
+ *
+ *  `path` is the file's path RELATIVE to the vault root (the browser
+ *  `webkitRelativePath` minus the top folder, or whatever the FE chooses), using
+ *  `/` separators — e.g. `assets/diagram.png` or `images/screenshots/a.png`.
+ *  It is matched against an in-content ref first by relative-path equality, then
+ *  by basename (see `match_vault_file`).
+ *
+ *  This is an IPC **input**, so it needs `Deserialize` (unlike the
+ *  backend→frontend [`ImportProgressUpdate`], which is `Serialize`-only).
+ */
+export type VaultFile = {
+	/**  Vault-root-relative path, `/`-separated (e.g. `assets/img.png`). */
+	path: string,
+	/**  Raw file bytes. */
+	bytes: number[],
 };
 
 /* Tauri Specta runtime */

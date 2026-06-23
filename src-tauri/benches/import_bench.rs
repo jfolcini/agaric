@@ -133,9 +133,13 @@ fn bench_import_markdown_inner(c: &mut Criterion) {
                                 &pool,
                                 DEV_BENCH,
                                 &materializer,
+                                dir.path(),
                                 content,
                                 Some("BenchPage.md".into()),
                                 space_id,
+                                // #1925 — no vault files in the bench (measures
+                                // the pre-#1925 import pipeline cost).
+                                None,
                             )
                             .await
                             .unwrap();
