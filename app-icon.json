@@ -1,0 +1,5 @@
+{
+  "default": "public/agaric.svg",
+  "bg_color": "#ffffff",
+  "android_fg": "app-icon-android-fg.svg"
+}
