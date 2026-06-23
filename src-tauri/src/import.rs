@@ -45,10 +45,10 @@ pub struct ImportResult {
     /// or the file's leading heading).
     pub page_title: String,
     /// Number of content blocks made durable by the import.
-    pub blocks_created: i64,
+    pub blocks_created: u64,
     /// Number of page-level properties stamped onto the created page (e.g.
     /// from YAML frontmatter).
-    pub properties_set: i64,
+    pub properties_set: u64,
     /// Non-fatal diagnostics collected while importing. Carries both soft
     /// parse warnings (e.g. depth clamping, stripped `((block-ref))` tokens,
     /// ambiguous wiki-links left as plain text) and per-item skip notices
@@ -241,16 +241,15 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     let mut frontmatter: Vec<(String, String)> = Vec::new();
     let normalized = strip_frontmatter(&normalized, &mut frontmatter, &mut frontmatter_warnings);
 
-    let lines: Vec<&str> = normalized.lines().collect();
-    let mut i = 0;
-
-    while i < lines.len() {
-        let line = lines[i];
+    // #1921 — iterate `normalized.lines()` directly instead of collecting into
+    // a `Vec<&str>`. The parse loop only ever reads the CURRENT line in
+    // document order (no random indexing / lookahead), so a streaming iterator
+    // is a drop-in that avoids the intermediate allocation.
+    for line in normalized.lines() {
         let trimmed = line.trim_start();
 
         // Skip empty lines
         if trimmed.is_empty() {
-            i += 1;
             continue;
         }
 
@@ -306,7 +305,6 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
                     "skipping reserved/column-backed body property during import (#1568)"
                 );
                 reserved_property_count += 1;
-                i += 1;
                 continue;
             }
             // #682: attach to the block that *indentation* says owns this
@@ -352,8 +350,6 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
                 properties: Vec::new(),
             });
         }
-
-        i += 1;
     }
 
     // Clamp depth to MAX_IMPORT_DEPTH (flatten deeper blocks) and track
@@ -410,11 +406,12 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
 /// leading `# Heading` line (Agaric's own export shape). In the latter case
 /// the heading line is left in the returned body. An unterminated fence is
 /// treated as plain content (returns the input unchanged, no properties).
-fn strip_frontmatter(
-    normalized: &str,
+fn strip_frontmatter<'a>(
+    normalized: &'a str,
     frontmatter: &mut Vec<(String, String)>,
     warnings: &mut Vec<String>,
-) -> String {
+) -> std::borrow::Cow<'a, str> {
+    use std::borrow::Cow;
     // Helper: given a slice that begins exactly at an opening `---` fence,
     // parse the fenced block and return the byte length consumed (through the
     // closing `\n---` and its line), or `None` if there is no closing fence.
@@ -439,9 +436,9 @@ fn strip_frontmatter(
     // Case 1: fence at the very top of the file.
     if normalized.starts_with("---") {
         if let Some(consumed) = parse_fence(normalized, frontmatter, warnings) {
-            return normalized[consumed..].to_string();
+            return Cow::Owned(normalized[consumed..].to_string());
         }
-        return normalized.to_string();
+        return Cow::Borrowed(normalized);
     }
 
     // Case 2: a single leading `# Heading` line, then (optionally blank
@@ -478,12 +475,12 @@ fn strip_frontmatter(
                 let mut out = String::with_capacity(heading.len() + after_fence.len());
                 out.push_str(heading);
                 out.push_str(after_fence);
-                return out;
+                return Cow::Owned(out);
             }
         }
     }
 
-    normalized.to_string()
+    Cow::Borrowed(normalized)
 }
 
 /// Parse a YAML inline flow sequence (`[a, b, "c, d"]`) into a single
@@ -535,67 +532,88 @@ fn parse_flow_sequence(raw: &str) -> String {
     items.join(", ")
 }
 
+/// One open YAML block scalar (#1590). When a key line ends with a `|` / `>`
+/// indicator, the subsequent MORE-INDENTED lines are continuation content
+/// belonging to that key — valid YAML, NOT invalid top-level lines. They are
+/// captured here, joined into a single scalar value, and committed on the
+/// first line that dedents out of the block (or at end of input) by
+/// [`commit_block`]. Lifted to module scope (de-nested from
+/// [`parse_frontmatter`]) for readability; kept private to this module.
+struct BlockScalar {
+    key: String,
+    folded: bool,
+    /// Indentation (in spaces) of the key line that opened the block.
+    /// Continuation lines must be indented MORE than this.
+    key_indent: usize,
+    /// Indentation of the first continuation line — the block's content
+    /// indentation, stripped uniformly from each captured line.
+    content_indent: Option<usize>,
+    lines: Vec<String>,
+}
+
+/// Leading-space count of a raw (untrimmed) line. Tabs are treated as a
+/// single column; frontmatter is space-indented in practice (the exporter
+/// emits spaces), and this is only used for relative indent comparisons.
+fn frontmatter_indent_of(raw: &str) -> usize {
+    raw.chars().take_while(|c| *c == ' ' || *c == '\t').count()
+}
+
+/// Commit a finished block scalar into `pairs` (de-dup aware), joining its
+/// captured continuation lines. Literal (`|`) joins with newlines; folded
+/// (`>`) joins with spaces. Chomping (`-`/`+`) is accepted at parse time but
+/// has no effect on the joined value: it is never given a trailing newline
+/// (we never append one), so clip/keep/strip all yield the same newline-free
+/// text. De-dup keeps the FIRST value and warns byte-for-byte identically to
+/// the scalar / sequence paths.
+fn commit_block(
+    b: BlockScalar,
+    pairs: &mut Vec<(String, String)>,
+    seen: &mut std::collections::HashSet<String>,
+    warnings: &mut Vec<String>,
+) {
+    let joined = if b.folded {
+        b.lines.join(" ")
+    } else {
+        b.lines.join("\n")
+    };
+    if seen.insert(b.key.clone()) {
+        pairs.push((b.key, joined));
+    } else {
+        warnings.push(format!(
+            "frontmatter key '{}' appears more than once; keeping the first value",
+            b.key
+        ));
+    }
+}
+
+/// Parse a leading YAML frontmatter block into page-property pairs (#1432).
+///
+/// This is a deliberately HAND-ROLLED parser over a fixed YAML *subset* — not
+/// a general YAML implementation — chosen to avoid pulling in a YAML crate for
+/// the narrow round-trip the exporter produces. The supported (parsed) grammar
+/// is frozen as:
+///   * top-level `key: value` scalars (split on the FIRST `:` only);
+///   * single- or double-quoted scalar values (one matching layer stripped);
+///   * inline flow sequences `key: [a, b]` (joined to a comma-separated
+///     scalar; quoted items split on top-level commas only);
+///   * block-style sequences (`key:` then `- item` lines, joined identically);
+///   * block scalars `key: |` / `key: >` with optional chomping (`-`/`+`) and
+///     a one-digit indent indicator (`|2`, `>2-`, …) — literal blocks join
+///     with newlines, folded blocks with spaces.
+///
+/// Explicitly REJECTED shapes are parse-and-warn (counted, never crash, never
+/// imported): stray block-sequence items `- item` with no owning `key:`,
+/// inline flow MAPPINGS `{a: b}`, nested maps, and anchors/aliases (`&a`/`*a`,
+/// which fail the `key: value` scalar test). Reserved/exporter-managed keys
+/// (see [`FRONTMATTER_RESERVED_KEYS`]) are silently filtered. Duplicate keys
+/// keep the FIRST value and warn.
 fn parse_frontmatter(yaml: &str, warnings: &mut Vec<String>) -> Vec<(String, String)> {
     let mut pairs: Vec<(String, String)> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut skipped_array = 0usize;
     let mut skipped_invalid = 0usize;
 
-    // Block-scalar state. When a key line ends with a `|` / `>` indicator
-    // (#1590), the subsequent MORE-INDENTED lines are continuation content
-    // belonging to that key — valid YAML, NOT invalid top-level lines. We
-    // capture them, join into a single scalar value, and commit on the first
-    // line that dedents out of the block (or at end of input).
-    struct BlockScalar {
-        key: String,
-        folded: bool,
-        chomp_strip: bool,
-        /// Indentation (in spaces) of the key line that opened the block.
-        /// Continuation lines must be indented MORE than this.
-        key_indent: usize,
-        /// Indentation of the first continuation line — the block's content
-        /// indentation, stripped uniformly from each captured line.
-        content_indent: Option<usize>,
-        lines: Vec<String>,
-    }
-
-    /// Leading-space count of a raw (untrimmed) line. Tabs are treated as a
-    /// single column; frontmatter is space-indented in practice (the exporter
-    /// emits spaces), and this is only used for relative indent comparisons.
-    fn indent_of(raw: &str) -> usize {
-        raw.chars().take_while(|c| *c == ' ' || *c == '\t').count()
-    }
-
     let mut block: Option<BlockScalar> = None;
-
-    // Commit a finished block scalar into `pairs` (de-dup aware), joining its
-    // captured continuation lines. Literal (`|`) joins with newlines; folded
-    // (`>`) joins with spaces. Chomping `-` strips the trailing newline (we
-    // never append one, so `-` vs clip/keep only matters for an explicit
-    // final newline, which we omit either way — the captured text is the
-    // value). Returns nothing; mutates the shared collections.
-    macro_rules! commit_block {
-        ($b:expr) => {{
-            let b = $b;
-            let joined = if b.folded {
-                b.lines.join(" ")
-            } else {
-                b.lines.join("\n")
-            };
-            // Chomping is accepted/parsed; the joined value carries no
-            // trailing newline regardless, so `chomp_strip` is recorded for
-            // completeness without altering the (newline-free) result.
-            let _ = b.chomp_strip;
-            if seen.insert(b.key.clone()) {
-                pairs.push((b.key, joined));
-            } else {
-                warnings.push(format!(
-                    "frontmatter key '{}' appears more than once; keeping the first value",
-                    b.key
-                ));
-            }
-        }};
-    }
 
     // Block-style sequence state (#1917): a `key:` line with no inline value
     // followed by `- item` lines. Items are collected here and committed as a
@@ -633,7 +651,7 @@ fn parse_frontmatter(yaml: &str, warnings: &mut Vec<String>) -> Vec<(String, Str
         // indented at-or-below the opening key ends the block; it is then
         // re-processed as a normal frontmatter line below.
         if let Some(b) = block.as_mut() {
-            let raw_indent = indent_of(raw);
+            let raw_indent = frontmatter_indent_of(raw);
             let is_blank = raw.trim().is_empty();
             // Blank lines inside a block are part of the scalar (a blank line
             // is only a terminator at-or-below the key indent — but a blank
@@ -657,7 +675,12 @@ fn parse_frontmatter(yaml: &str, warnings: &mut Vec<String>) -> Vec<(String, Str
             }
             // Dedent: the block is finished. Commit it, then fall through to
             // process `raw` as an ordinary frontmatter line.
-            commit_block!(block.take().expect("block present"));
+            commit_block(
+                block.take().expect("block present"),
+                &mut pairs,
+                &mut seen,
+                warnings,
+            );
         }
 
         let line = raw.trim();
@@ -713,8 +736,7 @@ fn parse_frontmatter(yaml: &str, warnings: &mut Vec<String>) -> Vec<(String, Str
             block = Some(BlockScalar {
                 key: key.to_string(),
                 folded: spec.folded,
-                chomp_strip: spec.chomp_strip,
-                key_indent: indent_of(raw),
+                key_indent: frontmatter_indent_of(raw),
                 content_indent: None,
                 lines: Vec::new(),
             });
@@ -777,7 +799,7 @@ fn parse_frontmatter(yaml: &str, warnings: &mut Vec<String>) -> Vec<(String, Str
 
     // Flush a block scalar still open at end of input.
     if let Some(b) = block.take() {
-        commit_block!(b);
+        commit_block(b, &mut pairs, &mut seen, warnings);
     }
     // Flush a block-style sequence still open at end of input.
     if let Some(seq) = pending_seq.take() {
@@ -804,8 +826,6 @@ fn parse_frontmatter(yaml: &str, warnings: &mut Vec<String>) -> Vec<(String, Str
 struct BlockScalarSpec {
     /// `true` for a folded block (`>`); `false` for a literal block (`|`).
     folded: bool,
-    /// `true` when the strip chomping indicator (`-`) is present.
-    chomp_strip: bool,
 }
 
 /// Recognise a YAML block-scalar indicator as the inline value of a `key:`
@@ -813,6 +833,11 @@ struct BlockScalarSpec {
 /// spec) by a chomping indicator (`-`/`+`) and/or a single indentation digit
 /// (`1`–`9`), e.g. `|`, `>-`, `|+`, `|2`, `>2-`. A trailing line comment
 /// (`# …`) is tolerated. Returns `None` for any other value (a normal scalar).
+///
+/// The chomping indicator is ACCEPTED (so `|-`/`>+`/`|2` still parse as block
+/// scalars) but DISCARDED: the captured value is always joined without a
+/// trailing newline, so clip/keep/strip would yield identical text — there is
+/// nothing for the bool to influence.
 fn parse_block_scalar_indicator(value: &str) -> Option<BlockScalarSpec> {
     // Drop a trailing comment so `| # literal block` still parses.
     let head = match value.split_once('#') {
@@ -825,41 +850,32 @@ fn parse_block_scalar_indicator(value: &str) -> Option<BlockScalarSpec> {
         '>' => true,
         _ => return None,
     };
-    let mut chomp_strip = false;
     for c in chars {
         match c {
-            '-' => chomp_strip = true,
-            '+' => {}         // keep chomping — accepted, no effect here
+            '-' | '+' => {}   // chomping indicator — accepted, discarded
             '1'..='9' => {}   // explicit indentation indicator — accepted
             _ => return None, // anything else: not a block-scalar header
         }
     }
-    Some(BlockScalarSpec {
-        folded,
-        chomp_strip,
-    })
+    Some(BlockScalarSpec { folded })
 }
 
-/// Strip a single layer of matching surrounding quotes (`"…"` or `'…'`)
-/// from a frontmatter scalar value. YAML quoting is preserved on export
-/// only when a value needs it; Agaric's exporter currently emits bare
-/// scalars, but accepting quoted values keeps the importer tolerant of
-/// hand-edited / third-party frontmatter without pulling in a YAML crate.
-fn strip_yaml_quotes(value: &str) -> &str {
-    let bytes = value.as_bytes();
-    if bytes.len() >= 2
-        && ((bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"')
-            || (bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\''))
-    {
-        &value[1..value.len() - 1]
-    } else {
-        value
-    }
-}
+/// Strip a single layer of matching surrounding quotes from a frontmatter
+/// scalar — defined in [`crate::commands::pages::markdown_yaml`] so the
+/// import-side parser and the export-side emitter share one definition (#1920,
+/// the symmetric counterpart of `yaml_flow_item`'s quoting).
+use crate::commands::pages::markdown_yaml::strip_yaml_quotes;
 
-/// Matches `((uuid))` block references.
-static BLOCK_REF_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\(\([^)]*\)\)").expect("invalid block ref regex"));
+/// Matches any `((...))` parenthetical token for stripping to plain text.
+///
+/// This is INTENTIONALLY broad — `\(\([^)]*\)\)` strips arbitrary Logseq
+/// `((uuid))` AND `((free text))` tokens — and deliberately DIFFERS from the
+/// canonical 26-char-ULID-scoped block-ref pattern used elsewhere
+/// (`crate::cache` / `crate::fts`). The import path wants to remove every
+/// `((...))` reference (the target block does not exist in the imported vault),
+/// so it does not constrain the body to a ULID.
+static PARENTHETICAL_REF_STRIP_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\(\([^)]*\)\)").expect("invalid parenthetical-ref regex"));
 
 /// Matches two or more consecutive spaces.
 static MULTI_SPACE_RE: LazyLock<Regex> =
@@ -872,7 +888,14 @@ static MULTI_SPACE_RE: LazyLock<Regex> =
 /// depth-clamp / orphan-property counters. Returns the cleaned text and the
 /// number of references removed from this line.
 fn strip_block_refs_counted(text: &str) -> (String, usize) {
-    let removed = BLOCK_REF_RE.find_iter(text).count();
+    // #1921 fast-path: most imported lines carry no `((...))` token, so skip
+    // the parenthetical regex entirely when the marker is absent. `find_iter`
+    // / `replace_all` only run when a `((` substring is actually present.
+    let removed = if text.contains("((") {
+        PARENTHETICAL_REF_STRIP_RE.find_iter(text).count()
+    } else {
+        0
+    };
     if removed > 0 {
         // Per-occurrence diagnostic so a stalled or lossy import is
         // traceable line-by-line at debug level; the aggregate warning
@@ -883,11 +906,23 @@ fn strip_block_refs_counted(text: &str) -> (String, usize) {
             "stripping ((block-ref)) token(s) from imported line (#1933)"
         );
     }
-    let result = BLOCK_REF_RE.replace_all(text, "");
-    (
-        MULTI_SPACE_RE.replace_all(result.trim(), " ").to_string(),
-        removed,
-    )
+    // Only run the strip regex when a ref was actually found; otherwise the
+    // text is unchanged and we keep a borrow to avoid an allocation.
+    let result: std::borrow::Cow<'_, str> = if removed > 0 {
+        PARENTHETICAL_REF_STRIP_RE.replace_all(text, "")
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    };
+    // Preserve the exact original semantics: trim first, then collapse runs of
+    // 2+ spaces. #1921 fast-path: skip the multi-space regex + `to_string`
+    // allocation when the trimmed text has no double-space run.
+    let trimmed = result.trim();
+    let collapsed = if trimmed.contains("  ") {
+        MULTI_SPACE_RE.replace_all(trimmed, " ").to_string()
+    } else {
+        trimmed.to_string()
+    };
+    (collapsed, removed)
 }
 
 /// I-Core-10: matches the same alphabet that `op::validate_set_property`
@@ -1054,6 +1089,40 @@ bare line ((jkl-012)) too";
     fn parse_empty_content() {
         let output = parse_logseq_markdown("");
         assert!(output.blocks.is_empty());
+    }
+
+    /// #1921 — `strip_block_refs_counted` fast-paths must preserve EXACT
+    /// output (trim + 2+-space collapse) across all four input shapes:
+    /// no-refs-no-doublespace (both fast paths), refs-only, double-spaces-only,
+    /// and both together.
+    #[test]
+    fn strip_block_refs_fast_paths_preserve_output_1921() {
+        // (a) No refs, no double space — both fast paths taken. Trimmed only.
+        let (out, removed) = strip_block_refs_counted("  plain text  ");
+        assert_eq!(out, "plain text", "trim only; no regex work");
+        assert_eq!(removed, 0);
+
+        // (b) Refs only (no double space introduced after strip + trim).
+        let (out, removed) = strip_block_refs_counted("a ((ref)) b");
+        assert_eq!(out, "a  b".replace("  ", " "), "refs stripped");
+        assert_eq!(out, "a b", "single space collapse from the gap");
+        assert_eq!(removed, 1);
+
+        // (c) Double spaces only (no refs) — first fast path skips the
+        // parenthetical regex, the collapse regex still runs.
+        let (out, removed) = strip_block_refs_counted("a    b   c");
+        assert_eq!(out, "a b c", "runs of spaces collapse to one");
+        assert_eq!(removed, 0);
+
+        // (d) Both refs and double spaces.
+        let (out, removed) = strip_block_refs_counted("x  ((r1))  y ((r2)) z");
+        assert_eq!(out, "x y z", "refs removed and spaces collapsed");
+        assert_eq!(removed, 2);
+
+        // (e) A token-only line collapses to empty after trim.
+        let (out, removed) = strip_block_refs_counted("((only))");
+        assert_eq!(out, "", "a bare ref line strips to empty");
+        assert_eq!(removed, 1);
     }
 
     #[test]
@@ -1769,40 +1838,35 @@ bare line ((jkl-012)) too";
 
     /// #1922 (`no-direct-helper-unit-tests`) — `parse_block_scalar_indicator`
     /// edge cases asserted at the HELPER level (the existing _1590 tests only
-    /// hit it indirectly): folded vs literal flag, chomp_strip flag, the
-    /// indent-digit form (`|2`), order-independence (`>2-`), trailing-comment
-    /// tolerance (`| # literal`), and rejection of non-block-scalar values.
+    /// hit it indirectly): folded vs literal flag, the indent-digit form
+    /// (`|2`), order-independence (`>2-`), trailing-comment tolerance
+    /// (`| # literal`), and rejection of non-block-scalar values. #1920 — the
+    /// chomping indicator is still ACCEPTED (`|-`/`>+`/`>2-` parse) but no
+    /// longer stored, so we assert acceptance via `Some(..)`, not a bool.
     #[test]
     fn parse_block_scalar_indicator_edge_cases_1922() {
-        // Literal `|` -> folded == false, chomp_strip == false.
+        // Literal `|` -> folded == false.
         let lit = parse_block_scalar_indicator("|").expect("`|` is a block scalar");
         assert!(!lit.folded, "`|` is literal (not folded)");
-        assert!(!lit.chomp_strip, "`|` has no strip chomp");
         // Folded `>` -> folded == true.
         let fold = parse_block_scalar_indicator(">").expect("`>` is a block scalar");
         assert!(fold.folded, "`>` is folded");
-        assert!(!fold.chomp_strip);
-        // Strip chomping `|-` -> chomp_strip == true, literal.
+        // Strip chomping `|-` -> still accepted, literal.
         let strip = parse_block_scalar_indicator("|-").expect("`|-` is a block scalar");
         assert!(!strip.folded);
-        assert!(strip.chomp_strip, "`|-` sets strip chomp");
-        // Keep chomping `>+` -> folded, no strip.
+        // Keep chomping `>+` -> still accepted, folded.
         let keep = parse_block_scalar_indicator(">+").expect("`>+` is a block scalar");
         assert!(keep.folded);
-        assert!(!keep.chomp_strip, "`+` (keep) is not strip");
-        // Indent digit `|2` -> accepted, literal, no strip.
+        // Indent digit `|2` -> accepted, literal.
         let indent = parse_block_scalar_indicator("|2").expect("`|2` is a block scalar");
         assert!(!indent.folded);
-        assert!(!indent.chomp_strip);
-        // Order-independent `>2-` -> folded + strip.
+        // Order-independent `>2-` -> still accepted, folded.
         let mixed = parse_block_scalar_indicator(">2-").expect("`>2-` is a block scalar");
         assert!(mixed.folded);
-        assert!(mixed.chomp_strip, "`>2-` carries the `-` strip indicator");
         // Trailing comment tolerated: `| # literal block`.
         let commented =
             parse_block_scalar_indicator("| # literal block").expect("trailing comment tolerated");
         assert!(!commented.folded);
-        assert!(!commented.chomp_strip);
         // Rejections: not a block-scalar header -> None.
         assert!(
             parse_block_scalar_indicator("x").is_none(),

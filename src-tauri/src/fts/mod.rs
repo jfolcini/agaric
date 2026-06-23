@@ -50,4 +50,4 @@ pub(crate) use search::sanitize_fts_query;
 // `page_limit` / `block_limit` against this ceiling and rejects an
 // over-limit request (the cursor path rejects via `PageRequest::new`).
 pub(crate) use search::MAX_SEARCH_RESULTS;
-pub(crate) use strip::{PAGE_LINK_RE, TAG_REF_RE, load_ref_maps_for_block};
+pub(crate) use strip::load_ref_maps_for_block;

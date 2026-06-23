@@ -11,6 +11,7 @@ pub(crate) mod aliases;
 pub(crate) mod links;
 pub(crate) mod listing;
 pub(crate) mod markdown;
+pub(crate) mod markdown_yaml;
 pub(crate) mod metadata;
 
 pub use aliases::*;
