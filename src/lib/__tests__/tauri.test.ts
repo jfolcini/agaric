@@ -3173,6 +3173,29 @@ describe('importMarkdown', () => {
     capturedChannel?.onmessage?.(event)
     expect(onProgress).toHaveBeenCalledWith(event)
   })
+
+  it('forwards vaultFiles to the import_markdown command (#1925)', async () => {
+    // #1925 — PR 2 adds the optional 5th `vaultFiles` arg (referenced
+    // attachment bytes from the vault picker). When supplied it must flow
+    // through to the IPC `vaultFiles` arg unchanged.
+    mockedInvoke.mockResolvedValueOnce({
+      page_title: 'P',
+      blocks_created: 1,
+      properties_set: 0,
+      warnings: [],
+    })
+
+    const vaultFiles = [{ path: 'assets/a.png', bytes: [1, 2, 3] }]
+    await importMarkdown('![](assets/a.png)', 'p.md', 'SPACE_A', undefined, vaultFiles)
+
+    expect(mockedInvoke).toHaveBeenCalledWith('import_markdown', {
+      content: '![](assets/a.png)',
+      filename: 'p.md',
+      spaceId: 'SPACE_A',
+      vaultFiles,
+      progress: expect.anything(),
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------

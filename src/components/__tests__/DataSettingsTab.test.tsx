@@ -140,6 +140,10 @@ describe('DataSettingsTab', () => {
         'test.md',
         DEFAULT_TEST_SPACE.id,
         expect.any(Function),
+        // #1925 — a single-file (non-folder) import has no sibling assets, so
+        // `vaultFiles` is null (documented limitation; only the folder picker
+        // exposes siblings).
+        null,
       )
     })
   })
@@ -979,6 +983,97 @@ describe('DataSettingsTab', () => {
 
     await act(async () => {
       resolveImport({ page_title: 'one', blocks_created: 1, properties_set: 0, warnings: [] })
+    })
+  })
+
+  // #1925 — vault attachment import (PR 2). The folder picker's FileList holds
+  // markdown AND sibling assets; the FE pre-scans each markdown for refs and
+  // ships only the matched files' bytes as `vaultFiles`.
+  describe('vault attachment import (#1925)', () => {
+    /** Make a `File` carrying a `webkitRelativePath` (the folder-pick shape). */
+    const folderFile = (
+      bytes: BlobPart[],
+      name: string,
+      relativePath: string,
+      type = 'text/markdown',
+    ): File => {
+      const f = new File(bytes, name, { type })
+      Object.defineProperty(f, 'webkitRelativePath', { value: relativePath })
+      return f
+    }
+
+    const okResult = {
+      page_title: 'note',
+      blocks_created: 1,
+      properties_set: 0,
+      warnings: [],
+    }
+
+    it('ships a referenced sibling file as vaultFiles { path, bytes }', async () => {
+      mockImportMarkdown.mockResolvedValueOnce(okResult)
+
+      render(<DataSettingsTab />)
+      const folderInput = screen.getByTestId('import-folder-input') as HTMLInputElement
+
+      const md = folderFile(['![](assets/diagram.png)'], 'note.md', 'MyVault/note.md')
+      const png = folderFile(
+        [new Uint8Array([1, 2, 3, 4])],
+        'diagram.png',
+        'MyVault/assets/diagram.png',
+        'image/png',
+      )
+      Object.defineProperty(folderInput, 'files', { value: [md, png] })
+
+      await act(async () => {
+        folderInput.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+
+      await waitFor(() => expect(mockImportMarkdown).toHaveBeenCalled())
+      const vaultFiles = mockImportMarkdown.mock.calls[0]?.[4] as Array<{
+        path: string
+        bytes: number[]
+      }> | null
+      expect(vaultFiles).toHaveLength(1)
+      // Path is vault-root-relative (top folder stripped).
+      expect(vaultFiles?.[0]?.path).toBe('assets/diagram.png')
+      // Bytes are the read file contents (non-empty number[]).
+      expect(vaultFiles?.[0]?.bytes).toEqual([1, 2, 3, 4])
+    })
+
+    it('omits a referenced-but-absent file from vaultFiles', async () => {
+      mockImportMarkdown.mockResolvedValueOnce(okResult)
+
+      render(<DataSettingsTab />)
+      const folderInput = screen.getByTestId('import-folder-input') as HTMLInputElement
+
+      // Markdown references a file that is NOT in the FileList.
+      const md = folderFile(['![](assets/missing.png)'], 'note.md', 'MyVault/note.md')
+      Object.defineProperty(folderInput, 'files', { value: [md] })
+
+      await act(async () => {
+        folderInput.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+
+      await waitFor(() => expect(mockImportMarkdown).toHaveBeenCalled())
+      // No refs resolved ⇒ null payload (backend warns about the missing file).
+      expect(mockImportMarkdown.mock.calls[0]?.[4]).toBeNull()
+    })
+
+    it('passes null vaultFiles for a single-file (non-folder) import', async () => {
+      mockImportMarkdown.mockResolvedValueOnce(okResult)
+
+      render(<DataSettingsTab />)
+      const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+      // A plain `.md` pick: webkitRelativePath is empty ⇒ no sibling assets.
+      const file = new File(['![](assets/diagram.png)'], 'note.md', { type: 'text/markdown' })
+      Object.defineProperty(fileInput, 'files', { value: [file] })
+
+      await act(async () => {
+        fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+
+      await waitFor(() => expect(mockImportMarkdown).toHaveBeenCalled())
+      expect(mockImportMarkdown.mock.calls[0]?.[4]).toBeNull()
     })
   })
 })

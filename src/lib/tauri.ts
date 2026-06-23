@@ -65,6 +65,7 @@ export type {
   TagExpr,
   TagResponse,
   TaskNotification,
+  VaultFile,
 } from './bindings'
 export type { SafeLimit } from './safe-limit'
 export {
@@ -116,6 +117,7 @@ import type {
   TagExpr,
   TagResponse,
   TaskNotification,
+  VaultFile,
 } from './bindings'
 
 /**
@@ -2178,15 +2180,19 @@ export async function importMarkdown(
   filename: string | undefined,
   spaceId: string,
   onProgress?: (update: ImportProgressUpdate) => void,
+  vaultFiles?: VaultFile[] | null,
 ): Promise<ImportResult> {
   const channel = new Channel<ImportProgressUpdate>()
   // oxlint-disable-next-line unicorn/prefer-add-event-listener -- Tauri `Channel` is an IPC primitive, not a DOM EventTarget; it only exposes an `onmessage` setter (no `addEventListener`)
   if (onProgress) channel.onmessage = onProgress
-  // #1925 — `vaultFiles` (referenced attachment bytes) is passed `null` here:
-  // PR 1 ships the backend ingest/rewrite only. PR 2 wires the frontend
-  // `webkitdirectory` picker to pre-scan the vault and supply just the
-  // referenced sibling files. `null` ⇒ exactly the pre-#1925 behaviour.
-  return unwrap(await commands.importMarkdown(content, filename ?? null, spaceId, null, channel))
+  // #1925 — `vaultFiles` carries the referenced attachment bytes the backend
+  // ingests and rewrites to `attachment:<id>`. Only the `webkitdirectory`
+  // vault picker can supply siblings (see DataSettingsTab); a single-file
+  // import has no siblings and omits it. Defaults to `null` ⇒ exactly the
+  // pre-#1925 behaviour for every caller that does not pass it.
+  return unwrap(
+    await commands.importMarkdown(content, filename ?? null, spaceId, vaultFiles ?? null, channel),
+  )
 }
 
 // ---------------------------------------------------------------------------
