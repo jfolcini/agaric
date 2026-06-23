@@ -180,23 +180,20 @@ export function buildFilters(
 
 /**
  * Map a {@link PropertyFilter} operator to the engine's nested
- * {@link DatePredicate} (used by `DueDate`/`Scheduled` `FilterPrimitive`s).
+ * {@link DatePredicate} (used by the `DueDate` `FilterPrimitive`).
  *
  * The legacy shorthand only carries the six comparison operators; the engine's
- * richer date predicates (`On`, `IsNull`, `Between`) have no shorthand spelling,
- * so they are unreachable from a legacy block and intentionally not produced
- * here. Mirrors `AddFilterPopover.applyDate`'s predicate construction.
+ * richer date predicates (`IsNull`, `Between`) have no shorthand spelling, so
+ * they are unreachable from a legacy block and intentionally not produced here.
+ * Mirrors `AddFilterPopover.applyDate`'s predicate construction.
+ *
+ * `neq` has no faithful date predicate and is rejected by the only caller
+ * ({@link propertyFilterToLeaves}); this throws rather than silently mapping it
+ * to `On` (its semantic opposite) so a future caller cannot reintroduce that
+ * footgun.
  */
 function toDatePredicate(pf: PropertyFilter): DatePredicate {
   switch (pf.operator) {
-    case 'neq': {
-      // No `!=` date predicate exists; `Ne` is property-only. The closest
-      // faithful structural form is "not on this day" — but the engine has no
-      // such date primitive, so a `due_date!=X` block is NOT translatable.
-      // Callers gate on `untranslatable` (see `legacyQueryToFilterExpr`); this
-      // arm is unreachable for them and falls back to an exact-day `On`.
-      return { type: 'On', date: pf.value }
-    }
     case 'lt': {
       return { type: 'Before', date: pf.value }
     }
@@ -209,10 +206,14 @@ function toDatePredicate(pf: PropertyFilter): DatePredicate {
     case 'gte': {
       return { type: 'OnOrAfter', date: pf.value }
     }
-    default: {
-      // `eq` / undefined → the exact calendar day (the engine expands `On` to a
-      // day window), matching the legacy `value_date = X` semantics.
+    case 'eq':
+    case undefined: {
+      // The exact calendar day (the engine expands `On` to a day window),
+      // matching the legacy `value_date = X` semantics.
       return { type: 'On', date: pf.value }
+    }
+    case 'neq': {
+      throw new Error('due_date != has no engine date predicate; reject upstream')
     }
   }
 }
@@ -246,46 +247,67 @@ function toPropertyPredicate(pf: PropertyFilter): PropertyPredicate {
   }
 }
 
+/** Wrap a {@link FilterPrimitive} in a `Leaf` {@link FilterExpr} node. */
+function leaf(primitive: FilterPrimitive): FilterExpr {
+  return { type: 'Leaf', primitive }
+}
+
 /**
  * Translate a single parsed {@link PropertyFilter} to the engine
- * {@link FilterPrimitive} that reproduces its match semantics, mirroring the
+ * {@link FilterExpr} leaves that reproduce its match semantics, mirroring the
  * fixed-field routing in {@link buildFilters} but onto the advanced-engine
  * vocabulary (`State`/`Priority`/`DueDate`/`HasProperty`) used by
  * `run_advanced_query`.
+ *
+ * Returns an array because a single legacy filter can need more than one leaf:
+ * custom `!=` becomes `Exists` + `Ne` (see below). The caller spreads them into
+ * its top-level `And`.
  *
  * Routing (matches `AddFilterPopover`'s chip construction):
  *   - `todo_state` → `State { values:[v], is_null:false, exclude:false }`
  *                    (only `eq` is faithful — `State` has no per-value operator)
  *   - `priority`   → `Priority { values:[v], is_null:false, exclude:false }`
  *                    (same `eq`-only constraint)
- *   - `due_date`   → `DueDate { predicate }` (all six operators map; see
- *                    {@link toDatePredicate})
- *   - other keys   → `HasProperty { key, predicate }` (all six operators map)
+ *   - `due_date`   → `DueDate { predicate }` (`eq`/`lt`/`gt`/`lte`/`gte` map;
+ *                    `neq` has no date predicate, see {@link toDatePredicate})
+ *   - custom `!=`  → `Exists` + `Ne` (legacy `!=` requires the property to be
+ *                    present; bare `HasProperty{Ne}` would also match absent)
+ *   - other keys   → `HasProperty { key, predicate }`
  *
  * Returns `null` when the filter is NOT faithfully expressible on the engine
  * vocabulary, so the caller can refuse to silently change a legacy block's
- * results. The only such cases are a non-`eq` operator on the membership-only
- * `todo_state` / `priority` fields (the engine's `State`/`Priority` leaves are
- * pure set-membership and carry no comparison operator).
+ * results: a non-`eq` operator on the membership-only `todo_state` / `priority`
+ * fields, or `due_date != X` (no engine `!=` date predicate).
  */
-function propertyFilterToPrimitive(pf: PropertyFilter): FilterPrimitive | null {
+function propertyFilterToLeaves(pf: PropertyFilter): FilterExpr[] | null {
   const isEq = pf.operator == null || pf.operator === 'eq'
   if (pf.key === 'todo_state') {
     if (!isEq) return null
-    return { type: 'State', values: [pf.value], is_null: false, exclude: false }
+    return [leaf({ type: 'State', values: [pf.value], is_null: false, exclude: false })]
   }
   if (pf.key === 'priority') {
     if (!isEq) return null
-    return { type: 'Priority', values: [pf.value], is_null: false, exclude: false }
+    return [leaf({ type: 'Priority', values: [pf.value], is_null: false, exclude: false })]
   }
   if (pf.key === 'due_date') {
     // The engine has no `!=` date predicate; `due_date!=X` would otherwise be
     // mistranslated to an exact-day `On` match (the semantic opposite), so we
     // refuse it and the caller keeps the legacy path.
     if (pf.operator === 'neq') return null
-    return { type: 'DueDate', predicate: toDatePredicate(pf) }
+    return [leaf({ type: 'DueDate', predicate: toDatePredicate(pf) })]
   }
-  return { type: 'HasProperty', key: pf.key, predicate: toPropertyPredicate(pf) }
+  if (pf.operator === 'neq') {
+    // Legacy custom `!=` is `EXISTS(SELECT … WHERE key=? AND value<>?)`, which
+    // requires the property to be PRESENT. The engine's `HasProperty{Ne}`
+    // compiles to `NOT EXISTS(… key=? AND value=?)`, which ALSO matches blocks
+    // that lack the property entirely — a wider set. Pair it with an explicit
+    // `Exists` leaf so the `And` reproduces the legacy "present and not equal".
+    return [
+      leaf({ type: 'HasProperty', key: pf.key, predicate: { type: 'Exists' } }),
+      leaf({ type: 'HasProperty', key: pf.key, predicate: toPropertyPredicate(pf) }),
+    ]
+  }
+  return [leaf({ type: 'HasProperty', key: pf.key, predicate: toPropertyPredicate(pf) })]
 }
 
 /** Outcome of {@link legacyQueryToFilterExpr}. */
@@ -331,7 +353,7 @@ export interface LegacyToFilterExprResult {
  *      block predicate).
  *   3. A non-`eq` operator on `todo_state` / `priority` — the engine's
  *      `State`/`Priority` leaves are membership-only (see
- *      {@link propertyFilterToPrimitive}).
+ *      {@link propertyFilterToLeaves}).
  *
  * Everything else (single/multi property shorthand with any operator, including
  * `due_date` ranges and custom-key comparisons) translates faithfully to an
@@ -364,12 +386,14 @@ export function legacyQueryToFilterExpr(
 
   const children: FilterExpr[] = []
   for (const pf of parsed.propertyFilters) {
-    const primitive = propertyFilterToPrimitive(pf)
-    if (primitive == null) {
+    const leaves = propertyFilterToLeaves(pf)
+    if (leaves == null) {
       reasons.push(`property-operator-not-expressible:${pf.key}:${pf.operator ?? 'eq'}`)
       continue
     }
-    children.push({ type: 'Leaf', primitive })
+    // `And` is associative, so a multi-leaf translation (custom `!=` →
+    // `Exists` + `Ne`) flattens into the top-level `And` rather than nesting.
+    children.push(...leaves)
   }
 
   if (reasons.length > 0) {

@@ -335,8 +335,9 @@ describe('legacyQueryToFilterExpr', () => {
     })
 
     it('maps every comparison operator on a custom property faithfully', () => {
+      // `!=` is special-cased (see the Exists+Ne test below): legacy `!=`
+      // requires the property to exist, so it cannot be a single leaf.
       const cases: [string, string][] = [
-        ['property:score!=100', 'Ne'],
         ['property:score<100', 'Lt'],
         ['property:score>100', 'Gt'],
         ['property:score<=100', 'Lte'],
@@ -359,6 +360,32 @@ describe('legacyQueryToFilterExpr', () => {
           ],
         })
       }
+    })
+
+    it('translates custom != to Exists AND Ne (legacy != requires presence)', () => {
+      // Legacy `property:score!=100` is `EXISTS(… key=score AND value<>100)`,
+      // which matches only blocks that HAVE the property. The engine's bare
+      // `HasProperty{Ne}` is `NOT EXISTS(… value=100)` and would also match
+      // blocks lacking the property, so we pair it with an explicit `Exists`.
+      const { filterExpr, reasons } = translate('property:score!=100')
+      expect(reasons).toEqual([])
+      expect(filterExpr).toEqual({
+        type: 'And',
+        children: [
+          {
+            type: 'Leaf',
+            primitive: { type: 'HasProperty', key: 'score', predicate: { type: 'Exists' } },
+          },
+          {
+            type: 'Leaf',
+            primitive: {
+              type: 'HasProperty',
+              key: 'score',
+              predicate: { type: 'Ne', value: { type: 'Text', value: '100' } },
+            },
+          },
+        ],
+      })
     })
 
     it('maps due_date comparison operators to DueDate date predicates', () => {
