@@ -3416,6 +3416,121 @@ mod tests {
         );
     }
 
+    /// #1993 Phase 1 — seed pre-0094 attachments (two rows with identical
+    /// bytes/hash + one distinct), apply the 0094 migration, run the Rust blob
+    /// backfill, and assert: exactly ONE `attachment_blobs` row per distinct
+    /// hash, files preserved, and duplicate rows repointed at the canonical
+    /// blob file. Uses the seed-then-migrate harness so the real migration SQL
+    /// (table create + fs_path UNIQUE drop) runs.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn attachment_blobs_backfill_dedups_pre_0094_rows_1993() {
+        let (pool, dir) = unmigrated_pool().await;
+        // Migrate up to 0093 (content_hash column present, fs_path UNIQUE still
+        // in force — so the duplicate-bytes rows must use DISTINCT fs_paths).
+        apply_migrations_through(&pool, 0, 93).await;
+
+        let app_data_dir = dir.path();
+        std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
+
+        let dup_bytes = b"identical bytes across two blocks".to_vec();
+        let dup_hash = blake3::hash(&dup_bytes).to_hex().to_string();
+        let solo_bytes = b"a different attachment entirely".to_vec();
+        let solo_hash = blake3::hash(&solo_bytes).to_hex().to_string();
+
+        // Three blocks, three files, three rows. Two rows share dup_hash.
+        for (blk, att, path, bytes, hash) in [
+            (
+                "BLK1993A",
+                "ATT1993A",
+                "attachments/a.bin",
+                &dup_bytes,
+                &dup_hash,
+            ),
+            (
+                "BLK1993B",
+                "ATT1993B",
+                "attachments/b.bin",
+                &dup_bytes,
+                &dup_hash,
+            ),
+            (
+                "BLK1993C",
+                "ATT1993C",
+                "attachments/c.bin",
+                &solo_bytes,
+                &solo_hash,
+            ),
+        ] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, page_id) \
+                 VALUES (?, 'page', 'seed', ?)",
+            )
+            .bind(blk)
+            .bind(blk)
+            .execute(&pool)
+            .await
+            .unwrap();
+            std::fs::write(app_data_dir.join(path), bytes).unwrap();
+            sqlx::query(
+                "INSERT INTO attachments \
+                 (id, block_id, mime_type, filename, size_bytes, fs_path, created_at, content_hash) \
+                 VALUES (?, ?, 'application/zip', 'f.bin', ?, ?, 1735689600000, ?)",
+            )
+            .bind(att)
+            .bind(blk)
+            .bind(i64::try_from(bytes.len()).unwrap())
+            .bind(path)
+            .bind(hash)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Apply 0094 (creates attachment_blobs, drops fs_path UNIQUE).
+        apply_migrations_to_head(&pool, 93).await;
+
+        // Run the Rust-side backfill (SQLite cannot hash; the migration only
+        // creates the empty table).
+        let report = crate::recovery::backfill_attachment_blobs(&pool, app_data_dir)
+            .await
+            .unwrap();
+        assert_eq!(report.blobs_created, 2, "two distinct hashes → two blobs");
+        assert_eq!(report.rows_repointed, 1, "the duplicate row is repointed");
+
+        // Exactly one blob row per distinct hash.
+        let blob_n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachment_blobs")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(blob_n, 2);
+
+        // The two duplicate rows now resolve to ONE canonical file.
+        let pa: String =
+            sqlx::query_scalar("SELECT fs_path FROM attachments WHERE id = 'ATT1993A'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let pb: String =
+            sqlx::query_scalar("SELECT fs_path FROM attachments WHERE id = 'ATT1993B'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(pa, pb, "duplicate rows must share one canonical blob path");
+        // Canonical file is preserved on disk.
+        assert!(
+            app_data_dir.join(&pa).exists(),
+            "canonical blob file preserved"
+        );
+        // The solo attachment is unaffected.
+        let pc: String =
+            sqlx::query_scalar("SELECT fs_path FROM attachments WHERE id = 'ATT1993C'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(pc, "attachments/c.bin");
+        assert!(app_data_dir.join(&pc).exists());
+    }
+
     // ----------------------------------------------------------------------
     // Issue #708 — the 0089 `spaces` registry + `blocks` rebuild.
     //

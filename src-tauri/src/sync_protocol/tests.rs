@@ -628,6 +628,7 @@ fn sync_message_serde_roundtrip() {
             attachment_id: "ATT1".into(),
             size_bytes: 4096,
             blake3_hash: "a".repeat(64),
+            content_hash: None,
         },
         SyncMessage::FileReceived {
             attachment_id: "ATT1".into(),

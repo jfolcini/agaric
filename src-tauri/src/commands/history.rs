@@ -304,8 +304,9 @@ pub async fn apply_reverse_in_tx(
             // materializer model. The forward `delete_attachment` path
             // (`materializer::handlers::apply_delete_attachment_tx`) hard-
             // deletes the row, and the runtime command
-            // (`commands::attachments::delete_attachment_inner`) unlinks the
-            // file post-commit. Undo is the *only* producer of soft-deleted
+            // (`commands::attachments::delete_attachment_inner`) deletes the
+            // row and defers byte reclamation to the GC pass (#1993). Undo is
+            // the *only* producer of soft-deleted
             // attachment rows, but `list_attachments_*` has no `deleted_at`
             // filter, so a soft-delete UPDATE here left a tombstone visible in
             // listings that is never GC'd. A hard DELETE keeps the reverse of

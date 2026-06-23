@@ -53,6 +53,11 @@ pub(crate) use handlers::{
 };
 #[cfg(test)]
 use handlers::{handle_background_task, handle_foreground_task};
+// #1993: re-exported test-only so command-level tests can drive the GC pass
+// (delete defers byte reclamation to it). Non-test code reaches it within the
+// materializer module via `handlers::cleanup_orphaned_attachments`.
+#[cfg(test)]
+pub(crate) use handlers::cleanup_orphaned_attachments;
 pub use metrics::{QueueMetrics, StatusInfo};
 use serde::Deserialize;
 use std::sync::Arc;

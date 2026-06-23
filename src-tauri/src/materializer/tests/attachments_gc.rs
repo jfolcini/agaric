@@ -219,6 +219,95 @@ async fn cleanup_orphaned_attachments_subdir_walk() {
     );
 }
 
+/// Insert an `attachment_blobs` row for the dedup GC tests.
+async fn insert_blob_row(pool: &SqlitePool, content_hash: &str, on_disk_path: &str) {
+    sqlx::query(
+        "INSERT INTO attachment_blobs (content_hash, on_disk_path, size_bytes, created_at) \
+         VALUES (?, ?, 1, 1735689600000)",
+    )
+    .bind(content_hash)
+    .bind(on_disk_path)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// #1993 GC refcount: a blob file shared by TWO live attachment rows must
+/// survive a GC pass (both rows still reference it). After one row is deleted
+/// the file STILL survives (the other row references it). Only when BOTH rows
+/// are gone does GC unlink the file AND prune the orphaned blob row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cleanup_orphaned_attachments_keeps_shared_blob_until_last_ref_1993() {
+    let (pool, dir) = test_pool().await;
+    let attachments = dir.path().join("attachments");
+    tokio::fs::create_dir_all(&attachments).await.unwrap();
+
+    let rel = "attachments/shared.bin".to_string();
+    tokio::fs::write(dir.path().join(&rel), b"shared bytes")
+        .await
+        .unwrap();
+
+    // Two rows (different blocks) pointing at one file + one blob row.
+    insert_attachment_row(&pool, "ATT_S1", "BLK_S1", &rel).await;
+    insert_attachment_row(&pool, "ATT_S2", "BLK_S2", &rel).await;
+    insert_blob_row(&pool, "hash_shared", &rel).await;
+
+    // Pass 1: both rows reference it → file + blob row survive.
+    super::super::handlers::cleanup_orphaned_attachments(&pool, None, dir.path())
+        .await
+        .unwrap();
+    assert!(
+        dir.path().join(&rel).exists(),
+        "shared file must survive while referenced"
+    );
+    let blob_n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachment_blobs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(blob_n, 1, "blob row must survive while referenced");
+
+    // Delete ONE row → the other still references the file.
+    sqlx::query("DELETE FROM attachments WHERE id = ?")
+        .bind("ATT_S1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    super::super::handlers::cleanup_orphaned_attachments(&pool, None, dir.path())
+        .await
+        .unwrap();
+    assert!(
+        dir.path().join(&rel).exists(),
+        "file must survive while a sibling row still references it"
+    );
+    let blob_n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachment_blobs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        blob_n, 1,
+        "blob row must survive while a sibling references it"
+    );
+
+    // Delete the LAST row → file + blob row are reclaimed.
+    sqlx::query("DELETE FROM attachments WHERE id = ?")
+        .bind("ATT_S2")
+        .execute(&pool)
+        .await
+        .unwrap();
+    super::super::handlers::cleanup_orphaned_attachments(&pool, None, dir.path())
+        .await
+        .unwrap();
+    assert!(
+        !dir.path().join(&rel).exists(),
+        "file must be unlinked once no row references it"
+    );
+    let blob_n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachment_blobs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(blob_n, 0, "orphaned blob row must be pruned");
+}
+
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cleanup_orphaned_attachments_unlink_error_is_non_fatal() {

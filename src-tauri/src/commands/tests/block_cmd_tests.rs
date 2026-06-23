@@ -3592,19 +3592,31 @@ async fn delete_attachment_removes_row() {
     .unwrap();
     assert!(maybe.is_none(), "attachment should be deleted from DB");
 
-    // C-3b: file should be unlinked from disk too.
+    // #1993: byte reclamation is deferred to GC. The row is gone, but the
+    // file survives until `cleanup_orphaned_attachments` runs (delete no
+    // longer unlinks eagerly — see `delete_attachment_inner`).
+    assert!(
+        app_data_dir.join("attachments/doc.pdf").exists(),
+        "attachment file should still be on disk immediately after delete (reclaimed by GC)"
+    );
+
+    // Run the GC pass → the now-unreferenced file is reclaimed.
+    crate::materializer::cleanup_orphaned_attachments(&pool, None, app_data_dir)
+        .await
+        .unwrap();
     assert!(
         !app_data_dir.join("attachments/doc.pdf").exists(),
-        "attachment file should be removed from disk after delete_attachment_inner"
+        "attachment file should be removed from disk after cleanup_orphaned_attachments"
     );
 
     mat.shutdown();
 }
 
-/// C-3a/b happy path: `delete_attachment_inner` must (a) commit a
+/// C-3a happy path: `delete_attachment_inner` must commit a
 /// `DeleteAttachment` op-log entry whose `fs_path` matches the original
-/// `add_attachment` fs_path, and (b) unlink the on-disk file under
-/// `app_data_dir`.
+/// `add_attachment` fs_path, and remove the DB row. #1993: the on-disk file
+/// is NOT unlinked eagerly — byte reclamation is deferred to the GC pass, so
+/// the file is reclaimed only after `cleanup_orphaned_attachments` runs.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_attachment_unlinks_file_and_records_fs_path_in_op_log() {
     let (pool, _dir) = test_pool().await;
@@ -3663,10 +3675,19 @@ async fn delete_attachment_unlinks_file_and_records_fs_path_in_op_log() {
     .unwrap();
     assert!(maybe.is_none(), "attachment row must be deleted from DB");
 
-    // (b) On-disk file gone.
+    // (b) #1993: on-disk file survives the delete (reclamation deferred to
+    // GC), then is reclaimed by `cleanup_orphaned_attachments`.
+    assert!(
+        full_path.exists(),
+        "attachment file at {} must still be present immediately after delete (GC reclaims it)",
+        full_path.display()
+    );
+    crate::materializer::cleanup_orphaned_attachments(&pool, None, app_data_dir)
+        .await
+        .unwrap();
     assert!(
         !full_path.exists(),
-        "attachment file at {} must be unlinked",
+        "attachment file at {} must be unlinked after GC",
         full_path.display()
     );
 
@@ -4479,16 +4500,12 @@ async fn add_attachment_returns_io_error_when_file_missing_on_disk() {
     mat.shutdown();
 }
 
-/// A second `add_attachment_inner` for the same `fs_path` (with the
-/// underlying file present on disk and a different `attachment_id` /
-/// `block_id`) must surface as `AppError::Database` — the partial unique
-/// index `idx_attachments_fs_path_unique` (migration 0037) trips the
-/// SQLite UNIQUE-constraint check inside the IMMEDIATE transaction, which
-/// `sqlx` reports as `sqlx::Error::Database` and our `From` impl wraps as
-/// `AppError::Database`. Pre-fix, the second insert silently succeeded
-/// and produced two rows pointing at the same file; once
-/// `delete_attachment` actually unlinks (C-3a/b), that would let one
-/// row's delete clobber the other row's content.
+/// #1993 supersedes M-30: a second `add_attachment_inner` for the same
+/// `fs_path`/bytes across two different blocks now SUCCEEDS and DEDUPS — the
+/// partial unique index `idx_attachments_fs_path_unique` was dropped in
+/// migration 0094 so many attachment rows may share one content-addressed
+/// blob file. Both rows exist, there is exactly ONE `attachment_blobs` row,
+/// and both rows resolve to the shared file.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn add_attachment_duplicate_fs_path_returns_error_m30() {
     let (pool, _dir) = test_pool().await;
@@ -4543,8 +4560,8 @@ async fn add_attachment_duplicate_fs_path_returns_error_m30() {
     .await
     .expect("first add_attachment must succeed");
 
-    // Second insert against the same `fs_path`: must fail with
-    // AppError::Database because the partial unique index trips.
+    // Second insert against the same `fs_path`/bytes from a different block:
+    // now SUCCEEDS and dedups against the existing blob.
     let result = add_attachment_inner(
         &pool,
         DEV,
@@ -4557,28 +4574,30 @@ async fn add_attachment_duplicate_fs_path_returns_error_m30() {
         rel_path.into(),
     )
     .await;
-
-    // Issue #106: `From<sqlx::Error>` now lifts unique-constraint
-    // violations out of the generic `Database` bucket into a dedicated
-    // `Conflict` variant so the frontend can render a tailored toast.
-    // The schema guarantee being pinned here is unchanged — the partial
-    // unique index still has to trip — only the discriminant moved.
     assert!(
-        matches!(result, Err(AppError::Conflict(_))),
-        "duplicate fs_path must surface as AppError::Conflict, got: {result:?}"
+        result.is_ok(),
+        "#1993: duplicate bytes must dedup (succeed), got: {result:?}"
     );
 
-    // Schema guarantee: only one row exists for this fs_path. The
-    // failed second insert rolled back inside the IMMEDIATE tx.
+    // Two attachment rows now point at the same file.
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE fs_path = ?")
         .bind(rel_path)
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(
-        count, 1,
-        "only the first add must have produced a row at this fs_path"
+        count, 2,
+        "#1993: both rows share one content-addressed blob file"
     );
+
+    // Exactly one blob row owns those bytes.
+    let blobs: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM attachment_blobs WHERE on_disk_path = ?")
+            .bind(rel_path)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(blobs, 1, "#1993: one blob per distinct hash");
 
     mat.shutdown();
 }
@@ -4683,6 +4702,230 @@ async fn add_attachment_after_soft_delete_can_reuse_fs_path_m30() {
         live, 1,
         "exactly one non-soft-deleted row may exist at a given fs_path"
     );
+
+    mat.shutdown();
+}
+
+/// #1993 ingest dedup via `add_attachment_with_bytes_inner`: adding the SAME
+/// bytes to two different blocks produces TWO `attachments` rows, ONE
+/// `attachment_blobs` row, ONE file on disk, and BOTH rows read the bytes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_attachment_with_bytes_dedups_identical_bytes_1993() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let app_data_dir = _dir.path();
+
+    let block_a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "a".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let block_b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "b".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+
+    let bytes: Vec<u8> = b"the very same bytes for two blocks".to_vec();
+
+    let row_a = add_attachment_with_bytes_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block_a.id.clone(),
+        "x.bin".into(),
+        "application/zip".into(),
+        bytes.clone(),
+    )
+    .await
+    .expect("first add succeeds");
+    let row_b = add_attachment_with_bytes_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block_b.id.clone(),
+        "y.bin".into(),
+        "application/zip".into(),
+        bytes.clone(),
+    )
+    .await
+    .expect("second add succeeds (dedup)");
+
+    // Two distinct attachment rows.
+    assert_ne!(row_a.id, row_b.id);
+    // Both rows resolve to the SAME canonical blob file.
+    assert_eq!(
+        row_a.fs_path, row_b.fs_path,
+        "second row must be repointed at the first row's blob file"
+    );
+    // Exactly one blob.
+    let blobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachment_blobs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(blobs, 1, "identical bytes → one blob");
+
+    // #1993: the ingest dedup repoints row B at row A's blob and leaves the
+    // freshly-written redundant duplicate on disk — byte reclamation is
+    // deferred to the GC pass (no racy eager unlink). So two files exist now.
+    let count_files = |dir: std::path::PathBuf| async move {
+        let mut files = 0u32;
+        let mut rd = tokio::fs::read_dir(dir).await.unwrap();
+        while let Ok(Some(e)) = rd.next_entry().await {
+            if e.file_type().await.unwrap().is_file() {
+                files += 1;
+            }
+        }
+        files
+    };
+    assert_eq!(
+        count_files(app_data_dir.join("attachments")).await,
+        2,
+        "redundant duplicate persists until GC (eager unlink removed for race-safety)"
+    );
+
+    // Both rows read back the bytes (both resolve the canonical blob file).
+    let read_a = read_attachment_inner(&pool, app_data_dir, row_a.id.clone())
+        .await
+        .unwrap();
+    let read_b = read_attachment_inner(&pool, app_data_dir, row_b.id.clone())
+        .await
+        .unwrap();
+    assert_eq!(read_a, bytes);
+    assert_eq!(read_b, bytes);
+
+    // Run GC → the unreferenced redundant duplicate is reclaimed race-free,
+    // leaving exactly one file for the shared bytes.
+    crate::materializer::cleanup_orphaned_attachments(&pool, None, app_data_dir)
+        .await
+        .unwrap();
+    assert_eq!(
+        count_files(app_data_dir.join("attachments")).await,
+        1,
+        "GC reclaims the redundant duplicate, leaving one file for the shared bytes"
+    );
+    // Reads still succeed after GC (the canonical file survives).
+    assert_eq!(
+        read_attachment_inner(&pool, app_data_dir, row_a.id.clone())
+            .await
+            .unwrap(),
+        bytes
+    );
+
+    mat.shutdown();
+}
+
+/// #1993 delete keeps shared blob: two rows share a blob; deleting one leaves
+/// the file + the other row readable. Deleting the second makes the file an
+/// orphan that the GC reclaims.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_attachment_keeps_shared_blob_1993() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let app_data_dir = _dir.path();
+
+    let block_a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "a".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let block_b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "b".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+
+    let bytes: Vec<u8> = b"shared blob delete test bytes".to_vec();
+    let row_a = add_attachment_with_bytes_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block_a.id.clone(),
+        "x.bin".into(),
+        "application/zip".into(),
+        bytes.clone(),
+    )
+    .await
+    .unwrap();
+    let row_b = add_attachment_with_bytes_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block_b.id.clone(),
+        "y.bin".into(),
+        "application/zip".into(),
+        bytes.clone(),
+    )
+    .await
+    .unwrap();
+    let shared_path = row_a.fs_path.clone();
+    assert_eq!(shared_path, row_b.fs_path);
+
+    // Delete row A. The shared file must survive (row B references it).
+    delete_attachment_inner(&pool, DEV, &mat, app_data_dir, row_a.id.clone())
+        .await
+        .unwrap();
+    assert!(
+        app_data_dir.join(&shared_path).exists(),
+        "shared blob file must survive while row B references it"
+    );
+    // Row B still reads the bytes.
+    let read_b = read_attachment_inner(&pool, app_data_dir, row_b.id.clone())
+        .await
+        .unwrap();
+    assert_eq!(read_b, bytes);
+
+    // Delete row B → no live row references the file. #1993: the delete does
+    // NOT unlink eagerly (reclamation deferred to GC), so the file survives.
+    delete_attachment_inner(&pool, DEV, &mat, app_data_dir, row_b.id.clone())
+        .await
+        .unwrap();
+    assert!(
+        app_data_dir.join(&shared_path).exists(),
+        "blob file survives the delete itself; GC reclaims it"
+    );
+
+    // Run GC → file + orphaned blob row are reclaimed race-free.
+    crate::materializer::cleanup_orphaned_attachments(&pool, None, app_data_dir)
+        .await
+        .unwrap();
+    assert!(
+        !app_data_dir.join(&shared_path).exists(),
+        "blob file must be unlinked by GC once the last reference is deleted"
+    );
+    let blobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachment_blobs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(blobs, 0, "orphaned blob row pruned by GC");
 
     mat.shutdown();
 }

@@ -309,11 +309,42 @@ pub(crate) async fn cleanup_orphaned_attachments(
         tokio::time::sleep(std::time::Duration::from_millis(CLEANUP_BATCH_SLEEP_MS)).await;
     }
 
+    // #1993 Phase 1 — refcount-aware blob reconciliation. The file walk above
+    // already implements the refcount-on-demand contract for BYTES: a blob
+    // file is unlinked only when NO `attachments` row references its
+    // `fs_path` (membership test against `referenced_paths`). A shared blob
+    // (N rows → 1 file) survives until the last referencing row is gone, then
+    // becomes an unreferenced file and is unlinked. Here we additionally prune
+    // any `attachment_blobs` row whose `on_disk_path` is no longer referenced
+    // by a live `attachments` row so the blob store does not accumulate
+    // dangling entries. Done on the write pool (the table is small; the delete
+    // is a single statement). Best-effort: a failure is logged, not
+    // propagated, matching the "partial GC beats no GC" contract.
+    // dynamic-sql: static SQL; the attachment_blobs table (migration 0094) is
+    // not yet in the offline .sqlx cache, so use the runtime form here.
+    let pruned_blobs = match sqlx::query(
+        "DELETE FROM attachment_blobs \
+         WHERE on_disk_path NOT IN (SELECT fs_path FROM attachments)",
+    )
+    .execute(pool)
+    .await
+    {
+        Ok(r) => r.rows_affected(),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "cleanup_orphaned_attachments: failed to prune orphaned attachment_blobs rows"
+            );
+            0
+        }
+    };
+
     tracing::info!(
         scanned,
         unlinked,
         errors,
-        "cleanup_orphaned_attachments: scanned {scanned} files, unlinked {unlinked} orphans, {errors} errors"
+        pruned_blobs,
+        "cleanup_orphaned_attachments: scanned {scanned} files, unlinked {unlinked} orphans, {errors} errors, pruned {pruned_blobs} blob rows"
     );
 
     Ok(())

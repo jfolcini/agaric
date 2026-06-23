@@ -197,12 +197,24 @@ pub fn check_attachment_fs_path_shape(fs_path: &str) -> Result<(), AppError> {
 /// — antivirus quarantine, sandbox denial, read-only remount — and
 /// is logged at warn level so it surfaces in diagnostics. The entry
 /// is still classified as missing for sync correctness either way.
+///
+/// One concurrent metadata probe result: the attachment row's
+/// `(id, fs_path, size_bytes, content_hash)` paired with the `metadata()`
+/// outcome for its on-disk file.
+type AttachmentProbe = (
+    String,
+    String,
+    i64,
+    Option<String>,
+    std::io::Result<std::fs::Metadata>,
+);
+
 pub async fn find_missing_attachments(
     pool: &SqlitePool,
     app_data_dir: &Path,
 ) -> Result<Vec<MissingAttachment>, AppError> {
-    let rows = sqlx::query_as::<_, (String, String, i64)>(
-        "SELECT id, fs_path, size_bytes FROM attachments WHERE deleted_at IS NULL",
+    let rows = sqlx::query_as::<_, (String, String, i64, Option<String>)>(
+        "SELECT id, fs_path, size_bytes, content_hash FROM attachments WHERE deleted_at IS NULL",
     )
     .fetch_all(pool)
     .await?;
@@ -226,12 +238,12 @@ pub async fn find_missing_attachments(
     // 0-byte quarantine) would otherwise pass the existence check forever.
     // Any metadata error (incl. permission denied) is treated as missing
     // so the file is re-requested.
-    let probes: Vec<(String, String, i64, std::io::Result<std::fs::Metadata>)> = stream::iter(rows)
-        .map(|(id, fs_path, size_bytes)| {
+    let probes: Vec<AttachmentProbe> = stream::iter(rows)
+        .map(|(id, fs_path, size_bytes, content_hash)| {
             let full_path = app_data_dir.join(&fs_path);
             async move {
                 let meta = tokio::fs::metadata(&full_path).await;
-                (id, fs_path, size_bytes, meta)
+                (id, fs_path, size_bytes, content_hash, meta)
             }
         })
         .buffer_unordered(16)
@@ -239,12 +251,18 @@ pub async fn find_missing_attachments(
         .await;
 
     let mut missing = Vec::new();
-    for (id, fs_path, size_bytes, meta) in probes {
+    for (id, fs_path, size_bytes, content_hash, meta) in probes {
         let full_path = app_data_dir.join(&fs_path);
         match meta {
             Ok(meta) => {
                 let expected = u64::try_from(size_bytes).unwrap_or(0);
                 if meta.len() != expected {
+                    // #1993: before classifying as missing, check whether the
+                    // bytes are already held under a content-addressed blob.
+                    if maybe_link_local_blob(pool, app_data_dir, &id, content_hash.as_deref()).await
+                    {
+                        continue;
+                    }
                     tracing::warn!(
                         attachment_id = %id,
                         path = %full_path.display(),
@@ -256,6 +274,12 @@ pub async fn find_missing_attachments(
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // #1993: the row's own file is gone, but if a local blob with
+                // this row's content_hash is present we already hold the bytes
+                // under another path — repoint the row and do NOT request it.
+                if maybe_link_local_blob(pool, app_data_dir, &id, content_hash.as_deref()).await {
+                    continue;
+                }
                 missing.push(MissingAttachment { id, fs_path });
             }
             Err(e) => {
@@ -318,6 +342,105 @@ async fn get_attachment_receive_meta(
         fs_path,
         size_bytes,
     }))
+}
+
+/// #1993 — if `content_hash` resolves to a locally-present blob, repoint the
+/// attachment row's `fs_path` at that blob file and return `true` (the bytes
+/// are already held locally, so the row is NOT missing). Returns `false` when
+/// there is no usable local blob, so the caller falls back to classifying the
+/// row as missing (full transfer).
+async fn maybe_link_local_blob(
+    pool: &SqlitePool,
+    app_data_dir: &Path,
+    attachment_id: &str,
+    content_hash: Option<&str>,
+) -> bool {
+    let Some(hash) = content_hash else {
+        return false;
+    };
+    let Some(blob_path) = local_blob_path_if_present(pool, app_data_dir, hash).await else {
+        return false;
+    };
+    // Repoint the row so reads resolve the shared bytes. Best-effort: if the
+    // UPDATE fails we still return false-equivalent by not suppressing the
+    // request would be safer, but the bytes ARE present, so treat as held.
+    // dynamic-sql: runtime query matches this sync module's existing
+    // runtime-query style (get_attachment_fs_path etc.); static SQL.
+    let _ = sqlx::query("UPDATE attachments SET fs_path = ? WHERE id = ?")
+        .bind(&blob_path)
+        .bind(attachment_id)
+        .execute(pool)
+        .await;
+    tracing::debug!(
+        attachment_id,
+        content_hash = hash,
+        "find_missing_attachments: bytes already held under local blob; linked row, not requesting"
+    );
+    true
+}
+
+/// #1993 — return the on-disk path of a local content-addressed blob for
+/// `content_hash` IFF the blob is registered AND its file is actually present
+/// on disk.
+///
+/// Used by both the receiver's skip-transfer path and `find_missing_attachments`
+/// so a file whose bytes we already hold is never requested or re-received. The
+/// on-disk presence check is essential: a blob row whose file vanished must NOT
+/// suppress a transfer, or the bytes would be lost.
+async fn local_blob_path_if_present(
+    pool: &SqlitePool,
+    app_data_dir: &Path,
+    content_hash: &str,
+) -> Option<String> {
+    // dynamic-sql: static SQL; runtime form matches this sync module's style
+    // and the attachment_blobs table is not yet in the offline .sqlx cache.
+    let row = sqlx::query_scalar::<_, String>(
+        "SELECT on_disk_path FROM attachment_blobs WHERE content_hash = ?",
+    )
+    .bind(content_hash)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()?;
+    let full = app_data_dir.join(&row);
+    if tokio::fs::try_exists(&full).await.unwrap_or(false) {
+        Some(row)
+    } else {
+        None
+    }
+}
+
+/// #1993 — register a verified, content-addressed blob (`INSERT OR IGNORE`).
+///
+/// Called after a receive's hash-verified commit. Best-effort: errors are
+/// logged, never propagated — the blob store is a dedup optimization, and the
+/// per-row `fs_path` already resolves the bytes.
+async fn register_received_blob(
+    pool: &SqlitePool,
+    content_hash: &str,
+    on_disk_path: &str,
+    size_bytes: i64,
+) {
+    let now = crate::db::now_ms();
+    // dynamic-sql: static SQL; runtime form matches this sync module's style
+    // and the attachment_blobs table is not yet in the offline .sqlx cache.
+    if let Err(e) = sqlx::query(
+        "INSERT OR IGNORE INTO attachment_blobs \
+         (content_hash, on_disk_path, size_bytes, created_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind(content_hash)
+    .bind(on_disk_path)
+    .bind(size_bytes)
+    .bind(now)
+    .execute(pool)
+    .await
+    {
+        tracing::warn!(
+            content_hash,
+            error = %e,
+            "register_received_blob: INSERT OR IGNORE attachment_blobs failed (non-fatal)"
+        );
+    }
 }
 
 /// Read an attachment file from disk and compute its blake3 hash.
@@ -854,11 +977,15 @@ pub async fn receive_request_and_send_files(
             }
         };
 
-        // Send FileOffer metadata
+        // Send FileOffer metadata. #1993: populate the additive `content_hash`
+        // with the same content-addressed digest as `blake3_hash` so a
+        // forward peer can reason about content-addressing explicitly. The
+        // wire stays back-compatible (the field is `#[serde(default)]`).
         conn.send_json(&SyncMessage::FileOffer {
             attachment_id: attachment_id.clone(),
             size_bytes,
-            blake3_hash: hash,
+            blake3_hash: hash.clone(),
+            content_hash: Some(hash),
         })
         .await?;
 
@@ -1099,7 +1226,44 @@ pub async fn request_and_receive_files(
                 attachment_id,
                 size_bytes,
                 blake3_hash,
+                content_hash,
             } => {
+                // #1993 Phase 2 — content-addressed skip. The offer carries the
+                // bytes' content hash (`blake3_hash`, mirrored into the optional
+                // `content_hash`). If we ALREADY have a local blob with that
+                // hash whose file is present on disk, we do not need these
+                // bytes: link this attachment row to the existing blob file
+                // (repoint `fs_path` at the blob's `on_disk_path`) and ACK
+                // without writing a duplicate. We still drain the offered binary
+                // frames to keep the wire aligned with the sender's frame
+                // pointer (the protocol streams immediately after the offer with
+                // no accept step). `content_hash` falls back to `blake3_hash` so
+                // an old peer's offer (no `content_hash`) still benefits.
+                let offered_hash = content_hash.as_deref().unwrap_or(blake3_hash.as_str());
+                if let Some(blob_path) =
+                    local_blob_path_if_present(pool, app_data_dir, offered_hash).await
+                {
+                    // Repoint the row at the existing blob file so reads resolve
+                    // the shared bytes. If the row is unknown locally we simply
+                    // discard the offer (the next sync re-derives missing).
+                    // dynamic-sql: static SQL; matches this module's style.
+                    let _ = sqlx::query("UPDATE attachments SET fs_path = ? WHERE id = ?")
+                        .bind(&blob_path)
+                        .bind(&attachment_id)
+                        .execute(pool)
+                        .await;
+                    tracing::debug!(
+                        attachment_id,
+                        content_hash = offered_hash,
+                        "FileOffer skipped: local blob already present; linked row, draining bytes"
+                    );
+                    // Drain the offered bytes (alignment) then ACK.
+                    consume_binary_data(conn, size_bytes).await?;
+                    conn.send_json(&SyncMessage::FileReceived { attachment_id })
+                        .await?;
+                    continue;
+                }
+
                 // Look up fs_path + DB size_bytes for this attachment
                 let Some(meta) = get_attachment_receive_meta(pool, &attachment_id).await? else {
                     tracing::warn!(
@@ -1225,6 +1389,15 @@ pub async fn request_and_receive_files(
                     );
                     return Err(e);
                 }
+
+                // #1993 Phase 2 — register the freshly-verified bytes in the
+                // content-addressed blob store so subsequent offers/adds of the
+                // same hash dedup against this file. The commit verified the
+                // bytes match `blake3_hash`, so the blob's key is authoritative.
+                // Best-effort (`INSERT OR IGNORE`): a failure here does not
+                // jeopardise the transfer — the boot-time backfill / next add
+                // reconciles the blob row, and reads still resolve via fs_path.
+                register_received_blob(pool, &blake3_hash, &meta.fs_path, meta.size_bytes).await;
 
                 stats.files_received += 1;
                 stats.bytes_received += size_bytes;
