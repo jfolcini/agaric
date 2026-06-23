@@ -34,6 +34,17 @@ pub struct ParsedBlock {
     pub content: String,
     pub depth: usize,
     pub properties: Vec<(String, String)>,
+    /// #1924 — `true` when the block's source line(s) fell inside a fenced
+    /// ```` ``` ```` code region. Set MINIMALLY: the parser does not change
+    /// how blocks are split, it only flags blocks born inside a fence so the
+    /// inline-tag pre-pass (`collect_inbound_tag_names` / `rewrite_inbound_tags`
+    /// in `commands::pages::markdown`) can SKIP them, keeping `#tag`-looking
+    /// text inside a code fence literal. Full code-fence import handling
+    /// (preserving the fence delimiters, language hints, and verbatim
+    /// multi-line bodies) is deliberately OUT of scope here and tracked as
+    /// separate work; this flag is the smallest hook the tag-safety acceptance
+    /// test needs.
+    pub is_code: bool,
 }
 
 /// Outcome of importing one markdown file: the created page plus aggregate
@@ -245,12 +256,38 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     // a `Vec<&str>`. The parse loop only ever reads the CURRENT line in
     // document order (no random indexing / lookahead), so a streaming iterator
     // is a drop-in that avoids the intermediate allocation.
+    // #1924 — MINIMAL fenced-code tracking. We do NOT change how blocks are
+    // split; we only flag blocks born inside a ```` ``` ````-fenced region so
+    // the inline-tag pre-pass skips them (a `#tag` inside a code fence must
+    // stay literal). A line whose trimmed text begins with three or more
+    // backticks is a fence delimiter; it toggles `in_fence`. The delimiter line
+    // and every line until the closing delimiter are treated as code. This is
+    // intentionally a single-fence-char (`` ` ``) heuristic — full code-fence
+    // import handling (tilde fences, language hints, indented fences, verbatim
+    // preservation) is separate, out-of-scope work.
+    let mut in_fence = false;
     for line in normalized.lines() {
         let trimmed = line.trim_start();
 
         // Skip empty lines
         if trimmed.is_empty() {
             continue;
+        }
+
+        // #1924 — fence-delimiter detection + toggle. The delimiter line is
+        // itself part of the code region (`line_is_code` is true on both the
+        // opening and closing fence), and every line strictly inside a fence is
+        // code. Computed BEFORE classification so the block this line lands in
+        // (or appends to) can be marked.
+        // A fence delimiter may appear either standalone (a bare ```` ``` ````
+        // continuation line) OR as the body of a list bullet (`- ```rust`), so
+        // probe both shapes: strip a leading `- ` bullet marker before the
+        // backtick test.
+        let fence_probe = trimmed.strip_prefix("- ").unwrap_or(trimmed);
+        let is_fence_delim = fence_probe.starts_with("```");
+        let line_is_code = in_fence || is_fence_delim;
+        if is_fence_delim {
+            in_fence = !in_fence;
         }
 
         // Calculate indentation (number of leading spaces / 2)
@@ -267,6 +304,7 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
                 content: String::new(),
                 depth,
                 properties: Vec::new(),
+                is_code: line_is_code,
             });
         } else if let Some(text) = trimmed.strip_prefix("- ") {
             // Strip ((uuid)) block references -> plain text
@@ -277,10 +315,12 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
                 content: cleaned,
                 depth,
                 properties: Vec::new(),
+                is_code: line_is_code,
             });
-        } else if let Some((key_candidate, value)) = trimmed
-            .split_once(":: ")
-            .filter(|(k, _)| is_property_key(k.trim()))
+        } else if !line_is_code
+            && let Some((key_candidate, value)) = trimmed
+                .split_once(":: ")
+                .filter(|(k, _)| is_property_key(k.trim()))
         {
             // Property line: `key:: value` — but only if the LHS matches the
             // same alphabet that `op::validate_set_property` enforces
@@ -333,6 +373,13 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
             // multi-line bullet bodies.
             let (cleaned, removed) = strip_block_refs_counted(trimmed);
             stripped_block_ref_count += removed;
+            // #1924 — a continuation line inside a fence makes the owning block
+            // code (e.g. the fenced body lines that follow a `- ```rust` bullet,
+            // and the closing ```` ``` ```` delimiter line). Once a block is
+            // flagged code it stays code.
+            if line_is_code {
+                last.is_code = true;
+            }
             if !cleaned.is_empty() {
                 if !last.content.is_empty() {
                     last.content.push('\n');
@@ -348,6 +395,7 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
                 content: cleaned,
                 depth,
                 properties: Vec::new(),
+                is_code: line_is_code,
             });
         }
     }
@@ -947,6 +995,44 @@ mod tests {
         assert_eq!(output.blocks[0].content, "Block 1");
         assert_eq!(output.blocks[0].depth, 0);
         assert_eq!(output.blocks[1].content, "Block 2");
+        assert!(
+            output.blocks.iter().all(|b| !b.is_code),
+            "plain blocks must not be flagged as code"
+        );
+    }
+
+    /// #1924 — a fenced ```` ``` ```` code region flags every block born
+    /// inside it (and the delimiter-bearing blocks) as `is_code`, while blocks
+    /// outside the fence stay non-code. This is the hook the inline-tag pre-pass
+    /// uses to keep a `#tag` inside a code fence literal.
+    #[test]
+    fn parse_marks_fenced_blocks_as_code_1924() {
+        // A bulleted fence: `- ```rust` opens, body + closing fence are
+        // continuation lines that fold into the same block.
+        let md = "- before\n- ```rust\n  let x = \"#notatag\";\n  ```\n- after";
+        let output = parse_logseq_markdown(md);
+        // before / fenced-bullet / after.
+        assert_eq!(output.blocks.len(), 3, "blocks: {:?}", output.blocks);
+        assert!(!output.blocks[0].is_code, "`before` is not code");
+        assert!(
+            output.blocks[1].is_code,
+            "the ```` ``` ````-opened bullet (and its folded body) is code"
+        );
+        assert!(!output.blocks[2].is_code, "`after` is not code");
+    }
+
+    /// #1924 — a non-bulleted fence: the `#tag` text inside the fence is folded
+    /// into the preceding block as a continuation line, and that block is
+    /// flagged code, so the tag pre-pass will skip it.
+    #[test]
+    fn parse_bare_fence_marks_owning_block_code_1924() {
+        let md = "- intro\n```\n#shouldstayliteral\n```";
+        let output = parse_logseq_markdown(md);
+        assert!(
+            output.blocks.iter().any(|b| b.is_code),
+            "a block covering the fenced region must be flagged code: {:?}",
+            output.blocks
+        );
     }
 
     #[test]
