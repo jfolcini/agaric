@@ -18,8 +18,9 @@ import { notify } from '@/lib/notify'
 
 import { downloadBlob, exportGraphAsZip } from '../lib/export-graph'
 import { formatBytes } from '../lib/format'
+import { scanAttachmentRefs } from '../lib/import-attachments'
 import { logger } from '../lib/logger'
-import { importMarkdown, resolvePageByAlias } from '../lib/tauri'
+import { importMarkdown, resolvePageByAlias, type VaultFile } from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
 import { useTabsStore } from '../stores/tabs'
 
@@ -36,6 +37,103 @@ function importErrorReason(err: unknown): string {
   if (isAppError(err)) return err.message
   if (err instanceof Error) return err.message
   return String(err)
+}
+
+/**
+ * Normalize a path to the vault-root-relative, `/`-separated form the backend
+ * matches against (#1925). Strips the leading top-folder segment of a
+ * `webkitRelativePath` (the browser always prefixes the chosen folder name,
+ * e.g. `MyVault/assets/a.png` → `assets/a.png`), backslashes → `/`, and a
+ * leading `./`. Mirrors the `norm` helper in `match_vault_file`, plus the
+ * top-folder strip the FE owns (the BE expects vault-root-relative `path`s).
+ */
+function vaultRelativePath(webkitRelativePath: string | undefined): string {
+  // jsdom (and a plain `.md` pick) may leave `webkitRelativePath` empty or
+  // undefined; treat both as the file's own basename-less root.
+  const slashed = (webkitRelativePath ?? '').replace(/\\/g, '/').replace(/^\.\//, '')
+  const firstSlash = slashed.indexOf('/')
+  // No slash ⇒ a top-level file with no folder prefix; keep as-is.
+  return firstSlash === -1 ? slashed : slashed.slice(firstSlash + 1)
+}
+
+/** Final path segment (basename) of a `/`-separated path. */
+function basename(path: string): string {
+  const i = path.lastIndexOf('/')
+  return i === -1 ? path : path.slice(i + 1)
+}
+
+/**
+ * A vault-folder file pick, indexed for attachment matching (#1925).
+ *
+ * `byPath` is keyed by the vault-root-relative path (exact-match, the precise
+ * resolution); `byBase` is keyed by basename for the Obsidian `![[img.png]]`
+ * fallback. Matching order mirrors the backend's `match_vault_file`:
+ * relative-path equality first, then basename. On a basename collision the
+ * FIRST file wins (deterministic), matching the backend's ambiguity rule —
+ * shipping one candidate is enough since the BE re-matches by the same rule.
+ */
+interface VaultIndex {
+  byPath: Map<string, File>
+  byBase: Map<string, File>
+}
+
+/**
+ * Index a folder pick's `FileList` for attachment matching. Non-markdown
+ * assets and markdown files alike are indexed (a markdown file is never a
+ * scanned ref, so including it is harmless). The first file wins on a basename
+ * collision so the lookup is deterministic.
+ */
+function indexVaultFiles(files: File[]): VaultIndex {
+  const byPath = new Map<string, File>()
+  const byBase = new Map<string, File>()
+  for (const file of files) {
+    const rel = vaultRelativePath(file.webkitRelativePath)
+    if (!byPath.has(rel)) byPath.set(rel, file)
+    const base = basename(rel)
+    if (!byBase.has(base)) byBase.set(base, file)
+  }
+  return { byPath, byBase }
+}
+
+/**
+ * Resolve one scanned attachment ref against the vault index, mirroring the
+ * backend `match_vault_file` order: exact vault-relative path, then basename.
+ */
+function resolveVaultRef(reference: string, index: VaultIndex): File | undefined {
+  const want = reference.replace(/\\/g, '/').replace(/^\.\//, '')
+  return index.byPath.get(want) ?? index.byBase.get(basename(want))
+}
+
+/**
+ * Collect the referenced sibling files for one markdown document into the
+ * `VaultFile[]` IPC payload (#1925). Pre-scans `content` for attachment refs,
+ * resolves each against the picked-folder index, and reads ONLY the matched
+ * files' bytes (a ref with no matching file is omitted — the backend warns).
+ *
+ * Returns `null` when there is nothing to ship (no refs, or none resolved) so
+ * the wrapper sends `null` ⇒ the pre-#1925 behaviour. Reading is async (
+ * `File.arrayBuffer`), so matched files are read in parallel.
+ */
+async function collectVaultFiles(content: string, index: VaultIndex): Promise<VaultFile[] | null> {
+  const refs = scanAttachmentRefs(content)
+  if (refs.length === 0) return null
+
+  // Resolve refs to distinct files (a ref may resolve to a file already picked
+  // up by another ref — dedup by the file object so we read each once).
+  const matched = new Map<string, File>()
+  for (const ref of refs) {
+    const file = resolveVaultRef(ref, index)
+    if (file) matched.set(vaultRelativePath(file.webkitRelativePath), file)
+  }
+  if (matched.size === 0) return null
+
+  const vaultFiles = await Promise.all(
+    [...matched].map(async ([path, file]) => {
+      const buf = await file.arrayBuffer()
+      return { path, bytes: Array.from(new Uint8Array(buf)) } satisfies VaultFile
+    }),
+  )
+  return vaultFiles
 }
 
 /**
@@ -192,6 +290,20 @@ export function DataSettingsTab(): React.ReactElement {
       const fileArray = Array.from(files)
       setTotalFiles(fileArray.length)
 
+      // #1925 — only a folder/vault pick (`webkitdirectory`) carries sibling
+      // assets: the browser populates `webkitRelativePath` for folder picks and
+      // leaves it empty for the plain `.md` multi-file pick. When ANY file has a
+      // relative path we treat the run as a vault import and index the whole
+      // FileList so each markdown's referenced attachments can be matched and
+      // shipped. A single-file (non-folder) import has no siblings — documented
+      // limitation — so `vaultIndex` stays null and `vaultFiles` is omitted.
+      // A non-empty `webkitRelativePath` is the folder-pick marker; a plain
+      // `.md` pick (and jsdom's `new File`) leaves it empty/undefined.
+      const isVaultImport = fileArray.some(
+        (f) => typeof f.webkitRelativePath === 'string' && f.webkitRelativePath.length > 0,
+      )
+      const vaultIndex = isVaultImport ? indexVaultFiles(fileArray) : null
+
       let totalBlocks = 0
       let totalProps = 0
       let totalBytes = 0
@@ -230,27 +342,39 @@ export function DataSettingsTab(): React.ReactElement {
           // `a/b/API`), the inverse of the namespaced export. A plain file pick
           // has an empty `webkitRelativePath`, so we fall back to the basename.
           const importPath = file.webkitRelativePath || file.name
-          const result = await importMarkdown(content, importPath, activeSpaceId, (update) => {
-            // #128 — drive the intra-file block bar from the streamed
-            // events. `complete` arrives after the backend commits; we
-            // leave the bar full and let the file-loop advance.
-            switch (update.kind) {
-              case 'started': {
-                setCurrentFileBlocksDone(0)
-                setCurrentFileBlocksTotal(update.blocks_total)
-                break
+          // #1925 — on a vault/folder import, pre-scan this markdown for
+          // attachment refs and read only the matched sibling files' bytes to
+          // ship alongside the content. A single-file import (no `vaultIndex`)
+          // has no siblings, so `vaultFiles` stays null (documented limitation).
+          const vaultFiles =
+            vaultIndex == null ? null : await collectVaultFiles(content, vaultIndex)
+          const result = await importMarkdown(
+            content,
+            importPath,
+            activeSpaceId,
+            (update) => {
+              // #128 — drive the intra-file block bar from the streamed
+              // events. `complete` arrives after the backend commits; we
+              // leave the bar full and let the file-loop advance.
+              switch (update.kind) {
+                case 'started': {
+                  setCurrentFileBlocksDone(0)
+                  setCurrentFileBlocksTotal(update.blocks_total)
+                  break
+                }
+                case 'progress': {
+                  setCurrentFileBlocksDone(update.blocks_done)
+                  setCurrentFileBlocksTotal(update.blocks_total)
+                  break
+                }
+                case 'complete': {
+                  setCurrentFileBlocksDone(update.blocks_created)
+                  break
+                }
               }
-              case 'progress': {
-                setCurrentFileBlocksDone(update.blocks_done)
-                setCurrentFileBlocksTotal(update.blocks_total)
-                break
-              }
-              case 'complete': {
-                setCurrentFileBlocksDone(update.blocks_created)
-                break
-              }
-            }
-          })
+            },
+            vaultFiles,
+          )
           totalBlocks += result.blocks_created
           totalProps += result.properties_set
           allWarnings.push(...result.warnings)
