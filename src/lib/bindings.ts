@@ -3459,8 +3459,9 @@ export type UndoResult = {
  *  `assets/...` refs, etc.), reads each into a browser `ArrayBuffer`, and sends
  *  the `{ path, bytes }` pairs alongside the markdown `content`. The backend
  *  matches each in-content attachment ref against this list, ingests the matched
- *  bytes as an attachment (deduping by `content_hash`), and rewrites the ref to
- *  the canonical `attachment:<id>` form.
+ *  bytes as a fresh attachment owned by the referencing block (a repeated ref
+ *  within one block ingests once; cross-block/cross-page asset dedup is deferred
+ *  to #1993), and rewrites the ref to the canonical `attachment:<id>` form.
  *
  *  `path` is the file's path RELATIVE to the vault root (the browser
  *  `webkitRelativePath` minus the top folder, or whatever the FE chooses), using

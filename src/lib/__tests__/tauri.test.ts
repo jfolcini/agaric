@@ -3123,6 +3123,9 @@ describe('importMarkdown', () => {
       content: '# Title\n\nBody',
       filename: 'my-page.md',
       spaceId: 'SPACE_A',
+      // #1925 — the wrapper threads `vaultFiles` (null until the vault picker
+      // wires it in PR 2; the backend treats null as "no attachments").
+      vaultFiles: null,
       // #128 — the wrapper always passes a `Channel<ImportProgressUpdate>`
       // for progress streaming (mirroring `startSync`), even when no
       // `onProgress` callback is supplied.
@@ -3145,6 +3148,7 @@ describe('importMarkdown', () => {
       content: 'hello',
       filename: null,
       spaceId: 'SPACE_A',
+      vaultFiles: null,
       progress: expect.anything(),
     })
   })
