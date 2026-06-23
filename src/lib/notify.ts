@@ -26,6 +26,7 @@
 import type { ExternalToast } from 'sonner'
 import { toast } from 'sonner'
 
+import { formatErrorForDisplay } from '@/lib/error-display'
 import { t } from '@/lib/i18n'
 
 /** Re-export sonner's option shape so callers don't need to import it from sonner directly. */
@@ -38,11 +39,15 @@ type NotifyMessage = string | number
 type OptionalOpts = [ExternalToast?]
 
 /**
- * `notify.error` accepts either a string or an `Error`. When given an
- * Error, the `.message` is shown and the original Error is logged via
- * `console.error` for debugging. Anything else (number, object) is
- * coerced via `String(...)` so the toast always shows something
- * actionable. The opts arg is forwarded to sonner unchanged.
+ * `notify.error` accepts a pre-built string/number, an `Error`, or a
+ * caught `unknown` (e.g. an IPC `AppError` object). Strings and numbers
+ * render verbatim — that's the common `notify.error(t('…'))` case.
+ * Errors and structured `AppError` values are run through
+ * {@link formatErrorForDisplay}, so the debug-mode toggle is honoured at
+ * this single chokepoint (#1987): off shows a clean message plus any
+ * `(err: <id>)` correlation code; on additionally appends the raw
+ * `kind`. The original value is logged via `console.error` for the
+ * devtools regardless of mode.
  *
  * Dedup: pass `{ id: 'category-id' }` to collapse rapid identical
  * errors from a recurring source (sync loops, IPC failures, auto-
@@ -55,14 +60,18 @@ type OptionalOpts = [ExternalToast?]
  * dedup contract.
  */
 function notifyError(
-  messageOrError: string | number | Error,
+  messageOrError: string | number | Error | unknown,
   ...rest: OptionalOpts
 ): string | number {
-  if (messageOrError instanceof Error) {
-    console.error(messageOrError)
-    return toast.error(messageOrError.message, ...rest)
+  // Pre-built human strings/numbers render verbatim — no code/kind to
+  // surface, and existing call sites pass already-translated copy.
+  if (typeof messageOrError === 'string' || typeof messageOrError === 'number') {
+    return toast.error(String(messageOrError), ...rest)
   }
-  return toast.error(String(messageOrError), ...rest)
+  // Structured Error / IPC AppError: log the raw value at full fidelity,
+  // then show the debug-aware formatted message.
+  if (messageOrError instanceof Error) console.error(messageOrError)
+  return toast.error(formatErrorForDisplay(messageOrError), ...rest)
 }
 
 /** Default callable: `notify('plain message', opts?)` mirrors `toast('plain message', opts?)`. */

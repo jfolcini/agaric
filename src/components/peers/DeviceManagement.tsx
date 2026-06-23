@@ -29,6 +29,7 @@ import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { mapPeerRefToInfo } from '@/hooks/useSyncTrigger'
 import { useSyncWithTimeout } from '@/hooks/useSyncWithTimeout'
 import { writeText } from '@/lib/clipboard'
+import { formatErrorForDisplay } from '@/lib/error-display'
 import { truncateId } from '@/lib/format'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -175,7 +176,7 @@ export function DeviceManagement(): React.ReactElement {
         })
         await loadData()
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Sync failed'
+        const message = formatErrorForDisplay(err)
         const displayMessage =
           message === 'Sync timed out'
             ? 'Sync took too long — check your connection and try again'
@@ -228,7 +229,7 @@ export function DeviceManagement(): React.ReactElement {
         await updatePeerName(renamePeerId, name || null)
         await loadData()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to rename')
+        setError(formatErrorForDisplay(e))
       } finally {
         setRenamingPeerId(null)
         setRenamePeerId(null)
