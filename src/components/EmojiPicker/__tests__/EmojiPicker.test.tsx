@@ -115,24 +115,51 @@ describe('<EmojiPicker>', () => {
     expect(onSelect).toHaveBeenCalledWith('\u{1F600}')
   })
 
-  it('shows a Recents row when there is history and inserts from it', async () => {
+  it('shows a Frequently Used row when there is history and inserts from it', async () => {
     const user = userEvent.setup()
     const onSelect = vi.fn()
     pushEmojiRecent('\u{1F525}')
     render(<EmojiPicker onSelect={onSelect} autoFocusSearch={false} />)
-    const recentsRow = screen.getByRole('row', { name: /recently used emoji/i })
-    const cell = within(recentsRow).getByRole('gridcell', { name: '\u{1F525}' })
+    const frequentRow = screen.getByRole('row', { name: /frequently used emoji/i })
+    const cell = within(frequentRow).getByRole('gridcell', { name: '\u{1F525}' })
     await user.click(cell)
     expect(onSelect).toHaveBeenCalledWith('\u{1F525}')
   })
 
-  it('hides the Recents row while searching', async () => {
+  it('hides the Frequently Used row while searching', async () => {
     const user = userEvent.setup()
     pushEmojiRecent('\u{1F525}')
     render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
-    expect(screen.getByRole('row', { name: /recently used emoji/i })).toBeInTheDocument()
+    expect(screen.getByRole('row', { name: /frequently used emoji/i })).toBeInTheDocument()
     await user.type(screen.getByRole('searchbox', { name: /search emoji/i }), 'rocket')
-    expect(screen.queryByRole('row', { name: /recently used emoji/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('row', { name: /frequently used emoji/i })).not.toBeInTheDocument()
+  })
+
+  it('renders a category tab per emoji group and jumps the grid on click', async () => {
+    const user = userEvent.setup()
+    render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
+    const tablist = screen.getByRole('tablist', { name: /emoji categories/i })
+    // One tab per CLDR group (9), each with a non-empty accessible name + icon.
+    const tabs = within(tablist).getAllByRole('tab')
+    expect(tabs).toHaveLength(9)
+    expect(within(tablist).getByRole('tab', { name: 'Smileys & Emotion' })).toBeInTheDocument()
+    // Clicking a later category is a no-throw jump (jsdom has no real scroll).
+    await user.click(within(tablist).getByRole('tab', { name: 'Flags' }))
+  })
+
+  it('hides the category strip while searching', async () => {
+    const user = userEvent.setup()
+    render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
+    expect(screen.getByRole('tablist', { name: /emoji categories/i })).toBeInTheDocument()
+    await user.type(screen.getByRole('searchbox', { name: /search emoji/i }), 'rocket')
+    expect(screen.queryByRole('tablist', { name: /emoji categories/i })).not.toBeInTheDocument()
+  })
+
+  it('shows a "no results" message for a query that matches nothing', async () => {
+    const user = userEvent.setup()
+    render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
+    await user.type(screen.getByRole('searchbox', { name: /search emoji/i }), 'zzzzznotanemojizzzz')
+    expect(screen.getByTestId('emoji-no-results')).toBeInTheDocument()
   })
 
   it('has no axe violations', async () => {

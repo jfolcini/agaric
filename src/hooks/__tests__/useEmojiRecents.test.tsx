@@ -8,8 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   clearEmojiRecents,
+  EMOJI_FREQUENCY_KEY,
   EMOJI_RECENTS_KEY,
-  MAX_EMOJI_RECENTS,
+  MAX_EMOJI_FREQUENCY,
   pushEmojiRecent,
   useEmojiRecents,
 } from '../useEmojiRecents'
@@ -26,78 +27,98 @@ afterEach(() => {
   localStorage.clear()
 })
 
-describe('useEmojiRecents', () => {
+describe('useEmojiRecents (frequently-used)', () => {
   it('starts empty when nothing is stored', () => {
     const { result } = renderHook(() => useEmojiRecents())
-    expect(result.current.recents).toEqual([])
+    expect(result.current.frequent).toEqual([])
   })
 
-  it('pushes an emoji to the front', () => {
+  it('pushes an emoji and persists the frequency map', () => {
     const { result } = renderHook(() => useEmojiRecents())
     act(() => result.current.push('\u{1F600}'))
-    expect(result.current.recents[0]).toBe('\u{1F600}')
-    expect(JSON.parse(localStorage.getItem(EMOJI_RECENTS_KEY) ?? '[]')).toEqual(['\u{1F600}'])
+    expect(result.current.frequent[0]).toBe('\u{1F600}')
+    const stored = JSON.parse(localStorage.getItem(EMOJI_FREQUENCY_KEY) ?? '{}')
+    expect(stored['\u{1F600}']?.n).toBe(1)
   })
 
-  it('moves a re-used emoji to the front without duplicating', () => {
+  it('ranks by use COUNT, not recency — a more-used emoji stays ahead of a one-off', () => {
     const { result } = renderHook(() => useEmojiRecents())
     act(() => {
-      result.current.push('\u{1F600}')
+      result.current.push('\u{1F600}') // used 3x
       result.current.push('\u{1F44D}')
       result.current.push('\u{1F600}')
+      result.current.push('\u{1F600}')
+      result.current.push('\u{1F44D}') // used 2x, more RECENT than the last 😀
     })
-    expect(result.current.recents).toEqual(['\u{1F600}', '\u{1F44D}'])
+    // Strict-MRU would put 👍 first; frequency keeps the 3×-used 😀 ahead.
+    expect(result.current.frequent).toEqual(['\u{1F600}', '\u{1F44D}'])
   })
 
-  it('caps the list at MAX_EMOJI_RECENTS', () => {
+  it('breaks equal counts by most-recently-used', () => {
     const { result } = renderHook(() => useEmojiRecents())
     act(() => {
-      for (let i = 0; i < MAX_EMOJI_RECENTS + 5; i++) {
-        // Distinct chars via codepoints starting at the smileys block.
+      result.current.push('\u{1F600}') // count 1, older
+      result.current.push('\u{1F44D}') // count 1, newer
+    })
+    expect(result.current.frequent).toEqual(['\u{1F44D}', '\u{1F600}'])
+  })
+
+  it('caps the stored map at MAX_EMOJI_FREQUENCY', () => {
+    const { result } = renderHook(() => useEmojiRecents())
+    act(() => {
+      for (let i = 0; i < MAX_EMOJI_FREQUENCY + 5; i++) {
         result.current.push(String.fromCodePoint(0x1f600 + i))
       }
     })
-    expect(result.current.recents).toHaveLength(MAX_EMOJI_RECENTS)
-    // Most-recent first: the last pushed is at the head.
-    expect(result.current.recents[0]).toBe(String.fromCodePoint(0x1f600 + MAX_EMOJI_RECENTS + 4))
+    expect(result.current.frequent).toHaveLength(MAX_EMOJI_FREQUENCY)
   })
 
   it('ignores an empty push', () => {
     const { result } = renderHook(() => useEmojiRecents())
     act(() => result.current.push(''))
-    expect(result.current.recents).toEqual([])
+    expect(result.current.frequent).toEqual([])
   })
 
   it('clears the list', () => {
     const { result } = renderHook(() => useEmojiRecents())
     act(() => result.current.push('\u{1F600}'))
     act(() => result.current.clear())
-    expect(result.current.recents).toEqual([])
+    expect(result.current.frequent).toEqual([])
   })
 
   it('shares state across two mounted consumers', () => {
     const a = renderHook(() => useEmojiRecents())
     const b = renderHook(() => useEmojiRecents())
     act(() => a.result.current.push('\u{1F680}'))
-    expect(b.result.current.recents[0]).toBe('\u{1F680}')
+    expect(b.result.current.frequent[0]).toBe('\u{1F680}')
   })
 
-  it('hydrates from a pre-existing stored list on mount', () => {
+  it('migrates a pre-existing legacy MRU array, most-recent first', () => {
     localStorage.setItem(EMOJI_RECENTS_KEY, JSON.stringify(['\u{2705}', '\u{1F525}']))
     const { result } = renderHook(() => useEmojiRecents())
-    expect(result.current.recents).toEqual(['\u{2705}', '\u{1F525}'])
+    // Legacy order is preserved as the recency tiebreak (all seeded at count 1).
+    expect(result.current.frequent).toEqual(['\u{2705}', '\u{1F525}'])
+  })
+
+  it('hydrates from a stored frequency map (highest count first)', () => {
+    localStorage.setItem(
+      EMOJI_FREQUENCY_KEY,
+      JSON.stringify({ '\u{2705}': { n: 1, t: 100 }, '\u{1F525}': { n: 5, t: 50 } }),
+    )
+    const { result } = renderHook(() => useEmojiRecents())
+    expect(result.current.frequent).toEqual(['\u{1F525}', '\u{2705}'])
   })
 
   it('falls back to empty on a corrupted stored blob', () => {
-    localStorage.setItem(EMOJI_RECENTS_KEY, 'not json{')
+    localStorage.setItem(EMOJI_FREQUENCY_KEY, 'not json{')
     const { result } = renderHook(() => useEmojiRecents())
-    expect(result.current.recents).toEqual([])
+    expect(result.current.frequent).toEqual([])
   })
 
   it('exposes a standalone pushEmojiRecent that feeds mounted hooks', () => {
     const { result } = renderHook(() => useEmojiRecents())
     act(() => pushEmojiRecent('\u{1F389}'))
-    expect(result.current.recents[0]).toBe('\u{1F389}')
+    expect(result.current.frequent[0]).toBe('\u{1F389}')
   })
 
   // Regression: the `subscribe` storage-listener must not leak with
@@ -118,11 +139,8 @@ describe('useEmojiRecents', () => {
 
       const storageAdds = added.mock.calls.filter(([type]) => type === 'storage')
       const storageRemoves = removed.mock.calls.filter(([type]) => type === 'storage')
-      // Exactly one attach (first subscriber) and one detach (last leaving)...
       expect(storageAdds).toHaveLength(1)
       expect(storageRemoves).toHaveLength(1)
-      // ...and the detach must target the very function that was attached, or
-      // the handler leaks. This assertion fails on the pre-fix per-closure code.
       const attached = storageAdds[0]?.[1]
       const detached = storageRemoves[0]?.[1]
       expect(attached).toBeTypeOf('function')
