@@ -132,7 +132,7 @@
     "happy-dom": "^20.10.3",
     "istanbul-lib-coverage": "^3.2.2",
     "jsdom": "^29.1.1",
-    "knip": "^6.16.1",
+    "knip": "^6.17.1",
     "license-checker": "^25.0.1",
     "markdownlint-cli2": "^0.22.1",
     "oxfmt": "^0.55.0",
