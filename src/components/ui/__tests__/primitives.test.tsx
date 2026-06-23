@@ -613,6 +613,9 @@ describe('RecentPageChip', () => {
 // ---------------------------------------------------------------------------
 
 describe('ToggleGroup', () => {
+  // radix-ui 1.6.0 gives single-select toggle groups the semantically correct
+  // `role="radiogroup"` (items already expose `role="radio"`); the container is
+  // queried by that role accordingly.
   it('renders the group with data-slot and items with role="radio"', () => {
     render(
       <ToggleGroup type="single" aria-label="Diff mode">
@@ -620,7 +623,7 @@ describe('ToggleGroup', () => {
         <ToggleGroupItem value="compared-current">Compared to current</ToggleGroupItem>
       </ToggleGroup>,
     )
-    const group = screen.getByRole('group', { name: 'Diff mode' })
+    const group = screen.getByRole('radiogroup', { name: 'Diff mode' })
     expect(group).toBeInTheDocument()
     expect(group).toHaveAttribute('data-slot', 'toggle-group')
     const items = screen.getAllByRole('radio')
@@ -634,7 +637,7 @@ describe('ToggleGroup', () => {
         <ToggleGroupItem value="a">A</ToggleGroupItem>
       </ToggleGroup>,
     )
-    const group = screen.getByRole('group', { name: 'Modes' })
+    const group = screen.getByRole('radiogroup', { name: 'Modes' })
     expect(group.className).toContain('rounded-md')
     expect(group.className).toContain('border-input')
   })
@@ -657,7 +660,7 @@ describe('ToggleGroup', () => {
         </ToggleGroupItem>
       </ToggleGroup>,
     )
-    const group = screen.getByRole('group', { name: 'Modes' })
+    const group = screen.getByRole('radiogroup', { name: 'Modes' })
     const item = screen.getByRole('radio', { name: 'A' })
     expect(group.className).toContain('my-group')
     expect(group.className).toContain('rounded-md')
