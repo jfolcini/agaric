@@ -12,6 +12,7 @@ import type React from 'react'
 import { DeadlineWarningSection } from '@/components/agenda/DeadlineWarningSection'
 
 import { AutostartRow } from './AutostartRow'
+import { DebugModeRow } from './DebugModeRow'
 import { QuickCaptureRow } from './QuickCaptureRow'
 import { ResetOnboardingRow } from './ResetOnboardingRow'
 
@@ -21,6 +22,7 @@ export function GeneralTab(): React.ReactElement {
       <DeadlineWarningSection />
       <AutostartRow />
       <QuickCaptureRow />
+      <DebugModeRow />
       <ResetOnboardingRow />
     </div>
   )

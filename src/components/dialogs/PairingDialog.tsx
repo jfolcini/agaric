@@ -30,6 +30,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { mapPeerRefToInfo } from '@/hooks/useSyncTrigger'
 import { announce } from '@/lib/announcer'
+import { formatErrorForDisplay } from '@/lib/error-display'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import type { PeerRefRow } from '@/lib/tauri'
@@ -316,7 +317,7 @@ export function PairingDialog({
       onOpenChange(false)
     },
     onError: (err) => {
-      setError(`Pairing failed: ${String(err instanceof Error ? err.message : err)}`)
+      setError(`Pairing failed: ${formatErrorForDisplay(err)}`)
     },
   })
 

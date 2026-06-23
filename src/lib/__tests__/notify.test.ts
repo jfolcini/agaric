@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { t } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
+import { useDebugStore } from '@/stores/useDebugStore'
 
 // `notify.retry` is the standardised "error + Retry action" helper
 // (ui-improvements 2026-05-16 batch). The global Sonner mock from
@@ -109,5 +110,39 @@ describe('notify dedup (id forwarding)', () => {
     expect(toast.warning).toHaveBeenCalledTimes(1)
     const opts = vi.mocked(toast.warning).mock.calls[0]?.[1] as Record<string, unknown> | undefined
     expect(opts?.['id']).toBe('dependency-warning')
+  })
+})
+
+// #1987: the notify chokepoint runs structured Error / IPC AppError values
+// through the debug-aware formatter, so every error toast honours the
+// debug-mode toggle without per-call-site changes. Plain strings are
+// untouched (covered above).
+describe('notify.error debug-mode formatting (#1987)', () => {
+  afterEach(() => {
+    useDebugStore.setState({ debugMode: false })
+  })
+
+  it('shows a cleaned IPC AppError message and hides the kind when debug is off', () => {
+    notify.error({ kind: 'validation', message: 'Validation error: pairing.passphrase.mismatch' })
+
+    expect(toast.error).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(toast.error).mock.calls[0]?.[0]).toBe('pairing.passphrase.mismatch')
+  })
+
+  it('appends the kind code to an IPC AppError when debug is on', () => {
+    useDebugStore.setState({ debugMode: true })
+    notify.error({ kind: 'validation', message: 'Validation error: pairing.passphrase.mismatch' })
+
+    expect(vi.mocked(toast.error).mock.calls[0]?.[0]).toBe(
+      'pairing.passphrase.mismatch · code: validation',
+    )
+  })
+
+  it('keeps the (err: <id>) correlation code visible even with debug off', () => {
+    notify.error({ kind: 'invalid_operation', message: 'an internal error occurred (err: 7F3A2)' })
+
+    expect(vi.mocked(toast.error).mock.calls[0]?.[0]).toBe(
+      'an internal error occurred (err: 7F3A2)',
+    )
   })
 })

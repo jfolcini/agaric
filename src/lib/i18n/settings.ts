@@ -11,6 +11,9 @@ export const settings: Record<string, string> = {
   'settings.autostart.description': 'Start Agaric automatically when you sign into your computer.',
   'settings.autostart.label': 'Launch on login',
   'settings.autostart.toggleFailed': "Couldn't update launch-on-login setting",
+  'settings.debugMode.label': 'Debug mode',
+  'settings.debugMode.description':
+    'Show technical error codes in notifications. Keep this off for everyday use; turn it on to capture the code when reporting a problem.',
   'settings.resetOnboarding.title': 'Reset spaces onboarding',
   'settings.resetOnboarding.description':
     'Show the spaces onboarding banner again the next time you open Manage Spaces.',

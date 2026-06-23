@@ -906,15 +906,32 @@ impl RepeatingBlockRow {
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
 
+/// Generate a short correlation id that ties a sanitized, user-facing
+/// error back to the full error logged backend-side (#1987).
+///
+/// Five uppercase hex chars (20 bits, ~1M space). NOT security-sensitive
+/// and collisions are tolerable: the id only has to be unique enough to
+/// `grep` the matching `ERROR error_id=…` log line within one session, so
+/// the user can read the code off a toast and an operator can find the
+/// full cause (SQL fragment, filesystem path, source chain) in the log.
+fn new_error_id() -> String {
+    use rand::RngExt;
+    format!("{:05X}", rand::rng().random_range(0u32..=0xF_FFFF))
+}
+
 /// Sanitize internal error details before returning to the frontend.
 ///
 /// Applied to every Tauri command wrapper — read and write alike — whose
 /// inner function can surface a SQL, I/O, JSON, channel, or snapshot error.
 /// The `AppError::Database` / `Migration` / `Io` / `Json` / `Channel` /
 /// `Snapshot` variants are collapsed to a generic
-/// `AppError::InvalidOperation("an internal error occurred")`, and the
-/// original error is logged backend-side via `tracing::warn!` so it remains
-/// available for debugging without being serialized to the UI.
+/// `AppError::InvalidOperation("an internal error occurred (err: <id>)")`,
+/// where `<id>` is a short correlation id (#1987). The original error is
+/// logged backend-side via `tracing::error!` keyed by the same id, so the
+/// full cause stays recoverable from the daily log without ever being
+/// serialized to the UI. The id travels inside the `message` (not a new
+/// wire field) to keep the `{ kind, message }` envelope — and its specta
+/// binding — unchanged.
 ///
 /// User-facing variants (`NotFound`, `Validation`, `InvalidOperation`,
 /// `NonReversible`, `Ulid`, `Conflict`, `PoolTimedOut`) pass through
@@ -937,10 +954,72 @@ pub(crate) fn sanitize_internal_error(err: AppError) -> AppError {
         | AppError::Channel(_)
         | AppError::Internal(_)
         | AppError::Snapshot(_) => {
-            tracing::warn!(error = %err, "internal error suppressed during sanitization");
-            AppError::InvalidOperation("an internal error occurred".into())
+            let id = new_error_id();
+            // Log at ERROR (not WARN) keyed by the correlation id so triage
+            // can pivot directly from a user-reported code to the full cause.
+            tracing::error!(
+                error_id = %id,
+                error = %err,
+                "internal error suppressed during sanitization"
+            );
+            AppError::InvalidOperation(format!("an internal error occurred (err: {id})"))
         }
         _ => err,
+    }
+}
+
+#[cfg(test)]
+mod sanitize_internal_error_tests {
+    use super::{new_error_id, sanitize_internal_error};
+    use crate::error::AppError;
+
+    /// Extract the `<id>` from `...(err: <id>)` so tests can assert its shape.
+    fn extract_id(msg: &str) -> &str {
+        msg.strip_prefix("an internal error occurred (err: ")
+            .and_then(|rest| rest.strip_suffix(')'))
+            .unwrap_or_else(|| panic!("message missing correlation-id suffix: {msg:?}"))
+    }
+
+    #[test]
+    fn new_error_id_is_five_uppercase_hex_chars() {
+        let id = new_error_id();
+        assert_eq!(id.len(), 5, "id should be 5 chars, got {id:?}");
+        assert!(
+            id.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_lowercase()),
+            "id should be uppercase hex, got {id:?}"
+        );
+    }
+
+    #[test]
+    fn internal_variants_are_collapsed_and_carry_a_correlation_id() {
+        // Io is one of the sanitized variants; the original detail
+        // ("disk full") must NOT survive to the wire, but a correlation
+        // id must be present so the full error stays grep-able in the log.
+        let sanitized = sanitize_internal_error(AppError::Io(std::io::Error::other("disk full")));
+        match sanitized {
+            AppError::InvalidOperation(msg) => {
+                assert!(
+                    !msg.contains("disk full"),
+                    "raw internal detail leaked to wire: {msg:?}"
+                );
+                let id = extract_id(&msg);
+                assert_eq!(id.len(), 5, "embedded id should be 5 hex chars, got {id:?}");
+                assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
+            }
+            other => panic!("Io should sanitize to InvalidOperation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn user_facing_variants_pass_through_unchanged() {
+        // Validation carries a frontend-renderable code and must reach the
+        // UI verbatim — no correlation id, no collapsing.
+        let original = "pairing.passphrase.mismatch";
+        match sanitize_internal_error(AppError::Validation(original.into())) {
+            AppError::Validation(msg) => assert_eq!(msg, original),
+            other => panic!("Validation must pass through unchanged, got {other:?}"),
+        }
     }
 }
 

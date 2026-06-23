@@ -4428,9 +4428,16 @@ async fn update_property_def_options_sanitizes_database_errors() {
 
     match sanitized {
         Err(AppError::InvalidOperation(msg)) => {
-            assert_eq!(
-                msg, "an internal error occurred",
-                "sanitized DB errors must surface the generic copy, got: {msg:?}"
+            // #1987: the generic copy is now suffixed with a short
+            // correlation id — `an internal error occurred (err: <id>)` —
+            // that ties the toast back to the full ERROR-level log line.
+            assert!(
+                msg.starts_with("an internal error occurred (err: "),
+                "sanitized DB errors must surface the generic copy with a correlation id, got: {msg:?}"
+            );
+            assert!(
+                msg.ends_with(')'),
+                "correlation-id suffix must be closed, got: {msg:?}"
             );
         }
         other => panic!("expected sanitized DB error to become InvalidOperation, got: {other:?}"),
@@ -4451,9 +4458,16 @@ async fn delete_property_def_sanitizes_database_errors() {
 
     match sanitized {
         Err(AppError::InvalidOperation(msg)) => {
-            assert_eq!(
-                msg, "an internal error occurred",
-                "sanitized DB errors must surface the generic copy, got: {msg:?}"
+            // #1987: the generic copy is now suffixed with a short
+            // correlation id — `an internal error occurred (err: <id>)` —
+            // that ties the toast back to the full ERROR-level log line.
+            assert!(
+                msg.starts_with("an internal error occurred (err: "),
+                "sanitized DB errors must surface the generic copy with a correlation id, got: {msg:?}"
+            );
+            assert!(
+                msg.ends_with(')'),
+                "correlation-id suffix must be closed, got: {msg:?}"
             );
         }
         other => panic!("expected sanitized DB error to become InvalidOperation, got: {other:?}"),
