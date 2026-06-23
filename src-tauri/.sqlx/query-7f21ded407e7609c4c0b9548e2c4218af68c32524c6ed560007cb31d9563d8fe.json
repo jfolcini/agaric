@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT tag_id, name, usage_count, updated_at\n             FROM tags_cache WHERE name = ?1 COLLATE NOCASE ORDER BY name LIMIT 1",
+  "query": "SELECT tag_id, name, usage_count, updated_at\n         FROM tags_cache ORDER BY tag_id",
   "describe": {
     "columns": [
       {
@@ -49,7 +49,7 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 0
     },
     "nullable": [
       false,
@@ -58,5 +58,5 @@
       false
     ]
   },
-  "hash": "fff8cc41196bea85d19d4fcc4ef95ad4b06eb72b9eec0fb9b6cd51d13322fdf9"
+  "hash": "7f21ded407e7609c4c0b9548e2c4218af68c32524c6ed560007cb31d9563d8fe"
 }

@@ -1,9 +1,11 @@
 use futures_util::TryStreamExt;
 use sqlx::SqlitePool;
 use std::cmp::Ordering;
+use std::collections::HashSet;
 
 use crate::db::MAX_SQL_PARAMS;
 use crate::error::AppError;
+use crate::tag_norm::normalize_tag_name;
 
 // `tags_cache` has 4 columns per row (tag_id, name, usage_count,
 // updated_at) → `MAX_SQL_PARAMS / 4 = 249` rows per chunk for INSERT.
@@ -41,25 +43,31 @@ const DELETE_CHUNK: usize = MAX_SQL_PARAMS; // 999
 /// forever (each rebuild evicted whichever one the previous rebuild had
 /// inserted → `changed >= 1` perpetually, one tag permanently invisible).
 ///
-/// We instead de-duplicate by name *deterministically* in the desired
-/// projection: among all live tags sharing a name (compared
-/// case-insensitively to match the UNIQUE index, which is
-/// `name COLLATE NOCASE` per 0061:206-207), only the one with the
-/// smallest `id` (ULID → earliest-created) survives. `ROW_NUMBER()
-/// OVER (PARTITION BY content COLLATE NOCASE ORDER BY id)` picks that
-/// winner. Because the winner is a pure function of the source rows, the
-/// desired stream is stable across rebuilds → the cache converges
-/// (a settled rebuild reports `changed == 0`) and the same tag wins every
-/// time. The loser is omitted from the cache (it has no UNIQUE slot to
-/// occupy); it remains fully live in `blocks` and is recoverable by a
-/// rename. This is the explicit, deterministic resolution mandated by
-/// the issue's Proposed change.
-const DESIRED_TAGS_SQL: &str = "SELECT id, content, cnt FROM (
-             SELECT b.id, b.content, COALESCE(t.cnt, 0) AS cnt,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY b.content COLLATE NOCASE
-                        ORDER BY b.id
-                    ) AS rn
+/// We instead de-duplicate by name *deterministically*: among all live
+/// tags sharing a name, only the one with the smallest `id` (ULID →
+/// earliest-created) survives.
+///
+/// **#1990 — normalize-consistent identity.** Tag identity is defined by
+/// [`crate::tag_norm::normalize_tag_name`] (NFC → full-Unicode lowercase
+/// → NFC) — the SAME key the Loro sync engine stores its tag map under
+/// (`loro/engine/apply.rs::tag_map_key_for`). The previous dedup used
+/// `PARTITION BY content COLLATE NOCASE`, but SQLite's NOCASE folds only
+/// ASCII A–Z, so non-ASCII case-variants (`#Σ`/`#σ`) were merged by the
+/// engine yet SPLIT into two cache rows — a latent multi-device hazard.
+/// SQLite cannot compute `normalize_tag_name`, so this SQL no longer
+/// de-duplicates at all: it emits EVERY live tag (id, content, cnt)
+/// ordered by `id ASC`, and [`next_desired_winner`] picks
+/// the smallest-id winner per normalized name in Rust. Because the stream
+/// is `id`-ordered, the first row for a normalized name IS the winner and
+/// later same-name rows are dropped. The winner is a pure function of the
+/// source rows, so the desired stream is stable across rebuilds → the
+/// cache converges (a settled rebuild reports `changed == 0`) and the
+/// same tag wins every time. The loser is omitted from the cache (it has
+/// no UNIQUE slot to occupy); it remains fully live in `blocks` and is
+/// recoverable by a rename. The ASCII case behaviour is unchanged — it is
+/// a strict subset of the Unicode fold (pinned by
+/// `tag_norm::ascii_fold_matches_sqlite_nocase`).
+const DESIRED_TAGS_SQL: &str = "SELECT b.id, b.content, COALESCE(t.cnt, 0) AS cnt
              FROM blocks b
              LEFT JOIN (
                  SELECT tag_id, COUNT(*) AS cnt FROM (
@@ -76,9 +84,7 @@ const DESIRED_TAGS_SQL: &str = "SELECT id, content, cnt FROM (
                  GROUP BY tag_id
              ) t ON t.tag_id = b.id
              WHERE b.block_type = 'tag' AND b.deleted_at IS NULL AND b.content IS NOT NULL
-         )
-         WHERE rn = 1
-         ORDER BY id ASC";
+             ORDER BY b.id ASC";
 
 const CURRENT_TAGS_SQL: &str =
     "SELECT tag_id, name, usage_count FROM tags_cache ORDER BY tag_id ASC";
@@ -92,15 +98,23 @@ const CURRENT_TAGS_SQL: &str =
 /// parameter `?` is the candidate tag's id.
 ///
 /// The de-dup guard is the load-bearing difference from a naive
-/// `WHERE b.id = ?`: in a full rebuild, among all live tags sharing a name
-/// (compared case-insensitively, matching the `tags_cache.name COLLATE
-/// NOCASE` UNIQUE index) only the smallest-id tag occupies the cache slot;
-/// the rest are omitted. So this query emits a row **only if** the candidate
-/// is that smallest-id winner — i.e. `NOT EXISTS` any live tag with the same
-/// name (NOCASE) and a smaller id. If the candidate is a name *loser*, was
-/// deleted, or isn't a tag block, the query returns **zero rows** and the
-/// caller leaves the cache untouched (exactly what a full rebuild does for
-/// that tag — it has no UNIQUE slot to occupy).
+/// `WHERE b.id = ?`: in a full rebuild, among all live tags sharing a
+/// normalized name (#1990 — [`normalize_tag_name`], the engine's tag
+/// identity key) only the smallest-id tag occupies the cache slot; the
+/// rest are omitted. So this query emits a row **only if** the candidate
+/// is that smallest-id winner — i.e. no live tag with the same normalized
+/// name has a smaller id.
+///
+/// **SQLite cannot compute `normalize_tag_name`.** Earlier this guard was
+/// an SQL `NOT EXISTS … o.content = b.content COLLATE NOCASE`, but NOCASE
+/// folds only ASCII, so a non-ASCII case-variant loser would wrongly be
+/// treated as a winner. Instead this query returns the candidate's own
+/// `(content, cnt)` plus the smallest live-tag `id` sharing its content
+/// under NOCASE (a cheap superset prefilter); the Rust caller
+/// ([`refresh_tag_usage_count_impl`]) confirms the true smallest-id winner
+/// among the full-Unicode-normalized siblings. If the candidate is a name
+/// *loser*, was deleted, or isn't a tag block, the caller leaves the cache
+/// untouched (exactly what a full rebuild does for that tag).
 ///
 /// Because `add_tag`/`remove_tag` mutate only `block_tags` (never
 /// `blocks.content`, never which tag blocks exist), the *winner* for any
@@ -125,15 +139,24 @@ const DESIRED_TAG_USAGE_SQL: &str = "SELECT b.content AS name, COALESCE(t.cnt, 0
          WHERE b.id = ?1
            AND b.block_type = 'tag'
            AND b.deleted_at IS NULL
-           AND b.content IS NOT NULL
-           AND NOT EXISTS (
-               SELECT 1 FROM blocks o
-               WHERE o.block_type = 'tag'
-                 AND o.deleted_at IS NULL
-                 AND o.content IS NOT NULL
-                 AND o.content = b.content COLLATE NOCASE
-                 AND o.id < b.id
-           )";
+           AND b.content IS NOT NULL";
+
+/// All live tag blocks (id, content), ordered by `id ASC`, used by the
+/// scoped refresh to confirm the smallest-id winner for a candidate's
+/// normalized name in Rust (#1990). SQLite's NOCASE folds only ASCII, so a
+/// SQL prefilter on `content = ? COLLATE NOCASE` would MISS a non-ASCII
+/// case-variant sibling (`#Σ` for a `#σ` candidate) — the exact relationship
+/// the winner check must detect. So we scan every live tag and confirm the
+/// full-Unicode `normalize_tag_name` equality in Rust. Tag count is bounded
+/// by the user's vocabulary (cf. the no-clamp `list_all_tags_in_space`), so
+/// the scan is cheap. The first `id`-ordered tag whose normalized name
+/// matches the candidate's is the winner.
+const ALL_LIVE_TAGS_SQL: &str = "SELECT id, content
+         FROM blocks
+         WHERE block_type = 'tag'
+           AND deleted_at IS NULL
+           AND content IS NOT NULL
+         ORDER BY id ASC";
 
 /// Incremental, single-tag refresh of `tags_cache.usage_count` (#676).
 ///
@@ -167,10 +190,29 @@ async fn refresh_tag_usage_count_impl(pool: &SqlitePool, tag_id: &str) -> Result
         .await?;
 
     let Some((name, cnt)) = desired else {
-        // Loser / deleted / non-tag: a full rebuild would not place this id
-        // in the cache, so leave it untouched.
+        // Deleted / non-tag / NULL content: a full rebuild would not place this
+        // id in the cache, so leave it untouched.
         return Ok(0);
     };
+
+    // #1990 — confirm the candidate is the smallest-id winner among all live
+    // tags sharing its NORMALIZED name (the engine's tag identity). SQLite
+    // cannot compute `normalize_tag_name`, so we resolve the winner in Rust
+    // (same fold the full rebuild's `dedup_desired_by_normalized_name` uses).
+    // If the candidate is a name *loser*, it has no UNIQUE(name) cache slot —
+    // identical to a full rebuild, which omits it — so leave the cache
+    // untouched.
+    let candidate_norm = normalize_tag_name(&name);
+    let siblings = sqlx::query_as::<_, (String, Option<String>)>(ALL_LIVE_TAGS_SQL)
+        .fetch_all(pool)
+        .await?;
+    let winner_id = siblings.iter().find_map(|(id, content)| {
+        let c = content.as_deref()?;
+        (normalize_tag_name(c) == candidate_norm).then_some(id.as_str())
+    });
+    if winner_id != Some(tag_id) {
+        return Ok(0);
+    }
 
     let mut tx = crate::db::begin_immediate_logged(pool, "cache_tags_refresh_one").await?;
     let res = sqlx::query(
@@ -257,6 +299,34 @@ async fn apply_tags_diff(
 // Sort-merge rebuild core
 // ---------------------------------------------------------------------------
 
+/// Advance an `id`-ordered desired-tag stream to the next **name-winner**,
+/// de-duplicating by [`normalize_tag_name`] in Rust (#1990).
+///
+/// [`DESIRED_TAGS_SQL`] emits EVERY live tag ordered by `id ASC` (SQLite
+/// cannot compute the full-Unicode `normalize_tag_name`, so the dedup can no
+/// longer live in SQL). For each candidate this folds its `content` to the
+/// engine's identity key and keeps it only if that key is unseen — i.e. it is
+/// the smallest-id tag for that normalized name. Later same-name rows (losers)
+/// are skipped, mirroring the old `ROW_NUMBER() … rn = 1` projection but with
+/// the Unicode-correct fold. `seen` accumulates the winning keys across the
+/// whole stream; because the stream is `id`-ordered the first occurrence of a
+/// key is always its smallest-id winner, so the result is a pure, stable
+/// function of the source rows (the cache still converges to `changed == 0`).
+async fn next_desired_winner(
+    stream: &mut (impl futures_util::Stream<Item = Result<(String, String, i64), sqlx::Error>> + Unpin),
+    seen: &mut HashSet<String>,
+) -> Result<Option<(String, String, i64)>, AppError> {
+    while let Some(row) = stream.try_next().await? {
+        if seen.insert(normalize_tag_name(&row.1)) {
+            return Ok(Some(row));
+        }
+        // Name-loser (a smaller-id tag already owns this normalized name) —
+        // skip it; it has no UNIQUE(name) cache slot, exactly as the old SQL
+        // `rn = 1` filter dropped it.
+    }
+    Ok(None)
+}
+
 /// Stream-walk the desired and current tag rows in lockstep, computing
 /// a diff:
 ///   - PK in NEW not in OLD → INSERT.
@@ -284,8 +354,15 @@ async fn apply_sort_merge_rebuild(
     let mut deletes: Vec<String> = Vec::new();
     let mut inserts: Vec<(String, String, i64)> = Vec::new();
     let mut changed: u64 = 0;
+    // #1990 — winning normalized names seen so far. The desired stream is
+    // de-duplicated by `normalize_tag_name` in Rust (the smallest-id tag wins
+    // each normalized name); `seen` tracks those winners as the stream
+    // advances. The desired stream stays `id`-ordered after the filter (we
+    // drop rows, never reorder), so the sort-merge below still walks both
+    // streams in lockstep on `id`.
+    let mut seen: HashSet<String> = HashSet::new();
 
-    let mut next_desired = desired_stream.try_next().await?;
+    let mut next_desired = next_desired_winner(&mut desired_stream, &mut seen).await?;
     let mut next_current = current_stream.try_next().await?;
 
     loop {
@@ -294,7 +371,7 @@ async fn apply_sort_merge_rebuild(
             (Some((d_id, d_name, d_cnt)), None) => {
                 inserts.push((d_id.clone(), d_name.clone(), *d_cnt));
                 changed += 1;
-                next_desired = desired_stream.try_next().await?;
+                next_desired = next_desired_winner(&mut desired_stream, &mut seen).await?;
             }
             (None, Some((c_id, _, _))) => {
                 deletes.push(c_id.clone());
@@ -306,7 +383,7 @@ async fn apply_sort_merge_rebuild(
                     Ordering::Less => {
                         inserts.push((d_id.clone(), d_name.clone(), *d_cnt));
                         changed += 1;
-                        next_desired = desired_stream.try_next().await?;
+                        next_desired = next_desired_winner(&mut desired_stream, &mut seen).await?;
                     }
                     Ordering::Greater => {
                         deletes.push(c_id.clone());
@@ -321,7 +398,7 @@ async fn apply_sort_merge_rebuild(
                             inserts.push((d_id.clone(), d_name.clone(), *d_cnt));
                             changed += 1;
                         }
-                        next_desired = desired_stream.try_next().await?;
+                        next_desired = next_desired_winner(&mut desired_stream, &mut seen).await?;
                         next_current = current_stream.try_next().await?;
                     }
                 }
@@ -695,6 +772,88 @@ mod tests {
         );
     }
 
+    /// #1990 — two live tags that are NON-ASCII case-variants (`#Σ` / `#σ`)
+    /// share one normalized identity (`normalize_tag_name`, the engine's tag
+    /// key) and must converge to ONE cache row deterministically — the
+    /// smallest-id winner — WITHOUT a UNIQUE-violation crash or flip-flop. The
+    /// old `PARTITION BY content COLLATE NOCASE` dedup folded only ASCII, so it
+    /// SPLIT these into two rows. This guards the Unicode-correct dedup.
+    #[tokio::test]
+    async fn tags_cache_unicode_case_variants_converge_1990() {
+        let (pool, _dir) = test_pool().await;
+
+        // Two live tags: capital sigma `Σ` (smaller id A) and lowercase
+        // sigma `σ` (larger id B). normalize_tag_name folds both to `σ`.
+        insert_tag(&pool, "TAGSIGA0000000000000000000", "Σ").await;
+        insert_tag(&pool, "TAGSIGB0000000000000000000", "σ").await;
+        // Give the LOSER (B) the higher usage to prove the winner is chosen by
+        // id, not usage_count.
+        insert_content(&pool, "BLKSIG00000000000000000000", "note").await;
+        add_tag(
+            &pool,
+            "BLKSIG00000000000000000000",
+            "TAGSIGB0000000000000000000",
+        )
+        .await;
+
+        let mut winners: Vec<(String, String, i64)> = Vec::new();
+        let mut changes: Vec<u64> = Vec::new();
+        for _ in 0..3 {
+            // No UNIQUE(name) crash: the dedup keeps exactly one of the
+            // case-variants out of the insert set.
+            let changed = rebuild_tags_cache_impl(&pool).await.unwrap();
+            changes.push(changed);
+            let cache = snapshot(&pool).await;
+            // Exactly ONE cache row exists across both case-variants (they share
+            // a normalized identity). The other is omitted, not duplicated.
+            assert_eq!(
+                cache.len(),
+                1,
+                "Unicode case-variants `Σ`/`σ` must converge to one cache row; cache = {cache:?}"
+            );
+            winners.push(cache.into_iter().next().unwrap());
+        }
+
+        // STABLE: the SAME smaller-id tag (A, `Σ`) wins every rebuild.
+        assert!(
+            winners
+                .iter()
+                .all(|(id, name, _)| id == "TAGSIGA0000000000000000000" && name == "Σ"),
+            "the smaller-id tag (Σ) must win every rebuild; winners = {winners:?}"
+        );
+        // CONVERGED: third rebuild is a no-op (no flip-flop).
+        assert_eq!(
+            changes[2], 0,
+            "third rebuild must converge to changed == 0; changes = {changes:?}"
+        );
+    }
+
+    /// #1990 — the existing ASCII behaviour (a strict subset of the Unicode
+    /// fold) must still hold: `#Foo`/`#foo` converge to one row, smaller-id
+    /// winner. Belt-and-braces alongside the NOCASE convergence tests, pinning
+    /// that the dedup-mechanism swap did not regress ASCII case-folding.
+    #[tokio::test]
+    async fn tags_cache_ascii_case_variants_still_converge_1990() {
+        let (pool, _dir) = test_pool().await;
+        insert_tag(&pool, "TAGFOOA0000000000000000000", "Foo").await;
+        insert_tag(&pool, "TAGFOOB0000000000000000000", "foo").await;
+
+        let changed = rebuild_tags_cache_impl(&pool).await.unwrap();
+        assert_eq!(changed, 1, "ASCII case-variants insert exactly one row");
+        let cache = snapshot(&pool).await;
+        assert_eq!(
+            cache.len(),
+            1,
+            "Foo/foo converge to one row; cache = {cache:?}"
+        );
+        assert_eq!(
+            cache[0].0, "TAGFOOA0000000000000000000",
+            "smaller-id Foo wins"
+        );
+        // Idempotent second rebuild.
+        assert_eq!(rebuild_tags_cache_impl(&pool).await.unwrap(), 0);
+    }
+
     async fn remove_tag_edge(pool: &SqlitePool, block_id: &str, tag_id: &str) {
         sqlx::query!(
             "DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?",
@@ -920,6 +1079,71 @@ mod tests {
             snapshot(&pool).await,
             full_rebuild_snapshot(&pool).await,
             "loser refresh must equal full rebuild"
+        );
+    }
+
+    /// #1990 — the scoped refresh's name-dedup must use the full-Unicode
+    /// `normalize_tag_name`, not ASCII NOCASE. A NON-ASCII case-variant loser
+    /// (`#σ`, larger id, sharing the normalized identity of the smaller-id
+    /// `#Σ` winner) has NO cache slot, so refreshing it must be a no-op — and
+    /// refreshing the WINNER must (re)materialize exactly one row. The old SQL
+    /// `NOT EXISTS … COLLATE NOCASE` guard would wrongly treat `#σ` as a
+    /// winner and resurrect a second row.
+    #[tokio::test]
+    async fn refresh_tag_usage_count_respects_unicode_name_dedup_1990() {
+        let (pool, _dir) = test_pool().await;
+        // A (smaller id, `Σ`) and B (larger id, `σ`) share the normalized
+        // identity `σ`.
+        insert_tag(&pool, "TAGSIGA0000000000000000000", "Σ").await;
+        insert_tag(&pool, "TAGSIGB0000000000000000000", "σ").await;
+        insert_content(&pool, "BLKSIG00000000000000000000", "note").await;
+
+        // Full rebuild: only winner A holds the slot.
+        rebuild_tags_cache_impl(&pool).await.unwrap();
+        let cache = snapshot(&pool).await;
+        assert_eq!(cache.len(), 1, "exactly one row; cache = {cache:?}");
+        assert_eq!(cache[0].0, "TAGSIGA0000000000000000000");
+
+        // Add an edge to the LOSER B and refresh it → must be a no-op (B has no
+        // UNIQUE(name) slot under the Unicode fold).
+        add_tag(
+            &pool,
+            "BLKSIG00000000000000000000",
+            "TAGSIGB0000000000000000000",
+        )
+        .await;
+        let touched = refresh_tag_usage_count_impl(&pool, "TAGSIGB0000000000000000000")
+            .await
+            .unwrap();
+        assert_eq!(
+            touched, 0,
+            "refreshing the Unicode case-variant loser is a no-op"
+        );
+        let after = snapshot(&pool).await;
+        assert_eq!(
+            after.len(),
+            1,
+            "loser must not resurrect a second row; cache = {after:?}"
+        );
+        assert_eq!(
+            after[0].0, "TAGSIGA0000000000000000000",
+            "winner A still owns the slot"
+        );
+
+        // Refreshing the WINNER A is the live path.
+        add_tag(
+            &pool,
+            "BLKSIG00000000000000000000",
+            "TAGSIGA0000000000000000000",
+        )
+        .await;
+        refresh_tag_usage_count_impl(&pool, "TAGSIGA0000000000000000000")
+            .await
+            .unwrap();
+        assert_eq!(
+            snapshot(&pool).await,
+            full_rebuild_snapshot(&pool).await,
+            "winner refresh must equal full rebuild"
         );
     }
 

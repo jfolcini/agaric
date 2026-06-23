@@ -1435,6 +1435,38 @@ pub async fn import_markdown_with_progress(
     // and is out of scope for #1924/#1950.
     let mut resolved_tag_norm: HashMap<String, String> = HashMap::new();
     let mut resolved_tag_tokens: HashMap<String, String> = HashMap::new();
+    // #1990 — snapshot the in-space live tag blocks ONCE, indexed by normalized
+    // name → smallest-id winner, instead of re-scanning every in-space tag per
+    // token. The loop only CREATES tags (never mutates existing tag content), so
+    // a single pre-loop snapshot stays valid; within-pass creations are tracked
+    // in `resolved_tag_norm`. SQLite cannot apply `normalize_tag_name`
+    // (NFC → Unicode lowercase → NFC) and NOCASE folds only ASCII A–Z, so we
+    // fold in Rust here to catch every case-variant the Loro engine (which keys
+    // by `normalize_tag_name`) already merges. Tag count is bounded by the
+    // user's vocabulary, so the snapshot is cheap.
+    let existing_tag_by_norm: HashMap<String, String> = {
+        let rows = sqlx::query!(
+            r#"SELECT id, content FROM blocks
+               WHERE block_type = 'tag'
+                 AND deleted_at IS NULL
+                 AND content IS NOT NULL
+                 AND space_id = ?1
+               ORDER BY id ASC"#,
+            space_id,
+        )
+        .fetch_all(&mut **tx)
+        .await?;
+        let mut map: HashMap<String, String> = HashMap::new();
+        for r in rows {
+            if let Some(c) = r.content {
+                // `or_insert` keeps the FIRST (smallest-id, since ORDER BY id
+                // ASC) row per normalized name — the tags-cache winner.
+                map.entry(crate::tag_norm::normalize_tag_name(&c))
+                    .or_insert(r.id);
+            }
+        }
+        map
+    };
     for token_name in collect_inbound_tag_names(&parse_output.blocks) {
         let norm = crate::tag_norm::normalize_tag_name(&token_name);
 
@@ -1444,44 +1476,16 @@ pub async fn import_markdown_with_progress(
             continue;
         }
 
-        // Resolve an EXISTING live tag block whose normalized content matches,
-        // scoped to the import's OWN space (`AND space_id = ?2`, mirroring the
-        // wiki-link pre-pass above). Tags are space-scoped: a same-name tag in
-        // ANOTHER space must NOT be reused — the cross-space gate in
-        // `reindex_block_tag_refs` would then drop the inline `#[ULID]` ref and
-        // silently fail to attach. Scoping here means a new in-space tag is
-        // created+stamped instead. `ORDER BY id ASC` aligns with the tags-cache
-        // winner (`PARTITION BY content … ORDER BY id`, `rn=1`) so a duplicate
-        // same-name tag binds to the row that actually surfaces in listings.
-        //
-        // SQLite cannot apply `normalize_tag_name` (NFC → Unicode lowercase →
-        // NFC), so we prefilter with a cheap NOCASE content equality (which
-        // folds ASCII A–Z identically) and confirm in Rust against the full
-        // Unicode fold. NOTE: NOCASE is ASCII-only, so non-ASCII case-variants
-        // (`#Σ` vs `#σ`) are NOT merged and each gets its own tag block — this
-        // matches the tags-cache layer, which also dedups by `COLLATE NOCASE`
-        // (system-wide Unicode tag-identity is tracked separately).
-        let candidates = sqlx::query!(
-            r#"SELECT id, content FROM blocks
-               WHERE block_type = 'tag'
-                 AND deleted_at IS NULL
-                 AND content IS NOT NULL
-                 AND content = ?1 COLLATE NOCASE
-                 AND space_id = ?2
-               ORDER BY id ASC"#,
-            token_name,
-            space_id,
-        )
-        .fetch_all(&mut **tx)
-        .await?;
-        let existing = candidates.into_iter().find_map(|r| {
-            let c = r.content?;
-            (crate::tag_norm::normalize_tag_name(&c) == norm).then_some(r.id)
-        });
-
-        if let Some(id) = existing {
+        // Reuse an EXISTING in-space tag whose normalized name matches, from the
+        // pre-loop snapshot (smallest-id winner, mirroring the tags-cache). Tags
+        // are space-scoped: a same-name tag in ANOTHER space must NOT be reused —
+        // the cross-space gate in `reindex_block_tag_refs` would then drop the
+        // inline `#[ULID]` ref and silently fail to attach — so the snapshot is
+        // already filtered to `space_id`, and a new in-space tag is created
+        // below when there is no match.
+        if let Some(id) = existing_tag_by_norm.get(&norm) {
             resolved_tag_norm.insert(norm, id.clone());
-            resolved_tag_tokens.insert(token_name, id);
+            resolved_tag_tokens.insert(token_name, id.clone());
             continue;
         }
 
