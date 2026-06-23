@@ -156,10 +156,54 @@ pub async fn add_attachment_inner(
         )));
     }
 
+    // #1993 Phase 1 — content-addressed blob dedup. If a blob with this hash
+    // already exists, REUSE its canonical file: the new attachment row links
+    // to it by pointing `fs_path` at the blob's `on_disk_path`, and the
+    // freshly-written duplicate at the supplied `fs_path` becomes redundant
+    // (unlinked after commit). Otherwise this is the first copy of these
+    // bytes — create the blob row pointing at the supplied `fs_path`.
+    let existing_blob = sqlx::query_scalar!(
+        "SELECT on_disk_path FROM attachment_blobs WHERE content_hash = ?",
+        content_hash
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+
+    // The path the row will store + the path whose bytes are now redundant.
+    let (row_fs_path, redundant_file): (String, Option<String>) = match existing_blob {
+        Some(canonical) if canonical != fs_path => {
+            // Reuse: redirect the row at the canonical blob file and mark the
+            // just-written duplicate for post-commit cleanup.
+            (canonical, Some(fs_path.clone()))
+        }
+        Some(canonical) => {
+            // Same path already is the canonical file (e.g. re-add of the
+            // exact same fs_path). Nothing redundant.
+            (canonical, None)
+        }
+        None => {
+            // First copy of these bytes — register the blob owning them.
+            sqlx::query!(
+                "INSERT INTO attachment_blobs \
+                 (content_hash, on_disk_path, size_bytes, created_at) \
+                 VALUES (?, ?, ?, ?)",
+                content_hash,
+                fs_path,
+                size_bytes,
+                now,
+            )
+            .execute(&mut **tx)
+            .await?;
+            (fs_path.clone(), None)
+        }
+    };
+
     // Append to op_log within transaction
     let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
 
-    // Insert into attachments table within same transaction
+    // Insert into attachments table within same transaction. `fs_path` is the
+    // canonical blob path (which may differ from the supplied path on a dedup
+    // reuse), so every read/sync path resolves the shared bytes.
     sqlx::query(
         "INSERT INTO attachments \
          (id, block_id, mime_type, filename, size_bytes, fs_path, created_at, content_hash) \
@@ -170,7 +214,7 @@ pub async fn add_attachment_inner(
     .bind(&mime_type)
     .bind(&filename)
     .bind(size_bytes)
-    .bind(&fs_path)
+    .bind(&row_fs_path)
     .bind(now)
     .bind(&content_hash)
     .execute(&mut **tx)
@@ -180,13 +224,28 @@ pub async fn add_attachment_inner(
     tx.enqueue_background(op_record);
     tx.commit_and_dispatch(materializer).await?;
 
+    // #1993 Phase 1 — on a dedup reuse, the just-written duplicate at the
+    // supplied `fs_path` is redundant (the committed row points at the
+    // canonical blob path instead). Reclamation of those bytes is DEFERRED to
+    // the GC pass (`cleanup_orphaned_attachments`) rather than unlinked here.
+    //
+    // Same reasoning as the delete path: an eager post-commit "EXISTS? then
+    // remove_file" is racy on a multi-connection write pool with no global
+    // write mutex — between the EXISTS check and the unlink a concurrent
+    // operation could link a row to this path. The blast radius of unlinking
+    // wrongly is smaller here (the path is a fresh per-add ULID), but we defer
+    // for consistency and to never unlink a path a committed row may
+    // reference. The GC reclaims the orphan race-free (its referenced-path
+    // membership test and unlink are colocated).
+    let _ = redundant_file;
+
     Ok(AttachmentRow {
         id: BlockId::from_trusted(&attachment_id),
         block_id,
         mime_type,
         filename,
         size_bytes,
-        fs_path,
+        fs_path: row_fs_path,
         created_at: now,
         content_hash: Some(content_hash),
     })
@@ -357,28 +416,33 @@ pub async fn read_attachment_inner(
 /// Delete an attachment by its ID.
 ///
 /// Validates the attachment exists, appends a `DeleteAttachment` op (carrying
-/// the captured `fs_path`), deletes from the `attachments` table, commits,
-/// and *then* attempts to unlink the underlying file from disk.
+/// the captured `fs_path`), deletes from the `attachments` table, and commits.
 ///
-/// C-3a/b: the on-disk file must be removed when the user deletes an
-/// attachment, otherwise the file leaks on disk. The op-log entry is the
-/// source of truth: if the unlink fails for any reason (other than
-/// `NotFound`, which is already-clean), the row is still committed and a
-/// future GC pass (C-3c) will reconcile orphaned files. We never return an
-/// error from a failed unlink — that would leave the DB and op-log saying
-/// "deleted" but force the caller to retry, which would then return
-/// `NotFound` from the existence check above and surface a misleading
-/// error to the user.
+/// # Byte reclamation is deferred to GC (#1993)
+///
+/// This command removes the attachment ROW (the *reference*) only; it does
+/// NOT touch the filesystem or the `attachment_blobs` table. With
+/// content-addressed dedup, many live rows may share one on-disk file, so the
+/// only race-free place to unlink bytes is the GC pass
+/// ([`cleanup_orphaned_attachments`](crate::materializer::handlers)) — it
+/// loads the full referenced-path set and unlinks a file only if no live row
+/// references it, with the check and the unlink colocated. An eager unlink
+/// here would race a concurrent same-bytes ingest (no global write mutex on a
+/// multi-connection write pool) and could delete a file a freshly-committed
+/// row references. The op-log entry is authoritative; the bytes are reclaimed
+/// by the next GC pass (boot/maintenance/materializer-periodic).
 ///
 /// # Errors
 ///
 /// - [`AppError::NotFound`] — attachment does not exist
-#[instrument(skip(pool, device_id, materializer, app_data_dir), err)]
+#[instrument(skip(pool, device_id, materializer, _app_data_dir), err)]
 pub async fn delete_attachment_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
-    app_data_dir: &Path,
+    // Retained for signature stability with the other attachment commands.
+    // Byte reclamation moved to the GC pass (#1993), so this is now unused.
+    _app_data_dir: &Path,
     attachment_id: AttachmentId,
 ) -> Result<(), AppError> {
     // Single IMMEDIATE transaction: validation + op_log + delete.
@@ -387,7 +451,8 @@ pub async fn delete_attachment_inner(
 
     // Validate attachment exists AND fetch its fs_path in one query.
     // The fs_path goes into the op-log payload (so remote peers / future
-    // GC passes can reconcile) and into the post-commit unlink.
+    // GC passes can reconcile). Byte reclamation is NOT done here — see the
+    // post-commit comment below.
     let attachment_id_str = attachment_id.as_str();
     let row = sqlx::query!(
         r#"SELECT fs_path FROM attachments WHERE id = ?"#,
@@ -414,37 +479,30 @@ pub async fn delete_attachment_inner(
         .execute(&mut **tx)
         .await?;
 
-    // Commit + fire-and-forget background cache dispatch. The cache
-    // dispatch enqueues before the post-commit unlink, then
-    // `commit_and_dispatch` fires them in order (commit → dispatch).
-    // The unlink below is independent — the materializer reads from
-    // the committed op_log entry, not from the filesystem.
+    // Commit + fire-and-forget background cache dispatch. The materializer
+    // reads from the committed op_log entry, not from the filesystem.
     tx.enqueue_background(op_record);
     tx.commit_and_dispatch(materializer).await?;
 
-    // C-3b: unlink the on-disk file *after* the commit. The op-log entry is
-    // authoritative — failures here are logged and reconciled later by the
-    // C-3c GC pass; we never surface them as errors because the user-facing
-    // delete already succeeded.
-    let full_path = app_data_dir.join(&fs_path);
-    match tokio::fs::remove_file(&full_path).await {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            tracing::info!(
-                path = %full_path.display(),
-                attachment_id = %attachment_id,
-                "attachment file already missing on disk; skipping unlink"
-            );
-        }
-        Err(e) => {
-            tracing::warn!(
-                path = %full_path.display(),
-                attachment_id = %attachment_id,
-                error = %e,
-                "failed to unlink attachment file; will be reconciled by C-3c GC pass"
-            );
-        }
-    }
+    // #1993 Phase 1 — byte reclamation is DEFERRED to the GC pass
+    // (`cleanup_orphaned_attachments`); we deliberately do NOT unlink the file
+    // or prune the `attachment_blobs` row here.
+    //
+    // Rationale (delete-vs-ingest race): the write pool has >1 connection and
+    // no global write mutex, so a concurrent ingest of the SAME bytes
+    // (`add_attachment_inner`) can link a fresh `attachments` row to this file
+    // between any post-commit "is it still referenced?" check and a
+    // `remove_file`. An eager unlink here would then delete a file a live,
+    // committed row references → data loss + a dangling reference.
+    //
+    // `cleanup_orphaned_attachments` reclaims bytes race-free: it loads the
+    // full set of referenced `fs_path`s and unlinks each walked file ONLY if
+    // its path is absent from that set, with the membership test and the
+    // unlink colocated. A shared blob (N rows → 1 file) thus survives until
+    // the last referencing row is gone. GC is invoked at boot/maintenance and
+    // periodically by the materializer, so deferring is safe — the bytes are
+    // a storage-reclamation concern, not a correctness invariant (the op-log
+    // entry already records the delete authoritatively).
 
     Ok(())
 }

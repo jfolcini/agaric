@@ -398,6 +398,7 @@ fn file_offer_serde_roundtrip() {
         attachment_id: "ATT1".into(),
         size_bytes: 1_048_576,
         blake3_hash: "a".repeat(64),
+        content_hash: None,
     };
     let json = serde_json::to_string(&msg).unwrap();
     let parsed: SyncMessage = serde_json::from_str(&json).unwrap();
@@ -444,6 +445,7 @@ fn file_offer_zero_size_serde_roundtrip() {
         attachment_id: "ATT1".into(),
         size_bytes: 0,
         blake3_hash: "b".repeat(64),
+        content_hash: None,
     };
     let json = serde_json::to_string(&msg).unwrap();
     let parsed: SyncMessage = serde_json::from_str(&json).unwrap();
@@ -897,6 +899,7 @@ async fn protocol_hash_mismatch_no_ack_returns_err() {
                 size_bytes: u64::try_from(file_data.len())
                     .expect("invariant: test fixture file size fits in u64"),
                 blake3_hash: wrong_hash,
+                content_hash: None,
             })
             .await
             .unwrap();
@@ -994,6 +997,7 @@ async fn protocol_size_mismatch_no_ack_returns_err() {
                 attachment_id: "ATT_SIZE".into(),
                 size_bytes: 200,
                 blake3_hash: hash,
+                content_hash: None,
             })
             .await
             .unwrap();
@@ -1089,6 +1093,7 @@ async fn protocol_unknown_attachment_acks_and_round_continues() {
                 size_bytes: u64::try_from(unknown_bytes.len())
                     .expect("invariant: test fixture file size fits in u64"),
                 blake3_hash: blake3::hash(unknown_bytes).to_hex().to_string(),
+                content_hash: None,
             })
             .await
             .unwrap();
@@ -1120,6 +1125,7 @@ async fn protocol_unknown_attachment_acks_and_round_continues() {
                 size_bytes: u64::try_from(known_bytes.len())
                     .expect("invariant: test fixture file size fits in u64"),
                 blake3_hash: known_hash,
+                content_hash: None,
             })
             .await
             .unwrap();
@@ -1231,6 +1237,7 @@ async fn protocol_temp_writer_reject_acks_and_round_continues() {
                 size_bytes: u64::try_from(bad_bytes.len())
                     .expect("invariant: test fixture file size fits in u64"),
                 blake3_hash: blake3::hash(bad_bytes).to_hex().to_string(),
+                content_hash: None,
             })
             .await
             .unwrap();
@@ -1259,6 +1266,7 @@ async fn protocol_temp_writer_reject_acks_and_round_continues() {
                 size_bytes: u64::try_from(good_bytes.len())
                     .expect("invariant: test fixture file size fits in u64"),
                 blake3_hash: good_hash,
+                content_hash: None,
             })
             .await
             .unwrap();
@@ -1430,6 +1438,69 @@ async fn find_missing_attachments_all_files_present() {
     assert!(
         missing.is_empty(),
         "all files present on disk → no missing attachments"
+    );
+}
+
+/// #1993 regression: a DANGLING `attachment_blobs` row (the blob is
+/// registered but its on-disk file has vanished) must NOT suppress a transfer.
+/// `local_blob_path_if_present`'s `try_exists` check is what guards this — a
+/// blob whose file is gone is treated as not-present, so the row whose own
+/// file is also missing is still classified as missing and a full transfer is
+/// requested. Without the on-disk check the bytes would be lost forever.
+#[tokio::test]
+async fn find_missing_attachments_not_skipped_when_blob_file_absent_1993() {
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("test.db");
+    let pool = init_pool(&db_path).await.unwrap();
+
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES ('BLK1', 'content', 'test')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // No file is written to disk: neither the row's own fs_path nor the blob's
+    // on_disk_path exist. The attachments dir does not even need to exist.
+    let hash = "abc123def456deadbeefcafe";
+
+    // Attachment row whose own file is absent, carrying a content_hash.
+    sqlx::query(
+        "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at, content_hash) \
+         VALUES ('ATT1', 'BLK1', 'image/png', 'photo.png', 12, 'attachments/att1.png', 1736942400000, ?)",
+    )
+    .bind(hash)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // A DANGLING blob row for the same hash: registered, but its on_disk_path
+    // file does not exist.
+    sqlx::query(
+        "INSERT INTO attachment_blobs (content_hash, on_disk_path, size_bytes, created_at) \
+         VALUES (?, 'attachments/blob_gone.png', 12, 1736942400000)",
+    )
+    .bind(hash)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let missing = find_missing_attachments(&pool, dir.path()).await.unwrap();
+
+    // The dangling blob row must NOT suppress the request: ATT1 is missing.
+    assert_eq!(
+        missing.len(),
+        1,
+        "a blob row whose file is absent must not suppress the transfer"
+    );
+    assert_eq!(missing[0].id, "ATT1");
+
+    // And the row must NOT have been repointed at the (non-existent) blob path.
+    let fs_path: String = sqlx::query_scalar("SELECT fs_path FROM attachments WHERE id = 'ATT1'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        fs_path, "attachments/att1.png",
+        "row must not be repointed at a blob whose file is absent"
     );
 }
 
@@ -1643,6 +1714,7 @@ async fn inmem_receive_request_sends_one_file() {
                 attachment_id,
                 size_bytes,
                 blake3_hash,
+                ..
             } => {
                 assert_eq!(attachment_id, "ATT_S1");
                 assert_eq!(size_bytes, expected_size);
@@ -1764,6 +1836,7 @@ async fn inmem_request_receive_one_file() {
                 attachment_id: "ATT_R1".into(),
                 size_bytes: expected_size,
                 blake3_hash: hash_for_offer,
+                content_hash: None,
             })
             .await
             .unwrap();
@@ -1864,6 +1937,7 @@ async fn inmem_request_receive_partial_transfer_disconnects_mid_frame_l72() {
                 attachment_id: "ATT_L72".into(),
                 size_bytes: declared_size,
                 blake3_hash: placeholder_hash,
+                content_hash: None,
             })
             .await
             .unwrap();
@@ -2051,6 +2125,7 @@ async fn run_file_transfer_initiator_breaks_on_cancel_m47() {
                 size_bytes: u64::try_from(file1.len())
                     .expect("invariant: test fixture file size fits in u64"),
                 blake3_hash: hash1.clone(),
+                content_hash: None,
             })
             .await
             .unwrap();
@@ -2703,4 +2778,223 @@ async fn wire_helpers_streaming_round_trip_m51() {
 
     assert_eq!(sink.len(), payload.len());
     assert_eq!(sink, payload);
+}
+
+// ── #1993 Phase 2: content-addressed skip-transfer ───────────────────
+
+/// Insert an `attachment_blobs` row (the local content-addressed blob store).
+async fn insert_blob_row(pool: &SqlitePool, content_hash: &str, on_disk_path: &str, size: i64) {
+    sqlx::query(
+        "INSERT INTO attachment_blobs (content_hash, on_disk_path, size_bytes, created_at) \
+         VALUES (?, ?, ?, unixepoch('now') * 1000)",
+    )
+    .bind(content_hash)
+    .bind(on_disk_path)
+    .bind(size)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// #1993: when the RECEIVER already holds a local blob for the attachment's
+/// content_hash (file present on disk + blob row), `find_missing_attachments`
+/// classifies the row as NOT missing — so no FileRequest is issued for it and
+/// no binary transfer occurs. The row is also repointed at the local blob.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn find_missing_skips_when_local_blob_present_1993() {
+    let dir = TempDir::new().unwrap();
+    let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+
+    let bytes = b"already-held bytes for skip transfer".to_vec();
+    let hash = blake3::hash(&bytes).to_hex().to_string();
+    let size = i64::try_from(bytes.len()).unwrap();
+
+    // The attachment row's OWN fs_path file is missing, but the bytes exist
+    // under a DIFFERENT path that the blob owns.
+    std::fs::create_dir_all(dir.path().join("attachments")).unwrap();
+    let blob_path = "attachments/blob_canonical.bin";
+    std::fs::write(dir.path().join(blob_path), &bytes).unwrap();
+    insert_blob_row(&pool, &hash, blob_path, size).await;
+
+    // Row points at a missing path but carries the matching content_hash.
+    let blk = "BLK_SKIP";
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', 'x')")
+        .bind(blk)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at, content_hash) \
+         VALUES ('ATT_SKIP', ?, 'application/octet-stream', 'f.bin', ?, 'attachments/missing.bin', unixepoch('now')*1000, ?)",
+    )
+    .bind(blk)
+    .bind(size)
+    .bind(&hash)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let missing = find_missing_attachments(&pool, dir.path()).await.unwrap();
+    assert!(
+        missing.is_empty(),
+        "row whose content_hash has a present local blob must NOT be missing: {missing:?}"
+    );
+
+    // The row was repointed at the canonical blob file.
+    let fs_path: String =
+        sqlx::query_scalar("SELECT fs_path FROM attachments WHERE id = 'ATT_SKIP'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        fs_path, blob_path,
+        "row must be repointed at the local blob"
+    );
+}
+
+/// #1993 end-to-end skip: the receiver already has the blob → it issues NO
+/// FileRequest for that attachment, so the sender transfers ZERO files.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_skip_transfer_when_receiver_has_blob_1993() {
+    let initiator_dir = TempDir::new().unwrap();
+    let initiator_pool = init_pool(&initiator_dir.path().join("test.db"))
+        .await
+        .unwrap();
+    let responder_dir = TempDir::new().unwrap();
+    let responder_pool = init_pool(&responder_dir.path().join("test.db"))
+        .await
+        .unwrap();
+
+    let file_data = b"bytes the initiator already holds via a blob".to_vec();
+    let hash = blake3::hash(&file_data).to_hex().to_string();
+    let size = i64::try_from(file_data.len()).unwrap();
+
+    // Both sides know the attachment row.
+    insert_test_attachment(&initiator_pool, "ATT01", "attachments/photo.jpg", size).await;
+    insert_test_attachment(&responder_pool, "ATT01", "attachments/photo.jpg", size).await;
+    // Set the initiator row's content_hash so the skip path can match.
+    sqlx::query("UPDATE attachments SET content_hash = ? WHERE id = 'ATT01'")
+        .bind(&hash)
+        .execute(&initiator_pool)
+        .await
+        .unwrap();
+
+    // Responder has the file; initiator does NOT at the row's path but DOES
+    // hold it under a local blob (different path).
+    write_attachment_file(responder_dir.path(), "attachments/photo.jpg", &file_data).unwrap();
+    std::fs::create_dir_all(initiator_dir.path().join("attachments")).unwrap();
+    let blob_path = "attachments/held_blob.bin";
+    std::fs::write(initiator_dir.path().join(blob_path), &file_data).unwrap();
+    insert_blob_row(&initiator_pool, &hash, blob_path, size).await;
+
+    let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
+    let cancel_resp = AtomicBool::new(false);
+    let cancel_init = AtomicBool::new(false);
+    let (responder_result, initiator_result) = tokio::join!(
+        receive_request_and_send_files(
+            &mut server_conn,
+            &responder_pool,
+            responder_dir.path(),
+            &cancel_resp,
+            None
+        ),
+        request_and_receive_files(
+            &mut client_conn,
+            &initiator_pool,
+            initiator_dir.path(),
+            &cancel_init,
+            None
+        ),
+    );
+    let sender_stats = responder_result.unwrap();
+    let receiver_stats = initiator_result.unwrap();
+
+    assert_eq!(
+        sender_stats.files_sent, 0,
+        "sender must transfer NO files (receiver had the blob)"
+    );
+    assert_eq!(
+        receiver_stats.files_received, 0,
+        "receiver must receive NO files"
+    );
+    assert_eq!(receiver_stats.bytes_received, 0);
+
+    server.shutdown().await;
+}
+
+/// #1993 back-compat: a `FileOffer` WITHOUT `content_hash` (old-peer
+/// simulation) still transfers correctly — the receiver falls back to the
+/// mandatory `blake3_hash` for verification and writes the file.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn file_offer_without_content_hash_still_transfers_1993() {
+    let initiator_dir = TempDir::new().unwrap();
+    let initiator_pool = init_pool(&initiator_dir.path().join("test.db"))
+        .await
+        .unwrap();
+
+    let file_data = b"old-peer bytes without content_hash field".to_vec();
+    let hash = blake3::hash(&file_data).to_hex().to_string();
+    let size_u64 = u64::try_from(file_data.len()).unwrap();
+    insert_test_attachment(
+        &initiator_pool,
+        "ATT_OLD",
+        "attachments/old.bin",
+        i64::try_from(file_data.len()).unwrap(),
+    )
+    .await;
+
+    let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
+
+    // Old-peer sender: send a FileOffer with content_hash explicitly None,
+    // then stream the bytes, then await the ack.
+    let data_clone = file_data.clone();
+    let hash_clone = hash.clone();
+    let sender = tokio::spawn(async move {
+        server_conn
+            .send_json(&SyncMessage::FileOffer {
+                attachment_id: "ATT_OLD".into(),
+                size_bytes: size_u64,
+                blake3_hash: hash_clone,
+                content_hash: None,
+            })
+            .await
+            .unwrap();
+        let cursor = std::io::Cursor::new(data_clone);
+        server_conn
+            .send_binary_streaming(
+                cursor,
+                size_u64,
+                crate::sync_constants::BINARY_FRAME_CHUNK_SIZE,
+            )
+            .await
+            .unwrap();
+        let _ack: SyncMessage = server_conn.recv_json().await.unwrap();
+        server_conn
+            .send_json(&SyncMessage::FileTransferComplete)
+            .await
+            .unwrap();
+    });
+
+    let cancel = AtomicBool::new(false);
+    let recv_stats = request_and_receive_files(
+        &mut client_conn,
+        &initiator_pool,
+        initiator_dir.path(),
+        &cancel,
+        None,
+    )
+    .await
+    .unwrap();
+    sender.await.unwrap();
+
+    assert_eq!(
+        recv_stats.files_received, 1,
+        "old-peer offer must transfer normally"
+    );
+    let (data, got_hash) =
+        read_attachment_file(initiator_dir.path(), "attachments/old.bin").unwrap();
+    assert_eq!(data, file_data);
+    assert_eq!(got_hash, hash);
+
+    server.shutdown().await;
 }

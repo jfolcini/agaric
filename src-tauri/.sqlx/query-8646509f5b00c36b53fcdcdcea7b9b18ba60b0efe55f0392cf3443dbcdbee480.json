@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE attachments SET fs_path = ? WHERE id = ? AND fs_path <> ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "8646509f5b00c36b53fcdcdcea7b9b18ba60b0efe55f0392cf3443dbcdbee480"
+}

@@ -2441,12 +2441,11 @@ pub(crate) fn anonymize_attachment_path(path: &str) -> (String, String) {
 ///
 /// #85: attachment `fs_path`s are stored **app-data-relative**
 /// (e.g. `attachments/<ULID>`). This resolves each against `app_data_dir`
-/// (`app_data_dir.join(fs_path)`) — the proper absolute path, matching
-/// `delete_attachment_inner` — rather than the earlier bulk paths' bare
-/// relative `remove_file`, which only worked when the process CWD happened to
-/// equal the app-data dir. All three purge paths funnel through here so the
-/// single-block purge no longer leaks files and the bulk paths stop depending
-/// on CWD.
+/// (`app_data_dir.join(fs_path)`) — the proper absolute path — rather than the
+/// earlier bulk paths' bare relative `remove_file`, which only worked when the
+/// process CWD happened to equal the app-data dir. All three purge paths funnel
+/// through here so the single-block purge no longer leaks files and the bulk
+/// paths stop depending on CWD.
 ///
 /// Defensive: an `fs_path` that is absolute or contains a `..` component is
 /// skipped (it cannot be a legitimate app-relative attachment path and joining

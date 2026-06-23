@@ -284,6 +284,22 @@ pub async fn recover_at_boot(
                     "#1453 attachment content_hash backfill failed — continuing boot"
                 );
             }
+
+            // #1993 Phase 1 — build the content-addressed `attachment_blobs`
+            // store from the (now-hashed) `attachments` rows and repoint
+            // duplicate rows at one canonical file per distinct hash. Runs
+            // AFTER the hash backfill above so as many rows as possible carry a
+            // `content_hash` to group on. Idempotent + best-effort: a failure
+            // is logged and boot continues (the blob store is a dedup
+            // optimization, the per-row `fs_path` still resolves bytes).
+            if let Err(e) =
+                super::attachment_blob_backfill::backfill_attachment_blobs(pool, &dir).await
+            {
+                tracing::warn!(
+                    error = %e,
+                    "#1993 attachment blob backfill failed — continuing boot"
+                );
+            }
         }
         None => {
             tracing::debug!(

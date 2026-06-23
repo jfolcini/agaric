@@ -258,10 +258,29 @@ pub enum SyncMessage {
     FileRequest { attachment_ids: Vec<String> },
     /// File-transfer sub-flow only.
     /// Offer a file for transfer (metadata before binary data).
+    ///
+    /// `blake3_hash` is the blake3 hex digest of the offered file's bytes
+    /// (always present; verified by the receiver on commit). It already IS the
+    /// content hash, so the #1993 content-addressed dedup keys off it.
+    ///
+    /// `content_hash` (#1993 Phase 2) is an OPTIONAL, additive field carrying
+    /// the same content-addressed hash explicitly. It is `#[serde(default)]`
+    /// so the wire change is strictly back-compatible:
+    /// * an OLD daemon serializes no field → a NEW receiver deserializes
+    ///   `None` and falls back to `blake3_hash` / full binary transfer;
+    /// * an OLD daemon receiving a NEW message ignores the unknown field.
+    ///
+    /// A NEW sender populates it (= `blake3_hash`) so future receivers can
+    /// reason about content-addressing without depending on the transfer
+    /// hash's role. The actual skip-transfer decision (#1993) is taken
+    /// receiver-side in `find_missing_attachments` (a file whose hash already
+    /// has a local blob is NOT requested, so it is never offered/streamed).
     FileOffer {
         attachment_id: String,
         size_bytes: u64,
         blake3_hash: String,
+        #[serde(default)]
+        content_hash: Option<String>,
     },
     /// File-transfer sub-flow only.
     /// Receiver confirms hash + write succeeded for `attachment_id`.
