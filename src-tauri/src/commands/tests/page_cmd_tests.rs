@@ -5693,6 +5693,74 @@ async fn import_tag_case_folds_to_single_tag_1924() {
     mat.shutdown();
 }
 
+/// #1990 — import resolve must reuse a pre-existing tag whose NORMALIZED name
+/// (`normalize_tag_name`, the engine's identity key) matches, even across a
+/// NON-ASCII case difference. A pre-seeded `#Σ` tag and an imported `#σ` token
+/// fold to the same identity, so the import must bind to the existing tag, NOT
+/// create a duplicate. The old `content = ?1 COLLATE NOCASE` prefilter folded
+/// only ASCII, so it MISSED the `#Σ` candidate when resolving `#σ` and created
+/// a second tag — splitting an identity the Loro engine had already merged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_tag_reuses_unicode_case_variant_1990() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    // Pre-seed a capital-sigma `#Σ` tag in the IMPORT's space.
+    let existing_tag = "01EXISTINGSIGMATAG00000000";
+    sqlx::query("INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'tag', ?, 0)")
+        .bind(existing_tag)
+        .bind("Σ")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assign_to_test_space(&pool, existing_tag).await;
+
+    // Import a lowercase-sigma `#σ` token — same normalized identity as `#Σ`.
+    import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- track #σ".into(),
+        Some("Sigma.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    // No duplicate tag block was created — exactly the pre-seeded one survives.
+    let tag_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'tag' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        tag_count, 1,
+        "`#σ` import must reuse the existing `#Σ` tag (normalize_tag_name), not duplicate it"
+    );
+
+    // The imported content references the PRE-EXISTING tag's ULID.
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND deleted_at IS NULL \
+         ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        content,
+        format!("track #[{existing_tag}]"),
+        "the inline ref must bind to the pre-existing `#Σ` tag"
+    );
+
+    mat.shutdown();
+}
+
 /// #1922 (`no-namespace-collision-import-test`) — `import_markdown_inner`
 /// ALWAYS creates a brand-new page block from the derived (namespaced) title;
 /// there is NO de-dup / merge against an existing page with the same title in

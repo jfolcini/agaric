@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, content FROM blocks\n               WHERE block_type = 'tag'\n                 AND deleted_at IS NULL\n                 AND content IS NOT NULL\n                 AND content = ?1 COLLATE NOCASE\n                 AND space_id = ?2\n               ORDER BY id ASC",
+  "query": "SELECT id, content FROM blocks\n               WHERE block_type = 'tag'\n                 AND deleted_at IS NULL\n                 AND content IS NOT NULL\n                 AND space_id = ?1\n               ORDER BY id ASC",
   "describe": {
     "columns": [
       {
@@ -27,12 +27,12 @@
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 1
     },
     "nullable": [
       false,
       true
     ]
   },
-  "hash": "84e5b5abad661076a93e3f2b4bde4498af53843174dff6b4d7e775f75d2ec22d"
+  "hash": "81eaca8a7a11ef09388f9e753906f0d452b0f2db0356d026d76e8e327d5b3673"
 }
