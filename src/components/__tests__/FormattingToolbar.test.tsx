@@ -697,13 +697,14 @@ describe('FormattingToolbar', () => {
       const sentinel = screen.getByTestId('toolbar-sentinel')
       expect(sentinel).toBeInTheDocument()
       expect(sentinel).toHaveAttribute('aria-hidden', 'true')
-      // Each item in the flattened list (16 buttons + 3 separators = 19) must
+      // Each item in the flattened list (17 buttons + 3 separators = 20) must
       // have a measurable child carrying its data-toolbar-item-key. #1960
       // replaced the 6 standalone block buttons (code/heading/blockquote/
       // ordered-list/divider/callout) with the single Format + Turn into pair,
-      // dropping the count from 21 buttons to 16.
+      // dropping the count from 21 buttons to 16; #281 then added the emoji
+      // button, bringing it to 17.
       const measurableChildren = sentinel.querySelectorAll('[data-toolbar-item-key]')
-      expect(measurableChildren.length).toBe(19)
+      expect(measurableChildren.length).toBe(20)
     })
   })
 
