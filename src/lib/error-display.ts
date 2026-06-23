@@ -59,26 +59,36 @@ export interface FormatErrorOptions {
    * store). Defaults to the live `getDebugMode()` value.
    */
   debug?: boolean
-}
-
-/**
- * Normalise an unknown caught value to `{ kind?, message }`. Returns
- * `null` for plain string/number values, signalling "render verbatim".
- */
-function describe(err: unknown): { kind?: string; message: string } | null {
-  if (typeof err === 'string' || typeof err === 'number') return null
-  if (isAppError(err)) return { kind: err.kind, message: err.message }
-  if (err instanceof Error) return { message: err.message }
-  return { message: String(err) }
+  /**
+   * Shown when `err` is not a recognisable error — a thrown non-`Error`
+   * value such as `undefined`, `null`, or a bare object. Lets a call site
+   * keep its context-specific copy (`'Failed to rename'`) instead of
+   * surfacing a useless `String(err)` like `"undefined"` /
+   * `"[object Object]"`. Ignored for strings/numbers (rendered verbatim)
+   * and for real `Error` / IPC `AppError` values (which carry a message).
+   */
+  fallback?: string
 }
 
 export function formatErrorForDisplay(err: unknown, opts: FormatErrorOptions = {}): string {
-  const described = describe(err)
-  if (described === null) return String(err)
+  // Pre-built human strings/numbers render verbatim.
+  if (typeof err === 'string' || typeof err === 'number') return String(err)
+
+  let kind: string | undefined
+  let message: string
+  if (isAppError(err)) {
+    kind = err.kind
+    message = err.message
+  } else if (err instanceof Error) {
+    message = err.message
+  } else {
+    // Unrecognised throw (bare object, null, undefined): prefer the
+    // caller's fallback over a useless String(err).
+    return opts.fallback ?? String(err)
+  }
 
   const debug = opts.debug ?? getDebugMode()
-  const base = stripErrorPrefix(described.message)
-
-  if (!debug || !described.kind) return base
-  return `${base} · code: ${described.kind}`
+  const base = stripErrorPrefix(message)
+  if (!debug || !kind) return base
+  return `${base} · code: ${kind}`
 }

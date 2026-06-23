@@ -4,12 +4,12 @@
  * A single, app-wide "show me the technical details" toggle, persisted to
  * `localStorage` and **off by default**. When on, user-facing error
  * surfaces (toasts and inline banners) additionally show the raw error
- * `kind`/message via {@link formatErrorForDisplay} in `@/lib/app-error`.
+ * `kind`/message via {@link formatErrorForDisplay} in `@/lib/error-display`.
  * Off or on, sanitized backend errors still carry their `(err: <id>)`
  * correlation code so a user can read it back and an operator can grep
  * the full cause from the daily log.
  *
- * Why a store (not just a setting row): the formatter in `app-error.ts`
+ * Why a store (not just a setting row): the formatter in `error-display.ts`
  * and the `notify` chokepoint in `notify.ts` are plain modules, not React
  * components, so they need a non-hook getter. {@link getDebugMode} reads
  * the live value synchronously for those call sites; React components use

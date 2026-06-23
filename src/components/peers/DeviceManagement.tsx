@@ -176,7 +176,7 @@ export function DeviceManagement(): React.ReactElement {
         })
         await loadData()
       } catch (err) {
-        const message = formatErrorForDisplay(err)
+        const message = formatErrorForDisplay(err, { fallback: 'Sync failed' })
         const displayMessage =
           message === 'Sync timed out'
             ? 'Sync took too long — check your connection and try again'
@@ -229,7 +229,7 @@ export function DeviceManagement(): React.ReactElement {
         await updatePeerName(renamePeerId, name || null)
         await loadData()
       } catch (e) {
-        setError(formatErrorForDisplay(e))
+        setError(formatErrorForDisplay(e, { fallback: 'Failed to rename' }))
       } finally {
         setRenamingPeerId(null)
         setRenamePeerId(null)

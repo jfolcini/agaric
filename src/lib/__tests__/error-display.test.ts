@@ -28,6 +28,31 @@ describe('formatErrorForDisplay', () => {
     expect(formatErrorForDisplay(err, { debug: true })).toBe('Sync timed out')
   })
 
+  describe('unrecognised throws (fallback)', () => {
+    it('uses the caller fallback instead of String(err) for non-Error values', () => {
+      expect(formatErrorForDisplay(undefined, { fallback: 'Failed to rename' })).toBe(
+        'Failed to rename',
+      )
+      expect(formatErrorForDisplay({ not: 'an error' }, { fallback: 'Sync failed' })).toBe(
+        'Sync failed',
+      )
+    })
+
+    it('falls back to String(err) when no fallback is supplied', () => {
+      expect(formatErrorForDisplay(undefined)).toBe('undefined')
+    })
+
+    it('ignores the fallback for real Error / AppError values', () => {
+      expect(formatErrorForDisplay(new Error('boom'), { fallback: 'ignored' })).toBe('boom')
+      expect(
+        formatErrorForDisplay(
+          { kind: 'io', message: 'IO error: disk full' },
+          { fallback: 'ignored', debug: false },
+        ),
+      ).toBe('disk full')
+    })
+  })
+
   describe('IPC AppError objects', () => {
     const appError = {
       kind: 'validation',

@@ -13,8 +13,29 @@ slow-timeout = { period = "30s", terminate-after = 2 }
 # release sockets; 30s is generous enough to avoid false-positive leak reports.
 leak-timeout = "30s"
 
+# Headroom for the suite's heaviest DB-bound tests so full-suite CPU contention
+# can't push them past the global 2×30s=60s terminate window and kill them on the
+# first attempt — which surfaces as a spurious "flaky" (TRY 1 terminated, retry
+# passes). These tests are correct and deterministic and have no internal
+# wall-clock assertions; they're just slow by construction, so the fix is a longer
+# leash (4×30s=120s), not trimming their coverage. Found while shipping #1987.
+#
+#   * apply_reproject_proptest::{b2,b3,b4} (#1683) — drive dozens of generated
+#     op-chains through the full engine→SQL reprojection pipeline (a Loro engine +
+#     DB pools per case); B4 runs ~30s even alone.
+#   * perf26_draft_recovery_at_10k_ops_is_fast — seeds 10K op-log rows (~50s of
+#     setup) before exercising indexed draft recovery; sat right under the 60s kill.
+[[profile.default.overrides]]
+filter = 'test(/apply_reproject_proptest::/) | test(/perf26_draft_recovery_at_10k_ops_is_fast/)'
+slow-timeout = { period = "30s", terminate-after = 4 }
+
 [profile.ci]
 fail-fast = false
 retries = 2
 slow-timeout = { period = "60s", terminate-after = 2 }
 leak-timeout = "30s"
+
+# Same headroom in CI (3×60s=180s) — see the default-profile override above.
+[[profile.ci.overrides]]
+filter = 'test(/apply_reproject_proptest::/) | test(/perf26_draft_recovery_at_10k_ops_is_fast/)'
+slow-timeout = { period = "60s", terminate-after = 3 }
