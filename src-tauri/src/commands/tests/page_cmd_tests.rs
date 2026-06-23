@@ -5142,23 +5142,18 @@ async fn import_export_namespace_and_wikilink_round_trip_1446() {
 // regression that alters them now fails CI.
 // ======================================================================
 
-/// #1922 (`no-hashtag-test`) — pins the import-side handling of
-/// Logseq/Obsidian `#tag` / `#[[Tag With Space]]` tokens. The import body
-/// path runs ONLY `rewrite_inbound_page_links`, whose HUMAN_PAGE_LINK_RE
-/// matches ANY `[[…]]` substring. Current (nuanced) behavior:
-///   - `#project` — a bare hashtag with no brackets — has no `[[…]]` to match,
-///     so it stays LITERAL text and is NEVER turned into a tag association.
-///   - `#[[My Topic]]` — the `[[My Topic]]` portion DOES match the inbound
-///     wiki-link pre-pass, which CREATES a "My Topic" page and rewrites the
-///     name to a canonical `[[ULID]]` ref. So the `#` survives but the bracket
-///     payload becomes a page reference, not a literal tag.
-/// Either way NO `block_tags` (tag-association) rows are created and NO
-/// `tag`-type block is materialized — the exporter's `#[ULID]`→`#tagname`
-/// resolution has no inverse on import. This test pins that asymmetry.
-///
-/// NOTE: the `#[[My Topic]]` → page-ref rewrite is a quirk (a hashtag's
-/// bracket payload is silently re-homed as a PAGE link, not a tag); it is
-/// pinned here as current behavior, not endorsed.
+/// #1924 / #1950 — the import path now PARSES and LINKS inline `#tag` and
+/// `#[[Tag With Space]]` tokens as TAGS (this replaces the old #1922 pin of the
+/// no-tag asymmetry). Importing `- see #project and #[[My Topic]]`:
+///   - `#project` — a bare hashtag — resolves-or-creates a `block_type='tag'`
+///     block "project" and rewrites the token to a canonical `#[ULID]` ref.
+///   - `#[[My Topic]]` — the multi-word form (#1950) — resolves-or-creates a
+///     TAG "My Topic" (NOT a page) and likewise rewrites to `#[ULID]`. The
+///     wiki-link pre-pass's `#`-prefix guard leaves the `[[…]]` for the tag
+///     pass, so NO "My Topic" PAGE is created.
+/// The created tags materialize as INLINE refs (`block_tag_refs` from the
+/// `#[ULID]` content via the `CreateBlock` dispatch), not `block_tags`
+/// associations — exactly like typing/pasting `#tag` in the editor.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn import_markdown_hashtags_no_tag_rows_1922() {
     let (pool, _dir) = test_pool().await;
@@ -5189,28 +5184,26 @@ async fn import_markdown_hashtags_no_tag_rows_1922() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    // The bare `#project` hashtag stays literal (no brackets → no rewrite).
+    // Both tokens are now canonical `#[ULID]` tag refs; neither the human name
+    // nor the `#[[ ]]` brackets survive.
+    let re = regex::Regex::new(r"^see #\[[0-9A-Z]{26}\] and #\[[0-9A-Z]{26}\]$").unwrap();
     assert!(
-        content.starts_with("see #project and #[["),
-        "bare `#project` stays literal and the `#` before `[[…]]` survives; got {content:?}"
-    );
-    // The `[[My Topic]]` payload was wiki-link-resolved to a canonical ULID
-    // ref (26-char Crockford ULID), NOT left as literal `My Topic`.
-    assert!(
-        !content.contains("My Topic"),
-        "the `[[My Topic]]` payload is rewritten to a `[[ULID]]` ref, not kept \
-         literal; got {content:?}"
-    );
-    let inner = content
-        .trim_start_matches("see #project and #[[")
-        .trim_end_matches("]]");
-    assert_eq!(
-        inner.len(),
-        26,
-        "the rewritten payload is a 26-char ULID page-ref; got {content:?}"
+        re.is_match(&content),
+        "both `#project` and `#[[My Topic]]` must rewrite to `#[ULID]` tag refs; got {content:?}"
     );
 
-    // A "My Topic" PAGE was created by the inbound wiki-link pre-pass.
+    // #1950 — "My Topic" is a TAG, NOT a page.
+    let my_topic_tags: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'tag' AND content = 'My Topic' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        my_topic_tags, 1,
+        "`#[[My Topic]]` must create exactly one TAG"
+    );
     let my_topic_pages: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND content = 'My Topic' \
          AND deleted_at IS NULL",
@@ -5219,29 +5212,411 @@ async fn import_markdown_hashtags_no_tag_rows_1922() {
     .await
     .unwrap();
     assert_eq!(
-        my_topic_pages, 1,
-        "the `[[My Topic]]` inside the hashtag created exactly one page"
+        my_topic_pages, 0,
+        "`#[[My Topic]]` must NOT create a page (it is a tag, #1950)"
     );
 
-    // The crux of the asymmetry: NO `block_tags` association rows and NO
-    // `tag`-type blocks result from importing `#tag` content.
+    // The `project` tag exists too.
+    let project_tags: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'tag' AND content = 'project' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(project_tags, 1, "`#project` must create the `project` tag");
+
+    // Inline tags are materialized as `block_tag_refs` (from `#[ULID]`
+    // content), NOT as explicit `block_tags` associations.
+    settle(&mat).await;
     let tag_links: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_tags")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(
         tag_links, 0,
-        "importing `#tag` content must create NO block_tags (tag-association) rows"
+        "inline `#tag` import must create NO block_tags (explicit-association) rows"
     );
+    let tag_refs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_tag_refs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        tag_refs, 2,
+        "the content block must carry two inline tag refs in block_tag_refs"
+    );
+
+    mat.shutdown();
+}
+
+/// #1924 — inline `#projectx` is parsed and LINKED as a tag: a
+/// `block_type='tag'` block named `projectx` is created, the content holds a
+/// canonical `#[ULID]` ref, and re-exporting yields `#projectx`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_inline_bare_tag_links_and_round_trips_1924() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        "- track this #projectx today".into(),
+        Some("Notes.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.blocks_created, 1);
+
+    // A tag named `projectx` was created.
+    let tag_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'tag' AND content = 'projectx' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // The content block holds a canonical `#[ULID]` ref to that tag.
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND deleted_at IS NULL \
+         ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        content,
+        format!("track this #[{tag_id}] today"),
+        "bare `#projectx` must rewrite to a `#[ULID]` tag ref"
+    );
+
+    // Re-export yields the human `#projectx` form.
+    settle(&mat).await;
+    let page_id: String =
+        sqlx::query_scalar("SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Notes'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let md = export_page_markdown_inner(&pool, &page_id).await.unwrap();
+    assert!(
+        md.contains("#projectx"),
+        "export must humanise the tag ref back to `#projectx`; got:\n{md}"
+    );
+
+    mat.shutdown();
+}
+
+/// #1924/#1950 — multi-word `#[[my tag]]` is linked as a TAG (block_type='tag',
+/// content 'my tag'); it round-trips LOSSLESSLY: the exporter emits the
+/// `#[[my tag]]` bracket form for whitespace names, and re-importing that
+/// resolves back to the SAME tag instead of splitting at the first space.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_inline_multiword_tag_links_and_round_trips_1924() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        "- a #[[my tag]] here".into(),
+        Some("MW.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+
+    let tag_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'tag' AND content = 'my tag' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    // No page named 'my tag'.
+    let pages: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND content = 'my tag'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(pages, 0, "multi-word tag must NOT create a page");
+
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND deleted_at IS NULL \
+         ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(content, format!("a #[{tag_id}] here"));
+
+    // Round-trip: the exporter renders `#[ULID]` as `#my tag` (bare form).
+    settle(&mat).await;
+    let page_id: String =
+        sqlx::query_scalar("SELECT id FROM blocks WHERE block_type = 'page' AND content = 'MW'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let md = export_page_markdown_inner(&pool, &page_id).await.unwrap();
+    assert!(
+        md.contains("#[[my tag]]"),
+        "export must emit the multi-word tag in the `#[[my tag]]` bracket form \
+         so it round-trips; got:\n{md}"
+    );
+
+    // Round-trip: re-importing the exported `#[[my tag]]` reuses the SAME tag
+    // (dedup by normalized name) and never splits it into a bare `#my` tag.
+    import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        "- echo #[[my tag]]".into(),
+        Some("MW2.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    let my_tag_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'tag' AND content = 'my tag' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        my_tag_count, 1,
+        "re-import of `#[[my tag]]` must reuse the existing tag, not duplicate it"
+    );
+    let split_tag: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'tag' AND content = 'my' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        split_tag, 0,
+        "re-import must NOT split the multi-word tag into a bare `#my`"
+    );
+
+    mat.shutdown();
+}
+
+/// #1924/#1950 regression — a same-name tag living in ANOTHER space must NOT be
+/// reused on import. Tags are space-scoped; binding the inline `#[ULID]` to a
+/// foreign-space tag would make the cross-space gate in `reindex_block_tag_refs`
+/// silently DROP the ref. The importer must instead create a new in-space tag.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_tag_does_not_reuse_cross_space_tag_1924() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    ensure_test_space_b(&pool).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    // A `project` tag that lives in the OTHER space (space B).
+    let foreign_tag = "01FOREIGNTAGPROJECT0000000";
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'tag', 'project', 0)",
+    )
+    .bind(foreign_tag)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assign_to_space(&pool, foreign_tag, TEST_SPACE_B_ID).await;
+
+    import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        "- ship #project".into(),
+        Some("CS.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+
+    // A NEW `project` tag was created in the IMPORT's space — not the foreign one.
+    let new_tag: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'tag' AND content = 'project' \
+         AND space_id = ? AND deleted_at IS NULL",
+    )
+    .bind(TEST_SPACE_ID)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_ne!(
+        new_tag, foreign_tag,
+        "import must NOT bind the cross-space `project` tag"
+    );
+
+    // The content ref points at the in-space tag, and the inline ref actually
+    // materialized (the cross-space gate would have dropped a foreign binding).
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND deleted_at IS NULL \
+         ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(content, format!("ship #[{new_tag}]"));
+
+    settle(&mat).await;
+    let refs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_tag_refs WHERE tag_id = ?")
+        .bind(&new_tag)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(refs, 1, "the inline ref must attach to the in-space tag");
+
+    mat.shutdown();
+}
+
+/// #1924 — a `#tag` inside a fenced ```` ``` ```` code block stays LITERAL:
+/// no tag block is created and the content is unchanged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_tag_inside_code_fence_stays_literal_1924() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    // A bulleted fence whose body contains a `#tag`-looking token.
+    let md_in = "- ```\n  #shouldstayliteral\n  ```";
+    import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        md_in.into(),
+        Some("Code.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+
+    let tag_blocks: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'tag' AND content = 'shouldstayliteral'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        tag_blocks, 0,
+        "a tag inside a code fence must NOT be created"
+    );
+
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND deleted_at IS NULL \
+         ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        content.contains("#shouldstayliteral"),
+        "the fenced `#tag` token must remain literal; got {content:?}"
+    );
+
+    mat.shutdown();
+}
+
+/// #1924 — a `# Heading` line is NOT treated as a tag (the bare-tag boundary
+/// requires a name char immediately after `#`, and `# Heading` has a space).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_heading_line_is_not_a_tag_1924() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        "- # Heading text".into(),
+        Some("H.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+
     let tag_blocks: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE block_type = 'tag'")
             .fetch_one(&pool)
             .await
             .unwrap();
+    assert_eq!(tag_blocks, 0, "`# Heading` must not create any tag");
+
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND deleted_at IS NULL \
+         ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(content, "# Heading text", "the heading text is unchanged");
+
+    mat.shutdown();
+}
+
+/// #1924 — case/dedup: `#Foo` and `#foo` resolve to ONE tag via
+/// `normalize_tag_name`. The first-seen display name wins as the tag content.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_tag_case_folds_to_single_tag_1924() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        "- one #Foo\n- two #foo".into(),
+        Some("Case.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+
+    let tag_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'tag' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     assert_eq!(
-        tag_blocks, 0,
-        "importing `#tag` content must create NO tag blocks"
+        tag_count, 1,
+        "`#Foo` and `#foo` must converge to a single tag (normalize_tag_name)"
     );
+
+    // Both content blocks reference the SAME tag ULID.
+    let tag_id: String =
+        sqlx::query_scalar("SELECT id FROM blocks WHERE block_type = 'tag' LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let refs: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'content' AND content LIKE ?",
+    )
+    .bind(format!("%#[{tag_id}]%"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(refs, 2, "both blocks must reference the one converged tag");
 
     mat.shutdown();
 }

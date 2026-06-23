@@ -68,6 +68,35 @@ static HUMAN_PAGE_LINK_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLo
     regex::Regex::new(r"\[\[([^\]\n]+?)\]\]").expect("invalid human page-link regex")
 });
 
+/// Matches a HUMAN-readable bare/nested/hyphenated inline tag `#tag` on import
+/// (#1924). Group 1 is the leading boundary char (or empty at line start);
+/// group 2 is the tag NAME — a run of `[\p{L}\p{N}_]` then `[\p{L}\p{N}_/-]*`
+/// (Unicode letters/digits/underscore, with `/` and `-` allowed after the
+/// first char for nested + hyphenated tags). This mirrors the frontend
+/// `HUMAN_TAG_RE` in `src/lib/block-clipboard.ts` byte-for-byte.
+///
+/// The leading boundary `(^|[^\p{L}\p{N}_])` prevents matching `# heading`
+/// (the `#` is followed by a space, not a name char), `word#frag` (the `#` is
+/// preceded by a word char), and `a#b`. Because the name's FIRST char must be
+/// a word char and a canonical `#[ULID]` ref's next char is `[` (not a word
+/// char), this regex never matches an already-internal `#[ULID]` token — so
+/// canonical refs survive untouched.
+static HUMAN_TAG_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(^|[^\p{L}\p{N}_])#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)")
+        .expect("invalid human inline-tag regex")
+});
+
+/// Matches a HUMAN-readable multi-word inline tag `#[[Tag With Space]]` on
+/// import (#1950). A `#` immediately followed by a `[[...]]` body. Group 1 is
+/// the inner tag name (any run that is neither `]` nor a newline, non-greedy).
+/// Distinct from a bare `[[Page]]` wiki-link by the leading `#` — the wiki-link
+/// pre-pass skips any `[[...]]` immediately preceded by `#` (see
+/// `collect_inbound_page_link_names` / `rewrite_inbound_page_links`) so a
+/// `#[[...]]` becomes a TAG here, never a page.
+static HUMAN_MULTIWORD_TAG_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"#\[\[([^\]\n]+?)\]\]").expect("invalid human multi-word-tag regex")
+});
+
 /// Map an import path (basename or folder-relative path) to the namespaced
 /// page TITLE (#1446 Part B — folder → namespace, the inverse of the
 /// namespaced export). Strips a trailing `.md`, normalises `\` to `/`, drops
@@ -99,6 +128,16 @@ fn collect_inbound_page_link_names(blocks: &[import::ParsedBlock]) -> Vec<String
             continue;
         }
         for cap in HUMAN_PAGE_LINK_RE.captures_iter(&block.content) {
+            let whole = cap.get(0).expect("group 0 always present");
+            // #1950 — a `[[...]]` immediately preceded by `#` is the multi-word
+            // tag form `#[[Tag With Space]]`, NOT a page link. Leave it for the
+            // tag pre-pass: do not collect it as a page name (so no page is
+            // created) and the matching rewrite guard below leaves the token in
+            // place for the tag rewrite. The check is byte-safe — a `#` is a
+            // single ASCII byte, so `[..start]` ending with `'#'` is exact.
+            if block.content[..whole.start()].ends_with('#') {
+                continue;
+            }
             let name = cap[1].trim();
             // Skip canonical `[[ULID]]` bodies — they are already internal refs.
             if name.is_empty() || crate::cache::PAGE_LINK_RE.is_match(&cap[0]) {
@@ -125,7 +164,16 @@ fn rewrite_inbound_page_links(content: &str, resolved: &HashMap<String, String>)
     }
     HUMAN_PAGE_LINK_RE
         .replace_all(content, |caps: &regex::Captures<'_>| {
-            let whole = &caps[0];
+            let m = caps.get(0).expect("group 0 always present");
+            let whole = m.as_str();
+            // #1950 — IDENTICAL guard to `collect_inbound_page_link_names`: a
+            // `[[...]]` immediately preceded by `#` is the `#[[Tag]]` multi-word
+            // tag form. Leave it untouched here so the tag rewrite (which runs
+            // separately) turns it into a `#[ULID]` tag ref, not a page ref.
+            // `m.start()` is the absolute byte offset within `content`.
+            if content[..m.start()].ends_with('#') {
+                return whole.to_string();
+            }
             // Already an internal `[[ULID]]` ref — keep verbatim.
             if crate::cache::PAGE_LINK_RE.is_match(whole) {
                 return whole.to_string();
@@ -134,6 +182,144 @@ fn rewrite_inbound_page_links(content: &str, resolved: &HashMap<String, String>)
             match resolved.get(name) {
                 Some(ulid) => format!("[[{ulid}]]"),
                 None => whole.to_string(),
+            }
+        })
+        .into_owned()
+}
+
+/// #1924 — byte ranges of `content` that lie inside an inline-code span
+/// (`` `...` ``). A simple left-to-right scan that pairs backticks: text
+/// between a backtick and the next backtick is a code span (the backticks
+/// themselves are included in the range). The inline-tag pre-pass skips any
+/// `#tag` token whose match falls inside one of these ranges, so a `#tag` in
+/// `` `code` `` stays literal — mirroring the fenced-code skip (`is_code`) for
+/// inline spans. Deliberately minimal: it does not implement the full CommonMark
+/// backtick-run-length matching rule (a span opened by N backticks closes only
+/// on a run of exactly N); a single-backtick pairing is sufficient for the
+/// import safety net and matches the spirit of the fence handling.
+fn inline_code_spans(content: &str) -> Vec<(usize, usize)> {
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    let mut open: Option<usize> = None;
+    for (i, b) in content.bytes().enumerate() {
+        if b == b'`' {
+            match open {
+                None => open = Some(i),
+                Some(start) => {
+                    // Range covers the opening backtick through the closing one.
+                    spans.push((start, i + 1));
+                    open = None;
+                }
+            }
+        }
+    }
+    spans
+}
+
+/// `true` when byte offset `pos` falls inside any inline-code span range.
+fn is_in_code_span(pos: usize, spans: &[(usize, usize)]) -> bool {
+    spans.iter().any(|&(s, e)| pos >= s && pos < e)
+}
+
+/// Collect the DISTINCT human-readable inline-tag names referenced across every
+/// TAG-ELIGIBLE block's content (#1924/#1950), in both forms:
+///   * bare/nested/hyphenated `#tag` (`HUMAN_TAG_RE`, group 2 is the name), and
+///   * multi-word `#[[Tag With Space]]` (`HUMAN_MULTIWORD_TAG_RE`, group 1).
+///
+/// A block flagged `is_code` (born inside a ```` ``` ```` fence) is skipped
+/// entirely — its `#tag`-looking text stays literal. Within a non-code block,
+/// matches falling inside an inline-code span (`` `...` ``) are skipped too.
+/// Canonical `#[ULID]` refs never match `HUMAN_TAG_RE` (the char after `#` is
+/// `[`, not a name char), so they are not collected. The multi-word form is
+/// scanned FIRST and its byte ranges are excluded from the bare scan so a
+/// `#[[a b]]` is not also double-counted as a bare `#a`-style fragment (it
+/// cannot be — `[` is not a name char — but the ordering keeps the rewrite and
+/// collect passes symmetric).
+///
+/// Used to drive the resolve-or-create tag pre-pass before the block-write loop,
+/// so each distinct name is resolved/created exactly once.
+fn collect_inbound_tag_names(blocks: &[import::ParsedBlock]) -> Vec<String> {
+    use std::collections::BTreeSet;
+    let mut names: BTreeSet<String> = BTreeSet::new();
+    for block in blocks {
+        if block.is_code {
+            continue;
+        }
+        if !block.content.contains('#') {
+            continue;
+        }
+        let spans = inline_code_spans(&block.content);
+        // Multi-word `#[[...]]` first.
+        for cap in HUMAN_MULTIWORD_TAG_RE.captures_iter(&block.content) {
+            let whole = cap.get(0).expect("group 0 always present");
+            if is_in_code_span(whole.start(), &spans) {
+                continue;
+            }
+            let name = cap[1].trim();
+            if !name.is_empty() {
+                names.insert(name.to_string());
+            }
+        }
+        // Bare `#tag`. The `#` is at `name_match.start() - 1` (group 1 is the
+        // boundary char, which may be empty at line start); the match start of
+        // group 0 is the boundary, so use the name group's start for the span
+        // check (its preceding `#` shares the same span membership).
+        for cap in HUMAN_TAG_RE.captures_iter(&block.content) {
+            let name_m = cap.get(2).expect("name group present");
+            if is_in_code_span(name_m.start(), &spans) {
+                continue;
+            }
+            let name = name_m.as_str();
+            if !name.is_empty() {
+                names.insert(name.to_string());
+            }
+        }
+    }
+    names.into_iter().collect()
+}
+
+/// Rewrite human-readable inline tags in `content` to internal `#[ULID]` refs
+/// using the resolved `name → ULID` map (#1924/#1950). Both `#tag` and
+/// `#[[Tag With Space]]` forms become `#[ULID]`. A name absent from the map
+/// (creation failure) keeps its original literal token — nothing is dropped.
+/// Code blocks (`is_code`) are handled by the CALLER (skipped before this runs);
+/// inline-code spans are skipped here. Canonical `#[ULID]` refs are never
+/// touched (they don't match the human regexes).
+fn rewrite_inbound_tags(content: &str, resolved: &HashMap<String, String>) -> String {
+    if !content.contains('#') {
+        return content.to_string();
+    }
+    let spans = inline_code_spans(content);
+    // Pass 1: multi-word `#[[name]]` → `#[ULID]`.
+    let after_multi = HUMAN_MULTIWORD_TAG_RE.replace_all(content, |caps: &regex::Captures<'_>| {
+        let m = caps.get(0).expect("group 0 present");
+        let whole = m.as_str();
+        if is_in_code_span(m.start(), &spans) {
+            return whole.to_string();
+        }
+        let name = caps[1].trim();
+        match resolved.get(name) {
+            Some(ulid) => format!("#[{ulid}]"),
+            None => whole.to_string(),
+        }
+    });
+
+    // Pass 2: bare `#tag` → `<boundary>#[ULID]`. The boundary char (group 1)
+    // is preserved verbatim so the leading separator is not consumed. The
+    // inline-code spans are recomputed against `after_multi` because pass 1 may
+    // have shifted byte offsets; a `#[[name]]` rewrite changes length, so reuse
+    // of the original `spans` would mis-align. Recompute defensively.
+    let spans2 = inline_code_spans(&after_multi);
+    HUMAN_TAG_RE
+        .replace_all(&after_multi, |caps: &regex::Captures<'_>| {
+            let boundary = caps.get(1).map_or("", |m| m.as_str());
+            let name_m = caps.get(2).expect("name group present");
+            let name = name_m.as_str();
+            if is_in_code_span(name_m.start(), &spans2) {
+                return format!("{boundary}#{name}");
+            }
+            match resolved.get(name) {
+                Some(ulid) => format!("{boundary}#[{ulid}]"),
+                None => format!("{boundary}#{name}"),
             }
         })
         .into_owned()
@@ -151,12 +337,19 @@ fn resolve_ulids_for_export(
     // canonical cache path here rather than going through `fts`.
     use crate::cache::{PAGE_LINK_RE, TAG_REF_RE};
 
-    // Replace #[ULID] → #tagname
+    // Replace #[ULID] → #tagname. A tag whose name contains whitespace is
+    // emitted in the `#[[multi word]]` form (#1924/#1950) so it survives a
+    // re-import as a single tag — the bare `#name` form would truncate at the
+    // first space (`HUMAN_TAG_RE` stops at non-name chars), splitting the tag.
     let result = TAG_REF_RE
         .replace_all(content, |caps: &regex::Captures| {
             let ulid = &caps[1];
             if let Some(name) = tag_names.get(ulid) {
-                format!("#{name}")
+                if name.chars().any(char::is_whitespace) {
+                    format!("#[[{name}]]")
+                } else {
+                    format!("#{name}")
+                }
             } else {
                 format!("#[{ulid}]") // Keep original if not found
             }
@@ -1190,6 +1383,134 @@ pub async fn import_markdown_with_progress(
         }
     }
 
+    // #1924 / #1950 — resolve inbound inline tags (`#tag` and `#[[Tag With
+    // Space]]`) to internal `#[ULID]` refs, creating any missing tag block
+    // (resolve-or-create). This mirrors the wiki-link pre-pass above and the
+    // frontend paste path (`buildImportRefInternalizers().tag` in
+    // `src/stores/page-blocks.ts`): resolve a tag by its NORMALIZED name
+    // (`tag_norm::normalize_tag_name` — the engine's tag identity key) else
+    // create a new `block_type='tag'` block whose content is the display name,
+    // and return its ULID. NO explicit `block_tags` association is written:
+    // typing/pasting `#tag` in the editor creates an INLINE ref (materialized
+    // into `block_tag_refs` from the `#[ULID]` content by the `CreateBlock`
+    // dispatch's `ReindexBlockTagRefs` task — identical to how `[[ULID]]` page
+    // links materialize `block_links`), not a `block_tags` row.
+    //
+    // The pre-pass runs in this (first) chunk's tx so created tags share its
+    // atomic write. `resolved_tag_norm` keys on the normalized name so `#Foo`
+    // and `#foo` converge to ONE tag; `resolved_tag_tokens` keys on the
+    // ORIGINAL token name so the per-block rewrite can map each literal token
+    // back to its ULID. A creation failure degrades gracefully: the token is
+    // absent from `resolved_tag_tokens`, so the rewrite leaves it literal and a
+    // warning is recorded (mirroring the page-link / paste degrade behavior).
+    //
+    // FRONTMATTER `tags:` is intentionally NOT processed here — converting a
+    // frontmatter `tags:` array into tag links is blocked on #1917 typed arrays
+    // and is out of scope for #1924/#1950.
+    let mut resolved_tag_norm: HashMap<String, String> = HashMap::new();
+    let mut resolved_tag_tokens: HashMap<String, String> = HashMap::new();
+    for token_name in collect_inbound_tag_names(&parse_output.blocks) {
+        let norm = crate::tag_norm::normalize_tag_name(&token_name);
+
+        // Already resolved/created in this pass (case/dedup convergence).
+        if let Some(ulid) = resolved_tag_norm.get(&norm) {
+            resolved_tag_tokens.insert(token_name, ulid.clone());
+            continue;
+        }
+
+        // Resolve an EXISTING live tag block whose normalized content matches,
+        // scoped to the import's OWN space (`AND space_id = ?2`, mirroring the
+        // wiki-link pre-pass above). Tags are space-scoped: a same-name tag in
+        // ANOTHER space must NOT be reused — the cross-space gate in
+        // `reindex_block_tag_refs` would then drop the inline `#[ULID]` ref and
+        // silently fail to attach. Scoping here means a new in-space tag is
+        // created+stamped instead. `ORDER BY id ASC` aligns with the tags-cache
+        // winner (`PARTITION BY content … ORDER BY id`, `rn=1`) so a duplicate
+        // same-name tag binds to the row that actually surfaces in listings.
+        //
+        // SQLite cannot apply `normalize_tag_name` (NFC → Unicode lowercase →
+        // NFC), so we prefilter with a cheap NOCASE content equality (which
+        // folds ASCII A–Z identically) and confirm in Rust against the full
+        // Unicode fold. NOTE: NOCASE is ASCII-only, so non-ASCII case-variants
+        // (`#Σ` vs `#σ`) are NOT merged and each gets its own tag block — this
+        // matches the tags-cache layer, which also dedups by `COLLATE NOCASE`
+        // (system-wide Unicode tag-identity is tracked separately).
+        let candidates = sqlx::query!(
+            r#"SELECT id, content FROM blocks
+               WHERE block_type = 'tag'
+                 AND deleted_at IS NULL
+                 AND content IS NOT NULL
+                 AND content = ?1 COLLATE NOCASE
+                 AND space_id = ?2
+               ORDER BY id ASC"#,
+            token_name,
+            space_id,
+        )
+        .fetch_all(&mut **tx)
+        .await?;
+        let existing = candidates.into_iter().find_map(|r| {
+            let c = r.content?;
+            (crate::tag_norm::normalize_tag_name(&c) == norm).then_some(r.id)
+        });
+
+        if let Some(id) = existing {
+            resolved_tag_norm.insert(norm, id.clone());
+            resolved_tag_tokens.insert(token_name, id);
+            continue;
+        }
+
+        // Create the missing tag block inside this chunk's tx. On failure,
+        // degrade: warn and leave the token literal (it is simply absent from
+        // `resolved_tag_tokens`).
+        match create_block_in_tx(
+            &mut tx,
+            device_id,
+            "tag".into(),
+            token_name.clone(),
+            None,
+            None,
+        )
+        .await
+        {
+            Ok((new_tag, new_tag_op)) => {
+                tx.enqueue_background(new_tag_op);
+                let new_tag_id = new_tag.id.clone().into_string();
+                // Stamp the tag's `space` ref (mirrors the importing page + new
+                // wiki-link pages). Tags are space-scoped (Path A): without this
+                // the new tag resolves to NO space, and the cross-space gate in
+                // `reindex_block_tag_refs` would drop the inline `#[ULID]` ref
+                // (the source content block IS space-scoped, so `tag_space NULL
+                // != source_space` excludes it). Stamping keeps the inline ref
+                // materializing into `block_tag_refs`.
+                let (_b, tag_space_op) = set_property_in_tx(
+                    &mut tx,
+                    device_id,
+                    new_tag_id.clone(),
+                    "space",
+                    None,
+                    None,
+                    None,
+                    Some(space_id.clone()),
+                    None,
+                )
+                .await?;
+                tx.enqueue_background(tag_space_op);
+                resolved_tag_norm.insert(norm, new_tag_id.clone());
+                resolved_tag_tokens.insert(token_name, new_tag_id);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    name = %token_name,
+                    error = %e,
+                    "import: tag create failed; leaving token as plain text (#1924)"
+                );
+                warnings.push(format!(
+                    "tag '#{token_name}' could not be created; left as plain text"
+                ));
+            }
+        }
+    }
+
     // #662 — number of blocks written into the *current* chunk's
     // transaction. Reset to 0 each time a chunk is flushed. A new chunk is
     // only opened at a top-level (depth-0) subtree boundary, so a chunk
@@ -1267,6 +1588,19 @@ pub async fn import_markdown_with_progress(
         // ambiguous / unresolvable (absent from the map) keep their original
         // plain-text token; canonical `[[ULID]]` tokens are left untouched.
         let content = rewrite_inbound_page_links(&block.content, &resolved_page_links);
+        // #1924 / #1950 — then rewrite inbound inline tags (`#tag`,
+        // `#[[Tag With Space]]`) to `#[ULID]` refs using the pre-resolved
+        // token→ULID map. A code block (`is_code`, born inside a ```` ``` ````
+        // fence) is SKIPPED entirely so its `#tag`-looking text stays literal;
+        // inline-code spans within a non-code block are skipped inside
+        // `rewrite_inbound_tags`. The page-link rewrite ran first and leaves a
+        // `#[[...]]` token in place (its `#`-prefix guard), so the tag rewrite
+        // is the sole owner of that token.
+        let content = if block.is_code {
+            content
+        } else {
+            rewrite_inbound_tags(&content, &resolved_tag_tokens)
+        };
 
         // #1918 — a SINGLE problematic block must degrade gracefully
         // (skip-and-warn) rather than `?`-abort the whole chunk/import. Two
@@ -1525,6 +1859,88 @@ mod tests {
                 "wiki-link match boundaries for {input:?} must match the TS mirror"
             );
         }
+    }
+
+    /// #1950 — the page-link collect/rewrite guard skips a `[[...]]` that is
+    /// immediately preceded by `#` (the `#[[Tag]]` multi-word tag form), so it
+    /// is neither collected as a page name nor rewritten as a page ref. A plain
+    /// `[[...]]` (no `#`) is still collected/rewritten as a page.
+    #[test]
+    fn page_link_guard_skips_hash_prefixed_brackets_1950() {
+        let blocks = vec![import::ParsedBlock {
+            content: "a #[[Tag With Space]] and [[Real Page]]".to_string(),
+            depth: 0,
+            properties: Vec::new(),
+            is_code: false,
+        }];
+        // Only the un-prefixed `[[Real Page]]` is collected as a page name.
+        let names = collect_inbound_page_link_names(&blocks);
+        assert_eq!(names, vec!["Real Page".to_string()], "got {names:?}");
+
+        // Rewrite: the `#[[Tag With Space]]` token survives untouched; the page
+        // link is rewritten to its ULID.
+        let mut resolved: HashMap<String, String> = HashMap::new();
+        resolved.insert(
+            "Real Page".to_string(),
+            "01PAGE0000000000000000PAGE".to_string(),
+        );
+        let out = rewrite_inbound_page_links(&blocks[0].content, &resolved);
+        assert_eq!(
+            out, "a #[[Tag With Space]] and [[01PAGE0000000000000000PAGE]]",
+            "the `#[[...]]` must be left for the tag pass; got {out:?}"
+        );
+    }
+
+    /// #1924 — `collect_inbound_tag_names` gathers both bare and multi-word
+    /// tags, skips `is_code` blocks entirely, skips inline-code spans, ignores
+    /// `# heading`, and never collects a canonical `#[ULID]` ref.
+    #[test]
+    fn collect_inbound_tag_names_covers_forms_and_skips_1924() {
+        let ulid = "01TAG00000000000000000TAG0";
+        let blocks = vec![
+            import::ParsedBlock {
+                content: format!(
+                    "see #projectx and #[[my tag]] not # heading nor `#incode` nor #[{ulid}]"
+                ),
+                depth: 0,
+                properties: Vec::new(),
+                is_code: false,
+            },
+            import::ParsedBlock {
+                content: "fenced #shouldskip".to_string(),
+                depth: 0,
+                properties: Vec::new(),
+                is_code: true,
+            },
+        ];
+        let names = collect_inbound_tag_names(&blocks);
+        assert_eq!(
+            names,
+            vec!["my tag".to_string(), "projectx".to_string()],
+            "bare + multi-word collected; heading/inline-code/canonical/code-block skipped; \
+             got {names:?}"
+        );
+    }
+
+    /// #1924 — `rewrite_inbound_tags` rewrites resolved tokens to `#[ULID]`,
+    /// leaves unresolved tokens literal, and never touches a `#[ULID]` already
+    /// present.
+    #[test]
+    fn rewrite_inbound_tags_rewrites_and_degrades_1924() {
+        let mut resolved: HashMap<String, String> = HashMap::new();
+        resolved.insert(
+            "known".to_string(),
+            "01KNOWN000000000000000TAG0".to_string(),
+        );
+        resolved.insert(
+            "my tag".to_string(),
+            "01MULTI000000000000000TAG0".to_string(),
+        );
+        let out = rewrite_inbound_tags("a #known b #[[my tag]] c #unknown d", &resolved);
+        assert_eq!(
+            out, "a #[01KNOWN000000000000000TAG0] b #[01MULTI000000000000000TAG0] c #unknown d",
+            "resolved tokens rewrite; unknown stays literal; got {out:?}"
+        );
     }
 
     /// #1921 — a block with no `[[` is returned UNCHANGED by
