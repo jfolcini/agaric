@@ -528,7 +528,13 @@ const SidebarGroupLabel = ({
       data-sidebar="group-label"
       className={cn(
         'flex h-8 shrink-0 items-center rounded-md px-2 text-xs font-medium text-muted-foreground transition-[margin,opacity] duration-moderate ease-linear focus-ring-visible [&>svg]:size-4 [&>svg]:shrink-0',
-        'group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0',
+        // Collapse height (`-mt-8`) AND width (`w-0 overflow-hidden`) in the
+        // icon rail: the label text ("Workspace"/"System") otherwise keeps its
+        // ~78px min-content width and — because the nav lives in a ScrollArea
+        // that lets content exceed the 48px rail — over-widens the group, so
+        // centered icons land off the rail's vertical axis. Zeroing the width
+        // lets the group clamp to the rail so every icon centers identically.
+        'group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:w-0 group-data-[collapsible=icon]:overflow-hidden group-data-[collapsible=icon]:p-0 group-data-[collapsible=icon]:opacity-0',
         className,
       )}
       {...props}
@@ -580,7 +586,10 @@ const SidebarMenu = ({ ref, className, ...props }: React.ComponentProps<'ul'>) =
     ref={ref}
     data-slot="sidebar-menu"
     data-sidebar="menu"
-    className={cn('flex w-full min-w-0 flex-col gap-1', className)}
+    className={cn(
+      'flex w-full min-w-0 flex-col gap-1 group-data-[collapsible=icon]:items-center',
+      className,
+    )}
     {...props}
   />
 )
@@ -608,7 +617,7 @@ const sidebarMenuButtonVariants = cva(
   // inside the mobile rail (`group-data-[mobile-rail=true]:px-0`) so the
   // 44-px button fits fully inside the 48-px rail without any overflow /
   // paint-vs-hit-area trade-off.
-  'peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! [@media(pointer:coarse)]:group-data-[collapsible=icon]:size-11! hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-ring-visible active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[active=true]:rounded-l-none data-[active=true]:border-l-[3px] data-[active=true]:border-l-primary data-[active=true]:dark:border-l-4 data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:[&>span]:sr-only [&>span:last-child]:truncate [&>svg]:size-[1.2em] [&>svg]:shrink-0',
+  'peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! group-data-[collapsible=icon]:justify-center [@media(pointer:coarse)]:group-data-[collapsible=icon]:size-11! hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-ring-visible active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[active=true]:rounded-l-none data-[active=true]:border-l-[3px] data-[active=true]:border-l-primary data-[active=true]:dark:border-l-4 group-data-[collapsible=icon]:data-[active=true]:rounded-md! group-data-[collapsible=icon]:data-[active=true]:border-l-0! data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:[&>span]:sr-only [&>span:last-child]:truncate [&>svg]:size-[1.2em] [&>svg]:shrink-0',
   {
     variants: {
       variant: {
