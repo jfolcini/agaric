@@ -59,7 +59,7 @@ interface TrashListViewProps {
   onToggleSelection: (id: string) => void
   onRestore: (block: BlockRow) => void
   onRequestPurge: (id: string) => void
-  getParentLabel: (block: BlockRow) => string | null
+  getPageLabel: (block: BlockRow) => string | null
   /**
    * Ref to the scroll viewport (the element that actually scrolls). The
    * orchestrator (`TrashView`) reads `[data-trash-item]` rows under this
@@ -84,7 +84,7 @@ export function TrashListView({
   onToggleSelection,
   onRestore,
   onRequestPurge,
-  getParentLabel,
+  getPageLabel,
   ref,
 }: TrashListViewProps): React.ReactElement {
   const { t } = useTranslation()
@@ -178,7 +178,7 @@ export function TrashListView({
                     block={block}
                     isSelected={selectedIds.has(block.id)}
                     isFocused={virtualRow.index === focusedIndex}
-                    parentLabel={getParentLabel(block)}
+                    pageLabel={getPageLabel(block)}
                     descendantCount={descendantCounts[block.id] ?? 0}
                     callbacks={callbacks}
                     onTagClick={onTagClick}

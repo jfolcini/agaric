@@ -1,7 +1,7 @@
 /**
- * Tests for useTrashBreadcrumbs — parent-page resolution via the
+ * Tests for useTrashBreadcrumbs — owning-page resolution via the
  * `batchResolve` IPC, with cancellation on prop change and a
- * deletedPage fallback for purged or missing parents.
+ * deletedPage fallback for purged or missing pages.
  */
 
 import { renderHook, waitFor } from '@testing-library/react'
@@ -34,24 +34,24 @@ beforeEach(() => {
 })
 
 describe('useTrashBreadcrumbs', () => {
-  it('returns null for blocks without a parent_id and never invokes batchResolve', () => {
-    const blocks: BlockRow[] = [makeBlock({ id: 'A', parent_id: null })]
+  it('returns null for blocks without a page_id and never invokes batchResolve', () => {
+    const blocks: BlockRow[] = [makeBlock({ id: 'A', page_id: null })]
     const { result } = renderHook(() => useTrashBreadcrumbs(blocks))
 
     expect(result.current(blocks[0] as BlockRow)).toBe(null)
     expect(mockedBatchResolve).not.toHaveBeenCalled()
   })
 
-  it('returns the resolved parent title after batchResolve fulfills', async () => {
+  it('returns the resolved page title after batchResolve fulfills', async () => {
     mockedBatchResolve.mockResolvedValueOnce([
       { id: 'P1', title: 'Project Alpha', block_type: 'page', deleted: false },
     ])
-    const blocks: BlockRow[] = [makeBlock({ id: 'A', parent_id: 'P1' })]
+    const blocks: BlockRow[] = [makeBlock({ id: 'A', page_id: 'P1' })]
 
     const { result } = renderHook(() => useTrashBreadcrumbs(blocks))
 
     expect(mockedBatchResolve).toHaveBeenCalledWith(['P1'])
-    // Before resolve flushes: parent map empty, getParentLabel returns null.
+    // Before resolve flushes: page map empty, getPageLabel returns null.
     expect(result.current(blocks[0] as BlockRow)).toBe(null)
 
     await waitFor(() => {
@@ -59,9 +59,9 @@ describe('useTrashBreadcrumbs', () => {
     })
   })
 
-  it('returns the deletedPage fallback when the parent is missing from the resolved set', async () => {
+  it('returns the deletedPage fallback when the page is missing from the resolved set', async () => {
     mockedBatchResolve.mockResolvedValueOnce([])
-    const blocks: BlockRow[] = [makeBlock({ id: 'A', parent_id: 'GONE' })]
+    const blocks: BlockRow[] = [makeBlock({ id: 'A', page_id: 'GONE' })]
 
     const { result } = renderHook(() => useTrashBreadcrumbs(blocks))
 
@@ -82,13 +82,13 @@ describe('useTrashBreadcrumbs', () => {
       { id: 'P2', title: 'Second Parent', block_type: 'page', deleted: false },
     ])
 
-    const initial: BlockRow[] = [makeBlock({ id: 'A', parent_id: 'P1' })]
+    const initial: BlockRow[] = [makeBlock({ id: 'A', page_id: 'P1' })]
     const { result, rerender } = renderHook(
       ({ blocks }: { blocks: BlockRow[] }) => useTrashBreadcrumbs(blocks),
       { initialProps: { blocks: initial } },
     )
 
-    const next: BlockRow[] = [makeBlock({ id: 'B', parent_id: 'P2' })]
+    const next: BlockRow[] = [makeBlock({ id: 'B', page_id: 'P2' })]
     rerender({ blocks: next })
 
     // Resolve the cancelled (first) promise with stale data — it must be
@@ -101,9 +101,9 @@ describe('useTrashBreadcrumbs', () => {
     expect(mockedBatchResolve).toHaveBeenCalledTimes(2)
   })
 
-  it('logs a warning and leaves the parent map empty when batchResolve rejects', async () => {
+  it('logs a warning and leaves the page map empty when batchResolve rejects', async () => {
     mockedBatchResolve.mockRejectedValueOnce(new Error('ipc-fail'))
-    const blocks: BlockRow[] = [makeBlock({ id: 'A', parent_id: 'P1' })]
+    const blocks: BlockRow[] = [makeBlock({ id: 'A', page_id: 'P1' })]
 
     const { result } = renderHook(() => useTrashBreadcrumbs(blocks))
 
@@ -116,7 +116,7 @@ describe('useTrashBreadcrumbs', () => {
       )
     })
 
-    // Parent never made it into the map → getParentLabel returns null.
+    // Page never made it into the map → getPageLabel returns null.
     expect(result.current(blocks[0] as BlockRow)).toBe(null)
   })
 })

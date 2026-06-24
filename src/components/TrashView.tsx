@@ -120,7 +120,7 @@ export function TrashView(): React.ReactElement {
   }, [debouncedFilter, setFocusedIndex])
 
   // ── Original-location breadcrumbs + descendant counts (extracted) ──
-  const getParentLabel = useTrashBreadcrumbs(blocks)
+  const getPageLabel = useTrashBreadcrumbs(blocks)
   const descendantCounts = useTrashDescendantCounts(blocks)
 
   // ── Single-item actions ──────────────────────────────────────────
@@ -441,7 +441,7 @@ export function TrashView(): React.ReactElement {
         onToggleSelection={toggleSelection}
         onRestore={handleRestore}
         onRequestPurge={setConfirmPurgeId}
-        getParentLabel={getParentLabel}
+        getPageLabel={getPageLabel}
       />
 
       {hasMore && (

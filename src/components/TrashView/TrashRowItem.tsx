@@ -28,7 +28,7 @@ interface TrashRowItemProps {
   block: BlockRow
   isSelected: boolean
   isFocused: boolean
-  parentLabel: string | null
+  pageLabel: string | null
   descendantCount: number
   callbacks: RichContentCallbacks
   onTagClick: (tagId: string) => void
@@ -54,7 +54,7 @@ export function TrashRowItem({
   block,
   isSelected,
   isFocused,
-  parentLabel,
+  pageLabel,
   descendantCount,
   callbacks,
   onTagClick,
@@ -162,12 +162,12 @@ export function TrashRowItem({
             {t('trash.deletedPrefix')}{' '}
             {block.deleted_at ? formatRelativeTime(block.deleted_at, t) : ''}
           </span>
-          {parentLabel && (
+          {pageLabel && (
             <span
               className="trash-item-breadcrumb text-xs text-muted-foreground"
               data-testid="trash-item-breadcrumb"
             >
-              {t('trash.fromPage', { page: parentLabel })}
+              {t('trash.fromPage', { page: pageLabel })}
             </span>
           )}
         </div>

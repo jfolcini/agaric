@@ -775,13 +775,13 @@ describe('TrashView', () => {
 
   // ── Original location breadcrumbs ───────────────────────────────────
 
-  it('renders breadcrumbs with parent page title', async () => {
+  it('renders breadcrumbs with owning page title', async () => {
     const blocks = [
       makeBlock({
         id: 'B1',
         content: 'child block',
         deleted_at: 1736899200000,
-        parent_id: 'P1',
+        page_id: 'P1',
       }),
     ]
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
@@ -798,13 +798,13 @@ describe('TrashView', () => {
     expect(breadcrumb).toHaveTextContent('from: My Parent Page')
   })
 
-  it('shows "(deleted page)" when parent is deleted', async () => {
+  it('shows "(deleted page)" when the owning page is deleted', async () => {
     const blocks = [
       makeBlock({
         id: 'B1',
         content: 'orphan block',
         deleted_at: 1736899200000,
-        parent_id: 'P_DELETED',
+        page_id: 'P_DELETED',
       }),
     ]
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
@@ -820,18 +820,18 @@ describe('TrashView', () => {
     expect(breadcrumb).toHaveTextContent('from: (deleted page)')
   })
 
-  it('shows "(deleted page)" when parent is not found in batch resolve', async () => {
+  it('shows "(deleted page)" when the owning page is not found in batch resolve', async () => {
     const blocks = [
       makeBlock({
         id: 'B1',
         content: 'orphan block',
         deleted_at: 1736899200000,
-        parent_id: 'P_MISSING',
+        page_id: 'P_MISSING',
       }),
     ]
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return [] // parent not found
+      if (cmd === 'batch_resolve') return [] // page not found
       return undefined
     })
 
@@ -841,13 +841,13 @@ describe('TrashView', () => {
     expect(breadcrumb).toHaveTextContent('from: (deleted page)')
   })
 
-  it('does not render breadcrumb when block has no parent_id', async () => {
+  it('does not render breadcrumb when block has no page_id', async () => {
     mockListAndResolve([
       makeBlock({
         id: 'B1',
         content: 'root block',
         deleted_at: 1736899200000,
-        parent_id: null,
+        page_id: null,
       }),
     ])
 

@@ -2,10 +2,12 @@
  * useTrashBreadcrumbs — original-location breadcrumb resolution for
  * TrashView rows.
  *
- * Resolves every distinct `parent_id` to a ResolvedBlock (or `null`
- * when the parent itself was purged) and exposes a `getParentLabel`
- * helper that returns the user-visible breadcrumb string. Extracted
- * From TrashView.tsx for.
+ * Resolves every distinct `page_id` (the owning page of a trashed block)
+ * to a ResolvedBlock (or `null` when that page was itself purged) and
+ * exposes a `getPageLabel` helper that returns the user-visible
+ * breadcrumb string. Resolving `page_id` rather than `parent_id` means a
+ * deeply-nested trashed block reports the page it lived in, not its
+ * immediate parent block. Extracted from TrashView.tsx.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -17,31 +19,31 @@ import { batchResolve } from '../lib/tauri'
 
 export function useTrashBreadcrumbs(blocks: BlockRow[]): (block: BlockRow) => string | null {
   const { t } = useTranslation()
-  const [parentMap, setParentMap] = useState<Map<string, ResolvedBlock | null>>(new Map())
+  const [pageMap, setPageMap] = useState<Map<string, ResolvedBlock | null>>(new Map())
 
-  const parentIds = useMemo(() => {
+  const pageIds = useMemo(() => {
     const ids = new Set<string>()
     for (const block of blocks) {
-      if (block.parent_id) ids.add(block.parent_id)
+      if (block.page_id) ids.add(block.page_id)
     }
     return Array.from(ids)
   }, [blocks])
 
   useEffect(() => {
-    if (parentIds.length === 0) return
+    if (pageIds.length === 0) return
     let cancelled = false
-    batchResolve(parentIds)
+    batchResolve(pageIds)
       .then((resolved) => {
         if (cancelled) return
         const map = new Map<string, ResolvedBlock | null>()
         for (const r of resolved) {
           map.set(r.id, r)
         }
-        // Mark missing IDs as null (parent page was deleted and purged).
-        for (const id of parentIds) {
+        // Mark missing IDs as null (the owning page was deleted and purged).
+        for (const id of pageIds) {
           if (!map.has(id)) map.set(id, null)
         }
-        setParentMap(map)
+        setPageMap(map)
       })
       .catch((err) => {
         logger.warn('TrashView', 'breadcrumb resolution failed', undefined, err)
@@ -49,16 +51,16 @@ export function useTrashBreadcrumbs(blocks: BlockRow[]): (block: BlockRow) => st
     return () => {
       cancelled = true
     }
-  }, [parentIds])
+  }, [pageIds])
 
   return useCallback(
     (block: BlockRow): string | null => {
-      if (!block.parent_id) return null
-      const resolved = parentMap.get(block.parent_id)
+      if (!block.page_id) return null
+      const resolved = pageMap.get(block.page_id)
       if (resolved === undefined) return null // not yet loaded
       if (resolved === null || resolved.deleted) return t('trash.deletedPage')
       return resolved.title ?? t('trash.deletedPage')
     },
-    [parentMap, t],
+    [pageMap, t],
   )
 }
