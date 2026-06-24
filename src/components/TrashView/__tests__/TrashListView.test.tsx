@@ -102,7 +102,7 @@ function renderList(props: Partial<React.ComponentProps<typeof TrashListView>> =
       onToggleSelection={onToggleSelection}
       onRestore={onRestore}
       onRequestPurge={onRequestPurge}
-      getParentLabel={props.getParentLabel ?? (() => null)}
+      getPageLabel={props.getPageLabel ?? (() => null)}
     />
   )
   const result = render(node)
@@ -189,7 +189,7 @@ describe('TrashListView behaviour preserved through virtualization', () => {
         onToggleSelection={vi.fn()}
         onRestore={onRestore}
         onRequestPurge={onRequestPurge}
-        getParentLabel={() => null}
+        getPageLabel={() => null}
       />,
     )
 
@@ -223,7 +223,7 @@ describe('TrashListView behaviour preserved through virtualization', () => {
         onToggleSelection={onToggleSelection}
         onRestore={vi.fn()}
         onRequestPurge={vi.fn()}
-        getParentLabel={() => null}
+        getPageLabel={() => null}
       />,
     )
 
@@ -270,7 +270,7 @@ describe('TrashListView behaviour preserved through virtualization', () => {
         onToggleSelection={vi.fn()}
         onRestore={vi.fn()}
         onRequestPurge={vi.fn()}
-        getParentLabel={() => null}
+        getPageLabel={() => null}
       />,
     )
 
