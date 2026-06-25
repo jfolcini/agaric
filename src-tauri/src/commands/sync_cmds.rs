@@ -164,6 +164,30 @@ pub fn start_pairing_inner(
     Ok(PairingInfo { passphrase, qr_svg })
 }
 
+/// Start pairing AND arm the pairing window so the host's dormant daemon
+/// activates for the duration.
+///
+/// #2008: a first-ever pair has zero peers, so on the host
+/// [`crate::sync_daemon::SyncDaemon::should_start_active`] would return
+/// `false` and the daemon would stay dormant — not announcing over mDNS,
+/// not listening — so the joining device could neither discover nor connect
+/// to it and pairing would deadlock. Setting the pending-pairing marker
+/// (the same TTL-bounded marker the joiner's [`confirm_pairing_inner`] sets)
+/// flips `should_start_active` to `true`; `notify_change()` wakes a dormant
+/// daemon immediately instead of waiting for its next poll. The marker is
+/// cleared once a real `peer_ref` exists (`should_start_active`).
+pub async fn start_pairing_armed_inner(
+    pool: &SqlitePool,
+    pairing_state: &Mutex<Option<PairingSession>>,
+    scheduler: &SyncScheduler,
+    device_id: &str,
+) -> Result<PairingInfo, AppError> {
+    let info = start_pairing_inner(pairing_state, device_id)?;
+    peer_refs::set_pending_pairing(pool).await?;
+    scheduler.notify_change();
+    Ok(info)
+}
+
 /// Confirm pairing with a remote device.
 ///
 /// H-1: validates the supplied `passphrase` against the active
@@ -428,10 +452,14 @@ pub async fn get_device_id(device_id: State<'_, DeviceId>) -> Result<String, App
 #[tauri::command]
 #[specta::specta]
 pub async fn start_pairing(
+    pool: State<'_, WritePool>,
     pairing_state: State<'_, PairingState>,
     device_id: State<'_, DeviceId>,
+    scheduler: State<'_, Arc<SyncScheduler>>,
 ) -> Result<PairingInfo, AppError> {
-    start_pairing_inner(&pairing_state.0, device_id.as_str()).map_err(sanitize_internal_error)
+    start_pairing_armed_inner(&pool.0, &pairing_state.0, &scheduler, device_id.as_str())
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: confirm pairing with a remote device.

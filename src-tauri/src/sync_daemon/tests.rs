@@ -509,7 +509,7 @@ fn make_peer_ref(peer_id: &str) -> PeerRef {
 fn should_attempt_sync_rejects_self_discovery() {
     let refs = vec![make_peer_ref("MY_DEVICE")];
     assert!(
-        !should_attempt_sync_with_discovered_peer("MY_DEVICE", "MY_DEVICE", false, &refs),
+        !should_attempt_sync_with_discovered_peer("MY_DEVICE", "MY_DEVICE", false, &refs, false),
         "must never attempt sync with self even if paired"
     );
 }
@@ -518,7 +518,7 @@ fn should_attempt_sync_rejects_self_discovery() {
 fn should_attempt_sync_rejects_already_discovered_peer() {
     let refs = vec![make_peer_ref("PEER_B")];
     assert!(
-        !should_attempt_sync_with_discovered_peer("PEER_B", "MY_DEVICE", true, &refs),
+        !should_attempt_sync_with_discovered_peer("PEER_B", "MY_DEVICE", true, &refs, false),
         "must not re-trigger sync for a peer already in the discovered map"
     );
 }
@@ -528,7 +528,7 @@ fn should_attempt_sync_rejects_unpaired_peer() {
     // Peer refs list contains PEER_A but NOT PEER_C
     let refs = vec![make_peer_ref("PEER_A")];
     assert!(
-        !should_attempt_sync_with_discovered_peer("PEER_C", "MY_DEVICE", false, &refs),
+        !should_attempt_sync_with_discovered_peer("PEER_C", "MY_DEVICE", false, &refs, false),
         "must not attempt sync with an unpaired peer"
     );
 }
@@ -537,8 +537,44 @@ fn should_attempt_sync_rejects_unpaired_peer() {
 fn should_attempt_sync_accepts_new_paired_peer() {
     let refs = vec![make_peer_ref("PEER_A"), make_peer_ref("PEER_B")];
     assert!(
-        should_attempt_sync_with_discovered_peer("PEER_B", "MY_DEVICE", false, &refs),
+        should_attempt_sync_with_discovered_peer("PEER_B", "MY_DEVICE", false, &refs, false),
         "must trigger sync for a newly discovered, paired peer"
+    );
+}
+
+/// #2008: during a pairing window the initiator must be willing to sync with
+/// an UNPAIRED discovered peer — this is the initiator-side counterpart to
+/// the responder's admit-while-pending (#1519). Without it nobody initiates
+/// the first session and pairing deadlocks.
+#[test]
+fn should_attempt_sync_accepts_unpaired_peer_while_pairing_pending() {
+    let refs: Vec<crate::peer_refs::PeerRef> = vec![]; // no peer_refs yet — mid-pairing
+    assert!(
+        should_attempt_sync_with_discovered_peer("PEER_NEW", "MY_DEVICE", false, &refs, true),
+        "while pairing is pending, an unpaired discovered peer must be a \
+         valid initiation target (#2008)"
+    );
+}
+
+/// The pairing-pending bypass must NOT override the self-discovery guard:
+/// a device must never try to sync with itself, pairing or not.
+#[test]
+fn should_attempt_sync_rejects_self_even_while_pairing_pending() {
+    let refs: Vec<crate::peer_refs::PeerRef> = vec![];
+    assert!(
+        !should_attempt_sync_with_discovered_peer("MY_DEVICE", "MY_DEVICE", false, &refs, true),
+        "self-discovery guard must hold even while pairing is pending"
+    );
+}
+
+/// The pairing-pending bypass must NOT override the already-discovered guard:
+/// an unpaired peer already in the discovered map must not re-trigger a sync.
+#[test]
+fn should_attempt_sync_rejects_already_discovered_even_while_pairing_pending() {
+    let refs: Vec<crate::peer_refs::PeerRef> = vec![];
+    assert!(
+        !should_attempt_sync_with_discovered_peer("PEER_NEW", "MY_DEVICE", true, &refs, true),
+        "already-discovered guard must hold even while pairing is pending"
     );
 }
 
@@ -2648,7 +2684,7 @@ fn process_discovery_event_evicts_on_service_removed() {
         ),
     );
 
-    let result = process_discovery_event(event, "LOCAL", &mut discovered, &[]);
+    let result = process_discovery_event(event, "LOCAL", &mut discovered, &[], false);
 
     assert!(
         result.is_none(),
@@ -3251,7 +3287,7 @@ fn process_discovery_non_resolved_returns_none() {
     );
     let mut discovered = HashMap::new();
     assert!(
-        process_discovery_event(event, "LOCAL", &mut discovered, &[]).is_none(),
+        process_discovery_event(event, "LOCAL", &mut discovered, &[], false).is_none(),
         "non-resolved event must return None"
     );
     assert!(
@@ -3265,7 +3301,7 @@ fn process_discovery_self_returns_none() {
     let event = make_resolved_event("LOCAL_DEV", 8443);
     let mut discovered = HashMap::new();
     assert!(
-        process_discovery_event(event, "LOCAL_DEV", &mut discovered, &[]).is_none(),
+        process_discovery_event(event, "LOCAL_DEV", &mut discovered, &[], false).is_none(),
         "self-discovery must return None"
     );
 }
@@ -3278,14 +3314,14 @@ fn process_discovery_already_discovered_returns_none() {
 
     // First discovery (unpaired -> None, but added to discovered)
     assert!(
-        process_discovery_event(event1, "LOCAL", &mut discovered, &[]).is_none(),
+        process_discovery_event(event1, "LOCAL", &mut discovered, &[], false).is_none(),
         "first discovery of unpaired peer must return None"
     );
     assert_eq!(discovered.len(), 1, "peer must be added to discovered map");
 
     // Second discovery -> already discovered -> None
     assert!(
-        process_discovery_event(event2, "LOCAL", &mut discovered, &[]).is_none(),
+        process_discovery_event(event2, "LOCAL", &mut discovered, &[], false).is_none(),
         "already-discovered peer must return None"
     );
     assert_eq!(
@@ -3299,7 +3335,7 @@ fn process_discovery_already_discovered_returns_none() {
 fn process_discovery_unpaired_returns_none() {
     let event = make_resolved_event("UNKNOWN_PEER", 8443);
     let mut discovered = HashMap::new();
-    let result = process_discovery_event(event, "LOCAL", &mut discovered, &[]);
+    let result = process_discovery_event(event, "LOCAL", &mut discovered, &[], false);
     assert!(result.is_none(), "unpaired peer should not trigger sync");
     assert_eq!(
         discovered.len(),
@@ -3313,11 +3349,38 @@ fn process_discovery_paired_returns_some() {
     let event = make_resolved_event("PAIRED_PEER", 8443);
     let mut discovered = HashMap::new();
     let peer_refs = vec![make_peer_ref("PAIRED_PEER")];
-    let result = process_discovery_event(event, "LOCAL", &mut discovered, &peer_refs);
+    let result = process_discovery_event(event, "LOCAL", &mut discovered, &peer_refs, false);
     assert!(result.is_some(), "new paired peer should trigger sync");
     let peer = result.unwrap();
     assert_eq!(peer.device_id, "PAIRED_PEER");
     assert_eq!(discovered.len(), 1);
+}
+
+/// #2008: an UNPAIRED discovered peer returns `None` normally but `Some`
+/// while a pairing is pending, so Branch A initiates the first session that
+/// the responder's admit-while-pending (#1519) is waiting to accept.
+#[test]
+fn process_discovery_unpaired_returns_some_only_while_pairing_pending() {
+    let no_refs: Vec<crate::peer_refs::PeerRef> = vec![];
+
+    // Not pending: unpaired peer is ignored (current paired-only behaviour).
+    let mut discovered = HashMap::new();
+    let event = make_resolved_event("UNPAIRED_PEER", 8443);
+    assert!(
+        process_discovery_event(event, "LOCAL", &mut discovered, &no_refs, false).is_none(),
+        "unpaired peer must be ignored when no pairing is pending"
+    );
+
+    // Pending: the same unpaired peer becomes a valid initiation target.
+    // Use a fresh map so the already-discovered guard doesn't short-circuit.
+    let mut discovered = HashMap::new();
+    let event = make_resolved_event("UNPAIRED_PEER", 8443);
+    let result = process_discovery_event(event, "LOCAL", &mut discovered, &no_refs, true);
+    assert!(
+        result.is_some(),
+        "unpaired peer must trigger sync while pairing is pending (#2008)"
+    );
+    assert_eq!(result.unwrap().device_id, "UNPAIRED_PEER");
 }
 
 // ── conditional daemon startup ──────────────────────────────
