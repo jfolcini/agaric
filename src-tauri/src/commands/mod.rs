@@ -154,8 +154,8 @@ pub use sync_cmds::{
     cancel_pairing, cancel_pairing_inner, cancel_sync, cancel_sync_inner, confirm_pairing,
     confirm_pairing_inner, delete_peer_ref, delete_peer_ref_inner, get_device_id,
     get_device_id_inner, get_peer_ref, get_peer_ref_inner, list_peer_refs, list_peer_refs_inner,
-    set_peer_address, set_peer_address_inner, start_pairing, start_pairing_inner, start_sync,
-    start_sync_inner, update_peer_name, update_peer_name_inner,
+    set_peer_address, set_peer_address_inner, start_pairing, start_pairing_armed_inner,
+    start_pairing_inner, start_sync, start_sync_inner, update_peer_name, update_peer_name_inner,
 };
 pub use tags::{
     add_tag, add_tag_inner, add_tags_by_ids, add_tags_by_ids_inner, list_all_tags_in_space,
