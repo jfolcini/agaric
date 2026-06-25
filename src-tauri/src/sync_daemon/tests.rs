@@ -4318,6 +4318,146 @@ async fn issue602_two_edited_devices_converge_without_reset_required() {
     mat_b.shutdown();
 }
 
+/// #2006 — concurrent edits to the SAME block converge deterministically.
+///
+/// #602 covers two devices editing DISTINCT blocks. This pins the conflict
+/// case: both devices write the same block id with different content before
+/// they have ever synced, then sync in both directions. The Loro CRDT must
+/// merge the concurrent writes to a single deterministic result — identical
+/// content AND identical version vector on both devices — with no
+/// `ResetRequired` / `Failed`. (The interrupted-then-resumed transfer case
+/// from #2006 is a separate follow-up.)
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn issue2006_concurrent_same_block_edits_converge_deterministically() {
+    use crate::sync_protocol::{SyncOrchestrator, SyncState};
+
+    const DEV_A: &str = "DEV2006A";
+    const DEV_B: &str = "DEV2006B";
+    const BLOCK_SHARED: &str = "01HZ2006BLKXXXXXXXXXXXXXXX";
+    let space = crate::space::SpaceId::from_trusted("01HZ2006SPACEXXXXXXXXXXXXX");
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+    let mat_b = Materializer::new(pool_b.clone());
+
+    let state_a: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+    let state_b: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+
+    peer_refs::upsert_peer_ref(&pool_a, DEV_B).await.unwrap();
+    peer_refs::upsert_peer_ref(&pool_b, DEV_A).await.unwrap();
+
+    // Both devices write the SAME block id concurrently with different
+    // content, before any sync — a genuine concurrent-edit conflict.
+    make_local_edit_602(
+        &pool_a,
+        &mat_a,
+        state_a,
+        DEV_A,
+        &space,
+        BLOCK_SHARED,
+        "content from A",
+        1_736_942_400_000,
+    )
+    .await;
+    make_local_edit_602(
+        &pool_b,
+        &mat_b,
+        state_b,
+        DEV_B,
+        &space,
+        BLOCK_SHARED,
+        "content from B",
+        1_736_942_401_000,
+    )
+    .await;
+
+    // ── Bidirectional sync (mirror of #602) ──────────────────────────
+    let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
+        .with_loro_state(state_a)
+        .with_expected_remote_id(DEV_B.into());
+    let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
+        .with_loro_state(state_b)
+        .with_expected_remote_id(DEV_A.into());
+    pump_full_session_602(&mut init_a, &mut resp_b).await;
+    assert_eq!(
+        init_a.session().state,
+        SyncState::Complete,
+        "session 1 initiator must complete"
+    );
+    assert_eq!(
+        resp_b.session().state,
+        SyncState::Complete,
+        "session 1 responder must complete"
+    );
+
+    let mut init_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
+        .with_loro_state(state_b)
+        .with_expected_remote_id(DEV_A.into());
+    let mut resp_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
+        .with_loro_state(state_a)
+        .with_expected_remote_id(DEV_B.into());
+    pump_full_session_602(&mut init_b, &mut resp_a).await;
+    assert_eq!(
+        init_b.session().state,
+        SyncState::Complete,
+        "session 2 initiator must complete"
+    );
+    assert_eq!(
+        resp_a.session().state,
+        SyncState::Complete,
+        "session 2 responder must complete"
+    );
+
+    // ── Convergence: both DBs agree on a single deterministic value ──
+    let content_a: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(BLOCK_SHARED)
+        .fetch_optional(&pool_a)
+        .await
+        .unwrap();
+    let content_b: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(BLOCK_SHARED)
+        .fetch_optional(&pool_b)
+        .await
+        .unwrap();
+    assert!(
+        content_a.is_some(),
+        "shared block must exist on device A after sync"
+    );
+    // The CRDT invariant under test is *convergence*: both replicas agree on
+    // a single deterministic merged value. Whether that value is LWW-picked or
+    // text-merged is the engine's business — we assert only that the two
+    // devices end up identical (and non-empty).
+    assert_eq!(
+        content_a, content_b,
+        "both devices must converge to the SAME merged content for the shared block"
+    );
+    assert!(
+        !content_a.as_deref().unwrap_or("").is_empty(),
+        "converged content must be non-empty, got {content_a:?}"
+    );
+
+    // ── Convergence: identical version vectors ───────────────────────
+    let vv_a = {
+        let mut g = state_a.registry.for_space(&space, DEV_A).expect("space A");
+        g.engine_mut().version_vector()
+    };
+    let vv_b = {
+        let mut g = state_b.registry.for_space(&space, DEV_B).expect("space B");
+        g.engine_mut().version_vector()
+    };
+    assert_eq!(
+        loro::VersionVector::decode(&vv_a).expect("decode vv A"),
+        loro::VersionVector::decode(&vv_b).expect("decode vv B"),
+        "both engines must converge to the same Loro version vector"
+    );
+
+    mat_a.flush_background().await.unwrap();
+    mat_b.flush_background().await.unwrap();
+    mat_a.shutdown();
+    mat_b.shutdown();
+}
+
 /// #610 — directional `synced_at`: only the side that PULLED records it.
 ///
 /// In a normal pull-only session the **initiator** pulls the responder's
