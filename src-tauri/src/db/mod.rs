@@ -4183,6 +4183,74 @@ mod tests {
         }
     }
 
+    /// Running the production migrator a second time against an
+    /// already-at-head database must be a clean no-op: a repeated init
+    /// (a second boot, a reconnect, a redundant `run_migrations` call) must
+    /// not re-apply migrations or duplicate `_sqlx_migrations` rows. sqlx
+    /// tracks applied versions in `_sqlx_migrations` and skips them, so the
+    /// second `.run()` returns `Ok` and the row count is unchanged.
+    #[tokio::test]
+    async fn migrator_run_twice_is_idempotent_noop() {
+        let (pool, _dir) = unmigrated_pool().await;
+
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+        let applied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let expected =
+            i64::try_from(up_migration_versions().0.len()).expect("migration count fits in i64");
+        assert_eq!(
+            applied, expected,
+            "every up-migration must record exactly one _sqlx_migrations row"
+        );
+
+        // Second run against the head database: must succeed and change nothing.
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+        let applied_again: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            applied_again, applied,
+            "re-running the migrator at head must be a no-op: it must not \
+             re-apply migrations or duplicate _sqlx_migrations rows"
+        );
+    }
+
+    /// Version-numbering guard over the migration source: the up-migration
+    /// versions must be strictly increasing (proving uniqueness) and
+    /// contiguous from 1..=N (no gaps, no duplicates, no misnumbering). This
+    /// fails CI fast the moment someone adds a migration with a duplicate,
+    /// gapped, or out-of-order version number.
+    #[tokio::test]
+    async fn migration_versions_are_contiguous_and_unique() {
+        let (versions, _) = up_migration_versions();
+
+        // Strictly increasing => unique and sorted.
+        for pair in versions.windows(2) {
+            assert!(
+                pair[1] > pair[0],
+                "migration versions must be strictly increasing (unique), \
+                 found {} not greater than {}",
+                pair[1],
+                pair[0]
+            );
+        }
+
+        // Contiguous 1..=N: no gaps or misnumbered versions.
+        let n = i64::try_from(versions.len()).expect("migration count fits in i64");
+        let expected: Vec<i64> = (1..=n).collect();
+        assert_eq!(
+            versions, expected,
+            "migration versions must be contiguous 1..=N with no gaps; if an \
+             intentional gap is introduced, update this guard and document the \
+             deliberate gap"
+        );
+    }
+
     /// Executable pin of the migrations/AGENTS.md §Table-rebuild recipe: run
     /// the documented copy-aside / swap / restore SQL as a synthetic future
     /// rebuild against the HEAD schema, inside a single transaction exactly
