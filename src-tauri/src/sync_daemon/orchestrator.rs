@@ -240,8 +240,15 @@ pub(crate) async fn daemon_loop(
             // Branch A: mDNS peer-discovery event (event-driven, no polling)
             Some(event) = mdns_rx.recv() => {
                 let refs = list_peer_refs_or_empty(&pool, "mdns_discovery").await;
+                // #2008: while a pairing is pending, an unpaired discovered
+                // peer is a valid initiation target (initiator-side TOFU pins
+                // it on success). Fail open to `false` so a transient DB error
+                // only falls back to the stricter paired-only behaviour.
+                let pairing_pending = peer_refs::is_pending_pairing(&pool)
+                    .await
+                    .unwrap_or(false);
                 if let Some(peer) = process_discovery_event(
-                    event, &device_id, &mut discovered, &refs,
+                    event, &device_id, &mut discovered, &refs, pairing_pending,
                 ) {
                     tracing::info!(peer_id = %peer.device_id, "discovered new peer via mDNS");
                     let ctx = SyncSessionContext {

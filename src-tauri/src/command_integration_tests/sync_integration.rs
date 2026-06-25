@@ -194,6 +194,43 @@ async fn pairing_lifecycle_creates_peer_ref() {
     );
 }
 
+/// #2008: the host side (`start_pairing`) must also arm the pairing window
+/// — set the pending-pairing marker so its dormant daemon goes active and
+/// announces/listens — otherwise the joiner can never reach it. The marker
+/// must be set even though no `peer_ref` exists yet (TOFU writes that on the
+/// first connection).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn start_pairing_armed_inner_arms_pending_window() {
+    let (pool, _dir) = test_pool().await;
+    let pairing = PairingState(Mutex::new(None));
+    let scheduler = SyncScheduler::new();
+
+    assert!(
+        !peer_refs::is_pending_pairing(&pool).await.unwrap(),
+        "no pending marker before pairing starts"
+    );
+
+    let info =
+        crate::commands::start_pairing_armed_inner(&pool, &pairing.0, &scheduler, "dev-host")
+            .await
+            .unwrap();
+    assert!(!info.passphrase.is_empty(), "passphrase must be non-empty");
+
+    assert!(
+        peer_refs::is_pending_pairing(&pool).await.unwrap(),
+        "start_pairing must arm the pending-pairing window so the host daemon \
+         activates (#2008)"
+    );
+    assert!(
+        peer_refs::list_peer_refs(&pool).await.unwrap().is_empty(),
+        "no peer_ref yet — it is written by TOFU on the first connection"
+    );
+    assert!(
+        pairing.0.lock().unwrap().is_some(),
+        "pairing session must be live after start"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pairing_start_then_cancel_clears_session() {
     let pairing = PairingState(Mutex::new(None));

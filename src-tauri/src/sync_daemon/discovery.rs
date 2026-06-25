@@ -9,7 +9,17 @@ use crate::sync_net::{self, DiscoveredPeer, ServiceEventKind};
 /// Returns `true` only when all of the following hold:
 /// 1. The peer is not the local device (no self-sync).
 /// 2. The peer was not already present in the discovered-peers map.
-/// 3. The peer appears in `peer_refs` (i.e. it is already paired).
+/// 3. EITHER the peer appears in `peer_refs` (already paired) OR a pairing
+///    is in progress (`pairing_pending`).
+///
+/// The `pairing_pending` clause is the initiator-side counterpart to the
+/// responder's admit-while-pending path (`sync_daemon/server.rs`, #1519):
+/// during the pairing window neither device has a `peer_ref` for the other
+/// yet, so without this clause no one would ever *initiate* the first sync
+/// and pairing deadlocks (#2008). On a successful unpaired session the
+/// initiator TOFU-pins the peer's cert (`upsert_peer_ref_with_cert` in
+/// `try_sync_with_peer`), after which clause 3's membership arm carries it
+/// and the pending marker is cleared.
 ///
 /// Extracted from `daemon_loop` Branch A for independent testing.
 pub fn should_attempt_sync_with_discovered_peer(
@@ -17,6 +27,7 @@ pub fn should_attempt_sync_with_discovered_peer(
     local_device_id: &str,
     already_discovered: bool,
     peer_refs: &[PeerRef],
+    pairing_pending: bool,
 ) -> bool {
     if peer_device_id == local_device_id {
         return false;
@@ -24,7 +35,7 @@ pub fn should_attempt_sync_with_discovered_peer(
     if already_discovered {
         return false;
     }
-    peer_refs.iter().any(|p| p.peer_id == peer_device_id)
+    pairing_pending || peer_refs.iter().any(|p| p.peer_id == peer_device_id)
 }
 
 /// Try to construct a [`DiscoveredPeer`] from a stored `last_address`.
@@ -217,12 +228,15 @@ pub fn should_store_cert_hash(stored_hash: Option<&str>, observed_hash: Option<&
 ///   [`process_service_removed`] instead)
 /// - The peer is the local device (self-discovery)
 /// - The peer was already discovered (timestamp updated, no new sync)
-/// - The peer is not in the paired peer_refs list
+/// - The peer is not in the paired peer_refs list AND no pairing is pending
+///   (during a pairing window an unpaired peer is a valid initiation target;
+///   see [`should_attempt_sync_with_discovered_peer`] and #2008)
 pub fn process_discovery_event(
     event: mdns_sd::ServiceEvent,
     device_id: &str,
     discovered: &mut HashMap<String, (DiscoveredPeer, tokio::time::Instant)>,
     peer_refs: &[PeerRef],
+    pairing_pending: bool,
 ) -> Option<DiscoveredPeer> {
     match sync_net::parse_service_event(event)? {
         ServiceEventKind::Resolved(peer) => {
@@ -242,8 +256,9 @@ pub fn process_discovery_event(
                 device_id,
                 already_discovered,
                 peer_refs,
+                pairing_pending,
             ) {
-                return None; // Not paired
+                return None; // Not paired (and no pairing in progress)
             }
             Some(peer)
         }
