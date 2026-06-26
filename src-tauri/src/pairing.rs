@@ -151,10 +151,21 @@ pub fn parse_pairing_qr(json: &str) -> Result<PairingQrPayload, AppError> {
 }
 
 /// Render `data` as a QR code and return the SVG markup.
+///
+/// The `qrcode` crate prefixes its output with an `<?xml …?>` declaration.
+/// That prolog is invalid once the markup is injected into an HTML element
+/// via `innerHTML` (the HTML parser treats `<?xml …?>` as a bogus comment),
+/// so we strip it and hand the frontend a bare `<svg>…</svg>` fragment.
 pub fn generate_qr_svg(data: &str) -> Result<String, AppError> {
     let code = qrcode::QrCode::new(data.as_bytes())
         .map_err(|e| AppError::InvalidOperation(format!("[pairing] QR generation failed: {e}")))?;
-    Ok(code.render::<qrcode::render::svg::Color>().build())
+    let svg = code.render::<qrcode::render::svg::Color>().build();
+    // Keep everything from the opening `<svg` tag onward, dropping the XML
+    // declaration the renderer emits before it.
+    Ok(match svg.find("<svg") {
+        Some(idx) => svg[idx..].to_string(),
+        None => svg,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -491,6 +502,21 @@ mod tests {
         assert!(
             svg.contains("<svg"),
             "QR output must contain an <svg tag, got: {svg}"
+        );
+    }
+
+    #[test]
+    fn generate_qr_svg_strips_xml_prolog() {
+        // The markup is injected into the DOM via innerHTML, where a leading
+        // `<?xml …?>` declaration is invalid; it must start at `<svg`.
+        let svg = generate_qr_svg("test data").expect("QR generation should succeed");
+        assert!(
+            svg.starts_with("<svg"),
+            "QR output must start with <svg (no XML prolog), got: {svg}"
+        );
+        assert!(
+            !svg.contains("<?xml"),
+            "QR output must not contain an XML declaration, got: {svg}"
         );
     }
 

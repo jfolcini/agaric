@@ -54,6 +54,14 @@ beforeEach(() => {
   mockScanData = ''
   mockScanFireCount = 1
   constructedIds.length = 0
+  // jsdom leaves navigator.mediaDevices undefined; QrScanner now guards on it
+  // and bails before touching html5-qrcode when getUserMedia is missing. Stub
+  // a present API so the existing tests exercise the library path, not the
+  // unavailable-API guard (which has its own test below).
+  Object.defineProperty(navigator, 'mediaDevices', {
+    configurable: true,
+    value: { getUserMedia: vi.fn().mockResolvedValue({}) },
+  })
 })
 
 describe('QrScanner', () => {
@@ -171,6 +179,30 @@ describe('QrScanner', () => {
     expect(await screen.findByText(t('qrScanner.cameraError'))).toBeInTheDocument()
     expect(onCameraDenied).toHaveBeenCalledTimes(1)
     expect(onError).toHaveBeenCalledWith(t('qrScanner.cameraError'))
+  })
+
+  // When the WebView exposes no camera API at all (insecure context or an
+  // Android build without the CAMERA permission), the scanner must short-circuit
+  // with a clear "unavailable" message and fall back to manual entry — without
+  // ever constructing html5-qrcode (which would otherwise throw a cryptic error).
+  it('bails with an unavailable message when navigator.mediaDevices is missing', async () => {
+    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined })
+
+    const user = userEvent.setup()
+    const onScan = vi.fn()
+    const onError = vi.fn()
+    const onCameraDenied = vi.fn()
+
+    render(<QrScanner onScan={onScan} onError={onError} onCameraDenied={onCameraDenied} />)
+
+    await user.click(screen.getByRole('button', { name: /scan qr code/i }))
+
+    expect(await screen.findByText(t('qrScanner.cameraUnavailable'))).toBeInTheDocument()
+    expect(onError).toHaveBeenCalledWith(t('qrScanner.cameraUnavailable'))
+    expect(onCameraDenied).toHaveBeenCalledTimes(1)
+    // The library must not be touched when the API is absent.
+    expect(constructedIds).toHaveLength(0)
+    expect(onScan).not.toHaveBeenCalled()
   })
 
   it('does not call onCameraDenied on successful scan', async () => {
