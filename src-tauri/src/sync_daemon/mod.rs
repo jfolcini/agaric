@@ -205,6 +205,29 @@ impl SyncDaemon {
         cancel: Arc<AtomicBool>,
         lifecycle: LifecycleHooks,
     ) -> Result<Self, AppError> {
+        // A pending-pairing marker is only meaningful while the in-memory
+        // `PairingSession` that armed it (in `start_pairing_armed_inner` /
+        // `confirm_pairing_inner`) is alive. That session lives in
+        // Tauri-managed state and never survives a process restart, so any
+        // marker still present at *startup* is orphaned — there is no
+        // interactive pairing it could belong to. Left in place it drives
+        // `should_start_active` straight into the active mDNS + TLS-listener
+        // path on every launch until the marker's TTL elapses. On Android
+        // that startup path can crash the process (release builds use
+        // `panic = "abort"`, and a native JNI fault is uncatchable either
+        // way), so a single mid-pairing crash would otherwise recur on every
+        // relaunch for the whole TTL window — a boot crash-loop. Clear the
+        // stale marker first so a fresh process only goes active for a *real*
+        // paired peer; an in-session pairing still wakes the dormant waiter
+        // via `scheduler.notify_change()`. Best-effort: a failed clear must
+        // not block startup.
+        if let Err(e) = peer_refs::clear_pending_pairing(&pool).await {
+            tracing::warn!(
+                error = %e,
+                "failed to clear stale pending-pairing marker at startup"
+            );
+        }
+
         match Self::should_start_active(&pool).await {
             Ok(true) => {
                 // Paired peers already exist — start the full daemon.
