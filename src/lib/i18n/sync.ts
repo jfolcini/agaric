@@ -84,6 +84,11 @@ export const sync: Record<string, string> = {
   'qrScanner.scanQrCodeButton': 'Scan QR Code',
   'qrScanner.scanningMessage': 'Scanning...',
   'qrScanner.cameraError': 'Camera access failed. Check camera permissions and try again.',
+  'qrScanner.cameraUnavailable':
+    'Camera is not available here. Use the 4-word passphrase to pair instead.',
+  'qrScanner.cameraDenied':
+    'Camera permission denied. Enable camera access for Agaric in your device settings, then retry.',
+  'qrScanner.cameraNotFound': 'No camera was found on this device.',
   'device.syncComplete': 'Sync complete',
   'device.syncFailed': 'Sync failed',
   'sync.failedForDevice': 'Sync failed for device {{deviceId}}...',

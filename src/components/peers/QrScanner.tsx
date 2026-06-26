@@ -56,7 +56,46 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
     [],
   )
 
+  // Translate a getUserMedia / html5-qrcode failure into an actionable,
+  // localized message. getUserMedia rejects with a DOMException whose `name`
+  // distinguishes the cause, so the user (and our logs) can tell a permission
+  // denial apart from a missing camera or an unsupported WebView.
+  const cameraErrorMessage = (err: unknown): string => {
+    const name =
+      err && typeof err === 'object' && 'name' in err ? String((err as { name: unknown }).name) : ''
+    if (name === 'NotAllowedError' || name === 'SecurityError') {
+      return t('qrScanner.cameraDenied')
+    }
+    if (
+      name === 'NotFoundError' ||
+      name === 'DevicesNotFoundError' ||
+      name === 'OverconstrainedError'
+    ) {
+      return t('qrScanner.cameraNotFound')
+    }
+    return t('qrScanner.cameraError')
+  }
+
   const startScanning = async () => {
+    // getUserMedia is only exposed in a secure context backed by a
+    // media-capable WebView. On Android the app must hold the CAMERA
+    // permission AND be served from a secure origin (tauri.localhost) for
+    // this to be defined. When it isn't, html5-qrcode throws a cryptic
+    // library error — bail early with a clear, actionable message and fall
+    // back to manual entry instead.
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      logger.warn(
+        'QrScanner',
+        'navigator.mediaDevices.getUserMedia is unavailable (insecure context or unsupported WebView)',
+      )
+      const message = t('qrScanner.cameraUnavailable')
+      setError(message)
+      setScanning(false)
+      onError?.(message)
+      onCameraDenied?.()
+      return
+    }
+
     try {
       // Dynamic import to avoid bundling html5-qrcode on desktop
       const { Html5Qrcode } = await import('html5-qrcode')
@@ -100,11 +139,11 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
         },
       )
     } catch (err) {
-      // Log the raw error for debugging, but surface a translated, user-facing
+      // Log the raw error for debugging, but surface a translated, cause-aware
       // message to the aria-live region (raw `err.message` is untranslated and
       // often a cryptic browser/library string). #1888
       logger.warn('QrScanner', 'Camera initialization failed', undefined, err)
-      const message = t('qrScanner.cameraError')
+      const message = cameraErrorMessage(err)
       setError(message)
       setScanning(false)
       scannerInstanceRef.current = null
