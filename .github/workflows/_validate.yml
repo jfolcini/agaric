@@ -201,7 +201,7 @@ jobs:
       # `apt-get install` below resolves from the cached .debs instead of the
       # slow Ubuntu mirror. Bump the `-v1` suffix when the package list changes.
       - name: Cache apt archives (Tauri system deps)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: /var/cache/apt/archives/*.deb
           key: apt-tauri-${{ runner.os }}-v1
@@ -351,7 +351,7 @@ jobs:
         # runs after `npm ci`, so dependency markdown churn (READMEs,
         # CHANGELOGs) was invalidating the key on every unrelated dep
         # bump even though lychee only ever checks tracked docs.
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .lycheecache
           key: lychee-${{ runner.os }}-${{ hashFiles('**/*.md', '!node_modules/**') }}
@@ -520,7 +520,7 @@ jobs:
           "${HOME}/.local/bin/lychee" --version
 
       - name: Restore lychee link-check cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .lycheecache
           key: lychee-${{ runner.os }}-${{ hashFiles('**/*.md', '!node_modules/**') }}
@@ -708,7 +708,7 @@ jobs:
         # serve as a base layer (`playwright install` below is idempotent
         # and pulls only what's missing, so a stale restore is safe).
         id: playwright-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
@@ -723,7 +723,7 @@ jobs:
       # instead of the mirror. Keyed on package-lock so a Playwright bump busts
       # it; restore-keys lets a stale set seed a partial hit.
       - name: Cache apt archives (Playwright system deps)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: /var/cache/apt/archives/*.deb
           key: apt-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
@@ -849,7 +849,7 @@ jobs:
       # cached .debs instead of the slow Ubuntu mirror. Bump `-v1` if the list
       # below changes.
       - name: Cache apt archives (Tauri system deps)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: /var/cache/apt/archives/*.deb
           key: apt-tauri-${{ runner.os }}-v1
@@ -1086,7 +1086,7 @@ jobs:
       # cached .debs instead of the slow Ubuntu mirror. Bump `-v1` if the list
       # below changes.
       - name: Cache apt archives (Tauri system deps)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: /var/cache/apt/archives/*.deb
           key: apt-tauri-${{ runner.os }}-v1
