@@ -3529,6 +3529,72 @@ async fn start_if_peers_exist_spawns_dormant_when_empty() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn start_if_peers_exist_clears_orphaned_pending_pairing_at_startup() {
+    // Regression (Android pairing crash-loop): opening the pairing dialog
+    // persists a pending-pairing marker (`start_pairing_armed_inner`). The
+    // in-memory `PairingSession` that marker stands for never survives a
+    // process restart, so a marker still present at startup is orphaned. It
+    // must be cleared at boot — otherwise `should_start_active` drives the
+    // daemon into the active mDNS/TLS-listener path on every launch for the
+    // marker's whole TTL. On Android that path can crash the process
+    // (`panic = "abort"`), turning a one-off pairing crash into a boot
+    // crash-loop where reopening the app crashes it again.
+    install_crypto_provider();
+
+    let (pool, _dir) = test_pool().await;
+
+    // Simulate a process that armed pairing and then restarted: the marker
+    // survived in the DB, but there are no real peers and no live session.
+    peer_refs::set_pending_pairing(&pool).await.unwrap();
+    assert!(
+        peer_refs::is_pending_pairing(&pool).await.unwrap(),
+        "precondition: the pending-pairing marker is set before startup"
+    );
+
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let cert = sync_net::generate_self_signed_cert("DEV_LOCAL").unwrap();
+    let event_sink: Arc<dyn crate::sync_events::SyncEventSink> =
+        Arc::new(RecordingEventSink::new());
+    let cancel = Arc::new(AtomicBool::new(false));
+
+    let daemon = SyncDaemon::start_if_peers_exist(
+        pool.clone(),
+        "DEV_LOCAL".into(),
+        materializer,
+        scheduler,
+        cert,
+        event_sink,
+        cancel,
+    )
+    .await
+    .unwrap();
+
+    // The orphaned marker must be gone, so a fresh boot does not auto-activate
+    // the full daemon (and re-run the Android startup path) solely because of
+    // a stale pairing attempt from a previous process.
+    assert!(
+        !peer_refs::is_pending_pairing(&pool).await.unwrap(),
+        "startup must clear the orphaned pending-pairing marker"
+    );
+    assert!(
+        !SyncDaemon::should_start_active(&pool).await.unwrap(),
+        "with the marker cleared and no peers, the daemon must stay dormant"
+    );
+
+    // A dormant daemon must still shut down cleanly.
+    daemon.shutdown();
+    let handle = daemon.handle;
+    tokio::time::timeout(std::time::Duration::from_secs(5), async move {
+        if let Some(h) = handle {
+            let _ = h.await;
+        }
+    })
+    .await
+    .expect("dormant daemon must shut down within 5s");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn start_if_peers_exist_starts_actively_when_peers_present() {
     // With at least one paired peer, `start_if_peers_exist` must call the
     // full `start` path. We verify this indirectly: the returned daemon
