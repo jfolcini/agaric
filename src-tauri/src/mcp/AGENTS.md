@@ -34,7 +34,12 @@ Every `tools/call` dispatch runs inside `ACTOR.scope(actor_context, ...)`. Insid
 - Op-log `origin` field (so an op authored by an agent is distinguishable from a user op).
 - Future per-agent rate-limiting / audit.
 
-The agent name comes from the rmcp client's `clientInfo.name` (set during the MCP handshake). When no `clientInfo` is present, the fallback is `Actor::Agent { name: "unknown" }`.
+The agent name comes from the rmcp client's `clientInfo.name` (set during the MCP handshake), **sanitized once at the trust boundary** by `sanitize_agent_name` (#1569): ASCII/Unicode control chars stripped, surrounding whitespace trimmed, truncated to `MAX_AGENT_NAME_LEN` (128) chars on a char boundary, and falling back to the `"unknown"` placeholder when nothing printable remains (or when `peer_info()` is absent). This cleaned value flows verbatim through `Actor::Agent` → `Actor::origin_tag` → the append-only `op_log.origin` column, so the sanitisation is the only chance to bound an attacker-controlled string before it is durably persisted.
+
+Two distinct labels come out of this:
+
+- **Activity feed** keeps the bare sanitized `agent_name` for display (it carries the per-connection `session_id` separately).
+- **Durable `op_log.origin`** uses `durable_agent_name` (#1545): a *named* client is stamped `agent:<name>` unchanged, but an *anonymous* client (the `"unknown"` placeholder) is stamped `agent:unknown:<session-ulid>` — the per-connection session ULID is folded in so two simultaneous anonymous agents don't collapse to a single indistinguishable `agent:unknown` origin. Both keep the `agent:` prefix, so `LIKE 'agent:%'` consumers still match.
 
 **Do not bypass `ACTOR.scope`.** A handler that calls a command function without being inside the scope will see `Actor::User` (the default), corrupting the activity feed and op-log origin attribution.
 
@@ -57,7 +62,11 @@ The rmcp framer handles standard JSON-RPC errors (`-32601 Method not found`, `-3
 - `-32601` = "the JSON-RPC method endpoint doesn't exist" (`tools/nonexistent`).
 - `-32001` = "the resource named in the call arguments doesn't exist" (an unknown tool name, an unknown block id inside a tool's args).
 
-This is mapped from `AppError::NotFound` by `app_error_to_rmcp` in `rmcp_adapter.rs`. Agents can discriminate the two: "I called a method that doesn't exist" vs "I asked for a thing that doesn't exist".
+`app_error_to_rmcp` in `rmcp_adapter.rs` is the single `AppError → wire` mapping. There are **three** arms — all three must stay in sync with this doc:
+
+- `AppError::NotFound` → `-32001` (the custom resource-not-found code above). Agents discriminate this from `-32601`: "I called a method that doesn't exist" vs "I asked for a thing that doesn't exist".
+- `AppError::Validation` **and** `AppError::InvalidOperation` → `-32602 Invalid params`. Bad arguments and rejected operations (e.g. an out-of-range `limit`, a malformed ULID) keep their crafted, agent-actionable `Display` message on the wire.
+- **everything else** (`Database` / `Io` / `Json` / …) → `-32603 Internal error` with a **generic, scrubbed** message (`INTERNAL_ERROR_WIRE_MESSAGE` = `"an internal error occurred"`). This is the #698 contract: internal variants embed sqlx / OS detail that must never reach an automation client (mirroring the Tauri IPC boundary's `sanitize_internal_error`). The real error chain is logged on a `tracing::error!(target: "mcp", …)` line for the daily log; only the generic sentence crosses the wire. **Do not** put `err.to_string()` on the catch-all arm.
 
 ## `ERROR_CLIP_CAP`
 
