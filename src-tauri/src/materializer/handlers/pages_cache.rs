@@ -241,6 +241,32 @@ pub(super) async fn target_pages_for_block_ids(
 /// backstop: it re-diffs the same content, finds the edges already applied,
 /// and is a no-op, so the synchronous update and the rebuild converge on the
 /// same value with no double-count.
+/// Collect the pages whose counts a Delete/Restore COHORT affects into
+/// `affected`. Shared by the `Cohort` and `RestoreCohortAndAncestors`
+/// (#2017) arms so both compute the identical cohort affected-page set.
+///
+/// The set is (a) the distinct owning pages of the cohort blocks (their
+/// `child_block_count` changes) and (b) the pages targeted by outbound
+/// edges from any cohort block (their `inbound_link_count` changes). For
+/// DeleteBlock the outbound edges still exist in `block_links` (CASCADE FK
+/// fires on row DELETE, not on `deleted_at` stamp); for RestoreBlock the
+/// edges remain throughout — so the outbound union is identical pre- and
+/// post-projection in both directions.
+async fn collect_cohort_affected_pages(
+    conn: &mut sqlx::SqliteConnection,
+    cohort: &[String],
+    affected: &mut std::collections::HashSet<String>,
+) -> Result<(), AppError> {
+    for p in distinct_pages_for_blocks(conn, cohort).await? {
+        affected.insert(p);
+    }
+    // #463: single batch query instead of one round-trip per cohort block.
+    for p in outbound_target_pages_for_blocks(conn, cohort).await? {
+        affected.insert(p);
+    }
+    Ok(())
+}
+
 pub(super) async fn maintain_pages_cache_counts_after_op(
     conn: &mut sqlx::SqliteConnection,
     pre_state: &PreOpState,
@@ -343,23 +369,24 @@ pub(super) async fn maintain_pages_cache_counts_after_op(
             // backstop rebuild converge with no double-count.
             crate::cache::reindex_block_links_conn(conn, block_id).await?;
         }
+        PreOpState::RestoreCohortAndAncestors { cohort, ancestors } => {
+            // #2017: the descendant cohort half is identical to the `Cohort`
+            // arm. The ancestor half adds the pages the restored ancestors
+            // now own. `distinct_pages_for_blocks` reads each ancestor's
+            // `page_id`; we ALSO insert the ancestor ids themselves so an
+            // ancestor that is itself a page (page_id == id) has its own
+            // `pages_cache` row recomputed (a page that rejoined the live tree
+            // gains its descendants back into `child_block_count`).
+            collect_cohort_affected_pages(conn, cohort, &mut affected).await?;
+            for p in distinct_pages_for_blocks(conn, ancestors).await? {
+                affected.insert(p);
+            }
+            for a in ancestors {
+                affected.insert(a.clone());
+            }
+        }
         PreOpState::Cohort(cohort) => {
-            // The cohort is captured upstream in `apply_op_tx` (see
-            // `collect_delete_cohort` / `collect_restore_cohort`). We
-            // mirror the same set here via the `Cohort` variant.
-            for p in distinct_pages_for_blocks(conn, cohort).await? {
-                affected.insert(p);
-            }
-            // Pages targeted by outbound edges from any cohort block.
-            // For DeleteBlock those edges still exist in `block_links`
-            // (CASCADE FK fires on row DELETE, not on `deleted_at` stamp);
-            // for RestoreBlock the edges remain throughout, so the union
-            // of `outbound_target_pages_for_block` over the cohort is
-            // identical pre- and post-projection.
-            // #463: single batch query instead of one round-trip per cohort block.
-            for p in outbound_target_pages_for_blocks(conn, cohort).await? {
-                affected.insert(p);
-            }
+            collect_cohort_affected_pages(conn, cohort, &mut affected).await?;
             // Inbound: blocks whose links pointed INTO the cohort. Their
             // page_id's `inbound_link_count` doesn't change because the
             // inbound count is keyed on the TARGET page (the cohort's
@@ -718,6 +745,17 @@ pub(super) enum PreOpState {
     /// The descendant cohort captured BEFORE the UPDATE; both ops refresh
     /// the same affected set.
     Cohort(Vec<String>),
+    /// #2017: RestoreBlock cohort PLUS the contiguous soft-deleted ancestor
+    /// chain the restore un-deleted UPWARD (the #1884 live-orphan fix). The
+    /// `cohort` half is handled identically to [`PreOpState::Cohort`]; the
+    /// `ancestors` half additionally refreshes every page the restored
+    /// ancestors now own (an un-deleted ancestor adds a live child to its
+    /// owning page, and an ancestor that is itself a page rejoins the
+    /// `child_block_count` view) — without this those counts stay stale.
+    RestoreCohortAndAncestors {
+        cohort: Vec<String>,
+        ancestors: Vec<String>,
+    },
     /// PurgeBlock affected-pages snapshot (captured pre-cascade because
     /// FK CASCADE on `block_links` clears outbound/inbound edges before
     /// the post-op recompute runs).

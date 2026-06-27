@@ -833,3 +833,224 @@ async fn apply_op_tx_delete_property_engine_path() {
         "engine must drop the property; got {prop:?}",
     );
 }
+
+// -----------------------------------------------------------------
+// #2017: RestoreBlock upward ANCESTOR-chain engine fan-out
+// -----------------------------------------------------------------
+
+/// #2017 regression — the live-orphan ancestor restore must reach the
+/// ENGINE, not just SQL, or a subsequent reproject re-deletes the ancestor
+/// (self-perpetuating CRDT divergence).
+///
+/// Topology under PAGE_ID:  PAGE_ID → B1 (intermediate) → B2 (grandchild).
+///
+/// Scenario reproducing the #1884 live-orphan setup:
+///   1. Delete B2  → B2 tombstoned at T1 (engine + SQL).
+///   2. Delete B1  → B1 tombstoned at T2. The descendant cascade SKIPS the
+///      already-deleted B2 (it has a different `deleted_at`), so B2 becomes
+///      a trash root sitting under the tombstoned B1.
+///   3. Restore B2 → the SQL restore clears B2's cohort AND walks UPWARD,
+///      un-deleting the contiguous tombstoned ancestor chain (B1) — the
+///      #1884 fix.
+///
+/// Before #2017 the upward restore was SQL-only: B1 was alive in SQL but
+/// still tombstoned in the per-space engine. This test drives the restore
+/// through the FULL `apply_op` path (which runs the post-commit ancestor
+/// fan-out) and asserts:
+///   (a) B1 is alive IN THE ENGINE (`read_deleted` false),
+///   (b) feeding the engine's `read_deleted_at(B1)` back through
+///       `reproject_block_deleted_at_from_engine` does NOT re-delete B1 in
+///       SQL (the self-perpetuating-divergence guard — the crux of #2017),
+///   (c) PAGE_ID's `pages_cache.child_block_count` counts B1 + B2 again.
+#[tokio::test]
+async fn apply_op_restore_fans_ancestor_chain_out_to_engine_no_reproject_redelete() {
+    const B1: &str = "01HZ0000000000000000000AN1";
+    const B2: &str = "01HZ0000000000000000000AN2";
+
+    let (pool, _dir) = fresh_pool_with_page().await;
+    let _state = crate::loro::shared::install_for_test();
+
+    // Seed PAGE_ID + the B1 → B2 chain through the engine path.
+    seed_page_via_loro(&pool).await;
+
+    let create_b1 = OpPayload::CreateBlock(CreateBlockPayload {
+        block_id: BlockId::from_trusted(B1),
+        block_type: "content".into(),
+        parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+        position: Some(0),
+        index: None,
+        content: "intermediate".into(),
+    });
+    let rec_b1 = crate::op_log::append_local_op(&pool, DEVICE_ID, create_b1)
+        .await
+        .expect("append create b1");
+    super::apply_op(&pool, &std::sync::Arc::new(rec_b1))
+        .await
+        .expect("apply create b1");
+    // Production stamps page_id/space_id via background rebuild; mirror it
+    // inline (BEFORE creating B2) so B2's create resolves B1's space and
+    // routes to SPACE_ID's engine rather than the SQL-only fallback.
+    sqlx::query("UPDATE blocks SET page_id = ?, space_id = ? WHERE id = ?")
+        .bind(PAGE_ID)
+        .bind(SPACE_ID)
+        .bind(B1)
+        .execute(&pool)
+        .await
+        .expect("stamp b1 page/space");
+
+    let create_b2 = OpPayload::CreateBlock(CreateBlockPayload {
+        block_id: BlockId::from_trusted(B2),
+        block_type: "content".into(),
+        parent_id: Some(BlockId::from_trusted(B1)),
+        position: Some(0),
+        index: None,
+        content: "grandchild".into(),
+    });
+    let rec_b2 = crate::op_log::append_local_op(&pool, DEVICE_ID, create_b2)
+        .await
+        .expect("append create b2");
+    super::apply_op(&pool, &std::sync::Arc::new(rec_b2))
+        .await
+        .expect("apply create b2");
+
+    sqlx::query("UPDATE blocks SET page_id = ?, space_id = ? WHERE id = ?")
+        .bind(PAGE_ID)
+        .bind(SPACE_ID)
+        .bind(B2)
+        .execute(&pool)
+        .await
+        .expect("stamp b2 page/space");
+
+    // (1) Delete B2 first (becomes a trash root at its own timestamp).
+    let del_b2 = OpPayload::DeleteBlock(DeleteBlockPayload {
+        block_id: BlockId::from_trusted(B2),
+    });
+    let rec_del_b2 = crate::op_log::append_local_op(&pool, DEVICE_ID, del_b2)
+        .await
+        .expect("append delete b2");
+    super::apply_op(&pool, &std::sync::Arc::new(rec_del_b2))
+        .await
+        .expect("apply delete b2");
+
+    // (2) Delete B1 — its cascade SKIPS the already-deleted B2.
+    let del_b1 = OpPayload::DeleteBlock(DeleteBlockPayload {
+        block_id: BlockId::from_trusted(B1),
+    });
+    let rec_del_b1 = crate::op_log::append_local_op(&pool, DEVICE_ID, del_b1)
+        .await
+        .expect("append delete b1");
+    super::apply_op(&pool, &std::sync::Arc::new(rec_del_b1))
+        .await
+        .expect("apply delete b1");
+
+    // Sanity: both B1 and B2 are tombstoned in SQL and the engine.
+    let b2_deleted_at: Option<i64> =
+        sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(B2)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch b2 deleted_at");
+    let b2_ref = b2_deleted_at.expect("b2 must be soft-deleted");
+    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+    {
+        let state = crate::loro::shared::get().expect("Loro state");
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        assert!(
+            guard
+                .engine_mut()
+                .read_deleted(B1)
+                .expect("read_deleted b1"),
+            "precondition: B1 tombstoned in engine after delete",
+        );
+    }
+
+    // (3) Restore B2 through the FULL apply path (post-commit ancestor
+    // fan-out runs here). This un-deletes B2's cohort AND the B1 ancestor
+    // chain in SQL, and — with #2017 — fans the B1 restore onto the engine.
+    let restore = OpPayload::RestoreBlock(RestoreBlockPayload {
+        block_id: BlockId::from_trusted(B2),
+        deleted_at_ref: b2_ref,
+    });
+    let rec_restore = crate::op_log::append_local_op(&pool, DEVICE_ID, restore)
+        .await
+        .expect("append restore");
+    super::apply_op(&pool, &std::sync::Arc::new(rec_restore))
+        .await
+        .expect("apply restore");
+
+    // SQL: both B1 (ancestor) and B2 (seed) are alive again.
+    let b1_sql: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(B1)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch b1 post-restore");
+    assert_eq!(b1_sql, None, "SQL must restore the B1 ancestor");
+
+    // (a) #2017 CORE: B1 is alive IN THE ENGINE, not just SQL.
+    let engine_b1_deleted_at: Option<String> = {
+        let state = crate::loro::shared::get().expect("Loro state");
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        assert!(
+            !guard
+                .engine_mut()
+                .read_deleted(B1)
+                .expect("read_deleted b1"),
+            "#2017: restoring B2 must restore the B1 ancestor IN THE ENGINE \
+             (was SQL-only → permanent CRDT divergence)",
+        );
+        guard
+            .engine_mut()
+            .read_deleted_at(B1)
+            .expect("read_deleted_at b1")
+    };
+    assert!(
+        engine_b1_deleted_at.is_none(),
+        "#2017: engine must report B1 alive (deleted_at None); got {engine_b1_deleted_at:?}",
+    );
+
+    // (b) THE GUARD: a reproject driven by the engine's view of B1 must NOT
+    // re-delete it in SQL. Pre-#2017 the engine still said "deleted", so
+    // this call would stamp `deleted_at` back onto B1 → self-perpetuating
+    // divergence on every reproject.
+    {
+        let mut tx = pool.begin().await.expect("begin reproject");
+        crate::loro::projection::reproject_block_deleted_at_from_engine(
+            &mut tx,
+            &BlockId::from_trusted(B1),
+            engine_b1_deleted_at.as_deref(),
+        )
+        .await
+        .expect("reproject b1");
+        tx.commit().await.expect("commit reproject");
+    }
+    let b1_after_reproject: Option<i64> =
+        sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(B1)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch b1 after reproject");
+    assert_eq!(
+        b1_after_reproject, None,
+        "#2017 GUARD: reproject must NOT re-delete the restored ancestor B1 \
+         (a stale engine tombstone would re-stamp deleted_at every reproject)",
+    );
+
+    // (c) pages_cache child_block_count counts both restored blocks again.
+    let child_count: i64 =
+        sqlx::query_scalar("SELECT child_block_count FROM pages_cache WHERE page_id = ?")
+            .bind(PAGE_ID)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch child_block_count");
+    assert_eq!(
+        child_count, 2,
+        "#2017: restored ancestor B1 + seed B2 must be reflected in \
+         PAGE_ID.child_block_count (was left stale)",
+    );
+}

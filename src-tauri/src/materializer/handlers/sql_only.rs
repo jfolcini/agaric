@@ -159,11 +159,18 @@ pub(super) async fn apply_delete_block_sql_only(
 /// which is soft-deleted), so its own re-rooting at `topmost_live_ancestor`
 /// is bypassed and must be mirrored here to keep the command and
 /// projection paths converged on the derived `block_tag_inherited` view.
+///
+/// #2017: returns the restored ancestor chain (the ids whose `deleted_at` the
+/// projection cleared upward) so the caller can fan the restore out to the
+/// per-space Loro engine. On this SQL-only fallback path the engine arm did not
+/// run (space unresolved / engine uninit), so the engine state for those
+/// ancestors is reconciled lazily on the next op-log replay; the chain is still
+/// returned for symmetry and for callers that DO have an engine available.
 pub(super) async fn apply_restore_block_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: RestoreBlockPayload,
-) -> Result<(), AppError> {
-    crate::loro::projection::project_restore_block_to_sql(
+) -> Result<Vec<String>, AppError> {
+    let restored_ancestors = crate::loro::projection::project_restore_block_to_sql(
         conn,
         p.block_id.as_str(),
         p.deleted_at_ref,
@@ -171,7 +178,7 @@ pub(super) async fn apply_restore_block_sql_only(
     .await?;
     let inheritance_root = topmost_live_ancestor(&mut *conn, p.block_id.as_str()).await?;
     tag_inheritance::recompute_subtree_inheritance(&mut *conn, &inheritance_root).await?;
-    Ok(())
+    Ok(restored_ancestors)
 }
 
 /// SQL-only MoveBlock fallback (formerly `apply_move_block_tx`).

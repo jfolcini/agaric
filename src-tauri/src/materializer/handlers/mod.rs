@@ -95,7 +95,7 @@ pub(crate) use loro_apply::apply_move_block_via_loro;
 // multi-root cascade; a post-cascade call hits dead space resolution).
 pub(crate) use apply::{
     collect_delete_cohort, collect_restore_cohort, dispatch_delete_descendants,
-    dispatch_restore_descendants,
+    dispatch_restore_ancestors, dispatch_restore_descendants,
 };
 pub(crate) use pages_cache::recompute_pages_cache_counts_for_pages;
 pub(crate) use task_handlers::{handle_background_task, handle_foreground_task};
