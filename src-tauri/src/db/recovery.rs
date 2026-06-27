@@ -1411,6 +1411,236 @@ mod tests {
         );
     }
 
+    /// #2052(1a): the iterative `page_id` reconstruction loop in
+    /// [`recover_blocks_from_op_log`] must converge for multi-level
+    /// `page > content > content` nesting. A page self-references
+    /// (`page_id = id`); each content block inherits its nearest page
+    /// ancestor's `page_id` from its parent. Because a deep child's parent has
+    /// no `page_id` yet on the first pass, the fixed-point loop has to make
+    /// MULTIPLE passes (one per nesting level) before every content block
+    /// resolves — a single pass would leave the grandchild NULL. This drives a
+    /// page > L1 > L2 chain from an op-log and asserts BOTH content blocks land
+    /// the page's id (the loop iterated to convergence, not just once).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_reconstructs_page_id_for_multi_level_nesting() {
+        let (pool, _dir) = test_pool().await;
+        sqlx::query("DROP TABLE IF EXISTS blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Constraint-free temp recovery table (the at-head INTEGER era).
+        sqlx::query(
+            "CREATE TABLE blocks (
+                 id TEXT NOT NULL PRIMARY KEY, block_type TEXT NOT NULL DEFAULT 'content',
+                 content TEXT, parent_id TEXT, position INTEGER, deleted_at INTEGER,
+                 todo_state TEXT, priority TEXT, due_date TEXT, scheduled_date TEXT, page_id TEXT
+             )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Op-log: page "pg" → content "l1" (child of pg) → content "l2" (child
+        // of l1). Replay order is `created_at, device_id, seq`.
+        let seed =
+            |id: &'static str, block_type: &'static str, parent: Option<&'static str>, seq: i64| {
+                let pool = pool.clone();
+                async move {
+                    let mut payload = serde_json::json!({
+                        "block_id": id,
+                        "block_type": block_type,
+                        "index": 0,
+                        "content": id,
+                    });
+                    if let Some(p) = parent {
+                        payload["parent_id"] = serde_json::Value::String(p.to_string());
+                    }
+                    sqlx::query(
+                        "INSERT INTO op_log \
+                     (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                     VALUES ('dev', ?, NULL, ?, 'create_block', ?, ?)",
+                    )
+                    .bind(seq)
+                    .bind(format!("h{seq}"))
+                    .bind(payload.to_string())
+                    .bind(1_767_225_600_000_i64 + seq)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                }
+            };
+        seed("pg", "page", None, 1).await;
+        seed("l1", "content", Some("pg"), 2).await;
+        seed("l2", "content", Some("l1"), 3).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        let page_id = |id: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, Option<String>>("SELECT page_id FROM blocks WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap()
+            }
+        };
+
+        assert_eq!(
+            page_id("pg").await.as_deref(),
+            Some("pg"),
+            "a page self-references its own id"
+        );
+        assert_eq!(
+            page_id("l1").await.as_deref(),
+            Some("pg"),
+            "the direct child content inherits the page id (first loop pass)"
+        );
+        assert_eq!(
+            page_id("l2").await.as_deref(),
+            Some("pg"),
+            "the grandchild content must ALSO resolve to the page id — the \
+             iterative loop has to converge over multiple passes (#2052)"
+        );
+    }
+
+    /// #2052(1b): a block whose `parent_id` points at a cross-device id absent
+    /// from the local op_log is an ORPHAN. [`recover_blocks_from_op_log`] NULLs
+    /// such dangling parents before computing `page_id`, so migration 0073's
+    /// `INSERT INTO _new_blocks` (which re-validates the `parent_id REFERENCES
+    /// blocks(id)` self-FK) does not abort. This test:
+    ///   1. replays a `create_block` whose parent is an absent cross-device id,
+    ///   2. asserts the recovered row's `parent_id` is NULLed, then
+    ///   3. runs the REAL migration 0073 SQL (extracted from the live migrator)
+    ///      against the recovered table and asserts it COMMITS — i.e. the
+    ///      rebuilt `blocks` accepts the recovered rows and 0073's
+    ///      `page_id_self_for_pages` CHECK is satisfied.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_nulls_cross_device_orphan_parent_and_migration_0073_accepts() {
+        let (pool, _dir) = test_pool().await;
+        // Reproduce the recovery temp table verbatim (the live `blocks` after a
+        // partial 0073 DROP): no FK, no CHECK. We rebuild it so the orphan
+        // parent can be seeded without the FK rejecting it up front.
+        sqlx::query("DROP TABLE IF EXISTS blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE blocks (
+                 id TEXT NOT NULL PRIMARY KEY, block_type TEXT NOT NULL DEFAULT 'content',
+                 content TEXT, parent_id TEXT, position INTEGER, deleted_at INTEGER,
+                 todo_state TEXT, priority TEXT, due_date TEXT, scheduled_date TEXT, page_id TEXT
+             )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // A page present locally, plus an orphan content block whose parent
+        // ("remote-parent") was created on another device and is NOT in the
+        // local op_log. A self-page row keeps a page present so the 0073 CHECK
+        // arm (`block_type = 'page' OR page_id = id`) is exercised on real data.
+        let seed_create =
+            |id: &'static str, block_type: &'static str, parent: Option<&'static str>, seq: i64| {
+                let pool = pool.clone();
+                async move {
+                    let mut payload = serde_json::json!({
+                        "block_id": id, "block_type": block_type, "index": 0, "content": id,
+                    });
+                    if let Some(p) = parent {
+                        payload["parent_id"] = serde_json::Value::String(p.to_string());
+                    }
+                    sqlx::query(
+                        "INSERT INTO op_log \
+                         (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                         VALUES ('dev', ?, NULL, ?, 'create_block', ?, ?)",
+                    )
+                    .bind(seq)
+                    .bind(format!("h{seq}"))
+                    .bind(payload.to_string())
+                    .bind(1_767_225_600_000_i64 + seq)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                }
+            };
+        seed_create("pg", "page", None, 1).await;
+        seed_create("orphan", "content", Some("remote-parent"), 2).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        // (2) the dangling cross-device parent is NULLed.
+        let orphan_parent =
+            sqlx::query_scalar::<_, Option<String>>("SELECT parent_id FROM blocks WHERE id = ?")
+                .bind("orphan")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            orphan_parent, None,
+            "a parent absent from the local op_log (cross-device id) must be NULLed (#2052)"
+        );
+        // The page row self-references (page_id = id), satisfying 0073's CHECK.
+        let pg_page_id =
+            sqlx::query_scalar::<_, Option<String>>("SELECT page_id FROM blocks WHERE id = ?")
+                .bind("pg")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            pg_page_id.as_deref(),
+            Some("pg"),
+            "the page self-references"
+        );
+
+        // (3) run the REAL migration 0073 against the recovered table. Its
+        // `INSERT INTO _new_blocks SELECT * FROM blocks` re-validates the
+        // self-FK (NULLed orphan parents pass) and fires the
+        // `page_id_self_for_pages` CHECK (the page row passes). A surviving
+        // dangling parent or a `page_id != id` page would abort here.
+        let migrator = sqlx::migrate!("./migrations");
+        let sql_0073 = migrator
+            .iter()
+            .find(|m| m.version == 73 && m.migration_type.is_up_migration())
+            .expect("migration 0073 exists")
+            .sql
+            .as_str()
+            .to_owned();
+        sqlx::query(sqlx::AssertSqlSafe(sql_0073))
+            .execute(&pool)
+            .await
+            .expect(
+                "migration 0073 must accept the recovered rows — the orphan parent was NULLed \
+                 and every page self-references, so its self-FK re-validation and \
+                 page_id_self_for_pages CHECK both pass (#2052)",
+            );
+
+        // Post-migration the rows survive in the rebuilt (CHECK-bearing) table.
+        let orphan_after =
+            sqlx::query_scalar::<_, Option<String>>("SELECT parent_id FROM blocks WHERE id = ?")
+                .bind("orphan")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            orphan_after, None,
+            "the orphan row survives the rebuild with a NULL parent"
+        );
+        let count: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM blocks")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 2, "both recovered rows survive the 0073 rebuild");
+    }
+
     /// #1536 control: a single, non-colliding `create_block` recovers cleanly —
     /// the `rows_affected == 0` warn arm is NOT taken (the insert affects one
     /// row), and the block materializes as expected.

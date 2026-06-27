@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT value_type, options, created_at FROM property_definitions WHERE key = 'status'",
+  "describe": {
+    "columns": [
+      {
+        "name": "value_type",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "property_definitions",
+            "name": "value_type"
+          }
+        }
+      },
+      {
+        "name": "options",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "property_definitions",
+            "name": "options"
+          }
+        }
+      },
+      {
+        "name": "created_at",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "property_definitions",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "ab5898fa792e2a76a6807d07fdb9d2bd354cf11705d54323d8db186b9aba3446"
+}
