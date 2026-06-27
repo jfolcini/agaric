@@ -84,3 +84,39 @@ pub const MAX_LORO_SYNC_PAYLOAD_SIZE: u64 = 256 * 1024 * 1024;
 // pool (2 writers + 4 readers) those sessions ultimately draw on, while still
 // being a hard, finite ceiling.
 pub const MAX_CONCURRENT_RESPONDER_SESSIONS: usize = 16;
+
+// ---------------------------------------------------------------------------
+// TLS / WebSocket handshake timeouts (#2027)
+// ---------------------------------------------------------------------------
+
+// Wall-clock budget for the *responder-side* connection setup — the TLS
+// handshake (`TlsAcceptor::accept`) followed by the WebSocket upgrade
+// (`accept_async_with_config`). Neither step is covered by
+// `SyncConnection::RECV_TIMEOUT`, which only applies once the
+// `SyncConnection` exists. Without this bound a peer that completes the TCP
+// handshake but then stalls TLS (e.g. sends no ClientHello, or wedges
+// mid-handshake) holds its `MAX_CONCURRENT_RESPONDER_SESSIONS` permit for the
+// OS TCP lifetime; 16 such stalls wedge every responder slot. On elapse the
+// per-connection task returns, dropping the `OwnedSemaphorePermit` and freeing
+// the slot.
+//
+// Sizing: a handshake between two LAN devices completes in well under a
+// second; 10 s is generous headroom for a slow/loaded device or a brief
+// network hiccup while still failing a genuinely stalled peer fast enough to
+// keep the 16-slot pool flowing. Distinct from (and far below) the 120 s
+// per-message `HANDSHAKE_TIMEOUT` and 180 s `RECV_TIMEOUT`, which cover the
+// established session, not connection setup.
+pub const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+// Wall-clock budget for the *initiator-side* connect — the full
+// `connect_async_tls_with_config` (TCP connect + TLS handshake + WebSocket
+// upgrade) in `sync_net::connect_to_peer`. The initiator runs this while
+// holding the per-peer lock and blocking a JoinSet round, so a stale
+// `last_address` that TCP-accepts but then stalls TLS would otherwise hang the
+// whole sync round. On elapse the connect fails fast: the multi-address helper
+// (`try_connect_each_address`) records the error and moves to the next
+// address, ultimately failing the round into its existing backoff.
+//
+// Sizing: matches `TLS_HANDSHAKE_TIMEOUT` (10 s) — both bound a single LAN
+// handshake — leaving room for a slow device while bounding a dead address.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);

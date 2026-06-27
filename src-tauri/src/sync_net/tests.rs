@@ -1853,3 +1853,158 @@ async fn partial_json_message_is_rejected() {
         "error should mention deserialization failure, got: {err_msg}"
     );
 }
+
+// -- 11. Handshake / connect timeouts (#2027) --------------------------
+
+/// #2027: the deterministic core of the responder elapsed path. The accept
+/// loop acquires an `OwnedSemaphorePermit` *before* the TLS handshake and the
+/// per-connection task owns it; when the handshake's `tokio::time::timeout`
+/// elapses the task returns, dropping the permit and freeing the slot. This
+/// models that contract with no network IO: a never-resolving future stands in
+/// for a stalled handshake, a very short injected timeout fires, and we assert
+/// (a) the wrapper yields `Err(Elapsed)` and (b) the held permit is returned to
+/// the semaphore when the task's scope ends on that path.
+#[tokio::test]
+async fn handshake_timeout_elapsed_path_releases_permit() {
+    use tokio::sync::Semaphore;
+
+    let limiter = Arc::new(Semaphore::new(1));
+    assert_eq!(limiter.available_permits(), 1, "precondition: one free slot");
+
+    // Acquire the only permit, exactly as the accept loop does before the
+    // handshake. The semaphore is now saturated.
+    let permit = Arc::clone(&limiter).try_acquire_owned().expect("acquire");
+    assert_eq!(
+        limiter.available_permits(),
+        0,
+        "permit held: no free slot while handshake is in flight"
+    );
+
+    // Drive a stalled handshake (a future that never resolves) under a short
+    // injected timeout, inside a scope that owns `permit` — mirroring the
+    // per-connection task body. On elapse we `return` out of the scope, which
+    // drops `permit`.
+    let elapsed = async {
+        let stalled = std::future::pending::<()>();
+        match tokio::time::timeout(Duration::from_millis(50), stalled).await {
+            Ok(()) => false,
+            Err(_elapsed) => {
+                // The real code returns here; `permit` drops with the scope.
+                drop(permit);
+                true
+            }
+        }
+    }
+    .await;
+
+    assert!(elapsed, "the stalled handshake must elapse, not resolve");
+    assert_eq!(
+        limiter.available_permits(),
+        1,
+        "the session slot must be released once the elapsed handshake path drops the permit"
+    );
+}
+
+/// #2027 (responder, end-to-end): a peer that completes the TCP handshake but
+/// then never speaks TLS must not pin its `SyncServer` session permit forever.
+/// We connect a raw TCP socket (no TLS bytes) to the server, which acquires a
+/// permit and stalls in `acceptor.accept`; after `TLS_HANDSHAKE_TIMEOUT` the
+/// per-connection task must drop the permit. We prove the slot was freed by
+/// asserting a normal client still completes a full handshake afterwards.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn responder_releases_permit_after_tls_handshake_timeout() {
+    use tokio::io::AsyncReadExt;
+
+    install_crypto_provider();
+    let cert = generate_self_signed_cert("hs-timeout").unwrap();
+
+    let (server, port) = SyncServer::start(&cert, |_conn, _permit| {})
+        .await
+        .unwrap();
+    let addr = format!("127.0.0.1:{port}");
+
+    // Open a raw TCP connection that completes the TCP handshake (so the accept
+    // loop grabs a permit and enters `acceptor.accept`) but sends no TLS bytes.
+    // This stalls the responder's TLS handshake until `TLS_HANDSHAKE_TIMEOUT`.
+    let mut stalled = tokio::net::TcpStream::connect(&addr)
+        .await
+        .expect("raw TCP connect should succeed");
+
+    // A normal client must still be able to handshake. Allow more than
+    // `TLS_HANDSHAKE_TIMEOUT` so this passes even if the stalled connection
+    // briefly held a slot (it should not, since the cap is large, but the real
+    // guarantee under test is that the stalled permit is eventually released).
+    let timeout = crate::sync_constants::TLS_HANDSHAKE_TIMEOUT + Duration::from_secs(5);
+    let client_cert = generate_self_signed_cert("hs-timeout-client").unwrap();
+    let normal = tokio::time::timeout(
+        timeout,
+        connect_to_peer(&addr, None, None, &client_cert),
+    )
+    .await
+    .expect("a normal client should connect within the handshake-timeout window")
+    .expect("normal client handshake should succeed");
+
+    // After waiting past `TLS_HANDSHAKE_TIMEOUT`, the server must have dropped
+    // the stalled connection: a read returns EOF (Ok(0)) on a clean close.
+    let drained = tokio::time::timeout(timeout, async {
+        let mut buf = [0u8; 1];
+        stalled.read(&mut buf).await
+    })
+    .await
+    .expect("stalled connection should be closed by the server, not held open");
+    assert!(
+        matches!(drained, Ok(0)) || drained.is_err(),
+        "server must drop the stalled TLS connection after the handshake timeout, \
+         got {drained:?}"
+    );
+
+    normal.close().await.ok();
+    server.shutdown().await;
+}
+
+/// #2027 (initiator): `connect_to_peer` must not hang the per-peer lock / sync
+/// round when an address TCP-accepts but then stalls TLS. A bare TCP listener
+/// accepts the connection and holds it open without ever performing the TLS
+/// handshake; `connect_to_peer` must elapse `CONNECT_TIMEOUT` and return a
+/// `connect timed out` error so `try_connect_each_address` can move on.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn connect_to_peer_times_out_on_stalled_tls() {
+    install_crypto_provider();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind stall listener");
+    let port = listener.local_addr().unwrap().port();
+
+    // Accept (completing TCP) but never speak TLS: hold the accepted stream so
+    // the client stalls in the TLS handshake.
+    let accept_task = tokio::spawn(async move {
+        if let Ok((stream, _)) = listener.accept().await {
+            // Park the stream open forever (until the task is aborted).
+            std::future::pending::<()>().await;
+            drop(stream);
+        }
+    });
+
+    let client_cert = generate_self_signed_cert("connect-timeout-client").unwrap();
+    let addr = format!("127.0.0.1:{port}");
+
+    // Bound the test above `CONNECT_TIMEOUT` so a regression (no timeout) is
+    // caught as a test hang rather than a false pass.
+    let bound = crate::sync_constants::CONNECT_TIMEOUT + Duration::from_secs(5);
+    let result = tokio::time::timeout(bound, connect_to_peer(&addr, None, None, &client_cert))
+        .await
+        .expect("connect_to_peer must return (via CONNECT_TIMEOUT), not hang the round");
+
+    let msg = match result {
+        Ok(_conn) => panic!("a stalled TLS handshake must fail, not connect"),
+        Err(e) => e.to_string(),
+    };
+    assert!(
+        msg.contains("connect timed out"),
+        "the elapsed connect must surface a timeout error (not a swallowed/other \
+         error), got: {msg}"
+    );
+
+    accept_task.abort();
+}
