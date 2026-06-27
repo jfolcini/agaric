@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { _internals, buildGitHubIssueUrl, formatReportBody, truncateDeviceId } from '../bug-report'
+import {
+  _internals,
+  BUG_REPORT_TEMPLATE,
+  buildGitHubIssueUrl,
+  formatReportBody,
+  formatReportFields,
+  truncateDeviceId,
+} from '../bug-report'
 import type { BugReport } from '../tauri'
 
 // #609: UUID-shaped, like the real per-device identifier — the issue body
@@ -22,78 +29,156 @@ const SAMPLE_METADATA: BugReport = {
 // --------------------------------------------------------------------------
 
 describe('buildGitHubIssueUrl', () => {
-  it('URL-encodes title and body into the query string', () => {
+  it('targets the issue-form template and never emits a body param', () => {
+    // The repo disables blank issues; a `body=` param hits the disabled
+    // blank-issue route and GitHub 500s. The URL must drive the form.
     const url = buildGitHubIssueUrl({
       owner: 'jfolcini',
       repo: 'agaric',
+      template: BUG_REPORT_TEMPLATE,
       title: 'Crash & burn',
-      body: 'Hello #world, how are you?',
+      fields: { summary: 'it broke' },
     })
     expect(url.startsWith('https://github.com/jfolcini/agaric/issues/new?')).toBe(true)
-    // URLSearchParams encodes spaces as '+'. Ampersands, hashes, and slashes
-    // all get percent-encoded.
+    const params = new URL(url).searchParams
+    expect(params.get('template')).toBe('bug_report.yml')
+    expect(params.has('body')).toBe(false)
+  })
+
+  it('URL-encodes the title and field values into the query string', () => {
+    const url = buildGitHubIssueUrl({
+      owner: 'o',
+      repo: 'r',
+      template: BUG_REPORT_TEMPLATE,
+      title: 'Crash & burn',
+      fields: { actual: 'Hello #world, how are you?' },
+    })
+    // URLSearchParams encodes spaces as '+'; ampersands, hashes, commas and
+    // question marks are percent-encoded.
     expect(url).toContain('title=Crash+%26+burn')
-    expect(url).toContain('body=Hello+%23world%2C+how+are+you%3F')
+    expect(url).toContain('actual=Hello+%23world%2C+how+are+you%3F')
   })
 
-  it('omits the labels param when none are given', () => {
+  it('maps each field id to its own query param', () => {
     const url = buildGitHubIssueUrl({
       owner: 'o',
       repo: 'r',
-      title: 't',
-      body: 'b',
-    })
-    expect(url).not.toContain('labels=')
-  })
-
-  it('joins labels with a comma', () => {
-    const url = buildGitHubIssueUrl({
-      owner: 'o',
-      repo: 'r',
-      title: 't',
-      body: 'b',
-      labels: ['bug', 'triage'],
-    })
-    expect(url).toContain('labels=bug%2Ctriage')
-  })
-
-  it('truncates a body exceeding MAX_BODY_CHARS and appends the marker', () => {
-    const huge = 'x'.repeat(_internals.MAX_BODY_CHARS + 500)
-    const url = buildGitHubIssueUrl({
-      owner: 'o',
-      repo: 'r',
-      title: 't',
-      body: huge,
+      template: BUG_REPORT_TEMPLATE,
+      fields: { summary: 's', version: '1.2.3', os: 'linux' },
     })
     const params = new URL(url).searchParams
-    const body = params.get('body') ?? ''
-    expect(body.length).toBeLessThanOrEqual(_internals.MAX_BODY_CHARS)
-    expect(body.endsWith(_internals.TRUNCATION_MARKER)).toBe(true)
+    expect(params.get('summary')).toBe('s')
+    expect(params.get('version')).toBe('1.2.3')
+    expect(params.get('os')).toBe('linux')
   })
 
-  it('does not truncate a body at exactly MAX_BODY_CHARS', () => {
-    const body = 'x'.repeat(_internals.MAX_BODY_CHARS)
+  it('drops empty field values so no stray `field=` is emitted', () => {
     const url = buildGitHubIssueUrl({
       owner: 'o',
       repo: 'r',
-      title: 't',
-      body,
+      template: BUG_REPORT_TEMPLATE,
+      fields: { summary: 'present', actual: '', logs: '' },
     })
     const params = new URL(url).searchParams
-    const got = params.get('body') ?? ''
-    expect(got.length).toBe(_internals.MAX_BODY_CHARS)
-    expect(got.endsWith(_internals.TRUNCATION_MARKER)).toBe(false)
+    expect(params.get('summary')).toBe('present')
+    expect(params.has('actual')).toBe(false)
+    expect(params.has('logs')).toBe(false)
+  })
+
+  it('omits the title param when empty so the form default prefix is kept', () => {
+    const url = buildGitHubIssueUrl({
+      owner: 'o',
+      repo: 'r',
+      template: BUG_REPORT_TEMPLATE,
+      title: '   ',
+      fields: { summary: 's' },
+    })
+    expect(new URL(url).searchParams.has('title')).toBe(false)
   })
 
   it('encodes owner/repo path segments', () => {
     const url = buildGitHubIssueUrl({
       owner: 'has space',
       repo: 'a/b',
-      title: 't',
-      body: 'b',
+      template: BUG_REPORT_TEMPLATE,
+      fields: {},
     })
     expect(url).toContain('/has%20space/')
     expect(url).toContain('/a%2Fb/')
+  })
+})
+
+// --------------------------------------------------------------------------
+// formatReportFields
+// --------------------------------------------------------------------------
+
+describe('formatReportFields', () => {
+  it('maps the report onto the issue-form field ids', () => {
+    const fields = formatReportFields({
+      metadata: SAMPLE_METADATA,
+      title: 'Editor crashes on undo',
+      description: 'It crashes when I press Ctrl+Z.',
+      zipFileName: 'agaric-bug-report-2025-01-15.zip',
+    })
+    expect(fields.summary).toBe('Editor crashes on undo')
+    expect(fields.actual).toBe('It crashes when I press Ctrl+Z.')
+    expect(fields.version).toBe('0.1.0')
+    expect(fields.os).toBe('linux')
+    expect(fields.logs).toBe('2025-01-01 ERROR [agaric] kaboom\n2025-01-01 WARN [agaric] slowpoke')
+    expect(fields.notes).toContain('Arch: x86_64')
+    expect(fields.notes).toContain('Diagnostic ZIP to attach: agaric-bug-report-2025-01-15.zip')
+  })
+
+  it('trims the title and description', () => {
+    const fields = formatReportFields({
+      metadata: SAMPLE_METADATA,
+      title: '  spaced title  ',
+      description: '  spaced body  ',
+    })
+    expect(fields.summary).toBe('spaced title')
+    expect(fields.actual).toBe('spaced body')
+  })
+
+  it('caps the logs field at MAX_BODY_CHARS and appends the marker', () => {
+    const huge = 'x'.repeat(_internals.MAX_BODY_CHARS + 500)
+    const fields = formatReportFields({
+      metadata: { ...SAMPLE_METADATA, recent_errors: [huge] },
+      title: 't',
+      description: 'd',
+    })
+    expect(fields.logs.length).toBeLessThanOrEqual(_internals.MAX_BODY_CHARS)
+    expect(fields.logs.endsWith(_internals.TRUNCATION_MARKER)).toBe(true)
+  })
+
+  it('leaves logs empty when there are no recent errors', () => {
+    const fields = formatReportFields({
+      metadata: { ...SAMPLE_METADATA, recent_errors: [] },
+      title: 't',
+      description: 'd',
+    })
+    expect(fields.logs).toBe('')
+  })
+
+  it('omits the ZIP reminder when no zipFileName is given', () => {
+    const fields = formatReportFields({
+      metadata: SAMPLE_METADATA,
+      title: 't',
+      description: 'd',
+    })
+    expect(fields.notes).not.toContain('Diagnostic ZIP')
+  })
+
+  // #609: the full device ID must never reach a public issue — only the
+  // truncated prefix, surfaced in the notes field.
+  it('never embeds the full device ID (#609)', () => {
+    const fields = formatReportFields({
+      metadata: SAMPLE_METADATA,
+      title: 't',
+      description: 'd',
+    })
+    const all = Object.values(fields).join('\n')
+    expect(all).not.toContain(FULL_DEVICE_ID)
+    expect(fields.notes).toContain('Device ID: 12345678… (truncated)')
   })
 })
 

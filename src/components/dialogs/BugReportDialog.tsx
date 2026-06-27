@@ -43,7 +43,12 @@ import { SheetBody } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
-import { buildGitHubIssueUrl, formatReportBody } from '@/lib/bug-report'
+import {
+  BUG_REPORT_TEMPLATE,
+  buildGitHubIssueUrl,
+  formatReportBody,
+  formatReportFields,
+} from '@/lib/bug-report'
 import { bugReportZipFilename, buildReportZip } from '@/lib/bug-report-zip'
 import { writeText } from '@/lib/clipboard'
 import { BUG_TRACKER } from '@/lib/config'
@@ -173,15 +178,30 @@ export function BugReportDialog({
     })
   }, [metadata, description, includeLogs, zipFileName])
 
+  // Map the report onto the bug_report.yml issue-form field ids. The repo
+  // disables blank issues, so the URL must drive the form (not a `body=`
+  // param) — see buildGitHubIssueUrl / BUG_REPORT_TEMPLATE.
+  const issueFields = useMemo<Record<string, string>>(() => {
+    if (metadata == null) return {}
+    return formatReportFields({
+      metadata,
+      title,
+      description,
+      zipFileName: includeLogs ? zipFileName : undefined,
+    })
+  }, [metadata, title, description, includeLogs, zipFileName])
+
   const issueUrl = useMemo<string>(
     () =>
       buildGitHubIssueUrl({
         owner: BUG_TRACKER.owner,
         repo: BUG_TRACKER.repo,
-        title: title.trim().length > 0 ? title : t('bugReport.title'),
-        body,
+        template: BUG_REPORT_TEMPLATE,
+        // Empty title → keep the form's own `bug: ` default prefix.
+        title,
+        fields: issueFields,
       }),
-    [title, body, t],
+    [title, issueFields],
   )
 
   // Copy the formatted report body. The navigator-availability
