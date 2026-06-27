@@ -702,6 +702,19 @@ pub async fn add_tags_by_ids_inner(
         _ => {}
     }
 
+    // #2038: resolve the live target set in ONE membership query instead of a
+    // per-block existence SELECT inside the loop (N+1). Skip-on-miss preserved.
+    let block_ids_json = serde_json::to_string(&block_ids)?;
+    let alive: std::collections::HashSet<String> = sqlx::query_scalar!(
+        r#"SELECT id FROM blocks
+           WHERE id IN (SELECT value FROM json_each(?)) AND deleted_at IS NULL"#,
+        block_ids_json
+    )
+    .fetch_all(&mut **tx)
+    .await?
+    .into_iter()
+    .collect();
+
     let mut tagged: i64 = 0;
     for block_id in &block_ids {
         // Mirror — a block cannot tag itself. Skip rather than abort:
@@ -713,15 +726,7 @@ pub async fn add_tags_by_ids_inner(
 
         let block_id_str = block_id.as_str();
 
-        // Probe existence inside the tx so a row deleted between FE selection
-        // and this call cleanly skips rather than aborting the whole batch.
-        let exists = sqlx::query_scalar!(
-            r#"SELECT 1 AS "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
-            block_id_str
-        )
-        .fetch_optional(&mut **tx)
-        .await?;
-        if exists.is_none() {
+        if !alive.contains(block_id_str) {
             continue;
         }
 
