@@ -28,6 +28,18 @@ vi.mock('pdfjs-dist', () => ({
   getDocument: vi.fn(),
 }))
 
+// #2035 — the real PdfViewerDialog statically imports pdfjs-dist (+ CSS) with
+// module-scope side effects. Mock it with a lightweight stub so we can assert
+// when StaticBlock mounts it (only the `open && <Dialog/>` gate flips it in)
+// without dragging the heavy module into the test.
+vi.mock('@/components/dialogs/PdfViewerDialog', () => ({
+  PdfViewerDialog: ({ open, filename }: { open: boolean; filename: string }) => (
+    <div data-testid="pdf-viewer-dialog" data-open={String(open)}>
+      {filename}
+    </div>
+  ),
+}))
+
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
   convertFileSrc: vi.fn((path: string) => `asset://localhost/${encodeURIComponent(path)}`),
@@ -1022,6 +1034,55 @@ describe('StaticBlock', () => {
 
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  // -- PDF viewer dialog gating (#2035) ---------------------------------------
+  //
+  // The lazy PdfViewerDialog must NOT be mounted on a normal render — React.lazy
+  // triggers the dynamic import (pulling in the ~450KB pdfjs-dist chunk) the
+  // moment the lazy component appears in the tree, regardless of its `open`
+  // prop. StaticBlock gates it behind `pdfViewerOpen && <Dialog/>` so the chunk
+  // only loads when the user actually opens a PDF attachment.
+
+  describe('PDF viewer dialog gating', () => {
+    function makePdfAttachment(overrides: Partial<AttachmentRow> = {}): AttachmentRow {
+      return {
+        id: 'pdf-att-1',
+        block_id: 'B1',
+        filename: 'report.pdf',
+        mime_type: 'application/pdf',
+        size_bytes: 2048,
+        fs_path: '/path/to/report.pdf',
+        created_at: 1704067200000,
+        ...overrides,
+      }
+    }
+
+    it('does not mount PdfViewerDialog when no PDF is open', () => {
+      mockBatchAttachments([makePdfAttachment()])
+      render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
+
+      // The chip is present, but the (lazy) dialog must NOT be in the tree.
+      expect(screen.getByRole('button', { name: 'Open file report.pdf' })).toBeInTheDocument()
+      expect(screen.queryByTestId('pdf-viewer-dialog')).not.toBeInTheDocument()
+    })
+
+    it('mounts PdfViewerDialog after a PDF attachment is clicked', async () => {
+      const user = userEvent.setup()
+      mockBatchAttachments([makePdfAttachment()])
+      render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
+
+      // Not mounted before the click.
+      expect(screen.queryByTestId('pdf-viewer-dialog')).not.toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: 'Open file report.pdf' }))
+
+      // Clicking reads the bytes over IPC, makes a blob URL, and flips
+      // pdfViewerOpen → the gated lazy dialog mounts (open=true, right filename).
+      const dialog = await screen.findByTestId('pdf-viewer-dialog')
+      expect(dialog).toHaveAttribute('data-open', 'true')
+      expect(dialog).toHaveTextContent('report.pdf')
     })
   })
 
