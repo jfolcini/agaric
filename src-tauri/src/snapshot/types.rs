@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 // Older blobs still deserialise as long as every dropped field carries
 // `#[serde(default)]` on intermediate versions; values for retired
 // columns are simply discarded on restore.
-pub(crate) const SCHEMA_VERSION: u32 = 5;
+pub(crate) const SCHEMA_VERSION: u32 = 6;
 
 // #706 item 1 — version gate BEFORE table decode.
 //
@@ -27,12 +27,15 @@ pub(crate) const SCHEMA_VERSION: u32 = 5;
 // `MIN_SCHEMA_VERSION` is the first version whose on-wire layout matches
 // the current structs. #109 Phase 2 introduced the i64 epoch-ms columns
 // (`blocks.deleted_at` / `attachments.created_at`) together with the v4
-// bump, so v4 and v5 (v5 only adds the `#[serde(default)]` `space_id`,
-// which is forward-compatible) share the current decodable shape. v1..=v3
-// carried the old TEXT timestamp columns and can never deserialize into
-// today's structs. Snapshots at or above the floor decode cleanly; older
-// ones are rejected up front with an honest "unsupported schema version"
-// message instead of a confusing decode failure buried in `tables`.
+// bump, so v4..=v6 share the current decodable shape: v5 only adds the
+// `#[serde(default)]` `space_id` and v6 only adds the `#[serde(default)]`
+// `attachments.content_hash` (#2022) — both forward/backward-compatible
+// (an old blob omits the field → decodes as `None`; a new blob's extra
+// field is simply absent in older readers). v1..=v3 carried the old TEXT
+// timestamp columns and can never deserialize into today's structs.
+// Snapshots at or above the floor decode cleanly; older ones are rejected
+// up front with an honest "unsupported schema version" message instead of
+// a confusing decode failure buried in `tables`.
 pub(crate) const MIN_SCHEMA_VERSION: u32 = 4;
 
 /// Validating deserializer for [`SnapshotData::schema_version`].
@@ -136,6 +139,14 @@ pub struct AttachmentSnapshot {
     pub created_at: i64,
     /// STAYS TEXT — `attachments.deleted_at` is out of scope for #109 Phase 2.
     pub deleted_at: Option<String>,
+    /// #2022: blake3 content hash (`attachments.content_hash`, migration 0093).
+    /// Captured + restored so a snapshot RESET preserves the attachment dedup
+    /// link — without it every restored attachment lands NULL and the
+    /// `attachment_blobs` (hash → path) layer is inconsistent until the
+    /// boot-time backfill re-hashes every file. `#[serde(default)]` keeps
+    /// pre-v6 snapshots decodable (→ None).
+    #[serde(default)]
+    pub content_hash: Option<String>,
 }
 
 /// A property definition row captured in a snapshot.

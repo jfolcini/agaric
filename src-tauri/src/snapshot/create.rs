@@ -150,7 +150,7 @@ pub(crate) async fn collect_tables(
 
     let attachments: Vec<AttachmentSnapshot> = sqlx::query_as!(
         AttachmentSnapshot,
-        "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at, deleted_at FROM attachments"
+        "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at, deleted_at, content_hash FROM attachments"
     )
     .fetch_all(&mut *conn)
     .await?;
