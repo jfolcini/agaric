@@ -45,6 +45,11 @@ pub(crate) fn serialize_inner_payload(op_payload: &OpPayload) -> Result<String, 
 /// The payload prefix is truncated at 80 chars so a multi-MB malformed payload
 /// does not flood the log line. `chars().take(80)` handles UTF-8 boundaries
 /// correctly (slicing by byte index can split a multi-byte codepoint).
+///
+/// Test-only since #2071: production ingest parses the payload once via
+/// [`extract_indexed_ids_from_payload`]. These single-field helpers remain as
+/// the extraction oracle that the `op_log`/`dag` tests compare against.
+#[cfg(test)]
 fn extract_str_field_from_payload(payload_json: &str, field: &'static str) -> Option<String> {
     match serde_json::from_str::<serde_json::Value>(payload_json) {
         Ok(value) => value.get(field)?.as_str().map(str::to_owned),
@@ -65,6 +70,41 @@ fn extract_str_field_from_payload(payload_json: &str, field: &'static str) -> Op
     }
 }
 
+/// Parse the payload JSON **once** and extract both indexed-column values
+/// (`block_id` and `attachment_id`) in a single pass.
+///
+/// [`crate::dag::insert_remote_op`] needs both denormalised columns for every
+/// ingested remote op. Extracting `block_id` and `attachment_id` with two
+/// separate `serde_json::from_str` passes parses the same JSON twice; this
+/// helper parses it once. Remote-op ingest runs per synced op, so halving the
+/// parse work matters under sync burst.
+///
+/// Same warn-and-continue contract as the single-field helpers: a parse
+/// failure logs once at warn level (not once per field) and yields
+/// `(None, None)`, leaving the indexed columns unpopulated rather than
+/// aborting ingest.
+pub(crate) fn extract_indexed_ids_from_payload(
+    payload_json: &str,
+) -> (Option<String>, Option<String>) {
+    match serde_json::from_str::<serde_json::Value>(payload_json) {
+        Ok(value) => {
+            let get = |field: &str| value.get(field).and_then(|v| v.as_str()).map(str::to_owned);
+            (get("block_id"), get("attachment_id"))
+        }
+        Err(e) => {
+            // Truncate at 80 chars (UTF-8-safe via `chars().take`) so a
+            // multi-MB malformed payload does not flood the log line.
+            let prefix: String = payload_json.chars().take(80).collect();
+            tracing::warn!(
+                error = %e,
+                op_payload_prefix = %prefix,
+                "failed to parse payload for indexed-id extraction",
+            );
+            (None, None)
+        }
+    }
+}
+
 /// Extract the `block_id` from a serialized payload JSON string.
 ///
 /// Used by [`crate::dag::insert_remote_op`] to populate the indexed
@@ -74,6 +114,9 @@ fn extract_str_field_from_payload(payload_json: &str, field: &'static str) -> Op
 /// Returns `None` if the payload has no `block_id` field (the
 /// `delete_attachment` op targets an attachment_id only) or if the JSON
 /// cannot be parsed.
+///
+/// Test-only since #2071 (see [`extract_indexed_ids_from_payload`]).
+#[cfg(test)]
 pub(crate) fn extract_block_id_from_payload(payload_json: &str) -> Option<String> {
     extract_str_field_from_payload(payload_json, "block_id")
 }
@@ -91,6 +134,9 @@ pub(crate) fn extract_block_id_from_payload(payload_json: &str) -> Option<String
 /// [`extract_block_id_from_payload`] — silent-swallow of malformed
 /// JSON would lose the indexed entry and produce hard-to-attribute
 /// "reverse-attachment query misses this op" bugs.
+///
+/// Test-only since #2071 (see [`extract_indexed_ids_from_payload`]).
+#[cfg(test)]
 pub(crate) fn extract_attachment_id_from_payload(payload_json: &str) -> Option<String> {
     extract_str_field_from_payload(payload_json, "attachment_id")
 }

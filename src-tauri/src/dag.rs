@@ -15,8 +15,7 @@ use crate::error::AppError;
 use crate::hash::{compute_op_hash, verify_op_hash};
 use crate::op::*;
 use crate::op_log::{
-    OpRecord, extract_attachment_id_from_payload, extract_block_id_from_payload, get_op_by_seq,
-    serialize_inner_payload,
+    OpRecord, extract_indexed_ids_from_payload, get_op_by_seq, serialize_inner_payload,
 };
 
 /// Hard cap on the number of `prev_edit` chain steps `find_lca` will
@@ -546,18 +545,15 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bo
     // INSERT OR IGNORE — duplicate delivery is a no-op.
     // Returns true if a row was inserted, false if it was a duplicate.
     //
-    // Populate the indexed block_id column (migration 0030) from
-    // the JSON payload so sync'd remote ops participate in fast block-scoped
-    // lookups. Local ops use OpPayload::block_id() directly; here we only
-    // have the serialized payload string.
-    let block_id: Option<String> = extract_block_id_from_payload(&record.payload);
-
-    // SQL-review B-4 / migration 0064: same denormalisation pattern as
-    // block_id, applied to attachment_id. Remote attachment ops must
-    // populate the column so the reverse-attachment lookup in
-    // `reverse::attachment_ops::reverse_delete_attachment` finds them
-    // via the indexed `idx_op_log_attachment_id` partial index.
-    let attachment_id: Option<String> = extract_attachment_id_from_payload(&record.payload);
+    // Populate the indexed block_id (migration 0030) and attachment_id
+    // (SQL-review B-4 / migration 0064) columns from the JSON payload so
+    // sync'd remote ops participate in fast block-scoped and reverse-attachment
+    // lookups (the latter via the `idx_op_log_attachment_id` partial index used
+    // by `reverse::attachment_ops::reverse_delete_attachment`). Local ops use
+    // the typed `OpPayload` accessors directly; here we only have the
+    // serialized payload string, so parse it once for both columns rather than
+    // once per field.
+    let (block_id, attachment_id) = extract_indexed_ids_from_payload(&record.payload);
 
     let result = sqlx::query!(
         "INSERT OR IGNORE INTO op_log \

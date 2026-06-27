@@ -447,3 +447,47 @@ fn canonical_json_deterministic_across_all_payload_types() {
         );
     }
 }
+
+// ── Single-pass indexed-id extraction (#2071) ───────────────────────
+
+/// `extract_indexed_ids_from_payload` parses the payload once and must agree,
+/// field-for-field, with the two single-field helpers it replaces at the
+/// `insert_remote_op` call site — across the create_block (block_id only),
+/// add_attachment (both ids), and delete_attachment (attachment_id only)
+/// shapes.
+#[test]
+fn extract_indexed_ids_agrees_with_single_field_helpers() {
+    let cases = [
+        // block_id present, attachment_id absent.
+        r#"{"block_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","content":"hi"}"#,
+        // both present (add_attachment shape).
+        r#"{"attachment_id":"01BX5ZZKBKACTAV9WEVGEMMVRZ","block_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","filename":"p.png"}"#,
+        // attachment_id only (delete_attachment shape).
+        r#"{"attachment_id":"01BX5ZZKBKACTAV9WEVGEMMVRZ"}"#,
+        // neither field.
+        r#"{"key":"status","value_text":"done"}"#,
+    ];
+    for payload in cases {
+        let (block_id, attachment_id) = extract_indexed_ids_from_payload(payload);
+        assert_eq!(
+            block_id,
+            extract_block_id_from_payload(payload),
+            "block_id mismatch for {payload}"
+        );
+        assert_eq!(
+            attachment_id,
+            extract_attachment_id_from_payload(payload),
+            "attachment_id mismatch for {payload}"
+        );
+    }
+}
+
+/// Malformed JSON yields `(None, None)` (warn-and-continue) rather than
+/// panicking or aborting ingest — the indexed columns are simply left
+/// unpopulated.
+#[test]
+fn extract_indexed_ids_malformed_json_yields_none() {
+    let (block_id, attachment_id) = extract_indexed_ids_from_payload("not json");
+    assert_eq!(block_id, None);
+    assert_eq!(attachment_id, None);
+}
