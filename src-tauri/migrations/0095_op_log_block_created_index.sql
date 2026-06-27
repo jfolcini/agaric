@@ -1,0 +1,15 @@
+-- #2039: composite (block_id, created_at) index for the LastEdited sort/group.
+--
+-- The query engine's LastEdited path joins a derived
+-- `SELECT block_id, MAX(created_at) FROM op_log GROUP BY block_id` (and a
+-- correlated `MAX(created_at)` variant). With only `idx_op_log_block_id`
+-- (block_id alone, migration 0030) and `idx_op_log_created` (created_at alone,
+-- migration 0001), SQLite must scan + group the entire append-only op_log on
+-- every such query (and again in the COUNT) — O(total_ops), which dominates on
+-- a mature vault even for a 50-row cursor page.
+--
+-- This composite lets SQLite satisfy the per-block MAX from the right edge of
+-- the index (an index-only seek per matched block_id), turning both the
+-- GROUP BY derived table and the correlated-subquery variant into
+-- O(matched_blocks · log) seeks instead of a full-table scan + sort.
+CREATE INDEX IF NOT EXISTS idx_op_log_block_created ON op_log (block_id, created_at);

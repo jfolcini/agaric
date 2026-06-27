@@ -2159,3 +2159,36 @@ async fn has_parent_matching_depth_exceeded_is_rejected() {
         "deeply-nested has-parent-matching must be rejected by the depth gate, got {err:?}"
     );
 }
+
+/// #2039: the LastEdited derived-table query
+/// (`SELECT block_id, MAX(created_at) FROM op_log GROUP BY block_id`) must be
+/// served by the composite `idx_op_log_block_created` index (migration 0095) —
+/// an index-only per-block MAX from the right edge — instead of a full op_log
+/// scan plus a temp B-tree GROUP BY sort that grows with the whole op_log.
+#[tokio::test]
+async fn last_edited_group_by_uses_block_created_index_2039() {
+    let (pool, _dir) = test_pool().await;
+
+    let plan_rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(
+        "EXPLAIN QUERY PLAN \
+         SELECT block_id, MAX(created_at) AS max_ca FROM op_log GROUP BY block_id",
+    ))
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    let plan = plan_rows
+        .iter()
+        .map(|(_, _, _, d)| d.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(
+        plan.contains("idx_op_log_block_created"),
+        "LastEdited GROUP BY must use idx_op_log_block_created; plan was:\n{plan}"
+    );
+    assert!(
+        !plan.contains("USE TEMP B-TREE FOR GROUP BY"),
+        "composite index must satisfy the GROUP BY ordering (no temp b-tree sort); plan was:\n{plan}"
+    );
+}
