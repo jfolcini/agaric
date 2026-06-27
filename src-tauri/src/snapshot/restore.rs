@@ -188,6 +188,20 @@ pub async fn apply_snapshot<R: std::io::Read>(
     sqlx::query!("DELETE FROM attachments")
         .execute(&mut *tx)
         .await?;
+    // #2022: reconcile the content-addressed blob store (migration 0094) in
+    // the SAME tx as the attachments wipe. The snapshot format carries no
+    // `attachment_blobs` rows — the table is pure local-dedup state keyed on
+    // `attachments.content_hash`. Left in place across a RESET, the pre-reset
+    // `(hash → on_disk_path)` rows would survive while the restored
+    // attachments carry the snapshot's hashes, leaving the dedup layer
+    // pointing at stale, possibly-deleted files until the boot-time
+    // `backfill_attachment_blobs` pass rebuilt it. Wiping here (and rebuilding
+    // lazily from the restored `content_hash` values on next boot) keeps the
+    // dedup layer consistent the instant the restore commits — a rollback
+    // keeps the old blobs alongside the old attachments (consistent).
+    sqlx::query!("DELETE FROM attachment_blobs")
+        .execute(&mut *tx)
+        .await?;
     sqlx::query!("DELETE FROM page_aliases")
         .execute(&mut *tx)
         .await?;
@@ -565,7 +579,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
         table: "attachments",
         columns: [
             "id", "block_id", "mime_type", "filename", "size_bytes",
-            "fs_path", "created_at", "deleted_at",
+            "fs_path", "created_at", "deleted_at", "content_hash",
         ],
         rows: data.tables.attachments,
         bind: |q, a| {
@@ -583,6 +597,10 @@ pub async fn apply_snapshot<R: std::io::Read>(
                 .bind(&a.fs_path)
                 .bind(a.created_at)
                 .bind(&a.deleted_at)
+                // #2022: round-trip the blake3 content_hash (migration 0093)
+                // so the restored attachment keeps its dedup link instead of
+                // landing NULL and forcing a full boot-time re-hash.
+                .bind(&a.content_hash)
         },
     );
 

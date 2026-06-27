@@ -116,6 +116,7 @@ fn sample_snapshot_data() -> SnapshotData {
                 fs_path: "attachments/photo.png".to_string(),
                 created_at: 1_735_689_600_000,
                 deleted_at: None,
+                content_hash: None,
             }],
             property_definitions: vec![],
             page_aliases: vec![],
@@ -1655,6 +1656,7 @@ async fn apply_snapshot_full_all_5_tables() {
                 fs_path: "attachments/notes.txt".to_string(),
                 created_at: 1_735_689_600_000,
                 deleted_at: None,
+                content_hash: None,
             }],
             property_definitions: vec![],
             page_aliases: vec![],
@@ -3479,6 +3481,7 @@ async fn apply_snapshot_rejects_traversal_attachment_fs_path() {
                 fs_path: "../../../etc/passwd".to_string(),
                 created_at: 1_735_689_600_000,
                 deleted_at: None,
+                content_hash: None,
             }],
             property_definitions: vec![],
             page_aliases: vec![],
@@ -3821,19 +3824,26 @@ mod proptest_tests {
             "[a-z]{3,8}\\.[a-z]{3}",
             1i64..1_000_000,
             "attachments/[a-z]{3,10}",
+            // #2022: generate both NULL and non-NULL content_hash so a dropped
+            // column in the create/restore path (which would silently turn the
+            // hash into None on round-trip) is caught by the proptest suite.
+            proptest::option::of("[a-f0-9]{64}"),
         )
-            .prop_map(|(id, block_id, mime_type, filename, size_bytes, fs_path)| {
-                AttachmentSnapshot {
-                    id: id.into(),
-                    block_id: block_id.into(),
-                    mime_type,
-                    filename,
-                    size_bytes,
-                    fs_path,
-                    created_at: 1_735_689_600_000,
-                    deleted_at: None,
-                }
-            })
+            .prop_map(
+                |(id, block_id, mime_type, filename, size_bytes, fs_path, content_hash)| {
+                    AttachmentSnapshot {
+                        id: id.into(),
+                        block_id: block_id.into(),
+                        mime_type,
+                        filename,
+                        size_bytes,
+                        fs_path,
+                        created_at: 1_735_689_600_000,
+                        deleted_at: None,
+                        content_hash,
+                    }
+                },
+            )
     }
 
     /// Strategy for generating a complete `SnapshotData` with random fields.
@@ -5764,6 +5774,131 @@ async fn apply_snapshot_clean_unchanged_by_repairs_1567() {
         .await
         .unwrap();
     assert_eq!(tags, 1, "the clean block_tags edge must restore unchanged");
+
+    mat.shutdown();
+}
+
+// =======================================================================
+// #2022 — attachments.content_hash survives RESET + attachment_blobs is
+// reconciled in the same transaction.
+// =======================================================================
+
+/// #2022: end-to-end fidelity test for the attachment dedup layer across a
+/// RESET. Drives a REAL `create_snapshot` → `apply_snapshot` cycle (so it
+/// exercises the `collect_tables` SELECT and the `apply_snapshot` bind list,
+/// not just a hand-built `SnapshotData`) and asserts:
+///
+///   (a) the restored attachment's `content_hash` survives intact (NOT NULL),
+///       so the dedup link from row → blob is preserved across the RESET; and
+///   (b) `attachment_blobs` is reconciled — the snapshot format carries no
+///       blob rows, so EVERY pre-reset `attachment_blobs` row (matching AND
+///       stale) is wiped in the same tx as the lineage wipe, leaving the
+///       table empty for the boot-time `backfill_attachment_blobs` to rebuild.
+///
+/// Without the fix, (a) fails (content_hash restores NULL because the SELECT
+/// omits the column) and (b) fails (the stale pre-reset blob row survives the
+/// restore because the wipe block never DELETEs `attachment_blobs`).
+#[tokio::test]
+async fn apply_snapshot_round_trips_content_hash_and_reconciles_blobs_2022() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let device_id = "dev-2022";
+    let block_id = BlockId::test_id("BLK-HASH").to_string();
+    let att_id = BlockId::test_id("ATT-HASH").to_string();
+    // 64-char blake3-hex-shaped digests.
+    let live_hash = "a".repeat(64);
+    let stale_hash = "b".repeat(64);
+
+    // Owning block for the attachment FK.
+    sqlx::query("INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'content', 'hosts attachment', 1)")
+        .bind(&block_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // A hash-bearing attachment row (content_hash = live_hash).
+    sqlx::query(
+        "INSERT INTO attachments \
+         (id, block_id, mime_type, filename, size_bytes, fs_path, created_at, content_hash) \
+         VALUES (?, ?, 'text/plain', 'doc.txt', 12, 'attachments/doc.txt', 1735689600000, ?)",
+    )
+    .bind(&att_id)
+    .bind(&block_id)
+    .bind(&live_hash)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // A matching blob row (the attachment's live blob) AND a stale pre-reset
+    // blob row that no attachment references. Both must be gone after RESET —
+    // the blob table is pure local-dedup state, rebuilt lazily on next boot.
+    sqlx::query(
+        "INSERT INTO attachment_blobs (content_hash, on_disk_path, size_bytes, created_at) \
+         VALUES (?, 'attachments/doc.txt', 12, 1735689600000)",
+    )
+    .bind(&live_hash)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO attachment_blobs (content_hash, on_disk_path, size_bytes, created_at) \
+         VALUES (?, 'attachments/stale.bin', 99, 1735689600000)",
+    )
+    .bind(&stale_hash)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // An op so `collect_frontier` has a row to fold (it tolerates an empty
+    // op_log, but a real frontier keeps the test faithful to production).
+    insert_op_at(&pool, device_id, "BLK-HASH", 1_735_689_600_000).await;
+
+    // Real create → fetch → apply (RESET) cycle.
+    let snap_id = create_snapshot(&pool, device_id).await.unwrap();
+    let (got_id, blob) = get_latest_snapshot(&pool)
+        .await
+        .unwrap()
+        .expect("a complete snapshot must exist");
+    assert_eq!(got_id, snap_id, "must fetch the snapshot just created");
+
+    let restored = apply_snapshot(&pool, &mat, &blob[..]).await.unwrap();
+    // The returned SnapshotData must carry the hash (decode-side fidelity).
+    assert_eq!(
+        restored.tables.attachments.len(),
+        1,
+        "exactly one attachment must round-trip"
+    );
+    assert_eq!(
+        restored.tables.attachments[0].content_hash.as_deref(),
+        Some(live_hash.as_str()),
+        "the snapshot must carry the attachment's content_hash"
+    );
+
+    // (a) the restored attachment row's content_hash survives intact, NOT NULL.
+    let restored_hash: Option<String> =
+        sqlx::query_scalar("SELECT content_hash FROM attachments WHERE id = ?")
+            .bind(&att_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        restored_hash.as_deref(),
+        Some(live_hash.as_str()),
+        "#2022: restored attachment.content_hash must survive the RESET, not land NULL"
+    );
+
+    // (b) attachment_blobs is reconciled — BOTH the matching and the stale
+    // pre-reset rows are gone (the snapshot carries no blob rows).
+    let blob_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachment_blobs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        blob_count, 0,
+        "#2022: attachment_blobs must be wiped in the RESET tx so no pre-reset \
+         (hash -> path) row survives a restore"
+    );
 
     mat.shutdown();
 }
