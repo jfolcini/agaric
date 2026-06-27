@@ -133,6 +133,20 @@ impl MulticastLock {
                     )?
                     .l()?;
 
+                // Some devices and restricted/work profiles return a *null*
+                // WifiManager from getSystemService. Invoking
+                // createMulticastLock on a null receiver is a JNI fatal error
+                // (SIGSEGV under ART), not a catchable Java exception — it
+                // aborts the whole process before the `?`/exception-check
+                // machinery can turn it into an `Err`. Guard explicitly so the
+                // daemon fails soft (logs and runs without mDNS) instead of
+                // crashing.
+                if wifi_manager.as_raw().is_null() {
+                    return Err(MulticastLockError::NoAndroidContext(
+                        "Context.getSystemService(\"wifi\") returned null".into(),
+                    ));
+                }
+
                 // wifiManager.createMulticastLock("agaric-mdns") → MulticastLock
                 let tag = env.new_string("agaric-mdns")?;
                 let lock = env
@@ -145,6 +159,14 @@ impl MulticastLock {
                         &[JValue::Object(&tag)],
                     )?
                     .l()?;
+
+                // Same guard for a null MulticastLock before we call
+                // setReferenceCounted/acquire on it.
+                if lock.as_raw().is_null() {
+                    return Err(MulticastLockError::NoAndroidContext(
+                        "WifiManager.createMulticastLock returned null".into(),
+                    ));
+                }
 
                 // lock.setReferenceCounted(false) — one release() always unlocks.
                 env.call_method(
