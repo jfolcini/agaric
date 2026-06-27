@@ -369,17 +369,24 @@ function StaticBlockInner({
           onPdfOpen={handlePdfOpen}
         />
       )}
-      <Suspense fallback={<Spinner />}>
-        <LazyPdfViewerDialog
-          open={pdfViewerOpen}
-          onOpenChange={setPdfViewerOpen}
-          fileUrl={pdfViewerUrl}
-          filename={pdfViewerFilename}
-          blockId={blockId}
-          attachmentId={pdfViewerAttachmentId}
-          onSaved={handlePdfSaved}
-        />
-      </Suspense>
+      {/* Gate the lazy dialog on `pdfViewerOpen` so React.lazy only triggers
+          the dynamic import (pulling in the ~450KB pdfjs-dist chunk + its
+          module-scope side effects) when the user actually opens a PDF — not on
+          every static-block render. The dialog tears down its document/viewer on
+          close, so unmounting here loses no state we need to keep (#2035). */}
+      {pdfViewerOpen && (
+        <Suspense fallback={<Spinner />}>
+          <LazyPdfViewerDialog
+            open={pdfViewerOpen}
+            onOpenChange={setPdfViewerOpen}
+            fileUrl={pdfViewerUrl}
+            filename={pdfViewerFilename}
+            blockId={blockId}
+            attachmentId={pdfViewerAttachmentId}
+            onSaved={handlePdfSaved}
+          />
+        </Suspense>
+      )}
       {lightboxState && (
         <ImageLightbox
           images={lightboxState.images.map((img) => ({
