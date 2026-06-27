@@ -93,6 +93,40 @@ describe('htmlBodyToOutline — block structure', () => {
     ])
   })
 
+  it('nests a child list WRAPPED in a div one depth under its parent item (#2024)', () => {
+    // A nested list wrapped in a non-list element (common in web exports) is
+    // stripped from the parent item's text by the recursive `querySelectorAll`
+    // removal; the recursion must reach it too (via the nearest-descendant
+    // walk) or its items are silently dropped (#1960 lossless-paste).
+    const html =
+      '<ul><li>parent<div><ul><li>child</li><li>child2</li></ul></div></li><li>sibling</li></ul>'
+    expect(convert(html)).toEqual([
+      { content: '- parent', depth: 0 },
+      { content: '- child', depth: 1 },
+      { content: '- child2', depth: 1 },
+      { content: '- sibling', depth: 0 },
+    ])
+  })
+
+  it('nests a doubly-wrapped child list at the right depth (#2024)', () => {
+    const html = '<ol><li>parent<section><div><ol><li>child</li></ol></div></section></li></ol>'
+    expect(convert(html)).toEqual([
+      { content: '1. parent', depth: 0 },
+      { content: '1. child', depth: 1 },
+    ])
+  })
+
+  it('keeps deeper wrapped lists one level apart, not collapsed (#2024)', () => {
+    // Grandchild list wrapped in a div inside the (also wrapped) child list:
+    // each level must add exactly one depth, recursed once at the right level.
+    const html = '<ul><li>a<div><ul><li>b<div><ul><li>c</li></ul></div></li></ul></div></li></ul>'
+    expect(convert(html)).toEqual([
+      { content: '- a', depth: 0 },
+      { content: '- b', depth: 1 },
+      { content: '- c', depth: 2 },
+    ])
+  })
+
   it('descends into wrapper divs without creating extra blocks', () => {
     expect(convert('<div><p>wrapped</p></div>')).toEqual([{ content: 'wrapped', depth: 0 }])
   })
@@ -356,6 +390,34 @@ describe('htmlBodyToOutline — task lists (Phase 2)', () => {
     const b = round[1]?.node.content?.[0]
     expect((a as unknown as { attrs?: { todoState?: string } }).attrs?.todoState).toBe('TODO')
     expect((b as unknown as { attrs?: { todoState?: string } }).attrs?.todoState).toBe('DONE')
+  })
+
+  it('recurses into a task list WRAPPED in a div inside a task item (#2024)', () => {
+    // The nested task list lives inside a <div>, so the direct-children
+    // recursion missed it; the nearest-descendant walk must still visit it.
+    const html =
+      '<ul>' +
+      '<li><input type="checkbox"> parent' +
+      '<div><ul><li><input type="checkbox" checked> child</li></ul></div>' +
+      '</li>' +
+      '</ul>'
+    expect(convert(html)).toEqual([
+      { content: '- [ ] parent', depth: 0 },
+      { content: '- [x] child', depth: 1 },
+    ])
+  })
+
+  it('recurses into a plain list wrapped in a div under a task item (#2024)', () => {
+    const html =
+      '<ul>' +
+      '<li><input type="checkbox" checked> parent' +
+      '<div><ul><li>plain child</li></ul></div>' +
+      '</li>' +
+      '</ul>'
+    expect(convert(html)).toEqual([
+      { content: '- [x] parent', depth: 0 },
+      { content: '- plain child', depth: 1 },
+    ])
   })
 
   it('a non-task <ul> still produces plain bullets (no regression)', () => {

@@ -210,6 +210,38 @@ function walkBlockquote(
 }
 
 /**
+ * Find the NEAREST nested lists inside an `<li>` — every `<ul>`/`<ol>` descendant
+ * that is not itself nested inside another list under the same item, in document
+ * order. Unlike `el.children`, this also reaches a list WRAPPED in a non-list
+ * element (e.g. `<li><div><ul>…</ul></div></li>`, common in web exports), so the
+ * recursion is symmetric with the `querySelectorAll('ul, ol')` removal that
+ * strips nested lists from the item's own text. Without this, a wrapped nested
+ * list is stripped from the text AND never recursed into — its items are lost
+ * (#1960 lossless-paste constraint, audit #2024).
+ *
+ * Each returned list is visited exactly once at the right (one-deeper) depth:
+ * lists deeper inside a returned list are left for that list's own recursion.
+ */
+function nearestNestedLists(li: Element): Element[] {
+  const lists: Element[] = []
+  for (const list of Array.from(li.querySelectorAll('ul, ol'))) {
+    // Skip lists that live inside another list still within this `<li>` — they
+    // belong to that inner list's recursion, not this item's.
+    let ancestor = list.parentElement
+    let nestedInList = false
+    while (ancestor && ancestor !== li) {
+      if (ancestor.tagName === 'UL' || ancestor.tagName === 'OL') {
+        nestedInList = true
+        break
+      }
+      ancestor = ancestor.parentElement
+    }
+    if (!nestedInList) lists.push(list)
+  }
+  return lists
+}
+
+/**
  * Detect whether a `<ul>`/`<ol>` is a GFM task list — at least one `<li>`
  * directly containing a `<input type="checkbox">`. Such lists emit `- [ ]` /
  * `- [x]` task blocks (one per item) rather than plain bullets.
@@ -251,14 +283,14 @@ function walkTaskList(
     const text = squashWhitespace(inline(clone))
     out.push({ content: text.length > 0 ? `${marker} ${text}` : marker, depth })
 
-    // Recurse into nested lists found directly inside this `<li>`.
-    for (const childList of Array.from(el.children)) {
-      if (childList.tagName === 'UL' || childList.tagName === 'OL') {
-        if (isTaskList(childList)) {
-          walkTaskList(childList, depth + 1, inline, out)
-        } else {
-          walkList(childList, childList.tagName === 'OL', depth + 1, inline, out)
-        }
+    // Recurse into the NEAREST nested lists inside this `<li>` (including ones
+    // wrapped in a non-list element) so they match the lists stripped from the
+    // item's text — see {@link nearestNestedLists} (#2024).
+    for (const childList of nearestNestedLists(el)) {
+      if (isTaskList(childList)) {
+        walkTaskList(childList, depth + 1, inline, out)
+      } else {
+        walkList(childList, childList.tagName === 'OL', depth + 1, inline, out)
       }
     }
   }
@@ -404,12 +436,14 @@ function walkList(
     out.push({ content: `${marker}${text}`, depth })
     ordinal += 1
 
-    // Recurse into nested lists found directly inside this `<li>`, one level
-    // deeper so `pasteBlocks` nests them under this item's block.
-    for (const childList of Array.from(el.children)) {
-      if (childList.tagName === 'UL' || childList.tagName === 'OL') {
-        walkList(childList, childList.tagName === 'OL', depth + 1, inline, out)
-      }
+    // Recurse into the NEAREST nested lists inside this `<li>` (including ones
+    // wrapped in a non-list element), one level deeper so `pasteBlocks` nests
+    // them under this item's block. Using the nearest descendants — not just
+    // `el.children` — keeps the recursion symmetric with the
+    // `querySelectorAll('ul, ol')` removal above, so a WRAPPED nested list is
+    // not silently dropped (#2024).
+    for (const childList of nearestNestedLists(el)) {
+      walkList(childList, childList.tagName === 'OL', depth + 1, inline, out)
     }
   }
 }
