@@ -200,6 +200,41 @@ describe('parseDate', () => {
   it('returns null for invalid day 32', () => {
     expect(parseDate('2026-01-32')).toBeNull()
   })
+
+  // #2029: numeric-overflow inputs must return null, not throw. The
+  // relative/natural paths use unbounded parseInt and feed the result to
+  // date-fns `format`, which throws RangeError('Invalid time value') on a
+  // non-finite Date. parseDate is documented as total (null on unparseable)
+  // and is called unguarded from a setTimeout and a blur handler, so a throw
+  // would be uncaught. Each of these must return null without throwing.
+  it('returns null for relative-day overflow "+99999999999d"', () => {
+    expect(parseDate('+99999999999d')).toBeNull()
+  })
+
+  it('returns null for relative-week overflow "+99999999999w"', () => {
+    expect(parseDate('+99999999999w')).toBeNull()
+  })
+
+  it('returns null for relative-month overflow "+99999999999m"', () => {
+    expect(parseDate('+99999999999m')).toBeNull()
+  })
+
+  it('returns null for natural-day overflow "in 99999999999 days"', () => {
+    expect(parseDate('in 99999999999 days')).toBeNull()
+  })
+
+  it('returns null for natural-week overflow "in 99999999999 weeks"', () => {
+    expect(parseDate('in 99999999999 weeks')).toBeNull()
+  })
+
+  it('returns null for natural-month overflow "in 99999999999 months"', () => {
+    expect(parseDate('in 99999999999 months')).toBeNull()
+  })
+
+  it('does not throw on overflow inputs (total contract preserved)', () => {
+    expect(() => parseDate('+99999999999d')).not.toThrow()
+    expect(() => parseDate('in 99999999999 months')).not.toThrow()
+  })
 })
 
 describe('edge cases', () => {

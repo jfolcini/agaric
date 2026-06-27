@@ -2,6 +2,17 @@ import { addMonths } from 'date-fns'
 
 import { formatDate } from './date-utils'
 
+// A Date whose time value is non-finite (NaN) renders as "Invalid time value"
+// and makes date-fns `format` (via `formatDate`) throw a RangeError. The
+// relative/natural paths build dates from an unbounded parsed count, so huge
+// inputs (e.g. "+99999999999d", "in 99999999999 months") can overflow past the
+// max representable Date. Returning null here preserves parseDate's documented
+// total contract — callers rely on a null result, not a thrown exception.
+function safeFormatDate(d: Date): string | null {
+  if (Number.isNaN(d.getTime())) return null
+  return formatDate(d)
+}
+
 const MONTH_NAMES: Record<string, number> = {
   jan: 1,
   january: 1,
@@ -99,9 +110,9 @@ function tryRelative(input: string, today: Date): string | null {
   } else if (unit === 'w') {
     result.setDate(result.getDate() + n * 7)
   } else if (unit === 'm') {
-    return formatDate(addMonths(result, n))
+    return safeFormatDate(addMonths(result, n))
   }
-  return formatDate(result)
+  return safeFormatDate(result)
 }
 
 function tryNatural(input: string, today: Date): string | null {
@@ -155,9 +166,9 @@ function tryNatural(input: string, today: Date): string | null {
     } else if (unit.startsWith('week')) {
       d.setDate(d.getDate() + n * 7)
     } else if (unit.startsWith('month')) {
-      return formatDate(addMonths(d, n))
+      return safeFormatDate(addMonths(d, n))
     }
-    return formatDate(d)
+    return safeFormatDate(d)
   }
 
   return null
