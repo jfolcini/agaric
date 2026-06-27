@@ -574,6 +574,128 @@ async fn insert_remote_op_accepts_multiple_resolved_parent_seqs() {
     assert_eq!(fetched.parent_seqs, parent_seqs);
 }
 
+// ── #2026: insert_remote_op enforces validate_set_property ──────────
+//
+// The local append path runs every SetProperty payload through
+// `op::validate_set_property` (key format, exactly-one-value, finite
+// num, non-empty strings) before it can land. Before #2026,
+// `insert_remote_op` validated only null-bytes / hash / parents, so a
+// hash-valid SetProperty from a peer or a buggy/older client could land
+// with an invalid key, an empty value, or multiple value fields — all
+// rejected locally — and then flow into `engine_apply` + downstream
+// (e.g. agenda ISO-date parsing). These tests mirror the local rejects.
+
+/// A valid remote SetProperty (exactly one value, well-formed key) still
+/// inserts — the new gate must not regress the happy path.
+#[tokio::test]
+async fn insert_remote_op_accepts_valid_set_property() {
+    let (pool, _dir) = test_pool().await;
+
+    let record = make_remote_record(
+        "remote-dev",
+        1,
+        None,
+        "set_property",
+        r#"{"block_id":"B1","key":"status","value_text":"done","value_num":null,"value_date":null,"value_ref":null,"value_bool":null}"#,
+    );
+
+    insert_remote_op(&pool, &record).await.unwrap();
+
+    let fetched = get_op_by_seq(&ReadPool(pool.clone()), "remote-dev", 1)
+        .await
+        .unwrap();
+    assert_eq!(fetched.op_type, "set_property");
+    assert_eq!(fetched.hash, record.hash);
+}
+
+/// A hash-valid remote SetProperty with an INVALID key (special chars,
+/// outside the `[A-Za-z0-9_-]` alphabet `validate_set_property` enforces)
+/// must be REJECTED — mirrors the local `validate_set_property` reject.
+#[tokio::test]
+async fn insert_remote_op_rejects_set_property_invalid_key() {
+    let (pool, _dir) = test_pool().await;
+
+    let record = make_remote_record(
+        "remote-dev",
+        1,
+        None,
+        "set_property",
+        r#"{"block_id":"B1","key":"bad key!","value_text":"x","value_num":null,"value_date":null,"value_ref":null,"value_bool":null}"#,
+    );
+
+    let err = insert_remote_op(&pool, &record).await;
+    assert!(
+        matches!(err, Err(AppError::Validation(_))),
+        "invalid SetProperty key must be rejected, got: {err:?}"
+    );
+
+    // The op must NOT have landed.
+    assert!(
+        get_op_by_seq(&ReadPool(pool.clone()), "remote-dev", 1)
+            .await
+            .is_err(),
+        "rejected SetProperty must not be written to op_log"
+    );
+}
+
+/// A hash-valid remote SetProperty whose single value field is an empty
+/// string (`value_text == ""`) must be REJECTED — the empty/whitespace
+/// guard in `validate_set_property` (which prevents downstream parse
+/// failures like agenda's ISO-8601 `value_date` parse).
+#[tokio::test]
+async fn insert_remote_op_rejects_set_property_empty_value() {
+    let (pool, _dir) = test_pool().await;
+
+    let record = make_remote_record(
+        "remote-dev",
+        1,
+        None,
+        "set_property",
+        r#"{"block_id":"B1","key":"status","value_text":"","value_num":null,"value_date":null,"value_ref":null,"value_bool":null}"#,
+    );
+
+    let err = insert_remote_op(&pool, &record).await;
+    assert!(
+        matches!(err, Err(AppError::Validation(_))),
+        "empty-string SetProperty value must be rejected, got: {err:?}"
+    );
+    assert!(
+        get_op_by_seq(&ReadPool(pool.clone()), "remote-dev", 1)
+            .await
+            .is_err(),
+        "rejected SetProperty must not be written to op_log"
+    );
+}
+
+/// A hash-valid remote SetProperty with MORE THAN ONE value field set
+/// (the exact "exactly one value" invariant the local path enforces) must
+/// be REJECTED at ingest, before it can reach `engine_apply` and be
+/// silently coerced by precedence.
+#[tokio::test]
+async fn insert_remote_op_rejects_set_property_multiple_values() {
+    let (pool, _dir) = test_pool().await;
+
+    let record = make_remote_record(
+        "remote-dev",
+        1,
+        None,
+        "set_property",
+        r#"{"block_id":"B1","key":"status","value_text":"x","value_num":1.0,"value_date":null,"value_ref":null,"value_bool":null}"#,
+    );
+
+    let err = insert_remote_op(&pool, &record).await;
+    assert!(
+        matches!(err, Err(AppError::Validation(_))),
+        "multi-value SetProperty must be rejected, got: {err:?}"
+    );
+    assert!(
+        get_op_by_seq(&ReadPool(pool.clone()), "remote-dev", 1)
+            .await
+            .is_err(),
+        "rejected SetProperty must not be written to op_log"
+    );
+}
+
 // =====================================================================
 // 2. append_merge_op
 // =====================================================================
