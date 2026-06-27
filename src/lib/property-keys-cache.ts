@@ -15,64 +15,48 @@
  * every consumer (slash menu, picker, backlink filter builder) shares
  * one cache and one in-flight fetch per `spaceId`.
  *
+ * #2047: the cache mechanics (Map / in-flight dedup / subscribers /
+ * generation-counter race guard / lazy listener) are now provided by the
+ * shared `createPropertyChangeCache` factory; this module is a thin
+ * instantiation that adds the default-`spaceId` wrapper and keeps the
+ * historical public export names.
+ *
  * Invalidation follows the existing `block:properties-changed`
  * convention emitted by the materializer (see
  * `src/hooks/useBlockPropertyEvents.ts` and
  * `src-tauri/src/sync_events.rs::EVENT_PROPERTY_CHANGED`).
  */
 
-import { listen } from '@tauri-apps/api/event'
-
-import { logger } from './logger'
+import { EVENT_PROPERTY_CHANGED } from './block-event-names'
+import { createPropertyChangeCache } from './create-property-change-cache'
 import { listPropertyKeys } from './tauri'
 
-/** Tauri event name — mirrors `EVENT_PROPERTY_CHANGED` in
- *  `src-tauri/src/sync_events.rs`. */
-export const EVENT_PROPERTY_CHANGED = 'block:properties-changed'
+export { EVENT_PROPERTY_CHANGED }
 
 /** Sentinel cache key for the no-active-space slot (boot, tests, the
  *  slash-command picker which does not yet plumb a spaceId). */
 export const PROPERTY_KEYS_GLOBAL_KEY = '__global__'
 
+const instance = createPropertyChangeCache({
+  fetch: () => listPropertyKeys(),
+  eventName: EVENT_PROPERTY_CHANGED,
+  logTag: 'property-keys-cache',
+})
+
 /** Stable empty-array reference returned before the first fetch
  *  resolves. `useSyncExternalStore` requires referentially-stable
  *  snapshots when nothing changed; reusing this constant is the
  *  cheapest way to satisfy that invariant. */
-export const PROPERTY_KEYS_EMPTY: string[] = Object.freeze([]) as unknown as string[]
-
-const cache = new Map<string, string[]>()
-const inFlight = new Map<string, Promise<string[]>>()
-const subscribers = new Set<() => void>()
-let listenerInitialized = false
-
-/**
- * Monotonic generation counter. Bumped by every invalidate/reset so an
- * in-flight fetch that started before the bump can detect that its
- * snapshot is stale and refuse to write it back. Without this fence a
- * fetch launched before an invalidation would `cache.set` its
- * pre-change result *after* the clear, resurrecting a deleted key (or
- * omitting a freshly-added one) until the next invalidation.
- */
-let generation = 0
-
-function notify(): void {
-  for (const cb of subscribers) cb()
-}
+export const PROPERTY_KEYS_EMPTY: string[] = instance.empty
 
 /**
  * Drop every cached `spaceId` entry. Pending in-flight fetches are
  * also cleared so a subsequent consumer triggers a fresh IPC instead
  * of awaiting the now-stale promise. Exposed for the Tauri listener
  * and for test setup.
- *
- * Bumping `generation` fences any in-flight fetch captured before this
- * call so it can't repopulate the cache with its pre-change snapshot.
  */
 export function invalidatePropertyKeysCache(): void {
-  generation++
-  cache.clear()
-  inFlight.clear()
-  notify()
+  instance.invalidate()
 }
 
 /**
@@ -81,7 +65,7 @@ export function invalidatePropertyKeysCache(): void {
  * This is the snapshot fn used by `useSyncExternalStore`.
  */
 export function getCachedPropertyKeys(spaceKey: string = PROPERTY_KEYS_GLOBAL_KEY): string[] {
-  return cache.get(spaceKey) ?? PROPERTY_KEYS_EMPTY
+  return instance.getCached(spaceKey)
 }
 
 /**
@@ -91,51 +75,11 @@ export function getCachedPropertyKeys(spaceKey: string = PROPERTY_KEYS_GLOBAL_KE
  * promise, so two callers fire ONE IPC. After resolution the entry is
  * cached until `invalidatePropertyKeysCache()` clears it (manually or
  * via the materializer event).
- *
- * Errors are swallowed to an empty array — matches the pre-cache
- * fallback so pickers still render rather than hanging in a loading
- * state forever. The error is logged once per fetch.
  */
 export function fetchPropertyKeysOnce(
   spaceKey: string = PROPERTY_KEYS_GLOBAL_KEY,
 ): Promise<string[]> {
-  const cached = cache.get(spaceKey)
-  if (cached) return Promise.resolve(cached)
-  const pending = inFlight.get(spaceKey)
-  if (pending) return pending
-
-  const startGeneration = generation
-  const promise = listPropertyKeys()
-    .then((keys) => {
-      // Only write back if no invalidation/reset raced this fetch.
-      // A stale snapshot from before an invalidation must not
-      // repopulate the cache (see #2025). The `.finally` below fires
-      // the subscriber notification.
-      if (generation === startGeneration) {
-        cache.set(spaceKey, keys)
-      }
-      return keys
-    })
-    .catch((err) => {
-      logger.warn('property-keys-cache', 'failed to load property keys', { spaceKey }, err)
-      const empty: string[] = []
-      if (generation === startGeneration) {
-        cache.set(spaceKey, empty)
-      }
-      return empty
-    })
-    .finally(() => {
-      // Only retire our own in-flight entry. A racing invalidation
-      // already cleared the map (and may have registered a newer
-      // fetch under the same key); deleting here would drop that
-      // newer fetch. The matching write-back above already notified.
-      if (generation === startGeneration) {
-        inFlight.delete(spaceKey)
-        notify()
-      }
-    })
-  inFlight.set(spaceKey, promise)
-  return promise
+  return instance.fetchOnce(spaceKey)
 }
 
 /**
@@ -144,34 +88,15 @@ export function fetchPropertyKeysOnce(
  * via `useSyncExternalStore`.
  */
 export function subscribeToPropertyKeysCache(cb: () => void): () => void {
-  subscribers.add(cb)
-  return () => {
-    subscribers.delete(cb)
-  }
+  return instance.subscribe(cb)
 }
 
 /**
  * Lazily register the materializer-event listener. Process-lifetime —
- * once registered it stays for the rest of the session. Mirrors the
- * Tauri-only gate from `useSyncEvents` so jsdom / browser-mode dev
- * sessions don't trigger a `transformCallback` NPE from the unmocked
- * `@tauri-apps/api/event` import.
+ * once registered it stays for the rest of the session.
  */
 export function ensurePropertyKeysInvalidationListener(): void {
-  if (listenerInitialized) return
-  listenerInitialized = true
-  const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
-  if (!inTauri) return
-  listen(EVENT_PROPERTY_CHANGED, () => {
-    invalidatePropertyKeysCache()
-  }).catch((err) => {
-    logger.warn(
-      'property-keys-cache',
-      'failed to register property-change listener',
-      undefined,
-      err,
-    )
-  })
+  instance.ensureListener()
 }
 
 /**
@@ -191,9 +116,5 @@ export function getPropertyKeys(spaceKey: string = PROPERTY_KEYS_GLOBAL_KEY): Pr
  * slate. Imported directly by tests; not part of the public surface.
  */
 export function _resetPropertyKeysCacheForTest(): void {
-  generation++
-  cache.clear()
-  inFlight.clear()
-  listenerInitialized = false
-  notify()
+  instance.resetForTest()
 }

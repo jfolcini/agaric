@@ -10,6 +10,11 @@
  * the *property key* rather than the *space id* (values are inherently
  * key-scoped, and the backend command is not space-scoped).
  *
+ * #2047: the cache mechanics (Map / in-flight dedup / subscribers /
+ * generation-counter race guard / lazy listener) are now provided by the
+ * shared `createPropertyChangeCache` factory; this module is a thin
+ * instantiation that keeps the historical public export names.
+ *
  * Two worlds consume it: the React autocomplete hook
  * (`useAutocompleteSources` via `useSyncExternalStore`) and any future
  * plain-TS caller. Both share the same Map / in-flight / subscriber set so
@@ -17,53 +22,31 @@
  * re-firing the IPC.
  */
 
-import { listen } from '@tauri-apps/api/event'
-
-import { logger } from './logger'
+import { EVENT_PROPERTY_CHANGED } from './block-event-names'
+import { createPropertyChangeCache } from './create-property-change-cache'
 import { listPropertyValues } from './tauri'
 
-/** Tauri event name — mirrors `EVENT_PROPERTY_CHANGED` in
- *  `src-tauri/src/sync_events.rs`. */
-export const EVENT_PROPERTY_CHANGED = 'block:properties-changed'
+export { EVENT_PROPERTY_CHANGED }
+
+const instance = createPropertyChangeCache({
+  fetch: (key) => listPropertyValues(key),
+  eventName: EVENT_PROPERTY_CHANGED,
+  logTag: 'property-values-cache',
+})
 
 /** Stable empty-array reference returned before the first fetch resolves.
  *  `useSyncExternalStore` requires referentially-stable snapshots when
  *  nothing changed; reusing this constant satisfies that invariant. */
-export const PROPERTY_VALUES_EMPTY: string[] = Object.freeze([]) as unknown as string[]
-
-const cache = new Map<string, string[]>()
-const inFlight = new Map<string, Promise<string[]>>()
-const subscribers = new Set<() => void>()
-let listenerInitialized = false
-
-/**
- * Monotonic generation counter. Bumped by every invalidate/reset so an
- * in-flight fetch that started before the bump can detect that its
- * snapshot is stale and refuse to write it back. Without this fence a
- * fetch launched before an invalidation would `cache.set` its
- * pre-change result *after* the clear, resurrecting a deleted value (or
- * omitting a freshly-added one) until the next invalidation.
- */
-let generation = 0
-
-function notify(): void {
-  for (const cb of subscribers) cb()
-}
+export const PROPERTY_VALUES_EMPTY: string[] = instance.empty
 
 /**
  * Drop every cached `key` entry. Pending in-flight fetches are also
  * cleared so a subsequent consumer triggers a fresh IPC instead of
  * awaiting the now-stale promise. Exposed for the Tauri listener and for
  * test setup.
- *
- * Bumping `generation` fences any in-flight fetch captured before this
- * call so it can't repopulate the cache with its pre-change snapshot.
  */
 export function invalidatePropertyValuesCache(): void {
-  generation++
-  cache.clear()
-  inFlight.clear()
-  notify()
+  instance.invalidate()
 }
 
 /**
@@ -72,7 +55,7 @@ export function invalidatePropertyValuesCache(): void {
  * the snapshot fn used by `useSyncExternalStore`.
  */
 export function getCachedPropertyValues(key: string): string[] {
-  return cache.get(key) ?? PROPERTY_VALUES_EMPTY
+  return instance.getCached(key)
 }
 
 /**
@@ -82,49 +65,9 @@ export function getCachedPropertyValues(key: string): string[] {
  * two callers fire ONE IPC. After resolution the entry is cached until
  * `invalidatePropertyValuesCache()` clears it (manually or via the
  * materializer event).
- *
- * Errors are swallowed to an empty array — matches the property-keys
- * fallback so the popover renders rather than hanging in a loading state
- * forever. The error is logged once per fetch.
  */
 export function fetchPropertyValuesOnce(key: string): Promise<string[]> {
-  const cached = cache.get(key)
-  if (cached) return Promise.resolve(cached)
-  const pending = inFlight.get(key)
-  if (pending) return pending
-
-  const startGeneration = generation
-  const promise = listPropertyValues(key)
-    .then((values) => {
-      // Only write back if no invalidation/reset raced this fetch.
-      // A stale snapshot from before an invalidation must not
-      // repopulate the cache (see #2025). The `.finally` below fires
-      // the subscriber notification.
-      if (generation === startGeneration) {
-        cache.set(key, values)
-      }
-      return values
-    })
-    .catch((err) => {
-      logger.warn('property-values-cache', 'failed to load property values', { key }, err)
-      const empty: string[] = []
-      if (generation === startGeneration) {
-        cache.set(key, empty)
-      }
-      return empty
-    })
-    .finally(() => {
-      // Only retire our own in-flight entry. A racing invalidation
-      // already cleared the map (and may have registered a newer
-      // fetch under the same key); deleting here would drop that
-      // newer fetch. The matching write-back above already notified.
-      if (generation === startGeneration) {
-        inFlight.delete(key)
-        notify()
-      }
-    })
-  inFlight.set(key, promise)
-  return promise
+  return instance.fetchOnce(key)
 }
 
 /**
@@ -133,34 +76,15 @@ export function fetchPropertyValuesOnce(key: string): Promise<string[]> {
  * `useSyncExternalStore`.
  */
 export function subscribeToPropertyValuesCache(cb: () => void): () => void {
-  subscribers.add(cb)
-  return () => {
-    subscribers.delete(cb)
-  }
+  return instance.subscribe(cb)
 }
 
 /**
  * Lazily register the materializer-event listener. Process-lifetime —
- * once registered it stays for the rest of the session. Mirrors the
- * Tauri-only gate from `property-keys-cache` so jsdom / browser-mode dev
- * sessions don't trigger a `transformCallback` NPE from the unmocked
- * `@tauri-apps/api/event` import.
+ * once registered it stays for the rest of the session.
  */
 export function ensurePropertyValuesInvalidationListener(): void {
-  if (listenerInitialized) return
-  listenerInitialized = true
-  const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
-  if (!inTauri) return
-  listen(EVENT_PROPERTY_CHANGED, () => {
-    invalidatePropertyValuesCache()
-  }).catch((err) => {
-    logger.warn(
-      'property-values-cache',
-      'failed to register property-change listener',
-      undefined,
-      err,
-    )
-  })
+  instance.ensureListener()
 }
 
 /**
@@ -169,9 +93,5 @@ export function ensurePropertyValuesInvalidationListener(): void {
  * Imported directly by tests; not part of the public surface.
  */
 export function _resetPropertyValuesCacheForTest(): void {
-  generation++
-  cache.clear()
-  inFlight.clear()
-  listenerInitialized = false
-  notify()
+  instance.resetForTest()
 }

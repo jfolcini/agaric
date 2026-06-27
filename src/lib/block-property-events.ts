@@ -20,11 +20,10 @@
 
 import { listen } from '@tauri-apps/api/event'
 
+import { EVENT_PROPERTY_CHANGED } from './block-event-names'
 import { logger } from './logger'
 
-/** Tauri event name — mirrors `EVENT_PROPERTY_CHANGED` in
- *  `src-tauri/src/sync_events.rs`. */
-export const EVENT_PROPERTY_CHANGED = 'block:properties-changed'
+export { EVENT_PROPERTY_CHANGED }
 
 /** Debounce window: batch rapid consecutive property changes (matches the
  *  pre-#1818 per-component behavior). */
