@@ -269,7 +269,10 @@ export function InPageFind({
         setResult({
           totalMatches: final.matches.length,
           currentIndex: startIndex,
-          regexError: null,
+          // ReDoS guard tripped: the regex scan aborted on its time budget.
+          // Surface it through the existing error channel so the toolbar
+          // shows "pattern too slow" instead of a misleadingly low count.
+          regexError: final.timedOut ? 'findInPage.regexTooSlow' : null,
           skippedLongNodes: final.skippedLongNodes,
         })
         paint(final.matches, startIndex)
@@ -537,7 +540,9 @@ export function InPageFind({
         >
           {regexError === 'findInPage.regexTooLong'
             ? t('findInPage.regexTooLong')
-            : t('findInPage.regexInvalid', { message: regexError })}
+            : regexError === 'findInPage.regexTooSlow'
+              ? t('findInPage.regexTooSlow')
+              : t('findInPage.regexInvalid', { message: regexError })}
         </span>
       )}
       {skippedLongNodes > 0 && !regexError && (
