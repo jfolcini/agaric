@@ -36,6 +36,7 @@ import type { EditorView } from '@tiptap/pm/view'
 
 import { dispatchBlockEvent } from '@/lib/block-events'
 import { logger } from '@/lib/logger'
+import { useBlockStore } from '@/stores/blocks'
 
 import { parse } from '../markdown-serializer'
 import type { DocNode } from '../types'
@@ -94,13 +95,36 @@ function parseHtmlBody(html: string): ParentNode | null {
  * the handler has already claimed the paste (preventDefault via returning true),
  * so on any failure we fall back to inserting the plain-text payload to avoid
  * silently dropping the user's content.
+ *
+ * The conversion is async (dynamic `import()` + DOM walk), and the single-block
+ * roving editor view is unmounted on blur / navigation / Android suspend (#2033),
+ * so the view may be DESTROYED by the time this resolves. Dispatching against a
+ * destroyed view throws, so we early-return on `view.isDestroyed` before every
+ * dispatch (mirroring the picker-plugin `editor.view?.isDestroyed` convention).
+ *
+ * `targetBlockId` is the focused block captured SYNCHRONOUSLY at paste time; it
+ * is threaded into the `PASTE_HTML_BLOCKS` payload so the receiver can no-op when
+ * focus has since moved to a different block, rather than routing structured
+ * content into whatever block happens to be focused at resolution time (#2033).
+ *
+ * @internal Exported for testing.
  */
-async function convertAndInsert(view: EditorView, html: string, plainText: string): Promise<void> {
+export async function convertAndInsert(
+  view: EditorView,
+  html: string,
+  plainText: string,
+  targetBlockId: string | null,
+): Promise<void> {
+  // The view may have been destroyed between claiming the paste and now.
+  if (view.isDestroyed) return
   try {
     // Lazy-load Turndown + the converter so they stay out of the main chunk and
     // only load on the first HTML paste (#750).
     const [{ createInlineTurndown }, { htmlBodyToOutline, outlineToIndentedMarkdown }] =
       await Promise.all([import('../inline-turndown'), import('../html-to-blocks')])
+
+    // The dynamic import is itself a turn, so re-check after it resolves.
+    if (view.isDestroyed) return
 
     const body = parseHtmlBody(html)
     if (!body) {
@@ -129,9 +153,10 @@ async function convertAndInsert(view: EditorView, html: string, plainText: strin
 
     // Multi-block (or nested / heading / list) → materialize via the focused
     // BlockTree's `pasteBlocks`. Routed through the focus-keyed block command
-    // bus so exactly the owning tree handles it.
+    // bus so exactly the owning tree handles it. The captured `targetBlockId`
+    // lets the receiver reject the paste if focus has since moved (#2033).
     const markdown = outlineToIndentedMarkdown(blocks)
-    dispatchBlockEvent('PASTE_HTML_BLOCKS', { markdown })
+    dispatchBlockEvent('PASTE_HTML_BLOCKS', { markdown, targetBlockId })
   } catch (err) {
     logger.warn('htmlPaste', 'conversion failed; falling back to plain text', undefined, err)
     insertPlainText(view, plainText)
@@ -153,6 +178,9 @@ function isStructuralLine(content: string): boolean {
 
 /** Insert single-line markdown as inline PM content (marks) at the caret. */
 function insertInlineMarkdown(view: EditorView, markdown: string): void {
+  // The view may have been destroyed while the conversion was in flight (#2033);
+  // dispatching against a destroyed view throws.
+  if (view.isDestroyed) return
   const doc = parse(markdown) as DocNode
   const inlineNodes = doc.content?.[0]?.content
   const { schema } = view.state
@@ -174,6 +202,9 @@ function insertInlineMarkdown(view: EditorView, markdown: string): void {
 /** Insert raw text at the caret (plain-text fallback). */
 function insertPlainText(view: EditorView, text: string): void {
   if (text.length === 0) return
+  // Guard every dispatch path: this is also the catch-path / no-blocks fallback,
+  // which can run after the view was destroyed mid-conversion (#2033).
+  if (view.isDestroyed) return
   view.dispatch(view.state.tr.insertText(text))
 }
 
@@ -193,10 +224,16 @@ export const HtmlPaste = Extension.create({
 
             const plainText = event.clipboardData?.getData('text/plain') ?? ''
 
+            // Capture the focused (paste-target) block id SYNCHRONOUSLY: the
+            // conversion is async, so by the time multi-block content is routed
+            // through the bus the focus may have moved. Threading the captured
+            // id lets the receiver reject a paste into the wrong block (#2033).
+            const targetBlockId = useBlockStore.getState().focusedBlockId
+
             // Claim the paste synchronously (the conversion is async). The
             // async path inserts structured content, or the plain-text payload
             // on any failure, so content is never silently dropped.
-            void convertAndInsert(view, html, plainText)
+            void convertAndInsert(view, html, plainText, targetBlockId)
             return true
           },
         },
