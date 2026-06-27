@@ -8,6 +8,10 @@
  * passthrough of allowSpaces / allowedPrefixes / pluginKey.
  */
 
+import { Editor } from '@tiptap/core'
+import Document from '@tiptap/extension-document'
+import Paragraph from '@tiptap/extension-paragraph'
+import Text from '@tiptap/extension-text'
 import { PluginKey } from '@tiptap/pm/state'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -267,12 +271,15 @@ function makeChainProxy() {
   return { chain, calls }
 }
 
-function makeEditor(docSize: number, viewOverride?: { isDestroyed: boolean }) {
+function makeEditor(docSize: number, destroyed?: boolean) {
   const { chain, calls } = makeChainProxy()
   const editor = {
     chain: () => chain,
     state: { doc: { content: { size: docSize } } },
-    ...(viewOverride ? { view: viewOverride } : {}),
+    // The post-await guard checks `editor.isDestroyed` — the v3-reliable
+    // signal (active-editor.ts). `editor.view.isDestroyed` is a Proxy stub
+    // that lies (`false`) after destroy, so it is deliberately NOT the guard.
+    isDestroyed: destroyed ?? false,
   } as unknown as Parameters<typeof resolveAndInsertPickerToken>[0]['editor']
   return { editor, calls }
 }
@@ -443,8 +450,8 @@ describe('resolveAndInsertPickerToken — error fallback', () => {
 })
 
 describe('resolveAndInsertPickerToken — editor destroyed mid-resolve', () => {
-  it('returns early after items resolve if editor.view.isDestroyed', async () => {
-    const { editor, calls } = makeEditor(1000, { isDestroyed: true })
+  it('returns early after items resolve if editor.isDestroyed', async () => {
+    const { editor, calls } = makeEditor(1000, true)
     await resolveAndInsertPickerToken({
       editor,
       text: 'myTag',
@@ -459,8 +466,8 @@ describe('resolveAndInsertPickerToken — editor destroyed mid-resolve', () => {
     expect(calls.insertContentAt).toEqual([])
   })
 
-  it('returns early after onCreate resolves if editor.view.isDestroyed', async () => {
-    const { editor, calls } = makeEditor(1000, { isDestroyed: true })
+  it('returns early after onCreate resolves if editor.isDestroyed', async () => {
+    const { editor, calls } = makeEditor(1000, true)
     await resolveAndInsertPickerToken({
       editor,
       text: 'fresh',
@@ -474,5 +481,134 @@ describe('resolveAndInsertPickerToken — editor destroyed mid-resolve', () => {
     })
     expect(calls.insertContent).toEqual([])
     expect(calls.insertContentAt).toEqual([])
+  })
+})
+
+// ── REAL editor.destroy() mid-resolve (#2048) ───────────────────
+//
+// The mock-`view`-stub cases above set `view.isDestroyed = true` — a state
+// TipTap v3 never actually produces. In real v3, calling `editor.destroy()`
+// leaves `editor.view` as a *Proxy stub* whose `isDestroyed` reports `false`
+// (see active-editor.ts: `Editor.isDestroyed` returns
+// `editorView?.isDestroyed ?? true`, the reliable signal). So a guard on
+// `editor.view?.isDestroyed` MISSES the destroy-before-resolve race and
+// dispatches into a torn-down editor; only `editor.isDestroyed` catches it.
+//
+// These tests drive a REAL Editor, call `editor.destroy()` while the
+// async resolve is still in flight, and assert NO insert/dispatch fires.
+describe('resolveAndInsertPickerToken — REAL editor.destroy() mid-resolve (#2048)', () => {
+  /** Build a real TipTap v3 editor and spy on its insert path. */
+  function makeRealEditor() {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: [Document, Paragraph, Text],
+      content: { type: 'doc', content: [{ type: 'paragraph' }] },
+    })
+    const inserts: { chainCalls: number; insertContent: unknown[]; insertContentAt: unknown[] } = {
+      chainCalls: 0,
+      insertContent: [],
+      insertContentAt: [],
+    }
+    // Teeth: record the *attempt* to chain at `editor.chain()` entry, BEFORE
+    // wrapping the insert methods. This matters because a real destroyed v3
+    // editor throws ("Cannot read properties of null") inside `editor.chain()`
+    // *before* any `insertContent*` method is reached — so recording only
+    // inside those methods would never catch a guard that wrongly let
+    // execution fall through (the insert recorders are never reached). By
+    // counting `chainCalls`, a failed guard (which proceeds to
+    // `editor.chain()...`) is detected regardless of the subsequent throw.
+    // With the correct `editor.isDestroyed` guard the function returns first,
+    // so `chainCalls` stays 0.
+    const realChain = editor.chain.bind(editor)
+    vi.spyOn(editor, 'chain').mockImplementation(() => {
+      inserts.chainCalls += 1
+      const chain = realChain()
+      const origInsertContent = chain.insertContent.bind(chain)
+      const origInsertContentAt = chain.insertContentAt.bind(chain)
+      chain.insertContent = (...args: Parameters<typeof origInsertContent>) => {
+        inserts.insertContent.push(args)
+        return origInsertContent(...args)
+      }
+      chain.insertContentAt = (...args: Parameters<typeof origInsertContentAt>) => {
+        inserts.insertContentAt.push(args)
+        return origInsertContentAt(...args)
+      }
+      return chain
+    })
+    return { editor, inserts }
+  }
+
+  it('does not insert after items() resolve when editor was destroyed mid-resolve', async () => {
+    const { editor, inserts } = makeRealEditor()
+
+    // A deferred items() promise: we destroy the editor *before* it resolves,
+    // mirroring an editor torn down while the async lookup is in flight.
+    let resolveItems!: (items: PickerItem[]) => void
+    const itemsPromise = new Promise<PickerItem[]>((r) => {
+      resolveItems = r
+    })
+
+    const done = resolveAndInsertPickerToken({
+      editor,
+      text: 'myTag',
+      insertPos: 1,
+      items: () => itemsPromise,
+      matchItem: (items, text) => items.find((i) => i.label.toLowerCase() === text.toLowerCase()),
+      tokenFor: (id) => ({ type: 'tag_ref', attrs: { id } }),
+      loggerComponent: 'TestPicker',
+      errorMessage: 'failed',
+    })
+
+    // Real teardown races the in-flight resolve. After this, the v3 Proxy
+    // stub still reports `editor.view.isDestroyed === false`.
+    editor.destroy()
+    expect(editor.isDestroyed).toBe(true)
+    expect(editor.view?.isDestroyed).toBe(false)
+
+    resolveItems([{ id: 'ULID_1', label: 'myTag' }])
+    await done
+
+    // The guard must short-circuit BEFORE touching the chain. `chainCalls`
+    // is the load-bearing assertion: with the buggy `editor.view?.isDestroyed`
+    // guard (which reports false here) execution falls through to
+    // `editor.chain()` and this count becomes non-zero.
+    expect(inserts.chainCalls).toBe(0)
+    expect(inserts.insertContent).toEqual([])
+    expect(inserts.insertContentAt).toEqual([])
+  })
+
+  it('does not insert after onCreate() resolve when editor was destroyed mid-resolve', async () => {
+    const { editor, inserts } = makeRealEditor()
+
+    let resolveCreate!: (id: string) => void
+    const createPromise = new Promise<string>((r) => {
+      resolveCreate = r
+    })
+
+    const done = resolveAndInsertPickerToken({
+      editor,
+      text: 'brand new',
+      insertPos: 1,
+      items: () => [],
+      matchItem: () => undefined,
+      tokenFor: (id) => ({ type: 'block_link', attrs: { id } }),
+      onCreate: () => createPromise,
+      loggerComponent: 'TestPicker',
+      errorMessage: 'failed',
+    })
+
+    // Let the empty items() resolve and the function reach the onCreate await,
+    // then destroy the editor while onCreate is still in flight.
+    await Promise.resolve()
+    editor.destroy()
+    expect(editor.isDestroyed).toBe(true)
+    expect(editor.view?.isDestroyed).toBe(false)
+
+    resolveCreate('NEW_ULID')
+    await done
+
+    expect(inserts.chainCalls).toBe(0)
+    expect(inserts.insertContent).toEqual([])
+    expect(inserts.insertContentAt).toEqual([])
   })
 })

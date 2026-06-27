@@ -152,7 +152,7 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
             extensionOptions
               .onCreate(item.label)
               .then((newId) => {
-                if (editor.view?.isDestroyed) return
+                if (editor.isDestroyed) return
                 editor
                   .chain()
                   .focus()
