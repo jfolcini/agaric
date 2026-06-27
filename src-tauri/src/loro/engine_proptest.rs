@@ -36,8 +36,8 @@ use proptest::prelude::*;
 
 use crate::loro::engine::{LoroEngine, PropertyValue};
 use crate::op::{
-    CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
-    SetPropertyPayload,
+    AddTagPayload, CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload,
+    OpPayload, RemoveTagPayload, SetPropertyPayload,
 };
 use crate::ulid::BlockId;
 
@@ -89,6 +89,29 @@ fn prop_key_strategy() -> impl Strategy<Value = String> {
 /// rationale there.
 fn prop_value_strategy() -> impl Strategy<Value = String> {
     "[a-zA-Z0-9]{0,10}".prop_map(|s| s)
+}
+
+/// Tag-id source.  Tags are themselves blocks, so a `tag_id` must be a
+/// valid `BlockId` (Crockford-base32 ULID).  We reuse [`BLOCK_ID_POOL`]
+/// so the small fixed set keeps the AddTag/RemoveTag shrinker
+/// human-readable and exercises the "same tag added on two peers" and
+/// "add then remove the same tag" paths (a tiny pool maximises those
+/// collisions, which is exactly where tag-merge bugs surface).
+fn tag_id_strategy() -> impl Strategy<Value = String> {
+    proptest::sample::select(BLOCK_ID_POOL).prop_map(std::string::ToString::to_string)
+}
+
+/// A typed property value for the property-LWW axis.  Drives
+/// `apply_set_property_typed` with the four native scalar shapes the
+/// engine stores (`Str`/`Num`/`Bool`/`Null`), so cross-peer LWW over
+/// `LoroValue::Double`/`Bool`/`Null` — not just `String` — is exercised.
+fn typed_value_strategy() -> impl Strategy<Value = PropertyValue> {
+    prop_oneof![
+        prop_value_strategy().prop_map(PropertyValue::Str),
+        (-1000i64..1000).prop_map(|n| PropertyValue::Num(n as f64)),
+        proptest::bool::ANY.prop_map(PropertyValue::Bool),
+        Just(PropertyValue::Null),
+    ]
 }
 
 /// Position scalar.  Deliberately bounded — production positions are
@@ -145,6 +168,14 @@ enum OpKind {
         key: String,
         value: String,
     },
+    AddTag {
+        index: usize,
+        tag_id: String,
+    },
+    RemoveTag {
+        index: usize,
+        tag_id: String,
+    },
 }
 
 /// Generator for a single [`OpKind`] step.  The probability mix
@@ -163,6 +194,10 @@ fn op_kind_strategy() -> impl Strategy<Value = OpKind> {
             .prop_map(|(index, position)| OpKind::Move { index, position }),
         2 => (any::<usize>(), prop_key_strategy(), prop_value_strategy())
             .prop_map(|(index, key, value)| OpKind::SetProperty { index, key, value }),
+        1 => (any::<usize>(), tag_id_strategy())
+            .prop_map(|(index, tag_id)| OpKind::AddTag { index, tag_id }),
+        1 => (any::<usize>(), tag_id_strategy())
+            .prop_map(|(index, tag_id)| OpKind::RemoveTag { index, tag_id }),
     ]
 }
 
@@ -243,6 +278,24 @@ fn resolve_op(kind: &OpKind, created: &[String], deleted: &[String]) -> Option<O
                 value_bool: None,
             }))
         }
+        OpKind::AddTag { index, tag_id } => {
+            // Tag a live block; the tag_id is itself a valid BlockId from
+            // the pool (tags are blocks too). `apply_add_tag` records the
+            // association by tag_id string without requiring the tag block
+            // to exist in the engine, mirroring the materializer boundary.
+            let target = pick_alive(*index)?;
+            Some(OpPayload::AddTag(AddTagPayload {
+                block_id: BlockId::from_trusted(target),
+                tag_id: BlockId::from_trusted(tag_id),
+            }))
+        }
+        OpKind::RemoveTag { index, tag_id } => {
+            let target = pick_alive(*index)?;
+            Some(OpPayload::RemoveTag(RemoveTagPayload {
+                block_id: BlockId::from_trusted(target),
+                tag_id: BlockId::from_trusted(tag_id),
+            }))
+        }
     }
 }
 
@@ -283,8 +336,14 @@ fn apply_to_engine(engine: &mut LoroEngine, op: &OpPayload) -> Result<(), crate:
                 .or_else(|| p.value_bool.map(|b| b.to_string()));
             engine.apply_set_property(p.block_id.as_str(), &p.key, value.as_deref())?;
         }
-        // The proptest generators only emit the five supported op
-        // variants — any other variant is unreachable here.
+        OpPayload::AddTag(p) => {
+            engine.apply_add_tag(p.block_id.as_str(), p.tag_id.as_str())?;
+        }
+        OpPayload::RemoveTag(p) => {
+            engine.apply_remove_tag(p.block_id.as_str(), p.tag_id.as_str())?;
+        }
+        // The proptest generators only emit the supported op variants —
+        // any other variant is unreachable here.
         _ => {}
     }
     Ok(())
@@ -595,6 +654,26 @@ mod two_device {
                 ));
             }
         }
+        // Tag-set convergence: both peers must agree on the SORTED tag-id
+        // set for this block after merge. `read_tags` returns a deduped
+        // vector whose order is storage-shape dependent (BTreeMap key
+        // order for map slots, insertion order for legacy lists), so we
+        // sort both before comparing to assert set-equality rather than
+        // ordering. Closes the gap where AddTag/RemoveTag convergence was
+        // never read back across peers.
+        let mut a_tags = a
+            .read_tags(block_id)
+            .map_err(|e| format!("A read_tags({block_id}): {e}"))?;
+        let mut b_tags = b
+            .read_tags(block_id)
+            .map_err(|e| format!("B read_tags({block_id}): {e}"))?;
+        a_tags.sort();
+        b_tags.sort();
+        if a_tags != b_tags {
+            return Err(format!(
+                "block {block_id} tag set diverged: A={a_tags:?}, B={b_tags:?}"
+            ));
+        }
         Ok(())
     }
 
@@ -867,6 +946,121 @@ mod two_device {
                 "move winner {parent:?} is neither A's {parent_a:?} nor B's {parent_b:?}",
             );
         }
+
+        /// Test 5 — concurrent typed SetProperty (Str/Num/Bool/Null) LWW.
+        ///
+        /// The other property-LWW tests only ever write STRING values via
+        /// the `apply_set_property` shim, so native `LoroValue::Double`/
+        /// `Bool`/`Null` cross-peer LWW — the exact encoding
+        /// `apply_set_property_typed`'s docstring claims to guard — was
+        /// never exercised. Here each peer writes an independently-typed
+        /// value to the same key via `apply_set_property_typed`, then both
+        /// must converge to the SAME stored `PropertyValue` (read via
+        /// `read_property_typed`) after sync. The winner must be one of the
+        /// two contributors (LWW never invents a third value), which also
+        /// proves the native type survives the import round-trip rather
+        /// than being flattened to a string.
+        #[test]
+        fn two_device_concurrent_set_property_typed_lww_converges(
+            a_value in typed_value_strategy(),
+            b_value in typed_value_strategy(),
+            key in prop_key_strategy(),
+        ) {
+            let mut engine_a = LoroEngine::with_peer_id("DEV-PROPTEST-A")
+                .expect("with_peer_id A");
+            let mut engine_b = LoroEngine::with_peer_id("DEV-PROPTEST-B")
+                .expect("with_peer_id B");
+
+            let seed_id = BLOCK_ID_POOL[0];
+            engine_a
+                .apply_create_block(seed_id, "content", "seed", None, 0)
+                .expect("A seed create");
+            engine_b
+                .apply_create_block(seed_id, "content", "seed", None, 0)
+                .expect("B seed create");
+            sync_engines(&mut engine_a, &mut engine_b);
+
+            engine_a
+                .apply_set_property_typed(seed_id, &key, &a_value)
+                .expect("A set_property_typed");
+            engine_b
+                .apply_set_property_typed(seed_id, &key, &b_value)
+                .expect("B set_property_typed");
+
+            sync_engines(&mut engine_a, &mut engine_b);
+
+            // Both engines must agree on the typed LWW winner.
+            if let Err(msg) = compare_property_reads(&engine_a, &engine_b, seed_id, &key) {
+                prop_assert!(false, "two-device typed set_property divergence: {msg}");
+            }
+
+            // Winner must be one of the two contributors — and crucially
+            // its NATIVE type (Num/Bool/Null, not a stringified copy) must
+            // round-trip through import. Equality against the typed
+            // `PropertyValue` enforces both value AND type.
+            let winner = engine_a
+                .read_property_typed(seed_id, &key)
+                .expect("A read winner")
+                .expect("property must exist after both sides wrote it");
+            prop_assert!(
+                winner == a_value || winner == b_value,
+                "typed LWW winner {winner:?} is neither A's {a_value:?} nor B's {b_value:?}",
+            );
+        }
+
+        /// Test 6 — concurrent AddTag/RemoveTag convergence.
+        ///
+        /// Each peer independently adds and removes tags (from the shared
+        /// pool, so add/remove collisions on the same tag_id are common)
+        /// against a common seed block. After mutual sync both peers must
+        /// read back the SAME sorted tag set. This is the convergence
+        /// counterpart to the single-engine tag tests, closing the gap
+        /// where AddTag/RemoveTag merge behaviour across peers was never
+        /// asserted by the proptest harness.
+        #[test]
+        fn two_device_concurrent_tag_ops_loro_converges(
+            a_ops in proptest::collection::vec(
+                (proptest::bool::ANY, tag_id_strategy()), 1..=8),
+            b_ops in proptest::collection::vec(
+                (proptest::bool::ANY, tag_id_strategy()), 1..=8),
+        ) {
+            let mut engine_a = LoroEngine::with_peer_id("DEV-PROPTEST-A")
+                .expect("with_peer_id A");
+            let mut engine_b = LoroEngine::with_peer_id("DEV-PROPTEST-B")
+                .expect("with_peer_id B");
+
+            let seed_id = BLOCK_ID_POOL[0];
+            engine_a
+                .apply_create_block(seed_id, "content", "seed", None, 0)
+                .expect("A seed create");
+            engine_b
+                .apply_create_block(seed_id, "content", "seed", None, 0)
+                .expect("B seed create");
+            sync_engines(&mut engine_a, &mut engine_b);
+
+            for (is_add, tag_id) in &a_ops {
+                if *is_add {
+                    engine_a.apply_add_tag(seed_id, tag_id).expect("A add_tag");
+                } else {
+                    engine_a.apply_remove_tag(seed_id, tag_id).expect("A remove_tag");
+                }
+            }
+            for (is_add, tag_id) in &b_ops {
+                if *is_add {
+                    engine_b.apply_add_tag(seed_id, tag_id).expect("B add_tag");
+                } else {
+                    engine_b.apply_remove_tag(seed_id, tag_id).expect("B remove_tag");
+                }
+            }
+
+            sync_engines(&mut engine_a, &mut engine_b);
+
+            // `compare_block_reads` now also asserts sorted-equal tag sets
+            // across peers, so this is the convergence assertion.
+            if let Err(msg) = compare_block_reads(&engine_a, &engine_b, seed_id) {
+                prop_assert!(false, "two-device tag-ops divergence: {msg}");
+            }
+        }
     }
 }
 
@@ -1114,5 +1308,108 @@ mod n_way {
                 }
             }
         }
+    }
+}
+
+// ===========================================================================
+// Criss-cross concurrent move cycle (deterministic).
+//
+// The notorious "A moves X under Y while B moves Y under X" concurrent
+// reparent cycle. Each move is individually legal on the peer that
+// authors it (no local cycle), but the MERGE of both would form a
+// 2-node parent cycle (X->Y->X). Loro's `LoroTree` move CRDT resolves
+// this deterministically: one of the two reparents is rejected as
+// cycle-forming on BOTH peers after they see each other's op (see
+// `move_block_impl` / `is_cyclic_move`), so the merged tree stays
+// acyclic and both peers agree on which move won.
+//
+// The existing move tests are single-engine cycle rejections or
+// same-node concurrent moves; none exercises the cross-peer criss-cross.
+// This deterministic two-engine test closes that gap. It is NOT a
+// proptest — the failure mode is a single fixed topology, so a focused
+// `#[test]` is the right shape.
+// ===========================================================================
+
+#[cfg(test)]
+mod criss_cross_move {
+    use super::*;
+
+    /// X = pool[0], Y = pool[1], both top-level on a shared base. A
+    /// reparents X under Y; B reparents Y under X. After cross-apply both
+    /// peers MUST (a) converge to identical parent relationships and (b)
+    /// have an acyclic tree — exactly one of the two moves loses
+    /// deterministically.
+    #[test]
+    fn criss_cross_concurrent_move_converges_acyclic() {
+        let x = BLOCK_ID_POOL[0];
+        let y = BLOCK_ID_POOL[1];
+
+        let mut engine_a = LoroEngine::with_peer_id("DEV-CRISS-A").expect("peer A");
+        let mut engine_b = LoroEngine::with_peer_id("DEV-CRISS-B").expect("peer B");
+
+        // Shared base: X and Y both exist, both top-level, on both peers.
+        for engine in [&mut engine_a, &mut engine_b] {
+            engine
+                .apply_create_block(x, "content", "X", None, 0)
+                .expect("create X");
+            engine
+                .apply_create_block(y, "content", "Y", None, 0)
+                .expect("create Y");
+        }
+        // Establish a clean common ancestor so the divergent moves below
+        // have a shared base (mirrors the two-device edit-seed pattern).
+        {
+            let a_bytes = engine_a.export_snapshot().expect("export A seed");
+            let b_bytes = engine_b.export_snapshot().expect("export B seed");
+            engine_a.import(&b_bytes).expect("import B->A seed");
+            engine_b.import(&a_bytes).expect("import A->B seed");
+        }
+
+        // Concurrent criss-cross: A puts X under Y, B puts Y under X.
+        engine_a
+            .apply_move_block(x, Some(y), 0)
+            .expect("A move X under Y");
+        engine_b
+            .apply_move_block(y, Some(x), 0)
+            .expect("B move Y under X");
+
+        // Cross-apply the concurrent updates (mutual snapshot exchange).
+        let a_bytes = engine_a.export_snapshot().expect("export A");
+        let b_bytes = engine_b.export_snapshot().expect("export B");
+        engine_a.import(&b_bytes).expect("import B->A");
+        engine_b.import(&a_bytes).expect("import A->B");
+
+        // (a) Convergence: both peers must read identical parent
+        // relationships for X and Y.
+        let a_px = engine_a.read_parent(x).expect("A parent X");
+        let b_px = engine_b.read_parent(x).expect("B parent X");
+        let a_py = engine_a.read_parent(y).expect("A parent Y");
+        let b_py = engine_b.read_parent(y).expect("B parent Y");
+        assert_eq!(
+            a_px, b_px,
+            "criss-cross: peers diverged on parent of X: A={a_px:?}, B={b_px:?}"
+        );
+        assert_eq!(
+            a_py, b_py,
+            "criss-cross: peers diverged on parent of Y: A={a_py:?}, B={b_py:?}"
+        );
+
+        // (b) Acyclicity: X and Y must not both be each other's parent.
+        // One reparent must have lost. The surviving relationship is one
+        // of: {X under Y, Y top-level} or {Y under X, X top-level}; never
+        // both X->Y and Y->X simultaneously.
+        let x_under_y = a_px.as_deref() == Some(y);
+        let y_under_x = a_py.as_deref() == Some(x);
+        assert!(
+            !(x_under_y && y_under_x),
+            "criss-cross formed a parent cycle X<->Y: parent(X)={a_px:?}, parent(Y)={a_py:?}"
+        );
+        // And exactly one of the two moves must have survived (the merge
+        // is not a no-op — one reparent always wins deterministically).
+        assert!(
+            x_under_y || y_under_x,
+            "criss-cross: neither reparent survived (expected exactly one winner): \
+             parent(X)={a_px:?}, parent(Y)={a_py:?}"
+        );
     }
 }
