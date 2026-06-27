@@ -8,9 +8,15 @@
 //! ## Design
 //!
 //! * **Reuses the sync hashing.** Hashing goes through
-//!   [`crate::sync_files::read_attachment_file`], which finalises
-//!   `blake3::hash(&data).to_hex()` — the exact scheme the file-sync layer uses
-//!   — so a backfilled hash matches a sync offer's `blake3_hash` byte-for-byte.
+//!   [`crate::sync_files::read_attachment_file_metadata`], which feeds the file
+//!   through a fixed-size buffer into a `blake3::Hasher` and finalises
+//!   `.to_hex()` — the exact scheme the file-sync sender uses for its
+//!   `FileOffer`. This is byte-for-byte the same digest as the older buffered
+//!   `read_attachment_file` (blake3 streamed via `Hasher::update` over the same
+//!   bytes equals the one-shot `blake3::hash`), so a backfilled hash matches a
+//!   sync offer's `blake3_hash` byte-for-byte. Crucially it never materialises
+//!   the whole file in heap, so this boot-time pass cannot OOM a mobile device
+//!   with large unhashed attachments.
 //! * **Idempotent.** It only selects rows `WHERE content_hash IS NULL`, so a
 //!   second run after a fully-successful pass is a no-op (selects nothing).
 //! * **Tolerates a missing file.** If the file is absent on disk (or the stored
@@ -69,40 +75,33 @@ pub async fn backfill_attachment_content_hashes(
     let mut report = BackfillReport::default();
 
     for c in candidates {
-        let dir = app_data_dir.to_path_buf();
-        let path = c.fs_path.clone();
-        // Reuse the sync hashing helper. It validates the fs_path shape and
-        // reads the bytes (synchronous std::fs on the blocking pool, like the
-        // read/attach paths).
-        let hash_result = tokio::task::spawn_blocking(move || {
-            crate::sync_files::read_attachment_file(&dir, &path)
-        })
+        // Reuse the sync layer's STREAMING hash helper. It validates the
+        // fs_path shape, opens the file once, and computes the blake3 hash
+        // through a fixed-size buffer (peak heap = one 256 KiB buffer,
+        // independent of file size) instead of materialising the whole file
+        // in a `Vec<u8>` just to hash and discard it. This is the same blake3
+        // over the same bytes as the old buffered `read_attachment_file`, so a
+        // backfilled hash still matches a sync offer's `blake3_hash`
+        // byte-for-byte — only the memory profile changes (avoids boot-time
+        // OOM on mobile with large unhashed attachments). We only need the
+        // hash; the returned size is ignored (the UPDATE writes content_hash).
+        let hash = match crate::sync_files::read_attachment_file_metadata(
+            app_data_dir,
+            &c.fs_path,
+        )
         .await
-        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())));
-
-        let hash = match hash_result {
-            // Join succeeded and the file hashed cleanly.
-            Ok(Ok((_bytes, hash))) => hash,
+        {
+            // The file hashed cleanly.
+            Ok((_size, hash)) => hash,
             // The file is missing / unreadable / fs_path malformed — tolerate
             // it: leave the row NULL and move on (sync GC reconciles missing
             // files; the next attach or a future backfill can fill it later).
-            Ok(Err(e)) => {
-                tracing::warn!(
-                    attachment_id = %c.id,
-                    fs_path = %c.fs_path,
-                    error = %e,
-                    "attachment content_hash backfill: file unreadable — leaving NULL"
-                );
-                report.skipped_missing += 1;
-                continue;
-            }
-            // spawn_blocking join error (panic / cancellation) — also skip.
             Err(e) => {
                 tracing::warn!(
                     attachment_id = %c.id,
                     fs_path = %c.fs_path,
                     error = %e,
-                    "attachment content_hash backfill: hashing task failed — leaving NULL"
+                    "attachment content_hash backfill: file unreadable — leaving NULL"
                 );
                 report.skipped_missing += 1;
                 continue;
@@ -225,9 +224,30 @@ mod tests {
         assert_eq!(r1.skipped_missing, 0);
 
         let stored = fetch_hash(&pool, "ATT-1").await.expect("now hashed");
-        let (_b, sync_hash) =
+
+        // The streaming backfill must produce EXACTLY the same blake3 digest as
+        // the old buffered full-read path — byte-for-byte. blake3 streamed
+        // through `read_attachment_file_metadata`'s fixed-size buffer equals the
+        // one-shot `blake3::hash` over the same bytes, so the persisted hash is
+        // identical regardless of which read path produced it.
+        let (_b, buffered_hash) =
             crate::sync_files::read_attachment_file(app_data_dir, fs_path).unwrap();
-        assert_eq!(stored, sync_hash, "backfilled hash matches sync hasher");
+        let (_sz, streaming_hash) =
+            crate::sync_files::read_attachment_file_metadata(app_data_dir, fs_path)
+                .await
+                .unwrap();
+        assert_eq!(
+            buffered_hash, streaming_hash,
+            "streaming hash == old buffered full-read hash (byte-for-byte)"
+        );
+        assert_eq!(
+            stored, streaming_hash,
+            "backfilled hash matches the streaming sync hasher"
+        );
+        assert_eq!(
+            stored, buffered_hash,
+            "backfilled hash matches the old buffered full-read hasher"
+        );
         assert_eq!(stored, blake3::hash(&bytes).to_hex().to_string());
 
         // Idempotent: a second run sees no NULL rows → no-op, hash unchanged.
