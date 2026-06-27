@@ -220,13 +220,14 @@ tauri-plugin-deep-link = "2"
 url = "2"
 dirs = { version = "6.0.0", default-features = false }
 
-# Spike: official Rust MCP SDK. Optional + feature-gated so
-# the default build does not link `rmcp`. Pinned to v1.7 (post-1.0,
-# Apache-2.0). Defaults (`base64`, `macros`, `server`) include the
-# `transport-async-rw` server transport via the `server` feature; the
-# `client` feature is added so the spike's end-to-end test can drive a
-# real rmcp client over an in-memory `tokio::io::duplex` pair. See
-# `src/mcp/rmcp_spike.md` for the spike verdict.
+# Official Rust MCP SDK — the canonical MCP transport/dispatch layer.
+# Hard (non-optional) dependency as of the rmcp migration (#693): the
+# `mcp_rmcp_spike` feature gate was retired and the hand-rolled framing
+# deleted, so `RmcpAdapter` serves both surfaces unconditionally. Pinned
+# to v1.7 (post-1.0, Apache-2.0). Defaults (`base64`, `macros`, `server`)
+# include the `transport-async-rw` server transport via the `server`
+# feature; the `client` feature is added so the end-to-end tests can
+# drive a real rmcp client over an in-memory `tokio::io::duplex` pair.
 rmcp = { version = "1.7", features = ["client"] }
 
 # Phase 1 — Loro CRDT runtime. Hard dep as of Phase 3 day-9
