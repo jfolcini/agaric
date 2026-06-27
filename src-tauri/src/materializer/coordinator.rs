@@ -953,6 +953,9 @@ impl Materializer {
             // #1326: surface the SQL-only fallback observability counter
             // (process-global, monotonic) through the status endpoint.
             sql_only_fallback_count: super::handlers::sql_only_fallback::count(),
+            // #2031: surface the descendant fan-out divergence counter
+            // (process-global, monotonic) through the status endpoint.
+            descendant_fanout_dropped: super::handlers::descendant_fanout_dropped::count(),
             // #1319: surface the cross-session sync snapshot-fallback
             // aggregate (process-global, monotonic count + last occurrence)
             // through the status endpoint.

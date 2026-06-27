@@ -37,6 +37,7 @@ use std::sync::Arc;
 
 mod apply;
 mod attachments;
+pub(crate) mod descendant_fanout_dropped;
 mod loro_apply;
 mod pages_cache;
 mod sql_only;

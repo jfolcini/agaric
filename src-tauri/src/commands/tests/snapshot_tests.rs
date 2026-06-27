@@ -115,6 +115,13 @@ async fn snapshot_status_info_response() {
         // across runs. Redact it to keep the snapshot stable; its live wiring
         // is asserted by the delta test in `materializer::tests::fifo_status`.
         ".sql_only_fallback_count" => "[FALLBACK_COUNT]",
+        // #2031: `descendant_fanout_dropped` is the same process-global
+        // monotonic shape as `sql_only_fallback_count` — other tests in
+        // this binary may bump it before this snapshot samples it. Redact
+        // it; the live wiring is asserted by the delta test in
+        // `materializer::handlers::descendant_fanout_dropped` and the
+        // fan-out skip test in the apply handler module.
+        ".descendant_fanout_dropped" => "[DESCENDANT_FANOUT_DROPPED]",
         // #1319: same process-global, cross-session non-determinism as
         // `sql_only_fallback_count` — other tests in this binary may have
         // recorded a snapshot-fallback before this snapshot samples it.
