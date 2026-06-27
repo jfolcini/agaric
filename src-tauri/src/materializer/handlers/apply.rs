@@ -156,6 +156,10 @@ pub(crate) async fn dispatch_restore_descendants(
     let root_payload: RestoreBlockPayload = match serde_json::from_str(&root_record.payload) {
         Ok(p) => p,
         Err(e) => {
+            // #2031: the SQL restore already committed but we cannot fan
+            // out to the engine — the engine stays divergent until boot
+            // replay reconciles. Meter the skip so it is observable.
+            super::descendant_fanout_dropped::record();
             tracing::warn!(
                 seq = root_record.seq,
                 error = %e,
@@ -174,6 +178,10 @@ pub(crate) async fn dispatch_restore_descendants(
     let space_id = match crate::space::resolve_block_space(pool, &root_block).await {
         Ok(Some(s)) => s,
         Ok(None) => {
+            // #2031: SQL restore committed but the root block has no
+            // resolvable space, so the engine cohort cannot be mirrored
+            // and stays divergent until boot replay. Meter the skip.
+            super::descendant_fanout_dropped::record();
             tracing::trace!(
                 block_id = root_payload.block_id.as_str(),
                 "restore-cascade fanout: no space for root block; skipping",
@@ -181,6 +189,9 @@ pub(crate) async fn dispatch_restore_descendants(
             return;
         }
         Err(e) => {
+            // #2031: resolve_block_space failed post-commit; the engine
+            // cohort is left divergent. Meter the skip.
+            super::descendant_fanout_dropped::record();
             tracing::warn!(
                 error = %e,
                 "restore-cascade fanout: resolve_block_space failed; skipping",
@@ -259,6 +270,11 @@ pub(crate) async fn dispatch_delete_descendants(
         // page never received a `space` SetProperty). Nothing to do —
         // there's no canonical engine to mirror onto. The SQL-side
         // delete already stands as the durable outcome.
+        //
+        // #2031: SQL delete committed but the descendant cohort cannot
+        // be mirrored onto an engine, leaving it divergent until boot
+        // replay. Meter the skip so it is observable.
+        super::descendant_fanout_dropped::record();
         tracing::trace!(
             seq = root_record.seq,
             "delete-cascade fanout: no space captured for root block; skipping",

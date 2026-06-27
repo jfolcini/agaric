@@ -255,3 +255,53 @@ async fn dispatch_restore_descendants_empty_list_is_noop() {
         );
     }
 }
+
+/// #2031: a malformed root payload makes `dispatch_restore_descendants`
+/// abort the fan-out (warn + early-return), leaving the engine
+/// divergent from the SQL restore. The
+/// `descendant_fanout_dropped` counter must bump exactly once on that
+/// skip so the divergence is observable instead of healing only on boot
+/// replay.
+///
+/// Drives the parse-failure skip path: the engine IS installed (so the
+/// `crate::loro::shared::get()` early-return is not the one taken), and
+/// the cohort is non-empty (so the empty-list fast path is not taken),
+/// but the root record's payload is not valid JSON — so the
+/// `serde_json::from_str::<RestoreBlockPayload>` parse fails and the
+/// helper bumps the counter and returns.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_restore_descendants_parse_failure_bumps_divergence_metric() {
+    let (pool, _dir) = fresh_pool().await;
+    seed_deleted_subtree(&pool).await;
+    // Engine MUST be installed so the `get()` early-return is not the
+    // path exercised — we want to reach the payload parse.
+    let _state = fresh_loro_state();
+
+    // Root record with an UNPARSEABLE payload (not valid JSON, and in
+    // particular not a `RestoreBlockPayload`).
+    let root = OpRecord {
+        device_id: DEVICE_ID.into(),
+        seq: 7,
+        parent_seqs: None,
+        hash: "0000".into(),
+        op_type: "restore_block".into(),
+        payload: "this is not json".into(),
+        created_at: DELETED_AT,
+        block_id: Some(PAGE_ID.into()),
+    };
+
+    // Non-empty cohort so the empty-list fast path is not taken.
+    let cohort = [PAGE_ID.to_string(), CHILD_1.to_string()];
+
+    // Sample the process-global counter as a delta — it is monotonic and
+    // other tests in this nextest process may have bumped it concurrently.
+    let before = super::descendant_fanout_dropped::count();
+    super::dispatch_restore_descendants(&pool, &root, &cohort).await;
+    let after = super::descendant_fanout_dropped::count();
+
+    assert_eq!(
+        after - before,
+        1,
+        "malformed root payload must bump descendant_fanout_dropped exactly once",
+    );
+}
