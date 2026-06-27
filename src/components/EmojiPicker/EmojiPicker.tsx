@@ -42,6 +42,7 @@ import { useTranslation } from 'react-i18next'
 import { groupedEmoji, searchEmoji, type EmojiEntry } from '@/editor/emoji-data'
 import { useEmojiRecents } from '@/hooks/useEmojiRecents'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
+import { useRovingTabindex } from '@/hooks/useRovingTabindex'
 import { cn } from '@/lib/utils'
 
 import { Input } from '../ui/input'
@@ -50,7 +51,13 @@ import { applySkinTone, SKIN_TONES, supportsSkinTone, type SkinToneId } from './
 const SKIN_TONE_KEY = 'emoji_skin_tone'
 /** Emoji per grid row. A fixed column count keeps virtualization row-based. */
 const COLUMNS = 8
-const CELL_PX = 40
+// #2057: emoji cells grow to the 44px coarse-pointer touch floor (`size-11`),
+// so the virtualizer reserves >=44px per row. `measureElement` corrects the
+// real height per row after mount; this is the pre-measure estimate. On fine
+// pointers the cell is 36px — overestimating the row height here is harmless
+// (the spacer is re-measured), and matching the coarse case avoids a layout
+// jump on touch where it matters for tap targets.
+const CELL_PX = 44
 const HEADER_PX = 28
 
 type GridRow =
@@ -126,6 +133,11 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
   })
 
   const scrollRef = useRef<HTMLDivElement>(null)
+  // #2057: roving tabindex + Arrow/Home/End for the category tablist. The
+  // tablist declares role="tablist" (promising arrow-key roving) but used to
+  // make every tab its own tab stop with no key handlers. Reuse the same
+  // toolbar-pattern hook the rest of the app uses for 1D roving sets.
+  const categoryRoving = useRovingTabindex()
   const { rows, total } = useMemo(() => buildRows(query), [query])
   const isSearching = query.trim() !== ''
   const noResults = isSearching && total === 0
@@ -322,10 +334,15 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
           grid to its group header; the active group highlights as you scroll. */}
       {categoryTargets.length > 0 && (
         <div
+          ref={categoryRoving.containerRef}
           role="tablist"
           aria-label={t('emojiPicker.categories')}
           data-testid="emoji-categories"
           className="flex items-center gap-0.5 border-b pb-1"
+          // Not a tab stop itself; the roving tab moves the single tabindex 0.
+          tabIndex={-1}
+          onKeyDown={categoryRoving.onKeyDown}
+          onFocus={categoryRoving.onFocus}
         >
           {categoryTargets.map(({ group, Icon, index }) => {
             const active = group === activeGroup
@@ -340,7 +357,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
                 data-active={active}
                 onClick={() => jumpToCategory(index)}
                 className={cn(
-                  'grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-ring-visible',
+                  'grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-ring-visible [@media(pointer:coarse)]:size-11 touch-target',
                   active && 'bg-accent text-foreground',
                 )}
               >
@@ -373,7 +390,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
                   push(char)
                   onSelect(char)
                 }}
-                className="grid size-9 place-items-center rounded-md text-xl leading-none hover:bg-accent focus-ring-visible"
+                className="grid size-9 place-items-center rounded-md text-xl leading-none hover:bg-accent focus-ring-visible [@media(pointer:coarse)]:size-11 touch-target"
               >
                 {char}
               </button>
@@ -452,7 +469,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
                             title={`:${entry.name}:`}
                             tabIndex={isFocused ? 0 : -1}
                             onClick={() => handleSelect(entry)}
-                            className="grid size-9 place-items-center rounded-md text-xl leading-none hover:bg-accent focus-ring-visible"
+                            className="grid size-9 place-items-center rounded-md text-xl leading-none hover:bg-accent focus-ring-visible [@media(pointer:coarse)]:size-11 touch-target"
                           >
                             {char}
                           </button>
@@ -484,11 +501,21 @@ interface SkinToneSelectorProps {
 function SkinToneSelector({ value, onChange }: SkinToneSelectorProps) {
   const { t } = useTranslation()
   const sample = '\u{1F44D}' // thumbsup — supports skin tone
+  // #2057: roving tabindex + Arrow/Home/End for the radiogroup. The container
+  // declared role="radiogroup" but every swatch was its own tab stop with no
+  // key handlers; reuse the shared toolbar-pattern hook (same as the category
+  // tablist) so Tab lands once and arrows move between swatches.
+  const roving = useRovingTabindex()
   return (
     <div
+      ref={roving.containerRef}
       role="radiogroup"
       aria-label={t('emojiPicker.skinTone')}
       className="flex items-center gap-0.5"
+      // Not a tab stop itself; the roving tab moves the single tabindex 0.
+      tabIndex={-1}
+      onKeyDown={roving.onKeyDown}
+      onFocus={roving.onFocus}
     >
       {SKIN_TONES.map((tone) => {
         const label = t(tone.labelKey)
@@ -503,7 +530,7 @@ function SkinToneSelector({ value, onChange }: SkinToneSelectorProps) {
             title={label}
             onClick={() => onChange(tone.id)}
             className={cn(
-              'grid size-7 place-items-center rounded-md text-base leading-none hover:bg-accent focus-ring-visible',
+              'grid size-7 place-items-center rounded-md text-base leading-none hover:bg-accent focus-ring-visible [@media(pointer:coarse)]:size-11 touch-target',
               value === tone.id && 'bg-accent ring-1 ring-ring',
             )}
           >

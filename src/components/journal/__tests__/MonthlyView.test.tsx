@@ -15,7 +15,9 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { format } from 'date-fns'
+import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -45,19 +47,28 @@ vi.mock('../../../hooks/useWeekStart', () => ({
 }))
 
 // ── Mock MonthlyDayCell ─────────────────────────────────────────────
+// The mock forwards the roving props the real cell consumes (ref, tabIndex,
+// onFocus) so the roving-tabindex / arrow-key tests below exercise
+// MonthlyView's grid keyboard handler against focusable cells.
 vi.mock('../MonthlyDayCell', () => ({
   MonthlyDayCell: (props: Record<string, unknown>) => {
     const entry = props['entry'] as DayEntry
+    const isCurrentMonth = !!props['isCurrentMonth']
+    const tabIndex = props['tabIndex'] as number | undefined
     return (
       /* oxlint-disable jsx-a11y/prefer-tag-over-role -- test mock; gridcell role mirrors MonthlyDayCell */
       <div
+        ref={props['ref'] as React.Ref<HTMLDivElement> | undefined}
         role="gridcell"
         data-testid={`monthly-cell-${entry.dateStr}`}
+        data-date={entry.dateStr}
         data-is-today={String(!!props['isToday'])}
-        data-is-current-month={String(!!props['isCurrentMonth'])}
+        data-is-current-month={String(isCurrentMonth)}
         data-agenda-count={String(props['agendaCount'])}
         data-backlink-count={String(props['backlinkCount'])}
         aria-label={entry.displayDate}
+        tabIndex={!isCurrentMonth ? -1 : (tabIndex ?? 0)}
+        onFocus={props['onFocus'] as React.FocusEventHandler<HTMLDivElement> | undefined}
       >
         {entry.date.getDate()}
       </div>
@@ -212,6 +223,83 @@ describe('MonthlyView', () => {
     expect(headers).toHaveLength(7)
     expect(headers[0]).toHaveTextContent('Sun')
     expect(headers[6]).toHaveTextContent('Sat')
+  })
+
+  // ── #2057: roving tabindex + arrow-key navigation ───────────────────
+  describe('#2057 roving tabindex / arrow-key navigation', () => {
+    it('exposes exactly one tab stop across the whole grid', () => {
+      render(<MonthlyView makeDayEntry={makeDayEntry} />)
+      const tabbable = screen
+        .getAllByRole('gridcell')
+        .filter((c) => c.getAttribute('tabindex') === '0')
+      expect(tabbable).toHaveLength(1)
+      // Jan 2025: today (2026) is out-of-month, so the first in-month day (Jan 1)
+      // owns the tab stop.
+      expect(tabbable[0]).toBe(screen.getByTestId('monthly-cell-2025-01-01'))
+    })
+
+    it('adjacent-month padding cells are never a tab stop (-1)', () => {
+      render(<MonthlyView makeDayEntry={makeDayEntry} />)
+      // Dec 30 2024 is leading padding for the Monday-start Jan 2025 grid.
+      expect(screen.getByTestId('monthly-cell-2024-12-30')).toHaveAttribute('tabindex', '-1')
+    })
+
+    it('ArrowRight moves the roving focus to the next in-month day', async () => {
+      const user = userEvent.setup()
+      render(<MonthlyView makeDayEntry={makeDayEntry} />)
+      const jan1 = screen.getByTestId('monthly-cell-2025-01-01')
+      jan1.focus()
+      await user.keyboard('{ArrowRight}')
+      const jan2 = screen.getByTestId('monthly-cell-2025-01-02')
+      expect(jan2).toHaveFocus()
+      expect(jan2).toHaveAttribute('tabindex', '0')
+      // The old tab stop relinquished it (single tab stop invariant).
+      expect(jan1).toHaveAttribute('tabindex', '-1')
+    })
+
+    it('ArrowDown moves the roving focus down one week (+7 days)', async () => {
+      const user = userEvent.setup()
+      render(<MonthlyView makeDayEntry={makeDayEntry} />)
+      const jan1 = screen.getByTestId('monthly-cell-2025-01-01')
+      jan1.focus()
+      await user.keyboard('{ArrowDown}')
+      expect(screen.getByTestId('monthly-cell-2025-01-08')).toHaveFocus()
+    })
+
+    it('ArrowLeft from the first in-month day stays in-month (skips padding)', async () => {
+      const user = userEvent.setup()
+      render(<MonthlyView makeDayEntry={makeDayEntry} />)
+      const jan1 = screen.getByTestId('monthly-cell-2025-01-01')
+      jan1.focus()
+      // Left of Jan 1 is Dec 31 (padding) then Dec 30 (padding) — no in-month
+      // cell to the left, so focus stays on Jan 1.
+      await user.keyboard('{ArrowLeft}')
+      expect(jan1).toHaveFocus()
+    })
+
+    it('Home/End jump within the current week row', async () => {
+      const user = userEvent.setup()
+      render(<MonthlyView makeDayEntry={makeDayEntry} />)
+      // Move into the second week so Home/End land on real in-month days.
+      const jan8 = screen.getByTestId('monthly-cell-2025-01-08')
+      jan8.focus()
+      await user.keyboard('{End}')
+      // Week 2 (Mon Jan 6 – Sun Jan 12); End → Jan 12.
+      expect(screen.getByTestId('monthly-cell-2025-01-12')).toHaveFocus()
+      await user.keyboard('{Home}')
+      // Home → Jan 6.
+      expect(screen.getByTestId('monthly-cell-2025-01-06')).toHaveFocus()
+    })
+
+    it('re-seeds the tab stop to the first in-month day on month change', () => {
+      const { rerender } = render(<MonthlyView makeDayEntry={makeDayEntry} />)
+      expect(screen.getByTestId('monthly-cell-2025-01-01')).toHaveAttribute('tabindex', '0')
+
+      useJournalStore.setState({ currentDate: FEB_DATE })
+      rerender(<MonthlyView makeDayEntry={makeDayEntry} />)
+      expect(screen.getByTestId('monthly-cell-2025-02-01')).toHaveAttribute('tabindex', '0')
+      expect(screen.queryByTestId('monthly-cell-2025-01-01')).not.toBeInTheDocument()
+    })
   })
 
   it('renders grid with role="grid" and aria-label', () => {
