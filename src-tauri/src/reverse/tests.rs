@@ -2275,7 +2275,14 @@ async fn compute_reverse_batch_matches_per_op_loop() {
 
     // -- batched candidate ------------------------------------------
     let records = get_op_records_batch(&pool, &op_refs).await.unwrap();
-    let batched = compute_reverse_batch(&pool, &records).await.unwrap();
+    // #2020: per-op `Result`s — every op in this batch is reversible, so
+    // unwrap each inner result into the byte-for-byte payload comparison.
+    let batched: Vec<OpPayload> = compute_reverse_batch(&pool, &records)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.expect("all ops in this batch are reversible"))
+        .collect();
 
     // -- assert byte-identical ---------------------------------------
     assert_eq!(
@@ -2364,7 +2371,13 @@ async fn compute_reverse_batch_set_delete_set_yields_delete_property() {
 
     // Batched candidate must match the oracle byte-for-byte.
     let records = get_op_records_batch(&pool, &op_refs).await.unwrap();
-    let batched = compute_reverse_batch(&pool, &records).await.unwrap();
+    // #2020: per-op `Result`s — this single reversible op unwraps cleanly.
+    let batched: Vec<OpPayload> = compute_reverse_batch(&pool, &records)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.expect("the final Set is reversible"))
+        .collect();
     assert_eq!(batched.len(), 1, "exactly one reverse for one op");
     assert_eq!(
         batched[0], legacy,
@@ -2434,9 +2447,13 @@ async fn compute_reverse_batch_chunks_large_edit_batch_c5() {
     let records = get_op_records_batch(&pool, &op_refs).await.unwrap();
     assert_eq!(records.len(), N_EDITS, "all op records round-tripped");
 
-    let batched = compute_reverse_batch(&pool, &records)
+    // #2020: per-op `Result`s — every edit is reversible, so unwrap each.
+    let batched: Vec<OpPayload> = compute_reverse_batch(&pool, &records)
         .await
-        .expect("C5: batched reverse of 400 edits must not overflow the SQL bind limit");
+        .expect("C5: batched reverse of 400 edits must not overflow the SQL bind limit")
+        .into_iter()
+        .map(|r| r.expect("every edit in this batch is reversible"))
+        .collect();
     assert_eq!(batched.len(), N_EDITS, "one reverse per input op, in order");
 
     // Output must stay aligned to input order across chunk boundaries:

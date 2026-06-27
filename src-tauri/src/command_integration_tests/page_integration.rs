@@ -826,6 +826,141 @@ async fn restore_page_to_op_op_log_chain_valid_after_restore() {
     mat.shutdown();
 }
 
+/// #2020: a point-in-time restore whose swept suffix contains a
+/// non-reversible op (here a position-less `move_block` whose only prior
+/// placement is an ancient `create_block` carrying neither `index` nor
+/// `position`) interleaved with a reversible op (an `edit_block`) must
+/// COMPLETE: it reverses the reversible op and SKIPS+COUNTS the
+/// non-reversible one, rather than aborting the entire restore with a
+/// `NonReversible` error.
+///
+/// Before the fix, `restore_page_to_op_inner` only pre-filtered the STATIC
+/// `[purge_block, delete_attachment]` op-types, so a `move_block` that
+/// `compute_reverse_batch` discovers to be non-reversible at runtime
+/// propagated its `NonReversible` via `?` and killed the whole restore.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_page_to_op_skips_non_reversible_and_completes() {
+    use crate::op::{CreateBlockPayload, MoveBlockPayload, OpPayload};
+    use crate::op_log::append_local_op_at;
+    use crate::ulid::BlockId;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // A real page + child so the reversible `edit_block`'s reverse can be
+    // APPLIED against a live `blocks` row.
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Restore Page".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "content-A".into(),
+        Some(page.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Restore target: the state right after the (reversible) command-helper
+    // seed history. Capture it BEFORE seeding the phantom op below — the
+    // phantom create carries an ANCIENT `created_at`, so letting it be the
+    // target would push `target_ts` back far enough to sweep (and revert)
+    // the legitimate page/child creates too.
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
+    let target_seq = ops.last().unwrap().seq;
+
+    // Phantom block: an ANCIENT `create_block` with BOTH `index` and
+    // `position` absent. This op lives only in the op_log (no `blocks`
+    // row) and is timestamped BEFORE the restore target, so it is NOT
+    // swept — it exists solely as the prior-placement context that makes
+    // the later move's reverse non-reversible. `created_at` is well before
+    // the command-helper ops above (which use `now_ms()`).
+    let phantom = BlockId::test_id("NR_PHANTOM");
+    append_local_op_at(
+        &pool,
+        DEV,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: phantom.clone(),
+            block_type: "content".into(),
+            parent_id: None,
+            position: None,
+            index: None,
+            content: "phantom".into(),
+        }),
+        1_000_000_000_000,
+    )
+    .await
+    .unwrap();
+
+    // (1) Reversible op AFTER target: edit the child A → B. Restore must
+    // revert this back to A.
+    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "content-B".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // (2) Non-reversible op AFTER target: a `move_block` on the phantom
+    // block whose only prior placement is the position-less create above.
+    // `compute_reverse_batch` returns `NonReversible` for this op. Use a
+    // `created_at` far in the future so it sorts strictly after the edit
+    // and after the target in the membership sweep.
+    append_local_op_at(
+        &pool,
+        DEV,
+        OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: phantom.clone(),
+            new_parent_id: None,
+            new_position: 5,
+            new_index: None,
+        }),
+        9_000_000_000_000,
+    )
+    .await
+    .unwrap();
+
+    // Restore to the seed point via the "__all__" sweep so both the edit
+    // and the phantom move qualify, regardless of `blocks`-table state.
+    let result =
+        restore_page_to_op_inner(&pool, DEV, &mat, "__all__".into(), DEV.into(), target_seq)
+            .await
+            .expect("restore must COMPLETE, not abort, despite a non-reversible swept op");
+    settle(&mat).await;
+
+    // The reversible edit was reverted; the non-reversible move was
+    // skipped and counted.
+    assert_eq!(
+        result.ops_reverted, 1,
+        "exactly the one reversible edit_block should be reverted"
+    );
+    assert_eq!(
+        result.non_reversible_skipped, 1,
+        "the position-less move_block must be skipped and counted, not aborted on"
+    );
+    assert_eq!(
+        get_block_inner(&pool, child.id).await.unwrap().content,
+        Some("content-A".into()),
+        "child content must revert to A even though a later op was non-reversible"
+    );
+
+    mat.shutdown();
+}
+
 // ======================================================================
 // list_page_links — graph view page relationship query
 // ======================================================================

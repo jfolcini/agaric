@@ -429,7 +429,10 @@ pub async fn revert_ops_inner(
     // dispatch is structurally impossible (commit_and_dispatch drains
     // the pending queue in order).
     let mut tx = CommandTx::begin_immediate(pool, "revert_ops").await?;
-    let results = revert_ops_in_tx(&mut tx, pool, device_id, ops).await?;
+    // Interactive batch undo preserves the historical contract: a single
+    // non-reversible op aborts the whole revert (skip_non_reversible =
+    // false). The discarded skip count is irrelevant on this path.
+    let (results, _skipped) = revert_ops_in_tx(&mut tx, pool, device_id, ops, false).await?;
 
     // Commits, then fires queued dispatches in enqueue order. If commit
     // fails, no dispatches fire.
@@ -447,16 +450,27 @@ pub async fn revert_ops_inner(
 /// same transaction that performs the revert, closing the TOCTOU window where
 /// an op landing between the membership read and the write would keep its
 /// forward effect (issue #1551).
+///
+/// `skip_non_reversible` selects the per-op non-reversible policy, unified
+/// through [`reverse::is_skippable_non_reversible`] (#2020):
+///   * `false` (interactive batch undo) — a single non-reversible op in the
+///     batch aborts the whole revert before any reverse is applied.
+///   * `true` (point-in-time restore) — non-reversible ops are SKIPPED and
+///     COUNTED; the reversible remainder is applied.
+///
+/// Returns `(results, non_reversible_skipped)`. The skip count is always 0
+/// when `skip_non_reversible` is `false` (such a batch errors out instead).
 async fn revert_ops_in_tx(
     tx: &mut CommandTx,
     pool: &SqlitePool,
     device_id: &str,
     ops: Vec<OpRef>,
-) -> Result<Vec<UndoResult>, AppError> {
+    skip_non_reversible: bool,
+) -> Result<(Vec<UndoResult>, u64), AppError> {
     use crate::reverse;
 
     if ops.is_empty() {
-        return Ok(vec![]);
+        return Ok((vec![], 0));
     }
 
     // C5 (#344): bound the batch size before any DB work. This is the
@@ -469,6 +483,8 @@ async fn revert_ops_in_tx(
             ops.len()
         )));
     }
+
+    let mut non_reversible_skipped: u64 = 0;
 
     // Phase 1: Validate all ops are reversible by computing their reverse payloads.
     //
@@ -489,10 +505,32 @@ async fn revert_ops_in_tx(
     // *which* ops are reverted — `restore_page_to_op_inner`'s ops-to-revert
     // SELECT — runs inside `tx` so it shares the IMMEDIATE write lock.
     let records = reverse::get_op_records_batch(pool, &ops).await?;
+    // #2020: `compute_reverse_batch` returns a per-op `Result`. A
+    // non-reversible op surfaces as an inner `Err(NonReversible)` (e.g. a
+    // position-less `move_block`, a `delete_attachment` whose paired
+    // `add_attachment` is gone, or a `purge_block`) — the SAME unified
+    // mechanism that subsumes the old static `[purge_block,
+    // delete_attachment]` skip list. The non-reversible *contract* lives
+    // in `reverse::is_skippable_non_reversible`.
     let reverse_payloads = reverse::compute_reverse_batch(pool, &records).await?;
     let mut reverses: Vec<(OpRef, OpPayload, i64, String)> = Vec::with_capacity(ops.len());
     for ((op_ref, reverse_payload), record) in ops.iter().zip(reverse_payloads).zip(records.iter())
     {
+        let reverse_payload = match reverse_payload {
+            Ok(p) => p,
+            // Per-op non-reversible. Restore SKIPS+COUNTS it and presses
+            // on; interactive undo aborts the whole batch (preserving the
+            // historical contract). `compute_reverse_batch` only emits an
+            // inner `Err` for skippable non-reversible ops, so any other
+            // error already aborted via `?` on the call above.
+            Err(e) => {
+                if skip_non_reversible && reverse::is_skippable_non_reversible(&e) {
+                    non_reversible_skipped += 1;
+                    continue;
+                }
+                return Err(e);
+            }
+        };
         reverses.push((
             op_ref.clone(),
             reverse_payload,
@@ -545,14 +583,21 @@ async fn revert_ops_in_tx(
         tx.enqueue_background(op_record);
     }
 
-    Ok(results)
+    Ok((results, non_reversible_skipped))
 }
 
 /// Restore a page to its state at a specific operation (point-in-time restore).
 ///
 /// Finds all ops that occurred AFTER the target op on blocks belonging to the
-/// given page (or all blocks if `page_id == "__all__"`), filters out non-reversible
-/// ops, and calls `revert_ops_inner()` with the remainder.
+/// given page (or all blocks if `page_id == "__all__"`) and reverts them inside
+/// a single IMMEDIATE transaction. Non-reversible ops are SKIPPED and counted
+/// (`non_reversible_skipped`) rather than aborting the restore (#2020): the
+/// revert path classifies them through `reverse::is_skippable_non_reversible`,
+/// so both statically non-reversible op-types (`purge_block`,
+/// `delete_attachment`) and ops only discovered to be non-reversible at runtime
+/// (a position-less `move_block`, a `delete_attachment` whose paired
+/// `add_attachment` is gone) are skipped uniformly. The restore completes and
+/// reverses everything that CAN be reversed.
 ///
 /// # Snapshot semantics — atomic read+revert (#1551)
 ///
@@ -645,16 +690,34 @@ pub async fn restore_page_to_op_inner(
         .collect()
     };
 
-    // Separate reversible from non-reversible ops
-    let non_reversible = ["purge_block", "delete_attachment"];
-    let mut reversible_ops = Vec::new();
-    let mut non_reversible_count: u64 = 0;
-
+    // #2020: split the swept suffix through the UNIFIED non-reversible
+    // contract, which has two halves living in `reverse`:
+    //
+    //   * STATIC (`reverse::is_statically_non_reversible`) — op-types a
+    //     restore skips on sight (`purge_block`, `delete_attachment`),
+    //     filtered + counted here.
+    //   * DYNAMIC (`reverse::is_skippable_non_reversible`) — ops that
+    //     `compute_reverse_batch` only discovers to be non-reversible at
+    //     RUNTIME (a position-less `move_block`, a `delete_attachment`
+    //     whose paired `add_attachment` is gone). These flow through as
+    //     candidates and are SKIPPED+COUNTED by `revert_ops_in_tx`.
+    //
+    // The old code had only the static half, so a dynamically
+    // non-reversible op propagated `NonReversible` via `?` and aborted the
+    // ENTIRE restore. Routing the remainder through `revert_ops_in_tx`
+    // with `skip_non_reversible = true` closes that gap; the two skip
+    // counts are summed into `non_reversible_skipped`.
+    let mut static_non_reversible_skipped: u64 = 0;
+    let mut candidate_ops: Vec<OpRef> = Vec::with_capacity(ops_after.len());
     for (dev_id, seq, op_type) in &ops_after {
-        if non_reversible.contains(&op_type.as_str()) {
-            non_reversible_count += 1;
+        if crate::reverse::is_statically_non_reversible(op_type) {
+            // STATIC half of the contract: op-types a restore skips on
+            // sight (`purge_block`, `delete_attachment`). `delete_attachment`
+            // is skipped even when an inverse could be reconstructed,
+            // preserving the established restore behaviour.
+            static_non_reversible_skipped += 1;
         } else {
-            reversible_ops.push(OpRef {
+            candidate_ops.push(OpRef {
                 device_id: dev_id.clone(),
                 seq: *seq,
             });
@@ -668,31 +731,39 @@ pub async fn restore_page_to_op_inner(
     // cleanly before any batch work rather than relying on the inner
     // guard. The bound matches the interactive `undo_depth` ceiling.
     // (Returning here drops `tx`, rolling the IMMEDIATE transaction back.)
-    if reversible_ops.len() > MAX_REVERT_OPS {
+    if candidate_ops.len() > MAX_REVERT_OPS {
         return Err(AppError::Validation(format!(
             "restore would revert {} ops, exceeding the maximum of {MAX_REVERT_OPS}; \
              restore to a more recent point",
-            reversible_ops.len()
+            candidate_ops.len()
         )));
     }
 
-    // Revert the reversible ops inside the SAME IMMEDIATE transaction the
+    // Revert the candidate ops inside the SAME IMMEDIATE transaction the
     // membership SELECT ran in (#1551 — read and revert are now atomic),
-    // then commit and fire post-commit dispatches.
-    let results = if reversible_ops.is_empty() {
+    // then commit and fire post-commit dispatches. Dynamically
+    // non-reversible ops are skipped+counted rather than aborting (#2020).
+    let (results, dynamic_non_reversible_skipped) = if candidate_ops.is_empty() {
         // Nothing to revert; release the write lock without churning the
         // materializer. (Membership read already saw a quiescent suffix.)
         tx.rollback().await?;
-        vec![]
+        (vec![], 0)
     } else {
-        let results = revert_ops_in_tx(&mut tx, pool, device_id, reversible_ops).await?;
-        tx.commit_and_dispatch(materializer).await?;
-        results
+        let (results, skipped) =
+            revert_ops_in_tx(&mut tx, pool, device_id, candidate_ops, true).await?;
+        if results.is_empty() {
+            // Every candidate op was non-reversible — nothing was applied,
+            // so release the write lock without churning the materializer.
+            tx.rollback().await?;
+        } else {
+            tx.commit_and_dispatch(materializer).await?;
+        }
+        (results, skipped)
     };
 
     Ok(RestoreToOpResult {
         ops_reverted: results.len() as u64,
-        non_reversible_skipped: non_reversible_count,
+        non_reversible_skipped: static_non_reversible_skipped + dynamic_non_reversible_skipped,
         results,
     })
 }
