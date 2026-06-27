@@ -78,10 +78,22 @@ pub(super) const CLEANUP_BATCH_SLEEP_MS: u64 = 10;
 /// or by any future code path that drops `fs_path` from a payload)
 /// and are unlinked.
 ///
-/// Threat model: single-user, multi-device. There are no concurrent
-/// writers for a given attachment row, so there is no TOCTOU concern
-/// between the `SELECT 1` existence check and the `remove_file`
-/// unlink — the row cannot appear between the two operations.
+/// Concurrency / TOCTOU (#2032): this GC runs as a background JoinSet
+/// task (`run_background`) concurrently with the foreground apply path
+/// (`run_foreground`), which commits `AddAttachment` rows. A row+file
+/// committed AFTER the bulk reference load but BEFORE its file is
+/// considered for unlink would otherwise look like an orphan and be
+/// removed out from under a just-added attachment. Two mitigations close
+/// the window:
+///   1. The referenced-path set is loaded BEFORE the on-disk file list
+///      is collected, so the reference set is at least as fresh as the
+///      file list (never staler).
+///   2. Immediately before each unlink we RE-CHECK membership with a
+///      fresh `SELECT 1 FROM attachments WHERE fs_path = ?` on the WRITE
+///      pool (the same pool the foreground apply commits through, so it
+///      cannot lag the writer the way a read-replica snapshot can). The
+///      file is unlinked only if it is STILL unreferenced per that
+///      write-pool read.
 ///
 /// Robustness guarantees:
 /// - Missing or empty `attachments/` directory is a no-op (early
@@ -99,17 +111,27 @@ pub(super) const CLEANUP_BATCH_SLEEP_MS: u64 = 10;
 /// Returns `Ok(())` always — failures are logged, never propagated,
 /// because a partial GC pass is strictly better than no GC pass.
 ///
-/// # Pool usage (#385)
+/// # Pool usage (#385, #2032)
 ///
 /// The set of referenced `fs_path`s is loaded **once** via a single
 /// `SELECT fs_path FROM attachments` on `read_pool` (the dedicated
-/// reader, when configured) into an in-memory `HashSet`, and membership
-/// is tested per file in memory. This replaces the historical
-/// per-file `SELECT 1 FROM attachments WHERE fs_path = ?` against the
-/// write pool, which (a) contended with the foreground apply path for
-/// the single SQLite writer and (b) could not use the *partial*
+/// reader, when configured) into an in-memory `HashSet`, used as a cheap
+/// in-memory pre-filter so we do not issue a query for every walked
+/// file. This bulk load replaces the historical per-file
+/// `SELECT 1 FROM attachments WHERE fs_path = ?` against the write pool
+/// as the *fast path*, which (a) contended with the foreground apply
+/// path for the single SQLite writer and (b) could not use the *partial*
 /// `fs_path` index (`WHERE deleted_at IS NULL`, migrations 0061/0081)
 /// because the predicate-less lookup forced a per-file scan.
+///
+/// A file that is in the set is kept immediately. A file that is NOT in
+/// the (possibly slightly stale) set is RE-CHECKED with a single
+/// `SELECT 1 FROM attachments WHERE fs_path = ?` on the **write** pool
+/// before unlinking — this is the authoritative decision and closes the
+/// #2032 race where a concurrently-added attachment is missing from the
+/// bulk snapshot. The blob-prune `DELETE` below runs on the same write
+/// pool against the same `attachments` table, so the orphan decision and
+/// the blob prune share one consistent view.
 ///
 /// Semantics are preserved exactly: the old query had **no**
 /// `deleted_at IS NULL` predicate, so it matched soft-deleted rows too;
@@ -137,6 +159,48 @@ pub(crate) async fn cleanup_orphaned_attachments(
         );
         return Ok(());
     }
+
+    // #2032: load the referenced-path set BEFORE collecting the on-disk
+    // file list, so the reference snapshot is at least as fresh as the
+    // file list (never staler). If the order were reversed, a file
+    // committed between the walk and the load would be in `files` but
+    // absent from `referenced_paths`, maximizing the orphan-misfire
+    // window. (The per-file write-pool re-check below is the actual
+    // correctness guarantee; this ordering merely narrows the window.)
+    //
+    // #385: load the full set of referenced `fs_path`s ONCE on the read
+    // pool, rather than issuing one write-pool `SELECT 1 WHERE fs_path = ?`
+    // per walked file. The read pool (when configured) keeps this off the
+    // single SQLite writer; falling back to the write pool preserves the
+    // legacy behaviour for single-pool (test / legacy) materializers.
+    //
+    // The legacy per-file query had NO `deleted_at IS NULL` predicate, so
+    // it matched soft-deleted rows too — we replicate that by selecting
+    // every row's `fs_path` (no predicate). `fs_path` is stored as a
+    // relative, forward-slash path by `add_attachment_inner`, which is the
+    // exact normalized shape we compute per walked file below, so an
+    // in-memory `HashSet` membership test is byte-equivalent to the old
+    // `WHERE fs_path = ?` comparison.
+    let lookup_pool = read_pool.unwrap_or(pool);
+    let referenced_paths: std::collections::HashSet<String> = match sqlx::query_scalar!(
+        r#"SELECT fs_path as "fs_path!: String" FROM attachments"#
+    )
+    .fetch_all(lookup_pool)
+    .await
+    {
+        Ok(rows) => rows.into_iter().collect(),
+        Err(e) => {
+            // A failure to load the reference set must NOT cause the
+            // GC to treat every file as an orphan. Abort the pass
+            // (Ok, since the contract is "never propagate") and leave
+            // all files untouched.
+            tracing::warn!(
+                error = %e,
+                "cleanup_orphaned_attachments: failed to load referenced fs_paths; aborting pass"
+            );
+            return Ok(());
+        }
+    };
 
     // Walk the attachments subtree iteratively (DFS via a Vec stack)
     // to avoid stack-recursion overhead on deeply nested layouts. We
@@ -207,40 +271,6 @@ pub(crate) async fn cleanup_orphaned_attachments(
         return Ok(());
     }
 
-    // #385: load the full set of referenced `fs_path`s ONCE on the read
-    // pool, rather than issuing one write-pool `SELECT 1 WHERE fs_path = ?`
-    // per walked file. The read pool (when configured) keeps this off the
-    // single SQLite writer; falling back to the write pool preserves the
-    // legacy behaviour for single-pool (test / legacy) materializers.
-    //
-    // The legacy per-file query had NO `deleted_at IS NULL` predicate, so
-    // it matched soft-deleted rows too — we replicate that by selecting
-    // every row's `fs_path` (no predicate). `fs_path` is stored as a
-    // relative, forward-slash path by `add_attachment_inner`, which is the
-    // exact normalized shape we compute per walked file below, so an
-    // in-memory `HashSet` membership test is byte-equivalent to the old
-    // `WHERE fs_path = ?` comparison.
-    let lookup_pool = read_pool.unwrap_or(pool);
-    let referenced_paths: std::collections::HashSet<String> = match sqlx::query_scalar!(
-        r#"SELECT fs_path as "fs_path!: String" FROM attachments"#
-    )
-    .fetch_all(lookup_pool)
-    .await
-    {
-        Ok(rows) => rows.into_iter().collect(),
-        Err(e) => {
-            // A failure to load the reference set must NOT cause the
-            // GC to treat every file as an orphan. Abort the pass
-            // (Ok, since the contract is "never propagate") and leave
-            // all files untouched.
-            tracing::warn!(
-                error = %e,
-                "cleanup_orphaned_attachments: failed to load referenced fs_paths; aborting pass"
-            );
-            return Ok(());
-        }
-    };
-
     let mut scanned: u64 = 0;
     let mut unlinked: u64 = 0;
     let mut errors: u64 = 0;
@@ -271,11 +301,56 @@ pub(crate) async fn cleanup_orphaned_attachments(
             };
             let relative_str = relative_str_raw.replace('\\', "/");
 
-            // #385: in-memory membership test against the pre-loaded set,
-            // replacing the per-file write-pool `SELECT 1 WHERE fs_path = ?`.
+            // #385: in-memory membership test against the pre-loaded set
+            // is the fast path. A hit means the file is referenced — keep
+            // it without touching the DB.
             if referenced_paths.contains(&relative_str) {
                 // File is referenced — keep it.
                 continue;
+            }
+
+            // #2032: a MISS in the bulk snapshot is not authoritative —
+            // the snapshot may have been loaded (a) before a concurrent
+            // foreground `AddAttachment` committed, or (b) from a
+            // read-replica that lags the writer. Re-check membership with
+            // a fresh `SELECT 1 FROM attachments WHERE fs_path = ?` on the
+            // WRITE pool, which cannot lag the foreground apply path. Only
+            // if the row is STILL absent do we treat the file as an
+            // orphan. This closes the TOCTOU window for a just-added
+            // attachment whose file is already on disk.
+            //
+            // dynamic-sql: static SQL; runtime form (not `query!`) keeps
+            // this off the offline `.sqlx` cache, matching the blob-prune
+            // DELETE below.
+            match sqlx::query("SELECT 1 FROM attachments WHERE fs_path = ?")
+                .bind(&relative_str)
+                .fetch_optional(pool)
+                .await
+            {
+                Ok(Some(_)) => {
+                    // Now referenced per the authoritative write pool —
+                    // a concurrent add raced the bulk snapshot. Keep it.
+                    tracing::debug!(
+                        path = %full_path.display(),
+                        "cleanup_orphaned_attachments: write-pool re-check found a reference; keeping (race with concurrent add)"
+                    );
+                    continue;
+                }
+                Ok(None) => {
+                    // Genuinely unreferenced — fall through to unlink.
+                }
+                Err(e) => {
+                    // Could not confirm orphan status. Be conservative:
+                    // do NOT unlink on an indeterminate re-check, since a
+                    // false unlink destroys a just-added attachment.
+                    errors += 1;
+                    tracing::warn!(
+                        path = %full_path.display(),
+                        error = %e,
+                        "cleanup_orphaned_attachments: write-pool re-check failed; skipping unlink to avoid destroying a possibly-referenced file"
+                    );
+                    continue;
+                }
             }
 
             // Orphan: unlink. Errors are logged but never propagated, so
@@ -320,6 +395,13 @@ pub(crate) async fn cleanup_orphaned_attachments(
     // dangling entries. Done on the write pool (the table is small; the delete
     // is a single statement). Best-effort: a failure is logged, not
     // propagated, matching the "partial GC beats no GC" contract.
+    //
+    // #2032: this DELETE evaluates its `SELECT fs_path FROM attachments`
+    // subquery on the SAME write pool the per-file unlink re-check uses,
+    // so the orphan decision (keep file iff a row references it) and the
+    // blob prune (drop blob row iff no row references it) share one
+    // consistent view — a row added concurrently is visible to both, so
+    // we never unlink a file while keeping its blob row, or vice versa.
     // dynamic-sql: static SQL; the attachment_blobs table (migration 0094) is
     // not yet in the offline .sqlx cache, so use the runtime form here.
     let pruned_blobs = match sqlx::query(
