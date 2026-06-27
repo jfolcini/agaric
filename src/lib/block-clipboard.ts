@@ -17,7 +17,7 @@
  */
 
 import type { FlatBlock } from './tree-utils'
-import { computeSelectionRoots, getDragDescendants } from './tree-utils'
+import { buildIndexById, computeSelectionRoots, getDragDescendants } from './tree-utils'
 
 /** Spaces per indent level — the repo's outline convention (2-space indent). */
 export const INDENT_UNIT = 2
@@ -307,10 +307,14 @@ export function serializeBlockSubtree(
 
   // Collect each root + its descendants, preserving document order. A Set keeps
   // the emission idempotent if (defensively) a descendant is also a root.
+  // Perf (#2041): build the `id → index` map ONCE and reuse it for every root's
+  // `getDragDescendants`, so the per-root O(n) `findIndex` becomes O(1) (R×n →
+  // R + n).
+  const indexById = buildIndexById(items)
   const emit = new Set<string>()
   for (const rootId of roots) {
     emit.add(rootId)
-    for (const descId of getDragDescendants(items, rootId)) emit.add(descId)
+    for (const descId of getDragDescendants(items, rootId, indexById)) emit.add(descId)
   }
 
   const emitted = items.filter((b) => emit.has(b.id))

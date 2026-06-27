@@ -17,6 +17,7 @@ import { makeBlock } from '../../__tests__/fixtures'
 import { logger } from '../logger'
 import {
   buildFlatTree,
+  buildIndexById,
   computeDropIndex,
   computeSelectionRoots,
   DEAD_ZONE_PX,
@@ -206,6 +207,45 @@ describe('getDragDescendants', () => {
   it('returns empty set for the last root item', () => {
     const desc = getDragDescendants(items, 'b')
     expect(desc).toEqual(new Set())
+  })
+
+  // #2041 — the optional precomputed `id → index` overload must return the
+  // SAME result as the default findIndex path for every id (including unknown).
+  it('with the index-Map overload returns identical results to without it', () => {
+    const indexById = buildIndexById(items)
+    for (const id of ['a', 'a1', 'a1a', 'a2', 'b', 'unknown']) {
+      expect(getDragDescendants(items, id, indexById)).toEqual(getDragDescendants(items, id))
+    }
+  })
+})
+
+// ── buildIndexById (#2041) ───────────────────────────────────────────────
+
+describe('buildIndexById', () => {
+  it('maps each id to its array index', () => {
+    const items: FlatBlock[] = [
+      mkFlat('a', null, 1, 0),
+      mkFlat('a1', 'a', 1, 1),
+      mkFlat('b', null, 2, 0),
+    ]
+    const index = buildIndexById(items)
+    expect(index.get('a')).toBe(0)
+    expect(index.get('a1')).toBe(1)
+    expect(index.get('b')).toBe(2)
+    expect(index.get('missing')).toBeUndefined()
+  })
+
+  it('agrees with findIndex for every member', () => {
+    const items: FlatBlock[] = [
+      mkFlat('a', null, 1, 0),
+      mkFlat('a1', 'a', 1, 1),
+      mkFlat('a1a', 'a1', 1, 2),
+      mkFlat('b', null, 2, 0),
+    ]
+    const index = buildIndexById(items)
+    for (const item of items) {
+      expect(index.get(item.id)).toBe(items.findIndex((i) => i.id === item.id))
+    }
   })
 })
 

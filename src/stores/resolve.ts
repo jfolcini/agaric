@@ -72,9 +72,17 @@ function activeSpaceId(): string {
  */
 function evictLeastRecentlyUsed<K, V>(cache: Map<K, V>, maxSize: number): void {
   if (cache.size <= maxSize) return
-  const excess = cache.size - maxSize
-  const toEvict = Array.from(cache.keys()).slice(0, excess)
-  for (const key of toEvict) cache.delete(key)
+  let excess = cache.size - maxSize
+  // Perf (#2041): the front of the Map's insertion order is the coldest entry,
+  // so consume the key-iterator and delete the first `excess` keys directly —
+  // no full `Array.from(cache.keys())` allocation on every at-capacity write.
+  // Deleting during iteration is safe here: each deleted key is at or before the
+  // iterator's current position, which the Map iterator protocol permits.
+  for (const key of cache.keys()) {
+    if (excess <= 0) break
+    cache.delete(key)
+    excess--
+  }
 }
 
 /**
