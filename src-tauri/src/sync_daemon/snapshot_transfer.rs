@@ -577,13 +577,27 @@ pub(crate) async fn try_receive_snapshot_catchup(
                 device_id,
             }) = &engine_reload
             {
-                let rehydrated =
-                    crate::loro::snapshot::reload_registry_from_db(pool, registry, device_id).await;
-                tracing::warn!(
-                    rehydrated,
-                    "apply_snapshot failed after the pre-apply engine clear (#607); \
-                     registry restored from the flushed loro_doc_state rows"
-                );
+                // #2023: on the failed-apply path the RESET tx rolled
+                // back, so the persisted epoch is UNCHANGED — a reload
+                // failure here can't fork (it would reload onto the same
+                // original epoch). Log it and still return the original
+                // apply error; we do not want to mask `e` with a reload
+                // error or leave the function without restoring.
+                match crate::loro::snapshot::reload_registry_from_db(pool, registry, device_id)
+                    .await
+                {
+                    Ok(rehydrated) => tracing::warn!(
+                        rehydrated,
+                        "apply_snapshot failed after the pre-apply engine clear (#607); \
+                         registry restored from the flushed loro_doc_state rows"
+                    ),
+                    Err(reload_err) => tracing::error!(
+                        error = %reload_err,
+                        "apply_snapshot failed AND the engine restore could not read the \
+                         peer epoch (#2023/#607); registry left cleared — engines will \
+                         lazy-recreate under the (unchanged, rolled-back) epoch"
+                    ),
+                }
             }
             return Err(e);
         }
@@ -607,8 +621,15 @@ pub(crate) async fn try_receive_snapshot_catchup(
             registry,
             device_id,
         }) => {
+            // #2023: the RESET committed, so the persisted epoch was
+            // bumped to >= 1. If the epoch read fails here we must fail
+            // the session CLOSED: proceeding (or letting engines
+            // lazy-recreate) under the wrong epoch would mint ops under
+            // the retired pre-reset PeerID and re-fork the
+            // (peer, counter) space (#792). `reload_registry_from_db`
+            // leaves the registry untouched on this error.
             let rehydrated =
-                crate::loro::snapshot::reload_registry_from_db(pool, registry, device_id).await;
+                crate::loro::snapshot::reload_registry_from_db(pool, registry, device_id).await?;
             tracing::info!(
                 rehydrated,
                 "post-snapshot engine reload complete (#607): dropped pre-reset \

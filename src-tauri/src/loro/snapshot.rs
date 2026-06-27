@@ -265,7 +265,7 @@ pub async fn reload_registry_from_db(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
     device_id: &str,
-) -> usize {
+) -> Result<usize, AppError> {
     // #792: re-read the persisted peer-id epoch BEFORE dropping the
     // engines. `apply_snapshot` bumps it inside the RESET transaction, so
     // after a successful RESET this installs the NEW epoch and every
@@ -275,7 +275,16 @@ pub async fn reload_registry_from_db(
     // On the failed-apply restore path the tx rolled back, the load
     // returns the unchanged epoch, and the engines reload onto their
     // original peer id — exactly matching the restored loro_doc_state.
-    let epoch = crate::loro::peer_epoch::load_peer_epoch(pool).await;
+    //
+    // #2023: if that read FAILS (after `load_peer_epoch`'s bounded
+    // retry) we must NOT proceed. This runs right after a RESET, where
+    // the persisted epoch was bumped to >= 1; defaulting to 0 (or
+    // leaving the stale in-memory epoch in place) and then rehydrating
+    // would mint engines under the retired pre-reset PeerID — the exact
+    // fork #792 prevents. Propagate the error and leave the registry
+    // untouched (engines NOT cleared / rehydrated) so the caller can
+    // fail the session closed instead of silently forking.
+    let epoch = crate::loro::peer_epoch::load_peer_epoch(pool).await?;
     if epoch != registry.peer_epoch() {
         tracing::info!(
             old_epoch = registry.peer_epoch(),
@@ -286,7 +295,7 @@ pub async fn reload_registry_from_db(
         registry.set_peer_epoch(epoch);
     }
     registry.clear();
-    rehydrate_registry(pool, registry, device_id).await
+    Ok(rehydrate_registry(pool, registry, device_id).await)
 }
 
 /// Walk the registry and persist every engine's current snapshot.  Used
@@ -633,7 +642,9 @@ mod tests {
             .await
             .expect("save b");
 
-        let n = reload_registry_from_db(&pool, &registry, "device-1").await;
+        let n = reload_registry_from_db(&pool, &registry, "device-1")
+            .await
+            .expect("reload");
         assert_eq!(n, 1, "only the persisted space must rehydrate");
         assert_eq!(registry.len(), 1, "stale engine for A must be dropped");
 
@@ -660,7 +671,9 @@ mod tests {
             .await
             .expect("wipe");
         registry.clear();
-        let n = reload_registry_from_db(&pool, &registry, "device-1").await;
+        let n = reload_registry_from_db(&pool, &registry, "device-1")
+            .await
+            .expect("reload");
         assert_eq!(n, 0, "empty loro_doc_state must rehydrate nothing");
         assert_eq!(registry.len(), 0);
         let saved = save_all_engines(&pool, &registry).await;
@@ -706,7 +719,9 @@ mod tests {
         tx.commit().await.expect("commit");
         assert_eq!(bumped, 1);
 
-        let n = reload_registry_from_db(&pool, &registry, "device-792").await;
+        let n = reload_registry_from_db(&pool, &registry, "device-792")
+            .await
+            .expect("reload");
         assert_eq!(n, 0, "loro_doc_state is empty after a RESET");
         assert_eq!(
             registry.peer_epoch(),

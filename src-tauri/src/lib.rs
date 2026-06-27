@@ -754,8 +754,18 @@ fn recover_and_bootstrap(
     // ranges peers still hold. Absent row == epoch 0 == the legacy
     // mapping, so never-reset vaults are byte-for-byte unaffected.
     {
+        // #2023: `load_peer_epoch` now distinguishes "row absent" (epoch
+        // 0, the legitimate never-reset state) from a genuine read
+        // FAILURE. A read failure is propagated (after a bounded retry)
+        // rather than coerced to 0 — boot fails CLOSED instead of
+        // minting every engine under this device's retired pre-reset
+        // PeerID and re-forking the (peer, counter) space (#792). A
+        // transient single blip is absorbed by the retry inside
+        // `load_peer_epoch`; a persistent DB read failure here is
+        // correctly boot-fatal (the same DB is unusable for recovery
+        // and rehydrate immediately below regardless).
         let peer_epoch =
-            tauri::async_runtime::block_on(crate::loro::peer_epoch::load_peer_epoch(&pools.write));
+            tauri::async_runtime::block_on(crate::loro::peer_epoch::load_peer_epoch(&pools.write))?;
         loro_state.registry.set_peer_epoch(peer_epoch);
         if peer_epoch > 0 {
             tracing::info!(
