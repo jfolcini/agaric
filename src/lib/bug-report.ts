@@ -27,34 +27,52 @@ export interface TrackerTarget {
   repo: string
 }
 
-/** Input to [`buildGitHubIssueUrl`]. `labels` may be empty; if it is, no
- *  `labels=` query parameter is emitted. */
+/** Filename of the repo's bug-report issue *form*
+ *  (`.github/ISSUE_TEMPLATE/bug_report.yml`). The repo sets
+ *  `blank_issues_enabled: false`, so the prefill URL MUST target a template:
+ *  a bare `issues/new?body=…` hits the now-disabled blank-issue route and
+ *  GitHub responds with HTTP 500 (most visibly after the logged-out
+ *  login → `return_to` redirect, where the user reported the failure). */
+export const BUG_REPORT_TEMPLATE = 'bug_report.yml'
+
+/** Input to [`buildGitHubIssueUrl`].
+ *
+ *  `fields` maps issue-form field *ids* (as declared in the target template's
+ *  YAML) to prefill values. GitHub issue forms ONLY honor query params whose
+ *  names match a field id — a `body` param is not recognised — so we emit one
+ *  query param per field. Empty values are dropped. */
 export interface BuildIssueUrlParams extends TrackerTarget {
-  title: string
-  body: string
-  labels?: readonly string[]
+  /** Issue-form template filename, e.g. [`BUG_REPORT_TEMPLATE`]. */
+  template: string
+  /** Optional issue title. When empty/omitted, the template's own default
+   *  title prefix is kept instead of being overridden. */
+  title?: string
+  /** Issue-form field id → prefill value. */
+  fields: Readonly<Record<string, string>>
 }
 
-/** Compose a `https://github.com/:owner/:repo/issues/new` URL with the
- *  title/body (and optional labels) URL-encoded into the query string.
+/** Compose a `https://github.com/:owner/:repo/issues/new` URL that targets an
+ *  issue-form `template` and prefills its fields via per-field query params.
  *
- *  Bodies exceeding [`MAX_BODY_CHARS`] are truncated with
- *  [`TRUNCATION_MARKER`] so the resulting URL is guaranteed to stay within
- *  GitHub's prefill limits. The title is NOT capped — reasonable titles are
- *  short, and cutting a user-typed title would be jarring. */
+ *  Field values are emitted verbatim — callers cap any large field (see
+ *  [`formatReportFields`], which bounds `logs` with [`TRUNCATION_MARKER`]) so
+ *  the URL stays within GitHub's prefill / login-`return_to` limits. The title
+ *  is not capped — reasonable titles are short. */
 export function buildGitHubIssueUrl(params: BuildIssueUrlParams): string {
-  const { owner, repo, title, body, labels } = params
-
-  const effectiveBody =
-    body.length > MAX_BODY_CHARS
-      ? body.slice(0, MAX_BODY_CHARS - TRUNCATION_MARKER.length) + TRUNCATION_MARKER
-      : body
+  const { owner, repo, template, title, fields } = params
 
   const query = new URLSearchParams()
-  query.set('title', title)
-  query.set('body', effectiveBody)
-  if (labels && labels.length > 0) {
-    query.set('labels', labels.join(','))
+  query.set('template', template)
+  // Only override the template's default title when the user supplied one.
+  if (title !== undefined && title.trim().length > 0) {
+    query.set('title', title.trim())
+  }
+  // One query param per non-empty field id. Params that don't match a field
+  // id are ignored by GitHub, so emitting only populated ids keeps it clean.
+  for (const [id, value] of Object.entries(fields)) {
+    if (value.length > 0) {
+      query.set(id, value)
+    }
   }
 
   return `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/new?${query.toString()}`
@@ -135,6 +153,57 @@ export function formatReportBody(params: FormatReportBodyParams): string {
   }
 
   return sections.join('\n\n')
+}
+
+/** Input to [`formatReportFields`]. */
+export interface FormatReportFieldsParams {
+  metadata: BugReport
+  /** Short issue title (the dialog's "Short title" field) → the form's
+   *  required `summary` field. */
+  title: string
+  /** Free-text "what went wrong" (the dialog's description) → the form's
+   *  `actual` field. */
+  description: string
+  /** When the user opted to attach diagnostics, the ZIP filename to remind
+   *  them to attach (surfaced in the `notes` field). */
+  zipFileName?: string | undefined
+}
+
+/** Map a bug report onto the `bug_report.yml` issue-form field ids.
+ *
+ *  Only fields the app can populate are returned; the form's other required
+ *  fields (reproduction steps, expected behaviour, platform, the "Before you
+ *  file" checkboxes) are left for the user to complete in GitHub. The `logs`
+ *  field is capped at [`MAX_BODY_CHARS`] (with [`TRUNCATION_MARKER`]) — it is
+ *  the one unbounded input, and the full log is available in the diagnostic
+ *  ZIP. The device ID is truncated (#609) before it can reach a public issue. */
+export function formatReportFields(params: FormatReportFieldsParams): Record<string, string> {
+  const { metadata, title, description, zipFileName } = params
+
+  const rawLogs = metadata.recent_errors.join('\n')
+  const logs =
+    rawLogs.length > MAX_BODY_CHARS
+      ? rawLogs.slice(0, MAX_BODY_CHARS - TRUNCATION_MARKER.length) + TRUNCATION_MARKER
+      : rawLogs
+
+  const notesLines = [
+    `Arch: ${metadata.arch}`,
+    // #609: never embed the full device ID in a public issue — the same
+    // identifier is scrubbed to [REDACTED_DEVICE_ID] in the ZIP export.
+    `Device ID: ${truncateDeviceId(metadata.device_id)} (truncated)`,
+  ]
+  if (zipFileName !== undefined && zipFileName.length > 0) {
+    notesLines.push(`Diagnostic ZIP to attach: ${zipFileName}`)
+  }
+
+  return {
+    summary: title.trim(),
+    actual: description.trim(),
+    version: metadata.app_version,
+    os: metadata.os,
+    logs,
+    notes: notesLines.join('\n'),
+  }
 }
 
 /** Re-exported for tests so the cap stays in one place. */
