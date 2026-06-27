@@ -37,11 +37,14 @@ export function useQuerySorting(options: UseQuerySortingOptions): UseQuerySortin
 
   const sortedResults = useMemo(() => {
     if (!sortKey) return results
-    return [...results].toSorted((a, b) => {
-      const aVal = columnValue(a, sortKey, customProps)
-      const bVal = columnValue(b, sortKey, customProps)
-      return compareValues(aVal, bVal, sortDir)
-    })
+    // Perf (#2041): Schwartzian transform — precompute each row's sort key ONCE
+    // (`columnValue` was evaluated twice per comparison, O(n log n) times) and
+    // sort the decorated tuples. `toSorted` is already non-mutating, so the
+    // prior defensive `[...results]` spread before it is dropped.
+    return results
+      .map((row) => ({ row, key: columnValue(row, sortKey, customProps) }))
+      .toSorted((a, b) => compareValues(a.key, b.key, sortDir))
+      .map((entry) => entry.row)
   }, [results, sortKey, sortDir, customProps])
 
   const handleColumnSort = useCallback((key: string) => {

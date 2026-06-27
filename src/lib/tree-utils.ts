@@ -111,10 +111,25 @@ export function buildFlatTree(
  * In a DFS-flattened list, descendants of item at index `i` with depth `d`
  * are all consecutive items at index > i with depth > d (until we hit an
  * item at depth <= d).
+ *
+ * `indexById` (perf, #2041) — an optional precomputed `id → index` map over
+ * `items`. When supplied, the active block's start index is read in O(1)
+ * instead of an O(n) `findIndex` scan. Callers that invoke this once per root
+ * over the same `items` (e.g. block copy / serialize over R roots) should build
+ * the map ONCE via {@link buildIndexById} and pass it, dropping the per-root
+ * O(n) scan (R×n → R + n). The map MUST be a faithful `id → index` index of the
+ * SAME `items` array; passing a stale map yields wrong results. Omitting it
+ * preserves the original single-call behaviour exactly.
  */
-export function getDragDescendants(items: FlatBlock[], activeId: string): Set<string> {
+export function getDragDescendants(
+  items: FlatBlock[],
+  activeId: string,
+  indexById?: ReadonlyMap<string, number>,
+): Set<string> {
   const descendants = new Set<string>()
-  const activeIndex = items.findIndex((item) => item.id === activeId)
+  const activeIndex = indexById
+    ? (indexById.get(activeId) ?? -1)
+    : items.findIndex((item) => item.id === activeId)
   if (activeIndex < 0) return descendants
 
   const activeDepth = items[activeIndex]?.depth as number
@@ -123,6 +138,20 @@ export function getDragDescendants(items: FlatBlock[], activeId: string): Set<st
     descendants.add((items[i] as FlatBlock).id)
   }
   return descendants
+}
+
+/**
+ * Build an `id → index` map over a flattened-tree array, for callers that look
+ * up many blocks' positions in the same `items` (e.g. {@link getDragDescendants}
+ * invoked once per selection root). Built once, it turns each per-root O(n)
+ * `findIndex` into an O(1) Map lookup (#2041). Last-write-wins on duplicate ids,
+ * matching `findIndex` (which returns the FIRST match) only when ids are unique —
+ * which they are in a well-formed flat tree.
+ */
+export function buildIndexById(items: FlatBlock[]): Map<string, number> {
+  const index = new Map<string, number>()
+  for (let i = 0; i < items.length; i++) index.set((items[i] as FlatBlock).id, i)
+  return index
 }
 
 // ── Selection roots (multi-select drag, #914) ────────────────────────────

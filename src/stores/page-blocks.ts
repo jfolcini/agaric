@@ -352,12 +352,16 @@ async function applyStructuralMove(
     }
     if (kind === 'skip') return {}
     const { blocks, touchedIds } = computeSpliced(state)
+    // Perf (#2041): resolve touched ids via a single id→object Map built once
+    // (O(n)) instead of a per-id `blocks.find` (O(touched×n)) inside the loop.
+    const byId = new Map<string, FlatBlock>()
+    for (const b of blocks) byId.set(b.id, b)
     const touched: FlatBlock[] = []
     const seen = new Set<string>()
     for (const id of touchedIds) {
       if (seen.has(id)) continue
       seen.add(id)
-      const b = blocks.find((x) => x.id === id)
+      const b = byId.get(id)
       if (b) touched.push(b)
     }
     return {

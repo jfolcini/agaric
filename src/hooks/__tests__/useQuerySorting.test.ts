@@ -187,4 +187,21 @@ describe('useQuerySorting', () => {
     // A has no 'area' → null → sorts last ascending.
     expect(result.current.sortedResults.map((b) => b.id)).toEqual(['B', 'A'])
   })
+
+  // #2041 — the Schwartzian-transform rewrite must keep the sort STABLE: rows
+  // with equal sort keys preserve their original relative order.
+  it('is stable for rows with equal sort keys', () => {
+    const results = [
+      makeBlock({ id: 'A', content: 'same' }),
+      makeBlock({ id: 'B', content: 'same' }),
+      makeBlock({ id: 'C', content: 'same' }),
+    ]
+    const { result } = renderHook(() => useQuerySorting({ results }))
+
+    act(() => {
+      result.current.handleColumnSort('content')
+    })
+
+    expect(result.current.sortedResults.map((b) => b.id)).toEqual(['A', 'B', 'C'])
+  })
 })
