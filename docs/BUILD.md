@@ -6,24 +6,23 @@ Everything you need to build, test, and release Agaric. Self-contained.
 ## TL;DR
 
 ```bash
-npm ci                                   # frontend deps
-cp src-tauri/.env.example src-tauri/.env # sqlx DATABASE_URL
-node scripts/prepare-external-bins.mjs --placeholder-only  # sidecar placeholder
+npm run setup                            # frontend deps + .env + dev DB (wraps scripts/setup.sh)
 cargo tauri dev                          # run the app
 prek run --all-files                     # run every CI gate locally
 ```
 
-First-time setup is automated by `bash scripts/setup.sh` (wraps the steps above).
+`npm run setup` (which runs `scripts/setup.sh`) is the canonical first-time setup: it runs `npm ci`, copies `src-tauri/.env.example` to the gitignored `.env` beside it (sqlx reads `DATABASE_URL` at compile time), seeds the sidecar placeholder, and provisions the local dev DB via `scripts/setup-dev-db.sh`. The sidecar placeholder is also re-run automatically by `beforeDevCommand`, so `cargo tauri dev` needs no manual prep step.
 
 Tests: `npx vitest run` (frontend), `cd src-tauri && cargo nextest run` (backend), `npx playwright test` (e2e), `cargo bench --bench interactive_slo` (perf SLO).
 
 ## After-clone setup
 
-Three steps before `cargo tauri dev` works on a fresh clone:
+Run `npm run setup` (wraps `scripts/setup.sh`) and you are ready for `cargo tauri dev`. The two steps that actually gate a fresh clone are:
 
 1. `npm ci` — frontend deps.
-2. `cp src-tauri/.env.example src-tauri/.env` — sqlx reads `DATABASE_URL` from here at compile time (offline mode uses `.sqlx/` cache, but the env file must exist).
-3. `node scripts/prepare-external-bins.mjs --placeholder-only` — creates a placeholder `agaric-mcp` sidecar binary so the Tauri builder doesn't error on the first build. The real sidecar is produced later by `cargo build --bin agaric-mcp`; this is just for the chicken-and-egg first compile.
+2. `cp src-tauri/.env.example src-tauri/.env` — sqlx reads `DATABASE_URL` from here at compile time (offline mode uses `.sqlx/` cache, but the env file must exist). Skipping this is the classic fresh-clone compile failure.
+
+`scripts/setup.sh` does both of the above, then provisions the dev DB (`scripts/setup-dev-db.sh`) so pre-push Rust checks pass. It also seeds the `agaric-mcp` sidecar placeholder — but you do not need to run `node scripts/prepare-external-bins.mjs --placeholder-only` by hand, because `beforeDevCommand` in `src-tauri/tauri.conf.json` re-runs it on every `cargo tauri dev`. The real sidecar is produced later by `cargo build --bin agaric-mcp`; the placeholder just unblocks the chicken-and-egg first compile.
 
 ## Prerequisites by platform
 
@@ -38,7 +37,7 @@ sudo apt install -y \
   build-essential curl wget file
 ```
 
-Plus Rust (`rustup default stable`), Node 24 LTS (see `.nvmrc`), and Tauri's CLI: `cargo install tauri-cli --locked`.
+Plus Rust (`rustup default stable`) and Node 24 LTS (see `.nvmrc`). The Tauri CLI is already pinned as the `@tauri-apps/cli` devDependency (currently `2.11.2`) and installed by `npm ci` — invoke it with `npx tauri …` (e.g. `npx tauri dev`). Do **not** `cargo install tauri-cli`: an independently-installed Rust CLI drifts from the pinned JS one and violates the coupled-bump rule for the Tauri stack ([AGENTS.md § coupled dependency stacks](../AGENTS.md)).
 
 ### Windows
 

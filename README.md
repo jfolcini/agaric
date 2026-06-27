@@ -145,9 +145,11 @@ See **[docs/BUILD.md](docs/BUILD.md)** for the complete build guide — prerequi
 ### Quick Start
 
 ```bash
-npm ci                       # Install frontend dependencies
+npm run setup                # Install deps + copy src-tauri/.env + provision dev DB
 cargo tauri dev              # Launch app with hot reload
 ```
+
+`npm run setup` (wraps `scripts/setup.sh`) installs frontend deps, copies `src-tauri/.env.example` to the gitignored `.env` beside it (sqlx reads `DATABASE_URL` from it at compile time), seeds the sidecar placeholder, and provisions the local dev DB. Without the `.env` copy, a fresh clone fails to compile. See [docs/BUILD.md](docs/BUILD.md#after-clone-setup) for the manual steps.
 
 ### Testing
 
@@ -197,7 +199,7 @@ After installing Agaric, point your MCP client's `command` field at the stub:
 | macOS `.app` | `/Applications/Agaric.app/Contents/MacOS/agaric-mcp` |
 | Windows installer | `C:\Program Files\Agaric\agaric-mcp.exe` |
 
-Override the default socket path with the `--socket <path>` flag or `AGARIC_MCP_SOCKET` environment variable if your setup puts Agaric's data directory somewhere non-standard. The read-only socket is gated by a Settings → Agent access toggle (shipping with).
+Override the default socket path with the `--socket <path>` flag or `AGARIC_MCP_SOCKET` environment variable if your setup puts Agaric's data directory somewhere non-standard. The read-only socket is gated by a Settings → Agent access toggle that ships **off by default** (as does the separate read-write socket); enable it explicitly before an MCP client can connect.
 
 ### Project Structure
 

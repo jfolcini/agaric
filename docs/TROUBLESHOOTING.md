@@ -80,18 +80,15 @@ cd src-tauri && cargo sqlx prepare -- --tests
 
 Commit the regenerated `src-tauri/.sqlx/` cache alongside the Rust change.
 
-If `dev.db` does not exist (see [section 5](#5-devdb-does-not-exist)), point
-sqlx at a throwaway database and migrate it first:
+If `dev.db` does not exist (see [section 5](#5-devdb-does-not-exist)), create it
+with the canonical script first, then prepare against it:
 
 ```bash
-export DATABASE_URL="sqlite:///tmp/agaric-prepare-$$.db"
-rm -f "${DATABASE_URL#sqlite://}"
-sqlx database create
-sqlx migrate run --source src-tauri/migrations
-cd src-tauri && cargo sqlx prepare -- --tests   # keep DATABASE_URL in env
+scripts/setup-dev-db.sh                          # creates src-tauri/dev.db + migrates
+cd src-tauri && cargo sqlx prepare -- --tests    # .env points DATABASE_URL at sqlite:dev.db
 ```
 
-Then stage `src-tauri/.sqlx/` and remove the temp DB.
+Then stage `src-tauri/.sqlx/`.
 
 ## 3. Specta bindings out of sync
 
@@ -174,19 +171,21 @@ exist before then.
 
 ### Fix
 
-Run the app once; it creates `dev.db` and applies all migrations automatically:
+Run the canonical provisioning script — it creates `dev.db` (under `src-tauri/`) and applies
+every migration, exactly as `scripts/setup.sh` and CI do (and what the pre-push
+verifier connects to via `DATABASE_URL=sqlite:dev.db`):
+
+```bash
+scripts/setup-dev-db.sh
+```
+
+It is idempotent — re-run it after pulling new migrations to refresh the schema.
+
+Alternatively, just launch the app once; it opens its pool with
+`create_if_missing(true)` and runs migrations on startup, materializing `dev.db`:
 
 ```bash
 cargo tauri dev
-```
-
-To create and migrate the database without launching the app (e.g. for the sqlx
-cache in [section 2](#2-sqlx-offline-cache-stale)):
-
-```bash
-cd src-tauri
-DATABASE_URL=sqlite:dev.db sqlx database create
-DATABASE_URL=sqlite:dev.db sqlx migrate run --source migrations
 ```
 
 ## 6. Large file blocked by pre-commit
