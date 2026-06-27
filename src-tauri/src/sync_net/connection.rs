@@ -91,14 +91,34 @@ pub async fn connect_to_peer(
     let url = format!("wss://{addr}");
     // #611: pass the shared `ws_config()` so the transport-level message /
     // frame caps match `MAX_MSG_SIZE` instead of tungstenite's 64 MiB default.
-    let (ws_stream, _response) = tokio_tungstenite::connect_async_tls_with_config(
-        &url,
-        Some(ws_config()),
-        false,
-        Some(connector),
+    //
+    // #2027: bound the whole connect (TCP + TLS handshake + WebSocket upgrade)
+    // with `CONNECT_TIMEOUT`. The caller (`try_connect_each_address`) runs this
+    // while holding the per-peer lock and blocking a JoinSet round, so a stale
+    // `last_address` that TCP-accepts but then stalls TLS would otherwise hang
+    // the whole sync round. On elapse we fail fast with a `connect timed out`
+    // error so the helper records it and moves to the next address, ultimately
+    // failing the round into its existing backoff.
+    let (ws_stream, _response) = match tokio::time::timeout(
+        crate::sync_constants::CONNECT_TIMEOUT,
+        tokio_tungstenite::connect_async_tls_with_config(
+            &url,
+            Some(ws_config()),
+            false,
+            Some(connector),
+        ),
     )
     .await
-    .map_err(|e| sync_err(format!("connect: {e}")))?;
+    {
+        Ok(Ok(pair)) => pair,
+        Ok(Err(e)) => return Err(sync_err(format!("connect: {e}"))),
+        Err(_elapsed) => {
+            return Err(sync_err(format!(
+                "connect timed out after {}s",
+                crate::sync_constants::CONNECT_TIMEOUT.as_secs()
+            )));
+        }
+    };
 
     // Read via `OnceLock::get` — no locking, no poisoning.
     let peer_hash = observed_hash.get().cloned();

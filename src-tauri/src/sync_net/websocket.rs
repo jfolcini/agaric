@@ -11,7 +11,7 @@ use super::connection::{InnerStream, SyncConnection};
 use super::sync_err;
 use super::tls::{SyncCert, build_server_tls_config};
 use crate::error::AppError;
-use crate::sync_constants::MAX_CONCURRENT_RESPONDER_SESSIONS;
+use crate::sync_constants::{MAX_CONCURRENT_RESPONDER_SESSIONS, TLS_HANDSHAKE_TIMEOUT};
 
 pub const MDNS_BROWSE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -391,10 +391,34 @@ impl SyncServer {
                                 let acceptor = acceptor.clone();
                                 let on_conn = on_connection.clone();
                                 tokio::spawn(async move {
-                                    let tls_stream = match acceptor.accept(tcp_stream).await {
-                                        Ok(s) => s,
-                                        Err(e) => {
+                                    // #2027: bound the TLS handshake. Neither
+                                    // `acceptor.accept` nor the WebSocket upgrade
+                                    // below is covered by `RECV_TIMEOUT` (which
+                                    // only applies once a `SyncConnection`
+                                    // exists), so a peer that completes TCP but
+                                    // stalls TLS would otherwise pin its session
+                                    // permit for the OS TCP lifetime. On elapse
+                                    // we return, dropping `permit` and freeing the
+                                    // slot.
+                                    let tls_stream = match tokio::time::timeout(
+                                        TLS_HANDSHAKE_TIMEOUT,
+                                        acceptor.accept(tcp_stream),
+                                    )
+                                    .await
+                                    {
+                                        Ok(Ok(s)) => s,
+                                        Ok(Err(e)) => {
                                             tracing::debug!(error = %e, "TLS handshake failed");
+                                            return;
+                                        }
+                                        Err(_elapsed) => {
+                                            tracing::warn!(
+                                                timeout_s = TLS_HANDSHAKE_TIMEOUT.as_secs(),
+                                                "sync_server.tls_handshake_timeout: dropping \
+                                                 stalled connection and releasing session permit"
+                                            );
+                                            // `tcp_stream` (moved into `accept`)
+                                            // and `permit` drop here → slot freed.
                                             return;
                                         }
                                     };
@@ -448,16 +472,33 @@ impl SyncServer {
                                     // the transport-level message / frame caps match
                                     // `SyncConnection::MAX_MSG_SIZE` instead of
                                     // tungstenite's 64 MiB default.
+                                    // #2027: bound the WebSocket upgrade under the
+                                    // same handshake budget. A peer that finishes
+                                    // TLS but never sends the WS upgrade request
+                                    // would otherwise hold the permit
+                                    // indefinitely. On elapse we return, dropping
+                                    // `permit` and freeing the slot.
                                     let ws_stream =
-                                        match tokio_tungstenite::accept_async_with_config(
-                                            tls_stream,
-                                            Some(super::connection::ws_config()),
+                                        match tokio::time::timeout(
+                                            TLS_HANDSHAKE_TIMEOUT,
+                                            tokio_tungstenite::accept_async_with_config(
+                                                tls_stream,
+                                                Some(super::connection::ws_config()),
+                                            ),
                                         )
                                         .await
                                         {
-                                            Ok(s) => s,
-                                            Err(e) => {
+                                            Ok(Ok(s)) => s,
+                                            Ok(Err(e)) => {
                                                 tracing::debug!(error = %e, "WebSocket upgrade failed");
+                                                return;
+                                            }
+                                            Err(_elapsed) => {
+                                                tracing::warn!(
+                                                    timeout_s = TLS_HANDSHAKE_TIMEOUT.as_secs(),
+                                                    "sync_server.ws_upgrade_timeout: dropping \
+                                                     stalled connection and releasing session permit"
+                                                );
                                                 return;
                                             }
                                         };
