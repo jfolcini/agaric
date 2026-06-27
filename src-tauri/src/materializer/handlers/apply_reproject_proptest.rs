@@ -50,7 +50,7 @@ use crate::op::OpPayload;
 use crate::op_log::append_local_op;
 use crate::proptest_db_harness::{HARNESS_DEVICE, op_chain_strategy, resolve_chain};
 use crate::space::SpaceId;
-use crate::sync_protocol::loro_sync::{ApplyOutcome, apply_remote, prepare_outgoing};
+use crate::sync_protocol::loro_sync::{ApplyOutcome, apply_remote, prepare_outgoing_for_pool};
 use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
 use crate::ulid::BlockId;
 use proptest::prelude::*;
@@ -614,7 +614,7 @@ async fn build_peer_snapshot(
         "B4 peer build took the SQL-only fallback"
     );
 
-    let msg = prepare_outgoing(&pool, &state.registry, &space, device_id, None)
+    let msg = prepare_outgoing_for_pool(&pool, &state.registry, &space, device_id, None)
         .await
         .expect("prepare_outgoing")
         .expect("#1257 freshness gate must not refuse a consistent engine");

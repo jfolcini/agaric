@@ -5015,7 +5015,7 @@ async fn apply_snapshot_reset_then_new_ops_reach_peer_792() {
     use crate::loro::registry::LoroEngineRegistry;
     use crate::loro::snapshot::reload_registry_from_db;
     use crate::space::SpaceId;
-    use crate::sync_protocol::loro_sync::{ApplyOutcome, apply_remote, prepare_outgoing};
+    use crate::sync_protocol::loro_sync::{ApplyOutcome, apply_remote, prepare_outgoing_for_pool};
 
     const DEVICE_A: &str = "device-792-A";
     const DEVICE_B: &str = "device-792-B";
@@ -5040,7 +5040,7 @@ async fn apply_snapshot_reset_then_new_ops_reach_peer_792() {
             .expect("pre 2");
     }
     let registry_b = LoroEngineRegistry::new();
-    let seed = prepare_outgoing(&pool_a, &registry_a, &space, DEVICE_A, None)
+    let seed = prepare_outgoing_for_pool(&pool_a, &registry_a, &space, DEVICE_A, None)
         .await
         .expect("seed message")
         .expect("#1257 freshness gate must not refuse a consistent engine");
@@ -5098,7 +5098,7 @@ async fn apply_snapshot_reset_then_new_ops_reach_peer_792() {
         let mut g = registry_b.for_space(&space, DEVICE_B).expect("b");
         g.engine_mut().version_vector()
     };
-    let update = prepare_outgoing(&pool_a, &registry_a, &space, DEVICE_A, Some(&b_vv))
+    let update = prepare_outgoing_for_pool(&pool_a, &registry_a, &space, DEVICE_A, Some(&b_vv))
         .await
         .expect("update message")
         .expect("#1257 freshness gate must not refuse a consistent engine");

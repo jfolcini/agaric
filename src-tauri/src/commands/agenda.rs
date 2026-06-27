@@ -473,23 +473,34 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
     // Inline helper: insert an entry into the sorted map, honouring the
     // cursor predicate and the `max_entries` size cap. Returns `true` if
     // the entry was accepted (so the caller can update `projected_count`).
+    //
+    // #2040: the cursor/cap decision depends ONLY on the cheap key
+    // `(projected_date, block_id, source)` — never on the full block row.
+    // So the key is taken eagerly while the heavy `ActiveProjectedAgendaEntry`
+    // (which clones the block row's content `String`) is produced via the
+    // `build` closure ONLY when the entry is actually accepted into the page.
+    // The previous shape cloned the block row for every one of up to ~10k
+    // projected occurrences before the cap discarded most of them; now the
+    // clone happens at most `max_entries` times per page. Behaviour is
+    // identical: the same key drives the same accept/reject/evict decisions,
+    // and the built entry carries the same `projected_date` / `source` the
+    // key was derived from.
     let try_insert =
         |entries_map: &mut BTreeMap<(String, String, String), ActiveProjectedAgendaEntry>,
-         entry: ActiveProjectedAgendaEntry|
+         projected_date: String,
+         block_id: &str,
+         source: &str,
+         build: &dyn Fn() -> ActiveProjectedAgendaEntry|
          -> bool {
             // Cursor predicate: keep only entries strictly AFTER the
             // cursor's (date, id). Mirrors the cache path's
             // `?cursor_date < projected_date OR (= AND ?cursor_id < block_id)`.
             if let Some((cd, ci)) = cursor_key
-                && (entry.projected_date.as_str(), entry.block.id.as_str()) <= (cd, ci)
+                && (projected_date.as_str(), block_id) <= (cd, ci)
             {
                 return false;
             }
-            let key = (
-                entry.projected_date.clone(),
-                entry.block.id.as_str().to_string(),
-                entry.source.clone(),
-            );
+            let key = (projected_date, block_id.to_string(), source.to_string());
             // Size-cap: if we're at capacity, only accept the new entry
             // when it would land strictly before the current largest
             // (i.e. it's a smaller (date, id, source) tuple). This keeps
@@ -506,7 +517,8 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
                 let largest_key = largest_key.clone();
                 entries_map.remove(&largest_key);
             }
-            entries_map.insert(key, entry);
+            // Accepted — only now pay for the block-row clone + entry build.
+            entries_map.insert(key, build());
             true
         };
 
@@ -595,11 +607,18 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
             range_start,
             range_end,
             |projected, source_name| {
+                // #2040: format the date (cheap) for the cursor/cap key, but
+                // defer the block-row clone (heavy: clones `content`) to the
+                // `build` closure, which `try_insert` calls only on acceptance.
+                let projected_date = projected.format("%Y-%m-%d").to_string();
                 try_insert(
                     &mut entries_map,
-                    ActiveProjectedAgendaEntry {
+                    projected_date.clone(),
+                    block_row.id.as_str(),
+                    source_name,
+                    &|| ActiveProjectedAgendaEntry {
                         block: block_row.clone(),
-                        projected_date: projected.format("%Y-%m-%d").to_string(),
+                        projected_date: projected_date.clone(),
                         source: source_name.to_string(),
                     },
                 );

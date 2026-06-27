@@ -2025,10 +2025,11 @@ async fn loro_sync_e2e_round_trip_block_visible_on_b() {
 
     // Build outgoing LoroSync via the prepare helper. Wrap into the
     // SyncMessage envelope (the wire shape).
-    let inner = loro_sync::prepare_outgoing(&pool_a, &registry_a, &space, "device-A", None)
-        .await
-        .expect("prepare_outgoing")
-        .expect("#1257 freshness gate must not refuse a consistent engine");
+    let inner =
+        loro_sync::prepare_outgoing_for_pool(&pool_a, &registry_a, &space, "device-A", None)
+            .await
+            .expect("prepare_outgoing")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
     let outgoing = SyncMessage::LoroSync {
         msg: inner,
         is_last: true,
@@ -2221,10 +2222,11 @@ async fn loro_sync_e2e_multi_space_snapshot_initial_sync() {
     let registry_b = LoroEngineRegistry::new();
 
     for space in [&space_x, &space_y] {
-        let inner = loro_sync::prepare_outgoing(&pool_a, &registry_a, space, "device-A", None)
-            .await
-            .expect("prepare_outgoing")
-            .expect("#1257 freshness gate must not refuse a consistent engine");
+        let inner =
+            loro_sync::prepare_outgoing_for_pool(&pool_a, &registry_a, space, "device-A", None)
+                .await
+                .expect("prepare_outgoing")
+                .expect("#1257 freshness gate must not refuse a consistent engine");
 
         // Wrap in the day-5 wire envelope and JSON-roundtrip — this
         // mirrors what `conn.send_json` / `conn.recv_json` do on the
@@ -2387,10 +2389,11 @@ async fn loro_sync_e2e_update_against_seeded_peer() {
             .expect("create X");
     }
     {
-        let inner = loro_sync::prepare_outgoing(&pool_a, &registry_a, &space, "device-A", None)
-            .await
-            .expect("prepare_outgoing snapshot")
-            .expect("#1257 freshness gate must not refuse a consistent engine");
+        let inner =
+            loro_sync::prepare_outgoing_for_pool(&pool_a, &registry_a, &space, "device-A", None)
+                .await
+                .expect("prepare_outgoing snapshot")
+                .expect("#1257 freshness gate must not refuse a consistent engine");
         // Round-trip via the SyncMessage envelope to mirror the wire.
         let outgoing = SyncMessage::LoroSync {
             msg: inner,
@@ -2447,7 +2450,7 @@ async fn loro_sync_e2e_update_against_seeded_peer() {
     }
 
     let update_msg =
-        loro_sync::prepare_outgoing(&pool_a, &registry_a, &space, "device-A", Some(&b_vv))
+        loro_sync::prepare_outgoing_for_pool(&pool_a, &registry_a, &space, "device-A", Some(&b_vv))
             .await
             .expect("prepare_outgoing update")
             .expect("#1257 freshness gate must not refuse a consistent engine");
@@ -2559,14 +2562,16 @@ async fn loro_sync_e2e_concurrent_disjoint_creates_converge() {
     // writer of its own ops, a Snapshot is what `prepare_outgoing(None)`
     // would produce — and is the safe choice when neither peer has
     // observed the other yet.
-    let msg_from_a = loro_sync::prepare_outgoing(&pool_a, &registry_a, &space, "device-A", None)
-        .await
-        .expect("A prepare_outgoing")
-        .expect("#1257 freshness gate must not refuse a consistent engine");
-    let msg_from_b = loro_sync::prepare_outgoing(&pool_b, &registry_b, &space, "device-B", None)
-        .await
-        .expect("B prepare_outgoing")
-        .expect("#1257 freshness gate must not refuse a consistent engine");
+    let msg_from_a =
+        loro_sync::prepare_outgoing_for_pool(&pool_a, &registry_a, &space, "device-A", None)
+            .await
+            .expect("A prepare_outgoing")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
+    let msg_from_b =
+        loro_sync::prepare_outgoing_for_pool(&pool_b, &registry_b, &space, "device-B", None)
+            .await
+            .expect("B prepare_outgoing")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
 
     // Wire-roundtrip both snapshots.
     let wire_a: SyncMessage = {
