@@ -127,7 +127,11 @@ export function PairingDialog({
       setCountdown(PAIRING_TIMEOUT_SECONDS)
     },
     onError: (err) => {
-      setError(`Failed to start pairing: ${String(err instanceof Error ? err.message : err)}`)
+      setError(
+        t('pairing.startFailed', {
+          message: String(err instanceof Error ? err.message : err),
+        }),
+      )
     },
   })
 
@@ -317,7 +321,7 @@ export function PairingDialog({
       onOpenChange(false)
     },
     onError: (err) => {
-      setError(`Pairing failed: ${formatErrorForDisplay(err)}`)
+      setError(t('pairing.pairFailed', { message: formatErrorForDisplay(err) }))
     },
   })
 
@@ -411,7 +415,11 @@ export function PairingDialog({
       setUnpairPeerId(null)
     },
     onError: (err) => {
-      setError(`Failed to unpair device: ${String(err instanceof Error ? err.message : err)}`)
+      setError(
+        t('pairing.unpairFailed', {
+          message: String(err instanceof Error ? err.message : err),
+        }),
+      )
     },
   })
 
@@ -491,7 +499,7 @@ export function PairingDialog({
                     onClick={() => init()}
                     className="pairing-retry-btn shrink-0"
                   >
-                    Retry
+                    {t('pairing.retryButton')}
                   </Button>
                 </div>
               )}
@@ -528,7 +536,7 @@ export function PairingDialog({
                     onWordChange={handleWordChange}
                     onWordKeyDown={handleWordKeyDown}
                     onQrScan={handleQrScan}
-                    onQrError={(err) => setError(`Camera error: ${err}`)}
+                    onQrError={(err) => setError(t('pairing.cameraError', { error: err }))}
                     onCancel={handleCancel}
                     onPair={handlePair}
                     pairLoading={pairLoading}

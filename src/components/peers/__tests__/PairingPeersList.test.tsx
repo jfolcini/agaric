@@ -99,7 +99,9 @@ describe('PairingPeersList', () => {
     expect(screen.queryByText(/reset/)).not.toBeInTheDocument()
   })
 
-  it('shows singular "reset" for count of 1', () => {
+  // #2058: reset-count badge uses the i18next plural key (device.resetCount,
+  // _one/_other), not hand-rolled `!== 1 ? 's' : ''` pluralization.
+  it('shows singular "reset" for count of 1 via the device.resetCount _one form', () => {
     const peerWithOneReset = [
       {
         ...firstPeer,
@@ -109,6 +111,7 @@ describe('PairingPeersList', () => {
     render(<PairingPeersList peers={peerWithOneReset} onUnpair={vi.fn()} />)
 
     expect(screen.getByText('1 reset')).toBeInTheDocument()
+    expect(screen.queryByText('1 resets')).not.toBeInTheDocument()
   })
 
   it('renders Unpair button for each peer', () => {

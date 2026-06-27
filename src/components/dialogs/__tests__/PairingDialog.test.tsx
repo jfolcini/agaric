@@ -1266,4 +1266,84 @@ describe('PairingDialog', () => {
       vi.mocked(useIpcCommand).mockImplementation(actualIpc.useIpcCommand)
     }
   })
+
+  // -----------------------------------------------------------------------
+  // #2058: error/recovery copy must come from i18n (t()), not hardcoded
+  // English literals. Assert each setError() path resolves through its
+  // translation key (the resolved English matches the key template).
+  // -----------------------------------------------------------------------
+  describe('#2058 i18n recovery path', () => {
+    it('surfaces pairing.startFailed (interpolated) on startPairing failure', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'start_pairing') throw new Error('network error')
+        if (cmd === 'list_peer_refs') return []
+        return undefined
+      })
+
+      render(<PairingDialog open onOpenChange={vi.fn()} />)
+
+      const errorEl = await screen.findByRole('alert')
+      // matches t('pairing.startFailed', { message: 'network error' })
+      expect(errorEl).toHaveTextContent('Failed to start pairing: network error')
+    })
+
+    it('surfaces pairing.pairFailed (interpolated) on confirmPairing failure', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'start_pairing') return mockPairingInfo
+        if (cmd === 'list_peer_refs') return []
+        if (cmd === 'confirm_pairing') throw new Error('invalid passphrase')
+        return undefined
+      })
+
+      render(<PairingDialog open onOpenChange={vi.fn()} />)
+      await screen.findByText('alpha bravo charlie delta')
+
+      const inputs = screen.getAllByRole('textbox')
+      await user.type(inputs[0] as HTMLElement, 'echo')
+      await user.type(inputs[1] as HTMLElement, 'foxtrot')
+      await user.type(inputs[2] as HTMLElement, 'golf')
+      await user.type(inputs[3] as HTMLElement, 'hotel')
+      await user.click(screen.getByRole('button', { name: /^Pair$/i }))
+
+      const errorEl = await screen.findByRole('alert')
+      // matches t('pairing.pairFailed', { message: 'invalid passphrase' })
+      expect(errorEl).toHaveTextContent('Pairing failed: invalid passphrase')
+    })
+
+    it('surfaces pairing.unpairFailed (interpolated) on deletePeerRef failure', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'start_pairing') return mockPairingInfo
+        if (cmd === 'list_peer_refs') return mockPeers
+        if (cmd === 'delete_peer_ref') throw new Error('peer not found')
+        return undefined
+      })
+
+      render(<PairingDialog open onOpenChange={vi.fn()} />)
+      await screen.findByText('peer-abc-1234567890')
+
+      await user.click(screen.getAllByRole('button', { name: /Unpair/i })[0] as HTMLElement)
+      await user.click(screen.getByRole('button', { name: /Yes, unpair/i }))
+
+      const errorEl = await screen.findByRole('alert')
+      // matches t('pairing.unpairFailed', { message: 'peer not found' })
+      expect(errorEl).toHaveTextContent('Failed to unpair device: peer not found')
+    })
+
+    it('renders the Retry button from pairing.retryButton (not a hardcoded literal)', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'start_pairing') throw new Error('network error')
+        if (cmd === 'list_peer_refs') return []
+        return undefined
+      })
+
+      render(<PairingDialog open onOpenChange={vi.fn()} />)
+
+      await screen.findByRole('alert')
+      const retryBtn = screen.getByRole('button', { name: /Retry/i })
+      // t('pairing.retryButton') === 'Retry'
+      expect(retryBtn).toHaveTextContent('Retry')
+    })
+  })
 })
