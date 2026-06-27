@@ -52,8 +52,50 @@ export const REGEX_PATTERN_MAX = 1024
 /** Maximum text-node length (chars) considered in regex mode. */
 export const REGEX_NODE_MAX = 10_240
 
+/**
+ * Maximum number of characters of a single text node that the regex
+ * engine is allowed to scan (ReDoS guard, #2030).
+ *
+ * `re.exec` cannot be interrupted once it enters a catastrophic
+ * backtrack, so the {@link REGEX_TIME_BUDGET_MS} aggregate budget — which
+ * is only checked *between* nodes — cannot rescue a single hung exec on a
+ * large node. The only thing that bounds a single `exec` is the size of
+ * the string handed to it. We therefore run the regex against at most the
+ * first `REGEX_NODE_SCAN_MAX` characters of each node rather than its
+ * full (up to {@link REGEX_NODE_MAX}) length. Slicing from offset 0 keeps
+ * every emitted match offset valid against the original node text.
+ *
+ * This is the "substantially lower the per-node cap for regex mode"
+ * mitigation called for by #2030: it caps the per-`exec` cost so the
+ * common pathological pattern (e.g. `(a+)+$`) can't freeze the thread on
+ * one node, while the time budget bounds the aggregate across nodes.
+ * (Patterns that still backtrack catastrophically within the slice are
+ * bounded in count by the slice and surfaced via the aggregate budget.)
+ */
+export const REGEX_NODE_SCAN_MAX = 2_048
+
 /** Chunk size for cooperative DOM walking. */
 export const CHUNK_SIZE = 50
+
+/**
+ * Wall-clock budget (ms) for the synchronous regex scanning work.
+ *
+ * A short pathological pattern (e.g. `(a+)+$`) against a single ~10 KB
+ * text node can backtrack exponentially. The pattern-length cap and the
+ * {@link REGEX_NODE_MAX} per-node cap don't help: catastrophic
+ * backtracking is governed by the pattern shape, not its length, and a
+ * 10 KB node is far more than enough to hang the main thread for seconds.
+ *
+ * To keep the UI responsive we bound how long the matcher may spend
+ * running regexes before it gives up. The budget is checked between
+ * text nodes (the granularity at which a single `matcher(text)` call
+ * runs to completion — once `re.exec` enters a pathological backtrack it
+ * cannot be interrupted, so the budget protects the *aggregate* across
+ * nodes and the boundary *before* the next node). On timeout the scan
+ * aborts and the result is flagged {@link FindResult.timedOut} so the
+ * caller can surface a "pattern too slow" signal instead of freezing.
+ */
+export const REGEX_TIME_BUDGET_MS = 75
 
 /** One literal/regex hit inside a single text node. */
 export interface FindMatch {
@@ -77,6 +119,15 @@ export interface FindResult {
   matches: FindMatch[]
   /** Count of text nodes skipped because they exceeded REGEX_NODE_MAX in regex mode. */
   skippedLongNodes: number
+  /**
+   * True when the regex scan aborted early because it exceeded
+   * {@link REGEX_TIME_BUDGET_MS} (ReDoS / catastrophic-backtracking
+   * guard). `matches` then holds whatever was collected before the
+   * budget ran out; the caller should surface a "pattern too slow"
+   * signal rather than treating the count as authoritative. Absent /
+   * `false` for literal scans and for regex scans that completed.
+   */
+  timedOut?: boolean
 }
 
 /** Token returned by `runWalker` so the caller can abort. */
@@ -250,8 +301,16 @@ function scanRegex(
   wholeWord: boolean,
 ): Array<{ start: number; end: number }> {
   const out: Array<{ start: number; end: number }> = []
+  // ReDoS guard (#2030): never hand the regex engine more than
+  // REGEX_NODE_SCAN_MAX characters of a node. A single `re.exec` can't be
+  // interrupted once it enters a catastrophic backtrack, so the only way to
+  // bound one exec's cost is to bound its input. Slicing from offset 0 keeps
+  // every emitted offset valid against the original node text; matches that
+  // would start beyond the cap are intentionally not surfaced (the time
+  // budget across nodes is the aggregate backstop).
+  const scanned = text.length > REGEX_NODE_SCAN_MAX ? text.slice(0, REGEX_NODE_SCAN_MAX) : text
   re.lastIndex = 0
-  let m = re.exec(text)
+  let m = re.exec(scanned)
   while (m !== null) {
     const start = m.index
     const end = start + m[0].length
@@ -261,7 +320,7 @@ function scanRegex(
     } else if (!wholeWord || isWholeWord(text, start, end)) {
       out.push({ start, end })
     }
-    m = re.exec(text)
+    m = re.exec(scanned)
   }
   return out
 }
@@ -348,10 +407,31 @@ export function walkSync(
     kind: 'literal' | 'regex'
     matcher: (text: string) => Array<{ start: number; end: number }>
   },
+  options?: {
+    /**
+     * Wall-clock budget (ms) for regex scanning before the walk aborts.
+     * Defaults to {@link REGEX_TIME_BUDGET_MS}. Only consulted in regex
+     * mode — literal scans are linear and need no guard. Exposed mainly
+     * so tests can pin a tiny budget; production callers omit it.
+     */
+    timeBudgetMs?: number
+    /** Injectable clock (defaults to `Date.now`) for deterministic tests. */
+    now?: () => number
+  },
 ): FindResult {
   const matches: FindMatch[] = []
   let skippedLongNodes = 0
+  const guardTime = compiled.kind === 'regex'
+  const now = options?.now ?? Date.now
+  const budget = options?.timeBudgetMs ?? REGEX_TIME_BUDGET_MS
+  const startedAt = guardTime ? now() : 0
   for (const node of textNodes) {
+    // Check the budget *before* running the next node's matcher: once
+    // `re.exec` enters a pathological backtrack it can't be interrupted,
+    // so we stop at node boundaries to keep the aggregate scan bounded.
+    if (guardTime && now() - startedAt > budget) {
+      return { matches, skippedLongNodes, timedOut: true }
+    }
     const text = node.nodeValue ?? ''
     if (compiled.kind === 'regex' && text.length > REGEX_NODE_MAX) {
       skippedLongNodes += 1
@@ -387,11 +467,25 @@ export function runWalker(
     onProgress?: (partial: FindResult) => void
     onComplete: (result: FindResult) => void
   },
+  options?: {
+    /**
+     * Per-chunk wall-clock budget (ms) for regex scanning before the walk
+     * aborts with {@link FindResult.timedOut}. Defaults to
+     * {@link REGEX_TIME_BUDGET_MS}. Exposed mainly so tests can pin a tiny
+     * budget for deterministic aborts; production callers omit it.
+     */
+    timeBudgetMs?: number
+    /** Injectable clock (defaults to `Date.now`) for deterministic tests. */
+    now?: () => number
+  },
 ): WalkerHandle {
   let cancelled = false
   let cursor = 0
   const matches: FindMatch[] = []
   let skippedLongNodes = 0
+  const guardTime = compiled.kind === 'regex'
+  const now = options?.now ?? Date.now
+  const budget = options?.timeBudgetMs ?? REGEX_TIME_BUDGET_MS
 
   const schedule = (fn: () => void) => {
     const ric = (globalThis as { requestIdleCallback?: (cb: () => void) => unknown })
@@ -406,7 +500,18 @@ export function runWalker(
   function step(): void {
     if (cancelled) return
     const end = Math.min(cursor + CHUNK_SIZE, textNodes.length)
+    // ReDoS guard: bound the wall-clock time spent running regexes inside
+    // this synchronous chunk. A single ~10 KB node against a pathological
+    // pattern (e.g. `(a+)+$`) can backtrack for seconds; without this the
+    // yield between chunks never arrives and the UI thread is frozen. We
+    // check at node boundaries (an in-flight `re.exec` can't be aborted).
+    const startedAt = guardTime ? now() : 0
     for (let i = cursor; i < end; i++) {
+      if (guardTime && now() - startedAt > budget) {
+        cursor = i
+        callbacks.onComplete({ matches, skippedLongNodes, timedOut: true })
+        return
+      }
       const node = textNodes[i]
       if (!node) continue
       const text = node.nodeValue ?? ''

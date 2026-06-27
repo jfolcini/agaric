@@ -410,6 +410,7 @@ export const common: Record<string, string> = {
   'findInPage.counterEmpty': '0 of 0',
   'findInPage.regexTooLong': 'Pattern is too long (max 1 KB).',
   'findInPage.regexInvalid': 'Invalid regex: {{message}}',
+  'findInPage.regexTooSlow': 'Pattern is too slow — try a simpler expression.',
   'findInPage.skippedLongPassages_one': '{{count}} long passage skipped',
   'findInPage.skippedLongPassages_other': '{{count}} long passages skipped',
   'announce.findInPageOpened': 'Find in page opened',

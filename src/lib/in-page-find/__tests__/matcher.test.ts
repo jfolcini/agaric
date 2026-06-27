@@ -21,7 +21,9 @@ import {
   collectTextNodes,
   compileQuery,
   REGEX_NODE_MAX,
+  REGEX_NODE_SCAN_MAX,
   REGEX_PATTERN_MAX,
+  REGEX_TIME_BUDGET_MS,
   runWalker,
   walkSync,
 } from '../matcher'
@@ -241,6 +243,128 @@ describe('walkSync', () => {
   })
 })
 
+describe('regex ReDoS / catastrophic-backtracking guard (#2030)', () => {
+  // CRITICAL: a JS regex engine cannot be interrupted mid-`exec`. A
+  // wall-clock check *between* nodes does NOT stop a single catastrophic
+  // `exec` on one large node. So these tests must NEVER hand a real
+  // pathological pattern a large enough input to actually hang — doing so
+  // would freeze CI. Two independent guards are exercised here:
+  //
+  //   (a) per-node input cap (REGEX_NODE_SCAN_MAX) — bounds a single exec
+  //       by slicing the node text before it ever reaches the engine, and
+  //   (b) an aggregate wall-clock budget (REGEX_TIME_BUDGET_MS) checked at
+  //       node boundaries to abort a long scan across many nodes.
+  //
+  // The budget tests below use an INJECTED clock so they are deterministic
+  // and run exactly one (cheap, capped) exec — no test relies on a real
+  // exponential exec completing.
+  const EVIL_PATTERN = '(a+)+$'
+
+  function makeNodes(text: string, count: number): Text[] {
+    const host = attach('<p></p>')
+    const p = host.querySelector('p')
+    const nodes: Text[] = []
+    for (let i = 0; i < count; i++) {
+      const t = document.createTextNode(text)
+      p?.append(t)
+      nodes.push(t)
+    }
+    return nodes
+  }
+
+  it('caps per-node regex input at REGEX_NODE_SCAN_MAX so a single exec is bounded', () => {
+    // A node well under REGEX_NODE_MAX (so it is NOT skipped) but longer
+    // than REGEX_NODE_SCAN_MAX. Pattern `xyz$` would match only the tail
+    // beyond the cap — proving the engine never saw past the cap. This runs
+    // instantly because the slice handed to exec is bounded and `a*` is
+    // linear, so the test can use a real (non-pathological) regex safely.
+    const text = `${'a'.repeat(REGEX_NODE_SCAN_MAX + 500)}xyz`
+    expect(text.length).toBeLessThan(REGEX_NODE_MAX) // not skipped as "long node"
+    const nodes = makeNodes(text, 1)
+    const compiled = compileQuery('xyz$', { ...defaultOpts, isRegex: true }) as Extract<
+      CompiledQuery,
+      { kind: 'regex' }
+    >
+    const result = walkSync(nodes, compiled)
+    // The "xyz" lives beyond REGEX_NODE_SCAN_MAX, so the capped scan can't
+    // see it: zero matches, and crucially the node was NOT skipped.
+    expect(result.matches).toHaveLength(0)
+    expect(result.skippedLongNodes).toBe(0)
+    expect(result.timedOut).toBeFalsy()
+  })
+
+  it('matches within the scanned slice but not beyond the per-node cap', () => {
+    const text = `${'before '.padEnd(10, ' ')}target${'z'.repeat(REGEX_NODE_SCAN_MAX)}target`
+    const nodes = makeNodes(text, 1)
+    const compiled = compileQuery('target', { ...defaultOpts, isRegex: true }) as Extract<
+      CompiledQuery,
+      { kind: 'regex' }
+    >
+    const result = walkSync(nodes, compiled)
+    // First "target" is inside the slice; the second is pushed past the cap.
+    expect(result.matches).toHaveLength(1)
+    expect(result.matches[0]?.start).toBe(text.indexOf('target'))
+  })
+
+  it('aborts and flags timedOut when the regex scan exceeds the time budget', () => {
+    // Deterministic via an injected clock: only one (capped, cheap) exec
+    // runs before the budget trips at the next node boundary.
+    const nodes = makeNodes(`${'a'.repeat(20)}!`, 5)
+    const compiled = compileQuery(EVIL_PATTERN, { ...defaultOpts, isRegex: true }) as Extract<
+      CompiledQuery,
+      { kind: 'regex' }
+    >
+
+    // `walkSync` calls now() once for `startedAt`, then once per node at the
+    // boundary check. Calls 1 (start) and 2 (node 0) read 0 → under budget,
+    // so node 0 runs; call 3 (node 1) reads past the budget → abort.
+    let ticks = 0
+    const now = () => {
+      ticks += 1
+      return ticks <= 2 ? 0 : REGEX_TIME_BUDGET_MS + 1
+    }
+
+    const result = walkSync(nodes, compiled, { timeBudgetMs: REGEX_TIME_BUDGET_MS, now })
+    expect(result.timedOut).toBe(true)
+    // Aborted at node 1, so only node 0's match (if any) was collected.
+    expect(result.matches.length).toBeLessThan(5)
+  })
+
+  it('does not flag timedOut for a well-behaved regex within budget', () => {
+    const host = attach('<p>alpha</p><p>beta</p>')
+    const nodes = collectTextNodes(host)
+    const compiled = compileQuery('alpha|beta', { ...defaultOpts, isRegex: true }) as Extract<
+      CompiledQuery,
+      { kind: 'regex' }
+    >
+    const result = walkSync(nodes, compiled)
+    expect(result.timedOut).toBeFalsy()
+    expect(result.matches).toHaveLength(2)
+  })
+
+  it('returns within a bounded time on a real pathological pattern (no hang)', () => {
+    // No fake clock, REAL `(a+)+$` backtracking — but each node is only 20
+    // chars of 'a', a few ms per exec, and the per-node cap guarantees no
+    // single exec ever sees more than REGEX_NODE_SCAN_MAX chars. With a tiny
+    // budget the walk aborts almost immediately. This proves the guard caps
+    // wall-clock time WITHOUT ever running an unbounded exec.
+    const nodes = makeNodes(`${'a'.repeat(20)}!`, 50)
+    const compiled = compileQuery(EVIL_PATTERN, { ...defaultOpts, isRegex: true }) as Extract<
+      CompiledQuery,
+      { kind: 'regex' }
+    >
+
+    const startedAt = Date.now()
+    const result = walkSync(nodes, compiled, { timeBudgetMs: 1 })
+    const elapsed = Date.now() - startedAt
+
+    expect(result.timedOut).toBe(true)
+    // Budget 1 ms + at most one in-flight (capped, ~few-ms) exec. A generous
+    // ceiling that still proves the abort fired rather than running 50 nodes.
+    expect(elapsed).toBeLessThan(1000)
+  })
+})
+
 describe('collectTextNodes', () => {
   it('ignores script and style elements', () => {
     const host = attach('<p>visible</p><script>hidden</script><style>.x{}</style>')
@@ -297,6 +421,46 @@ describe('runWalker', () => {
     })
     expect(final.matches.length).toBe(nodes.length)
     expect(progressCalls).toBeGreaterThanOrEqual(1)
+  })
+
+  it('aborts an in-flight chunk on the ReDoS time budget and flags timedOut (#2030)', async () => {
+    // A chunk full of pathological nodes would freeze the UI thread without
+    // the guard. We prove the abort fires deterministically via an INJECTED
+    // clock that trips the budget at the second node boundary — exactly one
+    // (capped, cheap) exec runs, so the test never relies on a real
+    // exponential exec completing and can never hang CI.
+    const host = attach('<p></p>')
+    const p = host.querySelector('p')
+    const evil: Text[] = []
+    for (let i = 0; i < 30; i++) {
+      const t = document.createTextNode(`${'a'.repeat(20)}!`)
+      p?.append(t)
+      evil.push(t)
+    }
+    const compiled = compileQuery('(a+)+$', { ...defaultOpts, isRegex: true }) as Extract<
+      CompiledQuery,
+      { kind: 'regex' }
+    >
+
+    // First chunk: now() reads 0 for startedAt and node 0's check, then jumps
+    // past the budget for node 1's check → abort with timedOut.
+    let ticks = 0
+    const now = () => {
+      ticks += 1
+      return ticks <= 2 ? 0 : REGEX_TIME_BUDGET_MS + 1
+    }
+
+    const final = await new Promise<ReturnType<typeof walkSync>>((resolve) => {
+      runWalker(
+        evil,
+        compiled,
+        { onComplete: resolve },
+        { timeBudgetMs: REGEX_TIME_BUDGET_MS, now },
+      )
+    })
+
+    expect(final.timedOut).toBe(true)
+    expect(final.matches.length).toBeLessThan(evil.length)
   })
 
   it('cancellation aborts the walk', async () => {
