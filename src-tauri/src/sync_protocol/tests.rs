@@ -941,6 +941,147 @@ async fn orchestrator_rejects_messages_in_terminal_state() {
     materializer.shutdown();
 }
 
+/// State-validation invariant — `SyncMessage::SyncComplete` is rejected
+/// when it arrives in a state where it is not a valid transition.
+///
+/// `SyncComplete` is only valid in `StreamingOps` (the normal
+/// op-stream terminator) or `ExchangingHeads` (the empty-stream
+/// short-circuit). It is the terminal arm above that catches it in
+/// `Complete`/`Failed`; this exercises the *non-terminal* wrong-state
+/// arm — i.e. `(_, SyncComplete)` in `ApplyingOps`, an intermediate
+/// state SyncComplete must never arrive in. The orchestrator must
+/// transition to `Failed("SyncComplete received in wrong state")` and
+/// return `AppError::InvalidOperation`, NOT advance to `Complete`.
+///
+/// This test fails if that rejection arm were changed to accept (the
+/// orchestrator would advance to `Complete` / `Ok(_)` instead of
+/// `Failed` / `Err`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_rejects_sync_complete_in_wrong_state() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+
+    // Directly set `state = ApplyingOps` to set up the precondition.
+    // `ApplyingOps` is reached mid-import (an inbound LoroSync handler is
+    // running); a peer must never send a bare `SyncComplete` in it. The
+    // state-validation match in `handle_message` reads `self.state` (the
+    // source of truth), so setting it directly exercises the same
+    // wrong-state rejection branch deterministically — and is NOT the
+    // terminal-state arm (ApplyingOps is non-terminal).
+    let _start = orch.start().await.unwrap();
+    orch.state = SyncState::ApplyingOps;
+
+    let result = orch
+        .handle_message(SyncMessage::SyncComplete {
+            last_hash: "deadbeef".into(),
+        })
+        .await;
+
+    assert!(
+        result.is_err(),
+        "SyncComplete in ApplyingOps must be rejected, got: {result:?}"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("SyncComplete") && err_msg.contains("wrong state"),
+        "rejection error should name SyncComplete and 'wrong state', got: {err_msg}"
+    );
+    assert_eq!(
+        orch.state,
+        SyncState::Failed("SyncComplete received in wrong state".into()),
+        "state must transition to Failed with the descriptive message"
+    );
+    assert_eq!(
+        orch.session().state,
+        SyncState::Failed("SyncComplete received in wrong state".into()),
+        "mirrored session.state must also transition to Failed"
+    );
+    assert!(
+        !orch.is_succeeded(),
+        "a wrong-state SyncComplete must NOT fake convergence / success"
+    );
+
+    materializer.shutdown();
+}
+
+/// State-validation invariant — once the session is `Failed(_)`, the
+/// terminal-state arm `(Complete | Failed(_), _)` must reject every
+/// incoming message with `AppError::InvalidOperation("... already in
+/// terminal state ...")`.
+///
+/// The existing `orchestrator_rejects_messages_in_terminal_state`
+/// covers ONLY the `Complete` half of that pattern; the `Failed(_)`
+/// half was untested. A `Failed` session is terminal — no further
+/// message may be processed and the state must not change.
+///
+/// This test fails if the `Failed(_)` branch of the terminal arm were
+/// removed/changed to accept (the message would fall through to a
+/// per-message arm and either mutate state or return `Ok(_)`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_rejects_messages_in_failed_terminal_state() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+
+    // Put the session into the `Failed` terminal state. The
+    // state-validation match reads `self.state` (the source of truth),
+    // so setting it directly exercises the terminal-state reject branch.
+    // (`session` is private; the other terminal-state test likewise drives
+    // only `orch.state`, which the terminal arm reads.)
+    let failed_state = SyncState::Failed("prior protocol violation".into());
+    orch.state = failed_state.clone();
+
+    // A HeadExchange would normally be valid from Idle/ExchangingHeads,
+    // but the terminal-state arm must reject it before any per-message
+    // dispatch — proving it is the terminal arm (not a wrong-state arm)
+    // that fires. The error must name the terminal state.
+    let result = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![],
+            loro_vvs: vec![],
+        })
+        .await;
+
+    let err_msg = match result {
+        Err(crate::error::AppError::InvalidOperation(msg)) => msg,
+        other => panic!(
+            "a message arriving in the Failed terminal state must return \
+             AppError::InvalidOperation, got: {other:?}"
+        ),
+    };
+    assert!(
+        err_msg.contains("terminal state"),
+        "rejection error must name the terminal state, got: {err_msg}"
+    );
+
+    // The terminal arm must NOT mutate state — no transition occurred.
+    assert_eq!(
+        orch.state, failed_state,
+        "state must remain unchanged (no transition) after a terminal-state reject"
+    );
+
+    // SnapshotOffer is otherwise accepted in any non-terminal state; in a
+    // terminal state it too must be rejected by the same arm. This pins
+    // the arm's "reject everything" contract for a second message kind.
+    let result2 = orch
+        .handle_message(SyncMessage::SnapshotOffer {
+            size_bytes: 1024,
+            blob_blake3: "deadbeef".into(),
+        })
+        .await;
+    assert!(
+        matches!(result2, Err(crate::error::AppError::InvalidOperation(ref m)) if m.contains("terminal state")),
+        "SnapshotOffer in the Failed terminal state must also be rejected by the terminal arm, got: {result2:?}"
+    );
+    assert_eq!(
+        orch.state, failed_state,
+        "state must remain Failed after the second terminal-state reject"
+    );
+
+    materializer.shutdown();
+}
+
 /// Error messages should be accepted in any non-terminal state,
 /// including Idle.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
