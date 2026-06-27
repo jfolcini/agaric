@@ -1100,8 +1100,15 @@ pub async fn restore_block_inner(
     // restored ancestors. Returns the TOPMOST restored ancestor id (or `None`
     // when the parent chain was already live), used below as the re-derivation
     // root so the whole reconnected subtree is refreshed.
+    // #2017: the engine fan-out for the restored ancestor chain happens in the
+    // materializer replay arm (`apply_op` → `dispatch_restore_ancestors`),
+    // driven by the op enqueued via `commit_and_dispatch` below — the same path
+    // that fans the descendant cohort out. The command tx only owns the SQL
+    // `deleted_at` clear here; we keep `topmost` for the re-derivation root.
     let restored_ancestor_top =
-        crate::block_descendants::restore_deleted_ancestor_chain(&mut tx, &block_id).await?;
+        crate::block_descendants::restore_deleted_ancestor_chain(&mut tx, &block_id)
+            .await?
+            .topmost;
 
     // Warn when the cascade walk hit the depth-100 cap so
     // an operator has a breadcrumb if a pathological tree silently

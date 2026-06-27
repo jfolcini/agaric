@@ -483,7 +483,7 @@ pub async fn project_restore_block_to_sql(
     conn: &mut SqliteConnection,
     block_id: &str,
     deleted_at_ref: i64,
-) -> Result<(), AppError> {
+) -> Result<Vec<String>, AppError> {
     sqlx::query(concat!(
         crate::descendants_cte_cohort!(),
         "UPDATE blocks SET deleted_at = NULL \
@@ -503,11 +503,19 @@ pub async fn project_restore_block_to_sql(
     // still-tombstoned, invisible parent — absent from both tree and trash.
     // Restore the contiguous soft-deleted ancestor chain up to the nearest live
     // ancestor (or root) so the command and op-replay/sql_only paths converge on
-    // identical settled state. The returned topmost id is unused here — page/
-    // space re-derivation runs in the via-loro arm; this projection only owns
-    // the `deleted_at` clear (the `sql_only` fallback's re-derivation is driven
-    // by its own caller).
-    crate::block_descendants::restore_deleted_ancestor_chain(&mut *conn, block_id).await?;
+    // identical settled state.
+    //
+    // #2017: RETURN the restored ancestor chain so the via-loro caller can fan
+    // it out to the per-space Loro engine. The SQL UPDATE clears `deleted_at`
+    // upward but the engine's `apply_restore_block` is per-block-id, so without
+    // an engine fan-out the ancestors stay tombstoned in the CRDT and a later
+    // `reproject_block_deleted_at` re-deletes them in SQL (self-perpetuating
+    // divergence). The page/space re-derivation from the topmost id runs in the
+    // via-loro arm; this projection only owns the `deleted_at` clear.
+    let restored_ancestors =
+        crate::block_descendants::restore_deleted_ancestor_chain(&mut *conn, block_id)
+            .await?
+            .chain;
 
     // #1582: surface deep-tree truncation on the op-replay / sql_only
     // paths. The command path (`restore_block_inner`) already emits this
@@ -527,7 +535,7 @@ pub async fn project_restore_block_to_sql(
              Tree pathologically deep.",
         );
     }
-    Ok(())
+    Ok(restored_ancestors)
 }
 
 /// Project a `DeleteProperty` engine state into SQL.  Mirrors the

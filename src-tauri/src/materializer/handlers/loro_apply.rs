@@ -398,11 +398,18 @@ pub(crate) async fn apply_move_block_via_loro(
 /// soft-deleted child by the per-space-tree invariant. When the block
 /// has no parent (orphan / page-level restore), the path falls back to
 /// the SQL-only restore.
+///
+/// #2017: returns the restored ANCESTOR chain (the contiguous soft-deleted
+/// ancestors above the block that the projection un-deleted in SQL). The caller
+/// (`apply_op_tx`) surfaces it in `ApplyEffects::restored_ancestors` and fans it
+/// out to the engine post-commit (`dispatch_restore_ancestors`), mirroring the
+/// descendant cohort fan-out. Without this the SQL un-deletes the ancestors but
+/// the engine never hears, so the next reproject re-deletes them in SQL.
 pub(crate) async fn apply_restore_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
     p: &RestoreBlockPayload,
-) -> Result<(), AppError> {
+) -> Result<Vec<String>, AppError> {
     use crate::loro::projection;
     use crate::ulid::BlockId;
 
@@ -439,7 +446,9 @@ pub(crate) async fn apply_restore_block_via_loro(
         drop(guard);
     }
 
-    projection::project_restore_block_to_sql(conn, p.block_id.as_str(), p.deleted_at_ref).await?;
+    let restored_ancestors =
+        projection::project_restore_block_to_sql(conn, p.block_id.as_str(), p.deleted_at_ref)
+            .await?;
 
     // #1884: `project_restore_block_to_sql` also restores the contiguous
     // soft-deleted ANCESTOR chain above the block (closing the live-orphan
@@ -451,7 +460,11 @@ pub(crate) async fn apply_restore_block_via_loro(
     // behaviour).
     let inheritance_root = topmost_live_ancestor(&mut *conn, p.block_id.as_str()).await?;
     tag_inheritance::recompute_subtree_inheritance(&mut *conn, &inheritance_root).await?;
-    Ok(())
+
+    // #2017: surface the restored ancestor chain so `apply_op_tx` can fan it
+    // out to the per-space engine post-commit. The engine apply above targeted
+    // only the SEED; the ancestors were un-deleted in SQL only.
+    Ok(restored_ancestors)
 }
 
 /// #1884: id of the highest LIVE ancestor reachable by walking `parent_id`

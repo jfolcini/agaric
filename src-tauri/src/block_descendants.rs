@@ -320,6 +320,27 @@ where
     Ok(hit.is_some())
 }
 
+/// Result of [`restore_deleted_ancestor_chain`]: the FULL set of soft-deleted
+/// ancestor ids whose `deleted_at` was cleared (`chain`) plus the topmost
+/// member (`topmost`, greatest depth from the block — the one nearest the live
+/// anchor / root).
+///
+/// `chain` exists for the #2017 engine fan-out: the SQL UPDATE restores the
+/// ancestors but the per-space Loro engine is per-block-id, so the caller must
+/// drive `RestoreBlock` onto the engine for every id in `chain`. `topmost`
+/// exists for the #1884 re-derivation root (page/space + tag inheritance
+/// recompute climbs from there). Both are empty / `None` when nothing was
+/// restored.
+#[derive(Debug, Default, Clone)]
+pub struct RestoredAncestorChain {
+    /// Highest restored ancestor (greatest depth), or `None` when the parent
+    /// chain was already live.
+    pub topmost: Option<String>,
+    /// Every ancestor id whose `deleted_at` this call cleared (contiguous
+    /// tombstoned chain between the block and the nearest live ancestor).
+    pub chain: Vec<String>,
+}
+
 /// #1884: restore the contiguous soft-deleted ANCESTOR chain above a
 /// block being restored, up to (but not including) the nearest LIVE
 /// ancestor (or the root).
@@ -342,20 +363,27 @@ where
 /// the live tree is restored. Both the command and projection paths call
 /// this so they converge on identical settled state.
 ///
-/// Returns `Some(topmost_ancestor_id)` — the highest block in the restored
-/// chain (the one nearest the live anchor / root) — when any ancestor was
-/// restored, or `None` when the parent chain was already live (nothing to do).
+/// Returns a [`RestoredAncestorChain`] describing what was restored:
+/// `topmost` is the highest block in the restored chain (the one nearest the
+/// live anchor / root) and `chain` is the FULL set of ancestor ids whose
+/// `deleted_at` this call cleared. Both are empty / `None` when the parent
+/// chain was already live (nothing to do).
+///
 /// The caller can drive page/space re-derivation and tag-inheritance recompute
-/// from this id so the whole reconnected subtree is refreshed. Idempotent: a
-/// re-run finds the chain already live (`deleted_at IS NULL`), restores nothing,
-/// and returns `None`.
+/// from `topmost` so the whole reconnected subtree is refreshed, and MUST fan
+/// the `chain` out to the per-space Loro engine (#2017) — the SQL UPDATE clears
+/// `deleted_at` upward but the engine is per-block-id, so without an engine
+/// fan-out the ancestors stay tombstoned in the CRDT and a later reproject
+/// re-deletes them in SQL (self-perpetuating divergence). Idempotent: a re-run
+/// finds the chain already live (`deleted_at IS NULL`), restores nothing, and
+/// returns an empty result.
 ///
 /// `depth < 100` bounds runaway recursion on corrupted `parent_id` chains
 /// (AGENTS.md invariant #9), mirroring the descendant/ancestor CTEs.
 pub async fn restore_deleted_ancestor_chain(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,
-) -> Result<Option<String>, sqlx::Error> {
+) -> Result<RestoredAncestorChain, sqlx::Error> {
     // dynamic-sql: recursive ancestor CTE assembled at runtime; not
     // expressible via the compile-checked `query!` macro form.
     //
@@ -377,23 +405,26 @@ pub async fn restore_deleted_ancestor_chain(
         };
     }
 
-    // Capture the topmost member (greatest depth) BEFORE the UPDATE — the
-    // walk's terminus is the highest tombstoned ancestor in the contiguous
-    // chain, i.e. the block whose own parent is live-or-NULL. `None` means the
-    // parent chain was already live, so there is nothing to restore.
+    // Capture the FULL contiguous chain (ordered by depth) BEFORE the UPDATE —
+    // the walk's terminus is the highest tombstoned ancestor in the contiguous
+    // chain, i.e. the block whose own parent is live-or-NULL. An empty result
+    // means the parent chain was already live, so there is nothing to restore.
+    // We capture every id (not just the topmost) because the #2017 caller fans
+    // each one out to the per-space Loro engine; the topmost is the last row
+    // (greatest depth) and drives the #1884 re-derivation root.
     // dynamic-sql: recursive deleted-ancestor CTE assembled from const
     // fragments at runtime (variable-depth upward walk); not expressible as a
     // compile-checked `query!` macro.
-    let topmost: Option<String> = sqlx::query_scalar::<_, String>(concat!(
+    let chain: Vec<String> = sqlx::query_scalar::<_, String>(concat!(
         deleted_chain_cte!(),
-        "SELECT id FROM deleted_chain ORDER BY depth DESC LIMIT 1",
+        "SELECT id FROM deleted_chain ORDER BY depth ASC",
     ))
     .bind(block_id)
-    .fetch_optional(&mut *conn)
+    .fetch_all(&mut *conn)
     .await?;
 
-    if topmost.is_none() {
-        return Ok(None);
+    if chain.is_empty() {
+        return Ok(RestoredAncestorChain::default());
     }
 
     // dynamic-sql: recursive deleted-ancestor CTE assembled from const
@@ -408,7 +439,9 @@ pub async fn restore_deleted_ancestor_chain(
     .execute(&mut *conn)
     .await?;
 
-    Ok(topmost)
+    // `topmost` = greatest depth = last element (chain is depth-ascending).
+    let topmost = chain.last().cloned();
+    Ok(RestoredAncestorChain { topmost, chain })
 }
 
 #[cfg(test)]

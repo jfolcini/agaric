@@ -89,6 +89,14 @@ pub(super) async fn apply_op(pool: &SqlitePool, record: &Arc<OpRecord>) -> Resul
     // filters `deleted_at IS NULL`; a post-commit lookup would return
     // `None` for every cohort row.
     dispatch_restore_descendants(pool, record, &effects.restored_cohort).await;
+    // #2017: symmetric UPWARD fan-out. The SQL restore also un-deleted the
+    // contiguous soft-deleted ANCESTOR chain (the #1884 live-orphan fix) but
+    // the in-tx engine apply touched only the seed, so the ancestors are alive
+    // in SQL yet still tombstoned in the per-space CRDT. Without this fan-out
+    // the next `reproject_block_deleted_at` re-deletes them in SQL —
+    // self-perpetuating divergence. Reuses the same engine RestoreBlock helper
+    // as the descendant fan-out.
+    dispatch_restore_ancestors(pool, record, &effects.restored_ancestors).await;
     dispatch_delete_descendants(
         record,
         &effects.deleted_cohort,
@@ -210,6 +218,110 @@ pub(crate) async fn dispatch_restore_descendants(
         let op_id = format!(
             "{}/{}#cohort/{}",
             root_record.device_id, root_record.seq, cohort_id,
+        );
+        crate::merge::engine_apply(
+            &op_id,
+            &payload,
+            &root_record.device_id,
+            &space_id,
+            &root_record.created_at.to_string(),
+            state,
+        );
+    }
+}
+
+/// #2017: symmetric UPWARD companion to [`dispatch_restore_descendants`].
+///
+/// A `RestoreBlock` SQL apply un-deletes not only the seed + descendant
+/// cohort but ALSO the contiguous soft-deleted ANCESTOR chain above the
+/// block (the #1884 live-orphan fix). The in-tx engine apply
+/// (`apply_restore_block_via_loro`) touches only the SEED, so without this
+/// fan-out the ancestors are alive in SQL but still tombstoned in the
+/// per-space CRDT. `reproject_block_deleted_at` then reads the engine
+/// (still "deleted") and RE-DELETES the ancestor in SQL — a
+/// self-perpetuating divergence that re-deletes the ancestor on every
+/// reproject. This helper drives `RestoreBlock` onto the engine for every
+/// id in the chain, mirroring the descendant fan-out exactly.
+///
+/// Space is resolved once from the root block (every ancestor is in the
+/// same space — they share the seed's per-space tree, and all are alive
+/// again post-commit so `resolve_block_space` succeeds). The synthesised
+/// `deleted_at_ref` is irrelevant to the engine's `apply_restore_block`
+/// (per-block-id; clears the deleted marker regardless of the SQL
+/// timestamp), so we reuse the root's. Errors are absorbed inside
+/// `engine_apply`. The #2031 fanout-dropped metric is bumped on the same
+/// unresolved-space / parse-failure paths as the descendant helper.
+pub(crate) async fn dispatch_restore_ancestors(
+    pool: &SqlitePool,
+    root_record: &OpRecord,
+    ancestors: &[String],
+) {
+    use crate::op::{OpPayload, RestoreBlockPayload};
+    use crate::ulid::BlockId;
+
+    if ancestors.is_empty() {
+        return;
+    }
+
+    let Some(state) = crate::loro::shared::get() else {
+        // Loro state not initialised (test environment that bypasses
+        // the boot setup). Nothing to do.
+        return;
+    };
+
+    let root_payload: RestoreBlockPayload = match serde_json::from_str(&root_record.payload) {
+        Ok(p) => p,
+        Err(e) => {
+            // #2031: SQL restore committed but we cannot fan the ancestor
+            // chain out to the engine — it stays divergent until boot
+            // replay reconciles. Meter the skip so it is observable.
+            super::descendant_fanout_dropped::record();
+            tracing::warn!(
+                seq = root_record.seq,
+                error = %e,
+                "restore-ancestor fanout: failed to parse root RestoreBlockPayload; \
+                 skipping ancestor fan-out",
+            );
+            return;
+        }
+    };
+
+    // Resolve the space once via the root's block_id (every restored
+    // ancestor shares the seed's per-space tree and is alive again
+    // post-commit, so `resolve_block_space` succeeds).
+    let root_block = BlockId::from_trusted(root_payload.block_id.as_str());
+    let space_id = match crate::space::resolve_block_space(pool, &root_block).await {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            super::descendant_fanout_dropped::record();
+            tracing::trace!(
+                block_id = root_payload.block_id.as_str(),
+                "restore-ancestor fanout: no space for root block; skipping",
+            );
+            return;
+        }
+        Err(e) => {
+            super::descendant_fanout_dropped::record();
+            tracing::warn!(
+                error = %e,
+                "restore-ancestor fanout: resolve_block_space failed; skipping",
+            );
+            return;
+        }
+    };
+
+    for ancestor_id in ancestors {
+        // The engine's `apply_restore_block` is per-block-id; `deleted_at_ref`
+        // is unused by it (the ancestor's own delete timestamp differs from
+        // the seed's, but the engine only clears the deleted marker).
+        let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
+            block_id: BlockId::from_trusted(ancestor_id),
+            deleted_at_ref: root_payload.deleted_at_ref,
+        });
+
+        let op_id = format!(
+            "{}/{}#ancestor/{}",
+            root_record.device_id, root_record.seq, ancestor_id,
         );
         crate::merge::engine_apply(
             &op_id,
@@ -374,6 +486,16 @@ pub(super) struct ApplyEffects {
     /// `RestoreBlock`.  Order is whatever SQLite's CTE walk produces
     /// (no guarantee but stable across calls on a fixed schema).
     pub restored_cohort: Vec<String>,
+    /// #2017: contiguous soft-deleted ANCESTOR ids that a `RestoreBlock`
+    /// apply un-deleted UPWARD (the #1884 live-orphan fix). The SQL UPDATE
+    /// clears `deleted_at` on this chain but the per-space engine's
+    /// `apply_restore_block` is per-block-id, so without a symmetric upward
+    /// fan-out the engine keeps the ancestors tombstoned and the next
+    /// `reproject_block_deleted_at` RE-DELETES them in SQL (self-perpetuating
+    /// CRDT divergence). `dispatch_restore_ancestors` fans these onto the
+    /// engine post-commit, mirroring `restored_cohort`'s descendant fan-out.
+    /// Empty unless the op was `RestoreBlock` and an ancestor chain existed.
+    pub restored_ancestors: Vec<String>,
     /// Block ids soft-deleted by a `DeleteBlock` apply — seed AND
     /// every active descendant the SQL CTE walked. Empty unless the op
     /// was `DeleteBlock`. Captured BEFORE the UPDATE so the
@@ -483,10 +605,24 @@ pub(super) async fn apply_op_tx(
             // `apply_restore_block` is a no-op on an already-restored
             // block).
             let cohort = collect_restore_cohort(conn, &p).await?;
-            // Cohort feeds the count refresh.
-            pre_state = PreOpState::Cohort(cohort.clone());
-            apply_restore_block_via_loro(conn, &record.device_id, &p).await?;
+            // #2017: `apply_restore_block_via_loro` returns the contiguous
+            // soft-deleted ANCESTOR chain it un-deleted upward (the #1884
+            // live-orphan fix). Surface it so the post-commit fan-out drives
+            // the engine for the ancestors too — the in-tx engine apply only
+            // touched the seed, so without this the ancestors stay tombstoned
+            // in the CRDT and the next reproject re-deletes them in SQL.
+            let restored_ancestors =
+                apply_restore_block_via_loro(conn, &record.device_id, &p).await?;
+            // Both the descendant cohort AND the restored ancestors feed the
+            // pages_cache count refresh: an un-deleted ancestor's owning page
+            // gains a live child, so its `child_block_count` must be recomputed
+            // or it is left stale.
+            pre_state = PreOpState::RestoreCohortAndAncestors {
+                cohort: cohort.clone(),
+                ancestors: restored_ancestors.clone(),
+            };
             effects.restored_cohort = cohort;
+            effects.restored_ancestors = restored_ancestors;
         }
         OpType::PurgeBlock => {
             let p: PurgeBlockPayload = serde_json::from_str(&record.payload)?;

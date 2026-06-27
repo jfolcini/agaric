@@ -136,6 +136,10 @@ pub(crate) async fn handle_foreground_task(
             // engine's per-block-id mutation matches the SQL cascade.
             for (record, effects) in records.iter().zip(per_record_effects.iter()) {
                 dispatch_restore_descendants(pool, record, &effects.restored_cohort).await;
+                // #2017: symmetric UPWARD fan-out for the restored ancestor
+                // chain (see `apply_op` for the divergence rationale). Mirrors
+                // the descendant fan-out on the batch path too.
+                dispatch_restore_ancestors(pool, record, &effects.restored_ancestors).await;
                 dispatch_delete_descendants(
                     record,
                     &effects.deleted_cohort,
