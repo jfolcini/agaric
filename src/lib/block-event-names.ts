@@ -35,3 +35,13 @@ export const BLOCK_EVENTS = {
   // BlockTree materializes it via `pasteBlocks(focusedBlockId, markdown)`.
   PASTE_HTML_BLOCKS: 'paste-html-blocks',
 } as const
+
+/**
+ * Cross-process Tauri event name emitted by the materializer after a block's
+ * properties change — mirrors `EVENT_PROPERTY_CHANGED` in
+ * `src-tauri/src/sync_events.rs`. Single source of truth: previously
+ * re-declared independently in `property-keys-cache.ts`,
+ * `property-values-cache.ts`, and `block-property-events.ts`, all of which now
+ * import it from here.
+ */
+export const EVENT_PROPERTY_CHANGED = 'block:properties-changed'
