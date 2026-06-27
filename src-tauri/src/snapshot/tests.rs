@@ -5478,6 +5478,247 @@ async fn apply_snapshot_drops_dangling_refs_1567() {
     mat.shutdown();
 }
 
+// =======================================================================
+// #2052: positive round-trip of non-empty property_definitions + page_aliases
+// =======================================================================
+
+/// #2052(2): `arb_snapshot_data` hardcodes `property_definitions` and
+/// `page_aliases` EMPTY, so a dropped column in their create/restore path
+/// would pass the whole proptest suite. This focused round-trip drives a
+/// snapshot carrying ≥1 row in EACH of those tables through a real
+/// create→apply (restore) cycle and asserts every column survives intact.
+/// A regression that drops a column (e.g. forgets to bind `options` or
+/// `value_type`) would surface here as a NULL / wrong value.
+#[tokio::test]
+async fn apply_snapshot_round_trips_property_definitions_and_page_aliases_2052() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let mut data = sample_snapshot_data();
+    // Two property_definitions exercising the nullable `options` column on
+    // both sides (NULL and non-NULL) so a dropped-column regression that, say,
+    // always binds NULL would be caught by the populated case.
+    data.tables.property_definitions = vec![
+        crate::snapshot::types::PropertyDefinitionSnapshot {
+            key: "status".to_string(),
+            value_type: "select".to_string(),
+            options: Some(r#"["todo","doing","done"]"#.to_string()),
+            created_at: "2025-01-15T00:00:00Z".to_string(),
+        },
+        crate::snapshot::types::PropertyDefinitionSnapshot {
+            key: "estimate".to_string(),
+            value_type: "number".to_string(),
+            options: None,
+            created_at: "2025-02-20T12:34:56Z".to_string(),
+        },
+    ];
+    // Two page_aliases. `page_aliases.page_id REFERENCES blocks(id)` (migration
+    // 0061), so both must point at a block present in the snapshot — BLOCK-1
+    // and BLOCK-2 are in `sample_snapshot_data`.
+    data.tables.page_aliases = vec![
+        crate::snapshot::types::PageAliasSnapshot {
+            page_id: BlockId::test_id("BLOCK-1").to_string(),
+            alias: "Home".to_string(),
+        },
+        crate::snapshot::types::PageAliasSnapshot {
+            page_id: BlockId::test_id("BLOCK-2").to_string(),
+            alias: "Inbox".to_string(),
+        },
+    ];
+    let encoded = encode_snapshot(&data).unwrap();
+
+    apply_snapshot(&pool, &mat, &encoded[..])
+        .await
+        .expect("snapshot with non-empty property_definitions + page_aliases must restore");
+
+    // --- property_definitions: every column survives intact. ---
+    // NOTE: migrations 0014/0016/0035 seed built-in definitions, so assert on
+    // the specific rows we inserted rather than the full table count.
+    let status = sqlx::query!(
+        "SELECT value_type, options, created_at FROM property_definitions WHERE key = 'status'"
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("the 'status' property definition must round-trip");
+    assert_eq!(status.value_type, "select", "value_type must survive");
+    assert_eq!(
+        status.options.as_deref(),
+        Some(r#"["todo","doing","done"]"#),
+        "non-NULL options must survive"
+    );
+    assert_eq!(
+        status.created_at, "2025-01-15T00:00:00Z",
+        "created_at must survive"
+    );
+
+    let estimate = sqlx::query!(
+        "SELECT value_type, options, created_at FROM property_definitions WHERE key = 'estimate'"
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("the 'estimate' property definition must round-trip");
+    assert_eq!(estimate.value_type, "number", "value_type must survive");
+    assert_eq!(estimate.options, None, "NULL options must survive as NULL");
+    assert_eq!(
+        estimate.created_at, "2025-02-20T12:34:56Z",
+        "created_at must survive"
+    );
+
+    // --- page_aliases: every column survives intact. ---
+    let alias_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM page_aliases")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(alias_count, 2, "both page_aliases rows must restore");
+
+    let block1_id = BlockId::test_id("BLOCK-1").to_string();
+    let home = sqlx::query_scalar!(
+        "SELECT alias FROM page_aliases WHERE page_id = ?",
+        block1_id
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("BLOCK-1 alias must round-trip");
+    assert_eq!(home, "Home", "page_aliases.alias must survive for BLOCK-1");
+
+    let block2_id = BlockId::test_id("BLOCK-2").to_string();
+    let inbox = sqlx::query_scalar!(
+        "SELECT alias FROM page_aliases WHERE page_id = ?",
+        block2_id
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("BLOCK-2 alias must round-trip");
+    assert_eq!(
+        inbox, "Inbox",
+        "page_aliases.alias must survive for BLOCK-2"
+    );
+
+    mat.shutdown();
+}
+
+/// F189: a snapshot carrying a `block_properties` row whose count of non-NULL
+/// typed value columns (value_text / value_num / value_date / value_ref /
+/// value_bool) != 1 violates migration 0062's `exactly_one_value` CHECK. That
+/// CHECK is IMMEDIATE, so a zero-value (all-NULL) or multi-value row would
+/// abort the WHOLE restore opaquely (`CHECK constraint failed:
+/// exactly_one_value`) at INSERT time. The repair pass must DROP + warn such
+/// rows so the restore SUCCEEDS with only the bad rows removed and the rest
+/// intact.
+#[tokio::test]
+async fn apply_snapshot_drops_malformed_value_count_property_f189() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let mut data = sample_snapshot_data();
+    // (a) Zero-value row: every typed value column is NULL. Without the F189
+    // repair the `exactly_one_value` CHECK aborts at INSERT time.
+    data.tables.block_properties.push(BlockPropertySnapshot {
+        block_id: BlockId::test_id("BLOCK-1"),
+        key: "empty-prop".to_string(),
+        value_text: None,
+        value_num: None,
+        value_date: None,
+        value_ref: None,
+        value_bool: None,
+    });
+    // (b) Multi-value row: two typed value columns non-NULL. Also a CHECK
+    // violation under the exactly-one invariant.
+    data.tables.block_properties.push(BlockPropertySnapshot {
+        block_id: BlockId::test_id("BLOCK-1"),
+        key: "double-prop".to_string(),
+        value_text: Some("text".to_string()),
+        value_num: Some(42.0),
+        value_date: None,
+        value_ref: None,
+        value_bool: None,
+    });
+    let encoded = encode_snapshot(&data).unwrap();
+
+    // Must SUCCEED (pre-fix: aborts on the exactly_one_value CHECK).
+    apply_snapshot(&pool, &mat, &encoded[..])
+        .await
+        .expect("malformed-value-count rows must be dropped, not abort the restore");
+
+    // Both malformed rows are gone; only the clean `due` row remains.
+    let total: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_properties")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        total, 1,
+        "only the single valid `due` property must survive; both malformed rows dropped"
+    );
+
+    let bad: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM block_properties WHERE key IN ('empty-prop', 'double-prop')"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        bad, 0,
+        "the zero-value and multi-value rows must be dropped"
+    );
+
+    // The clean row survives with its single value intact.
+    let due: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM block_properties WHERE key = 'due' AND value_date = '2025-01-15'"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(due, 1, "the valid `due` property must restore unchanged");
+
+    mat.shutdown();
+}
+
+/// F189 control: a VALID single-value `block_properties` row (exactly one
+/// typed value column non-NULL) must restore unchanged — the F189 repair only
+/// fires on count != 1, never on the valid count == 1 case. This pins the
+/// behaviour-preserving guarantee for the common path.
+#[tokio::test]
+async fn apply_snapshot_keeps_valid_value_count_property_f189() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let mut data = sample_snapshot_data();
+    // A second VALID property row carrying exactly one value (value_text).
+    data.tables.block_properties.push(BlockPropertySnapshot {
+        block_id: BlockId::test_id("BLOCK-1"),
+        key: "note".to_string(),
+        value_text: Some("a note".to_string()),
+        value_num: None,
+        value_date: None,
+        value_ref: None,
+        value_bool: None,
+    });
+    let encoded = encode_snapshot(&data).unwrap();
+
+    apply_snapshot(&pool, &mat, &encoded[..])
+        .await
+        .expect("valid single-value rows must restore unchanged");
+
+    let total: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_properties")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(total, 2, "both valid single-value properties must survive");
+
+    let note: Option<String> =
+        sqlx::query_scalar!("SELECT value_text FROM block_properties WHERE key = 'note'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        note.as_deref(),
+        Some("a note"),
+        "the valid value_text property must restore with its value intact"
+    );
+
+    mat.shutdown();
+}
+
 /// #1567(c): a CLEAN snapshot (no reserved keys, no dangling refs) must
 /// restore byte-identically — the defensive repairs only fire on actually
 /// bad rows. Reuses the canonical self-consistent fixture and asserts every

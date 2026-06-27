@@ -405,9 +405,11 @@ pub async fn apply_snapshot<R: std::io::Read>(
     use std::collections::HashSet;
     let known_block_ids: HashSet<&str> = data.tables.blocks.iter().map(|b| b.id.as_str()).collect();
 
-    // (1) reserved-key + (2) dangling-value_ref repair for block_properties.
+    // (1) reserved-key + (2) dangling-value_ref + (3) exactly-one-value repair
+    // for block_properties.
     let mut dropped_reserved_key = 0usize;
     let mut nulled_value_ref = 0usize;
+    let mut dropped_bad_value_count = 0usize;
     let repaired_block_properties: Vec<_> = data
         .tables
         .block_properties
@@ -417,6 +419,29 @@ pub async fn apply_snapshot<R: std::io::Read>(
             // predicate (the four reserved keys + `space`). Drop offenders.
             if crate::op::is_column_backed_property_key(&bp.key) {
                 dropped_reserved_key += 1;
+                return false;
+            }
+            true
+        })
+        .filter(|bp| {
+            // F189 / migration 0062's `exactly_one_value` CHECK: a
+            // `block_properties` row must have EXACTLY ONE of its five typed
+            // value columns (value_text / value_num / value_date / value_ref /
+            // value_bool) non-NULL. A zero-value (all-NULL) or multi-value row
+            // — landed by a corrupted op replay, a legacy producer, or a
+            // foreign snapshot — violates the CHECK. That CHECK is IMMEDIATE
+            // (like 0088's key_not_reserved), so the bad row aborts the whole
+            // restore at INSERT time with an opaque `CHECK constraint failed:
+            // exactly_one_value` and wedges catch-up. Drop + warn instead, so a
+            // single malformed row cannot take down the entire RESET. Valid
+            // rows (count == 1) are untouched — behaviour-preserving.
+            let value_count = usize::from(bp.value_text.is_some())
+                + usize::from(bp.value_num.is_some())
+                + usize::from(bp.value_date.is_some())
+                + usize::from(bp.value_ref.is_some())
+                + usize::from(bp.value_bool.is_some());
+            if value_count != 1 {
+                dropped_bad_value_count += 1;
                 return false;
             }
             true
@@ -450,6 +475,14 @@ pub async fn apply_snapshot<R: std::io::Read>(
             "apply_snapshot: dropped block_properties rows whose value_ref \
              pointed at a block absent from the snapshot (#1567); the dangling \
              FK would otherwise abort the whole restore at COMMIT"
+        );
+    }
+    if dropped_bad_value_count > 0 {
+        tracing::warn!(
+            rows = dropped_bad_value_count,
+            "apply_snapshot: dropped block_properties rows whose non-NULL typed \
+             value count != 1 (F189); migration 0062's exactly_one_value CHECK \
+             would otherwise abort the whole restore at INSERT time"
         );
     }
 
