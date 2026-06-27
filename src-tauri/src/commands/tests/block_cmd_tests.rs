@@ -2267,9 +2267,120 @@ async fn purge_blocks_by_ids_empty_input_returns_validation_error() {
     );
 }
 
-// TODO(#501): add genuine mid-tx rollback test — engineer a failure that enters
-// the CommandTx transaction (e.g. a FK violation after the first DELETE) and
-// assert that blocks/op_log rows written before the failure are rolled back.
+// #2049 / #501 — delete_blocks_by_ids atomic-abort, verified against the
+// ACTUAL production seam.
+//
+// The audit asked for a "genuine mid-tx rollback" where a valid block's
+// soft-delete is *written and then reverted*. Reading `delete_blocks_by_ids_inner`
+// (crud.rs) closely, that exact shape does NOT exist: every per-root failure
+// guard runs BEFORE any write. The order inside the single `BEGIN IMMEDIATE`
+// tx is:
+//   1. resolve `live_roots` (read-only),
+//   2. the non-empty-space refusal guard over EVERY root (read-only; aborts
+//      with `InvalidOperation` if any root is a populated space),
+//   3. ONLY THEN the per-root op_log appends, and
+//   4. the single cascade `UPDATE blocks SET deleted_at = ?`.
+// So the space refusal is structurally a *pre-write* abort: when it fires no
+// `op_log` row and no `deleted_at` write has happened yet for ANY root,
+// deletable or not. There is no inducible point where one root's soft-delete
+// is committed to the tx and a LATER root then aborts the same tx (the only
+// post-`begin_immediate` per-root steps — `collect_delete_cohort`,
+// `resolve_block_space`, the cascade CTE, the tag/pages-cache recompute — are
+// all read-only or bounded SQL that cannot fail for valid rows). Engineering a
+// "written-then-reverted" delete would require reordering the guard, i.e. a
+// production change, which #2049 explicitly forbids.
+//
+// What IS genuinely testable, and what this test proves (strictly stronger
+// than the pre-tx capacity-reject below, which never opens a tx at all):
+// the space refusal fires INSIDE the IMMEDIATE tx and the whole batch is
+// all-or-nothing — a co-batched, genuinely-deletable block is NOT
+// partially soft-deleted and contributes NO op_log row. A POSITIVE CONTROL
+// (the same block deleted ALONE) proves the block really was deletable, so
+// its survival in the mixed batch is caused by the abort, not by the block
+// being independently un-deletable (the trivial-pass trap #2049 is about).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_blocks_by_ids_space_refusal_aborts_whole_batch() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // A registered space (`mark_block_as_space` fires the 0089 trigger that
+    // inserts the `spaces` registry row) made NON-EMPTY by a child page whose
+    // `blocks.space_id` points at it — the exact condition the per-root guard
+    // refuses (`cannot delete space '…': it contains N pages`).
+    insert_block(&pool, "DBI_SPACE", "page", "Space", None, None).await;
+    mark_block_as_space(&pool, "DBI_SPACE").await;
+    insert_block(&pool, "DBI_CHILD_PG", "page", "child page", None, Some(1)).await;
+    sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ?")
+        .bind("DBI_SPACE")
+        .bind("DBI_CHILD_PG")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // A plain content block that IS deletable on its own (the positive control
+    // below proves it).
+    insert_block(&pool, "DBI_DELME", "content", "delete me", None, Some(2)).await;
+
+    let pre_ops: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log WHERE device_id = ?", DEV)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // Mixed batch: the deletable block FIRST, the non-empty space SECOND.
+    // The whole tx must abort with InvalidOperation.
+    let result = delete_blocks_by_ids_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec!["DBI_DELME".into(), "DBI_SPACE".into()],
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::InvalidOperation(_))),
+        "deleting a non-empty space in the batch must abort with InvalidOperation, got {result:?}"
+    );
+
+    // All-or-nothing: the co-batched deletable block is NOT soft-deleted …
+    let delme_deleted: Option<i64> =
+        sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind("DBI_DELME")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        delme_deleted.is_none(),
+        "aborted batch must leave the co-batched deletable block's deleted_at NULL \
+         (no partial soft-delete), got {delme_deleted:?}"
+    );
+    // … and NO op_log row was persisted for the aborted batch.
+    let post_ops: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log WHERE device_id = ?", DEV)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        pre_ops, post_ops,
+        "aborted batch must persist zero op_log rows (no DeleteBlock op for the deletable root)"
+    );
+
+    // POSITIVE CONTROL — the same block, deleted ALONE, IS soft-deleted. This
+    // proves DBI_DELME was genuinely deletable, so its survival above is the
+    // abort's doing, not a trivial "nothing was ever deletable" pass.
+    let control = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec!["DBI_DELME".into()])
+        .await
+        .expect("the deletable block must delete cleanly when batched alone");
+    assert_eq!(control, 1, "control: exactly one block soft-deleted");
+    let delme_deleted_after: Option<i64> =
+        sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind("DBI_DELME")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        delme_deleted_after.is_some(),
+        "control: the block's deleted_at must be stamped when deleted alone"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn purge_blocks_by_ids_rejects_oversized_batch() {
     let (pool, _dir) = test_pool().await;
@@ -6202,6 +6313,133 @@ async fn move_blocks_to_space_rejects_non_space_target() {
         .await
         .unwrap();
     assert_eq!(space_id, None, "aborted batch must not set space_id");
+}
+
+/// #2049 — `move_blocks_to_space` atomic abort, with a positive control that
+/// makes the rollback assertion non-trivial.
+///
+/// Honest scope note (the heart of #2049): `move_blocks_to_space_inner`
+/// validates the SINGLE target `space_id` ONCE inside the IMMEDIATE tx but
+/// BEFORE the per-block write loop, and resolves block liveness (`alive`) above
+/// the loop too. Every block in the batch is moved to the SAME target, so there
+/// is no per-item failure mode: the batch either rejects wholesale (bad target)
+/// or every live block is moved. A "valid block written, then a later block
+/// fails mid-loop" cannot be engineered for a uniform valid target without a
+/// production change — the per-block `set_property_in_tx` `space` backstop
+/// checks the same (registered) target for all blocks, the `space_id` FK is
+/// satisfied for a registered target, and the only per-row CHECK
+/// (`page_id_self_for_pages`) rejects the corrupting setup itself. The genuine
+/// guarantee under test is: the wholesale target-validation abort happens
+/// INSIDE the tx and is all-or-nothing.
+///
+/// A POSITIVE CONTROL first proves the same two blocks DO each gain a
+/// `blocks.space_id` write + one `set_property(space)` op_log row under a VALID
+/// target, so the post-abort "space_id NULL / zero new ops" assertions are
+/// meaningful (they show a write that WOULD have landed did not).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_to_space_atomic_rollback_on_inner_failure() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // A valid registered space target for the control.
+    seed_space(&pool, "MBS_RB_SPACE").await;
+    // A plain page that is NOT flagged is_space — the abort target.
+    insert_block(&pool, "MBS_RB_NOTSPACE", "page", "not a space", None, None).await;
+
+    insert_block(&pool, "MBS_RB_A", "page", "pgA", None, Some(1)).await;
+    insert_block(&pool, "MBS_RB_B", "page", "pgB", None, Some(2)).await;
+
+    // ── POSITIVE CONTROL ──────────────────────────────────────────────
+    let ctrl_pre_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let ctrl = move_blocks_to_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec!["MBS_RB_A".into(), "MBS_RB_B".into()],
+        "MBS_RB_SPACE".into(),
+    )
+    .await
+    .expect("valid target must commit for the control");
+    assert_eq!(ctrl, 2, "control: both blocks moved");
+    for id in ["MBS_RB_A", "MBS_RB_B"] {
+        let sid: Option<String> =
+            sqlx::query_scalar::<_, Option<String>>("SELECT space_id FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            sid.as_deref(),
+            Some("MBS_RB_SPACE"),
+            "control: block {id} must carry the target space_id"
+        );
+    }
+    let ctrl_ops: i64 = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM op_log WHERE device_id = ? AND seq > ? AND op_type = 'set_property'",
+    )
+    .bind(DEV)
+    .bind(ctrl_pre_max)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(ctrl_ops, 2, "control: one set_property(space) op per block");
+
+    // Reset membership so the abort branch starts from a clean slate.
+    sqlx::query("UPDATE blocks SET space_id = NULL WHERE id IN (?, ?)")
+        .bind("MBS_RB_A")
+        .bind("MBS_RB_B")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // ── ATOMIC ABORT ──────────────────────────────────────────────────
+    let pre_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let result = move_blocks_to_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec!["MBS_RB_A".into(), "MBS_RB_B".into()],
+        "MBS_RB_NOTSPACE".into(),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "non-space target must abort the batch with Validation, got {result:?}"
+    );
+
+    // Atomic: no op_log rows added, no space_id writes landed.
+    let post_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(pre_max, post_max, "aborted batch must add zero op_log rows");
+    for id in ["MBS_RB_A", "MBS_RB_B"] {
+        let sid: Option<String> =
+            sqlx::query_scalar::<_, Option<String>>("SELECT space_id FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            sid, None,
+            "block {id} space_id must remain NULL after the aborted batch"
+        );
+    }
 }
 
 // ======================================================================

@@ -5959,10 +5959,28 @@ async fn set_todo_state_batch_skips_missing_and_deleted() {
     assert_eq!(v, Some("TODO".into()));
 }
 
-/// Invalid `state` (not in the seeded
-/// `["TODO","DOING","DONE"]` set when the property definition row
-/// has been deleted) aborts the whole batch — no op_log rows, no
-/// `blocks.todo_state` writes.
+/// #2049 — `set_todo_state_batch` atomic abort, with a positive control that
+/// makes the rollback assertion non-trivial.
+///
+/// Honest scope note (the heart of #2049): `set_todo_state_batch_inner`
+/// applies ONE `state` to EVERY block, and validates that state ONCE inside the
+/// IMMEDIATE tx but BEFORE the per-block write loop (the
+/// `validate_reserved_property_value` fallback in properties.rs). The block
+/// liveness probe (`alive` set) is likewise hoisted above the loop. So there is
+/// no per-item failure mode: the batch either rejects wholesale (bad state) or
+/// every live block is written — you cannot construct "block A valid, block B
+/// fails mid-loop" for a uniform state without a production change (no per-row
+/// constraint on `blocks.todo_state` can be tripped for one block and not
+/// another; the only per-row CHECK, `page_id_self_for_pages`, rejects the
+/// corrupting setup itself). The genuine guarantee under test is therefore:
+/// the wholesale validation abort happens INSIDE the tx and is all-or-nothing.
+///
+/// To keep that from being a trivial pass (it would "pass" even with no tx if
+/// nothing were ever written), a POSITIVE CONTROL first proves the very same
+/// two blocks DO get a `todo_state` column write + one `set_property` op_log
+/// row each under a VALID state — so the post-abort "NULL column / zero new
+/// ops" assertions below are meaningful: they show a write that WOULD have
+/// landed did not.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_todo_state_batch_atomic_rollback_on_inner_failure() {
     let (pool, _dir) = test_pool().await;
@@ -5992,8 +6010,62 @@ async fn set_todo_state_batch_atomic_rollback_on_inner_failure() {
     .unwrap();
     settle(&mat).await;
 
-    // Delete the seeded `todo_state` definition so the fallback
-    // validation kicks in. CANCELLED is not in the seeded defaults.
+    // ── POSITIVE CONTROL ──────────────────────────────────────────────
+    // The same two blocks under a VALID state must each gain a todo_state
+    // column write AND exactly one set_property op_log row. This proves the
+    // path genuinely writes per block, so the rollback assertions further
+    // down are not vacuously true.
+    let ctrl_pre_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let ctrl = set_todo_state_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![b1.id.clone(), b2.id.clone()],
+        Some("DONE".into()),
+    )
+    .await
+    .expect("valid state must commit for the control");
+    assert_eq!(ctrl, 2, "control: both live blocks updated");
+    for id in [&b1.id, &b2.id] {
+        let v: Option<String> = sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            v.as_deref(),
+            Some("DONE"),
+            "control: block {id} must carry the written todo_state"
+        );
+    }
+    let ctrl_ops: i64 = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM op_log WHERE device_id = ? AND seq > ? AND op_type = 'set_property'",
+    )
+    .bind(DEV)
+    .bind(ctrl_pre_max)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(ctrl_ops, 2, "control: one set_property op per block");
+
+    // Reset the column back to NULL so the abort branch starts from a clean
+    // slate (the control's writes are intentional, not what we assert on).
+    sqlx::query("UPDATE blocks SET todo_state = NULL WHERE id IN (?, ?)")
+        .bind(&b1.id)
+        .bind(&b2.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // ── ATOMIC ABORT ──────────────────────────────────────────────────
+    // Delete the seeded `todo_state` definition so the in-tx fallback
+    // validation rejects. CANCELLED is not in the seeded defaults.
     sqlx::query("DELETE FROM property_definitions WHERE key = 'todo_state'")
         .execute(&pool)
         .await
