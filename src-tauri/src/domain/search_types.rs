@@ -243,10 +243,12 @@ pub struct SearchFilter {
     /// (...)`. Each entry is matched verbatim against the column. The
     /// inversion intentionally includes NULL: a "blocks not in DONE"
     /// query should return blocks with no state set at all, not
-    /// exclude them. The literal keyword `none` (case-insensitive)
-    /// flips to `todo_state IS NOT NULL` (the `not-state:none` token);
-    /// a custom state literally called `"none"` is treated as the
-    /// sentinel — documented in `docs/SEARCH.md`. Empty list = no
+    /// exclude them. The literal keyword `none` (case-insensitive,
+    /// the `not-state:none` token) excludes the NULL bucket too: with
+    /// values it AND-joins to `todo_state IS NOT NULL AND todo_state
+    /// NOT IN (...)` (#2019), and alone it emits `todo_state IS NOT
+    /// NULL`. A custom state literally called `"none"` is treated as
+    /// the sentinel — documented in `docs/SEARCH.md`. Empty list = no
     /// Filter (preserves pre- wire compat).
     #[serde(default)]
     pub excluded_state_filter: Vec<String>,

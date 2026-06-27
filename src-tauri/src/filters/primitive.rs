@@ -806,14 +806,36 @@ fn in_or_null(column: &str, values: &[String], is_null: bool, exclude: bool) -> 
         .join(", ");
     let mut parts: Vec<String> = Vec::new();
     if exclude {
-        // `append_text_not_in_or_not_null`: NULL branch OUTSIDE the IN list.
-        if !values.is_empty() {
+        // EXCLUDE semantics (#2019). The shape depends on `is_null`:
+        //
+        // - `is_null == false` (plain `not-state:DONE`): keep NULL-state rows
+        //   (they "are not in the excluded set"), so the NULL branch lives
+        //   OUTSIDE the IN list, OR-joined — `(col IS NULL OR col NOT IN (…))`.
+        //   This also sidesteps the 3-valued `NOT IN (…, NULL)` trap.
+        //
+        // - `is_null == true` (`not-state:DONE,none`): the user asked to
+        //   exclude the listed values AND the NULL bucket. The two conditions
+        //   must be AND-joined: `(col IS NOT NULL AND col NOT IN (…))`. The
+        //   previous code OR-joined a `col IS NULL OR col NOT IN (…)` part with
+        //   a `col IS NOT NULL` part, which is a tautology (every row hits one
+        //   side or the other) — so the filter silently matched every row
+        //   instead of excluding anything.
+        if is_null {
+            if values.is_empty() {
+                // `not-state:none` only → drop NULL-state rows.
+                parts.push(format!("{column} IS NOT NULL"));
+            } else {
+                // Exclude the listed values AND the NULL bucket.
+                parts.push(format!(
+                    "{column} IS NOT NULL AND {column} NOT IN ({placeholders})"
+                ));
+            }
+        } else if !values.is_empty() {
+            // Plain exclude: NULL branch OUTSIDE the IN list, OR-joined so
+            // NULL-state rows are KEPT.
             parts.push(format!(
                 "{column} IS NULL OR {column} NOT IN ({placeholders})"
             ));
-        }
-        if is_null {
-            parts.push(format!("{column} IS NOT NULL"));
         }
     } else {
         // `append_text_in_or_null`.
@@ -1144,9 +1166,13 @@ impl Projection for PagesProjection {
         //   `(col IS NULL OR col NOT IN (?,…))` — the `IS NULL` branch lives
         //   OUTSIDE the `IN` list by design (NULL-state rows count as "not in
         //   the excluded set"), which also sidesteps the 3-valued
-        //   `NOT IN (…, NULL)` trap. The `is_null` flag ADDS `OR col IS NOT
-        //   NULL` (the legacy `not-state:none` sentinel → "exclude blocks
-        //   with no state"). Empty values + `!is_null` emits a no-op `1=1`.
+        //   `NOT IN (…, NULL)` trap. When the `is_null` flag is set
+        //   (`not-state:DONE,none`) the user is excluding the listed values AND
+        //   the NULL bucket, so the two conditions are AND-joined:
+        //   `(col IS NOT NULL AND col NOT IN (?,…))` (#2019 — the previous
+        //   OR-join was a tautology that matched every row). With only the
+        //   `none` sentinel (no values) → `(col IS NOT NULL)`. Empty values +
+        //   `!is_null` emits a no-op `1=1`.
         in_or_null("b.todo_state", values, is_null, exclude)
     }
     fn compile_block_type(&self, values: &[String], exclude: bool) -> WhereClause {
@@ -2198,8 +2224,10 @@ mod tests {
         // The NULL element is never inside the IN list.
         assert!(!w.sql.contains("IN (?, ?, b.todo_state IS NULL)"));
 
-        // Exclude values + none-sentinel → adds `OR col IS NOT NULL`
-        // (`not-state:none` → "exclude blocks with no state").
+        // Exclude values + none-sentinel (`not-state:DONE,none`) → AND-join
+        // `col IS NOT NULL` with the `NOT IN` test so the listed values AND the
+        // NULL bucket are BOTH excluded (#2019 — the previous OR-join was a
+        // tautology that matched every row).
         let w = p.compile(&FilterPrimitive::State {
             values: vec!["DONE".into()],
             is_null: true,
@@ -2207,7 +2235,7 @@ mod tests {
         });
         assert_eq!(
             w.sql,
-            "(b.todo_state IS NULL OR b.todo_state NOT IN (?) OR b.todo_state IS NOT NULL)"
+            "(b.todo_state IS NOT NULL AND b.todo_state NOT IN (?))"
         );
         assert_eq!(w.binds, vec![Bind::Text("DONE".into())]);
 

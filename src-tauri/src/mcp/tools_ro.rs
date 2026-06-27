@@ -572,7 +572,7 @@ fn tool_desc_search() -> ToolDescription {
                         "excluded_state_filter": {
                             "type": "array",
                             "items": { "type": "string" },
-                            "description": "`(todo_state IS NULL OR todo_state NOT IN (...))`. Literal `'none'` flips to `todo_state IS NOT NULL`.",
+                            "description": "`(todo_state IS NULL OR todo_state NOT IN (...))`. Adding literal `'none'` excludes the NULL bucket too, AND-joining to `(todo_state IS NOT NULL AND todo_state NOT IN (...))`; `'none'` alone emits `todo_state IS NOT NULL`.",
                         },
                         "excluded_priority_filter": { "type": "array", "items": { "type": "string" } },
                         "due_filter": {
