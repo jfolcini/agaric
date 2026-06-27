@@ -4895,7 +4895,9 @@ async fn apply_snapshot_then_exit_save_and_rehydrate_has_no_pre_reset_state_779(
     apply_snapshot(&pool, &materializer, &compressed[..])
         .await
         .expect("apply");
-    let rehydrated = reload_registry_from_db(&pool, &registry, DEVICE).await;
+    let rehydrated = reload_registry_from_db(&pool, &registry, DEVICE)
+        .await
+        .expect("reload");
     assert_eq!(rehydrated, 0, "post-RESET loro_doc_state is empty");
     assert_eq!(registry.len(), 0, "pre-reset engines must be dropped");
 
@@ -4965,7 +4967,7 @@ async fn apply_snapshot_bumps_peer_epoch_792() {
     let (pool, _dir) = test_pool().await;
     let materializer = test_materializer(&pool);
     assert_eq!(
-        load_peer_epoch(&pool).await,
+        load_peer_epoch(&pool).await.expect("load epoch"),
         0,
         "a never-reset vault sits on the legacy epoch 0"
     );
@@ -4981,7 +4983,7 @@ async fn apply_snapshot_bumps_peer_epoch_792() {
         .await
         .expect("apply 1");
     assert_eq!(
-        load_peer_epoch(&pool).await,
+        load_peer_epoch(&pool).await.expect("load epoch"),
         1,
         "#792: the first RESET must bump the peer-id epoch to 1"
     );
@@ -4990,7 +4992,7 @@ async fn apply_snapshot_bumps_peer_epoch_792() {
         .await
         .expect("apply 2");
     assert_eq!(
-        load_peer_epoch(&pool).await,
+        load_peer_epoch(&pool).await.expect("load epoch"),
         2,
         "#792: every RESET must retire the previous peer id again"
     );
@@ -5068,7 +5070,9 @@ async fn apply_snapshot_reset_then_new_ops_reach_peer_792() {
     apply_snapshot(&pool_a, &mat_a, &encoded[..])
         .await
         .expect("RESET");
-    reload_registry_from_db(&pool_a, &registry_a, DEVICE_A).await;
+    reload_registry_from_db(&pool_a, &registry_a, DEVICE_A)
+        .await
+        .expect("reload");
     assert_eq!(
         registry_a.peer_epoch(),
         1,
