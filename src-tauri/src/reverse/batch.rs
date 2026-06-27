@@ -70,6 +70,55 @@ const PROPERTY_BINDS_PER_OP: usize = 8;
 const ATTACHMENT_BINDS_PER_OP: usize = 7;
 const OP_RECORD_BINDS_PER_OP: usize = 3;
 
+/// Op-types that a point-in-time restore treats as non-reversible
+/// UNCONDITIONALLY, regardless of whether a per-op inverse could be
+/// reconstructed.
+///
+/// `purge_block` has no inverse at all. `delete_attachment` is listed
+/// here deliberately: even when its paired `add_attachment` still exists
+/// (so `compute_reverse_batch` *could* synthesize an `AddAttachment`
+/// inverse), a point-in-time restore must NOT resurrect attachment rows —
+/// the established restore contract (pinned by
+/// `restore_page_to_op_skips_delete_attachment` /
+/// `restore_page_to_op_finds_delete_attachment_in_page_scope`) is to skip
+/// and count them. This static set is the restore-scoped half of the
+/// unified non-reversible contract; the dynamic half is
+/// [`is_skippable_non_reversible`].
+const STATIC_NON_REVERSIBLE_OP_TYPES: [&str; 2] = ["purge_block", "delete_attachment"];
+
+/// Whether `op_type` is in [`STATIC_NON_REVERSIBLE_OP_TYPES`] — the
+/// op-types a point-in-time restore skips on sight (#2020).
+#[must_use]
+pub fn is_statically_non_reversible(op_type: &str) -> bool {
+    STATIC_NON_REVERSIBLE_OP_TYPES.contains(&op_type)
+}
+
+/// Classify whether an [`AppError`] surfaced by per-op reverse
+/// computation means "this op cannot be reversed, but the batch may
+/// continue without it" — as opposed to a fatal batch-level failure
+/// (SQL error, malformed payload, unknown op type) that must abort.
+///
+/// This is the dynamic half of the shared non-reversible contract
+/// between the reverse engine and its callers (`commands::history`): a
+/// point-in-time restore SKIPS and COUNTS exactly the ops this returns
+/// `true` for, while an interactive batch undo propagates them. Today
+/// only [`AppError::NonReversible`] is skippable — it is emitted at
+/// RUNTIME (not statically by op-type) by:
+///   * the `purge_block` arm (no inverse exists at all),
+///   * `delete_attachment` whose paired `add_attachment` is gone, and
+///   * `move_block` whose only prior placement is an ancient
+///     `create_block` with neither `index` nor `position`.
+///
+/// Centralizing the predicate here is what lets a restore skip the
+/// dynamically-discovered non-reversible ops (a position-less
+/// `move_block`, a `delete_attachment` with a missing add) that the old
+/// static op-type list could never have caught — the bug behind #2020,
+/// where the first such op aborted the entire restore.
+#[must_use]
+pub fn is_skippable_non_reversible(err: &AppError) -> bool {
+    matches!(err, AppError::NonReversible { .. })
+}
+
 /// Batch-compute reverse payloads for a sequence of [`OpRecord`]s.
 ///
 /// Returns reverses in the same order as the input. Mirrors the
@@ -77,22 +126,29 @@ const OP_RECORD_BINDS_PER_OP: usize = 3;
 /// per-op `find_prior_*` lookups into at most one UNION-ALL query per
 /// op-type group.
 ///
-/// # Errors
+/// # Per-op results vs. batch-level errors
 ///
-/// Propagates the same errors as [`super::compute_reverse`], including:
+/// Each output element is itself a `Result<OpPayload, AppError>`:
+///   * `Ok(payload)` — the op's reverse payload.
+///   * `Err(AppError::NonReversible { .. })` — the op has no inverse
+///     (purge_block, an attachment restore whose `add_attachment` is
+///     gone, or a move-of-create missing position). Callers decide
+///     whether to SKIP (point-in-time restore) or abort (interactive
+///     undo); see [`is_skippable_non_reversible`].
+///
+/// The OUTER `Result` is reserved for fatal batch-level failures that
+/// abort the whole computation regardless of caller policy:
 ///   * `AppError::Validation` on unknown `op_type` strings.
-///   * `AppError::NotFound` when any op's prior context is missing
+///   * `AppError::NotFound` when an op's prior context is missing
 ///     (edit_block, move_block, set_property, delete_property arms).
-///   * `AppError::NonReversible` for non-reversible ops (e.g. purge_block,
-///     an attachment restore whose `add_attachment` is gone, or a
-///     Move-of-create missing position).
-///   * `serde_json::Error` (via `From`) for malformed payloads in any arm.
+///   * `serde_json::Error` (via `From`) for malformed payloads, and any
+///     SQL error from the prior-context prefetch.
 ///
 /// An empty input slice returns `Ok(Vec::new())`.
 pub async fn compute_reverse_batch(
     pool: &SqlitePool,
     ops: &[OpRecord],
-) -> Result<Vec<OpPayload>, AppError> {
+) -> Result<Vec<Result<OpPayload, AppError>>, AppError> {
     if ops.is_empty() {
         return Ok(Vec::new());
     }
@@ -150,7 +206,15 @@ pub async fn compute_reverse_batch(
         fetch_prior_attachment_batch(pool, ops, &del_att_idxs).await?;
 
     // ----- assemble per-op reverse payloads in input order ------------
-    let mut result: Vec<OpPayload> = Vec::with_capacity(ops.len());
+    //
+    // Each arm yields a `Result<OpPayload, AppError>`. A skippable
+    // `NonReversible` (per `is_skippable_non_reversible`) is pushed as an
+    // inner `Err` so the caller can SKIP+COUNT that single op; every
+    // other error (serde, NotFound prior-context, unknown variant) is a
+    // fatal batch-level failure surfaced via `?` to abort the whole
+    // computation — matching the single-op `super::compute_reverse`
+    // contract for those cases.
+    let mut result: Vec<Result<OpPayload, AppError>> = Vec::with_capacity(ops.len());
     let mut edit_cursor = 0usize;
     let mut move_cursor = 0usize;
     let mut set_cursor = 0usize;
@@ -159,46 +223,50 @@ pub async fn compute_reverse_batch(
 
     for (idx, ty) in parsed_types.iter().enumerate() {
         let record = &ops[idx];
-        let reverse = match ty {
-            OpType::CreateBlock => block_ops::reverse_create_block(record)?,
-            OpType::DeleteBlock => block_ops::reverse_delete_block(record)?,
+        let reverse: Result<OpPayload, AppError> = match ty {
+            OpType::CreateBlock => block_ops::reverse_create_block(record),
+            OpType::DeleteBlock => block_ops::reverse_delete_block(record),
             OpType::EditBlock => {
                 let prior = edit_prior[edit_cursor].as_ref();
                 edit_cursor += 1;
-                build_reverse_edit_block(record, prior)?
+                build_reverse_edit_block(record, prior)
             }
             OpType::MoveBlock => {
                 let prior = move_prior[move_cursor].as_ref();
                 move_cursor += 1;
-                build_reverse_move_block(record, prior)?
+                build_reverse_move_block(record, prior)
             }
-            OpType::AddTag => tag_ops::reverse_add_tag(record)?,
-            OpType::RemoveTag => tag_ops::reverse_remove_tag(record)?,
+            OpType::AddTag => tag_ops::reverse_add_tag(record),
+            OpType::RemoveTag => tag_ops::reverse_remove_tag(record),
             OpType::SetProperty => {
                 let prior = set_prior[set_cursor].as_deref();
                 set_cursor += 1;
-                build_reverse_set_property(record, prior)?
+                build_reverse_set_property(record, prior)
             }
             OpType::DeleteProperty => {
                 let prior = del_prior[del_cursor].as_deref();
                 del_cursor += 1;
-                build_reverse_delete_property(record, prior)?
+                build_reverse_delete_property(record, prior)
             }
-            OpType::AddAttachment => attachment_ops::reverse_add_attachment(record)?,
-            OpType::RestoreBlock => block_ops::reverse_restore_block(record)?,
+            OpType::AddAttachment => attachment_ops::reverse_add_attachment(record),
+            OpType::RestoreBlock => block_ops::reverse_restore_block(record),
             OpType::DeleteAttachment => {
                 let prior = att_prior[att_cursor].as_deref();
                 att_cursor += 1;
-                build_reverse_delete_attachment(record, prior)?
+                build_reverse_delete_attachment(record, prior)
             }
-            OpType::RenameAttachment => attachment_ops::reverse_rename_attachment(record)?,
-            OpType::PurgeBlock => {
-                return Err(AppError::NonReversible {
-                    op_type: record.op_type.clone(),
-                });
-            }
+            OpType::RenameAttachment => attachment_ops::reverse_rename_attachment(record),
+            OpType::PurgeBlock => Err(AppError::NonReversible {
+                op_type: record.op_type.clone(),
+            }),
         };
-        result.push(reverse);
+        match reverse {
+            Ok(payload) => result.push(Ok(payload)),
+            // Skippable: hand the caller the per-op error to SKIP+COUNT.
+            Err(e) if is_skippable_non_reversible(&e) => result.push(Err(e)),
+            // Fatal: abort the whole batch (mirrors single-op `?`).
+            Err(e) => return Err(e),
+        }
     }
     Ok(result)
 }
