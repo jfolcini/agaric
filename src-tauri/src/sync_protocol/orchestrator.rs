@@ -911,6 +911,15 @@ impl SyncOrchestrator {
         // Vvs — ship a full Snapshot. The receiver's reachability
         // gate (`apply_remote`) catches an unreachable `from_vv` and falls
         // back to a snapshot, so a stale advertised vv is safe.
+        // #2040: read the vault-wide SQL-soft-deleted id set ONCE for this
+        // whole sync round, then thread it into every per-space
+        // `prepare_outgoing`. Previously each space re-ran the identical
+        // full-vault `SELECT id FROM blocks WHERE deleted_at IS NOT NULL`, so S
+        // spaces meant S identical reads on every sync tick / debounced change /
+        // mDNS discovery. The set's content does not depend on the space, so
+        // sharing it across spaces is behaviour-preserving.
+        let sql_deleted = loro_sync::read_sql_soft_deleted_ids(&self.pool).await?;
+
         let mut messages: VecDeque<LoroSyncMessage> = VecDeque::with_capacity(space_ids.len());
         for sid in &space_ids {
             let peer_vv = peer_vvs
@@ -923,11 +932,11 @@ impl SyncOrchestrator {
             // it this round; the gate already logged + signalled a
             // rebuild-from-op-log is needed. Do NOT repair inline.
             match loro_sync::prepare_outgoing(
-                &self.pool,
                 &loro_state.registry,
                 sid,
                 &self.device_id,
                 peer_vv,
+                &sql_deleted,
             )
             .await?
             {

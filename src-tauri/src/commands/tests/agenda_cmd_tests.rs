@@ -1775,6 +1775,151 @@ async fn projected_agenda_limit_caps_results() {
     mat.shutdown();
 }
 
+// #2040: the on-the-fly emit closure was restructured so the heavy
+// block-row clone happens only for ACCEPTED entries (after the cursor/cap
+// decision), not for every one of the up-to-10k projected occurrences. This
+// is a pure perf refactor; the accepted page — entries, order, and cursor —
+// must be byte-for-byte identical to the pre-refactor sort-then-truncate
+// behaviour. This test pins that page for a daily repeater whose projected
+// count (24 occurrences in range) far exceeds the page size (limit 5), and
+// then walks the cursor to confirm the full sequence reassembles with no gap
+// / duplicate / reorder across the page boundary.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn projected_agenda_on_the_fly_page_and_cursor_stable_when_over_page_size() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let resp = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        // Non-trivial content so the deferred clone has a real String to copy;
+        // its survival in the accepted entries also proves the lazy `build`
+        // closure carries the full block row through.
+        "Daily standup — long-ish content body to exercise the String clone".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        resp.id.as_str().into(),
+        Some("2026-04-06".into()),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        resp.id.as_str().into(),
+        "repeat".into(),
+        Some("daily".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        resp.id.as_str().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Pinned today + a 24-day inclusive window → daily rule emits exactly 24
+    // in-range occurrences (2026-04-07 .. 2026-04-30), well over the 5-entry
+    // page size. Call `_on_the_fly` directly with a pinned `today` so the
+    // assertion does not drift with the system clock (mirrors
+    // `projected_agenda_respects_repeat_count_end_condition`).
+    let pinned_today = chrono::NaiveDate::from_ymd_opt(2026, 4, 6).unwrap();
+    let range_start = chrono::NaiveDate::from_ymd_opt(2026, 4, 7).unwrap();
+    let range_end = chrono::NaiveDate::from_ymd_opt(2026, 4, 30).unwrap();
+
+    // The full expected in-range sequence (the sort-then-truncate ground
+    // truth): every day from 2026-04-07 to 2026-04-30 inclusive.
+    let mut expected_dates: Vec<String> = Vec::new();
+    let mut d = range_start;
+    while d <= range_end {
+        expected_dates.push(d.format("%Y-%m-%d").to_string());
+        d = d.succ_opt().unwrap();
+    }
+    assert_eq!(expected_dates.len(), 24, "sanity: 24 daily in-range hits");
+
+    // Walk the cursor, accumulating every entry across pages. Each page is
+    // capped at 5; the restructured cap/cursor logic must hand back the same
+    // ordered slice the old code produced.
+    let mut collected: Vec<crate::pagination::ActiveProjectedAgendaEntry> = Vec::new();
+    let mut cursor: Option<crate::pagination::Cursor> = None;
+    let mut pages = 0;
+    loop {
+        let page = list_projected_agenda_on_the_fly(
+            &pool,
+            range_start,
+            range_end,
+            5,
+            pinned_today,
+            cursor.as_ref(),
+            None,
+        )
+        .await
+        .unwrap();
+        pages += 1;
+        assert!(
+            page.items.len() <= 5,
+            "each page must respect the size cap (limit 5)"
+        );
+        // Every entry on the page carries the full (cloned) block row + the
+        // formatted date the cheap key was derived from.
+        for e in &page.items {
+            assert_eq!(
+                e.block.id.as_str(),
+                resp.id.as_str(),
+                "accepted entry must carry the source block row (deferred clone)"
+            );
+            assert_eq!(e.source, "due_date");
+        }
+        let has_more = page.has_more;
+        let next = page.next_cursor.clone();
+        collected.extend(page.items);
+        if !has_more {
+            assert!(next.is_none(), "no cursor when no more pages");
+            break;
+        }
+        let next = next.expect("has_more implies a next_cursor");
+        cursor = Some(crate::pagination::Cursor::decode(&next).unwrap());
+        assert!(pages < 20, "pagination must terminate");
+    }
+
+    // 24 occurrences / 5 per page → 5 pages (5+5+5+5+4).
+    assert_eq!(pages, 5, "24 entries at 5/page must paginate in 5 pages");
+    let got_dates: Vec<String> = collected.iter().map(|e| e.projected_date.clone()).collect();
+    assert_eq!(
+        got_dates, expected_dates,
+        "cursor-walked sequence must equal the full ordered ground-truth \
+         (no gap / duplicate / reorder across page boundaries)"
+    );
+
+    mat.shutdown();
+}
+
 // ======================================================================
 // Template-page filtering (spec line 812)
 // ======================================================================
