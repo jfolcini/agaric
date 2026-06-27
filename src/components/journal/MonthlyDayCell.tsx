@@ -20,6 +20,17 @@ interface MonthlyDayCellProps {
   agendaCountsBySource?: Record<string, number>
   backlinkCount: number
   onNavigateToDate: (dateStr: string) => void
+  /**
+   * Roving tabindex (#2057): MonthlyView drives a single tab stop across the
+   * grid. When provided, this overrides the default ("0 for the current month,
+   * -1 for adjacent") so only the one roving cell is tabbable. Adjacent-month
+   * cells are inert and always stay -1.
+   */
+  tabIndex?: number
+  /** Notify the grid which cell took focus so it can track the roving origin. */
+  onFocus?: (e: React.FocusEvent<HTMLDivElement>) => void
+  /** Roving-focus target ref (React 19 ref-as-prop), set by MonthlyView. */
+  ref?: React.Ref<HTMLDivElement>
 }
 
 export function MonthlyDayCell({
@@ -30,6 +41,9 @@ export function MonthlyDayCell({
   agendaCountsBySource,
   backlinkCount,
   onNavigateToDate,
+  tabIndex,
+  onFocus,
+  ref,
 }: MonthlyDayCellProps): React.ReactElement {
   const dayNumber = entry.date.getDate()
   const totalCount = agendaCount + backlinkCount
@@ -59,12 +73,20 @@ export function MonthlyDayCell({
     }
   }
 
+  // Roving tabindex (#2057): the grid passes an explicit `tabIndex` so exactly
+  // one in-month cell is a tab stop. Adjacent-month cells are inert (never a
+  // tab stop). When no `tabIndex` is supplied (e.g. a standalone render) fall
+  // back to the historical "0 for current month, -1 for adjacent" behaviour.
+  const resolvedTabIndex = !isCurrentMonth ? -1 : (tabIndex ?? 0)
+
   return (
     <div
+      ref={ref}
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- ARIA grid cell on a CSS-grid div; a real <td> requires <table>/<tr> ancestry that would break the calendar grid layout
       role="gridcell"
       aria-label={ariaLabel}
-      tabIndex={isCurrentMonth ? 0 : -1}
+      tabIndex={resolvedTabIndex}
+      data-date={entry.dateStr}
       className={cn(
         'relative bg-background p-1.5 min-h-[80px] [@media(pointer:coarse)]:min-h-[44px] transition-colors focus-ring-visible',
         isCurrentMonth && 'cursor-pointer hover:bg-accent/30 active:bg-accent/50',
@@ -72,11 +94,12 @@ export function MonthlyDayCell({
       )}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
+      onFocus={onFocus}
     >
       {/* Date number */}
       <span
         className={cn(
-          'inline-flex items-center justify-center text-sm font-medium w-7 h-7 rounded-full [@media(pointer:coarse)]:w-10 [@media(pointer:coarse)]:h-10',
+          'inline-flex items-center justify-center text-sm font-medium w-7 h-7 rounded-full [@media(pointer:coarse)]:w-11 [@media(pointer:coarse)]:h-11',
           isToday && 'bg-primary text-primary-foreground font-bold',
         )}
       >

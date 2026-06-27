@@ -147,6 +147,75 @@ describe('<EmojiPicker>', () => {
     await user.click(within(tablist).getByRole('tab', { name: 'Flags' }))
   })
 
+  // #2057: the tablist declares role="tablist" (promising arrow-key roving);
+  // it must expose a single tab stop and move focus with Arrow/Home/End.
+  it('roves focus across category tabs with arrow keys (single tab stop)', async () => {
+    const user = userEvent.setup()
+    render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
+    const tablist = screen.getByRole('tablist', { name: /emoji categories/i })
+    const tabs = within(tablist).getAllByRole('tab')
+    // Exactly one tab is tabbable (roving tabindex).
+    expect(tabs.filter((t) => t.getAttribute('tabindex') === '0')).toHaveLength(1)
+
+    tabs[0]?.focus()
+    expect(tabs[0]).toHaveFocus()
+    await user.keyboard('{ArrowRight}')
+    expect(tabs[1]).toHaveFocus()
+    expect(
+      within(tablist)
+        .getAllByRole('tab')
+        .filter((t) => t.getAttribute('tabindex') === '0'),
+    ).toHaveLength(1)
+    await user.keyboard('{End}')
+    expect(tabs.at(-1)).toHaveFocus()
+    await user.keyboard('{Home}')
+    expect(tabs[0]).toHaveFocus()
+  })
+
+  // #2057: the skin-tone radiogroup must rove with Arrow/Home/End and keep a
+  // single tab stop, mirroring the tablist + emoji grid.
+  it('roves focus across skin-tone swatches with arrow keys (single tab stop)', async () => {
+    const user = userEvent.setup()
+    render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
+    const radiogroup = screen.getByRole('radiogroup', { name: /skin tone/i })
+    const radios = within(radiogroup).getAllByRole('radio')
+    expect(radios.filter((r) => r.getAttribute('tabindex') === '0')).toHaveLength(1)
+
+    radios[0]?.focus()
+    await user.keyboard('{ArrowRight}')
+    expect(radios[1]).toHaveFocus()
+    expect(
+      within(radiogroup)
+        .getAllByRole('radio')
+        .filter((r) => r.getAttribute('tabindex') === '0'),
+    ).toHaveLength(1)
+    await user.keyboard('{End}')
+    expect(radios.at(-1)).toHaveFocus()
+    await user.keyboard('{Home}')
+    expect(radios[0]).toHaveFocus()
+  })
+
+  // #2057: interactive controls on coarse pointers must hit the 44px floor.
+  it('applies coarse-pointer touch-target size classes to tabs, swatches, and emoji cells', () => {
+    pushEmojiRecent('\u{1F525}')
+    render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
+    const tab = within(screen.getByRole('tablist', { name: /emoji categories/i })).getAllByRole(
+      'tab',
+    )[0]
+    expect(tab?.className).toContain('[@media(pointer:coarse)]:size-11')
+    expect(tab?.className).toContain('touch-target')
+
+    const radio = within(screen.getByRole('radiogroup', { name: /skin tone/i })).getAllByRole(
+      'radio',
+    )[0]
+    expect(radio?.className).toContain('[@media(pointer:coarse)]:size-11')
+    expect(radio?.className).toContain('touch-target')
+
+    const cell = within(screen.getByRole('grid', { name: /emoji/i })).getAllByRole('gridcell')[0]
+    expect(cell?.className).toContain('[@media(pointer:coarse)]:size-11')
+    expect(cell?.className).toContain('touch-target')
+  })
+
   it('hides the category strip while searching', async () => {
     const user = userEvent.setup()
     render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)

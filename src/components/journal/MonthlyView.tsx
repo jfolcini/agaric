@@ -17,7 +17,7 @@ import {
   startOfWeek,
 } from 'date-fns'
 import type React from 'react'
-import { useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useBatchCounts } from '../../hooks/useBatchCounts'
@@ -68,6 +68,115 @@ export function MonthlyView({ makeDayEntry }: MonthlyViewProps): React.ReactElem
     return result
   }, [entries])
 
+  // #2057: roving tabindex over the calendar grid. The grid declares
+  // role="grid", which promises arrow-key roving focus — but every in-month
+  // cell used to be a tab stop with only Enter/Space, so the advertised arrows
+  // did nothing and keyboard users tabbed through 30+ cells. We now keep a
+  // single tab stop (`focusedDate`) and move it with Arrow / Home / End, while
+  // adjacent-month cells stay inert (never focusable).
+  //
+  // `focusedDate` is the dateStr of the in-month cell that owns the tab stop.
+  // It seeds on today when today is in-month, else the first in-month day.
+  const inMonthDates = useMemo(
+    () => entries.filter((e) => isSameMonth(e.date, currentDate)).map((e) => e.dateStr),
+    [entries, currentDate],
+  )
+  const defaultFocusedDate = inMonthDates.includes(todayStr) ? todayStr : (inMonthDates[0] ?? null)
+  const [focusedDate, setFocusedDate] = useState<string | null>(defaultFocusedDate)
+
+  // Reset the roving tab stop when the displayed month changes (the previous
+  // focused date is no longer in this grid). Keyed on the in-month set so it
+  // re-seeds exactly once per month change.
+  useEffect(() => {
+    setFocusedDate((prev) =>
+      prev !== null && inMonthDates.includes(prev) ? prev : defaultFocusedDate,
+    )
+  }, [inMonthDates, defaultFocusedDate])
+
+  // dateStr → its index in the flat `entries` array (includes padding cells),
+  // so arrow math can step by ±1 (horizontal) and ±7 (vertical) across the grid.
+  const indexByDate = useMemo(() => {
+    const map = new Map<string, number>()
+    entries.forEach((e, i) => map.set(e.dateStr, i))
+    return map
+  }, [entries])
+
+  const cellRefs = useRef(new Map<string, HTMLDivElement>())
+  const registerCell = useCallback((dateStr: string, node: HTMLDivElement | null) => {
+    if (node) cellRefs.current.set(dateStr, node)
+    else cellRefs.current.delete(dateStr)
+  }, [])
+
+  // Move the roving tab stop to a flat-array index, skipping over any
+  // out-of-month (inert) cells in the requested direction. Returns silently if
+  // the move would leave the grid or no in-month cell is reachable.
+  const moveFocusTo = useCallback(
+    (targetIndex: number, step: number) => {
+      let i = targetIndex
+      while (i >= 0 && i < entries.length) {
+        const entry = entries[i]
+        if (entry && isSameMonth(entry.date, currentDate)) {
+          setFocusedDate(entry.dateStr)
+          cellRefs.current.get(entry.dateStr)?.focus()
+          return
+        }
+        // The requested cell is padding (adjacent month) — keep stepping in the
+        // same direction so an arrow press still lands on a real day.
+        i += step
+      }
+    },
+    [entries, currentDate],
+  )
+
+  const handleGridKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (focusedDate === null) return
+      const cur = indexByDate.get(focusedDate)
+      if (cur === undefined) return
+      let target: number | null = null
+      // Default horizontal step; overridden below for vertical (±7) and reverse moves.
+      let step = 1
+      switch (e.key) {
+        case 'ArrowRight': {
+          target = cur + 1
+          break
+        }
+        case 'ArrowLeft': {
+          target = cur - 1
+          step = -1
+          break
+        }
+        case 'ArrowDown': {
+          target = cur + 7
+          step = 7
+          break
+        }
+        case 'ArrowUp': {
+          target = cur - 7
+          step = -7
+          break
+        }
+        case 'Home': {
+          // First cell of the current week row.
+          target = cur - (cur % 7)
+          break
+        }
+        case 'End': {
+          // Last cell of the current week row.
+          target = cur - (cur % 7) + 6
+          step = -1
+          break
+        }
+        default: {
+          return
+        }
+      }
+      e.preventDefault()
+      moveFocusTo(target, step)
+    },
+    [focusedDate, indexByDate, moveFocusTo],
+  )
+
   const handleNavigateToDate = (dateStr: string) => {
     const parts = dateStr.split('-')
     if (parts.length === 3) {
@@ -81,6 +190,10 @@ export function MonthlyView({ makeDayEntry }: MonthlyViewProps): React.ReactElem
       role="grid"
       aria-label={t('journal.monthlyCalendarLabel')}
       className="rounded-lg overflow-hidden bg-border"
+      // Programmatically focusable (not a tab stop) so the grid can host the
+      // arrow-key handler; the roving cell keeps the single tabindex 0.
+      tabIndex={-1}
+      onKeyDown={handleGridKeyDown}
     >
       {/* Day-of-week headers */}
       {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- ARIA grid built on CSS grid divs; a real <tr> requires <table>/<tbody> ancestry that would break the grid-cols-7 layout */}
@@ -113,6 +226,7 @@ export function MonthlyView({ makeDayEntry }: MonthlyViewProps): React.ReactElem
               return (
                 <MonthlyDayCell
                   key={entry.dateStr}
+                  ref={(node) => registerCell(entry.dateStr, node)}
                   entry={entry}
                   isToday={isToday}
                   isCurrentMonth={isCurrentMonth}
@@ -122,6 +236,8 @@ export function MonthlyView({ makeDayEntry }: MonthlyViewProps): React.ReactElem
                   })}
                   backlinkCount={backlinkCount}
                   onNavigateToDate={handleNavigateToDate}
+                  tabIndex={isCurrentMonth && entry.dateStr === focusedDate ? 0 : -1}
+                  onFocus={() => setFocusedDate(entry.dateStr)}
                 />
               )
             })}

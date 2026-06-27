@@ -282,10 +282,9 @@ describe('MonthlyDayCell', () => {
     expect(cell).toHaveAttribute('tabindex', '-1')
   })
 
-  // Scale the inner clickable date circle on coarse pointers so the
-  // visible tap target meets the 44 px minimum (the cell already does, but
-  // The circle is the visual affordance).
-  it('inner date circle scales to 40 px on coarse pointers', () => {
+  // #2057: scale the inner clickable date circle on coarse pointers so the
+  // visible tap target meets the 44 px minimum (w-11 / h-11 = 44px).
+  it('inner date circle scales to 44 px on coarse pointers', () => {
     const { container } = render(<MonthlyDayCell {...defaultProps} />)
 
     // The date number span is the first <span> with the rounded-full class
@@ -293,8 +292,33 @@ describe('MonthlyDayCell', () => {
     expect(dateSpan).toBeInTheDocument()
     expect(dateSpan.className).toContain('w-7')
     expect(dateSpan.className).toContain('h-7')
-    expect(dateSpan.className).toContain('[@media(pointer:coarse)]:w-10')
-    expect(dateSpan.className).toContain('[@media(pointer:coarse)]:h-10')
+    expect(dateSpan.className).toContain('[@media(pointer:coarse)]:w-11')
+    expect(dateSpan.className).toContain('[@media(pointer:coarse)]:h-11')
+  })
+
+  // #2057: the cell itself keeps its >=44px coarse-pointer floor.
+  it('cell meets the 44px coarse-pointer minimum height', () => {
+    render(<MonthlyDayCell {...defaultProps} />)
+    const cell = screen.getByRole('gridcell')
+    expect(cell.className).toContain('[@media(pointer:coarse)]:min-h-[44px]')
+  })
+
+  // #2057: roving tabindex — MonthlyView passes an explicit tabIndex so only
+  // one in-month cell is a tab stop. The prop overrides the default for
+  // in-month cells; adjacent-month cells stay inert (-1) regardless.
+  it('honours an explicit roving tabIndex for an in-month cell', () => {
+    render(<MonthlyDayCell {...defaultProps} isCurrentMonth tabIndex={-1} />)
+    expect(screen.getByRole('gridcell')).toHaveAttribute('tabindex', '-1')
+  })
+
+  it('roving tabIndex=0 makes the in-month cell the tab stop', () => {
+    render(<MonthlyDayCell {...defaultProps} isCurrentMonth tabIndex={0} />)
+    expect(screen.getByRole('gridcell')).toHaveAttribute('tabindex', '0')
+  })
+
+  it('adjacent-month cell stays -1 even when a roving tabIndex is supplied', () => {
+    render(<MonthlyDayCell {...defaultProps} isCurrentMonth={false} tabIndex={0} />)
+    expect(screen.getByRole('gridcell')).toHaveAttribute('tabindex', '-1')
   })
 
   it('has no a11y violations', async () => {
