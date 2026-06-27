@@ -122,16 +122,24 @@ describe('compileQuery', () => {
     }
   })
 
-  it('regex zero-width matches do not loop forever', () => {
+  it('regex zero-width matches are dropped, not emitted (exact output)', () => {
     const compiled = compileQuery('a*', { ...defaultOpts, isRegex: true }) as Extract<
       CompiledQuery,
       { kind: 'regex' }
     >
-    // `a*` on `aaa` produces three real matches (a, aa, aaa-ish depending on
-    // engine) — what matters is that the scanner terminates and emits at
-    // least the leading `aaa` non-empty match.
-    const out = compiled.matcher('aaa')
-    expect(out.length).toBeGreaterThan(0)
+    // `a*` is greedy: on `aaa` the FIRST exec consumes the whole run as one
+    // non-empty match {0,3}; the next exec (lastIndex=3, end of string) is a
+    // zero-width match that the scanner must DROP and advance past, not emit.
+    // The exact set is therefore a single {0,3} span — assert it precisely so
+    // the regression is actually caught: if zero-width matches were emitted the
+    // set would contain extra {3,3}/{4,…} spans, and if the lastIndex bump were
+    // dropped the scan would loop forever (test would hang) instead of passing.
+    expect(compiled.matcher('aaa')).toEqual([{ start: 0, end: 3 }])
+
+    // And a leading zero-width hit must not bleed into a phantom match: `a*`
+    // at offset 0 of `baaab` matches the empty string before `b` (must be
+    // dropped), then the real run `aaa` at {1,4}. Exactly one non-empty span.
+    expect(compiled.matcher('baaab')).toEqual([{ start: 1, end: 4 }])
   })
 })
 

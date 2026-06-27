@@ -53,6 +53,27 @@ function makeView(isDestroyed: boolean): FakeView {
   }
 }
 
+/**
+ * A view that is LIVE at first inspection but becomes destroyed after the
+ * `flipAfter`-th read of `isDestroyed`. Models the #2033 race: the view is
+ * alive when `convertAndInsert` claims the paste (the synchronous guard at the
+ * top passes), then the roving editor is torn down (blur / navigation / Android
+ * suspend) WHILE the dynamic `import()` is in flight. The post-await re-check
+ * (`if (view.isDestroyed) return`) and the per-insert guards must then catch it.
+ */
+function makeViewDestroyedAfter(flipAfter: number): FakeView {
+  const tr = { insertText: () => tr }
+  let reads = 0
+  return {
+    get isDestroyed() {
+      reads += 1
+      return reads > flipAfter
+    },
+    dispatch: vi.fn(),
+    state: { tr, schema: {}, selection: {} },
+  } as unknown as FakeView
+}
+
 async function loadModule() {
   return import('../html-paste')
 }
@@ -83,6 +104,58 @@ describe('convertAndInsert — destroyed-view guard (#2033)', () => {
     ).resolves.toBeUndefined()
 
     expect(view.dispatch).not.toHaveBeenCalled()
+  })
+
+  it('does not dispatch when the view is destroyed AFTER the conversion import resolves', async () => {
+    const { convertAndInsert } = await loadModule()
+    // Live at the synchronous top-of-function guard, destroyed by the time the
+    // dynamic `import()` resolves (the post-await `if (view.isDestroyed) return`
+    // at html-paste.ts ~line 127). flipAfter=1 → read #1 (top guard) sees a live
+    // view and proceeds; read #2 (post-await) sees it destroyed and bails.
+    const view = makeViewDestroyedAfter(1)
+
+    // The conversion WOULD route a multi-block paste through the bus if it ran.
+    htmlBodyToOutline.mockReturnValue([
+      { content: 'one', depth: 0 },
+      { content: 'two', depth: 0 },
+    ])
+    outlineToIndentedMarkdown.mockReturnValue('one\ntwo')
+
+    await expect(
+      convertAndInsert(
+        view as unknown as EditorView,
+        '<p>one</p><p>two</p>',
+        'one\ntwo',
+        'BLOCK_A',
+      ),
+    ).resolves.toBeUndefined()
+
+    // Post-await guard fired: the body was never walked, no block event routed,
+    // and nothing dispatched into the now-destroyed view. If that guard were
+    // removed, htmlBodyToOutline would run and dispatchBlockEvent would fire.
+    expect(htmlBodyToOutline).not.toHaveBeenCalled()
+    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+    expect(view.dispatch).not.toHaveBeenCalled()
+  })
+
+  it('does not dispatch the inline insert when the view is destroyed mid-conversion', async () => {
+    const { convertAndInsert } = await loadModule()
+    // Survive both the top guard (read #1) and the post-await guard (read #2),
+    // then be destroyed by the time the single-inline-block insert runs
+    // (`insertInlineMarkdown`'s `if (view.isDestroyed) return`, read #3).
+    const view = makeViewDestroyedAfter(2)
+
+    // Single top-level, non-structural block → inline-insert path.
+    htmlBodyToOutline.mockReturnValue([{ content: 'hello', depth: 0 }])
+
+    await expect(
+      convertAndInsert(view as unknown as EditorView, '<p>hello</p>', 'hello', null),
+    ).resolves.toBeUndefined()
+
+    // The inline-insert guard caught the destroyed view: no dispatch, and the
+    // block-paste bus was never used (this was the single-block inline path).
+    expect(view.dispatch).not.toHaveBeenCalled()
+    expect(dispatchBlockEvent).not.toHaveBeenCalled()
   })
 })
 

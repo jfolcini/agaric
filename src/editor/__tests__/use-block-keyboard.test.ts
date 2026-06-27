@@ -1143,7 +1143,10 @@ describe('useBlockKeyboard — Tab-indent accessibility opt-out', () => {
 // #915 — `beforeinput` fallback so Android Gboard (keyCode 229) can still
 // create/delete/merge blocks even when `handleKeyDown` bails.
 describe('useBlockKeyboard — beforeinput fallback (#915)', () => {
-  function setup(markdownContent?: string) {
+  function setup(
+    markdownContent?: string,
+    callbackOverrides: { isLastBlock?: () => boolean } = {},
+  ) {
     const element = document.createElement('div')
     document.body.append(element)
     const editor = new Editor({
@@ -1156,7 +1159,7 @@ describe('useBlockKeyboard — beforeinput fallback (#915)', () => {
           }
         : { type: 'doc', content: [{ type: 'paragraph' }] },
     })
-    const callbacks = makeCallbacks()
+    const callbacks = makeCallbacks(callbackOverrides)
     const { unmount } = renderHook(() => useBlockKeyboard(editor, callbacks))
     const dom = editor.view.dom as HTMLElement
     const cleanup = () => {
@@ -1184,6 +1187,32 @@ describe('useBlockKeyboard — beforeinput fallback (#915)', () => {
 
   it('deleteContentBackward on an empty block triggers onDeleteBlock', () => {
     const { callbacks, dom, cleanup } = setup()
+    const spy = fireBeforeInput(dom, 'deleteContentBackward')
+    expect(callbacks._calls['onDeleteBlock']).toBe(1)
+    expect(spy).toHaveBeenCalled()
+    cleanup()
+  })
+
+  it('deleteContentBackward on the sole empty block is a no-op (last-block guard fires)', () => {
+    // #915 + last-block guard: the Gboard `deleteContentBackward` path on an
+    // EMPTY block must respect `isLastBlock` exactly like the keydown path —
+    // when it's the only block on the page, deletion is suppressed so the page
+    // can never be left empty. This is the guard at use-block-keyboard.ts ~545
+    // (`if (isLastBlock?.()) return`) inside `handleBeforeInput`; without it the
+    // empty page would lose its last block. preventDefault still fires (the
+    // structural delete is claimed) but onDeleteBlock must NOT.
+    const { callbacks, dom, cleanup } = setup(undefined, { isLastBlock: () => true })
+    const spy = fireBeforeInput(dom, 'deleteContentBackward')
+    expect(callbacks._calls['onDeleteBlock']).toBeUndefined()
+    expect(spy).toHaveBeenCalled()
+    cleanup()
+  })
+
+  it('deleteContentBackward on an empty block deletes when isLastBlock is false', () => {
+    // Counterpart to the guard test above: with more than one block on the page
+    // the same Gboard path proceeds to delete, proving the no-op above is the
+    // guard firing rather than the path being dead.
+    const { callbacks, dom, cleanup } = setup(undefined, { isLastBlock: () => false })
     const spy = fireBeforeInput(dom, 'deleteContentBackward')
     expect(callbacks._calls['onDeleteBlock']).toBe(1)
     expect(spy).toHaveBeenCalled()

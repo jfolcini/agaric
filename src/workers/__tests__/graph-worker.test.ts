@@ -196,6 +196,85 @@ describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)'
     expect(sim.nodes).toEqual(before)
   })
 
+  // -------------------------------------------------------------------------
+  // Primary output path: the `tick` / `end` handlers registered on the sim post
+  // node positions back to the main thread (graph-worker.ts:84-90 +
+  // collectPositions). These were registered by the existing tests but never
+  // invoked, so the actual posted message shapes went unasserted.
+  // -------------------------------------------------------------------------
+
+  it('the `tick` handler posts {type:"tick", positions} with the live node x/y', () => {
+    send({
+      type: 'start',
+      nodes: [
+        { id: 'a', label: 'A' },
+        { id: 'b', label: 'B' },
+      ],
+      edges: [],
+      width: 800,
+      height: 600,
+    })
+    const sim = lastSim as unknown as FakeSim
+
+    // d3 mutates node x/y in place each tick; simulate a settled frame.
+    Object.assign(sim.nodes[0] as object, { x: 11, y: 22 })
+    Object.assign(sim.nodes[1] as object, { x: 33, y: 44 })
+
+    posted.length = 0
+    const tick = sim.handlers.get('tick')
+    expect(tick).toBeTypeOf('function')
+    tick?.()
+
+    expect(posted).toEqual([
+      {
+        type: 'tick',
+        positions: [
+          { id: 'a', x: 11, y: 22 },
+          { id: 'b', x: 33, y: 44 },
+        ],
+      },
+    ])
+  })
+
+  it('the `end` handler posts {type:"done", positions} with the final node x/y', () => {
+    send({
+      type: 'start',
+      nodes: [{ id: 'a', label: 'A' }],
+      edges: [],
+      width: 800,
+      height: 600,
+    })
+    const sim = lastSim as unknown as FakeSim
+    Object.assign(sim.nodes[0] as object, { x: 7, y: 9 })
+
+    posted.length = 0
+    const end = sim.handlers.get('end')
+    expect(end).toBeTypeOf('function')
+    end?.()
+
+    expect(posted).toEqual([{ type: 'done', positions: [{ id: 'a', x: 7, y: 9 }] }])
+  })
+
+  it('collectPositions defaults missing x/y to 0 in posted positions', () => {
+    // A node d3 has not yet placed has undefined x/y; collectPositions
+    // (graph-worker.ts:44-50) coalesces to 0 so the main thread always receives
+    // numeric coordinates.
+    send({
+      type: 'start',
+      nodes: [{ id: 'a', label: 'A' }],
+      edges: [],
+      width: 800,
+      height: 600,
+    })
+    const sim = lastSim as unknown as FakeSim
+    // Leave node.x / node.y undefined (no Object.assign).
+
+    posted.length = 0
+    sim.handlers.get('tick')?.()
+
+    expect(posted).toEqual([{ type: 'tick', positions: [{ id: 'a', x: 0, y: 0 }] }])
+  })
+
   it('`resize` before any `start` is a no-op (does not throw, builds nothing)', () => {
     send({ type: 'resize', width: 1000, height: 400 })
     expect(forceSimulation).not.toHaveBeenCalled()
