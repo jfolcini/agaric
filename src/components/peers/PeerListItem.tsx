@@ -105,14 +105,16 @@ export function PeerListItem({
             </p>
           )}
           <p className="text-xs text-muted-foreground">
-            Last:{' '}
-            {peer.synced_at != null
-              ? formatRelativeTime(peer.synced_at, t)
-              : t('sidebar.lastSyncedNever')}
+            {t('device.lastSyncedAt', {
+              time:
+                peer.synced_at != null
+                  ? formatRelativeTime(peer.synced_at, t)
+                  : t('sidebar.lastSyncedNever'),
+            })}
           </p>
           {peer.reset_count > 0 && (
             <Badge tone="outline" className="mt-0.5 text-xs">
-              {peer.reset_count} reset{peer.reset_count !== 1 ? 's' : ''}
+              {t('device.resetCount', { count: peer.reset_count })}
             </Badge>
           )}
           <div className="peer-address flex items-center gap-1 mt-0.5">

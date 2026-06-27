@@ -1274,4 +1274,107 @@ describe('DeviceManagement', () => {
     const syncBtn = container.querySelector('.device-sync-btn')
     expect(syncBtn?.parentElement?.className).toContain('flex-wrap')
   })
+
+  // #2058: recovery-path copy must come from i18n (t()), not hardcoded
+  // English literals or hand-rolled pluralization.
+  describe('#2058 i18n recovery path', () => {
+    it('surfaces device.loadFailed key on load failure', async () => {
+      mockedInvoke.mockRejectedValue(new Error('network failure'))
+
+      render(<DeviceManagement />)
+
+      // t('device.loadFailed') === 'Failed to load device info'
+      expect(await screen.findByText('Failed to load device info')).toBeInTheDocument()
+    })
+
+    it('surfaces device.unpairFailed key on unpair failure', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'get_device_id') return mockDeviceId
+        if (cmd === 'list_peer_refs') return [mockPeers[0]]
+        if (cmd === 'delete_peer_ref') throw new Error('FK constraint')
+        return undefined
+      })
+
+      render(<DeviceManagement />)
+      await screen.findByText('peer-abc-123...')
+
+      await user.click(screen.getByRole('button', { name: /Unpair/i }))
+      await user.click(screen.getByRole('button', { name: /Yes, unpair/i }))
+
+      // t('device.unpairFailed') === 'Failed to unpair device'
+      await waitFor(() => {
+        expect(screen.getByText('Failed to unpair device')).toBeInTheDocument()
+      })
+    })
+
+    it('surfaces device.syncTimedOut key (friendly timeout copy) on timeout', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'get_device_id') return mockDeviceId
+        if (cmd === 'list_peer_refs') return mockPeers
+        if (cmd === 'start_sync') throw new Error('Sync timed out')
+        if (cmd === 'cancel_sync') return undefined
+        return undefined
+      })
+
+      render(<DeviceManagement />)
+      await screen.findByText('peer-abc-123...')
+
+      const syncBtns = screen.getAllByRole('button', { name: /Sync Now/i })
+      await user.click(syncBtns[0] as HTMLElement)
+
+      // t('device.syncTimedOut')
+      await waitFor(() => {
+        expect(
+          screen.getByText('Sync took too long — check your connection and try again'),
+        ).toBeInTheDocument()
+      })
+    })
+
+    it('surfaces device.syncFailedForList (interpolated) when Sync All has failures', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+        if (cmd === 'get_device_id') return mockDeviceId
+        if (cmd === 'list_peer_refs') return mockPeers
+        if (cmd === 'start_sync') {
+          const peerId = (args as Record<string, string>)['peerId']
+          if (peerId === 'peer-abc-1234567890') throw new Error('Connection refused')
+          return {
+            state: 'completed',
+            local_device_id: mockDeviceId,
+            remote_device_id: peerId,
+            ops_received: 0,
+            ops_sent: 0,
+          }
+        }
+        return undefined
+      })
+
+      const { container } = render(<DeviceManagement />)
+      await waitFor(() => {
+        expect(container.querySelector('.device-sync-all-btn')).toBeTruthy()
+      })
+
+      await userEvent.click(container.querySelector('.device-sync-all-btn') as HTMLButtonElement)
+
+      // t('device.syncFailedForList', { devices }) -> 'Sync failed for: …'
+      await waitFor(() => {
+        expect(screen.getAllByText(/^Sync failed for: /).length).toBeGreaterThan(0)
+      })
+    })
+
+    it('renders the reset-count badge via the device.resetCount plural key', async () => {
+      // mockPeers[1] has reset_count: 1 -> _one form, no trailing "s"
+      mockInvokeByCommand({
+        get_device_id: mockDeviceId,
+        list_peer_refs: mockPeers,
+      })
+
+      render(<DeviceManagement />)
+
+      // _one form: '1 reset' (singular), not '1 resets'
+      expect(await screen.findByText('1 reset')).toBeInTheDocument()
+      expect(screen.queryByText('1 resets')).not.toBeInTheDocument()
+    })
+  })
 })

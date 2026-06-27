@@ -115,6 +115,32 @@ describe('PeerListItem', () => {
     expect(screen.getByText('3 resets')).toBeInTheDocument()
   })
 
+  // #2058: reset-count badge uses the i18next plural key (device.resetCount),
+  // not hand-rolled `!== 1 ? 's' : ''` pluralization.
+  it('uses the device.resetCount _one form for a single reset', () => {
+    const peer = makePeer({ reset_count: 1 })
+
+    render(<PeerListItem peer={peer} {...defaultProps} />)
+
+    // _one form: '1 reset' (singular), not '1 resets'
+    expect(screen.getByText('1 reset')).toBeInTheDocument()
+    expect(screen.queryByText('1 resets')).not.toBeInTheDocument()
+  })
+
+  // #2058: 'Last:' prefix comes from device.lastSyncedAt with the relative
+  // time interpolated, not a hardcoded English literal.
+  it('renders last-synced time via the interpolated device.lastSyncedAt key', () => {
+    const peer = makePeer({
+      device_name: 'Work Laptop',
+      synced_at: Date.now() - 5 * 60 * 1000,
+    })
+
+    render(<PeerListItem peer={peer} {...defaultProps} />)
+
+    // t('device.lastSyncedAt', { time: '5m ago' }) === 'Last: 5m ago'
+    expect(screen.getByText(/Last: 5m ago/)).toBeInTheDocument()
+  })
+
   it('has no a11y violations', async () => {
     const peer = makePeer({ device_name: 'Test Device' })
 

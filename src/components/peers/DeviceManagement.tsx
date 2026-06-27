@@ -123,7 +123,7 @@ export function DeviceManagement(): React.ReactElement {
       useSyncStore.getState().setPeers(sorted.map(mapPeerRefToInfo))
     },
     onError: () => {
-      setError('Failed to load device info')
+      setError(t('device.loadFailed'))
     },
   })
 
@@ -156,7 +156,7 @@ export function DeviceManagement(): React.ReactElement {
       setUnpairPeerId(null)
     },
     onError: () => {
-      setError('Failed to unpair device')
+      setError(t('device.unpairFailed'))
     },
   })
 
@@ -176,17 +176,14 @@ export function DeviceManagement(): React.ReactElement {
         })
         await loadData()
       } catch (err) {
-        const message = formatErrorForDisplay(err, { fallback: 'Sync failed' })
-        const displayMessage =
-          message === 'Sync timed out'
-            ? 'Sync took too long — check your connection and try again'
-            : message
+        const message = formatErrorForDisplay(err, { fallback: t('device.syncFailed') })
+        const displayMessage = message === 'Sync timed out' ? t('device.syncTimedOut') : message
         logger.error('DeviceManagement', 'Sync failed', undefined, err)
         setError(displayMessage)
       }
       setSyncingPeerId(null)
     },
-    [executeSyncWithTimeout, loadData],
+    [executeSyncWithTimeout, loadData, t],
   )
 
   const handleSyncAll = useCallback(async () => {
@@ -205,13 +202,14 @@ export function DeviceManagement(): React.ReactElement {
       }
       setSyncingPeerId(null)
     }
-    const failureMessage = failures.length > 0 ? `Sync failed for: ${failures.join(', ')}` : null
+    const failureMessage =
+      failures.length > 0 ? t('device.syncFailedForList', { devices: failures.join(', ') }) : null
     await loadData()
     if (failureMessage) {
       setError(failureMessage)
     }
     setSyncingAll(false)
-  }, [peers, executeSyncWithTimeout, loadData])
+  }, [peers, executeSyncWithTimeout, loadData, t])
 
   const handlePairingClose = useCallback(
     (open: boolean) => {
@@ -229,13 +227,13 @@ export function DeviceManagement(): React.ReactElement {
         await updatePeerName(renamePeerId, name || null)
         await loadData()
       } catch (e) {
-        setError(formatErrorForDisplay(e, { fallback: 'Failed to rename' }))
+        setError(formatErrorForDisplay(e, { fallback: t('device.renameFailed') }))
       } finally {
         setRenamingPeerId(null)
         setRenamePeerId(null)
       }
     },
-    [renamePeerId, loadData],
+    [renamePeerId, loadData, t],
   )
 
   return (
