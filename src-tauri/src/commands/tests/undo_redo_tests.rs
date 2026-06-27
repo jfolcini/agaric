@@ -3338,10 +3338,14 @@ async fn undo_redo_undo_redo_full_cycle_multiple_edits() {
         "after first undo, content should be v1"
     );
 
-    // 2) undo(depth=2) → reverses edit "v1"
-    //    History after step 1: [undo_edit(seq5), edit_v2(seq4), edit_v1(seq3), ...]
-    //    depth=2 picks seq3 (edit "v1"), whose prior text is "original"
-    let undo2 = undo_page_op_inner(&pool, DEV, &mat, page.id.clone().into_string(), 2)
+    // 2) undo(depth=1) → reverses edit "v1"
+    //    #2018: `undo_page_op_inner`'s target SELECT now filters `is_undo = 0`,
+    //    so the reverse op appended by step 1's undo (a plain `edit_block` with
+    //    `is_undo = 1`) is NOT counted by the depth OFFSET — matching the op
+    //    set `find_undo_group_inner` walks. The undoable ops newest-first are:
+    //      depth=0: edit_v2, depth=1: edit_v1, depth=2: create_child.
+    //    So edit "v1" (prior text "original") is now at depth=1, not depth=2.
+    let undo2 = undo_page_op_inner(&pool, DEV, &mat, page.id.clone().into_string(), 1)
         .await
         .unwrap();
     let after = get_block_inner(&pool, child.id.clone()).await.unwrap();
@@ -4016,10 +4020,13 @@ async fn sequential_undo_from_multiple_devices() {
         "first undo should not be flagged as redo"
     );
 
-    // After first undo, history (newest first):
-    //   reverse_edit_b(0), edit_b(1), edit_a(2), create_b(3), create_a(4)
-    // Second undo at depth=2 targets edit_a.
-    let result_a = undo_page_op_inner(&pool, "device-A", &mat, page.id.clone().into_string(), 2)
+    // After first undo, the op_log contains reverse_edit_b (a plain
+    // `edit_block` with `is_undo = 1`) as the newest row, but #2018's fix
+    // makes `undo_page_op_inner` filter `is_undo = 0` for its depth OFFSET
+    // (matching `find_undo_group_inner`). The UNDOABLE ops newest-first are:
+    //   depth=0: edit_b, depth=1: edit_a, depth=2: create_b, depth=3: create_a.
+    // Second undo at depth=1 targets edit_a (the reverse op is skipped).
+    let result_a = undo_page_op_inner(&pool, "device-A", &mat, page.id.clone().into_string(), 1)
         .await
         .expect("undo edit_a should succeed");
     assert!(

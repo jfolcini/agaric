@@ -760,7 +760,8 @@ pub async fn undo_page_op_inner(
                  ) \
              ) \
          ) \
-         ORDER BY ol.created_at DESC, ol.seq DESC \
+           AND ol.is_undo = 0 \
+         ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC \
          LIMIT 1 OFFSET ?2",
         page_id,    // ?1
         undo_depth, // ?2
