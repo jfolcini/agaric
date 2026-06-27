@@ -455,19 +455,24 @@ pub async fn set_todo_state_batch_inner(
         )?;
     }
 
+    // #2038: resolve which target blocks are live in ONE membership query
+    // instead of a per-block existence SELECT inside the loop (N+1). Skip-on-
+    // miss semantics are preserved: a row deleted between the FE selection and
+    // this call is absent from `alive` and cleanly skipped.
+    let block_ids_json = serde_json::to_string(&block_ids)?;
+    let alive: std::collections::HashSet<String> = sqlx::query_scalar!(
+        r#"SELECT id FROM blocks
+           WHERE id IN (SELECT value FROM json_each(?)) AND deleted_at IS NULL"#,
+        block_ids_json
+    )
+    .fetch_all(&mut **tx)
+    .await?
+    .into_iter()
+    .collect();
+
     let mut updated: i64 = 0;
     for block_id in block_ids {
-        // Probe existence inside the tx so a concurrent delete that
-        // landed between the FE selection and this call cleanly skips
-        // rather than aborting the whole batch.
-        let block_id_str = block_id.as_str();
-        let exists = sqlx::query_scalar!(
-            r#"SELECT 1 AS "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
-            block_id_str
-        )
-        .fetch_optional(&mut **tx)
-        .await?;
-        if exists.is_none() {
+        if !alive.contains(block_id.as_str()) {
             continue;
         }
 
