@@ -596,6 +596,90 @@ async fn inbound_count_correct_synchronously_without_bg_reindex() {
     assert_parity(&pool, "after backstop BG reindex (removal)").await;
 }
 
+/// #2021 — creating a content block under a page must make that page's
+/// `child_block_count` synchronously correct (incremented) right after the
+/// foreground `ApplyOp(create_block)`, WITHOUT any subsequent unrelated
+/// mutation and WITHOUT the deferred background `SetBlockPageId` task.
+///
+/// Before the fix `project_create_block_to_sql` left the new non-page
+/// block's `page_id` NULL (stamped later by the deferred `SetBlockPageId`
+/// task), and the page-wide count recompute keys on
+/// `descendant.page_id = pages_cache.page_id`, so the new block was excluded
+/// and the count stayed one short until an unrelated op touched the page.
+/// The fix stamps the owning page id in-tx before the recompute.
+///
+/// NOTE the deliberate omission: unlike `create_and_link_updates_both_counts`
+/// this test does NOT manually `UPDATE blocks SET page_id` after the create.
+/// That manual patch was the test-side workaround for exactly this bug — its
+/// absence here is the whole point.
+#[tokio::test]
+async fn create_block_increments_child_count_synchronously() {
+    let (pool, _dir) = test_pool().await;
+    seed_page(&pool, "PAGE_C", "Page C").await;
+
+    // Baseline: empty page.
+    let (_, child) = cached_counts(&pool, "PAGE_C").await.unwrap();
+    assert_eq!(child, 0, "page starts with zero children");
+
+    // CreateBlock — a content block directly under PAGE_C. Drive ONLY the
+    // foreground ApplyOp (no SetBlockPageId, no other op): the count must
+    // already be correct.
+    let payload = r#"{"block_id":"NEWCB_C","block_type":"content","content":"hello","parent_id":"PAGE_C","position":0}"#.to_string();
+    run_op(&pool, op_task("create_block", &payload), &[]).await;
+
+    // The new block must have been stamped with its owning page id IN-TX so
+    // the page-wide count recompute saw it.
+    let new_page_id: Option<String> =
+        sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = 'NEWCB_C'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        new_page_id.as_deref(),
+        Some("PAGE_C"),
+        "the new block's page_id must be stamped in-tx (not left NULL for the deferred task)"
+    );
+
+    // Synchronous correctness: child_block_count is 1 immediately, with no
+    // subsequent unrelated mutation.
+    let (_, child) = cached_counts(&pool, "PAGE_C").await.unwrap();
+    assert_eq!(
+        child, 1,
+        "child_block_count must be synchronously incremented after create, \
+         before any deferred SetBlockPageId task or unrelated op"
+    );
+    assert_parity(&pool, "after synchronous create").await;
+
+    // Idempotent backstop: the deferred SetBlockPageId task re-derives the
+    // SAME page_id from the parent and must NOT change anything.
+    handle_background_task(
+        &pool,
+        &MaterializeTask::SetBlockPageId {
+            block_id: "NEWCB_C".into(),
+        },
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let new_page_id_after: Option<String> =
+        sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = 'NEWCB_C'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        new_page_id_after.as_deref(),
+        Some("PAGE_C"),
+        "deferred SetBlockPageId must re-derive the identical page_id (idempotent, no double-stamp)"
+    );
+    let (_, child_after) = cached_counts(&pool, "PAGE_C").await.unwrap();
+    assert_eq!(
+        child_after, 1,
+        "child_block_count must stay 1 after the idempotent deferred SetBlockPageId"
+    );
+    assert_parity(&pool, "after deferred SetBlockPageId backstop").await;
+}
+
 /// E4 — a `MoveBlock` that reparents a block onto a DIFFERENT page must
 /// refresh BOTH the source page's and the destination page's
 /// `child_block_count`. Before the fix the MoveBlock arm was a no-op
