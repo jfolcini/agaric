@@ -535,7 +535,10 @@ mod engine_apply_unit_tests {
             .for_space(&space, DEVICE_ID)
             .expect("for_space");
         assert_eq!(
-            guard.engine_mut().read_property_typed(BLOCK_1, "k").unwrap(),
+            guard
+                .engine_mut()
+                .read_property_typed(BLOCK_1, "k")
+                .unwrap(),
             Some(PropertyValue::Str("text-wins".into())),
             "multi-value coercion must still resolve to value_text by precedence",
         );
