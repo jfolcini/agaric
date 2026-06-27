@@ -434,6 +434,26 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bo
         ));
     }
 
+    // #2026 — Enforce the SetProperty domain invariants on the remote
+    // ingest path. The local append path
+    // (`append_local_op_in_tx_with_provenance`) runs every SetProperty
+    // payload through `crate::op::validate_set_property` (key format,
+    // exactly-one-value, finite num, non-empty string fields) before it
+    // can land. `insert_remote_op` previously validated only null
+    // bytes / hash / parents, so a peer or a buggy/older client could
+    // land a hash-valid SetProperty with an empty/oversized/special-char
+    // key, an empty value, or multiple value fields — all rejected
+    // locally — which then flow into `engine_apply` and downstream (e.g.
+    // agenda ISO-date parsing). We re-decode the inner payload (the
+    // stored `payload` column is the *inner* struct JSON, without the
+    // `op_type` tag — see `serialize_inner_payload`) and reuse the same
+    // validator verbatim so the two append paths cannot drift. Only
+    // SetProperty ops are decoded; every other op type is untouched.
+    if record.op_type == OpType::SetProperty.as_str() {
+        let payload: SetPropertyPayload = serde_json::from_str(&record.payload)?;
+        validate_set_property(&payload)?;
+    }
+
     // Verify every `(device_id, seq)` entry in `parent_seqs` already
     // exists in `op_log` before landing this row.  Without the check, a
     // buggy peer or a corrupted stream can insert a row whose parent

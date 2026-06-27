@@ -149,6 +149,48 @@ pub(crate) fn engine_apply(
             // `property_definitions.value_type`); no field set ⇒ explicit
             // clear (`Null`).
             use crate::loro::engine::PropertyValue;
+            // #2026 — observability for a malformed multi-value SetProperty
+            // that slipped through ingest. The local append path and (since
+            // #2026) `dag::insert_remote_op` both run SetProperty payloads
+            // through `validate_set_property`, which rejects more than one
+            // set value field. A payload that reaches this dispatcher with
+            // multiple value fields therefore indicates an op that bypassed
+            // validation (e.g. a pre-fix legacy row already on disk, or a
+            // future ingest path that forgets the check). The coercion below
+            // resolves it deterministically by precedence
+            // (text→num→date→ref→bool), silently dropping the extra fields.
+            // Emit a warn + the durable divergence signal BEFORE coercing so
+            // the silent drop is observable; the coercion RESULT is
+            // intentionally left unchanged.
+            let value_field_count = [
+                p.value_text.is_some(),
+                p.value_num.is_some(),
+                p.value_date.is_some(),
+                p.value_ref.is_some(),
+                p.value_bool.is_some(),
+            ]
+            .iter()
+            .filter(|&&set| set)
+            .count();
+            if value_field_count > 1 {
+                tracing::warn!(
+                    op_id,
+                    op_type = %op.op_type_str(),
+                    key = %p.key,
+                    value_field_count,
+                    "engine_apply: SetProperty has more than one value field set; \
+                     coercing by precedence and dropping the extras",
+                );
+                divergence::record(
+                    op_id,
+                    op.op_type_str(),
+                    &format!(
+                        "SetProperty multi-value (key={}, value_field_count={value_field_count}); \
+                         coercing by precedence",
+                        p.key
+                    ),
+                );
+            }
             let value = if let Some(v) = &p.value_text {
                 PropertyValue::Str(v.clone())
             } else if let Some(v) = p.value_num {

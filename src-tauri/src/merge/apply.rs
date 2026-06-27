@@ -489,4 +489,55 @@ mod engine_apply_unit_tests {
              divergence counter (before={before}, after={after})"
         );
     }
+
+    /// #2026: a malformed SetProperty that reaches `engine_apply` with more
+    /// than one value field set (one that bypassed
+    /// `validate_set_property` — e.g. a pre-fix legacy row already on disk)
+    /// must be OBSERVABLE: `engine_apply` records a divergence + warns
+    /// BEFORE coercing by precedence. The coercion RESULT is unchanged —
+    /// `value_text` still wins by precedence — so this test asserts both
+    /// the durable signal fires AND the precedence-coerced value lands.
+    #[test]
+    fn engine_apply_set_property_multi_value_records_divergence() {
+        use crate::loro::engine::PropertyValue;
+        use crate::merge::divergence;
+
+        let state = fresh_state();
+        let space = SpaceId::from_trusted(SPACE_A);
+        dispatch(&state, &space, "DEV/1", &create_op(BLOCK_1, "seed"));
+
+        // Multi-value payload: both value_text and value_num set. This is
+        // exactly what `validate_set_property` rejects (count > 1), so it
+        // can only reach the engine via a bypassed ingest path.
+        let multi = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::from_trusted(BLOCK_1),
+            key: "k".into(),
+            value_text: Some("text-wins".into()),
+            value_num: Some(42.0),
+            value_date: None,
+            value_ref: None,
+            value_bool: None,
+        });
+
+        let before = divergence::count();
+        dispatch(&state, &space, "DEV/2", &multi);
+        let after = divergence::count();
+
+        assert!(
+            after > before,
+            "a multi-value SetProperty reaching engine_apply must bump the \
+             divergence counter (before={before}, after={after})"
+        );
+
+        // The coercion result is unchanged: value_text wins by precedence.
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        assert_eq!(
+            guard.engine_mut().read_property_typed(BLOCK_1, "k").unwrap(),
+            Some(PropertyValue::Str("text-wins".into())),
+            "multi-value coercion must still resolve to value_text by precedence",
+        );
+    }
 }
