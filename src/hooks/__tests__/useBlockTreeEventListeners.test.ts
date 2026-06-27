@@ -375,6 +375,55 @@ describe('useBlockTreeEventListeners', () => {
     })
   })
 
+  // #2033 — the editor's HTML-paste handler converts the clipboard HTML
+  // ASYNCHRONOUSLY, then routes multi-block content through the bus. It captures
+  // the focused block id at paste time as `detail.targetBlockId`; the receiver
+  // must reject the paste when focus has since moved, rather than dumping the
+  // content into whatever block is focused at resolution time.
+  describe('PASTE_HTML_BLOCKS captured-target guard (#2033)', () => {
+    function pasteOpts() {
+      const pasteBlocks = vi.fn().mockResolvedValue(undefined)
+      const blocksById = new Map([['BLOCK_1', { id: 'BLOCK_1', content: '' }]])
+      const opts = makeOptions({
+        pageStore: {
+          setState: vi.fn(),
+          getState: () => ({ blocksById, blocks: [{ id: 'BLOCK_1', content: '' }], pasteBlocks }),
+          getInitialState: vi.fn(),
+          subscribe: vi.fn(),
+        } as unknown as UseBlockTreeEventListenersOptions['pageStore'],
+      })
+      return { opts, pasteBlocks }
+    }
+
+    it('pastes when the captured target matches the focused block', () => {
+      const { opts, pasteBlocks } = pasteOpts()
+      renderHook(() => useBlockTreeEventListeners(opts))
+
+      dispatchBlockEvent('PASTE_HTML_BLOCKS', { markdown: 'a\nb', targetBlockId: 'BLOCK_1' })
+
+      expect(pasteBlocks).toHaveBeenCalledWith('BLOCK_1', 'a\nb')
+    })
+
+    it('no-ops (does NOT paste into the wrong block) when focus moved since paste', () => {
+      const { opts, pasteBlocks } = pasteOpts()
+      renderHook(() => useBlockTreeEventListeners(opts))
+
+      // Paste was claimed while OTHER_BLOCK was focused, but focus is now BLOCK_1.
+      dispatchBlockEvent('PASTE_HTML_BLOCKS', { markdown: 'a\nb', targetBlockId: 'OTHER_BLOCK' })
+
+      expect(pasteBlocks).not.toHaveBeenCalled()
+    })
+
+    it('pastes when no target was captured (null targetBlockId — legacy payload)', () => {
+      const { opts, pasteBlocks } = pasteOpts()
+      renderHook(() => useBlockTreeEventListeners(opts))
+
+      dispatchBlockEvent('PASTE_HTML_BLOCKS', { markdown: 'a\nb', targetBlockId: null })
+
+      expect(pasteBlocks).toHaveBeenCalledWith('BLOCK_1', 'a\nb')
+    })
+  })
+
   // #713 — journal week/month mount one BlockTree (one registration here) per
   // day, all sharing the global focusedBlockId. Only the tree whose page store
   // owns the focused block may act; a non-owning tree must perform ZERO side

@@ -233,8 +233,23 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
     // owns the focus). The outline lands AFTER the anchor (siblings/children),
     // exactly like the keyboard/context-menu outline paste.
     const onPasteHtmlBlocks: BlockCommandHandler = (blockId, detail) => {
-      const markdown = (detail as { markdown?: string } | undefined)?.markdown
+      const payload = detail as { markdown?: string; targetBlockId?: string | null } | undefined
+      const markdown = payload?.markdown
       if (!markdown) return
+      // #2033 — the editor's HTML-paste handler captures the focused block id
+      // synchronously at paste time and threads it as `targetBlockId`. The
+      // conversion is async, so focus may have moved by the time the bus routes
+      // this command. If the resolved (now-focused) block no longer matches the
+      // captured target, no-op rather than dumping structured content into the
+      // wrong block. (`targetBlockId` is omitted only by older/test payloads, in
+      // which case we keep the prior behaviour.)
+      if (payload?.targetBlockId != null && payload.targetBlockId !== blockId) {
+        logger.warn('BlockTree', 'Discarding HTML paste: focus moved since paste', {
+          targetBlockId: payload.targetBlockId,
+          blockId,
+        })
+        return
+      }
       void pageStore
         .getState()
         .pasteBlocks(blockId, markdown)
