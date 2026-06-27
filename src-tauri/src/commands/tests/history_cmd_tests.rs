@@ -926,3 +926,117 @@ async fn find_undo_group_skips_reverse_ops() {
          be the 2 user edits, not collapsed by the reverse op"
     );
 }
+
+/// #2018: `undo_page_op_inner`'s target SELECT must walk the SAME op set as
+/// `find_undo_group_inner` — both filtered to `is_undo = 0` and ordered by
+/// `(created_at DESC, seq DESC, device_id DESC)`. Before the fix, the undo
+/// target SELECT had NO `is_undo` filter, so once a prior undo appended an
+/// `is_undo = 1` op, the OFFSET-by-depth counted a row the group walk
+/// excludes and the two diverged: a group undo would reverse the WRONG op
+/// (e.g. the undo op itself, or an off-by-one neighbor).
+///
+/// This test interleaves an `is_undo = 1` op MID-group (between two user
+/// edits) and asserts:
+///   - `undo_page_op_inner` at each depth targets a real USER edit, never
+///     the interleaved undo op; and
+///   - the depth→op mapping is exactly the one `find_undo_group_inner`
+///     walks (the group of user edits is 2, and depths 0/1 reverse those
+///     two user edits in newest-first order).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_page_op_skips_interleaved_undo_op_matching_group_walk() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Two consecutive same-device user edits: dev1@0 ("edit-0") then
+    // dev1@200 ("edit-1"). seed_page_with_ops also creates the page +
+    // child via DEV (older, real `now` timestamps).
+    let (page_id, child_id) =
+        seed_page_with_ops(&pool, &mat, &[("dev1", 0), ("dev1", 200)]).await;
+
+    // Interleave a reverse op (is_undo = 1) BETWEEN the two user edits in
+    // time (created_at @100, strictly between @0 and @200), in the real
+    // production shape: a plain `edit_block` op_type with is_undo = 1.
+    // Without the is_undo filter on the undo target SELECT, this row is
+    // counted by the OFFSET, so depth=1 would land on it (reversing the
+    // undo op) and depth=0/1 would no longer match the group walk.
+    let undo_seq = 1_i64;
+    sqlx::query(
+        "INSERT INTO op_log \
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, is_undo) \
+         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 1)",
+    )
+    .bind("dev2")
+    .bind(undo_seq)
+    .bind("synthetic-hash")
+    .bind("edit_block")
+    .bind(format!(r#"{{"block_id":"{child_id}","to_text":"undo-noise"}}"#))
+    .bind(4_102_444_800_100_i64) // between dev1@0 and dev1@200
+    .bind(&child_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // The group walk sees only the two is_undo = 0 user edits.
+    let group = find_undo_group_inner(&pool, &page_id, 0, 500)
+        .await
+        .unwrap();
+    assert_eq!(
+        group, 2,
+        "group walk should count exactly the 2 user edits (interleaved undo op excluded)"
+    );
+
+    // Materialize so undo can read/reverse against current state.
+    mat.flush_background().await.unwrap();
+
+    // depth=0 → must reverse the NEWEST user edit (dev1, "edit-1"),
+    // NOT the interleaved is_undo = 1 op.
+    let r0 = undo_page_op_inner(&pool, DEV, &mat, page_id.clone(), 0)
+        .await
+        .unwrap();
+    assert!(
+        !(r0.reversed_op.device_id == "dev2" && r0.reversed_op.seq == undo_seq),
+        "depth=0 must NOT target the interleaved is_undo op, got {:?}",
+        r0.reversed_op
+    );
+    assert_eq!(
+        r0.reversed_op.device_id, "dev1",
+        "depth=0 should reverse a dev1 user edit"
+    );
+    // Confirm the targeted op really is is_undo = 0.
+    let r0_is_undo: i64 =
+        sqlx::query_scalar("SELECT is_undo FROM op_log WHERE device_id = ? AND seq = ?")
+            .bind(&r0.reversed_op.device_id)
+            .bind(r0.reversed_op.seq)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(r0_is_undo, 0, "depth=0 target must be a non-undo (user) op");
+
+    // depth=1 (after depth=0 appended its own is_undo op) → must reverse
+    // the OTHER user edit (dev1, "edit-0"), still skipping every is_undo
+    // op. This is the case that diverged pre-fix: the freshly-appended
+    // undo op from r0 plus the interleaved one would shift the OFFSET.
+    let r1 = undo_page_op_inner(&pool, DEV, &mat, page_id.clone(), 1)
+        .await
+        .unwrap();
+    assert!(
+        !(r1.reversed_op.device_id == "dev2" && r1.reversed_op.seq == undo_seq),
+        "depth=1 must NOT target the interleaved is_undo op, got {:?}",
+        r1.reversed_op
+    );
+    let r1_is_undo: i64 =
+        sqlx::query_scalar("SELECT is_undo FROM op_log WHERE device_id = ? AND seq = ?")
+            .bind(&r1.reversed_op.device_id)
+            .bind(r1.reversed_op.seq)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(r1_is_undo, 0, "depth=1 target must be a non-undo (user) op");
+
+    // The two user edits are the two distinct ops reversed across depth 0/1.
+    assert_ne!(
+        (r0.reversed_op.device_id.clone(), r0.reversed_op.seq),
+        (r1.reversed_op.device_id.clone(), r1.reversed_op.seq),
+        "depth 0 and 1 must target the two distinct user edits, not the same op"
+    );
+}
