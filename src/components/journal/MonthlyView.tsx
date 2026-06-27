@@ -134,11 +134,11 @@ export function MonthlyView({ makeDayEntry }: MonthlyViewProps): React.ReactElem
       const cur = indexByDate.get(focusedDate)
       if (cur === undefined) return
       let target: number | null = null
+      // Default horizontal step; overridden below for vertical (±7) and reverse moves.
       let step = 1
       switch (e.key) {
         case 'ArrowRight': {
           target = cur + 1
-          step = 1
           break
         }
         case 'ArrowLeft': {
@@ -159,7 +159,6 @@ export function MonthlyView({ makeDayEntry }: MonthlyViewProps): React.ReactElem
         case 'Home': {
           // First cell of the current week row.
           target = cur - (cur % 7)
-          step = 1
           break
         }
         case 'End': {
