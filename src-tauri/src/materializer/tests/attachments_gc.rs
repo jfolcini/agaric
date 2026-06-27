@@ -219,6 +219,97 @@ async fn cleanup_orphaned_attachments_subdir_walk() {
     );
 }
 
+/// #2032 — TOCTOU race regression. The background GC loads the referenced
+/// `fs_path` set up front (here, from a SEPARATE read pool whose snapshot
+/// does NOT contain the row, simulating a read-replica that lags the writer
+/// or a foreground `AddAttachment` that commits after the bulk load). The
+/// file is on disk and IS referenced by a row in the WRITE pool. The
+/// per-file write-pool re-check before unlink must find that row and KEEP
+/// the file — without the re-check it would be unlinked as a false orphan.
+///
+/// A second, genuinely orphaned file (referenced by NEITHER pool) must still
+/// be removed, proving the re-check does not disable orphan collection.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cleanup_orphaned_attachments_write_pool_recheck_survives_lagging_read_snapshot_2032() {
+    let dir = TempDir::new().unwrap();
+    // Write pool over the real DB file; this is where the foreground apply
+    // path commits, and where the per-file re-check reads.
+    let write_db = dir.path().join("write.db");
+    let write_pool = init_pool(&write_db).await.unwrap();
+    // A DISTINCT read pool over a DIFFERENT, empty DB stands in for a
+    // reference snapshot that lags the writer: it will NOT contain the row
+    // we are about to add to the write pool, so the bulk-load membership
+    // test misses it and the file looks like an orphan to the fast path.
+    let read_db = dir.path().join("read.db");
+    let read_pool = init_pool(&read_db).await.unwrap();
+
+    let attachments = dir.path().join("attachments");
+    tokio::fs::create_dir_all(&attachments).await.unwrap();
+
+    // Referenced-in-write-pool-only file (the "just added, not yet in the
+    // read snapshot" attachment).
+    let rel_racing = "attachments/racing.dat".to_string();
+    // Genuinely orphaned file (in neither pool).
+    let rel_orphan = "attachments/orphan.dat".to_string();
+    tokio::fs::write(dir.path().join(&rel_racing), b"racing")
+        .await
+        .unwrap();
+    tokio::fs::write(dir.path().join(&rel_orphan), b"orphan")
+        .await
+        .unwrap();
+
+    // The row exists ONLY in the write pool — exactly the lag/race state.
+    insert_attachment_row(&write_pool, "ATT_RACE", "BLK_RACE", &rel_racing).await;
+
+    super::super::handlers::cleanup_orphaned_attachments(&write_pool, Some(&read_pool), dir.path())
+        .await
+        .unwrap();
+
+    assert!(
+        dir.path().join(&rel_racing).exists(),
+        "a file referenced in the write pool but absent from the lagging read snapshot \
+         must survive GC because the write-pool re-check finds its row (#2032)"
+    );
+    assert!(
+        !dir.path().join(&rel_orphan).exists(),
+        "a genuinely orphaned file (referenced by neither pool) must still be removed"
+    );
+}
+
+/// #2032 — companion to the lagging-snapshot test using the single-pool
+/// path: when the file IS referenced at unlink time per the write pool it
+/// survives, and an unreferenced sibling is removed. This guards the
+/// re-check on the common (no dedicated read pool) materializer wiring.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cleanup_orphaned_attachments_recheck_keeps_referenced_single_pool_2032() {
+    let (pool, dir) = test_pool().await;
+    let attachments = dir.path().join("attachments");
+    tokio::fs::create_dir_all(&attachments).await.unwrap();
+
+    let rel_keep = "attachments/keep.dat".to_string();
+    let rel_orphan = "attachments/orphan.dat".to_string();
+    tokio::fs::write(dir.path().join(&rel_keep), b"k")
+        .await
+        .unwrap();
+    tokio::fs::write(dir.path().join(&rel_orphan), b"o")
+        .await
+        .unwrap();
+    insert_attachment_row(&pool, "ATT_K2032", "BLK_K2032", &rel_keep).await;
+
+    super::super::handlers::cleanup_orphaned_attachments(&pool, None, dir.path())
+        .await
+        .unwrap();
+
+    assert!(
+        dir.path().join(&rel_keep).exists(),
+        "referenced file must survive GC (write-pool re-check)"
+    );
+    assert!(
+        !dir.path().join(&rel_orphan).exists(),
+        "unreferenced file must still be removed"
+    );
+}
+
 /// Insert an `attachment_blobs` row for the dedup GC tests.
 async fn insert_blob_row(pool: &SqlitePool, content_hash: &str, on_disk_path: &str) {
     sqlx::query(
