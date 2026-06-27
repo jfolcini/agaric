@@ -1291,15 +1291,32 @@ mod tests {
 
     /// State EXCLUDE compiles to the NULL-inclusive inversion `(b.todo_state
     /// IS NULL OR b.todo_state NOT IN (…))` — the `IS NULL` branch OUTSIDE
-    /// the `NOT IN` list (3-valued trap guard); `is_null=true` adds the
-    /// `IS NOT NULL` branch (the `not-state:none` sentinel).
+    /// the `NOT IN` list (3-valued trap guard). With `is_null=true`
+    /// (`not-state:DONE,none`) the listed values AND the NULL bucket are
+    /// excluded, so the conditions are AND-joined into `(b.todo_state IS NOT
+    /// NULL AND b.todo_state NOT IN (…))` (#2019 — the previous OR-join was a
+    /// tautology matching every row).
     #[test]
     fn state_exclude_via_projection_snapshot() {
         let mut fb = StructuralFilterBuilder::new(6);
         fb.add_state_via_projection(FTS_PREFIX, &["DONE".to_string()], true, true);
         assert_eq!(
             fb.sql(),
-            "\n           AND (b.todo_state IS NULL OR b.todo_state NOT IN (?6) OR b.todo_state IS NOT NULL)"
+            "\n           AND (b.todo_state IS NOT NULL AND b.todo_state NOT IN (?6))"
+        );
+        assert_eq!(fb.next_param(), 7);
+        assert_eq!(fb.bind_count(), 1);
+    }
+
+    /// State EXCLUDE without the `none` sentinel keeps NULL-state rows: the
+    /// `IS NULL` branch lives OUTSIDE the `NOT IN` list, OR-joined.
+    #[test]
+    fn state_exclude_without_none_keeps_null_via_projection_snapshot() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_state_via_projection(FTS_PREFIX, &["DONE".to_string()], false, true);
+        assert_eq!(
+            fb.sql(),
+            "\n           AND (b.todo_state IS NULL OR b.todo_state NOT IN (?6))"
         );
         assert_eq!(fb.next_param(), 7);
         assert_eq!(fb.bind_count(), 1);
@@ -1369,16 +1386,18 @@ mod tests {
 
     /// EXCLUDE compiles to the NULL-inclusive inversion
     /// `(b.priority IS NULL OR b.priority NOT IN (…))` — the `IS NULL` branch
-    /// OUTSIDE the `NOT IN` list (3-valued trap guard); `is_null=true` adds the
-    /// `IS NOT NULL` branch (the `not-priority:none` sentinel). Byte-shape
-    /// identical to the legacy `append_text_not_in_or_not_null` fragment.
+    /// OUTSIDE the `NOT IN` list (3-valued trap guard). With `is_null=true`
+    /// (`not-priority:A,none`) the listed values AND the NULL bucket are
+    /// excluded, so the conditions are AND-joined into `(b.priority IS NOT NULL
+    /// AND b.priority NOT IN (…))` (#2019 — the previous OR-join was a
+    /// tautology matching every row).
     #[test]
     fn priority_exclude_via_projection_snapshot() {
         let mut fb = StructuralFilterBuilder::new(6);
         fb.add_priority_via_projection(FTS_PREFIX, &["A".to_string()], true, true);
         assert_eq!(
             fb.sql(),
-            "\n           AND (b.priority IS NULL OR b.priority NOT IN (?6) OR b.priority IS NOT NULL)"
+            "\n           AND (b.priority IS NOT NULL AND b.priority NOT IN (?6))"
         );
         assert_eq!(fb.next_param(), 7);
         assert_eq!(fb.bind_count(), 1);

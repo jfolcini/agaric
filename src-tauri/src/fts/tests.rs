@@ -9869,15 +9869,16 @@ async fn b2_state_exclude_includes_null_rows_matches_legacy() {
     );
 }
 
-/// State EXCLUDE + `none` sentinel: `not-state:DONE,none` → the values
-/// branch (`IS NULL OR NOT IN ('DONE')`) OR the `IS NOT NULL` branch. The
-/// two OR-branches compose to "every row" here (a NULL row hits the first
-/// branch, a non-NULL row hits the second), so nothing is excluded — the
-/// documented legacy shape. Specifically pins that the `none` sentinel maps
-/// to the `is_null=true` exclude param and the result still includes the
-/// NULL rows.
+/// State EXCLUDE + `none` sentinel: `not-state:DONE,none` → exclude the
+/// listed values AND the NULL bucket. The corrected SQL AND-joins
+/// `todo_state IS NOT NULL AND todo_state NOT IN ('DONE')` (#2019), so a
+/// DONE row is dropped by the `NOT IN`, and a NULL-state row is dropped by
+/// the `IS NOT NULL` guard. Only the non-NULL, non-DONE rows survive.
+///
+/// Before #2019 this OR-joined to `(todo_state IS NULL OR todo_state NOT IN
+/// ('DONE')) OR todo_state IS NOT NULL`, a tautology that matched every row.
 #[tokio::test]
-async fn b2_state_exclude_with_none_sentinel_matches_legacy() {
+async fn b2_state_exclude_with_none_sentinel_excludes_values_and_null() {
     let (pool, _dir) = test_pool().await;
     seed_metadata_fixture(&pool).await;
 
@@ -9887,8 +9888,9 @@ async fn b2_state_exclude_with_none_sentinel_matches_legacy() {
     .await;
     assert_eq!(
         got,
-        id_set(&[META_TODO, META_DONE, META_DOING, META_NULLST, META_PAGE]),
-        "exclude-with-none composes to a tautology (legacy shape) — all rows match"
+        id_set(&[META_TODO, META_DOING]),
+        "not-state:DONE,none must exclude both DONE rows and NULL-state rows, \
+         keeping only the non-NULL non-DONE rows (#2019)"
     );
 }
 

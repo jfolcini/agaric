@@ -69,12 +69,14 @@ pub struct MetadataPredicates {
     pub priority_values: Vec<String>,
     pub priority_is_null: bool,
     /// Resolved `excluded_state_filter`. Empty + flag-false
-    /// means "no exclusion". SQL emits
+    /// means "no exclusion". With values only, SQL emits
     /// `(col IS NULL OR col NOT IN (...))`; the `IS NULL` branch is
-    /// always included so blocks with no state aren't accidentally
+    /// included so blocks with no state aren't accidentally
     /// excluded from a "not DONE" query. The `not-state:none`
-    /// sentinel flips [`Self::excluded_state_not_null`] (and emits
-    /// `col IS NOT NULL`).
+    /// sentinel flips [`Self::excluded_state_not_null`]: with the sentinel
+    /// AND values the SQL AND-joins to `(col IS NOT NULL AND col NOT IN (...))`
+    /// (exclude the listed values AND the NULL bucket — #2019); with only the
+    /// sentinel it emits `(col IS NOT NULL)`.
     pub excluded_state_values: Vec<String>,
     pub excluded_state_not_null: bool,
     /// Symmetric to [`Self::excluded_state_values`] /
