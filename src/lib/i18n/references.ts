@@ -343,6 +343,7 @@ export const references: Record<string, string> = {
   'search.statusError': 'Search failed',
   'search.errorTitle': 'Search failed',
   'search.errorBody': 'Something went wrong running your search. Try again.',
+  'search.errorRetryButton': 'Try again',
   // Result cap notice (the 5000-item ceiling was hit silently).
   'search.cappedNotice': 'Showing the first results — refine your search to narrow them down.',
   // Cmd+K palette dialog.

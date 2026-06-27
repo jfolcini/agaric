@@ -573,6 +573,56 @@ describe('SearchPanel', () => {
     expect(screen.queryByText(t('search.noResultsFound'))).not.toBeInTheDocument()
   })
 
+  // #2059 — the generic search-failure card must offer a recovery
+  // affordance ("Try again"), mirroring the zero-results "Clear filters".
+  it('renders a Try again button in the error card and re-fires the query', async () => {
+    const user = userEvent.setup()
+
+    // First search fails, the retry succeeds.
+    mockedInvoke.mockRejectedValueOnce(new Error('backend error')).mockResolvedValueOnce({
+      items: [makeSearchResult({ content: 'recovered result' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    typeAndSubmit(input, 'flaky')
+
+    const errorState = await screen.findByTestId('search-error-state')
+    const retry = within(errorState).getByTestId('search-error-retry')
+    expect(retry).toHaveTextContent(t('search.errorRetryButton'))
+
+    await user.click(retry)
+
+    // The retry re-fires the same query and the results now render.
+    await waitFor(() => {
+      expect(screen.getByText(textContent('recovered result'))).toBeInTheDocument()
+    })
+    // search_blocks was called twice for 'flaky' (initial + retry).
+    const flakyCalls = mockedInvoke.mock.calls.filter(
+      ([cmd, args]) =>
+        cmd === 'search_blocks' && (args as { query?: string } | undefined)?.query === 'flaky',
+    )
+    expect(flakyCalls.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('error card with Try again button has no a11y violations', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('backend error'))
+
+    const { container } = render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    typeAndSubmit(input, 'fail')
+
+    await screen.findByTestId('search-error-state')
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+
   it('has a search landmark', () => {
     render(<SearchPanel />)
 
