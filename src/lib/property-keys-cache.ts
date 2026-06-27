@@ -45,6 +45,16 @@ const inFlight = new Map<string, Promise<string[]>>()
 const subscribers = new Set<() => void>()
 let listenerInitialized = false
 
+/**
+ * Monotonic generation counter. Bumped by every invalidate/reset so an
+ * in-flight fetch that started before the bump can detect that its
+ * snapshot is stale and refuse to write it back. Without this fence a
+ * fetch launched before an invalidation would `cache.set` its
+ * pre-change result *after* the clear, resurrecting a deleted key (or
+ * omitting a freshly-added one) until the next invalidation.
+ */
+let generation = 0
+
 function notify(): void {
   for (const cb of subscribers) cb()
 }
@@ -54,8 +64,12 @@ function notify(): void {
  * also cleared so a subsequent consumer triggers a fresh IPC instead
  * of awaiting the now-stale promise. Exposed for the Tauri listener
  * and for test setup.
+ *
+ * Bumping `generation` fences any in-flight fetch captured before this
+ * call so it can't repopulate the cache with its pre-change snapshot.
  */
 export function invalidatePropertyKeysCache(): void {
+  generation++
   cache.clear()
   inFlight.clear()
   notify()
@@ -90,20 +104,35 @@ export function fetchPropertyKeysOnce(
   const pending = inFlight.get(spaceKey)
   if (pending) return pending
 
+  const startGeneration = generation
   const promise = listPropertyKeys()
     .then((keys) => {
-      cache.set(spaceKey, keys)
+      // Only write back if no invalidation/reset raced this fetch.
+      // A stale snapshot from before an invalidation must not
+      // repopulate the cache (see #2025). The `.finally` below fires
+      // the subscriber notification.
+      if (generation === startGeneration) {
+        cache.set(spaceKey, keys)
+      }
       return keys
     })
     .catch((err) => {
       logger.warn('property-keys-cache', 'failed to load property keys', { spaceKey }, err)
       const empty: string[] = []
-      cache.set(spaceKey, empty)
+      if (generation === startGeneration) {
+        cache.set(spaceKey, empty)
+      }
       return empty
     })
     .finally(() => {
-      inFlight.delete(spaceKey)
-      notify()
+      // Only retire our own in-flight entry. A racing invalidation
+      // already cleared the map (and may have registered a newer
+      // fetch under the same key); deleting here would drop that
+      // newer fetch. The matching write-back above already notified.
+      if (generation === startGeneration) {
+        inFlight.delete(spaceKey)
+        notify()
+      }
     })
   inFlight.set(spaceKey, promise)
   return promise
@@ -162,6 +191,7 @@ export function getPropertyKeys(spaceKey: string = PROPERTY_KEYS_GLOBAL_KEY): Pr
  * slate. Imported directly by tests; not part of the public surface.
  */
 export function _resetPropertyKeysCacheForTest(): void {
+  generation++
   cache.clear()
   inFlight.clear()
   listenerInitialized = false

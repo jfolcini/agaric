@@ -1,17 +1,19 @@
 /**
- * Tests for `src/lib/property-keys-cache.ts`.
+ * Tests for `src/lib/property-values-cache.ts`.
  *
- * The cache primitives moved out of `usePropertyKeysCache` so non-React
- * callers (slash-command picker) can share the same module-level state.
- * The hook keeps its own coverage for React-specific behaviour
- * (`useSyncExternalStore` snapshot stability, mount/unmount). This file
- * pins the plain-JS contract:
+ * Modelled on `property-keys-cache.test.ts` — the value cache is a
+ * near-duplicate of the key cache, differing only in the cache
+ * dimension (the property *key* rather than the *space id*) and the
+ * backing IPC (`list_property_values` rather than `list_property_keys`).
+ * This file pins the same plain-JS contract:
  *
  *  (a) module-level cache hit — second call returns cached array
  *      without firing a fresh IPC,
  *  (b) in-flight dedupe — two concurrent calls share one IPC,
  *  (c) `block:properties-changed` invalidation triggers a refetch on
- *      the next consumer.
+ *      the next consumer,
+ *  (c') an invalidation that races an in-flight fetch must NOT write
+ *      the stale pre-change snapshot back after the clear (#2025).
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -36,32 +38,31 @@ vi.mock('@tauri-apps/api/event', () => ({
 ;(window as unknown as { __TAURI_INTERNALS__: object }).__TAURI_INTERNALS__ = {}
 
 import {
-  _resetPropertyKeysCacheForTest,
+  _resetPropertyValuesCacheForTest,
   EVENT_PROPERTY_CHANGED,
-  ensurePropertyKeysInvalidationListener,
-  fetchPropertyKeysOnce,
-  getCachedPropertyKeys,
-  getPropertyKeys,
-  invalidatePropertyKeysCache,
-  PROPERTY_KEYS_EMPTY,
-  subscribeToPropertyKeysCache,
-} from '../property-keys-cache'
+  ensurePropertyValuesInvalidationListener,
+  fetchPropertyValuesOnce,
+  getCachedPropertyValues,
+  invalidatePropertyValuesCache,
+  PROPERTY_VALUES_EMPTY,
+  subscribeToPropertyValuesCache,
+} from '../property-values-cache'
 
 const mockedInvoke = vi.mocked(invoke)
 
 beforeEach(() => {
   vi.clearAllMocks()
   eventListeners.clear()
-  _resetPropertyKeysCacheForTest()
-  mockedInvoke.mockResolvedValue(['project', 'effort'])
+  _resetPropertyValuesCacheForTest()
+  mockedInvoke.mockResolvedValue(['alpha', 'beta'])
 })
 
 afterEach(() => {
-  _resetPropertyKeysCacheForTest()
+  _resetPropertyValuesCacheForTest()
 })
 
-function listPropertyKeysInvocationCount(): number {
-  return mockedInvoke.mock.calls.filter((c) => c[0] === 'list_property_keys').length
+function listPropertyValuesInvocationCount(): number {
+  return mockedInvoke.mock.calls.filter((c) => c[0] === 'list_property_values').length
 }
 
 function fireInvalidationEvent(): void {
@@ -70,35 +71,35 @@ function fireInvalidationEvent(): void {
   handler({ payload: { block_id: 'BLK01', changed_keys: ['project'] } })
 }
 
-describe('property-keys-cache', () => {
+describe('property-values-cache', () => {
   // ------------------------------------------------------------------
   // (a) Module-level cache hit
   // ------------------------------------------------------------------
   it('caches the result so a second fetch reuses the cached array without firing IPC', async () => {
-    const first = await fetchPropertyKeysOnce('SPACE_A')
-    expect(first).toEqual(['project', 'effort'])
-    expect(listPropertyKeysInvocationCount()).toBe(1)
+    const first = await fetchPropertyValuesOnce('project')
+    expect(first).toEqual(['alpha', 'beta'])
+    expect(listPropertyValuesInvocationCount()).toBe(1)
 
-    const second = await fetchPropertyKeysOnce('SPACE_A')
+    const second = await fetchPropertyValuesOnce('project')
     expect(second).toBe(first) // same array reference — cached
-    expect(listPropertyKeysInvocationCount()).toBe(1)
+    expect(listPropertyValuesInvocationCount()).toBe(1)
   })
 
-  it('getCachedPropertyKeys returns the stable EMPTY array before the first fetch', () => {
-    expect(getCachedPropertyKeys('SPACE_A')).toBe(PROPERTY_KEYS_EMPTY)
+  it('getCachedPropertyValues returns the stable EMPTY array before the first fetch', () => {
+    expect(getCachedPropertyValues('project')).toBe(PROPERTY_VALUES_EMPTY)
   })
 
-  it('different spaceKeys cache independently and fire separate IPCs', async () => {
-    await fetchPropertyKeysOnce('SPACE_A')
-    await fetchPropertyKeysOnce('SPACE_B')
-    expect(listPropertyKeysInvocationCount()).toBe(2)
+  it('different keys cache independently and fire separate IPCs', async () => {
+    await fetchPropertyValuesOnce('project')
+    await fetchPropertyValuesOnce('effort')
+    expect(listPropertyValuesInvocationCount()).toBe(2)
   })
 
   // ------------------------------------------------------------------
   // (b) In-flight dedupe — two concurrent calls share one IPC
   // ------------------------------------------------------------------
-  it('two concurrent fetchPropertyKeysOnce() calls share a single IPC', async () => {
-    let resolveIpc: ((keys: string[]) => void) | null = null
+  it('two concurrent fetchPropertyValuesOnce() calls share a single IPC', async () => {
+    let resolveIpc: ((values: string[]) => void) | null = null
     mockedInvoke.mockImplementationOnce(
       () =>
         new Promise<string[]>((resolve) => {
@@ -106,40 +107,40 @@ describe('property-keys-cache', () => {
         }),
     )
 
-    const p1 = fetchPropertyKeysOnce('SPACE_A')
-    const p2 = fetchPropertyKeysOnce('SPACE_A')
+    const p1 = fetchPropertyValuesOnce('project')
+    const p2 = fetchPropertyValuesOnce('project')
 
     // Both calls registered before the IPC resolved — only one IPC fired.
-    expect(listPropertyKeysInvocationCount()).toBe(1)
+    expect(listPropertyValuesInvocationCount()).toBe(1)
 
     if (!resolveIpc) throw new Error('resolveIpc was never assigned')
-    ;(resolveIpc as (keys: string[]) => void)(['project', 'effort'])
+    ;(resolveIpc as (values: string[]) => void)(['alpha', 'beta'])
 
     const [r1, r2] = await Promise.all([p1, p2])
-    expect(r1).toEqual(['project', 'effort'])
-    expect(r2).toEqual(['project', 'effort'])
-    expect(listPropertyKeysInvocationCount()).toBe(1)
+    expect(r1).toEqual(['alpha', 'beta'])
+    expect(r2).toEqual(['alpha', 'beta'])
+    expect(listPropertyValuesInvocationCount()).toBe(1)
   })
 
   // ------------------------------------------------------------------
   // (c) Invalidation event triggers a refetch on the next consumer
   // ------------------------------------------------------------------
   it('block:properties-changed invalidates the cache so the next fetch refetches', async () => {
-    ensurePropertyKeysInvalidationListener()
-    await fetchPropertyKeysOnce('SPACE_A')
-    expect(listPropertyKeysInvocationCount()).toBe(1)
+    ensurePropertyValuesInvalidationListener()
+    await fetchPropertyValuesOnce('project')
+    expect(listPropertyValuesInvocationCount()).toBe(1)
 
     // Materializer signals that property data changed.
     fireInvalidationEvent()
 
     // Cached entry is dropped — snapshot resets to EMPTY.
-    expect(getCachedPropertyKeys('SPACE_A')).toBe(PROPERTY_KEYS_EMPTY)
+    expect(getCachedPropertyValues('project')).toBe(PROPERTY_VALUES_EMPTY)
 
     // Next fetch fires a fresh IPC.
-    mockedInvoke.mockResolvedValueOnce(['project', 'effort', 'assignee'])
-    const refreshed = await fetchPropertyKeysOnce('SPACE_A')
-    expect(refreshed).toEqual(['project', 'effort', 'assignee'])
-    expect(listPropertyKeysInvocationCount()).toBe(2)
+    mockedInvoke.mockResolvedValueOnce(['alpha', 'beta', 'gamma'])
+    const refreshed = await fetchPropertyValuesOnce('project')
+    expect(refreshed).toEqual(['alpha', 'beta', 'gamma'])
+    expect(listPropertyValuesInvocationCount()).toBe(2)
   })
 
   // ------------------------------------------------------------------
@@ -147,7 +148,7 @@ describe('property-keys-cache', () => {
   //      stale pre-change snapshot back after the clear (#2025).
   // ------------------------------------------------------------------
   it('does not cache a stale result when invalidation races an in-flight fetch', async () => {
-    let resolveIpc: ((keys: string[]) => void) | null = null
+    let resolveIpc: ((values: string[]) => void) | null = null
     mockedInvoke.mockImplementationOnce(
       () =>
         new Promise<string[]>((resolve) => {
@@ -156,28 +157,28 @@ describe('property-keys-cache', () => {
     )
 
     // Start a fetch — IPC is in flight, not yet resolved.
-    const inflight = fetchPropertyKeysOnce('SPACE_A')
-    expect(listPropertyKeysInvocationCount()).toBe(1)
+    const inflight = fetchPropertyValuesOnce('project')
+    expect(listPropertyValuesInvocationCount()).toBe(1)
 
-    // A property changes mid-flight: cache is invalidated.
-    invalidatePropertyKeysCache()
-    expect(getCachedPropertyKeys('SPACE_A')).toBe(PROPERTY_KEYS_EMPTY)
+    // A property value changes mid-flight: cache is invalidated.
+    invalidatePropertyValuesCache()
+    expect(getCachedPropertyValues('project')).toBe(PROPERTY_VALUES_EMPTY)
 
     // Now the original IPC resolves with the pre-change snapshot.
     if (!resolveIpc) throw new Error('resolveIpc was never assigned')
-    ;(resolveIpc as (keys: string[]) => void)(['project', 'effort'])
+    ;(resolveIpc as (values: string[]) => void)(['alpha', 'beta'])
     await inflight
 
     // The stale snapshot must NOT have been written back — the cache
     // stays empty so the next consumer triggers a fresh fetch.
-    expect(getCachedPropertyKeys('SPACE_A')).toBe(PROPERTY_KEYS_EMPTY)
+    expect(getCachedPropertyValues('project')).toBe(PROPERTY_VALUES_EMPTY)
 
     // A subsequent fetch fires a fresh IPC and gets the new data.
-    mockedInvoke.mockResolvedValueOnce(['project', 'effort', 'assignee'])
-    const refreshed = await fetchPropertyKeysOnce('SPACE_A')
-    expect(refreshed).toEqual(['project', 'effort', 'assignee'])
-    expect(getCachedPropertyKeys('SPACE_A')).toEqual(['project', 'effort', 'assignee'])
-    expect(listPropertyKeysInvocationCount()).toBe(2)
+    mockedInvoke.mockResolvedValueOnce(['alpha', 'beta', 'gamma'])
+    const refreshed = await fetchPropertyValuesOnce('project')
+    expect(refreshed).toEqual(['alpha', 'beta', 'gamma'])
+    expect(getCachedPropertyValues('project')).toEqual(['alpha', 'beta', 'gamma'])
+    expect(listPropertyValuesInvocationCount()).toBe(2)
   })
 
   it('does not cache the empty error fallback when invalidation races a failing fetch', async () => {
@@ -189,27 +190,27 @@ describe('property-keys-cache', () => {
         }),
     )
 
-    const inflight = fetchPropertyKeysOnce('SPACE_A')
-    expect(listPropertyKeysInvocationCount()).toBe(1)
+    const inflight = fetchPropertyValuesOnce('project')
+    expect(listPropertyValuesInvocationCount()).toBe(1)
 
-    invalidatePropertyKeysCache()
+    invalidatePropertyValuesCache()
 
     if (!rejectIpc) throw new Error('rejectIpc was never assigned')
     ;(rejectIpc as (err: Error) => void)(new Error('IPC failure'))
     await inflight
 
     // The empty fallback from the raced fetch must not be cached either.
-    expect(getCachedPropertyKeys('SPACE_A')).toBe(PROPERTY_KEYS_EMPTY)
+    expect(getCachedPropertyValues('project')).toBe(PROPERTY_VALUES_EMPTY)
   })
 
-  it('invalidatePropertyKeysCache() clears every cached spaceKey', async () => {
-    await fetchPropertyKeysOnce('SPACE_A')
-    await fetchPropertyKeysOnce('SPACE_B')
-    expect(listPropertyKeysInvocationCount()).toBe(2)
+  it('invalidatePropertyValuesCache() clears every cached key', async () => {
+    await fetchPropertyValuesOnce('project')
+    await fetchPropertyValuesOnce('effort')
+    expect(listPropertyValuesInvocationCount()).toBe(2)
 
-    invalidatePropertyKeysCache()
-    expect(getCachedPropertyKeys('SPACE_A')).toBe(PROPERTY_KEYS_EMPTY)
-    expect(getCachedPropertyKeys('SPACE_B')).toBe(PROPERTY_KEYS_EMPTY)
+    invalidatePropertyValuesCache()
+    expect(getCachedPropertyValues('project')).toBe(PROPERTY_VALUES_EMPTY)
+    expect(getCachedPropertyValues('effort')).toBe(PROPERTY_VALUES_EMPTY)
   })
 
   // ------------------------------------------------------------------
@@ -217,40 +218,30 @@ describe('property-keys-cache', () => {
   // ------------------------------------------------------------------
   it('notifies subscribers when an in-flight fetch resolves', async () => {
     const cb = vi.fn()
-    const unsub = subscribeToPropertyKeysCache(cb)
+    const unsub = subscribeToPropertyValuesCache(cb)
 
-    await fetchPropertyKeysOnce('SPACE_A')
+    await fetchPropertyValuesOnce('project')
     expect(cb).toHaveBeenCalled()
 
     unsub()
     cb.mockClear()
-    invalidatePropertyKeysCache()
+    invalidatePropertyValuesCache()
     expect(cb).not.toHaveBeenCalled()
   })
 
   // ------------------------------------------------------------------
   // Error path falls back to empty array (matches pre-cache behaviour)
   // ------------------------------------------------------------------
-  it('falls back to an empty array when listPropertyKeys rejects', async () => {
+  it('falls back to an empty array when listPropertyValues rejects', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('IPC failure'))
-    const result = await fetchPropertyKeysOnce('SPACE_A')
+    const result = await fetchPropertyValuesOnce('project')
     expect(result).toEqual([])
-    expect(listPropertyKeysInvocationCount()).toBe(1)
+    expect(listPropertyValuesInvocationCount()).toBe(1)
 
     // The cache remembers the empty fallback so a second consumer
     // doesn't re-trigger the failing IPC immediately.
-    const second = await fetchPropertyKeysOnce('SPACE_A')
+    const second = await fetchPropertyValuesOnce('project')
     expect(second).toEqual([])
-    expect(listPropertyKeysInvocationCount()).toBe(1)
-  })
-
-  // ------------------------------------------------------------------
-  // getPropertyKeys() — convenience for non-React callers
-  // ------------------------------------------------------------------
-  it('getPropertyKeys() returns the cached array without a second IPC', async () => {
-    const first = await getPropertyKeys('SPACE_A')
-    const second = await getPropertyKeys('SPACE_A')
-    expect(first).toBe(second)
-    expect(listPropertyKeysInvocationCount()).toBe(1)
+    expect(listPropertyValuesInvocationCount()).toBe(1)
   })
 })
