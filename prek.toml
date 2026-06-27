@@ -21,8 +21,13 @@ repo = "builtin"
 # AND exactly once per push (via Phase A) instead of the previous up-to-3×
 # (pre-commit shim + pre-push shim + Phase A re-run).
 hooks = [
-    { id = "trailing-whitespace", exclude = "\\.(png|ico|icns|svg)$", stages = ["pre-commit"] },
-    { id = "end-of-file-fixer", exclude = "\\.(png|ico|icns|svg)$", stages = ["pre-commit"] },
+    # `src/lib/bindings.ts` is tauri-specta-generated (already excluded from
+    # oxfmt/oxlint/knip). The generator emits trailing whitespace in doc
+    # comments and a trailing blank line, so these two whitespace fixers strip
+    # them and make `specta_tests::ts_bindings_up_to_date` fail (committed !=
+    # generated). Exclude the generated file from both, like the other formatters.
+    { id = "trailing-whitespace", exclude = "(\\.(png|ico|icns|svg)$|^src/lib/bindings\\.ts$)", stages = ["pre-commit"] },
+    { id = "end-of-file-fixer", exclude = "(\\.(png|ico|icns|svg)$|^src/lib/bindings\\.ts$)", stages = ["pre-commit"] },
     { id = "check-yaml", stages = ["pre-commit"] },
     { id = "check-toml", stages = ["pre-commit"] },
     { id = "check-json", exclude = "(tsconfig.*\\.json$|\\.sqlx/)", stages = ["pre-commit"] },

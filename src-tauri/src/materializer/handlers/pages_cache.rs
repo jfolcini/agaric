@@ -266,36 +266,6 @@ pub(super) async fn maintain_pages_cache_counts_after_op(
             // row here so the recompute UPDATE below has a target row.
             // Determine the owning page.
             let owning_page = resolve_owning_page(conn, block_id, parent_id.as_deref()).await?;
-            // #2021: stamp the new NON-PAGE block's `page_id` IN THIS TX,
-            // BEFORE the recompute below. `project_create_block_to_sql`
-            // leaves a non-page block's `page_id` NULL (it's filled later by
-            // the deferred background `SetBlockPageId` task), but the
-            // page-wide `child_block_count` recompute keys on
-            // `descendant.page_id = pages_cache.page_id` — so with NULL
-            // page_id the freshly-created block is EXCLUDED from the count,
-            // leaving the owning page one child short until an unrelated op
-            // touches it. Mirror the MoveBlock arm
-            // (`reparent_moved_subtree_page_id`): write the owning page id
-            // here so the in-tx recompute counts the new block, making
-            // `child_block_count` synchronously correct. Pages already carry
-            // `page_id = id` from the projection, so this only stamps
-            // non-page blocks. The deferred `SetBlockPageId` task remains the
-            // idempotent backstop: it re-derives the SAME value from the
-            // parent's `page_id` (`set_block_page_id_from_parent`), so
-            // running it after this stamp rewrites the identical value — no
-            // double-stamp, no conflict. A fresh block has no descendants, so
-            // (unlike the move arm) only the one new row needs stamping.
-            if block_type != "page"
-                && let Some(p) = &owning_page
-            {
-                sqlx::query!(
-                    "UPDATE blocks SET page_id = ? WHERE id = ? AND page_id IS NULL",
-                    p,
-                    block_id,
-                )
-                .execute(&mut *conn)
-                .await?;
-            }
             if block_type == "page" {
                 // INSERT the pages_cache row if missing so the
                 // `UPDATE` below sees a target. Title = content

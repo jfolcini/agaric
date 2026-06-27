@@ -85,11 +85,8 @@ pub async fn backfill_attachment_content_hashes(
         // byte-for-byte — only the memory profile changes (avoids boot-time
         // OOM on mobile with large unhashed attachments). We only need the
         // hash; the returned size is ignored (the UPDATE writes content_hash).
-        let hash = match crate::sync_files::read_attachment_file_metadata(
-            app_data_dir,
-            &c.fs_path,
-        )
-        .await
+        let hash = match crate::sync_files::read_attachment_file_metadata(app_data_dir, &c.fs_path)
+            .await
         {
             // The file hashed cleanly.
             Ok((_size, hash)) => hash,

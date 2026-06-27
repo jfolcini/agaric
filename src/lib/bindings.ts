@@ -16,7 +16,7 @@ export const commands = {
 	/**
 	 *  Tauri command: atomically create a batch of blocks. Delegates to
 	 *  [`create_blocks_batch_inner`].
-	 *
+	 * 
 	 *  Collapses the per-block `create_block` IPC loop
 	 *  in `src/lib/template-utils.ts::insertTemplateBlocks` /
 	 *  `insertTemplateBlocksFromString` into one round-trip and one
@@ -30,7 +30,7 @@ export const commands = {
 	deleteBlock: (blockId: BlockId) => typedError<DeleteResponse, AppError>(__TAURI_INVOKE("delete_block", { blockId })),
 	/**
 	 *  Tauri command: batch-delete blocks by ids.
-	 *
+	 * 
 	 *  Delegates to [`delete_blocks_by_ids_inner`]. Single IMMEDIATE tx
 	 *  covers the whole batch — collapses the legacy N-IPC loop in
 	 *  `useBlockMultiSelect.handleBatchDelete` into one round-trip and
@@ -66,7 +66,7 @@ export const commands = {
 	moveBlock: (blockId: string, newParentId: string | null, newIndex: number) => typedError<MoveResponse, AppError>(__TAURI_INVOKE("move_block", { blockId, newParentId, newIndex })),
 	/**
 	 *  Tauri command: list blocks with filtering and pagination. Delegates to [`list_blocks_inner`].
-	 *
+	 * 
 	 *  The three agenda knobs (`date`, `date_range`, `source`) are bundled
 	 *  into a single [`AgendaQuery`] to keep this wrapper under the
 	 *  `tauri-specta` 10-arg limit after Phase 2 added `space_id`.
@@ -88,7 +88,7 @@ export const commands = {
 	/**
 	 *  Tauri command: fetch a single block by ID. Delegates to
 	 *  [`get_active_block_inner`].
-	 *
+	 * 
 	 *  The public IPC must never surface soft-deleted rows; the
 	 *  frontend exposes them only via [`list_trash`] (the trash view).
 	 *  Switched from `get_block_inner` to [`get_active_block_inner`] so a
@@ -98,7 +98,7 @@ export const commands = {
 	getBlock: (blockId: BlockId) => typedError<BlockRow, AppError>(__TAURI_INVOKE("get_block", { blockId })),
 	/**
 	 *  Tauri command: batch-resolve block metadata. Delegates to [`batch_resolve_inner`].
-	 *
+	 * 
 	 *  Phase 7 — `space_id` is required so the resolve store cannot
 	 *  surface foreign-space titles. The frontend always knows the current
 	 *  space and threads it through `useResolveStore.preload(spaceId)`.
@@ -121,14 +121,14 @@ export const commands = {
 	getStatus: () => typedError<StatusInfo, AppError>(__TAURI_INVOKE("get_status")),
 	/**
 	 *  Tauri command: return the boot-recovery status.
-	 *
+	 * 
 	 *  Used by the frontend to backfill the degraded-boot signal on mount, in
 	 *  case its `recovery:degraded` listener registered after boot emitted.
 	 */
 	getRecoveryStatus: () => typedError<RecoveryStatus, AppError>(__TAURI_INVOKE("get_recovery_status")),
 	/**
 	 *  Tauri command: full-text search across blocks. Delegates to [`search_blocks_inner`].
-	 *
+	 * 
 	 *  Phase 0 — `parent_id` / `tag_ids` / `space_id` are bundled
 	 *  into [`SearchFilter`] so the wrapper stays well under the
 	 *  `tauri-specta` 10-arg ceiling as follow-up plans append filter
@@ -144,11 +144,11 @@ export const commands = {
 	 *  partitions of the same FTS scan (pages-only + unrestricted) in a
 	 *  single round-trip, replacing the palette's two parallel
 	 *  [`search_blocks`] calls.
-	 *
+	 * 
 	 *  `filter.block_type_filter` is **ignored** by this command — the
 	 *  partitioning IS the block-type split. The field stays on the wire
 	 *  for [`SearchFilter`] compat.
-	 *
+	 * 
 	 *  See [`search_blocks_partitioned_inner`] for the partition + `has_more`
 	 *  Contract, and the cancellation contract.
 	 */
@@ -158,7 +158,7 @@ export const commands = {
 	/**
 	 *  Tauri command: query blocks by an arbitrary nested boolean tag
 	 *  expression (#1472). Delegates to [`query_by_tag_expr_inner`].
-	 *
+	 * 
 	 *  Exposes the resolver's full `(A AND B) OR (NOT C)` nesting over IPC —
 	 *  the flat [`query_by_tags`] remains for back-compat. The `expr` is
 	 *  depth-validated against [`TagExpr::MAX_DEPTH`] before resolution.
@@ -166,7 +166,7 @@ export const commands = {
 	queryByTagExpr: (expr: TagExpr, includeInherited: boolean | null, cursor: string | null, limit: number | null, scope: SpaceScope, blockType: string | null) => typedError<PageResponse<ActiveBlockRow>, AppError>(__TAURI_INVOKE("query_by_tag_expr", { expr, includeInherited, cursor, limit, scope, blockType })),
 	/**
 	 *  Tauri command: query blocks by property key/value. Delegates to [`query_by_property_inner`].
-	 *
+	 * 
 	 *  All push-down filters (`exclude_parent_id`, `content_non_empty`,
 	 *  `block_type`, `value_text_in`, `value_date_range`) are bundled
 	 *  into [`ExtraQueryFilters`] to keep this wrapper under the
@@ -212,7 +212,7 @@ export const commands = {
 	/**
 	 *  Tauri command: AND-intersect property + tag predicates in SQL.
 	 *  Delegates to [`filtered_blocks_query_inner`].
-	 *
+	 * 
 	 *  Replaces the FE pattern of fan-out IPCs (one `query_by_property` /
 	 *  `query_by_tags` per sub-filter, each capped at 200 rows) followed by
 	 *  JS-side intersection capped at 50 rows. The composed-EXISTS shape
@@ -255,7 +255,7 @@ export const commands = {
 	listInheritedTagsForBlock: (blockId: BlockId) => typedError<string[], AppError>(__TAURI_INVOKE("list_inherited_tags_for_block", { blockId })),
 	/**
 	 *  Tauri command: set (upsert) a property on a block. Delegates to [`set_property_inner`].
-	 *
+	 * 
 	 *  Typed value fields are bundled into [`SetPropertyArgs`] so the
 	 *  IPC signature stays at 7 positional args (under specta's 10-arg cap).
 	 *  Adding `value_bool` as a 5th flat field would have exceeded the limit.
@@ -265,12 +265,12 @@ export const commands = {
 	setTodoState: (blockId: BlockId, state: string | null) => typedError<BlockRow, AppError>(__TAURI_INVOKE("set_todo_state", { blockId, state })),
 	/**
 	 *  Tauri command: batch-set todo state on multiple blocks.
-	 *
+	 * 
 	 *  Delegates to [`set_todo_state_batch_inner`]. Single IMMEDIATE tx
 	 *  covers every per-block write — collapses the legacy N-IPC loop the
 	 *  FE used to drive in `useBlockMultiSelect.handleBatchSetTodo` into
 	 *  one round-trip / one op_log seq range / one writer-lock window.
-	 *
+	 * 
 	 *  Emits one `EVENT_PROPERTY_CHANGED` per successfully-updated block
 	 *  so existing per-block listeners (e.g. agenda recompute, property
 	 *  drawer) keep firing without protocol changes. Failed-emit
@@ -279,7 +279,7 @@ export const commands = {
 	setTodoStateBatch: (blockIds: BlockId[], state: string | null) => typedError<number, AppError>(__TAURI_INVOKE("set_todo_state_batch", { blockIds, state })),
 	/**
 	 *  Tauri command: set priority on a block. Delegates to [`set_priority_inner`].
-	 *
+	 * 
 	 *  Emits `EVENT_PROPERTY_CHANGED` after a successful set so the
 	 *  frontend property-change listener fires for priority updates (parity
 	 *  with `set_todo_state` / `set_due_date` / `set_scheduled_date` /
@@ -338,7 +338,7 @@ export const commands = {
 	 *  content (as of the selected point `(historical_created_at,
 	 *  historical_seq)`) and its current live content. Delegates to
 	 *  [`compute_block_vs_current_diff_inner`].
-	 *
+	 * 
 	 *  #382: the caller passes BOTH `historical_created_at` and
 	 *  `historical_seq` (the history entry already carries both columns) so
 	 *  the historical lookup can bound on the canonical `(created_at, seq)`
@@ -464,7 +464,7 @@ export const commands = {
 	/**
 	 *  Tauri command: list projected future occurrences of repeating tasks.
 	 *  Delegates to [`list_projected_agenda_inner`].
-	 *
+	 * 
 	 *  Cursor-paginated — pass `cursor = next_cursor` from the previous
 	 *  response to fetch the next page.
 	 */
@@ -473,7 +473,7 @@ export const commands = {
 	listUndatedTasks: (cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("list_undated_tasks", { cursor, limit, scope })),
 	/**
 	 *  Tauri command: fire an OS notification for a due / scheduled task.
-	 *
+	 * 
 	 *  Validates the payload via [`prepare_notification`], then builds and
 	 *  shows the notification through `tauri-plugin-notification`.  A failure
 	 *  to dispatch (e.g. the plugin is unavailable) surfaces as
@@ -484,13 +484,13 @@ export const commands = {
 	/**
 	 *  Tauri command: import a Logseq-style markdown file as a page with
 	 *  block hierarchy. Delegates to [`import_markdown_with_progress`].
-	 *
+	 * 
 	 *  `space_id` is required. The imported page is
 	 *  stamped with `space = ?space_id` inside the same transaction as the
 	 *  `CreateBlock` op, so an imported page can never exist in the op log
 	 *  Without its space property (invariant). Validation against a
 	 *  live space block happens TOCTOU-safe inside the same transaction.
-	 *
+	 * 
 	 *  #128 — `progress` streams per-block import
 	 *  progress to the frontend. The frontend always supplies a
 	 *  `Channel<ImportProgressUpdate>` (mirroring `start_sync`); sends are
@@ -526,7 +526,7 @@ export const commands = {
 	listAttachmentsBatch: (blockIds: BlockId[]) => typedError<{ [key in string]: AttachmentRow[] }, AppError>(__TAURI_INVOKE("list_attachments_batch", { blockIds })),
 	/**
 	 *  Tauri command: list all page-to-page links for graph visualization.
-	 *
+	 * 
 	 *  `tag_ids` — when non-empty, restricts edges to
 	 *  those whose target page carries at least one of the listed tags. The
 	 *  frontend GraphView passes its active tag filter here so the backend
@@ -553,7 +553,7 @@ export const commands = {
 	/**
 	 *  Log a frontend message to the backend's daily-rolling log file.
 	 *  Fire-and-forget — the frontend never awaits this.
-	 *
+	 * 
 	 *  Every `String` / `Option<String>` field is truncated at entry
 	 *  to [`MAX_FRONTEND_LOG_FIELD_BYTES`] (64 KB) so a single oversized
 	 *  payload cannot stall the IPC thread or corrupt the daily log file.
@@ -564,7 +564,7 @@ export const commands = {
 	logFrontend: (level: string, module: string, message: string, stack: string | null, context: string | null, data: string | null) => typedError<null, AppError>(__TAURI_INVOKE("log_frontend", { level, module, message, stack, context, data })),
 	/**
 	 *  Return the path to the logs directory.
-	 *
+	 * 
 	 *  Uses [`crate::log_dir_for_app_data`] so the path returned to the
 	 *  frontend ("Open logs folder") is guaranteed to match the directory
 	 *  The tracing-appender writes to — on every platform.
@@ -574,10 +574,10 @@ export const commands = {
 	getCompactionStatus: () => typedError<CompactionStatus, AppError>(__TAURI_INVOKE("get_compaction_status")),
 	/**
 	 *  Tauri command: trigger op log compaction.
-	 *
+	 * 
 	 *  The frontend is responsible for confirming with the user before calling
 	 *  this command. `retention_days` controls how far back ops are retained.
-	 *
+	 * 
 	 *  A successful compaction that actually deleted ops enqueues
 	 *  `CleanupOrphanedAttachments` so attachments whose owning block was
 	 *  just purged get swept. The complementary boot-time enqueue in
@@ -641,7 +641,7 @@ export const commands = {
 	 *  sign-in) and from "transient" (5xx — both flags false plus
 	 *  `title.is_none()`). The frontend uses this to render a "(not
 	 *  found)" tag and suppress the favicon.
-	 *
+	 * 
 	 *  `#[serde(default)]` so any legacy serialized blob — e.g. a
 	 *  cached snapshot deserialized before this field existed — keeps
 	 *  deserializing cleanly as `false`.
@@ -652,7 +652,7 @@ export const commands = {
 	 *  Tauri command: gather bug-report metadata (app version, OS, arch,
 	 *  device id, recent ERROR/WARN log lines). Delegates to
 	 *  [`collect_bug_report_metadata_inner`].
-	 *
+	 * 
 	 *  #609: redaction inputs (home dir, peer device ids) are
 	 *  resolved here — same sources as [`read_logs_for_report`] — so the
 	 *  recent-error tail embedded in the prefilled public GitHub issue body
@@ -673,7 +673,7 @@ export const commands = {
 	/**
 	 *  Tauri command: toggle the MCP RO enabled marker file and start / stop
 	 *  the serve task accordingly.
-	 *
+	 * 
 	 *  The inner toggle + spawn sequence is serialised through the
 	 *  shared [`McpToggleGate`] (`tokio::sync::Mutex`) so rapid UI toggles
 	 *  cannot interleave and leave the server in an "enabled but not
@@ -683,12 +683,12 @@ export const commands = {
 	mcpSetEnabled: (enabled: boolean) => typedError<boolean, AppError>(__TAURI_INVOKE("mcp_set_enabled", { enabled })),
 	/**
 	 *  Tauri command: disconnect every in-flight MCP connection.
-	 *
+	 * 
 	 *  Fires the `McpLifecycle` disconnect signal — every connection's
 	 *  `select!` branch wakes asynchronously and drops its stream. The
 	 *  signal is fire-and-forget; this command returns `Ok(())` as soon
 	 *  as the signal has been emitted.
-	 *
+	 * 
 	 *  The previous doc-comment promised this command "returns the
 	 *  connection count observed immediately after firing the signal", but
 	 *  the signature is `Result<(), AppError>`. The mismatch was a doc
@@ -697,7 +697,7 @@ export const commands = {
 	 *  `lifecycle.connection_count()` directly) rather than via this
 	 *  command's return value, so adding a count return here would be
 	 *  pure noise. Aligned the doc to the actual `Ok(())` contract.
-	 *
+	 * 
 	 *  Reporting a count adjacent to disconnect-all would also be
 	 *  misleading: `lifecycle.disconnect_all()` is asynchronous, so any
 	 *  snapshot taken right after the signal fires is racy — connections
@@ -709,7 +709,7 @@ export const commands = {
 	/**
 	 *  Tauri command: return the most recent MCP tool-call activity entries
 	 *  (oldest first, capped at the ring's 100-entry capacity).
-	 *
+	 * 
 	 *  #695 — read surface for the activity ring. The ring is the
 	 *  shared [`McpActivityRing`] managed state written by both the RO and
 	 *  RW serve tasks, so late subscribers (a Settings tab opened after
@@ -728,7 +728,7 @@ export const commands = {
 	 *  Tauri command: toggle the MCP RW enabled marker file and start / stop
 	 *  the RW serve task accordingly. Mirrors [`mcp_set_enabled`] but binds
 	 *  the **writer** pool into the `ReadWriteTools` registry.
-	 *
+	 * 
 	 *  Serialised through [`McpRwToggleGate`] — see `mcp_set_enabled`
 	 *  for the rationale. RO and RW each hold their own gate so they do
 	 *  not block each other.
@@ -740,7 +740,7 @@ export const commands = {
 	listSpaces: () => typedError<SpaceRow[], AppError>(__TAURI_INVOKE("list_spaces")),
 	/**
 	 *  Tauri command wrapper around [`create_page_in_space_inner`].
-	 *
+	 * 
 	 *  Returns a plain `String` (the new page's ULID) rather than `BlockId`
 	 *  to keep the specta-generated bindings the simple shape the frontend
 	 *  expects. Background cache tasks (tag-inheritance, block-tag-refs,
@@ -750,7 +750,7 @@ export const commands = {
 	createPageInSpace: (parentId: string | null, content: string, spaceId: string) => typedError<string, AppError>(__TAURI_INVOKE("create_page_in_space", { parentId, content, spaceId })),
 	/**
 	 *  Tauri command wrapper around [`create_space_inner`].
-	 *
+	 * 
 	 *  Returns a plain `String` (the new space's ULID). Background cache
 	 *  rebuilds (FTS, tag-inheritance, agenda projection) are dispatched
 	 *  inside `_inner` via `CommandTx`; the wrapper only threads
@@ -805,7 +805,7 @@ export const commands = {
 	 *  Tauri command: paginated page list with per-page metadata columns
 	 *  (last-modified timestamp, inbound link count, descendant count,
 	 *  has-property bitmask) and a richer sort taxonomy than `list_pages`.
-	 *
+	 * 
 	 *  Frontend wires this from `PageBrowser` when the `densityV1` flag is
 	 *  on; the flag-off path continues to use `list_blocks(blockType='page')`.
 	 */
@@ -820,11 +820,11 @@ export const commands = {
 /* Types */
 /**
  *  A block ID that has been verified to refer to an active block.
- *
+ * 
  *  "Active" means the block exists in the materialised `blocks` table
  *  AND `deleted_at IS NULL`. Use [`verify_active`]
  *  to convert a raw [`BlockId`] into this type.
- *
+ * 
  *  **Wire-format parity with [`BlockId`] / `String`:** `serde` uses
  *  `transparent`, and `sqlx::Type` is `transparent` over the inner
  *  `String` — the encoded representation is byte-identical to the
@@ -838,13 +838,13 @@ export type ActiveBlockId = string;
 /**
  *  Row returned by paginated block queries that filter
  *  on `deleted_at IS NULL` in their SQL.
- *
+ * 
  *  Mirror of [`BlockRow`] except `id` is typed [`crate::ulid::ActiveBlockId`]
  *  — a strict subset of the raw block-id space that has been verified
  *  (by the helper's own SQL filter) to refer to a live block. Helpers
  *  that intentionally surface deleted rows (`list_trash`) keep returning
  *  `BlockRow`.
- *
+ * 
  *  Specta emits this as a separate TypeScript type, but `id`'s emit is
  *  `ActiveBlockId` which is itself a transparent alias for `string`. The
  *  runtime wire format is byte-identical to `BlockRow` (same JSON shape,
@@ -853,7 +853,7 @@ export type ActiveBlockId = string;
  *  TypeScript's structural typing accepts `ActiveBlockRow` wherever a
  *  `BlockRow` is expected (and vice-versa) — both have `id: string`
  *  at the wire level.
- *
+ * 
  *  Construction is via `sqlx::query_as` with a column cast like
  *  `id as "id: ActiveBlockId"` (see `fts/search.rs::search_fts` for an
  *  example), or via [`ActiveBlockRow::from_block_row_unchecked`] at the
@@ -894,11 +894,11 @@ export type ActiveProjectedAgendaEntry = {
  *  A single entry in the activity ring. One entry is appended per
  *  `tools/call` completion (success or failure) and emitted on the
  *  `mcp:activity` Tauri event bus.
- *
+ * 
  *  Serialization uses `camelCase` to match the rest of the app's event
  *  payloads. `agent_name` is skipped when `None` so the wire payload
  *  stays compact for user-initiated entries.
- *
+ * 
  *  The `Debug` impl is handwritten to redact `agent_name` — never rely on
  *  `{entry:?}` producing the agent identifier in tracing spans. If an
  *  auditor needs the real name, read it via `entry.agent_name` explicitly.
@@ -909,11 +909,11 @@ export type ActivityEntry = ActivityEntry_Serialize | ActivityEntry_Deserialize;
  *  A single entry in the activity ring. One entry is appended per
  *  `tools/call` completion (success or failure) and emitted on the
  *  `mcp:activity` Tauri event bus.
- *
+ * 
  *  Serialization uses `camelCase` to match the rest of the app's event
  *  payloads. `agent_name` is skipped when `None` so the wire payload
  *  stays compact for user-initiated entries.
- *
+ * 
  *  The `Debug` impl is handwritten to redact `agent_name` — never rely on
  *  `{entry:?}` producing the agent identifier in tracing spans. If an
  *  auditor needs the real name, read it via `entry.agent_name` explicitly.
@@ -950,7 +950,7 @@ export type ActivityEntry_Deserialize = {
 	 *  Populated by the dispatch layer from the `LAST_APPEND`
 	 *  task-local. Serialised as `opRef`; omitted from the wire
 	 *  payload when `None`.
-	 *
+	 * 
 	 *  Multi-op tools surface their additional `OpRef`s on
 	 *  [`ActivityEntry::additional_op_refs`] — for the
 	 *  rationale (forward-compat for `move_subtree` /
@@ -974,11 +974,11 @@ export type ActivityEntry_Deserialize = {
  *  A single entry in the activity ring. One entry is appended per
  *  `tools/call` completion (success or failure) and emitted on the
  *  `mcp:activity` Tauri event bus.
- *
+ * 
  *  Serialization uses `camelCase` to match the rest of the app's event
  *  payloads. `agent_name` is skipped when `None` so the wire payload
  *  stays compact for user-initiated entries.
- *
+ * 
  *  The `Debug` impl is handwritten to redact `agent_name` — never rely on
  *  `{entry:?}` producing the agent identifier in tracing spans. If an
  *  auditor needs the real name, read it via `entry.agent_name` explicitly.
@@ -1015,7 +1015,7 @@ export type ActivityEntry_Serialize = {
 	 *  Populated by the dispatch layer from the `LAST_APPEND`
 	 *  task-local. Serialised as `opRef`; omitted from the wire
 	 *  payload when `None`.
-	 *
+	 * 
 	 *  Multi-op tools surface their additional `OpRef`s on
 	 *  [`ActivityEntry::additional_op_refs`] — for the
 	 *  rationale (forward-compat for `move_subtree` /
@@ -1040,9 +1040,9 @@ export type ActivityEntry_Serialize = {
  *  never the full `AppError` chain — because the summary is rendered in the
  *  Settings activity feed.
  */
-export type ActivityResult =
+export type ActivityResult = 
 /**  The tool call completed successfully. */
-{ kind: "ok" } |
+{ kind: "ok" } | 
 /**
  *  The tool call failed. `String` is a short error description (e.g.
  *  `"block not found"`), not a serialized `AppError`.
@@ -1054,12 +1054,12 @@ export type ActivityResult =
  *  identifying name in Debug output. Agent identifiers (when present) live
  *  on [`ActivityEntry::agent_name`] and are redacted from the `Debug` impl.
  */
-export type ActorKind =
+export type ActorKind = 
 /**
  *  Tool call originated from a user action in the UI (today this never
  *  Happens for the RO server; reserved for RW tools).
  */
-"user" |
+"user" | 
 /**
  *  Tool call originated from an external agent connected via the MCP
  *  socket.
@@ -1070,7 +1070,7 @@ export type ActorKind =
  *  A composable advanced query: a boolean [`FilterExpr`] tree over the
  *  structural filter dimensions, scoped to one space, with an optional
  *  multi-key sort and keyset cursor.
- *
+ * 
  *  The `filter` defaults to `And { children: [] }` — the TRUE expression
  *  (`1=1`), i.e. "every block in the space". `sort` defaults to empty (the
  *  engine applies its default keyset on `b.id DESC`). `limit` defaults to
@@ -1136,7 +1136,7 @@ export type AdvancedQueryRequest = {
 
 /**
  *  The paginated result of an advanced query.
- *
+ * 
  *  In FLAT mode (`group_by` absent) `rows` carries the page and `groups` is
  *  empty. In GROUPED mode (`group_by` present) `groups` carries the bucket
  *  page and `rows` is empty. `next_cursor` / `has_more` / `total_count`
@@ -1173,7 +1173,7 @@ export type AdvancedQueryResponse = {
 
 /**
  *  Bundled agenda filter for the [`list_blocks`] Tauri command.
- *
+ * 
  *  Exists purely to keep `list_blocks`'s argument count under the
  *  `tauri-specta` 10-arg limit after Phase 2 added `space_id`.
  *  The three sub-fields were previously top-level parameters and are
@@ -1182,7 +1182,7 @@ export type AdvancedQueryResponse = {
  *  filter applies" (the common case), and each sub-field remains
  *  optional inside the struct so callers can still specify a single
  *  date without the range, etc.
- *
+ * 
  *  Serde `rename_all = "camelCase"` matches the Tauri command-arg
  *  convention (camelCase keys on the IPC boundary), so the hand-written
  *  TS wrapper in `src/lib/tauri.ts` can pass `{ dateRange, source, date }`
@@ -1198,21 +1198,21 @@ export type AgendaQuery = {
 };
 
 /**  The closed set of aggregate operators. */
-export type AggOp =
+export type AggOp = 
 /**
  *  Row count (`COUNT(*)` with no target, else `COUNT(<numeric expr>)`).
  *  Result lands in [`AggregateResult::count`] (an `i64`).
  */
-"count" |
+"count" | 
 /**  Numeric sum. Result lands in [`AggregateResult::value`] (an `f64`). */
-"sum" |
+"sum" | 
 /**
  *  Numeric average over the NUMERIC rows (the non-numeric rows are skipped,
  *  so the denominator is the numeric count, not the row count).
  */
-"avg" |
+"avg" | 
 /**  Numeric minimum. */
-"min" |
+"min" | 
 /**  Numeric maximum. */
 "max";
 
@@ -1220,21 +1220,21 @@ export type AggOp =
  *  The closed set of block columns an aggregate may fold. Closed (rather than a
  *  free `String`) so an aggregate column can NEVER be a user-controlled string
  *  spliced into SQL.
- *
+ * 
  *  Both columns are numeric-coerced through the same numeric-skip guard as a
  *  property: `priority` is a TEXT column (it stores `select` values like
  *  `"1"`/`"2"`/`"3"` — or non-numeric labels, which are skipped), and
  *  `position` is INTEGER.
  */
-export type AggregateColumn =
+export type AggregateColumn = 
 /**  `b.priority` (TEXT; numeric-coerced, non-numeric labels skipped). */
-"priority" |
+"priority" | 
 /**  `b.position` (INTEGER). */
 "position";
 
 /**
  *  One aggregate's computed result, in request order.
- *
+ * 
  *  [`AggOp::Count`] fills `count` (the integer row/numeric count); the fold
  *  operators ([`AggOp::Sum`] / `Avg` / `Min` / `Max`) fill `value` (the `f64`
  *  result), which is `None` when the set is empty or every contributing value
@@ -1254,7 +1254,7 @@ export type AggregateResult = {
 
 /**
  *  One requested aggregate: an operator over an optional target.
- *
+ * 
  *  `Count` with no `target` is `COUNT(*)` (every matched row); `Count` WITH a
  *  target counts the rows whose target value is numeric (non-NULL after the
  *  numeric-skip coercion). `Sum` / `Avg` / `Min` / `Max` REQUIRE a numeric
@@ -1272,22 +1272,22 @@ export type AggregateSpec = {
 
 /**
  *  What an [`AggregateSpec`] aggregates over. Internally-tagged on `"type"`.
- *
+ * 
  *  `Column` is a closed set of numeric-ish block columns (never a
  *  user-supplied identifier). `Property` aggregates the per-block NUMERIC
  *  value of a typed property; its `key` is BOUND as a `?` parameter, never
  *  interpolated. So aggregation cannot inject SQL.
  */
-export type AggregateTarget =
+export type AggregateTarget = 
 /**  Aggregate a fixed numeric-ish block column (closed [`AggregateColumn`]). */
-{ type: "Column";
+{ type: "Column"; 
 /**  Which column to aggregate. */
-name: AggregateColumn } |
+name: AggregateColumn } | 
 /**
  *  Aggregate the numeric value of a typed property (`block_properties`),
  *  keyed by `key`. Non-numeric values are SKIPPED by the numeric guard.
  */
-{ type: "Property";
+{ type: "Property"; 
 /**  The property key whose `value_text` is read + numeric-coerced. */
 key: string };
 
@@ -1314,7 +1314,7 @@ export type AttachmentRow = {
 	/**
 	 *  blake3 hex digest of the file bytes (#1453 Phase 1). Same scheme as the
 	 *  file-sync layer (`sync_files.rs`), so it matches the sync offer's hash.
-	 *
+	 * 
 	 *  `None` for rows attached before migration 0093, or whose file was
 	 *  missing on disk when the boot-time backfill ran. Persisted only — the
 	 *  dedup / skip-transfer / mutation-safety USES of it are follow-ups.
@@ -1324,23 +1324,23 @@ export type AttachmentRow = {
 
 /**
  *  Tagged union of filter predicates for backlink queries.
- *
+ * 
  *  Filters are combined with AND semantics at the top level.
  *  Use `And`/`Or`/`Not` variants for compound boolean logic.
  */
-export type BacklinkFilter = { type: "PropertyText"; key: string; op: CompareOp; value: string } | { type: "PropertyNum"; key: string; op: CompareOp; value: number | null } | { type: "PropertyDate"; key: string; op: CompareOp; value: string } | { type: "PropertyIsSet"; key: string } | { type: "PropertyIsEmpty"; key: string } |
+export type BacklinkFilter = { type: "PropertyText"; key: string; op: CompareOp; value: string } | { type: "PropertyNum"; key: string; op: CompareOp; value: number | null } | { type: "PropertyDate"; key: string; op: CompareOp; value: string } | { type: "PropertyIsSet"; key: string } | { type: "PropertyIsEmpty"; key: string } | 
 /**  Filter blocks by todo_state column (direct, no block_properties join). */
-{ type: "TodoState"; state: string } |
+{ type: "TodoState"; state: string } | 
 /**  Filter blocks by priority column (direct, no block_properties join). */
-{ type: "Priority"; level: string } |
+{ type: "Priority"; level: string } | 
 /**  Filter blocks by due_date column with comparison operator. */
-{ type: "DueDate"; op: CompareOp; value: string } | { type: "HasTag"; tag_id: string } | { type: "HasTagPrefix"; prefix: string } | { type: "Contains"; query: string } | { type: "CreatedInRange"; after: string | null; before: string | null } | { type: "BlockType"; block_type: string } |
+{ type: "DueDate"; op: CompareOp; value: string } | { type: "HasTag"; tag_id: string } | { type: "HasTagPrefix"; prefix: string } | { type: "Contains"; query: string } | { type: "CreatedInRange"; after: string | null; before: string | null } | { type: "BlockType"; block_type: string } | 
 /**  Filter by source page — include/exclude blocks based on their root page ancestor. */
 { type: "SourcePage"; included: string[]; excluded: string[] } | { type: "And"; filters: BacklinkFilter[] } | { type: "Or"; filters: BacklinkFilter[] } | { type: "Not"; filter: BacklinkFilter };
 
 /**
  *  A group of backlinks from the same source page.
- *
+ * 
  *  `blocks` is `ActiveBlockRow`-typed; same rationale as
  *  [`BacklinkQueryResponse::items`].
  */
@@ -1360,7 +1360,7 @@ export type BacklinkGroup = {
 
 /**
  *  Response for a filtered backlink query, including total count.
- *
+ * 
  *  `items` is `ActiveBlockRow`-typed because the backlink
  *  resolver filters deleted_at IS NULL` on every
  *  candidate source block (`backlink/query.rs::eval_backlink_query`,
@@ -1380,10 +1380,10 @@ export type BacklinkSort = { type: "Created"; dir: SortDir } | { type: "Property
 /**
  *  Newtype wrapper around ULID for type safety and consistent serialisation.
  *  Stores the canonical uppercase Crockford base32 representation.
- *
+ * 
  *  Primary type for block IDs. Type aliases below provide semantic names for
  *  non-block entity IDs (attachments, snapshots) that are also ULIDs.
- *
+ * 
  *  **Deserialization normalizes to canonical Crockford base32** — any valid
  *  ULID string (lowercase, mixed-case) is accepted and stored in canonical
  *  uppercase form. This is critical for blake3 hash determinism.
@@ -1392,7 +1392,7 @@ export type BlockId = string;
 
 /**
  *  Row returned by paginated block queries.
- *
+ * 
  *  Took the parallel-types path (over the explored
  *  `BlockRow<Id = String>` generic, which collided with two
  *  `specta-typescript` 0.0.11 constraints — no generic-default emit and
@@ -1429,7 +1429,7 @@ export type BugReport = {
 	/**
 	 *  Last [`RECENT_ERRORS_CAP`] error/warn lines from today's
 	 *  `agaric.log`, newest last.
-	 *
+	 * 
 	 *  #609: ALWAYS redacted through the same pipeline as the ZIP export
 	 *  ([`redact_line_with_redactor`]) — the frontend embeds these lines
 	 *  verbatim into the prefilled PUBLIC GitHub issue body
@@ -1462,7 +1462,7 @@ export type CompareOp = "Eq" | "Neq" | "Lt" | "Gt" | "Lte" | "Gte" | "Contains" 
 
 /**
  *  One row of [`create_blocks_batch_inner`]'s input list.
- *
+ * 
  *  Mirrors the per-block argument set the FE used to send to `create_block`
  *  once per descendant / per markdown line in `template-utils.ts`. The
  *  `properties` map carries arbitrary `key -> value_text` pairs that land
@@ -1507,26 +1507,26 @@ export type CreateBlockSpec = {
 };
 
 /**  The calendar granularity of a [`GroupKey::DateBucket`]. */
-export type DateBucketUnit =
+export type DateBucketUnit = 
 /**  One bucket per calendar day, rendered `YYYY-MM-DD`. */
-"day" |
+"day" | 
 /**  One bucket per ISO-ish week, rendered `YYYY-Www` (`strftime('%Y-W%W')`). */
-"week" |
+"week" | 
 /**  One bucket per calendar month, rendered `YYYY-MM`. */
 "month";
 
 /**  The date column / timestamp a [`GroupKey::DateBucket`] buckets over. */
-export type DateField =
+export type DateField = 
 /**  `b.due_date` (TEXT ISO `YYYY-MM-DD`). */
-"due" |
+"due" | 
 /**  `b.scheduled_date` (TEXT ISO `YYYY-MM-DD`). */
-"scheduled" |
+"scheduled" | 
 /**
  *  Creation time. Derived from the EARLIEST `op_log.created_at`
  *  (epoch-ms) for the block; blocks with no op-log row have no created
  *  date → the `"none"` bucket.
  */
-"created" |
+"created" | 
 /**
  *  Last-edited time. Derived from the LATEST `op_log.created_at`
  *  (epoch-ms) for the block; same no-op-log rule as `Created`.
@@ -1536,9 +1536,9 @@ export type DateField =
 /**
  *  Date-filter shape used by [`SearchFilter::due_filter`] /
  *  [`SearchFilter::scheduled_filter`].
- *
+ * 
  *  Two variants:
- *
+ * 
  *  - [`DateFilter::Named`] — bucket keyword resolved at query time
  *    against `chrono::Local::today()` (or the cell-injected clock in
  *    tests). Vocabulary: `overdue`, `today`, `yesterday`, `this-week`,
@@ -1547,14 +1547,14 @@ export type DateField =
  *  - [`DateFilter::Op`] — explicit comparison operator (`<`, `<=`, `=`,
  *    `>=`, `>`) followed by an ISO `YYYY-MM-DD` date. The frontend
  *    parser accepts the same shape (`due:>=2026-01-01`).
- *
+ * 
  *  `#[serde(rename_all = "camelCase")]` on the enum variants keeps the
  *  wire shape ergonomic for the TS side: the AST projection emits
  *  `{ named: "today" }` or `{ op: { op: "gte", date: "2026-01-01" } }`.
  */
-export type DateFilter =
+export type DateFilter = 
 /**  Named bucket — resolved to a date predicate at query time. */
-({ named: NamedDateRange }) & { op?: never } |
+({ named: NamedDateRange }) & { op?: never } | 
 /**  Explicit comparison operator + ISO date. */
 ({ op: {
 	/**
@@ -1582,12 +1582,12 @@ export type DateOp = "lt" | "lte" | "eq" | "gte" | "gt";
  *  are **lexical**: ISO-8601 dates sort the same byte-wise as
  *  chronologically, so `'2026-01-02' > '2026-01-01'` holds as a string
  *  compare.
- *
+ * 
  *  Internally-tagged on `"type"` (PascalCase). The TS union reads
  *  `{ type: "IsNull" } | { type: "Before", date } | { type: "After", date }
  *  | { type: "OnOrBefore", date } | { type: "OnOrAfter", date }
  *  | { type: "On", date } | { type: "Between", from, to }`.
- *
+ * 
  *  **`On` and the calendar-day rule:** `On YYYY-MM-DD` means "the whole
  *  calendar day". When the underlying column is *pure* `YYYY-MM-DD` (no
  *  time component) a lexical `= ?` already matches the whole day — that is
@@ -1599,22 +1599,22 @@ export type DateOp = "lt" | "lte" | "eq" | "gte" | "gt";
  *  day range `>= 'd' AND < 'd+1day'` so daytime values on the named day are
  *  included (mirroring `compile_last_edited`'s end-of-day handling).
  */
-export type DatePredicate =
+export type DatePredicate = 
 /**  The column is NULL (unset). */
-{ type: "IsNull" } |
+{ type: "IsNull" } | 
 /**  Strictly before the given date (`< 'date'`). */
-{ type: "Before"; date: string } |
+{ type: "Before"; date: string } | 
 /**  Strictly after the given date (`> 'date'`). */
-{ type: "After"; date: string } |
+{ type: "After"; date: string } | 
 /**  On or before the given date (`<= 'date'`). */
-{ type: "OnOrBefore"; date: string } |
+{ type: "OnOrBefore"; date: string } | 
 /**  On or after the given date (`>= 'date'`). */
-{ type: "OnOrAfter"; date: string } |
+{ type: "OnOrAfter"; date: string } | 
 /**
  *  Exactly on the given calendar day. See the type-level doc for the
  *  day-expansion rule.
  */
-{ type: "On"; date: string } |
+{ type: "On"; date: string } | 
 /**  Inclusive range `BETWEEN 'from' AND 'to'`. */
 { type: "Between"; from: string; to: string };
 
@@ -1665,14 +1665,14 @@ export type Draft = {
 
 /**
  *  Bundled extra filters for the [`query_by_property`] Tauri command.
- *
+ * 
  *  Exists purely to keep `query_by_property`'s argument count under
  *  The `tauri-specta` 10-arg limit. added
  *  `exclude_parent_id` / `content_non_empty` (pushing this command
  *  To 9 IPC args incl. `pool`); adds another three
  *  (`block_type`, `value_text_in`, `value_date_range`). Bundling all
  *  five into one struct keeps the IPC arg count at 8.
- *
+ * 
  *  The five sub-fields are still threaded into
  *  `query_by_property_inner` as individual parameters — bundling is a
  *  transport-layer concern. `None` means "no extra filter applies"
@@ -1681,7 +1681,7 @@ export type Draft = {
  *  wrapper in `src/lib/tauri.ts` keeps the flat public API and
  *  marshals into this struct only at the IPC boundary, mirroring the
  *  [`AgendaQuery`] precedent on `list_blocks`.
- *
+ * 
  *  Serde `rename_all = "camelCase"` matches the Tauri command-arg
  *  convention.
  */
@@ -1721,27 +1721,27 @@ export type ExtraQueryFilters = {
 
 /**
  *  A boolean tree over [`FilterPrimitive`] leaves.
- *
+ * 
  *  Struct variants (not newtype/tuple variants) for the same reason
  *  [`FilterPrimitive`] uses them: serde's internally-tagged representation
  *  (`#[serde(tag = "type")]`) does not support newtype variants wrapping a
  *  non-struct, and named fields give the TS union self-describing shapes
  *  (`{ type: "Not", child }`).
  */
-export type FilterExpr =
+export type FilterExpr = 
 /**  A single primitive leaf. */
-{ type: "Leaf"; primitive: FilterPrimitive } |
+{ type: "Leaf"; primitive: FilterPrimitive } | 
 /**  Conjunction — every child must match. Empty = TRUE (`1=1`). */
-{ type: "And"; children: FilterExpr[] } |
+{ type: "And"; children: FilterExpr[] } | 
 /**  Disjunction — at least one child must match. Empty = FALSE (`1=0`). */
-{ type: "Or"; children: FilterExpr[] } |
+{ type: "Or"; children: FilterExpr[] } | 
 /**  Set complement of the child (3-valued `NOT COALESCE((…), 0)`). */
 { type: "Not"; child: FilterExpr };
 
 /**
  *  One filter atom in a compound-filter expression. Variants are tagged
  *  so the cross-surface SQL composer can dispatch via match.
- *
+ * 
  *  **Wire shape (Phase 3):** internally-tagged on `"type"` with
  *  PascalCase variant names, matching `BacklinkFilter`. Every variant is
  *  a struct variant (single-field where the prior backend-only shape used
@@ -1750,29 +1750,29 @@ export type FilterExpr =
  *  give the frontend a self-describing field name (`{ type: "Tag", tag }`
  *  rather than a bare positional value).
  */
-export type FilterPrimitive =
+export type FilterPrimitive = 
 /**  Shared — block carries this tag id directly. */
-{ type: "Tag"; tag: string } |
+{ type: "Tag"; tag: string } | 
 /**
  *  Shared — block carries `tag` via an ATTACHED `block_tags` row OR an
  *  inline `block_tag_refs` reference (`source_id`). The ref-inclusive tag
  *  semantics the legacy `query_by_tags`/`filtered_blocks_query` paths use;
  *  `Tag` is attached-only.
  */
-{ type: "TagOrRef"; tag: string } |
+{ type: "TagOrRef"; tag: string } | 
 /**
  *  Shared — block's `parent_id` equals `parent` (its direct children).
  *  Mirrors the legacy `list_blocks(parent_id=…)` backlinks path.
  */
-{ type: "ChildOf"; parent: string } |
+{ type: "ChildOf"; parent: string } | 
 /**
  *  Shared — page name matches the GLOB pattern. `exclude=true`
  *  becomes a `NOT IN (...)` sub-select; otherwise an `IN (...)`.
  */
-{ type: "PathGlob"; pattern: string; exclude: boolean } |
+{ type: "PathGlob"; pattern: string; exclude: boolean } | 
 /**
  *  Shared — block carries a property matching this predicate.
- *
+ * 
  *  D8 (make invalid states unrepresentable): the predicate is a
  *  single nested [`PropertyPredicate`] enum rather than a separate
  *  `op` + `Option<value>` pair. This guarantees by construction that
@@ -1781,56 +1781,56 @@ export type FilterPrimitive =
  *  are simply not expressible, so `compile_has_property` no longer
  *  needs an `unsupported()` fallback.
  */
-{ type: "HasProperty"; key: string; predicate: PropertyPredicate } |
+{ type: "HasProperty"; key: string; predicate: PropertyPredicate } | 
 /**  Shared — block's `last_modified_at` falls in this window. */
-{ type: "LastEdited"; spec: LastEditedSpec } |
+{ type: "LastEdited"; spec: LastEditedSpec } | 
 /**  Shared — block's owning page lives in this space. */
-{ type: "Space"; space_id: string } |
+{ type: "Space"; space_id: string } | 
 /**
  *  Shared — block's `priority` is in `values` (or IS NULL when
  *  `is_null`). `exclude=true` negates the membership test. Multi-value
  *  to support the chip vocabulary; the single-value backlink `Priority`
  *  leaf routes to `{ values: [priority], is_null: false, exclude: false }`.
  */
-{ type: "Priority"; values: string[]; is_null?: boolean; exclude?: boolean } |
+{ type: "Priority"; values: string[]; is_null?: boolean; exclude?: boolean } | 
 /**
  *  #1280 — block's `todo_state` is in `values` (or IS NULL when
  *  `is_null`). `exclude=true` negates the membership test. Multi-value
  *  to support the chip vocabulary; the single-value backlink `TodoState`
  *  leaf routes to `{ values: [state], is_null: false, exclude: false }`.
  */
-{ type: "State"; values: string[]; is_null?: boolean; exclude?: boolean } |
+{ type: "State"; values: string[]; is_null?: boolean; exclude?: boolean } | 
 /**
  *  #1280 — block's `block_type` is in `values`. `exclude=true` negates.
  *  The single-value backlink `BlockType` leaf routes to
  *  `{ values: [block_type], exclude: false }`.
  */
-{ type: "BlockType"; values: string[]; exclude: boolean } |
+{ type: "BlockType"; values: string[]; exclude: boolean } | 
 /**  #1280 — block's `due_date` matches the date predicate. */
-{ type: "DueDate"; predicate: DatePredicate } |
+{ type: "DueDate"; predicate: DatePredicate } | 
 /**  #1280 — block's `scheduled_date` matches the date predicate. */
-{ type: "Scheduled"; predicate: DatePredicate } |
+{ type: "Scheduled"; predicate: DatePredicate } | 
 /**
  *  #1280 — block was created (by ULID-prefix range) at or after `after`
  *  and before `before`. Bounds are ISO dates; the projection converts
  *  each to a ULID prefix and compares `b.id`. Routes the backlink
  *  `CreatedInRange` leaf.
  */
-{ type: "Created"; after: string | null; before: string | null } |
+{ type: "Created"; after: string | null; before: string | null } | 
 /**
  *  #1455 — block has an OUTBOUND link to the concrete `target` block id:
  *  `EXISTS (SELECT 1 FROM block_links l WHERE l.source_id = b.id AND
  *  l.target_id = ?)`. The richer "target is itself a `FilterExpr`" form
  *  is a deliberate follow-up; this leaf takes a concrete id.
  */
-{ type: "LinksTo"; target: string } |
+{ type: "LinksTo"; target: string } | 
 /**
  *  #1455 — block has an INBOUND link FROM the concrete `source` block id
  *  (inverse of [`LinksTo`]): `EXISTS (SELECT 1 FROM block_links l WHERE
  *  l.target_id = b.id AND l.source_id = ?)`. The richer FilterExpr-source
  *  form is a follow-up; this leaf takes a concrete id.
  */
-{ type: "LinkedFrom"; source: string } |
+{ type: "LinkedFrom"; source: string } | 
 /**
  *  #1455 — block's PARENT row satisfies the nested `matcher` expression:
  *  `EXISTS (SELECT 1 FROM blocks p WHERE p.id = b.parent_id AND
@@ -1842,34 +1842,34 @@ export type FilterPrimitive =
  *  depth gate descends into the boxed matcher (#1455), so the compile
  *  recursion cannot run away.
  */
-{ type: "HasParentMatching"; matcher: FilterExpr } |
+{ type: "HasParentMatching"; matcher: FilterExpr } | 
 /**
  *  Pages-only — page has no inbound links AND no outbound links.
  *  (`HasNoInboundLinks` is the looser inbound-only sibling.)
  */
-{ type: "Orphan" } |
+{ type: "Orphan" } | 
 /**
  *  Pages-only — page has zero non-title descendants. Per
  *  "Page
  *  whose only block is its own title row (zero non-title
  *  descendants)". Backed by `pages_cache.child_block_count == 0`.
  */
-{ type: "Stub" } |
+{ type: "Stub" } | 
 /**  Pages-only — page has no inbound links (looser than `Orphan`). */
-{ type: "HasNoInboundLinks" } |
+{ type: "HasNoInboundLinks" } | 
 /**  Search-only — regex pattern over block content. */
-{ type: "Regex"; pattern: string } |
+{ type: "Regex"; pattern: string } | 
 /**  Search-only — case-sensitive match toggle (post-FTS filter). */
-{ type: "CaseSensitive"; enabled: boolean } |
+{ type: "CaseSensitive"; enabled: boolean } | 
 /**  Search-only — whole-word match toggle (ASCII `\b` semantics). */
-{ type: "WholeWord"; enabled: boolean } |
+{ type: "WholeWord"; enabled: boolean } | 
 /**  Search-only — FTS5 `snippet()` window spec. */
 { type: "Snippet"; spec: SnippetSpec };
 
 /**
  *  Result of [`flush_all_drafts_inner`]: how many drafts were processed
  *  inside the single transaction.
- *
+ * 
  *  Returned by the boot-recovery one-IPC flush so the
  *  frontend can surface a recovery toast / log line.
  */
@@ -1884,59 +1884,59 @@ export type FlushAllDraftsResult = {
 
 /**
  *  The dimension an advanced query groups by. Internally-tagged on `"type"`.
- *
+ * 
  *  Every variant resolves to a fixed SQL group-key expression built from
  *  STATIC column literals; the only user-controlled inputs are bound as `?`
  *  parameters ([`GroupKey::Property`]'s `key`, [`GroupKey::DateBucket`]'s
  *  `source`/`unit` — and `unit` maps to a literal `strftime` format, never
  *  interpolated). No user string is ever spliced in as an identifier, so
  *  grouping cannot inject SQL.
- *
+ * 
  *  **Multiplicity:** [`GroupKey::Tag`] is the only MULTI-valued key — a
  *  block with K tags lands in K groups. All others are single-valued.
  */
-export type GroupKey =
+export type GroupKey = 
 /**
  *  Group by tag (`block_tags.tag_id`). Joins `block_tags`, so a block
  *  appears once per tag it carries (documented multiplicity).
  */
-{ type: "Tag" } |
+{ type: "Tag" } | 
 /**
  *  Group by owning page (`b.page_id`). Blocks with no page bucket under
  *  the rendered key `"none"`.
  */
-{ type: "Page" } |
+{ type: "Page" } | 
 /**
  *  Group by todo state (`b.todo_state`); NULL state → the `"none"`
  *  bucket.
  */
-{ type: "State" } |
+{ type: "State" } | 
 /**  Group by block type (`b.block_type`), always non-NULL. */
-{ type: "BlockType" } |
+{ type: "BlockType" } | 
 /**  Group by priority (`b.priority`); NULL → the `"none"` bucket. */
-{ type: "Priority" } |
+{ type: "Priority" } | 
 /**
  *  Group by a typed property's `value_text` (correlated lookup on
  *  `block_properties` keyed by `key`); blocks lacking the property →
  *  the `"none"` bucket. `key` is BOUND as a `?` parameter.
  */
-{ type: "Property";
+{ type: "Property"; 
 /**  The property key to read `value_text` for. */
-key: string } |
+key: string } | 
 /**
  *  Group by a calendar bucket over a date column. `source` selects the
  *  column / op-log timestamp; `unit` selects the `strftime` granularity.
  *  Blocks with no date in the source → the `"none"` bucket.
  */
-{ type: "DateBucket";
+{ type: "DateBucket"; 
 /**  Which date the bucket is computed over. */
-source: DateField;
+source: DateField; 
 /**  The calendar granularity (day / ISO-week / month). */
 unit: DateBucketUnit };
 
 /**
  *  A grouping directive: bucket the matched rows by ONE dimension.
- *
+ * 
  *  C4 will extend this with per-group aggregates; for now it carries only
  *  the [`GroupKey`].
  */
@@ -1972,14 +1972,14 @@ export type HistoryEntry = {
 
 /**
  *  Streaming progress payload for a single `import_markdown` call (#128).
- *
+ * 
  *  Carried over a Tauri `Channel<ImportProgressUpdate>` so a long import
  *  can render a per-block progress bar instead of a bare spinner. The
  *  enum is `Serialize` + `Type` only (no `Deserialize`) — like
  *  [`crate::sync_events::SyncProgressUpdate`], it is a one-way
  *  backend→frontend payload. Frontend consumers switch on `kind` and read
  *  the variant-specific fields.
- *
+ * 
  *  Emission contract (see `import_markdown_inner`): exactly one
  *  [`Started`](ImportProgressUpdate::Started) before any block is written,
  *  one [`Progress`](ImportProgressUpdate::Progress) per block created, and
@@ -1989,23 +1989,23 @@ export type HistoryEntry = {
  *  returns `Err`), so a consumer that never sees `Complete` must treat the
  *  import as failed.
  */
-export type ImportProgressUpdate =
+export type ImportProgressUpdate = 
 /**
  *  Emitted once, before the first block is created. `blocks_total` is
  *  the parser's block count, so the UI can render a determinate bar
  *  from the very first event. May be 0 for an empty / headings-only
  *  file.
  */
-{ kind: "started";
+{ kind: "started"; 
 /**  Title derived from the filename (or the fallback). */
-page_title: string;
+page_title: string; 
 /**  Total blocks the parser produced for this file. */
-blocks_total: number } |
+blocks_total: number } | 
 /**
  *  Emitted after each block is created inside the transaction.
  *  `blocks_done` counts up to `blocks_total`.
  */
-{ kind: "progress"; blocks_done: number; blocks_total: number } |
+{ kind: "progress"; blocks_done: number; blocks_total: number } | 
 /**
  *  Emitted once, AFTER the transaction commits successfully. Mirrors
  *  the returned [`ImportResult`] counts so a consumer can render the
@@ -2044,16 +2044,16 @@ export type ImportResult = {
 
 /**
  *  `last-edited:` time-window spec.
- *
+ * 
  *  Internally-tagged on `"type"` (PascalCase) so the TS union reads
  *  `{ type: "Rolling", days } | { type: "Range", start, end }
  *  | { type: "OlderThan", days }`.
- *
+ * 
  *  Phase 2 review — the existing variants already cover the
  *  Plan's full bucket vocabulary (pending/-pages-view-compound-
  *  filters.md:144, lines 308-310). No `LastEditedBucket` variant is
  *  needed — the parser maps each chip token to one of these variants:
- *
+ * 
  *  | Chip token                | Variant               |
  *  |---------------------------|-----------------------|
  *  | `last-edited:today`       | `Rolling { days: 1 }`  |
@@ -2062,15 +2062,15 @@ export type ImportResult = {
  *  | `last-edited:older`       | `OlderThan { days: 30 }` |
  *  | `last-edited:>=YYYY-MM-DD` | `Range { .. }`        |
  */
-export type LastEditedSpec =
+export type LastEditedSpec = 
 /**
  *  Rolling N-days window. `Today`, `ThisWeek`, `ThisMonth` map to
  *  1 / 7 / 30. Custom values are accepted but documented as
  *  "rolling, not calendar".
  */
-{ type: "Rolling"; days: number } |
+{ type: "Rolling"; days: number } | 
 /**  Absolute date range (ISO 8601 dates, inclusive on both ends). */
-{ type: "Range"; start: string; end: string } |
+{ type: "Range"; start: string; end: string } | 
 /**
  *  Older than the given rolling N-days window (the inverse of
  *  `Rolling`). Used by `last-edited:older` chip.
@@ -2096,7 +2096,7 @@ export type LinkMetadata = {
 	 *  sign-in) and from "transient" (5xx — both flags false plus
 	 *  `title.is_none()`). The frontend uses this to render a "(not
 	 *  found)" tag and suppress the favicon.
-	 *
+	 * 
 	 *  `#[serde(default)]` so any legacy serialized blob — e.g. a
 	 *  cached snapshot deserialized before this field existed — keeps
 	 *  deserializing cleanly as `false`.
@@ -2129,7 +2129,7 @@ export type LogFileEntry = {
 
 /**
  *  Match span emitted by the toggle pipeline.
- *
+ * 
  *  The `start` / `end` indices are **UTF-16 code-unit offsets** into the
  *  block's content string — chosen to match JavaScript's native string
  *  indexing (`.length`, `.substring`, `.charCodeAt`). Rust's `regex`
@@ -2161,7 +2161,7 @@ export type McpRwStatus = {
 
 /**
  *  Snapshot of the MCP RO server state surfaced to the Settings tab.
- *
+ * 
  *  `socket_path` is a display string on every platform (the Unix socket
  *  filesystem path on Linux / macOS, the named-pipe path on Windows).
  *  `active_connections` reports the instantaneous count from
@@ -2181,9 +2181,9 @@ export type MoveResponse = {
 
 /**
  *  Named date buckets recognised by [`DateFilter::Named`].
- *
+ * 
  *  Resolution semantics (today = `chrono::Local::today()`):
- *
+ * 
  *  - `Overdue`   → column `< today AND column IS NOT NULL`.
  *  - `Today`     → column `= today`.
  *  - `Yesterday` → column `= today - 1d`.
@@ -2206,7 +2206,7 @@ export type OpRef = {
  *  Page header for callers that need every page in a space without
  *  pagination.  Used by the markdown export (`exportGraphAsZip`) and by
  *  the graph view, which both want the full set in one shot.
- *
+ * 
  *  Includes the four agenda-shaped native columns on `blocks`
  *  (`todo_state` / `priority` / `due_date` / `scheduled_date`) because
  *  the graph node renderer keys node colour / icons on them.  The
@@ -2223,11 +2223,11 @@ export type PageHeading = {
 
 /**
  *  A block id in its role as a page reference.
- *
+ * 
  *  Read a `page_id` TEXT column into this type when the value names a page
  *  (or the owning page of a block). It is a drop-in replacement for
  *  reading the column as [`BlockId`] / `String`.
- *
+ * 
  *  **Wire-format parity with [`BlockId`] / `String`:** `serde` uses
  *  `transparent` and `sqlx::Type` is `transparent` over the inner
  *  [`BlockId`] (itself transparent over `String`) — the encoded
@@ -2238,7 +2238,7 @@ export type PageId = BlockId;
 
 /**
  *  A link between two pages (for graph visualization).
- *
+ * 
  *  Both endpoints are [`ActiveBlockId`] — `list_page_links_inner` filters
  *  deleted_at IS NULL` on both source and target
  *  Pages (lift of invariant #9 into the type system).
@@ -2268,7 +2268,7 @@ export type PagePropertyFlags = {
 
 /**
  *  Paginated response.
- *
+ * 
  *  `total_count` is `Option<i64>` because cursor pagination does not in
  *  general require a count and most pagination helpers leave it `None`
  *  (the FE detects the end of results via `has_more = false`). A small
@@ -2289,7 +2289,7 @@ export type PageResponse<T> = {
 	 *  the page cursor/limit. `None` when the helper does not compute
 	 *  it (the default). Populated by surfaces that drive an "X of Y"
 	 *  progress indicator.
-	 *
+	 * 
 	 *  Always serialised (no `skip_serializing_if`) so the wire format
 	 *  matches the TS type `number | null` exactly — consumers read
 	 *  `total_count` directly without having to check for an absent key.
@@ -2299,25 +2299,25 @@ export type PageResponse<T> = {
 
 /**
  *  Sort mode for [`list_pages_with_metadata_inner`].
- *
+ * 
  *  These are the server-derived sort modes the IPC exposes. The
  *  frontend may layer two additional sorts that don't go over the wire:
- *
+ * 
  *    - `recent` — per-device visit history (sourced from `getRecentPages()`).
  *    - `created` — ULID DESC (just `Default` reversed in JS).
- *
+ * 
  *  Both reuse the `Default` SQL ordering and re-sort the loaded page
  *  client-side.
  */
-export type PageSort =
+export type PageSort = 
 /**  Title ascending, case-insensitive. Default for "browse my pages". */
-"alphabetical" |
+"alphabetical" | 
 /**  Last-modified timestamp (max op_log.created_at) DESC. */
-"recently-modified" |
+"recently-modified" | 
 /**  Inbound-link count DESC (page + descendant link targets). */
-"most-linked" |
+"most-linked" | 
 /**  Descendant-block count DESC. */
-"most-content" |
+"most-content" | 
 /**
  *  Default backend ordering — block id ASC. Useful for debugging
  *  and as the wire shape for the frontend-only `recent` / `created`
@@ -2329,7 +2329,7 @@ export type PageSort =
  *  Result of [`load_page_subtree_inner`] — the (possibly capped) block
  *  set plus an honest truncation signal so the FE can surface a
  *  non-blocking notice instead of silently dropping descendants.
- *
+ * 
  *  #1258 — the loader caps its returned set at [`PAGE_SUBTREE_MAX_BLOCKS`]
  *  by flat `(position, id)` order, which is NOT structure-preserving: a
  *  surviving deeply-nested child whose parent row was cut becomes an
@@ -2359,7 +2359,7 @@ export type PageSubtree = {
 
 /**
  *  Row returned by [`list_pages_with_metadata_inner`].
- *
+ * 
  *  Carries every `BlockRow` column verbatim so the frontend can read
  *  `id`, `content`, etc. via the same accessors. Four extra metadata
  *  columns drive the new sort modes + density badges.
@@ -2404,7 +2404,7 @@ export type PageWithMetadataRow = {
 
 /**
  *  Response payload returned by [`start_pairing`].
- *
+ * 
  *  The QR payload + [`PairingInfo`] both carry only the passphrase.
  *  mDNS owns discovery + address resolution end-to-end; there is no
  *  scan-bootstrap path that would need a `host`/`port` here.
@@ -2416,9 +2416,9 @@ export type PairingInfo = {
 
 /**
  *  Response envelope for [`search_blocks_partitioned`].
- *
+ * 
  *  Carries two partitions of the same FTS scan in one IPC round-trip:
- *
+ * 
  *  - `pages` — rows where `block_type == "page"`, capped at the
  *    caller's `page_limit`.
  *  - `blocks` — the **unrestricted** rank-ordered set (may include
@@ -2426,7 +2426,7 @@ export type PairingInfo = {
  *    `block_limit`. The palette intentionally shows both together in
  *    this partition; the dedicated `pages` partition is for the
  *    page-group rendering.
- *
+ * 
  *  Neither partition emits a cursor (the palette doesn't paginate) and
  *  `total_count` is always `None`. The `has_more` flag is set per
  *  partition — see [`search_blocks_partitioned`] for the exact
@@ -2483,7 +2483,7 @@ export type PropertyDefinition = {
 
 /**
  *  One property predicate for [`filtered_blocks_query_inner`].
- *
+ * 
  *  Mirrors the per-call shape of [`query_by_property_inner`] so a caller
  *  migrating from the JS-side AND-intersection (`Promise.all` over N
  *  `query_by_property` IPCs) can replay each sub-filter unchanged. Each
@@ -2491,7 +2491,7 @@ export type PropertyDefinition = {
  *  subquery in the composed SQL — the AND-intersection is the
  *  structural conjunction of the EXISTS clauses (no JS post-filter, no
  *  silent row cap).
- *
+ * 
  *  At most one of `value_text` / `value_text_in` / `value_date` /
  *  `value_date_range` should be supplied per filter; mixing them is
  *  rejected with [`AppError::Validation`] at the boundary (mirrors the
@@ -2526,7 +2526,7 @@ export type PropertyFilter = {
 
 /**
  *  Predicate on a `has-property:` primitive.
- *
+ * 
  *  D8 (make invalid states unrepresentable): a single internally-tagged
  *  enum that fuses the operator with its operand. `Eq`/`Ne` carry a
  *  mandatory [`PropertyValue`]; `Exists`/`NotExists` carry none. The
@@ -2535,44 +2535,44 @@ export type PropertyFilter = {
  *  with a value) that had to be rejected at compile time with an
  *  `unsupported()` sentinel. Folding the operand into the operator
  *  variant removes those states from the type entirely.
- *
+ * 
  *  **Wire shape:** internally-tagged on `"type"` (PascalCase) so the TS
  *  union reads `{ type: "Exists" } | { type: "NotExists" }
  *  | { type: "Eq", value: PropertyValue } | { type: "Ne", value: PropertyValue }`.
  */
-export type PropertyPredicate =
+export type PropertyPredicate = 
 /**  Property key exists (no value comparison). */
-{ type: "Exists" } |
+{ type: "Exists" } | 
 /**  Property key does NOT exist. */
-{ type: "NotExists" } |
+{ type: "NotExists" } | 
 /**
  *  Property value equals the given operand. `Text` compares
  *  `value_text`; `Ref` compares `value_ref`.
  */
-{ type: "Eq"; value: PropertyValue } |
+{ type: "Eq"; value: PropertyValue } | 
 /**
  *  Property value does NOT equal the given operand (the block has no
  *  matching `(key, value)` row). `Text` compares `value_text`; `Ref`
  *  compares `value_ref`.
  */
-{ type: "Ne"; value: PropertyValue } |
+{ type: "Ne"; value: PropertyValue } | 
 /**
  *  #1280 — property value is strictly less than the operand. The
  *  compared column is chosen from the [`PropertyValue`] variant (see
  *  [`property_value_column`]).
  */
-{ type: "Lt"; value: PropertyValue } |
+{ type: "Lt"; value: PropertyValue } | 
 /**  #1280 — property value is strictly greater than the operand. */
-{ type: "Gt"; value: PropertyValue } |
+{ type: "Gt"; value: PropertyValue } | 
 /**  #1280 — property value is less than or equal to the operand. */
-{ type: "Lte"; value: PropertyValue } |
+{ type: "Lte"; value: PropertyValue } | 
 /**  #1280 — property value is greater than or equal to the operand. */
-{ type: "Gte"; value: PropertyValue } |
+{ type: "Gte"; value: PropertyValue } | 
 /**
  *  #1280 — property value contains the operand as a substring
  *  (`LIKE '%v%' ESCAPE '\'`). Meaningless on a `Num` value → `1=0`.
  */
-{ type: "Contains"; value: PropertyValue } |
+{ type: "Contains"; value: PropertyValue } | 
 /**
  *  #1280 — property value starts with the operand (`LIKE 'v%' ESCAPE
  *  '\'`). Meaningless on a `Num` value → `1=0`.
@@ -2594,18 +2594,18 @@ export type PropertyRow = {
 
 /**
  *  The right-hand-side value type for `HasProperty`.
- *
+ * 
  *  Internally-tagged on `"type"` (PascalCase) so the TS union reads
  *  `{ type: "Text", value } | { type: "Ref", value }`.
  */
-export type PropertyValue = { type: "Text"; value: string } |
+export type PropertyValue = { type: "Text"; value: string } | 
 /**  References another block via `block_properties.value_ref`. */
-{ type: "Ref"; value: string } |
+{ type: "Ref"; value: string } | 
 /**
  *  #1280 — a numeric value compared against `block_properties.value_num`.
  *  Bound as [`Bind::Real`] so it keeps its native SQLite REAL affinity.
  */
-{ type: "Num"; value: number | null } |
+{ type: "Num"; value: number | null } | 
 /**
  *  #1280 — an ISO-TEXT date value compared against
  *  `block_properties.value_date` (a TEXT column). Bound as
@@ -2621,7 +2621,7 @@ export type PurgeResponse = {
 
 /**
  *  One group bucket of a grouped advanced query.
- *
+ * 
  *  `key` is the RENDERED group key — a tag id, page id, todo state /
  *  priority string, block type, date-bucket label (`YYYY-MM-DD` /
  *  `YYYY-Www` / `YYYY-MM`), or the literal `"none"` for the NULL/absent
@@ -2652,7 +2652,7 @@ export type QueryGroup = {
 /**
  *  One row of an advanced-query page: a block plus its forward-compat
  *  ranking score.
- *
+ * 
  *  `block` is flattened so the wire shape is `{ ...ActiveBlockRow, score }`
  *  — a stable superset of [`ActiveBlockRow`].
  */
@@ -2667,7 +2667,7 @@ export type QueryResultRow = {
 
 /**
  *  #1255: durable, user-visible boot-recovery status.
- *
+ * 
  *  Emitted as the [`EVENT_RECOVERY_DEGRADED`] payload AND returned by the
  *  `get_recovery_status` command so a frontend that mounts after boot can
  *  still discover the degraded state. `degraded = true` means the boot
@@ -2712,7 +2712,7 @@ export type RestoreToOpResult = {
 
 /**
  *  Response row for `search_blocks_inner`.
- *
+ * 
  *  Mirrors `ActiveBlockRow` column-for-column so the wire format is a
  *  strict superset (every field in `ActiveBlockRow` is reproduced
  *  verbatim) and adds `snippet` — the FTS5 [`snippet`] window with
@@ -2721,12 +2721,12 @@ export type RestoreToOpResult = {
  *  `dangerouslySetInnerHTML`); the MCP search tool converts them back to
  *  `<mark>` / `</mark>` so the agent-facing contract is unchanged. See
  *  For the renderer contract.
- *
+ * 
  *  Appends `match_offsets: Vec<MatchOffset>` for the
  *  regex/whole-word offset rendering path; `#[serde(default)]` keeps
  *  The wire shape additive (pre- frontends see an empty array
  *  from absent payloads and fall through to the snippet path).
- *
+ * 
  *  [`snippet`]: https://www.sqlite.org/fts5.html#the_snippet_function
  */
 export type SearchBlockRow = {
@@ -2772,7 +2772,7 @@ export type SearchBlockRow = {
 
 /**
  *  Optional filter bundle for `search_blocks_inner`.
- *
+ * 
  *  Phase 0 collapses the previous positional `parent_id` /
  *  `tag_ids` / `space_id` args into a single struct so the `tauri-specta`
  *  10-arg ceiling stays comfortable as follow-up plans append filter
@@ -2780,9 +2780,9 @@ export type SearchBlockRow = {
  *  the wire deserialises to the field's `Default`, which preserves
  *  today's "no filter" behaviour. Follow-up plans append new fields the
  *  same way; they MUST NOT add positional args.
- *
+ * 
  *  Future appendees (locked in by design section):
- *
+ * 
  *  `include_page_globs`, `exclude_page_globs` (`Vec<String>`).
  *  `case_sensitive`, `whole_word`, `is_regex` (`bool`).
  *  `block_type_filter` (`Option<String>`).
@@ -2898,10 +2898,12 @@ export type SearchFilter = {
 	 *  (...)`. Each entry is matched verbatim against the column. The
 	 *  inversion intentionally includes NULL: a "blocks not in DONE"
 	 *  query should return blocks with no state set at all, not
-	 *  exclude them. The literal keyword `none` (case-insensitive)
-	 *  flips to `todo_state IS NOT NULL` (the `not-state:none` token);
-	 *  a custom state literally called `"none"` is treated as the
-	 *  sentinel — documented in `docs/SEARCH.md`. Empty list = no
+	 *  exclude them. The literal keyword `none` (case-insensitive,
+	 *  the `not-state:none` token) excludes the NULL bucket too: with
+	 *  values it AND-joins to `todo_state IS NOT NULL AND todo_state
+	 *  NOT IN (...)` (#2019), and alone it emits `todo_state IS NOT
+	 *  NULL`. A custom state literally called `"none"` is treated as
+	 *  the sentinel — documented in `docs/SEARCH.md`. Empty list = no
 	 *  Filter (preserves pre- wire compat).
 	 */
 	excludedStateFilter?: string[],
@@ -2929,12 +2931,12 @@ export type SearchFilter = {
 /**
  *  Property predicate for [`SearchFilter::property_filters`] /
  *  [`SearchFilter::excluded_property_filters`].
- *
+ * 
  *  Named separately from the (existing) `PropertyFilter` struct used by
  *  `filtered_blocks_query` — that one carries five typed value fields and
  *  a comparison operator; this one is the simpler `(key, value_text)`
  *  shape the inline `prop:key=value` token produces.
- *
+ * 
  *  `value` is matched against `block_properties.value_text` (the
  *  most-common case for user-typed properties; locked in by the plan's
  *  "Locked-in decisions" #4). An empty `value` matches "block has this
@@ -3006,22 +3008,22 @@ export type SnippetSpec = {
  *  than a free `String`) so a sort column can NEVER be a user-controlled
  *  string spliced into SQL.
  */
-export type SortColumn =
+export type SortColumn = 
 /**
  *  Creation order. The block `id` is a ULID, whose lexical order is
  *  creation order, so `Created` maps to `b.id`.
  */
-"created" |
+"created" | 
 /**
  *  Last-edited time: `MAX(op_log.created_at)` over the block, `COALESCE`d
  *  to the epoch sentinel for blocks with no op-log row (matching
  *  `PagesProjection::compile_last_edited`'s no-op-log rule).
  */
-"lastEdited" |
+"lastEdited" | 
 /**  Sibling position (`b.position`). NULL positions sort last. */
-"position" |
+"position" | 
 /**  `b.priority`. NULL priorities sort last. */
-"priority" |
+"priority" | 
 /**  Page title (`pages_cache.title`) of the block's owning page. */
 "title";
 
@@ -3042,7 +3044,7 @@ export type SortKey = {
 
 /**
  *  The thing a [`SortKey`] orders by.
- *
+ * 
  *  Internally-tagged on `"type"`. `Column` sorts on a fixed block column.
  *  `Relevance` sorts on the full-text `bm25` rank and is ONLY valid when the
  *  request carries a `fulltext` term — the engine rejects it otherwise
@@ -3050,14 +3052,14 @@ export type SortKey = {
  *  and `VectorScore` (vector similarity) remain RESERVED for later
  *  fast-follows.
  */
-export type SortSource =
+export type SortSource = 
 /**
  *  Sort by a fixed, closed-set block column. The column name is NEVER a
  *  user-supplied string — it is a [`SortColumn`] enum the engine maps to
  *  a literal SQL column, so SQL injection through a sort key is
  *  impossible by construction.
  */
-{ type: "Column"; name: SortColumn } |
+{ type: "Column"; name: SortColumn } | 
 /**
  *  Sort by full-text relevance (`fts.rank`, a `bm25` score — lower is
  *  better). Only valid when the request carries a `fulltext` term;
@@ -3067,22 +3069,22 @@ export type SortSource =
 
 /**
  *  Newtype wrapper around a space ULID for type-safety + IPC bindings.
- *
+ * 
  *  Mirrors [`crate::ulid::ActiveBlockId`] (the strict newtype):
  *  transparent serde + transparent sqlx + `specta::Type` so the wire / DB
  *  layers see a plain string while Rust call sites get the named type.
- *
+ * 
  *  # Normalisation
- *
+ * 
  *  Stored value is the canonical uppercase Crockford base32 representation —
  *  AGENTS.md invariant #8. Both `from_string`, `from_trusted`, and the
  *  `Deserialize` impl uppercase via `to_ascii_uppercase` so every path
  *  produces byte-identical output for non-ASCII inputs (e.g. "ß" stays "SS"
  *  is *not* what we want; `to_ascii_uppercase` is the only normaliser that
  *  keeps blake3 hash determinism).
- *
+ * 
  *  # Wire format
- *
+ * 
  *  `serde(transparent)` + `sqlx(transparent)` → JSON / SQLite see a bare
  *  string. Specta emits `export type SpaceId = string;`. The newtype is
  *  purely a Rust-side type-safety gate.
@@ -3093,7 +3095,7 @@ export type SpaceId = string;
  *  A space row returned by [`list_spaces_inner`] — the pieces the
  *  frontend needs to render the switcher (ULID + display name) plus
  *  The visual-identity surface (`accent_color`).
- *
+ * 
  *  `accent_color` carries the free-form palette token (e.g.
  *  `accent-emerald`, `accent-blue`) stored under
  *  `block_properties(key='accent_color', value_text=…)`. `None` means
@@ -3110,24 +3112,24 @@ export type SpaceRow = {
 
 /**
  *  The space scope a list / search query runs under.
- *
+ * 
  *  `Global` — no `block_properties.space` filter is applied (pre-
  *  behaviour, plus journal / settings views that intentionally span all
  *  spaces). `Active(SpaceId)` — restrict results to blocks belonging to
  *  the given space.
- *
+ * 
  *  # Wire format
- *
+ * 
  *  Adjacently-tagged via `#[serde(tag = "kind", content = "space_id")]`:
- *
+ * 
  *  - `SpaceScope::Global`              → `{"kind":"global"}`
  *  - `SpaceScope::Active(SpaceId(id))` → `{"kind":"active","space_id":"<ULID>"}`
- *
+ * 
  *  Specta emits this as a TS discriminated union
  *  (`{ kind: "global" } | { kind: "active"; space_id: SpaceId }`).
- *
+ * 
  *  # Deserialize validates the `Active` id shape (issue #1588)
- *
+ * 
  *  The wire/SQL layers treat the inner `SpaceId` as a trusted-shape string —
  *  [`SpaceId::Deserialize`] only uppercase-normalises (mirroring `BlockId`),
  *  so without a guard a malformed `space_id` from the frontend / MCP / sync
@@ -3292,45 +3294,45 @@ export type StatusInfo = {
 
 /**
  *  Streaming progress payload carried over the sync channel.
- *
+ * 
  *  Made this a tagged enum so a single channel per sync
  *  session carries both the orchestrator's state-transition stream
  *  (`Sync`) and the post-sync attachment-transfer stream (`Files`).
  *  Frontend consumers switch on `kind` and read the variant-specific
  *  fields.
  */
-export type SyncProgressUpdate =
+export type SyncProgressUpdate = 
 /**
  *  Op-sync state transitions (Tier 1). Mirrors the
  *  [`SyncEvent::Progress`] / [`SyncEvent::Complete`] /
  *  [`SyncEvent::Error`] envelope, with `state` carrying
  *  `"complete"` / `"error"` for the terminal cases.
  */
-{ kind: "sync"; state: string; remote_device_id: string; ops_received: number; ops_sent: number } |
+{ kind: "sync"; state: string; remote_device_id: string; ops_received: number; ops_sent: number } | 
 /**
  *  Per-frame attachment transfer progress (Tier 2). Emitted by
  *  `sync_files::run_file_transfer_*` between binary frames so the
  *  UI can render a real bytes-done bar instead of a spinner.
  */
-{ kind: "files";
+{ kind: "files"; 
 /**
  *  `"sending"` (we are pushing files to the peer),
  *  `"receiving"` (we are pulling files from the peer), or
  *  `"complete"` (both halves are done for this session).
  */
-phase: string; remote_device_id: string;
+phase: string; remote_device_id: string; 
 /**  Files fully transferred so far in the current `phase`. */
-files_done: number;
+files_done: number; 
 /**
  *  Total files the peer or we requested for this `phase`. May
  *  be 0 in the steady-state "nothing to transfer" case.
  */
-files_total: number;
+files_total: number; 
 /**
  *  Bytes shipped/received so far in the current `phase`,
  *  including in-progress frames.
  */
-bytes_done: number;
+bytes_done: number; 
 /**  Aggregate byte total advertised for the current `phase`. */
 bytes_total: number };
 
@@ -3353,9 +3355,9 @@ export type TagCacheRow = {
 
 /**
  *  Boolean expression tree for tag queries.
- *
+ * 
  *  # IPC wire format (#1472)
- *
+ * 
  *  Adjacently-tagged via `#[serde(tag = "type", content = "value")]`, the
  *  same shape `SpaceScope` (`space.rs`) and `CursorValue` (`query/engine.rs`)
  *  use for tuple/newtype variants. Internal tagging (`#[serde(tag = "type")]`,
@@ -3364,13 +3366,13 @@ export type TagCacheRow = {
  *  tuple-variant shape — so every in-tree constructor (`TagExpr::Tag(..)`,
  *  `TagExpr::And(vec![..])`, …) is unchanged — while still emitting a
  *  specta-expressible, self-describing TS discriminated union:
- *
+ * 
  *  - `Tag("urgent")`      → `{ "type": "Tag",    "value": "urgent" }`
  *  - `Prefix("work/")`    → `{ "type": "Prefix", "value": "work/" }`
  *  - `And([a, b])`        → `{ "type": "And",    "value": [a, b] }`
  *  - `Or([a, b])`         → `{ "type": "Or",     "value": [a, b] }`
  *  - `Not(a)`             → `{ "type": "Not",    "value": a }`
- *
+ * 
  *  The recursion bottoms out at the `Tag`/`Prefix` leaves, so the type is a
  *  self-referential discriminated union specta emits losslessly. Untrusted
  *  trees deserialised at the IPC boundary MUST be passed through
@@ -3382,7 +3384,7 @@ export type TagExpr = { type: "Tag"; value: string } | { type: "Prefix"; value: 
 
 /**
  *  Tag predicate for [`filtered_blocks_query_inner`].
- *
+ * 
  *  Mirrors the [`query_by_tags_inner`] arg shape. When `mode = "and"`
  *  every supplied tag (id or prefix) must match; `"or"` (default) is
  *  the union. The predicate is composed into ONE `AND EXISTS (…)`
@@ -3414,7 +3416,7 @@ export type TagResponse = {
 
 /**
  *  Payload describing the notification to fire for a due / scheduled task.
- *
+ * 
  *  `title` is required and non-empty; `body` is optional (a notification
  *  with only a title is valid on every platform).  `block_id` is carried
  *  purely so the frontend / a future scheduler can correlate the
@@ -3453,7 +3455,7 @@ export type UndoResult = {
 /**
  *  A single referenced sibling file carried over IPC for an attachment-aware
  *  import (#1925).
- *
+ * 
  *  The frontend (PR 2) pre-scans the picked Logseq/Obsidian vault, collects ONLY
  *  the files actually referenced by the markdown being imported (image embeds,
  *  `assets/...` refs, etc.), reads each into a browser `ArrayBuffer`, and sends
@@ -3462,13 +3464,13 @@ export type UndoResult = {
  *  bytes as a fresh attachment owned by the referencing block (a repeated ref
  *  within one block ingests once; cross-block/cross-page asset dedup is deferred
  *  to #1993), and rewrites the ref to the canonical `attachment:<id>` form.
- *
+ * 
  *  `path` is the file's path RELATIVE to the vault root (the browser
  *  `webkitRelativePath` minus the top folder, or whatever the FE chooses), using
  *  `/` separators — e.g. `assets/diagram.png` or `images/screenshots/a.png`.
  *  It is matched against an in-content ref first by relative-path equality, then
  *  by basename (see `match_vault_file`).
- *
+ * 
  *  This is an IPC **input**, so it needs `Deserialize` (unlike the
  *  backend→frontend [`ImportProgressUpdate`], which is `Serialize`-only).
  */
@@ -3488,3 +3490,4 @@ async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; dat
         return { status: "error", error: e as any };
     }
 }
+

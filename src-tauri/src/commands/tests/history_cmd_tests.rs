@@ -950,8 +950,7 @@ async fn undo_page_op_skips_interleaved_undo_op_matching_group_walk() {
     // Two consecutive same-device user edits: dev1@0 ("edit-0") then
     // dev1@200 ("edit-1"). seed_page_with_ops also creates the page +
     // child via DEV (older, real `now` timestamps).
-    let (page_id, child_id) =
-        seed_page_with_ops(&pool, &mat, &[("dev1", 0), ("dev1", 200)]).await;
+    let (page_id, child_id) = seed_page_with_ops(&pool, &mat, &[("dev1", 0), ("dev1", 200)]).await;
 
     // Interleave a reverse op (is_undo = 1) BETWEEN the two user edits in
     // time (created_at @100, strictly between @0 and @200), in the real
@@ -969,7 +968,9 @@ async fn undo_page_op_skips_interleaved_undo_op_matching_group_walk() {
     .bind(undo_seq)
     .bind("synthetic-hash")
     .bind("edit_block")
-    .bind(format!(r#"{{"block_id":"{child_id}","to_text":"undo-noise"}}"#))
+    .bind(format!(
+        r#"{{"block_id":"{child_id}","to_text":"undo-noise"}}"#
+    ))
     .bind(4_102_444_800_100_i64) // between dev1@0 and dev1@200
     .bind(&child_id)
     .execute(&pool)

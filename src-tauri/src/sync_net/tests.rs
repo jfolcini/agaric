@@ -1869,7 +1869,11 @@ async fn handshake_timeout_elapsed_path_releases_permit() {
     use tokio::sync::Semaphore;
 
     let limiter = Arc::new(Semaphore::new(1));
-    assert_eq!(limiter.available_permits(), 1, "precondition: one free slot");
+    assert_eq!(
+        limiter.available_permits(),
+        1,
+        "precondition: one free slot"
+    );
 
     // Acquire the only permit, exactly as the accept loop does before the
     // handshake. The semaphore is now saturated.
@@ -1918,9 +1922,7 @@ async fn responder_releases_permit_after_tls_handshake_timeout() {
     install_crypto_provider();
     let cert = generate_self_signed_cert("hs-timeout").unwrap();
 
-    let (server, port) = SyncServer::start(&cert, |_conn, _permit| {})
-        .await
-        .unwrap();
+    let (server, port) = SyncServer::start(&cert, |_conn, _permit| {}).await.unwrap();
     let addr = format!("127.0.0.1:{port}");
 
     // Open a raw TCP connection that completes the TCP handshake (so the accept
@@ -1936,13 +1938,10 @@ async fn responder_releases_permit_after_tls_handshake_timeout() {
     // guarantee under test is that the stalled permit is eventually released).
     let timeout = crate::sync_constants::TLS_HANDSHAKE_TIMEOUT + Duration::from_secs(5);
     let client_cert = generate_self_signed_cert("hs-timeout-client").unwrap();
-    let normal = tokio::time::timeout(
-        timeout,
-        connect_to_peer(&addr, None, None, &client_cert),
-    )
-    .await
-    .expect("a normal client should connect within the handshake-timeout window")
-    .expect("normal client handshake should succeed");
+    let normal = tokio::time::timeout(timeout, connect_to_peer(&addr, None, None, &client_cert))
+        .await
+        .expect("a normal client should connect within the handshake-timeout window")
+        .expect("normal client handshake should succeed");
 
     // After waiting past `TLS_HANDSHAKE_TIMEOUT`, the server must have dropped
     // the stalled connection: a read returns EOF (Ok(0)) on a clean close.
