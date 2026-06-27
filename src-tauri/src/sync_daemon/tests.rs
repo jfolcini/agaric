@@ -4587,6 +4587,199 @@ async fn issue2006_concurrent_same_block_edits_converge_deterministically() {
     mat_b.shutdown();
 }
 
+/// #2006 — interrupted-then-resumed transfer converges with no lost,
+/// duplicated, or half-applied ops.
+///
+/// #602 and the concurrent-edit test above cover *completed* sessions. This
+/// pins the failure mode that matters most for a sync-first app: a
+/// connection that drops mid-transfer must not corrupt or half-apply state,
+/// and the next sync cycle must still converge cleanly.
+///
+/// Model (matches production, where `try_sync_with_peer` builds a fresh
+/// orchestrator each cycle, so a dropped session is simply retried):
+///   1. A initiates; responder B ingests A's opening message and prepares
+///      its reply + LoroSync stream — but the wire dies before ANY of B's
+///      messages reach A (B's entire outbound is discarded).
+///   2. Assert the transfer was genuinely interrupted: A is not Complete and
+///      B's block has NOT landed on A (nothing was half-applied).
+///   3. Resume with FRESH orchestrators (the dropped ones are gone) and run
+///      a full bidirectional sync.
+///   4. Assert convergence: both DBs hold both blocks EXACTLY ONCE (no
+///      duplication), with intact content (no loss / half-apply) and
+///      identical Loro version vectors.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn issue2006_interrupted_then_resumed_transfer_converges() {
+    use crate::sync_protocol::{SyncOrchestrator, SyncState};
+
+    const DEV_A: &str = "DEV2006IRA";
+    const DEV_B: &str = "DEV2006IRB";
+    const BLOCK_A: &str = "01HZ2006IRBLKAXXXXXXXXXXXX";
+    const BLOCK_B: &str = "01HZ2006IRBLKBXXXXXXXXXXXX";
+    let space = crate::space::SpaceId::from_trusted("01HZ2006IRSPACEXXXXXXXXXXX");
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+    let mat_b = Materializer::new(pool_b.clone());
+
+    // #602 test seam: one Loro registry per device.
+    let state_a: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+    let state_b: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+
+    peer_refs::upsert_peer_ref(&pool_a, DEV_B).await.unwrap();
+    peer_refs::upsert_peer_ref(&pool_b, DEV_A).await.unwrap();
+
+    make_local_edit_602(
+        &pool_a,
+        &mat_a,
+        state_a,
+        DEV_A,
+        &space,
+        BLOCK_A,
+        "edit from device A",
+        1_736_942_400_000,
+    )
+    .await;
+    make_local_edit_602(
+        &pool_b,
+        &mat_b,
+        state_b,
+        DEV_B,
+        &space,
+        BLOCK_B,
+        "edit from device B",
+        1_736_942_401_000,
+    )
+    .await;
+
+    // ── Interrupted attempt: A initiates, B prepares its stream, but the
+    //    wire dies before any of B's messages reach A. ───────────────────
+    {
+        let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
+            .with_loro_state(state_a)
+            .with_expected_remote_id(DEV_B.into());
+        let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
+            .with_loro_state(state_b)
+            .with_expected_remote_id(DEV_A.into());
+
+        let first = init_a.start().await.expect("initiator start");
+        // B ingests A's opening message and may queue a reply + LoroSync
+        // stream — all of which we discard: the connection is gone, so
+        // nothing reaches A.
+        let _ = resp_b
+            .handle_message(wire_roundtrip_602(&first))
+            .await
+            .expect("responder handle_message");
+
+        // The transfer was genuinely cut: A never completed, and B's block
+        // has not landed on A — no inbound state was half-applied.
+        assert_ne!(
+            init_a.session().state,
+            SyncState::Complete,
+            "initiator must NOT be Complete after a mid-stream drop"
+        );
+        let b_on_a_after_drop: Option<String> =
+            sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+                .bind(BLOCK_B)
+                .fetch_optional(&pool_a)
+                .await
+                .unwrap();
+        assert_eq!(
+            b_on_a_after_drop, None,
+            "B's block must not be on A after the interrupted transfer \
+             (nothing half-applied)"
+        );
+        // Drop the interrupted orchestrators — production discards them on a
+        // dropped connection and builds fresh ones next cycle.
+    }
+
+    // ── Resume: fresh orchestrators, full bidirectional sync. ───────────
+    let mut init_a2 = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
+        .with_loro_state(state_a)
+        .with_expected_remote_id(DEV_B.into());
+    let mut resp_b2 = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
+        .with_loro_state(state_b)
+        .with_expected_remote_id(DEV_A.into());
+    pump_full_session_602(&mut init_a2, &mut resp_b2).await;
+    assert_eq!(
+        init_a2.session().state,
+        SyncState::Complete,
+        "resumed A→B initiator must complete after the earlier interruption"
+    );
+    assert_eq!(
+        resp_b2.session().state,
+        SyncState::Complete,
+        "resumed A→B responder must complete after the earlier interruption"
+    );
+
+    let mut init_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
+        .with_loro_state(state_b)
+        .with_expected_remote_id(DEV_A.into());
+    let mut resp_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
+        .with_loro_state(state_a)
+        .with_expected_remote_id(DEV_B.into());
+    pump_full_session_602(&mut init_b, &mut resp_a).await;
+    assert_eq!(
+        init_b.session().state,
+        SyncState::Complete,
+        "resumed B→A initiator must complete"
+    );
+    assert_eq!(
+        resp_a.session().state,
+        SyncState::Complete,
+        "resumed B→A responder must complete"
+    );
+
+    // ── Convergence: both DBs hold both blocks EXACTLY ONCE, with intact
+    //    content — no loss, no duplication, no half-applied op. ──────────
+    for (label, pool) in [("A", &pool_a), ("B", &pool_b)] {
+        for (block_id, content) in [
+            (BLOCK_A, "edit from device A"),
+            (BLOCK_B, "edit from device B"),
+        ] {
+            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+                .bind(block_id)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            assert_eq!(
+                count, 1,
+                "device {label} must hold block {block_id} exactly once (no duplication)"
+            );
+            let row: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+                .bind(block_id)
+                .fetch_optional(pool)
+                .await
+                .unwrap();
+            assert_eq!(
+                row.as_deref(),
+                Some(content),
+                "device {label} must hold block {block_id} with intact content after resume"
+            );
+        }
+    }
+
+    // ── Convergence: identical version vectors. ──────────────────────────
+    let vv_a = {
+        let mut g = state_a.registry.for_space(&space, DEV_A).expect("space A");
+        g.engine_mut().version_vector()
+    };
+    let vv_b = {
+        let mut g = state_b.registry.for_space(&space, DEV_B).expect("space B");
+        g.engine_mut().version_vector()
+    };
+    assert_eq!(
+        loro::VersionVector::decode(&vv_a).expect("decode vv A"),
+        loro::VersionVector::decode(&vv_b).expect("decode vv B"),
+        "interrupted-then-resumed session must still converge version vectors"
+    );
+
+    mat_a.flush_background().await.unwrap();
+    mat_b.flush_background().await.unwrap();
+    mat_a.shutdown();
+    mat_b.shutdown();
+}
+
 /// #610 — directional `synced_at`: only the side that PULLED records it.
 ///
 /// In a normal pull-only session the **initiator** pulls the responder's
