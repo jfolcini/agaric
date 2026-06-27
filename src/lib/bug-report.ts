@@ -171,13 +171,19 @@ export interface FormatReportFieldsParams {
 
 /** Map a bug report onto the `bug_report.yml` issue-form field ids.
  *
+ *  The return type is left inferred — an anonymous object type with named,
+ *  always-present `string` properties. That keeps callers index-signature-free
+ *  (so `fields.summary` is legal under `noPropertyAccessFromIndexSignature`
+ *  and never `string | undefined`) while staying assignable to
+ *  [`BuildIssueUrlParams.fields`]'s `Record<string, string>`.
+ *
  *  Only fields the app can populate are returned; the form's other required
  *  fields (reproduction steps, expected behaviour, platform, the "Before you
  *  file" checkboxes) are left for the user to complete in GitHub. The `logs`
  *  field is capped at [`MAX_BODY_CHARS`] (with [`TRUNCATION_MARKER`]) — it is
  *  the one unbounded input, and the full log is available in the diagnostic
  *  ZIP. The device ID is truncated (#609) before it can reach a public issue. */
-export function formatReportFields(params: FormatReportFieldsParams): Record<string, string> {
+export function formatReportFields(params: FormatReportFieldsParams) {
   const { metadata, title, description, zipFileName } = params
 
   const rawLogs = metadata.recent_errors.join('\n')
