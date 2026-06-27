@@ -3271,6 +3271,22 @@ export type StatusInfo = {
 	 */
 	sql_only_fallback_count: number,
 	/**
+	 *  #2031: process-global count of post-commit descendant fan-out
+	 *  skips that left the Loro engine potentially divergent from SQL.
+	 *  Bumped whenever [`super::handlers::apply::dispatch_restore_descendants`]
+	 *  or [`super::handlers::apply::dispatch_delete_descendants`] aborts at a
+	 *  divergence-leaving early-return: a malformed root payload, a
+	 *  `resolve_block_space` error, or a missing space. Monotonic, never
+	 *  reset. Mirrors `fg_apply_dropped`'s "silent divergence" signal for
+	 *  the fan-out paths, which otherwise heal only on full boot replay.
+	 *  A non-zero value means SQL deleted/restored a cohort the engine
+	 *  did not mirror on this run — pair with the `restore-cascade
+	 *  fanout` / `delete-cascade fanout` warn/trace lines for triage.
+	 *  Sourced from
+	 *  [`super::handlers::descendant_fanout_dropped::count`].
+	 */
+	descendant_fanout_dropped: number,
+	/**
 	 *  #1319: process-global, cross-session count of sync snapshot-fallbacks
 	 *  taken because a peer advertised a `from_vv` unreachable from our local
 	 *  `oplog_vv()`. Monotonic, never reset. A steadily rising
