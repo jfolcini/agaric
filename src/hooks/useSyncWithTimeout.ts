@@ -37,7 +37,19 @@ export function useSyncWithTimeout(timeoutMs = 60_000) {
         await Promise.race([syncFn(), timeout])
       } catch (err) {
         if (err instanceof Error && err.message === 'Sync timed out') {
-          await cancelSync()
+          // Cleanup must not mask the timeout error the caller expects: a
+          // failing cancelSync() (backend down / IPC error — the same
+          // conditions that cause the timeout) would otherwise replace `err`.
+          try {
+            await cancelSync()
+          } catch (cancelErr) {
+            logger.warn(
+              'useSyncWithTimeout',
+              'cancelSync failed after timeout',
+              undefined,
+              cancelErr,
+            )
+          }
         }
         throw err
       } finally {

@@ -62,6 +62,28 @@ describe('useSyncWithTimeout', () => {
     expect(mockCancelSync).toHaveBeenCalledTimes(1)
   })
 
+  it('still surfaces the timeout error when cancelSync rejects', async () => {
+    mockCancelSync.mockRejectedValue(new Error('IPC error: backend down'))
+
+    const { result } = renderHook(() => useSyncWithTimeout(1000))
+    const syncFn = vi.fn(() => new Promise<void>(() => {})) // never resolves
+
+    let error: Error | undefined
+    await act(async () => {
+      const promise = result.current.execute(syncFn)
+      // Attach catch before advancing time to prevent unhandled rejection
+      const caught = promise.catch((err) => {
+        error = err as Error
+      })
+      await vi.advanceTimersByTimeAsync(1000)
+      await caught
+    })
+
+    // The caller must observe the timeout error, not the cancelSync rejection.
+    expect(error?.message).toBe('Sync timed out')
+    expect(mockCancelSync).toHaveBeenCalledTimes(1)
+  })
+
   it('sets loading true during sync and false after', async () => {
     const { result } = renderHook(() => useSyncWithTimeout())
     expect(result.current.loading).toBe(false)
