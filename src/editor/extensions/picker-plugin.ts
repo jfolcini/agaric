@@ -152,7 +152,7 @@ export async function resolveAndInsertPickerToken({
 
   try {
     const resolved = await items(text)
-    if (editor.view?.isDestroyed) return
+    if (editor.isDestroyed) return
     const exactMatch = matchItem(resolved, text)
     if (exactMatch) {
       if (isStale()) {
@@ -167,7 +167,7 @@ export async function resolveAndInsertPickerToken({
       editor.chain().focus().insertContentAt(insertPos, tokenFor(exactMatch.id)).run()
     } else if (onCreate) {
       const newId = await onCreate(text)
-      if (editor.view?.isDestroyed) return
+      if (editor.isDestroyed) return
       if (isStale()) {
         logger.warn(
           loggerComponent,
@@ -188,7 +188,7 @@ export async function resolveAndInsertPickerToken({
     }
   } catch (err) {
     logger.warn(loggerComponent, errorMessage, { text }, err)
-    if (editor.view?.isDestroyed) return
+    if (editor.isDestroyed) return
     // On error, re-insert as plain text so the user doesn't lose content
     if (isStale()) {
       insertPlainAtCursor()
