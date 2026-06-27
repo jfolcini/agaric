@@ -13,14 +13,17 @@ import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { MetricCard } from '@/components/ui/metric-card'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { usePollingQuery } from '@/hooks/usePollingQuery'
+import { useSyncWithTimeout } from '@/hooks/useSyncWithTimeout'
 import { formatRelativeTime } from '@/lib/format-relative-time'
+import { logger } from '@/lib/logger'
 import type { StatusInfo } from '@/lib/tauri'
-import { getStatus } from '@/lib/tauri'
+import { getStatus, startSync } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { type SyncState, useSyncStore } from '@/stores/sync'
 
@@ -149,6 +152,58 @@ function SyncStateIcon({ state }: { state: SyncState }): React.ReactElement {
       )
     }
   }
+}
+
+/**
+ * Recovery affordance for the sync-error state (#2059). Mirrors
+ * DeviceManagement's `handleSyncNow`: each paired peer is re-synced behind
+ * the shared timeout guard, with the store's sync-state flipped to `syncing`
+ * for the run and back to `idle`/`error` on settle so the panel's own
+ * indicator reflects the retry.
+ *
+ * Rendered only in the `error` state (returns `null` otherwise). Kept as its
+ * own component so its loop / try-catch / conditional-render decision points
+ * stay out of `StatusPanel`'s body (cyclomatic-complexity ceiling).
+ */
+function SyncRetryButton({ state }: { state: SyncState }): React.ReactElement | null {
+  const { t } = useTranslation()
+  const syncPeers = useSyncStore((s) => s.peers)
+  const syncError = useSyncStore((s) => s.error)
+  const setSyncState = useSyncStore((s) => s.setState)
+  const { execute: executeSyncWithTimeout, loading: retrying } = useSyncWithTimeout()
+
+  const handleRetrySync = useCallback(async () => {
+    setSyncState('syncing')
+    let hadFailure = false
+    for (const peer of syncPeers) {
+      try {
+        await executeSyncWithTimeout(async () => {
+          await startSync(peer.peerId)
+        })
+      } catch (err) {
+        hadFailure = true
+        logger.error('StatusPanel', `Sync retry failed for ${peer.peerId}`, undefined, err)
+      }
+    }
+    setSyncState(hadFailure ? 'error' : 'idle', hadFailure ? syncError : null)
+  }, [executeSyncWithTimeout, setSyncState, syncPeers, syncError])
+
+  if (state !== 'error') return null
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="sync-panel-retry flex items-center gap-1"
+      onClick={handleRetrySync}
+      disabled={retrying}
+      aria-label={t('status.syncRetryLabel')}
+      data-testid="sync-panel-retry"
+    >
+      <RefreshCw className={cn('h-3.5 w-3.5', retrying && 'animate-spin')} />
+      {retrying ? t('status.syncRetryingButton') : t('status.syncRetryButton')}
+    </Button>
+  )
 }
 
 export function StatusPanel(): React.ReactElement {
@@ -332,6 +387,12 @@ export function StatusPanel(): React.ReactElement {
                   {syncError}
                 </p>
               )}
+
+              {/* #2059 — the sync-error state previously offered no recovery
+                  affordance, unlike DeviceManagement. Surface a "Sync now"
+                  button that re-syncs every paired peer behind the shared
+                  timeout guard. */}
+              <SyncRetryButton state={syncState} />
 
               <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <MetricCard

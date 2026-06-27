@@ -59,6 +59,8 @@ export interface UseSearchResultsValue {
   searchLoading: boolean
   hasMore: boolean
   loadMore: () => void
+  /** Re-fire the current query from page 1 (error-recovery affordance, #2059). */
+  reload: () => void
   error: string | null
   capped: boolean
   setItems: Dispatch<SetStateAction<SearchBlockRow[]>>
@@ -150,6 +152,7 @@ export function useSearchResults({
     loading: searchLoading,
     hasMore,
     loadMore,
+    reload,
     error,
     capped,
     setItems,
@@ -336,6 +339,7 @@ export function useSearchResults({
     searchLoading,
     hasMore,
     loadMore,
+    reload,
     error,
     capped,
     setItems,

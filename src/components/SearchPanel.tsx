@@ -27,7 +27,7 @@
  * (Phase 4.M4 removed the stub `SearchResultList.tsx`).
  */
 
-import { FilterX, Search } from 'lucide-react'
+import { FilterX, RefreshCw, Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -210,6 +210,7 @@ export function SearchPanel(): React.ReactElement {
     searchLoading,
     hasMore,
     loadMore,
+    reload,
     error,
     capped,
     setItems,
@@ -678,6 +679,18 @@ export function SearchPanel(): React.ReactElement {
         >
           <p className="font-medium">{t('search.errorTitle')}</p>
           <p className="text-destructive/90">{t('search.errorBody')}</p>
+          {/* #2059 — mirror the zero-results "Clear filters" recovery: re-fire
+              the current query from page 1 instead of leaving the user stuck. */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-3 flex items-center gap-1"
+            onClick={reload}
+            data-testid="search-error-retry"
+          >
+            <RefreshCw className="h-4 w-4" />
+            {t('search.errorRetryButton')}
+          </Button>
         </div>
       )}
 

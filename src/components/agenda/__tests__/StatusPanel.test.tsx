@@ -27,16 +27,19 @@ vi.mock('@/components/peers/DeviceManagement', () => ({
 }))
 
 // Controllable sync store state for tests that need non-default values.
-const { mockSyncStoreState } = vi.hoisted(() => ({
+const { mockSyncStoreState, mockSetState } = vi.hoisted(() => ({
+  mockSetState: vi.fn(),
   mockSyncStoreState: {
     state: 'idle' as string,
     error: null as string | null,
-    peers: [] as Array<{ peer_id: string }>,
+    peers: [] as Array<{ peer_id?: string; peerId?: string }>,
     lastSyncedAt: null as string | null,
     opsReceived: 0,
     opsSent: 0,
+    setState: undefined as unknown as ReturnType<typeof vi.fn>,
   },
 }))
+mockSyncStoreState.setState = mockSetState
 
 vi.mock('@/stores/sync', () => ({
   useSyncStore: (selector: (s: typeof mockSyncStoreState) => unknown) =>
@@ -61,6 +64,7 @@ beforeEach(() => {
   mockSyncStoreState.lastSyncedAt = null
   mockSyncStoreState.opsReceived = 0
   mockSyncStoreState.opsSent = 0
+  mockSetState.mockClear()
 })
 
 describe('StatusPanel', () => {
@@ -544,6 +548,76 @@ describe('StatusPanel', () => {
       const alert = screen.getByRole('alert')
       expect(alert).toHaveTextContent('Connection lost')
       expect(alert).toHaveClass('sync-panel-error')
+    })
+
+    // #2059 — the sync-error state must offer a recovery affordance
+    // (a "Sync now" / Retry button), matching DeviceManagement.
+    describe('error-state retry affordance (#2059)', () => {
+      it('renders a Sync now retry button when sync state is error', async () => {
+        mockSyncStoreState.peers = [{ peerId: 'P1' }]
+        mockSyncStoreState.state = 'error'
+        mockSyncStoreState.error = 'Connection lost'
+        mockedInvoke.mockResolvedValue(mockStatus)
+        render(<StatusPanel />)
+        await screen.findByText('Materializer Status')
+
+        const retry = screen.getByTestId('sync-panel-retry')
+        expect(retry).toBeInTheDocument()
+        expect(retry).toHaveTextContent('Sync now')
+        expect(retry).toHaveAccessibleName('Retry sync with all paired devices')
+      })
+
+      it('does not render the retry button in non-error states', async () => {
+        mockSyncStoreState.peers = [{ peerId: 'P1' }]
+        mockSyncStoreState.state = 'idle'
+        mockedInvoke.mockResolvedValue(mockStatus)
+        render(<StatusPanel />)
+        await screen.findByText('Materializer Status')
+        expect(screen.queryByTestId('sync-panel-retry')).not.toBeInTheDocument()
+      })
+
+      it('re-syncs every paired peer and flips sync state on click', async () => {
+        const user = userEvent.setup()
+        mockSyncStoreState.peers = [{ peerId: 'P1' }, { peerId: 'P2' }]
+        mockSyncStoreState.state = 'error'
+        mockSyncStoreState.error = 'Connection lost'
+        // get_status (polling) + start_sync (per peer) all succeed.
+        mockedInvoke.mockResolvedValue(mockStatus)
+        render(<StatusPanel />)
+        await screen.findByText('Materializer Status')
+
+        await user.click(screen.getByTestId('sync-panel-retry'))
+
+        await waitFor(() => {
+          expect(mockedInvoke).toHaveBeenCalledWith(
+            'start_sync',
+            expect.objectContaining({ peerId: 'P1' }),
+          )
+          expect(mockedInvoke).toHaveBeenCalledWith(
+            'start_sync',
+            expect.objectContaining({ peerId: 'P2' }),
+          )
+        })
+
+        // Flips to syncing for the run, then back to idle on success.
+        expect(mockSetState).toHaveBeenCalledWith('syncing')
+        await waitFor(() => {
+          expect(mockSetState).toHaveBeenCalledWith('idle', null)
+        })
+      })
+
+      it('has no a11y violations in the sync-error state', async () => {
+        mockSyncStoreState.peers = [{ peerId: 'P1' }]
+        mockSyncStoreState.state = 'error'
+        mockSyncStoreState.error = 'Connection lost'
+        mockedInvoke.mockResolvedValue(mockStatus)
+        const { container } = render(<StatusPanel />)
+        await screen.findByText('Materializer Status')
+        await screen.findByTestId('sync-panel-retry')
+
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      })
     })
 
     it('shows sync metrics (peers count, ops received/sent)', async () => {
