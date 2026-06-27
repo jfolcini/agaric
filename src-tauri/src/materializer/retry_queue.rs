@@ -2321,37 +2321,111 @@ mod tests {
 
     // --- global cache rebuild persistence ---
 
-    /// Round-trip a global cache rebuild through `record_failure`
-    /// → row → `task_from_row` and assert the reconstructed task matches
-    /// the original. Repeats for all 7 global variants so adding a new
-    /// `MaterializeTask::Rebuild*Cache` arm forces a corresponding
-    /// `RetryKind` arm or the test surfaces the gap.
+    /// Round-trip every persistable cache-rebuild / projection task
+    /// through `record_failure` → row → `task_from_row` and assert the
+    /// reconstructed task matches the original kind.
+    ///
+    /// The table below covers EVERY `RetryKind` for which
+    /// `is_global() == true` (all 9: the seven original `Rebuild*` global
+    /// rebuilds PLUS `RebuildPagesCacheCounts` and `RebuildPageLinkCache`,
+    /// which an earlier revision of this test silently omitted — a
+    /// `from_task`/`from_str` regression on either would drop the row as
+    /// unknown and never retry the rebuild). It also covers the two
+    /// per-block kinds that share this persistence path but are NOT global
+    /// (`SetBlockPageId`, `RefreshTagUsageCount`), where the real block /
+    /// tag id must survive the round-trip rather than being replaced by
+    /// the `__GLOBAL__` sentinel.
+    ///
+    /// The `is_global()`-coverage assertion at the end fails loudly if a
+    /// new global variant is added to `is_global()` without a matching row
+    /// here, so this table cannot silently fall out of date again.
     #[tokio::test]
     async fn test_global_task_persistence() {
-        let cases: [(MaterializeTask, &str); 7] = [
-            (MaterializeTask::RebuildTagsCache, "RebuildTagsCache"),
-            (MaterializeTask::RebuildPagesCache, "RebuildPagesCache"),
-            (MaterializeTask::RebuildAgendaCache, "RebuildAgendaCache"),
+        // (task, expected task_kind string, expected persisted block_id).
+        // For global kinds the persisted block_id is the sentinel; for the
+        // per-block kinds it is the real id passed in the task.
+        let cases: [(MaterializeTask, &str, &str); 11] = [
+            // --- global (is_global() == true) ---
+            (
+                MaterializeTask::RebuildTagsCache,
+                "RebuildTagsCache",
+                GLOBAL_TASK_SENTINEL,
+            ),
+            (
+                MaterializeTask::RebuildPagesCache,
+                "RebuildPagesCache",
+                GLOBAL_TASK_SENTINEL,
+            ),
+            (
+                MaterializeTask::RebuildPagesCacheCounts,
+                "RebuildPagesCacheCounts",
+                GLOBAL_TASK_SENTINEL,
+            ),
+            (
+                MaterializeTask::RebuildAgendaCache,
+                "RebuildAgendaCache",
+                GLOBAL_TASK_SENTINEL,
+            ),
             (
                 MaterializeTask::RebuildProjectedAgendaCache,
                 "RebuildProjectedAgendaCache",
+                GLOBAL_TASK_SENTINEL,
             ),
             (
                 MaterializeTask::RebuildTagInheritanceCache,
                 "RebuildTagInheritanceCache",
+                GLOBAL_TASK_SENTINEL,
             ),
-            (MaterializeTask::RebuildPageIds, "RebuildPageIds"),
+            (
+                MaterializeTask::RebuildPageIds,
+                "RebuildPageIds",
+                GLOBAL_TASK_SENTINEL,
+            ),
             (
                 MaterializeTask::RebuildBlockTagRefsCache,
                 "RebuildBlockTagRefsCache",
+                GLOBAL_TASK_SENTINEL,
+            ),
+            (
+                MaterializeTask::RebuildPageLinkCache,
+                "RebuildPageLinkCache",
+                GLOBAL_TASK_SENTINEL,
+            ),
+            // --- per-block kinds sharing this persistence path (NOT global) ---
+            (
+                MaterializeTask::SetBlockPageId {
+                    block_id: "BLK_SPID".into(),
+                },
+                "SetBlockPageId",
+                "BLK_SPID",
+            ),
+            (
+                MaterializeTask::RefreshTagUsageCount {
+                    tag_id: "TAG_RTUC".into(),
+                },
+                "RefreshTagUsageCount",
+                "TAG_RTUC",
             ),
         ];
 
-        for (task, kind_str) in cases {
+        // Track which global kinds the table exercises so the coverage
+        // assertion below can prove EVERY `is_global()` variant is present.
+        let mut covered_global_kinds: Vec<String> = Vec::new();
+
+        for (task, kind_str, expected_block_id) in cases {
+            // Note for the coverage check: only record kinds that report
+            // `is_global()`. `RetryKind::from_task` returns the kind so we
+            // can classify without re-deriving it.
+            let (kind, _) = RetryKind::from_task(&task)
+                .unwrap_or_else(|| panic!("task {task:?} must be retryable"));
+            if kind.is_global() {
+                covered_global_kinds.push(kind.task_kind_str().into_owned());
+            }
+
             let (pool, _dir) = test_pool().await;
             record_failure(&pool, &task, "boom-global").await.unwrap();
 
-            // Row landed under the GLOBAL_TASK_SENTINEL with the right kind.
+            // Row landed under the expected block_id with the right kind.
             let row = sqlx::query!(
                 "SELECT block_id, task_kind, attempts, last_error, created_at \
                  FROM materializer_retry_queue",
@@ -2360,28 +2434,77 @@ mod tests {
             .await
             .unwrap();
             assert_eq!(
-                row.block_id, GLOBAL_TASK_SENTINEL,
-                "global task {kind_str} must persist under '__GLOBAL__'"
+                row.block_id, expected_block_id,
+                "task {kind_str} must persist under block_id '{expected_block_id}'"
             );
             assert_eq!(row.task_kind, kind_str);
             assert_eq!(row.attempts, 1);
             assert_eq!(row.last_error.as_deref(), Some("boom-global"));
 
-            // Reconstruction via the sweeper path discards the sentinel
-            // and yields the original variant.
+            // Reconstruction via the sweeper path re-loads to the SAME kind
+            // (global kinds discard the sentinel; per-block kinds keep the
+            // real id). A `from_str` regression on the two formerly-omitted
+            // variants would make `task_from_row` return `None` here.
             let due = DueRow {
-                block_id: row.block_id,
+                block_id: row.block_id.clone(),
                 task_kind: row.task_kind,
                 attempts: row.attempts,
                 created_at: row.created_at,
             };
-            let reconstructed = task_from_row(&due).unwrap();
+            let reconstructed = task_from_row(&due).unwrap_or_else(|| {
+                panic!("task_from_row must reconstruct {kind_str} (regression would drop the row)")
+            });
             assert_eq!(
                 std::mem::discriminant(&reconstructed),
                 std::mem::discriminant(&task),
-                "round-trip must produce the same MaterializeTask variant"
+                "round-trip must produce the same MaterializeTask variant for {kind_str}"
+            );
+            // Per-block kinds must additionally preserve the real id through
+            // the round-trip (the sentinel must NOT leak in).
+            match &reconstructed {
+                MaterializeTask::SetBlockPageId { block_id } => {
+                    assert_eq!(block_id.as_ref(), expected_block_id);
+                }
+                MaterializeTask::RefreshTagUsageCount { tag_id } => {
+                    assert_eq!(tag_id.as_ref(), expected_block_id);
+                }
+                _ => {}
+            }
+        }
+
+        // Coverage guard: assert the table above exercised EVERY variant
+        // that `is_global()` returns true for. Build the full set of global
+        // kinds from the `RetryKind` enum and require each appears in the
+        // table. If a future variant is added to `is_global()` without a
+        // corresponding row, this fails — no more "all 7" lie.
+        let all_global_kinds = [
+            RetryKind::RebuildTagsCache,
+            RetryKind::RebuildPagesCache,
+            RetryKind::RebuildPagesCacheCounts,
+            RetryKind::RebuildAgendaCache,
+            RetryKind::RebuildProjectedAgendaCache,
+            RetryKind::RebuildTagInheritanceCache,
+            RetryKind::RebuildPageIds,
+            RetryKind::RebuildBlockTagRefsCache,
+            RetryKind::RebuildPageLinkCache,
+        ];
+        for k in &all_global_kinds {
+            assert!(
+                k.is_global(),
+                "enumerated kind {k:?} must report is_global()"
+            );
+            let name = k.task_kind_str().into_owned();
+            assert!(
+                covered_global_kinds.contains(&name),
+                "is_global() variant {name} is missing from the persistence round-trip table"
             );
         }
+        assert_eq!(
+            covered_global_kinds.len(),
+            all_global_kinds.len(),
+            "the round-trip table must cover exactly the set of is_global() variants \
+             (covered: {covered_global_kinds:?})"
+        );
     }
 
     /// A global task failing repeatedly walks the same

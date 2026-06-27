@@ -199,11 +199,25 @@ pub const TOMBSTONE_RETENTION_DAYS: i64 = 90;
 /// Per-batch cap matching `MAX_BATCH_BLOCK_IDS`. Each delete
 /// transaction processes at most this many rows so a single purge never
 /// holds a long write lock.
+///
+/// Under `cfg(test)` the limit is shrunk to a handful of rows (mirroring
+/// the `#[cfg(not(test))]` / `#[cfg(test)]` value-switch already used by
+/// `spawn_daemon`'s `spawn_fn`) so a test can drive the batch ceiling and
+/// rollover cheaply — driving the production 1000-row batches × 50-batch
+/// ceiling would require seeding 50k+ tombstone rows. Production behaviour
+/// is unchanged: the `cfg(not(test))` arm keeps the real 1000 / 50 values.
+#[cfg(not(test))]
 const TOMBSTONE_PURGE_BATCH_LIMIT: i64 = 1000;
+#[cfg(test)]
+const TOMBSTONE_PURGE_BATCH_LIMIT: i64 = 3;
 
 /// `usize` companion to [`TOMBSTONE_PURGE_BATCH_LIMIT`] for comparing
-/// against `Vec::len()` without a lossy cast.
+/// against `Vec::len()` without a lossy cast. Kept in lock-step with the
+/// i64 constant under both cfgs.
+#[cfg(not(test))]
 const TOMBSTONE_PURGE_BATCH_LIMIT_USIZE: usize = 1000;
+#[cfg(test)]
+const TOMBSTONE_PURGE_BATCH_LIMIT_USIZE: usize = 3;
 
 /// Per-invocation ceiling on the number of bounded batches drained in a
 /// single `tombstone_purge` run. With a [`TOMBSTONE_PURGE_BATCH_LIMIT`]
@@ -212,7 +226,14 @@ const TOMBSTONE_PURGE_BATCH_LIMIT_USIZE: usize = 1000;
 /// ticks instead of ~1 batch/day — while still bounding *each* delete to
 /// one short transaction and yielding back to the runtime between
 /// batches. Anything beyond the ceiling rolls over to the next tick.
+///
+/// Under `cfg(test)` the ceiling is shrunk so the per-run cap is reached
+/// with a tiny, cheaply-seeded backlog (test batch limit 3 × ceiling 4 =
+/// 12 rows purged per run). Production keeps the real 50-batch ceiling.
+#[cfg(not(test))]
 const TOMBSTONE_PURGE_MAX_BATCHES_PER_RUN: usize = 50;
+#[cfg(test)]
+const TOMBSTONE_PURGE_MAX_BATCHES_PER_RUN: usize = 4;
 
 /// Issue #157 sub-item E — hard-purge soft-deleted blocks whose
 /// `deleted_at` is older than [`TOMBSTONE_RETENTION_DAYS`]. Delegates
@@ -784,6 +805,81 @@ mod tests {
         );
     }
 
+    /// Issue #2051 — `tombstone_purge` enforces its per-run batch ceiling
+    /// and rolls the remainder over to the next run.
+    ///
+    /// Drives the `cfg(test)`-shrunk constants (batch limit 3 × ceiling 4 =
+    /// 12 rows/run) so the test is cheap: seeding the production 50k-row
+    /// ceiling directly would be prohibitive. The `cfg(not(test))` build
+    /// keeps the real 1000 / 50 values, so this changes nothing in
+    /// production.
+    ///
+    /// Seeds `ceiling * batch_limit + remainder` aged tombstones. After the
+    /// FIRST run, exactly `ceiling * batch_limit` rows must be gone (the
+    /// ceiling fired and bailed mid-backlog); the remainder must still be
+    /// present. After the SECOND run, the remainder drains too.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tombstone_purge_hits_batch_ceiling_then_rolls_over_2051() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mat = crate::materializer::Materializer::new(pool.clone());
+
+        let per_run_cap = TOMBSTONE_PURGE_MAX_BATCHES_PER_RUN * TOMBSTONE_PURGE_BATCH_LIMIT_USIZE;
+        // A remainder strictly smaller than one batch so the second run
+        // drains it in a single short batch and stops.
+        let remainder = TOMBSTONE_PURGE_BATCH_LIMIT_USIZE - 1;
+        let total_aged = per_run_cap + remainder;
+
+        let aged_deleted_at = (chrono::Utc::now()
+            - chrono::Duration::days(TOMBSTONE_RETENTION_DAYS + 5))
+        .timestamp_millis();
+
+        for i in 0..total_aged {
+            let position = i64::try_from(i).unwrap();
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+                 VALUES (?, 'content', 'aged tombstone', NULL, ?, ?)",
+            )
+            .bind(format!("C{i:08}"))
+            .bind(position)
+            .bind(aged_deleted_at)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let aged_remaining = || async {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM blocks WHERE id LIKE 'C%' AND deleted_at IS NOT NULL",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+
+        // --- First run: the ceiling fires, exactly per_run_cap purged. ---
+        tombstone_purge(&pool, "test-device", &mat)
+            .await
+            .expect("first tombstone_purge run must succeed");
+        assert_eq!(
+            aged_remaining().await,
+            i64::try_from(remainder).unwrap(),
+            "first run must purge EXACTLY ceiling * batch_limit rows and roll the rest over"
+        );
+
+        // --- Second run: the leftover backlog drains. ---
+        tombstone_purge(&pool, "test-device", &mat)
+            .await
+            .expect("second tombstone_purge run must succeed");
+        assert_eq!(
+            aged_remaining().await,
+            0,
+            "second run must drain the rolled-over remainder"
+        );
+    }
+
     /// Issue #157 sub-item I — `loro_snapshot_if_dirty` is safe to
     /// call when the loro shared state has not been initialised.
     #[tokio::test]
@@ -864,5 +960,120 @@ mod tests {
             today,
             "last_fired_day must advance to today after the rollover enqueue"
         );
+    }
+
+    /// Issue #2051 — a single midnight tick must actually ENQUEUE exactly
+    /// one `RebuildProjectedAgendaCache` (the existing #157-H tests only
+    /// asserted the atomic day-number advance, never that the rebuild task
+    /// lands on the background queue).
+    ///
+    /// Observed via `bg_processed`. A `flush_background()` barrier is
+    /// itself a background task that increments `bg_processed` by exactly
+    /// one (consumer.rs counts the Barrier), so we first measure that
+    /// fixed barrier cost with a bare drain (the control), then measure a
+    /// tick + drain and subtract — the residual is exactly the rebuild.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn projected_agenda_midnight_enqueues_exactly_one_rebuild_2051() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mat = crate::materializer::Materializer::new(pool);
+        let last_day = AtomicI32::new(i32::MIN);
+
+        let load = || {
+            mat.metrics()
+                .bg_processed
+                .load(std::sync::atomic::Ordering::Relaxed)
+        };
+
+        // Control: a bare drain with no tick. Its delta is the per-flush
+        // Barrier cost (exactly 1) with no rebuild mixed in.
+        let c0 = load();
+        mat.flush_background().await.expect("control drain");
+        let barrier_cost = load() - c0;
+        assert_eq!(barrier_cost, 1, "a flush barrier must count as one bg task");
+
+        // Measurement: one midnight tick, then drain.
+        let before = load();
+        projected_agenda_midnight_tick(&mat, &last_day)
+            .await
+            .expect("midnight tick must enqueue successfully");
+        mat.flush_background().await.expect("drain after tick");
+        let rebuilds = (load() - before) - barrier_cost;
+
+        assert_eq!(
+            rebuilds, 1,
+            "a single midnight tick must enqueue exactly one RebuildProjectedAgendaCache"
+        );
+        mat.shutdown();
+    }
+
+    /// Issue #2051 — N concurrent midnight ticks racing across the same
+    /// day rollover must land EXACTLY ONE `RebuildProjectedAgendaCache`.
+    /// This is the invariant the CAS in `projected_agenda_midnight_tick`
+    /// exists to enforce: only the thread that wins the
+    /// `compare_exchange` on `last_fired_day` proceeds to enqueue; the
+    /// losers short-circuit. Without the CAS, several ticks would observe
+    /// the stale `previous` value and each enqueue a duplicate.
+    ///
+    /// Verified two ways: (1) the day atomic advances to today exactly
+    /// once, and (2) after draining, `bg_processed` reflects a single
+    /// rebuild.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn projected_agenda_midnight_cas_prevents_double_enqueue_2051() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mat = crate::materializer::Materializer::new(pool);
+        let today = chrono::Utc::now().date_naive().num_days_from_ce();
+        // Start one day behind so EVERY tick sees a rollover and contends
+        // for the CAS.
+        let last_day = Arc::new(AtomicI32::new(today - 1));
+
+        let load = || {
+            mat.metrics()
+                .bg_processed
+                .load(std::sync::atomic::Ordering::Relaxed)
+        };
+
+        // Control: fixed per-flush Barrier cost (see the single-tick test).
+        let c0 = load();
+        mat.flush_background().await.expect("control drain");
+        let barrier_cost = load() - c0;
+        assert_eq!(barrier_cost, 1, "a flush barrier must count as one bg task");
+
+        let before = load();
+        const N: usize = 16;
+        let mut handles = Vec::with_capacity(N);
+        for _ in 0..N {
+            let mat = mat.clone();
+            let last_day = last_day.clone();
+            handles.push(tokio::spawn(async move {
+                projected_agenda_midnight_tick(&mat, &last_day).await
+            }));
+        }
+        for h in handles {
+            h.await
+                .expect("tick task must not panic")
+                .expect("each concurrent tick must return Ok (winner enqueues, losers no-op)");
+        }
+
+        // The CAS winner advanced the atomic to today; all losers observed
+        // `previous == today` (or lost the swap) and short-circuited.
+        assert_eq!(
+            last_day.load(Ordering::Acquire),
+            today,
+            "the day atomic must advance to today exactly once under contention"
+        );
+
+        mat.flush_background().await.expect("drain after ticks");
+        let rebuilds = (load() - before) - barrier_cost;
+        assert_eq!(
+            rebuilds, 1,
+            "EXACTLY ONE RebuildProjectedAgendaCache must land despite {N} concurrent ticks (CAS)"
+        );
+        mat.shutdown();
     }
 }
