@@ -692,6 +692,16 @@ pub(crate) async fn try_receive_snapshot_catchup(
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
         peer_refs::upsert_peer_ref_in_tx(&mut tx, resolved_peer_id).await?;
         peer_refs::update_on_sync_in_tx(&mut tx, resolved_peer_id, &up_to_hash, "").await?;
+        // #2046: a snapshot catch-up IS a protocol reset — the initiator's
+        // op_log/Loro state was wiped and re-seeded from the responder's
+        // snapshot. Bump `reset_count` (and stamp `last_reset_at`) in the
+        // SAME transaction that advances `synced_at`/`last_hash`, so the
+        // counter and the new frontier commit atomically: a crash between
+        // them can't record the re-sync without the reset (or vice versa).
+        // This is the single production caller of the increment, so the
+        // counter advances exactly once per applied snapshot — driving the
+        // "{reset_count} resets" badge in `PeerListItem.tsx`.
+        peer_refs::increment_reset_count_in_tx(&mut tx, resolved_peer_id).await?;
         tx.commit().await?;
         Ok::<(), AppError>(())
     };
@@ -1380,6 +1390,112 @@ mod tests {
 
         materializer.shutdown();
         resp_materializer.shutdown();
+    }
+
+    // -----------------------------------------------------------------
+    // #2046: a snapshot catch-up IS a protocol reset → reset_count bumps
+    // -----------------------------------------------------------------
+
+    /// #2046: a successful snapshot catch-up must increment the peer's
+    /// `reset_count` and stamp `last_reset_at`, atomically with the
+    /// `synced_at`/`last_hash` advance. This is the single production
+    /// caller of the increment — without it the counter (and the
+    /// `PeerListItem.tsx` "{reset_count} resets" badge) never moves.
+    ///
+    /// Drives two back-to-back catch-ups against the same initiator and
+    /// asserts the 0 → 1 → 2 progression so a future double-count
+    /// regression (an extra increment per reset) would fail here.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn try_receive_snapshot_catchup_increments_reset_count_2046() {
+        // Initiator DB (the peer being reset + caught up). It starts with
+        // no peer_refs row, so reset_count effectively starts at 0.
+        let (init_pool, _init_dir) = test_pool().await;
+        let materializer = Materializer::new(init_pool.clone());
+
+        // Run one catch-up from a freshly-built responder snapshot.
+        // Returns after the bookkeeping tx (incl. the reset bump) commits.
+        async fn drive_one_catchup(init_pool: &SqlitePool, materializer: &Materializer) {
+            let (resp_pool, _resp_dir) = test_pool().await;
+            let resp_materializer = Materializer::new(resp_pool.clone());
+            seed_one_block(&resp_pool, &resp_materializer, REMOTE_DEV).await;
+            create_snapshot(&resp_pool, REMOTE_DEV).await.unwrap();
+            let (_snap_id, snap_bytes) = get_latest_snapshot(&resp_pool).await.unwrap().unwrap();
+            let expected_size = snap_bytes.len() as u64;
+
+            let (mut server_conn, mut client_conn) = test_connection_pair().await;
+            let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+            let bytes_clone = snap_bytes.clone();
+            let snap_hash = blake3::hash(&snap_bytes).to_hex().to_string();
+            let server_task = tokio::spawn(async move {
+                server_conn
+                    .send_json(&SyncMessage::SnapshotOffer {
+                        size_bytes: expected_size,
+                        blob_blake3: snap_hash,
+                    })
+                    .await
+                    .unwrap();
+                let accept: SyncMessage = server_conn.recv_json().await.unwrap();
+                assert_eq!(accept, SyncMessage::SnapshotAccept);
+                for chunk in bytes_clone.chunks(BINARY_FRAME_CHUNK_SIZE) {
+                    server_conn.send_binary(chunk).await.unwrap();
+                }
+            });
+
+            let outcome = try_receive_snapshot_catchup(
+                &mut client_conn,
+                init_pool,
+                materializer,
+                &event_sink,
+                REMOTE_DEV,
+                None,
+                None,
+            )
+            .await
+            .expect("catch-up must succeed");
+            assert!(
+                matches!(outcome, CatchupOutcome::Applied { .. }),
+                "expected Applied, got {outcome:?}"
+            );
+
+            server_task.await.unwrap();
+            materializer.flush_background().await.unwrap();
+            resp_materializer.shutdown();
+        }
+
+        // First reset: 0 → 1.
+        drive_one_catchup(&init_pool, &materializer).await;
+        let peer = peer_refs::get_peer_ref(&init_pool, REMOTE_DEV)
+            .await
+            .unwrap()
+            .expect("peer_refs row must exist after the first catch-up");
+        assert_eq!(
+            peer.reset_count, 1,
+            "#2046: reset_count must be 1 after the first snapshot catch-up"
+        );
+        assert!(
+            peer.last_reset_at.is_some(),
+            "#2046: last_reset_at must be stamped on a protocol reset"
+        );
+        // The reset is recorded in the SAME tx as the frontier advance.
+        assert!(
+            peer.synced_at.is_some() && peer.last_hash.is_some(),
+            "synced_at/last_hash must also be set (atomic with the reset bump)"
+        );
+
+        // Second reset against the same initiator: 1 → 2 (exactly once
+        // per reset — no double-count).
+        drive_one_catchup(&init_pool, &materializer).await;
+        let peer = peer_refs::get_peer_ref(&init_pool, REMOTE_DEV)
+            .await
+            .unwrap()
+            .expect("peer_refs row must still exist after the second catch-up");
+        assert_eq!(
+            peer.reset_count, 2,
+            "#2046: reset_count must be 2 after a second catch-up (one bump per reset)"
+        );
+
+        materializer.shutdown();
     }
 
     // -----------------------------------------------------------------
