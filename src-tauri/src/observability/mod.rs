@@ -61,10 +61,12 @@ mod config;
 mod exporter;
 mod guard;
 mod layer;
+mod propagation;
 mod provider;
 
 pub use config::{ObservabilityConfig, from_env};
 pub use guard::ObservabilityGuard;
+pub use propagation::extract_trace_context;
 
 use tracing_subscriber::Layer;
 use tracing_subscriber::registry::Registry;

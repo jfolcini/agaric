@@ -542,6 +542,7 @@ fn disable_webkit_dmabuf_if_unset() {
 fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path::Path) {
     use tauri::Manager;
     use tracing_subscriber::EnvFilter;
+    use tracing_subscriber::Layer;
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
@@ -581,11 +582,29 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
     };
 
     // Preserve any user-provided `RUST_LOG` directives for
-    // `agaric` / `frontend`.
+    // `agaric` / `frontend`. The log layers (stderr + file) default to `info`.
+    // `EnvFilter` is not `Clone`, so build the directive string once and mint a
+    // fresh filter per layer (each layer now carries its OWN filter — see the
+    // registry composition below — instead of one global filter).
     let rust_log = std::env::var("RUST_LOG").unwrap_or_default();
     let directives = build_log_directives(&rust_log, &[("agaric", "info"), ("frontend", "info")]);
-    let env_filter = EnvFilter::try_new(&directives)
-        .unwrap_or_else(|_| EnvFilter::new("agaric=info,frontend=info"));
+    let make_log_filter = || {
+        EnvFilter::try_new(&directives)
+            .unwrap_or_else(|_| EnvFilter::new("agaric=info,frontend=info"))
+    };
+
+    // #2110 M3 — the OTel trace layer captures at `debug` (default), so the
+    // dispatch-time `ipc::request::run` span (Tauri `tracing` feature; target
+    // `agaric_lib::…`, debug level) is recorded and carries the frontend
+    // `traceparent` parent into the async command future. RUST_LOG still
+    // overrides. This is a SEPARATE, more permissive filter from the log layers'
+    // `info`, and it is attached only when the OTel layers exist (below) so it
+    // never raises the registry's max level — and thus never makes debug spans
+    // (e.g. the op-hash spans) evaluate — when observability is off.
+    let otel_directives =
+        build_log_directives(&rust_log, &[("agaric", "debug"), ("frontend", "info")]);
+    let otel_filter = EnvFilter::try_new(&otel_directives)
+        .unwrap_or_else(|_| EnvFilter::new("agaric=debug,frontend=info"));
 
     // H-9b-activation: the file appender emits JSON-per-line so
     // the H-9b deny-list redaction pipeline (`bug_report::redact_line`)
@@ -622,16 +641,20 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
     // The OTel layers are `Box<dyn Layer<Registry>>`, so they must be added
     // directly onto the bare `Registry` (each implements `Layer` only for that
     // exact subscriber type, not for an already-`Layered` one). A `Vec` of them
-    // is itself one `Layer<Registry>`, which is what lets both compose in a
-    // single `.with(...)`; it is added first, and the env filter + fmt layers
-    // wrap it. Composition order does not change which spans/events each layer
-    // sees — the global `EnvFilter` still gates every layer, including these.
-    // `obs.layers` is empty when disabled, a no-op on the registry.
+    // is itself one `Layer<Registry>`; it carries its own `debug` filter and is
+    // added first. The stderr + file layers each carry their own `info` filter.
+    // `Option::then` attaches the OTel layers (with the debug filter) ONLY when
+    // they exist — when disabled this is `None`, a no-op that leaves the
+    // registry's max level at `info` so debug callsites stay free (M2b).
+    let otel_layers = obs_enabled.then(|| obs.layers.with_filter(otel_filter));
     tracing_subscriber::registry()
-        .with(obs.layers)
-        .with(env_filter)
-        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-        .with(file_layer)
+        .with(otel_layers)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_filter(make_log_filter()),
+        )
+        .with(file_layer.map(|f| f.with_filter(make_log_filter())))
         .init();
 
     // #2110 M1a/M1b — announce only when telemetry is actually enabled; stay
@@ -2021,7 +2044,30 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(builder.invoke_handler())
+        // #2110 M3 — wrap the tauri-specta invoke handler to extract a W3C
+        // `traceparent` header (set by the frontend `invoke` shim) and re-parent
+        // this request's span onto the frontend trace. Tauri's `tracing` feature
+        // makes the async command future run under an `ipc::request::run` span
+        // created *here*, synchronously, while `ipc.frontend` is entered — so it
+        // (and every command + subsystem `#[instrument]` span beneath it) becomes
+        // a child of the frontend interaction. No `traceparent` (the default, and
+        // whenever observability is off) ⇒ the inner handler runs unwrapped and
+        // the command starts a fresh root trace, exactly as before.
+        .invoke_handler({
+            let specta_invoke_handler = builder.invoke_handler();
+            move |invoke| {
+                use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+                match observability::extract_trace_context(invoke.message.headers()) {
+                    Some(parent_cx) => {
+                        let span = tracing::info_span!("ipc.frontend");
+                        let _ = span.set_parent(parent_cx);
+                        let _enter = span.enter();
+                        specta_invoke_handler(invoke)
+                    }
+                    None => specta_invoke_handler(invoke),
+                }
+            }
+        })
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {
             tracing::error!(error = %e, "failed to build Tauri application");
