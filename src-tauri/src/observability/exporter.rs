@@ -112,8 +112,11 @@ pub fn build_file_exporter(log_dir: &Path) -> Option<FileSpanExporter> {
 
 /// Serialize one span to a single line.
 ///
-/// Format (tab-separated): `<rfc3339-end> <name> trace=<id> span=<id>
-/// parent=<id|->  dur_ms=<f> status=<…> { <key>=<val> … }`. Only opaque ids,
+/// Format (tab-separated `key=value` pairs):
+/// `end=<rfc3339-ms>\tname=<name>\ttrace=<id>\tspan=<id>\tparent=<id|->\t`
+/// `dur_ms=<f>\tstatus=<…>\t<attr-key>=<attr-val>…`. `end` is the span's end
+/// time as RFC-3339 with millisecond precision (UTC), so a line is
+/// self-describing in time without cross-referencing the log. Only opaque ids,
 /// op-types, counts, durations, and the attribute key/values the
 /// instrumentation chose to attach appear — there is no app content here.
 fn format_span(span: &SpanData) -> String {
@@ -125,6 +128,11 @@ fn format_span(span: &SpanData) -> String {
         .map(|d| d.as_secs_f64() * 1000.0)
         .unwrap_or(f64::NAN);
 
+    // Span end time as RFC-3339 (UTC, millis) — the leading, human-readable
+    // timestamp the line is keyed on.
+    let end = chrono::DateTime::<chrono::Utc>::from(span.end_time)
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+
     let parent = if span.parent_span_id == opentelemetry::SpanId::INVALID {
         "-".to_owned()
     } else {
@@ -134,7 +142,7 @@ fn format_span(span: &SpanData) -> String {
     let mut line = String::new();
     let _ = write!(
         line,
-        "name={name}\ttrace={trace}\tspan={span_id}\tparent={parent}\tdur_ms={dur_ms:.3}\tstatus={status:?}",
+        "end={end}\tname={name}\ttrace={trace}\tspan={span_id}\tparent={parent}\tdur_ms={dur_ms:.3}\tstatus={status:?}",
         name = span.name,
         trace = span.span_context.trace_id(),
         span_id = span.span_context.span_id(),
