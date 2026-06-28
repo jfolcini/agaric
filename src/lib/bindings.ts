@@ -1920,9 +1920,26 @@ export type FrontendSpan = {
 	/**  Span end as epoch milliseconds. */
 	end_unix_millis: number | null,
 	/**  Flat attribute key/value pairs the frontend attached. */
-	attributes: ([string, string])[],
+	attributes: FrontendSpanAttr[],
 	/**  Optional status string (e.g. `"ok"` / `"error"`), or `None`. */
 	status: string | null,
+};
+
+/**
+ *  One frontend span attribute. A named key/value struct rather than a
+ *  `(String, String)` tuple so the generated TS type is `FrontendSpanAttr[]`
+ *  (not `([string, string])[]`); the tuple form's leading `(` confused the
+ *  `check-tauri-bindings-parity` command-name parser, and a named struct is the
+ *  clearer wire shape anyway.
+ */
+export type FrontendSpanAttr = {
+	/**  Attribute key (an opaque label — never content). */
+	key: string,
+	/**
+	 *  Attribute value (opaque — ids/counts/enums only; PII is the frontend's
+	 *  responsibility, enforced by the M4 guard).
+	 */
+	value: string,
 };
 
 /**

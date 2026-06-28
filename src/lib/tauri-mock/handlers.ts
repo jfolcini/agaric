@@ -924,6 +924,13 @@ function fbqInSpace(b: Record<string, unknown>, spaceId: string | null): boolean
 }
 
 export const HANDLERS: Record<string, Handler> = {
+  // #2110 M3b — OpenTelemetry frontend-span ingest. Off by default; the frontend
+  // tracer only invokes it when observability is enabled, which the default e2e
+  // runs never are, so the mock is a no-op that accepts the batch and returns
+  // `Ok(())` (serialized as `null`). Keeps the handlers-drift guard satisfied
+  // until the frontend producer + its own e2e coverage land.
+  ingest_otel_spans: () => null,
+
   // ---------------------------------------------------------------------------
   // Block listing & CRUD
   // ---------------------------------------------------------------------------

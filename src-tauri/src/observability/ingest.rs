@@ -77,9 +77,23 @@ pub struct FrontendSpan {
     /// Span end as epoch milliseconds.
     pub end_unix_millis: f64,
     /// Flat attribute key/value pairs the frontend attached.
-    pub attributes: Vec<(String, String)>,
+    pub attributes: Vec<FrontendSpanAttr>,
     /// Optional status string (e.g. `"ok"` / `"error"`), or `None`.
     pub status: Option<String>,
+}
+
+/// One frontend span attribute. A named key/value struct rather than a
+/// `(String, String)` tuple so the generated TS type is `FrontendSpanAttr[]`
+/// (not `([string, string])[]`); the tuple form's leading `(` confused the
+/// `check-tauri-bindings-parity` command-name parser, and a named struct is the
+/// clearer wire shape anyway.
+#[derive(Debug, Clone, serde::Deserialize, specta::Type)]
+pub struct FrontendSpanAttr {
+    /// Attribute key (an opaque label — never content).
+    pub key: String,
+    /// Attribute value (opaque — ids/counts/enums only; PII is the frontend's
+    /// responsibility, enforced by the M4 guard).
+    pub value: String,
 }
 
 /// Writes ingested [`FrontendSpan`]s to the local `traces/` sink.
@@ -160,12 +174,12 @@ fn format_frontend_span(span: &FrontendSpan) -> String {
         trace = sanitize_inline(&span.trace_id),
         span_id = sanitize_inline(&span.span_id),
     );
-    for (key, value) in &span.attributes {
+    for attr in &span.attributes {
         let _ = write!(
             line,
             "\t{}={}",
-            sanitize_inline(key),
-            sanitize_inline(value)
+            sanitize_inline(&attr.key),
+            sanitize_inline(&attr.value)
         );
     }
     line.push('\n');
@@ -219,7 +233,10 @@ mod tests {
             name: "click_create_block".to_owned(),
             start_unix_millis: 1_700_000_000_000.0,
             end_unix_millis: 1_700_000_000_012.5,
-            attributes: vec![("count".to_owned(), "3".to_owned())],
+            attributes: vec![FrontendSpanAttr {
+                key: "count".to_owned(),
+                value: "3".to_owned(),
+            }],
             status: Some("ok".to_owned()),
         }
     }
