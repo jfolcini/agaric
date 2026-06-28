@@ -128,8 +128,9 @@ impl RollingFileSink {
         }
     }
 
-    /// Flush any buffered bytes (used by `SpanExporter::force_flush`).
-    fn flush(&self) {
+    /// Flush any buffered bytes (used by `SpanExporter::force_flush` and the
+    /// M6 `FileMetricExporter`'s `force_flush` / `shutdown_with_timeout`).
+    pub(crate) fn force_flush(&self) {
         if let Ok(mut w) = self.writer.lock() {
             let _ = w.flush();
         }
@@ -215,7 +216,7 @@ impl SpanExporter for FileSpanExporter {
     }
 
     fn force_flush(&self) -> OTelSdkResult {
-        self.sink.flush();
+        self.sink.force_flush();
         Ok(())
     }
 }

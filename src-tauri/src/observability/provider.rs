@@ -29,13 +29,16 @@ const SERVICE_NAME: &str = "agaric";
 /// Instrumentation-scope name for the tracer this provider hands out.
 const TRACER_SCOPE: &str = "agaric";
 
-/// The OTel [`Resource`] shared by the trace and logs providers.
+/// The OTel [`Resource`] shared by the trace, logs, and metrics providers.
 ///
-/// Tags every span and log record with `service.name = "agaric"` +
+/// Tags every span, log record, and metric with `service.name = "agaric"` +
 /// `service.version = <crate version>` and nothing else — no host name, user,
-/// or other PII identifier. Built identically for both signals so a span and
-/// its correlated logs agree on the resource.
-fn resource() -> Resource {
+/// or other PII identifier. Built identically for all signals so a span, its
+/// correlated logs, and the metrics emitted in the same run agree on the
+/// resource. `pub(super)` so the M6 metrics provider
+/// ([`super::metrics::build_meter_provider`]) reuses the *exact* same resource
+/// rather than duplicating it.
+pub(super) fn resource() -> Resource {
     Resource::builder()
         .with_service_name(SERVICE_NAME)
         .with_attribute(opentelemetry::KeyValue::new(

@@ -36,9 +36,31 @@
 //! event with that active span's trace + span id.
 //!
 //! Submodules: [`config`] (pure env parsing), [`exporter`] (the only place that
-//! knows the on-disk formats + owns the shared rolling-file sink), [`provider`]
-//! (resource + sampler + batch processors for both signals), [`layer`] (the two
-//! tracing↔OTel bridges), [`guard`] (flush both on exit).
+//! knows the span/log on-disk formats + owns the shared rolling-file sink),
+//! [`provider`] (resource + sampler + batch processors for both signals),
+//! [`layer`] (the two tracing↔OTel bridges), [`metrics_exporter`] (the M6
+//! local-file metric exporter, reusing the shared sink) + [`metrics`] (the M6
+//! meter provider, observable counters over the existing materializer atomics,
+//! and latency histograms), [`guard`] (flush all three signals on exit).
+//!
+//! # M6 metrics (local-file, off by default)
+//!
+//! ```text
+//!   process-global atomics ──► observable counters ┐
+//!   record_ipc_duration / _op_apply ──► histograms ┤
+//!                                                   ▼
+//!                                          SdkMeterProvider
+//!                                            ├─ Resource(service.name/version)
+//!                                            └─ PeriodicReader (~30s, thread)
+//!                                                   └─► FileMetricExporter
+//!                                                         └─► metrics/*.log
+//! ```
+//!
+//! The `PeriodicReader` collects on a background `std::thread` (no async
+//! runtime, same "no rt-tokio" posture as the batch span/log processors) and
+//! drives the local-file exporter — zero egress. The histogram helpers resolve
+//! the global meter lazily, so they are unconditional + free when disabled (the
+//! global default is a no-op meter).
 //!
 //! # Three invariants (hard rules)
 //!
@@ -62,12 +84,20 @@ mod exporter;
 mod guard;
 mod ingest;
 mod layer;
+mod metrics;
+mod metrics_exporter;
 mod propagation;
 mod provider;
 
 pub use config::{ObservabilityConfig, from_env};
 pub use guard::ObservabilityGuard;
 pub use ingest::{FrontendSpan, FrontendSpanIngestor, build_frontend_ingestor};
+// #2110 M6 — the two latency-histogram record helpers. Unconditional + free at
+// every call site: when observability is off (the default) the global meter is
+// a no-op, so these compile to a couple of moves into a no-op instrument. The
+// IPC helper is called from the `lib.rs` invoke wrapper; the apply helper from
+// `materializer::handlers::apply::apply_op`.
+pub use metrics::{record_ipc_duration, record_op_apply_duration};
 pub use propagation::extract_trace_context;
 
 use tracing_subscriber::Layer;
@@ -109,15 +139,18 @@ impl Observability {
     }
 }
 
-/// Initialize the trace + logs pipelines for one app boot.
+/// Initialize the trace + logs + metrics pipelines for one app boot.
 ///
 /// Returns [`Observability::disabled`] (no layers, no guard) when
 /// `config.enabled` is `false` OR the span exporter cannot be built (e.g. a
 /// read-only disk). Otherwise builds the span exporter under `<log_dir>/traces/`,
 /// the batched `SdkTracerProvider`, and the trace layer; then — independently —
 /// the log exporter under `<log_dir>/otel-logs/`, its `SdkLoggerProvider`, and
-/// the M1b logs bridge layer. The logs signal degrades on its own: if only its
-/// sink is unwritable, tracing still runs without it.
+/// the M1b logs bridge layer; then — also independently — the M6 metric exporter
+/// under `<log_dir>/metrics/`, its `SdkMeterProvider` (installed as the global
+/// meter provider, with the observable counters registered). Each of the logs +
+/// metrics signals degrades on its own: if only its sink is unwritable, the
+/// other pipelines still run without it.
 ///
 /// This function never touches the network and never panics.
 #[must_use]
@@ -147,7 +180,23 @@ pub fn init(log_dir: &std::path::Path, config: &ObservabilityConfig) -> Observab
         None => None,
     };
 
-    let guard = ObservabilityGuard::new(provider, logger_provider);
+    // M6 — the metrics pipeline is likewise an independent signal: if its
+    // `metrics/` sink can't be opened, traces + logs still run (no meter
+    // provider, no metrics in the guard). When built, install it as the
+    // process-global meter provider (so the lazily-resolved latency-histogram
+    // helpers reach it) and register the observable counters that read the
+    // existing materializer atomics on each collection cycle.
+    let meter_provider = match metrics_exporter::build_metric_exporter(log_dir) {
+        Some(metric_exporter) => {
+            let meter_provider = metrics::build_meter_provider(config, metric_exporter);
+            opentelemetry::global::set_meter_provider(meter_provider.clone());
+            metrics::register_instruments(&meter_provider);
+            Some(meter_provider)
+        }
+        None => None,
+    };
+
+    let guard = ObservabilityGuard::new(provider, logger_provider, meter_provider);
 
     Observability {
         layers,
@@ -201,8 +250,14 @@ mod tests {
             tmp.path().join("otel-logs").is_dir(),
             "enabled ⇒ otel-logs/ dir created"
         );
-        // Drop the guard explicitly (flush + shutdown both providers) — must not
-        // panic.
+        // M6 — the metrics pipeline degrades independently, so an enabled boot
+        // on a writable dir must also create the metrics/ sink.
+        assert!(
+            tmp.path().join("metrics").is_dir(),
+            "enabled ⇒ metrics/ dir created"
+        );
+        // Drop the guard explicitly (flush + shutdown all three providers) —
+        // must not panic.
         drop(obs);
     }
 

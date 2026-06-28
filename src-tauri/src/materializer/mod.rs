@@ -58,6 +58,13 @@ use handlers::{handle_background_task, handle_foreground_task};
 // materializer module via `handlers::cleanup_orphaned_attachments`.
 #[cfg(test)]
 pub(crate) use handlers::cleanup_orphaned_attachments;
+// #2110 M6 — re-export the two process-global materializer counter accessors
+// so the OTel metrics pipeline (`observability::metrics`) can surface them as
+// observable counters WITHOUT reaching into the private `handlers` module or
+// touching the underlying statics directly. Each is a thin getter over a
+// monotonic `AtomicU64` (relaxed load); the metrics callback reads it on each
+// collection cycle. PII-safe by construction (opaque counts only).
+pub(crate) use handlers::{descendant_fanout_dropped_count, sql_only_fallback_count};
 pub use metrics::{QueueMetrics, StatusInfo};
 use serde::Deserialize;
 use std::sync::Arc;

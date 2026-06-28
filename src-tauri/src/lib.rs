@@ -2069,7 +2069,18 @@ pub fn run() {
             let specta_invoke_handler = builder.invoke_handler();
             move |invoke| {
                 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-                match observability::extract_trace_context(invoke.message.headers()) {
+                // #2110 M6 — time each IPC command dispatch and record it to the
+                // `agaric.ipc.duration` histogram, attributed by the command
+                // NAME (an opaque compile-time identifier, never user data). The
+                // command name is captured BEFORE dispatch (which consumes
+                // `invoke`). `record_ipc_duration` is unconditional + free when
+                // observability is off (the global meter is a no-op), so this
+                // wraps both the re-parented and the unwrapped path with no
+                // enabled-check.
+                let cmd = invoke.message.command().to_owned();
+                let started = std::time::Instant::now();
+                let response = match observability::extract_trace_context(invoke.message.headers())
+                {
                     Some(parent_cx) => {
                         let span = tracing::info_span!("ipc.frontend");
                         let _ = span.set_parent(parent_cx);
@@ -2077,7 +2088,9 @@ pub fn run() {
                         specta_invoke_handler(invoke)
                     }
                     None => specta_invoke_handler(invoke),
-                }
+                };
+                observability::record_ipc_duration(started.elapsed().as_secs_f64() * 1000.0, &cmd);
+                response
             }
         })
         .build(tauri::generate_context!())
