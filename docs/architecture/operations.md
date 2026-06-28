@@ -37,7 +37,7 @@ Generated TS bindings + the macro single-source means there's no per-PR drift co
 
 ### Per-space scoping in SQL
 
-Space filter is pushed into the SQL `WHERE` clause everywhere it matters (canonical fragment pinned by `SPACE_FILTER_CANONICAL` parity test). Cross-space queries don't load + post-filter — they stop at the SQL engine. The 13 sites that share the fragment have a drift-detection test so they can't desync.
+Space filter is pushed into the SQL `WHERE` clause everywhere it matters (canonical fragment pinned by `SPACE_FILTER_CANONICAL` parity test). Cross-space queries don't load + post-filter — they stop at the SQL engine. The fragment is inlined at ~30 sites (every canonical-shape inline site); the drift-detection test walks `src/**/*.rs` and asserts the canonical shape on every match — no exact count is pinned, so adding a site can't desync.
 
 ## Memory footprint & scaling envelope
 

@@ -52,10 +52,17 @@ impl LoroEngine {
         }
     }
     /// Read the raw stamped [`FIELD_FORMAT_VERSION`] from an [`ENGINE_META_ROOT`]
-    /// map. `None` distinguishes *absent* (legacy-unstamped, pre-#1584) from a
-    /// *present* value so the import gate can treat the two differently. A
-    /// present-but-non-`I64` value yields `Some(_)` only when it parses; the
-    /// caller's gate rejects the non-integer case explicitly.
+    /// map. Tri-state:
+    ///
+    /// * field absent → `None` (legacy-unstamped, pre-#1584).
+    /// * field present and a valid `I64` → `Some(n)` (the stamped version).
+    /// * field present but **not** an `I64` → `Some(i64::MIN)`, a negative
+    ///   sentinel. (`i64::MIN` is `< 0`, so the caller's gate
+    ///   ([`Self::reject_unknown_format_version`]) rejects it via its `v < 0`
+    ///   corrupt/unknown branch.)
+    ///
+    /// `None` distinguishes *absent* (accept as legacy-unstamped) from a
+    /// *present* value so the import gate can treat the two differently.
     fn read_format_version(meta: &LoroMap) -> Option<i64> {
         match meta.get(FIELD_FORMAT_VERSION)?.into_value() {
             Ok(LoroValue::I64(n)) => Some(n),
