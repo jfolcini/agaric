@@ -112,7 +112,22 @@ pub async fn create_block_inner(
 // builder pattern. Restructuring into an args struct would touch hundreds
 // of callsites for zero behavioural gain.
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(pool, device_id, materializer, content), err)]
+// #2110 M1a — PII-safe command span. Records ONLY opaque fields: the
+// block_type tag (an enum-like "page"/"task"/… string, never user text), the
+// parent ULID (opaque id), and the sibling index (a count). `content` and the
+// space scope's inner value are deliberately NOT recorded — `skip_all` drops
+// every argument and only the explicit `fields(...)` below are attached.
+#[instrument(
+    level = "info",
+    name = "create_block",
+    skip_all,
+    fields(
+        block_type = %block_type,
+        parent_id = ?parent_id,
+        index = ?index,
+    ),
+    err
+)]
 pub async fn create_block_inner_with_space(
     pool: &SqlitePool,
     device_id: &str,

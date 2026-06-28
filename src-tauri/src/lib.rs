@@ -28,6 +28,9 @@ pub mod maintenance;
 pub mod materializer;
 pub mod mcp;
 pub mod merge;
+// OpenTelemetry trace observability (#2110, M1a). Backend traces to a LOCAL
+// FILE only — zero network egress, gated OFF by default (AGARIC_OTEL unset).
+pub mod observability;
 pub mod op;
 pub mod op_log;
 pub mod pagination;
@@ -604,11 +607,40 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
             .with_writer(nb)
             .with_ansi(false)
     });
+
+    // #2110 M1a — OpenTelemetry traces to a LOCAL FILE only (zero egress),
+    // gated OFF by default (AGARIC_OTEL unset). `obs.trace_layer` is an
+    // `Option<Layer>`: a no-op on the registry when `None` (same composition
+    // the `file_layer` above already relies on), so when observability is
+    // disabled the subscriber chain is byte-identical to before.
+    let obs_config = observability::ObservabilityConfig::from_env();
+    let obs = observability::init(&log_dir, &obs_config);
+    let obs_guard = obs.guard;
+    let obs_enabled = obs.trace_layer.is_some();
+
+    // The OTel layer is a `Box<dyn Layer<Registry>>`, so it must be added
+    // directly onto the bare `Registry` (it only implements `Layer` for that
+    // exact subscriber type, not for an already-`Layered` one). It is added
+    // first; the env filter + fmt layers wrap it. Composition order does not
+    // change which spans each layer sees — the global `EnvFilter` still gates
+    // every layer, including this one. `obs.trace_layer` is `None` when
+    // disabled, which is a no-op on the registry (byte-identical chain).
     tracing_subscriber::registry()
+        .with(obs.trace_layer)
         .with(env_filter)
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .with(file_layer)
         .init();
+
+    // #2110 M1a — announce only when traces are actually enabled; stay silent
+    // (no new log line) when off so the existing logging output is unchanged.
+    if obs_enabled {
+        tracing::info!(
+            traces_dir = %log_dir.join("traces").display(),
+            sampling_ratio = obs_config.sampling_ratio,
+            "OpenTelemetry traces enabled"
+        );
+    }
 
     if log_guard.is_some() {
         tracing::info!(log_dir = %log_dir.display(), "log directory initialized");
@@ -631,6 +663,13 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
     // stderr-only degrade path there is nothing to flush.
     if let Some(log_guard) = log_guard {
         app.manage(LogGuard(log_guard));
+    }
+
+    // #2110 M1a — keep the OTel trace pipeline alive for the app lifetime so
+    // spans flush + the provider shuts down cleanly on exit (mirrors LogGuard).
+    // Only present when traces were enabled and the file exporter was built.
+    if let Some(obs_guard) = obs_guard {
+        app.manage(obs_guard);
     }
 }
 

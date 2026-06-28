@@ -22,7 +22,25 @@ use crate::space::SpaceScope;
 ///
 /// - [`AppError::Validation`] — multiple conflicting filters, or invalid date format
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(pool), err)]
+// #2110 M1a — PII-safe query span (info level, so it passes the default
+// `agaric=info` OTel filter). Records ONLY opaque ids / enum tags / counts /
+// booleans: the space ULID, the optional block_type enum tag, the limit
+// (a count), and `has_tag_filter` / `has_parent` booleans. `tag_id`,
+// `cursor`, and the agenda date strings are skipped to keep the span minimal —
+// NO query text / tag name / content is ever recorded.
+#[instrument(
+    level = "info",
+    name = "list_blocks",
+    skip_all,
+    fields(
+        space_id = %space_id,
+        block_type = ?block_type,
+        limit = ?limit,
+        has_parent = parent_id.is_some(),
+        has_tag_filter = tag_id.is_some(),
+    ),
+    err
+)]
 pub async fn list_blocks_inner(
     pool: &SqlitePool,
     parent_id: Option<BlockId>,

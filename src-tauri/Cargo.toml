@@ -166,6 +166,32 @@ ciborium = "0.2"
 tracing = { version = "0.1.44", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 
+# OpenTelemetry tracing (issue #2110, milestone M1a). Backend traces ONLY,
+# written to a LOCAL FILE — ZERO network egress (no opentelemetry-otlp / no
+# HTTP/gRPC exporter is in this graph by design; the app's "nothing leaves
+# your machine" promise + CSP forbid it). The whole pipeline is gated OFF by
+# default (AGARIC_OTEL unset) and is a ~zero-overhead no-op when disabled.
+#
+# Mutually-compatible version set — all three agree on the `opentelemetry`
+# 0.32 API surface, which is what makes them link together:
+#   - tracing-opentelemetry 0.33 pins opentelemetry 0.32 + opentelemetry_sdk 0.32
+# The on-disk span exporter is a small in-repo `impl SpanExporter` (see
+# observability/exporter.rs) writing a line-per-span format to a rolling
+# LOCAL FILE. A future swap to a strict OTLP/JSON file exporter stays behind
+# the same `SpanExporter` trait without a version bump. (NOTE: the
+# `opentelemetry-stdout` crate was evaluated and rejected — its 0.32
+# `SpanExporter` hardcodes `println!` to process stdout with no `with_writer`
+# hook, so it cannot satisfy the local-file requirement; writing our own
+# exporter is both the only way to hit a file AND the intended swap point.)
+# All three crates are Apache-2.0 (GPL-3-compatible per deny.toml's allow-list).
+opentelemetry = "0.32"
+# Default features only (includes `trace`). The thread-based
+# `with_batch_exporter` processor needs no async runtime, so `rt-tokio` is
+# deliberately NOT enabled; the test-only `testing` feature (InMemorySpanExporter)
+# is a dev-dependency below so it stays out of the release binary.
+opentelemetry_sdk = "0.32"
+tracing-opentelemetry = "0.33"
+
 # Sync
 tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
@@ -253,6 +279,10 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["async_tokio"] }
+# Test-only OTel feature: `InMemorySpanExporter` for the observability pipeline
+# tests (#2110). Cargo unifies this onto the normal `opentelemetry_sdk` dep for
+# test builds; the release binary never sees the `testing` feature.
+opentelemetry_sdk = { version = "0.32", features = ["testing"] }
 insta = { version = "1.47.0", features = ["yaml", "redactions"] }
 proptest = "1.11.0"
 tempfile = "3.27.0"
