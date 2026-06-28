@@ -54,6 +54,12 @@ const FRONTEND_SERVICE_NAME: &str = "agaric-frontend";
 /// mirroring how `log_frontend` truncates oversized fields.
 const MAX_SPANS_PER_CALL: usize = 512;
 
+/// Maximum number of attributes serialized per span; extras are dropped.
+/// Symmetric with [`MAX_SPANS_PER_CALL`] — bounds a single span carrying a
+/// runaway attribute list. Generous: real interaction spans carry well under
+/// this (a handful of ids/counts).
+const MAX_ATTRS_PER_SPAN: usize = 64;
+
 /// One frontend-produced span, mirroring a W3C/OTLP span. Deserialized straight
 /// off the IPC boundary; the frontend tracer fills every field.
 ///
@@ -174,7 +180,7 @@ fn format_frontend_span(span: &FrontendSpan) -> String {
         trace = sanitize_inline(&span.trace_id),
         span_id = sanitize_inline(&span.span_id),
     );
-    for attr in &span.attributes {
+    for attr in span.attributes.iter().take(MAX_ATTRS_PER_SPAN) {
         let _ = write!(
             line,
             "\t{}={}",
@@ -323,6 +329,41 @@ mod tests {
         assert_eq!(
             line_count, MAX_SPANS_PER_CALL,
             "batch over cap must be truncated to {MAX_SPANS_PER_CALL} lines"
+        );
+    }
+
+    /// A span's attribute list is capped at [`MAX_ATTRS_PER_SPAN`] — extras are
+    /// dropped, symmetric with the per-call span cap.
+    #[test]
+    fn ingest_caps_attributes_per_span() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ingestor = build_frontend_ingestor(tmp.path(), true);
+
+        let mut span = sample_span("4bf92f3577b34da6a3ce929d0e0e4736");
+        span.attributes = (0..MAX_ATTRS_PER_SPAN + 5)
+            .map(|i| FrontendSpanAttr {
+                key: format!("attr{i}"),
+                value: "x".to_owned(),
+            })
+            .collect();
+        ingestor.ingest(&[span]);
+
+        let mut contents = String::new();
+        for entry in std::fs::read_dir(tmp.path().join(TRACES_SUBDIR)).expect("read traces dir") {
+            let path = entry.expect("dir entry").path();
+            if path.is_file() {
+                contents.push_str(&std::fs::read_to_string(&path).expect("read trace file"));
+            }
+        }
+
+        assert!(contents.contains("\tattr0=x"), "first attribute kept");
+        assert!(
+            contents.contains(&format!("\tattr{}=x", MAX_ATTRS_PER_SPAN - 1)),
+            "the last in-cap attribute is kept"
+        );
+        assert!(
+            !contents.contains(&format!("\tattr{}=x", MAX_ATTRS_PER_SPAN)),
+            "an attribute beyond the cap is dropped"
         );
     }
 
