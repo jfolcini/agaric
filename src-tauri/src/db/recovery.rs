@@ -358,10 +358,28 @@ async fn recover_blocks_from_op_log(
             "edit_block" => {
                 let block_id = payload["block_id"].as_str().unwrap_or("");
                 if let Some(to_text) = payload.get("to_text").and_then(serde_json::Value::as_str) {
-                    sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
-                        .bind(to_text)
-                        .bind(block_id)
-                        .execute(&mut *executor)
+                    // #2043: route the content UPDATE through the shared
+                    // projection (`project_edit_block_to_sql`) so its shape
+                    // (`SET content = ? WHERE id = ? AND deleted_at IS NULL`)
+                    // cannot drift from the engine/sql-only arms. The added
+                    // `deleted_at IS NULL` guard is inert here: recovery replays
+                    // in `created_at` order, so an `edit_block` always precedes
+                    // its block's later `delete_block` — the target row is never
+                    // yet soft-deleted when the edit lands. The temp `blocks`
+                    // table's `content` column is plain TEXT (constraint-free),
+                    // so the macro-checked query runs unchanged against it. We
+                    // synthesize the `BlockSnapshot` the projection expects from
+                    // the op payload; only `content` + `block_id` are read (the
+                    // other fields are inert placeholders), exactly as
+                    // `apply_edit_block_sql_only` does.
+                    let snapshot = crate::loro::engine::BlockSnapshot {
+                        block_id: block_id.to_owned(),
+                        block_type: String::new(),
+                        content: to_text.to_owned(),
+                        parent_id: None,
+                        position: 0,
+                    };
+                    crate::loro::projection::project_edit_block_to_sql(&mut *executor, &snapshot)
                         .await?;
                 }
             }
@@ -413,6 +431,13 @@ async fn recover_blocks_from_op_log(
                 // STRICT INTEGER column, so rfc3339 TEXT wedges 0085/0089 and
                 // corrupts at-head i64 reads), rfc3339 TEXT before that
                 // (0080's julianday() backfill converts it).
+                //
+                // #2043: this arm is INTENTIONALLY left inline, not routed
+                // through `project_delete_block_to_sql`. That projection is
+                // i64-only (`deleted_at` INTEGER) and its recursive CTE filter
+                // differs; the era-switched TEXT/INTEGER stamp above cannot be
+                // expressed through it, so unifying would mis-stamp the
+                // pre-0080 (TEXT) era.
                 let query = sqlx::query(
                     "UPDATE blocks SET deleted_at = ?1 \
                      WHERE deleted_at IS NULL \
@@ -436,17 +461,27 @@ async fn recover_blocks_from_op_log(
             }
             "restore_block" => {
                 let block_id = payload["block_id"].as_str().unwrap_or("");
-                // #613: a `restore_block` op encodes ONLY the root, but the
-                // production path (`apply_restore_block_sql_only` /
-                // `project_restore_block_to_sql`, `collect_restore_cohort`)
-                // un-deletes the whole `(seed, deleted_at_ref)` cohort —
-                // every descendant tombstoned by the SAME delete op. The
-                // previous root-only UPDATE left every descendant tombstoned
-                // after a delete(root)+restore(root) replay, and ignored the
-                // cohort token entirely (a root deleted independently earlier
-                // would get resurrected by a later unrelated restore op).
+                // #613: a `restore_block` op encodes ONLY the root. This arm
+                // un-deletes a FLAT subtree cohort keyed on the originating
+                // delete op's `deleted_at_ref`, by design.
                 //
-                // Mirror the #429 delete-arm cascade, keyed on the cohort
+                // #2043: this is INTENTIONALLY DIVERGENT from the projection
+                // (`project_restore_block_to_sql` / `collect_restore_cohort`)
+                // and MUST NOT be unified with it. The projection uses the
+                // stricter connected-cohort walk (#1055) plus upward ancestor
+                // restore (#1884/#2017); routing recovery through it would
+                // CHANGE which blocks get un-deleted (the exact
+                // orphan-promotion / RestoreBlock regression class #2043
+                // cites). Recovery deliberately keeps the flat
+                // `(seed, deleted_at_ref)` cohort + no ancestor restore.
+                //
+                // The previous root-only UPDATE left every descendant
+                // tombstoned after a delete(root)+restore(root) replay, and
+                // ignored the cohort token entirely (a root deleted
+                // independently earlier would get resurrected by a later
+                // unrelated restore op).
+                //
+                // Use the #429 delete-arm cascade shape, keyed on the cohort
                 // timestamp: `deleted_at_ref` is the originating delete op's
                 // `created_at` in epoch-ms — exactly what the delete arm
                 // above stamped into `deleted_at` (per era, #618). Pre-0080
@@ -822,10 +857,18 @@ pub(crate) async fn recover_derived_state_from_op_log(
                     // #534: reserved keys (`todo_state` / `priority` / `due_date` /
                     // `scheduled_date` / `space`) are column-backed on `blocks` and
                     // are FORBIDDEN in `block_properties` by the migration-0088
-                    // CHECK constraint. Route the set to the dedicated `blocks` column,
-                    // mirroring `project_set_property_to_sql`, instead of inserting
-                    // a (now-rejected) property row. Skip if the owning block is
-                    // absent (purged / never reached this device) to avoid clobber.
+                    // CHECK constraint. Route the set to the dedicated `blocks` column
+                    // (the same reserved-key→column mapping the projection uses)
+                    // instead of inserting a (now-rejected) property row.
+                    //
+                    // #2043: this arm is INTENTIONALLY left inline, not routed
+                    // through `project_set_property_to_sql`. Recovery adds
+                    // FK-existence guards the projection LACKS — it skips the op if
+                    // the owning block is absent (purged / never reached this
+                    // device, below) and skips a dangling `space` ref (#605/#708) —
+                    // because recovery runs with `foreign_keys=ON` on every boot, so
+                    // a dangling write would trip FK 787 and PERMANENTLY wedge boot.
+                    // Dropping those guards to share the projection is unsafe.
                     if let Some(col) = reserved_key_blocks_column(key) {
                         // `space` is value_ref-typed; the date/text keys carry their
                         // value in value_date / value_text respectively. Pick the
@@ -936,34 +979,22 @@ pub(crate) async fn recover_derived_state_from_op_log(
                     let block_id = payload["block_id"].as_str().unwrap_or("");
                     let key = payload["key"].as_str().unwrap_or("");
 
-                    // #534: reserved keys clear the dedicated `blocks` column
-                    // (single source of truth); non-reserved keys delete the
-                    // `block_properties` row. Mirrors `project_delete_property_to_sql`.
-                    if let Some(col) = reserved_key_blocks_column(key) {
-                        // `col` is a fixed internal literal from the allowlist in
-                        // `reserved_key_blocks_column`, never user input. `space`
-                        // fans out to the whole owning-page group, like
-                        // `project_delete_property_to_sql`; the others are 1:1.
-                        let q = if col == "space_id" {
-                            sqlx::query(sqlx::AssertSqlSafe(format!(
-                                "UPDATE blocks SET {col} = NULL WHERE id = ? OR page_id = ?"
-                            )))
-                            .bind(block_id)
-                            .bind(block_id)
-                        } else {
-                            sqlx::query(sqlx::AssertSqlSafe(format!(
-                                "UPDATE blocks SET {col} = NULL WHERE id = ?"
-                            )))
-                            .bind(block_id)
-                        };
-                        q.execute(&mut *tx).await?;
-                    } else {
-                        sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
-                            .bind(block_id)
-                            .bind(key)
-                            .execute(&mut *tx)
-                            .await?;
-                    }
+                    // #2043: route through the shared projection
+                    // (`project_delete_property_to_sql`) instead of re-hand-rolling
+                    // the per-key fan-out. It is genuinely equivalent: reserved
+                    // keys clear the dedicated `blocks` column (single source of
+                    // truth); `space` clears `space_id` for the whole owning-page
+                    // group; non-reserved keys DELETE the `block_properties` row —
+                    // the same `reserved_key_blocks_column` / `is_reserved_property_key`
+                    // dispatch. This arm runs post-migration against the REAL
+                    // schema, and a clear-to-NULL / row DELETE cannot trip FK 787,
+                    // so there is no FK-guard concern (unlike `set_property` /
+                    // `add_tag`, which keep their guards inline). All branches are
+                    // idempotent (0-row UPDATE/DELETE no-ops).
+                    crate::loro::projection::project_delete_property_to_sql(
+                        &mut *tx, block_id, key,
+                    )
+                    .await?;
                 }
                 "add_tag" => {
                     let block_id = payload["block_id"].as_str().unwrap_or("");
