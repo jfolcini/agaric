@@ -18,6 +18,8 @@
 //! what is logged to stderr/file — useful for deep tracing without flooding
 //! the human-readable logs.
 
+use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
+use opentelemetry_sdk::logs::SdkLoggerProvider;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use tracing_subscriber::Layer;
 use tracing_subscriber::registry::Registry;
@@ -28,8 +30,26 @@ use super::provider::tracer;
 ///
 /// `provider` is borrowed only to mint a tracer; the caller retains ownership
 /// so the shutdown guard can flush it on exit.
+///
+/// The layer keeps `tracing-opentelemetry`'s default `context_activation`,
+/// which attaches each span's OTel context as *current* on enter. That is what
+/// lets the M1b logs bridge ([`build_logs_layer`]) correlate a `tracing` event
+/// to the span it fired inside: the SDK logger reads the active span from the
+/// current OTel context, which this layer — not the bridge — populates.
 pub fn build_trace_layer(provider: &SdkTracerProvider) -> Box<dyn Layer<Registry> + Send + Sync> {
     tracing_opentelemetry::layer()
         .with_tracer(tracer(provider))
         .boxed()
+}
+
+/// Build the boxed OpenTelemetry **logs** bridge layer for the global registry
+/// (M1b).
+///
+/// `OpenTelemetryTracingBridge` turns each `tracing` event that passes the
+/// registry's `EnvFilter` into an OTel `LogRecord` emitted through `provider`.
+/// It deliberately carries no per-layer filter, so it inherits the same global
+/// filter the trace + file-log layers use — an event is bridged exactly when it
+/// would be logged. Trace correlation is automatic (see [`build_trace_layer`]).
+pub fn build_logs_layer(provider: &SdkLoggerProvider) -> Box<dyn Layer<Registry> + Send + Sync> {
+    OpenTelemetryTracingBridge::new(provider).boxed()
 }
