@@ -60,12 +60,14 @@
 mod config;
 mod exporter;
 mod guard;
+mod ingest;
 mod layer;
 mod propagation;
 mod provider;
 
 pub use config::{ObservabilityConfig, from_env};
 pub use guard::ObservabilityGuard;
+pub use ingest::{FrontendSpan, FrontendSpanIngestor, build_frontend_ingestor};
 pub use propagation::extract_trace_context;
 
 use tracing_subscriber::Layer;

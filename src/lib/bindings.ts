@@ -570,6 +570,20 @@ export const commands = {
 	 *  The tracing-appender writes to — on every platform.
 	 */
 	getLogDir: () => typedError<string, AppError>(__TAURI_INVOKE("get_log_dir")),
+	/**
+	 *  Ingest a batch of frontend-produced spans into the local trace sink.
+	 * 
+	 *  Writes each [`FrontendSpan`] as one line into `<log_dir>/traces/`'s
+	 *  frontend-trace file, so frontend interaction spans land in the same local
+	 *  sink as the backend trace spans and can be joined by `trace_id`. A no-op
+	 *  when observability is disabled (the managed [`FrontendSpanIngestor`] holds no
+	 *  sink). Fire-and-forget on the frontend side; always returns `Ok(())`.
+	 * 
+	 *  `#[instrument(skip_all, fields(count = spans.len()))]` records only the batch
+	 *  size — never the span payload — satisfying the M2a command-instrumentation
+	 *  guard while keeping content/PII out of the span.
+	 */
+	ingestOtelSpans: (spans: FrontendSpan[]) => typedError<null, AppError>(__TAURI_INVOKE("ingest_otel_spans", { spans })),
 	/**  Tauri command: return op log compaction statistics for the UI. */
 	getCompactionStatus: () => typedError<CompactionStatus, AppError>(__TAURI_INVOKE("get_compaction_status")),
 	/**
@@ -1880,6 +1894,35 @@ export type FlushAllDraftsResult = {
 	 *  or soft-deleted) — anything that consumed a draft row counts.
 	 */
 	flushed: number,
+};
+
+/**
+ *  One frontend-produced span, mirroring a W3C/OTLP span. Deserialized straight
+ *  off the IPC boundary; the frontend tracer fills every field.
+ * 
+ *  The id fields are opaque W3C hex strings (`trace_id` 32 hex chars, `span_id`
+ *  16); `start_unix_millis` / `end_unix_millis` are epoch-millisecond `f64`s
+ *  (matching `performance.timeOrigin + performance.now()` on the frontend).
+ *  `attributes` is a flat key/value list the frontend chose to attach — it is
+ *  the frontend's job (M4 guard) to keep PII out of these.
+ */
+export type FrontendSpan = {
+	/**  W3C trace id (32 lowercase hex chars). The join key with backend spans. */
+	trace_id: string,
+	/**  W3C span id (16 lowercase hex chars). */
+	span_id: string,
+	/**  Parent span id, or `None` for a root span. */
+	parent_span_id: string | null,
+	/**  Span name (an opaque interaction/op label — never content). */
+	name: string,
+	/**  Span start as epoch milliseconds. */
+	start_unix_millis: number | null,
+	/**  Span end as epoch milliseconds. */
+	end_unix_millis: number | null,
+	/**  Flat attribute key/value pairs the frontend attached. */
+	attributes: ([string, string])[],
+	/**  Optional status string (e.g. `"ok"` / `"error"`), or `None`. */
+	status: string | null,
 };
 
 /**
