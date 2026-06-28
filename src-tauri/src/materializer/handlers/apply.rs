@@ -7,6 +7,7 @@ use super::*;
 /// /L9: takes `&Arc<OpRecord>` so callers (the
 /// `MaterializeTask::ApplyOp` arm) that already hold the record as
 /// `Arc<OpRecord>` thread the borrow through without a deep clone.
+#[tracing::instrument(skip(pool, record), fields(seq = record.seq), err)]
 pub(super) async fn apply_op(pool: &SqlitePool, record: &Arc<OpRecord>) -> Result<(), AppError> {
     // SQL-review route through `begin_immediate_logged` so
     // sync-burst contention surfaces as upfront serialised wait (with
@@ -522,6 +523,7 @@ pub(super) struct ApplyEffects {
 /// caller is responsible for running.  Today the only populated field
 /// is `restored_cohort` (see the struct docs); every other op type
 /// returns the default-empty effects.
+#[tracing::instrument(skip(conn, record), fields(seq = record.seq), err)]
 pub(super) async fn apply_op_tx(
     conn: &mut sqlx::SqliteConnection,
     record: &OpRecord,

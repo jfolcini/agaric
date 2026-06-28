@@ -169,6 +169,7 @@ pub async fn pragma_optimize(write_pool: &SqlitePool) -> Result<(), AppError> {
 }
 
 /// Issue #157 sub-item F — enqueue `CleanupOrphanedAttachments`.
+#[tracing::instrument(skip_all, err)]
 pub async fn enqueue_cleanup_orphaned_attachments(
     materializer: &crate::materializer::Materializer,
 ) -> Result<(), AppError> {

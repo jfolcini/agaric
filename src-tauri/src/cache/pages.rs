@@ -157,6 +157,7 @@ pub(crate) async fn recompute_all_pages_cache_counts(
 ///    sweeps cache rows whose source block was soft-deleted, hard
 ///    deleted, demoted from `block_type = 'page'`, or had its content
 ///    cleared.
+#[tracing::instrument(skip(pool), err)]
 pub async fn rebuild_pages_cache(pool: &SqlitePool) -> Result<(), AppError> {
     super::rebuild_with_timing("pages", || rebuild_pages_cache_impl(pool)).await
 }

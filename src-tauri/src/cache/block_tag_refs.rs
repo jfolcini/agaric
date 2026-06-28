@@ -491,6 +491,7 @@ async fn diff_against_current(
 /// Intended for: migration backfill, snapshot restore, explicit "rebuild
 /// caches" actions. Per-block content edits still go through
 /// [`reindex_block_tag_refs`] instead.
+#[tracing::instrument(skip(pool), err)]
 pub async fn rebuild_block_tag_refs_cache(pool: &SqlitePool) -> Result<(), AppError> {
     super::rebuild_with_timing("block_tag_refs", || rebuild_block_tag_refs_cache_impl(pool)).await
 }

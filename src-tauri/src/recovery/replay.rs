@@ -330,6 +330,7 @@ pub(super) async fn heal_orphaned_apply_cursor(pool: &SqlitePool) -> Result<bool
 /// access.
 ///
 /// No-op when the op log has no rows past the cursor.
+#[tracing::instrument(skip_all, err)]
 pub async fn replay_unmaterialized_ops(
     pool: &SqlitePool,
     materializer: &Materializer,

@@ -166,6 +166,7 @@ fn snapshot_covers_remote_heads(
 /// Returns [`OfferOutcome::NoSnapshot`] when `log_snapshots` has no
 /// complete row — in that case the caller should close the session
 /// (matching pre- behavior).
+#[tracing::instrument(skip_all, err)]
 pub(crate) async fn try_offer_snapshot_catchup(
     conn: &mut SyncConnection,
     pool: &SqlitePool,
@@ -409,6 +410,7 @@ pub(crate) enum CatchupOutcome {
 /// now-empty table. A `None` `engine_reload` (engine state not
 /// initialised) is logged at `warn!` — the snapshot is still applied,
 /// but any live engines keep pre-reset state until restart.
+#[tracing::instrument(skip_all, err)]
 pub(crate) async fn try_receive_snapshot_catchup(
     conn: &mut SyncConnection,
     pool: &SqlitePool,
@@ -817,6 +819,7 @@ async fn blake3_of_file(path: &Path) -> Result<String, AppError> {
 /// The returned [`SnapshotTempFile`] guard unlinks the file on
 /// drop, so the caller does not need an explicit cleanup branch on
 /// the apply / decode error paths.
+#[tracing::instrument(skip(conn, app_data_dir), err)]
 pub(crate) async fn receive_snapshot_to_temp(
     conn: &mut SyncConnection,
     app_data_dir: &Path,

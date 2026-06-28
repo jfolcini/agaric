@@ -32,6 +32,7 @@ use super::record::OpRecord;
 /// (verified #1657: every `src/` caller is inside a `#[cfg(test)]` module; the
 /// only non-test consumer is the bench). If you are wiring this into runtime
 /// code, you are doing something wrong — use [`append_local_op_in_tx`].
+#[tracing::instrument(skip(pool, device_id, op_payload), err)]
 pub async fn append_local_op(
     pool: &SqlitePool,
     device_id: &str,
@@ -95,6 +96,7 @@ pub async fn append_local_op(
 ///
 /// If you find yourself adding a new caller, follow the pattern in
 /// [`append_local_op_at`] verbatim (open via `BEGIN IMMEDIATE`).
+#[tracing::instrument(skip(tx, device_id, op_payload, created_at), err)]
 pub async fn append_local_op_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,
@@ -112,6 +114,7 @@ pub async fn append_local_op_in_tx(
 /// before reversing. Redo's own output ops are forward-equivalent and go
 /// through the plain [`append_local_op_in_tx`] (flag 0), as does everything
 /// else. Same `BEGIN IMMEDIATE` contract as the plain variant.
+#[tracing::instrument(skip(tx, device_id, op_payload, created_at), err)]
 pub async fn append_local_undo_op_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,
@@ -121,6 +124,7 @@ pub async fn append_local_undo_op_in_tx(
     append_local_op_in_tx_with_provenance(tx, device_id, op_payload, created_at, true).await
 }
 
+#[tracing::instrument(skip(tx, device_id, op_payload, created_at), fields(is_undo), err)]
 async fn append_local_op_in_tx_with_provenance(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,
@@ -289,6 +293,7 @@ async fn append_local_op_in_tx_with_provenance(
 /// [`append_local_op`] for why this contract is enforced by doc-comment rather
 /// than `#[cfg(test)]` (the benches consume the public API without `cfg(test)`)
 /// and for the #1657 audit confirming there are no runtime callers.
+#[tracing::instrument(skip(pool, device_id, op_payload, created_at), err)]
 pub async fn append_local_op_at(
     pool: &SqlitePool,
     device_id: &str,

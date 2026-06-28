@@ -437,6 +437,7 @@ async fn apply_sort_merge_rebuild(
 /// Unchanged rows are not touched — their `updated_at` is preserved.
 ///
 /// Tags with zero usage are included via the LEFT JOIN + COALESCE.
+#[tracing::instrument(skip(pool), err)]
 pub async fn rebuild_tags_cache(pool: &SqlitePool) -> Result<(), AppError> {
     super::rebuild_with_timing("tags", || rebuild_tags_cache_impl(pool)).await
 }

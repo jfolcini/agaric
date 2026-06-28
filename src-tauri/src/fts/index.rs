@@ -117,6 +117,7 @@ async fn insert_fts_rows_tx(
 /// per batch, avoiding the two redundant `SELECT block_type=…` queries
 /// per block. See the module-level docs in `crate::fts` for the
 /// rationale.
+#[tracing::instrument(skip_all, err)]
 pub async fn update_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
     let (tag_names, page_titles) = load_ref_maps(pool).await?;
     update_fts_for_block_with_maps(pool, block_id, &tag_names, &page_titles).await
@@ -299,6 +300,7 @@ pub async fn remove_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(
 /// chunks committed, which is acceptable since `fts_blocks` is an
 /// eventually-consistent cache (the next `update_fts_for_block` /
 /// `rebuild_fts_index` reconciles any stale rows).
+#[tracing::instrument(skip_all, err)]
 pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
     // Find blocks referencing this ID via block_tags (for explicit tags)
     let tag_refs: Vec<String> =
@@ -417,6 +419,7 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
 /// commits do publish intermediate state to readers, but the rebuild is
 /// understood to be a transient inconsistent window — search results
 /// are eventually-consistent during a rebuild).
+#[tracing::instrument(skip_all, err)]
 pub async fn rebuild_fts_index(pool: &SqlitePool) -> Result<(), AppError> {
     tracing::info!("rebuilding fts_blocks cache");
     let start = std::time::Instant::now();
@@ -582,6 +585,7 @@ const FTS_MERGE_PAGES: i64 = 256;
 /// A full `'optimize'` remains the right tool for an explicit, user-initiated
 /// maintenance action (one-shot, foreground-acknowledged); it is intentionally
 /// no longer run on the automatic background cadence.
+#[tracing::instrument(skip(pool), err)]
 pub async fn fts_optimize(pool: &SqlitePool) -> Result<(), AppError> {
     sqlx::query!(
         "INSERT INTO fts_blocks(fts_blocks, rank) VALUES('merge', ?)",

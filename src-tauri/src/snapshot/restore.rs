@@ -136,6 +136,7 @@ const CACHE_TABLES: &[(&str, MaterializeTask)] = &[
 /// from snapshot SQL would mint a fresh history whose tree nodes duplicate
 /// the peer's on the next loro-sync merge; an empty engine instead imports
 /// the peer's full CRDT state cleanly on the next session.
+#[tracing::instrument(skip_all, err)]
 pub async fn apply_snapshot<R: std::io::Read>(
     pool: &SqlitePool,
     materializer: &Materializer,

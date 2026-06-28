@@ -89,6 +89,7 @@ struct CacheRepeatingRow {
 /// Behaviour change. The documentation path was chosen per the
 /// AGENTS.md "Architectural Stability" guidance: either document this
 /// divergence or normalise to UTC consistently.
+#[tracing::instrument(skip(pool), err)]
 pub async fn rebuild_projected_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
     let today = chrono::Local::now().date_naive();
     rebuild_projected_agenda_cache_with_today(pool, today).await
