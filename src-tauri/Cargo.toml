@@ -120,7 +120,14 @@ ci-smoke = []
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["image-png"] }
+# `tracing` feature (#2110 M3): makes Tauri's async `#[command]` wrapper
+# instrument each command future with an `ipc::request::run` span created at
+# dispatch time. Combined with the trace-context-extracting invoke wrapper in
+# `lib.rs`, that span is born a child of the frontend's `traceparent`, so every
+# backend command + subsystem span nests under the originating frontend
+# interaction (one trace across the IPC boundary). The feature only adds
+# debug/trace-level spans, captured solely by the OTel layer (off by default).
+tauri = { version = "2", features = ["image-png", "tracing"] }
 tauri-plugin-shell = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-clipboard-manager = "2"
