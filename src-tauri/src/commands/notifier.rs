@@ -104,6 +104,7 @@ pub async fn notify_task(
 /// Split from the `#[tauri::command]` wrapper so the dispatch path is one
 /// unit and the wrapper can funnel errors through
 /// [`sanitize_internal_error`] (per the IPC error-sanitization convention).
+#[tracing::instrument(skip(app, notification), err)]
 fn notify_task_inner<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     notification: &TaskNotification,

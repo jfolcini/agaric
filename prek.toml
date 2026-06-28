@@ -563,6 +563,34 @@ pass_filenames = false
 files = "^src-tauri/src/commands/.*\\.rs$"
 stages = ["pre-commit"]
 
+# tauri-command-instrumented (#2110 M2): every `#[tauri::command]` must be
+# covered by a `tracing` span — directly `#[instrument]`-ed, or delegating to
+# an instrumented in-file helper (the `*_inner` convention) — so the
+# OpenTelemetry trace pipeline sees every IPC entry point. Trivial span-free
+# getters + commands instrumented via a cross-module helper are listed in an
+# explicit allowlist inside the script (adjust there, not here).
+[[repos.hooks]]
+id = "tauri-command-instrumented"
+name = "tauri command instrumented"
+entry = "node scripts/check-tauri-command-instrumented.mjs"
+language = "system"
+pass_filenames = false
+files = "^src-tauri/src/commands/.*\\.rs$"
+stages = ["pre-commit"]
+
+# Self-test the instrumentation guard's own exit behavior (DIRECT/DELEGATED
+# PASS, GAP FAILS, doc-mention does not count, stale allowlist FAILS) whenever
+# the guard script itself changes, so a regression that re-vacuums it can't
+# land unnoticed. Mirrors `ipc-error-path-coverage-selftest`.
+[[repos.hooks]]
+id = "tauri-command-instrumented-selftest"
+name = "tauri command instrumented self-test"
+entry = "node scripts/check-tauri-command-instrumented.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-tauri-command-instrumented\\.mjs$"
+stages = ["pre-commit"]
+
 # Rust: raw write-tx guard (#110). replaced ad-hoc
 # `pool.begin_with("BEGIN IMMEDIATE")` write transactions on user-edit
 # paths with the `CommandTx` convention (open via

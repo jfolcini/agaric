@@ -751,6 +751,7 @@ struct ResolvedBlockRow {
 /// other `BlockId`-typed sibling command. A lowercase id from a caller used
 /// to miss the (uppercase) `op_log.block_id` rows and return an empty
 /// history silently.
+#[tracing::instrument(skip_all, fields(block_id = block_id.as_str(), limit), err)]
 pub async fn get_block_history_inner(
     pool: &SqlitePool,
     block_id: BlockId,

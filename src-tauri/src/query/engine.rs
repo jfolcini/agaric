@@ -573,6 +573,7 @@ fn map_fts_error(e: sqlx::Error) -> AppError {
 }
 
 /// Compile and run an advanced query.
+#[tracing::instrument(skip_all, err)]
 pub async fn compile_and_run(
     pool: &SqlitePool,
     request: AdvancedQueryRequest,

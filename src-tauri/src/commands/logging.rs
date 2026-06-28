@@ -39,6 +39,7 @@ fn truncate_optional_log_field(s: Option<String>) -> Option<String> {
 /// the unknown-level fallback to `info` can be unit-tested without a
 /// Tauri runtime. All fields are passed by reference; the caller owns
 /// The truncation step before invoking this helper.
+#[tracing::instrument(skip(message, stack, context, data))]
 pub(crate) fn log_frontend_inner(
     level: &str,
     module: &str,

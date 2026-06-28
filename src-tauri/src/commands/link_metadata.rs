@@ -16,6 +16,7 @@ use crate::link_metadata::{self, LinkMetadata};
 /// from the writer pool. The `write_pool` is acquired only for the final
 /// `upsert` after a fresh fetch, keeping write contention with the
 /// materializer to the minimum necessary footprint.
+#[tracing::instrument(skip(read_pool, write_pool, url), err)]
 pub async fn fetch_link_metadata_inner(
     read_pool: &SqlitePool,
     write_pool: &SqlitePool,
@@ -36,6 +37,7 @@ pub async fn fetch_link_metadata_inner(
 }
 
 /// Get cached metadata only (no network fetch).
+#[tracing::instrument(skip(pool, url), err)]
 pub async fn get_link_metadata_inner(
     pool: &SqlitePool,
     url: String,

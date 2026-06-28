@@ -54,6 +54,7 @@ pub struct Draft {
 /// for display/ordering, but recovery's supersession check now keys on the
 /// clock-independent `(draft_anchor_device, draft_anchor_seq)` pair so a
 /// backward clock step can no longer resurrect a stale draft.
+#[tracing::instrument(skip(pool, device_id, content), fields(content_len = content.len()), err)]
 pub async fn save_draft(
     pool: &SqlitePool,
     device_id: &str,
@@ -106,6 +107,7 @@ pub async fn save_draft_if_changed(
 }
 
 /// Delete a draft row for the given block (if it exists).
+#[tracing::instrument(skip(pool), err)]
 pub async fn delete_draft(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
     sqlx::query!("DELETE FROM block_drafts WHERE block_id = ?", block_id)
         .execute(pool)
@@ -142,6 +144,7 @@ pub async fn get_draft(pool: &SqlitePool, block_id: &str) -> Result<Option<Draft
 }
 
 /// Return all draft rows ordered by `updated_at` ascending.
+#[tracing::instrument(skip(pool), err)]
 pub async fn get_all_drafts(pool: &SqlitePool) -> Result<Vec<Draft>, AppError> {
     let drafts = sqlx::query_as!(
         Draft,

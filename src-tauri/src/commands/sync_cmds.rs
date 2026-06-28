@@ -176,6 +176,7 @@ pub fn start_pairing_inner(
 /// flips `should_start_active` to `true`; `notify_change()` wakes a dormant
 /// daemon immediately instead of waiting for its next poll. The marker is
 /// cleared once a real `peer_ref` exists (`should_start_active`).
+#[instrument(skip(pool, pairing_state, scheduler, device_id), err)]
 pub async fn start_pairing_armed_inner(
     pool: &SqlitePool,
     pairing_state: &Mutex<Option<PairingSession>>,

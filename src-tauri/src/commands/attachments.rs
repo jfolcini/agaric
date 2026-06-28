@@ -516,6 +516,7 @@ pub async fn delete_attachment_inner(
 ///
 /// - [`AppError::NotFound`] — attachment does not exist
 /// - [`AppError::Validation`] — new filename is empty
+#[instrument(skip(pool, device_id, materializer, new_filename), err)]
 pub async fn rename_attachment_inner(
     pool: &SqlitePool,
     device_id: &str,
