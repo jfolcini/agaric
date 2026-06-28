@@ -75,7 +75,10 @@ const ALLOWLIST = new Map([
   ['recovery.rs:get_recovery_status', 'clones a lock-guarded boot-status value'],
 
   // ── Instrumented via a cross-module helper the in-file resolver can't see ──
-  ['advanced_query.rs:run_advanced_query', 'span on query::engine::compile_and_run (query/engine.rs)'],
+  [
+    'advanced_query.rs:run_advanced_query',
+    'span on query::engine::compile_and_run (query/engine.rs)',
+  ],
   ['drafts.rs:save_draft', 'span on draft::save_draft (draft.rs)'],
   ['drafts.rs:delete_draft', 'span on draft::delete_draft (draft.rs)'],
   ['drafts.rs:list_drafts', 'span on draft::get_all_drafts (draft.rs)'],
