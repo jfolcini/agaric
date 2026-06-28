@@ -184,13 +184,21 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 # hook, so it cannot satisfy the local-file requirement; writing our own
 # exporter is both the only way to hit a file AND the intended swap point.)
 # All three crates are Apache-2.0 (GPL-3-compatible per deny.toml's allow-list).
-opentelemetry = "0.32"
-# Default features only (includes `trace`). The thread-based
-# `with_batch_exporter` processor needs no async runtime, so `rt-tokio` is
-# deliberately NOT enabled; the test-only `testing` feature (InMemorySpanExporter)
-# is a dev-dependency below so it stays out of the release binary.
-opentelemetry_sdk = "0.32"
+opentelemetry = { version = "0.32", features = ["logs"] }
+# `logs` (M1b) adds the OTel logs API the appender bridge + file log exporter
+# use, on top of the default `trace`. The thread-based `with_batch_exporter`
+# processor (used for both spans and logs) needs no async runtime, so `rt-tokio`
+# is deliberately NOT enabled; the test-only `testing` feature
+# (InMemory{Span,Log}Exporter) is a dev-dependency below so it stays out of the
+# release binary.
+opentelemetry_sdk = { version = "0.32", features = ["logs"] }
 tracing-opentelemetry = "0.33"
+# M1b — bridges existing `tracing` events into OTel `LogRecord`s correlated with
+# the active span, written to the SAME local-file sink (still ZERO egress). Pulls
+# no new heavy transitive deps (tracing + opentelemetry only). Apache-2.0
+# (GPL-3-compatible per deny.toml's allow-list). Default features only — the
+# `experimental_*` attribute features are not needed for span-correlated logs.
+opentelemetry-appender-tracing = "0.32"
 
 # Sync
 tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }
@@ -279,10 +287,11 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["async_tokio"] }
-# Test-only OTel feature: `InMemorySpanExporter` for the observability pipeline
-# tests (#2110). Cargo unifies this onto the normal `opentelemetry_sdk` dep for
-# test builds; the release binary never sees the `testing` feature.
-opentelemetry_sdk = { version = "0.32", features = ["testing"] }
+# Test-only OTel feature: `InMemorySpanExporter` / `InMemoryLogExporter` for the
+# observability pipeline tests (#2110, M1a + M1b). Cargo unifies this onto the
+# normal `opentelemetry_sdk` dep for test builds; the release binary never sees
+# the `testing` feature.
+opentelemetry_sdk = { version = "0.32", features = ["testing", "logs"] }
 insta = { version = "1.47.0", features = ["yaml", "redactions"] }
 proptest = "1.11.0"
 tempfile = "3.27.0"

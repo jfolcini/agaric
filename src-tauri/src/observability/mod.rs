@@ -1,10 +1,11 @@
-//! OpenTelemetry trace observability for the Agaric backend (issue #2110, M1a).
+//! OpenTelemetry observability for the Agaric backend (issue #2110, M1a + M1b).
 //!
-//! This module turns `tracing` spans emitted by backend commands into
-//! OpenTelemetry traces and writes them to a LOCAL FILE. It plugs into the
-//! existing `init_logging` subscriber chain in `lib.rs` as one more optional
-//! `tracing_subscriber::Layer`, and a Drop-guard flushes the pipeline on exit
-//! (mirroring `LogGuard`).
+//! This module turns the `tracing` spans **and** events emitted by backend
+//! commands into OpenTelemetry traces (M1a) and span-correlated logs (M1b) and
+//! writes both to LOCAL FILES. It plugs into the existing `init_logging`
+//! subscriber chain in `lib.rs` as a small set of optional
+//! `tracing_subscriber::Layer`s, and a Drop-guard flushes both pipelines on
+//! exit (mirroring `LogGuard`).
 //!
 //! # Architecture
 //!
@@ -13,36 +14,48 @@
 //!                                            ├─ EnvFilter (RUST_LOG / agaric=info)
 //!                                            ├─ stderr fmt layer        (unchanged)
 //!                                            ├─ JSON file layer         (unchanged)
-//!                                            └─ OTel layer (this module, Option)
-//!                                                   │
-//!                                          tracing-opentelemetry
-//!                                                   │
-//!                                          SdkTracerProvider
-//!                                            ├─ Resource(service.name/version)
-//!                                            ├─ ParentBased(TraceIdRatio) sampler
-//!                                            └─ BatchSpanProcessor ──► FileSpanExporter
-//!                                                                          │
-//!                                                              <log_dir>/traces/*.log
+//!                                            ├─ OTel trace layer (spans)
+//!                                            │      │  tracing-opentelemetry
+//!                                            │      ▼
+//!                                            │   SdkTracerProvider
+//!                                            │     ├─ Resource(service.name/version)
+//!                                            │     ├─ ParentBased(TraceIdRatio) sampler
+//!                                            │     └─ BatchSpanProcessor ─► FileSpanExporter
+//!                                            │                                 └─► traces/*.log
+//!                                            └─ OTel logs bridge (events, M1b)
+//!                                                   │  opentelemetry-appender-tracing
+//!                                                   ▼
+//!                                                SdkLoggerProvider
+//!                                                  ├─ Resource(service.name/version)
+//!                                                  └─ BatchLogProcessor ──► FileLogExporter
+//!                                                                              └─► otel-logs/*.log
 //! ```
 //!
+//! Span↔log correlation is automatic: the trace layer activates each span's
+//! OTel context as *current* on enter, and the SDK logger stamps every bridged
+//! event with that active span's trace + span id.
+//!
 //! Submodules: [`config`] (pure env parsing), [`exporter`] (the only place that
-//! knows the on-disk format), [`provider`] (resource + sampler + batch
-//! processor), [`layer`] (the tracing↔OTel bridge), [`guard`] (flush on exit).
+//! knows the on-disk formats + owns the shared rolling-file sink), [`provider`]
+//! (resource + sampler + batch processors for both signals), [`layer`] (the two
+//! tracing↔OTel bridges), [`guard`] (flush both on exit).
 //!
 //! # Three invariants (hard rules)
 //!
-//! 1. **Zero egress.** Spans go ONLY to a local file. There is no
-//!    `opentelemetry-otlp` / HTTP / gRPC exporter anywhere in this crate. The
+//! 1. **Zero egress.** Spans and log records go ONLY to local files. There is
+//!    no `opentelemetry-otlp` / HTTP / gRPC exporter anywhere in this crate. The
 //!    app's "nothing leaves your machine" promise + CSP forbid it.
 //! 2. **Off by default.** When `AGARIC_OTEL` is unset, [`init`] returns a no-op
-//!    `Observability { trace_layer: None, guard: None }`. An `Option<Layer>` is
-//!    a no-op when `None`, so the existing logging behaviour is byte-identical
-//!    and overhead is ~zero.
+//!    `Observability { layers: <empty>, guard: None }`. An empty `Vec<Layer>`
+//!    is a no-op on the registry, so the existing logging behaviour is
+//!    byte-identical and overhead is ~zero.
 //! 3. **PII discipline.** Span names + attributes carry ONLY opaque ids
 //!    (ULIDs), enums/op-types, counts, durations, and booleans. NEVER block
 //!    `content`, `to_text`, search query strings, tag names, or property
 //!    values. This is enforced at every `#[instrument(... fields(...))]` site;
-//!    the exporter just serializes what it is handed.
+//!    the exporters just serialize what they are handed. Bridged log *bodies*
+//!    mirror what already goes to `agaric.log` and ride the same redaction pass
+//!    (M7); a leak-guard test asserts log attribute keys stay PII-free too.
 
 mod config;
 mod exporter;
@@ -56,17 +69,24 @@ pub use guard::ObservabilityGuard;
 use tracing_subscriber::Layer;
 use tracing_subscriber::registry::Registry;
 
-/// The outputs of [`init`]: an optional trace layer to add to the registry and
-/// an optional shutdown guard to place in Tauri managed state.
+/// The outputs of [`init`]: the OTel `tracing` layers to add to the registry
+/// and an optional shutdown guard to place in Tauri managed state.
 ///
-/// Both are `None` when observability is disabled or the file exporter could
-/// not be built — the caller then adds a no-op layer and registers no guard.
+/// `layers` is **empty** (and `guard` is `None`) when observability is disabled
+/// or the span exporter could not be built — the caller then adds a no-op and
+/// registers no guard.
 pub struct Observability {
-    /// Boxed OTel trace layer, or `None` when disabled / unavailable.
+    /// The OTel `tracing` layers — the trace bridge plus, when its sink built,
+    /// the M1b logs bridge.
     ///
-    /// `.with(None)` on a `tracing_subscriber` registry is a no-op, so the
-    /// caller can add this unconditionally.
-    pub trace_layer: Option<Box<dyn Layer<Registry> + Send + Sync>>,
+    /// Returned as a `Vec` rather than two `Option` fields on purpose: a
+    /// `Vec<Box<dyn Layer<Registry>>>` is *itself* one `Layer<Registry>`, so the
+    /// caller adds both in a single `.with(...)`. Two separately-boxed
+    /// `Box<dyn Layer<Registry>>` values cannot be chained via `.with().with()`
+    /// — each implements `Layer` only for the bare `Registry`, not for the
+    /// `Layered<…>` that the first `.with` produces. An empty `Vec` is a no-op
+    /// on the registry, so the caller adds it unconditionally.
+    pub layers: Vec<Box<dyn Layer<Registry> + Send + Sync>>,
 
     /// Flush-on-exit guard, or `None` when disabled / unavailable.
     ///
@@ -76,22 +96,24 @@ pub struct Observability {
 }
 
 impl Observability {
-    /// The disabled / unavailable result: no layer, no guard.
+    /// The disabled / unavailable result: no layers, no guard.
     fn disabled() -> Self {
         Self {
-            trace_layer: None,
+            layers: Vec::new(),
             guard: None,
         }
     }
 }
 
-/// Initialize the trace pipeline for one app boot.
+/// Initialize the trace + logs pipelines for one app boot.
 ///
-/// Returns [`Observability::disabled`] (no layer, no guard) when
-/// `config.enabled` is `false` OR the file exporter cannot be built (e.g. a
-/// read-only disk). Otherwise builds the file exporter under
-/// `<log_dir>/traces/`, the batched `SdkTracerProvider`, the boxed trace
-/// layer, and the shutdown guard.
+/// Returns [`Observability::disabled`] (no layers, no guard) when
+/// `config.enabled` is `false` OR the span exporter cannot be built (e.g. a
+/// read-only disk). Otherwise builds the span exporter under `<log_dir>/traces/`,
+/// the batched `SdkTracerProvider`, and the trace layer; then — independently —
+/// the log exporter under `<log_dir>/otel-logs/`, its `SdkLoggerProvider`, and
+/// the M1b logs bridge layer. The logs signal degrades on its own: if only its
+/// sink is unwritable, tracing still runs without it.
 ///
 /// This function never touches the network and never panics.
 #[must_use]
@@ -107,11 +129,24 @@ pub fn init(log_dir: &std::path::Path, config: &ObservabilityConfig) -> Observab
     };
 
     let provider = provider::build_tracer_provider(config, exporter);
-    let trace_layer = layer::build_trace_layer(&provider);
-    let guard = ObservabilityGuard::new(provider);
+    let mut layers: Vec<Box<dyn Layer<Registry> + Send + Sync>> =
+        vec![layer::build_trace_layer(&provider)];
+
+    // M1b — the OTel logs bridge is an independent signal: if its `otel-logs/`
+    // sink can't be opened, traces still run (no logs layer, no logger guard).
+    let logger_provider = match exporter::build_log_exporter(log_dir) {
+        Some(log_exporter) => {
+            let logger_provider = provider::build_logger_provider(log_exporter);
+            layers.push(layer::build_logs_layer(&logger_provider));
+            Some(logger_provider)
+        }
+        None => None,
+    };
+
+    let guard = ObservabilityGuard::new(provider, logger_provider);
 
     Observability {
-        trace_layer: Some(trace_layer),
+        layers,
         guard: Some(guard),
     }
 }
@@ -134,27 +169,36 @@ mod tests {
             sampling_ratio: 1.0,
         };
         let obs = init(tmp.path(), &cfg);
-        assert!(obs.trace_layer.is_none(), "disabled ⇒ no trace layer");
+        assert!(obs.layers.is_empty(), "disabled ⇒ no OTel layers");
         assert!(obs.guard.is_none(), "disabled ⇒ no guard");
     }
 
-    /// `init` with an enabled config must produce both a layer and a guard, and
-    /// must create the on-disk traces directory.
+    /// `init` with an enabled config must produce both OTel layers (trace +
+    /// logs) and a guard, and must create the on-disk traces + otel-logs dirs.
     #[test]
-    fn init_enabled_builds_layer_and_guard() {
+    fn init_enabled_builds_layers_and_guard() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let cfg = ObservabilityConfig {
             enabled: true,
             sampling_ratio: 1.0,
         };
         let obs = init(tmp.path(), &cfg);
-        assert!(obs.trace_layer.is_some(), "enabled ⇒ trace layer present");
+        assert_eq!(
+            obs.layers.len(),
+            2,
+            "enabled ⇒ both the trace bridge and the M1b logs bridge are present"
+        );
         assert!(obs.guard.is_some(), "enabled ⇒ guard present");
         assert!(
             tmp.path().join("traces").is_dir(),
             "enabled ⇒ traces/ dir created"
         );
-        // Drop the guard explicitly (flush + shutdown) — must not panic.
+        assert!(
+            tmp.path().join("otel-logs").is_dir(),
+            "enabled ⇒ otel-logs/ dir created"
+        );
+        // Drop the guard explicitly (flush + shutdown both providers) — must not
+        // panic.
         drop(obs);
     }
 
@@ -265,6 +309,106 @@ mod tests {
                     "span carried non-allowlisted attribute {key:?} — add to \
                      ALLOWED_KEYS only after confirming it is opaque \
                      (id/enum/count/bool), never PII"
+                );
+            }
+        }
+    }
+
+    /// M1b headline guarantee: a `tracing` event emitted inside an instrumented
+    /// span reaches the OTel logs bridge as a `LogRecord` **correlated** to that
+    /// span (same `trace_id` + `span_id`), and leaks no PII through its
+    /// attribute keys.
+    ///
+    /// Correlation is not done by the appender bridge itself — the SDK logger
+    /// fills the record's trace context from the *current* OTel context, which
+    /// the `tracing-opentelemetry` layer activates on span enter (its default
+    /// `context_activation`). This test wires the real trace layer + real
+    /// bridge together to prove that seam, so a regression (e.g. a future
+    /// `with_context_activation(false)`) fails here instead of silently
+    /// shipping uncorrelated logs.
+    #[test]
+    fn logs_are_span_correlated_and_pii_safe() {
+        use opentelemetry::logs::AnyValue;
+        use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
+        use opentelemetry_sdk::logs::{InMemoryLogExporter, SdkLoggerProvider};
+
+        // Trace side: in-memory span exporter behind the real tracing-otel layer.
+        let span_exporter = InMemorySpanExporter::default();
+        let tracer_provider = SdkTracerProvider::builder()
+            .with_resource(Resource::builder().with_service_name("agaric").build())
+            .with_span_processor(opentelemetry_sdk::trace::SimpleSpanProcessor::new(
+                span_exporter.clone(),
+            ))
+            .with_sampler(Sampler::ParentBased(Box::new(Sampler::TraceIdRatioBased(
+                1.0,
+            ))))
+            .build();
+        let otel_trace_layer =
+            tracing_opentelemetry::layer().with_tracer(tracer_provider.tracer("agaric"));
+
+        // Logs side: in-memory log exporter behind the real appender bridge. A
+        // simple (synchronous) processor makes force_flush deterministic.
+        let log_exporter = InMemoryLogExporter::default();
+        let logger_provider = SdkLoggerProvider::builder()
+            .with_simple_exporter(log_exporter.clone())
+            .build();
+        let logs_bridge = OpenTelemetryTracingBridge::new(&logger_provider);
+
+        let subscriber = tracing_subscriber::registry()
+            .with(otel_trace_layer)
+            .with(logs_bridge);
+
+        tracing::subscriber::with_default(subscriber, || {
+            // PII-safe span + event fields only: opaque id, enum tag, count.
+            let span = tracing::info_span!("apply_op", block_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV");
+            let _enter = span.enter();
+            tracing::error!(op_type = "insert", count = 2_i64, "op apply failed");
+        });
+
+        tracer_provider.force_flush().expect("flush spans");
+        logger_provider.force_flush().expect("flush logs");
+
+        let spans = span_exporter.get_finished_spans().expect("finished spans");
+        assert_eq!(spans.len(), 1, "exactly one span should be exported");
+        let span = &spans[0];
+
+        let logs = log_exporter.get_emitted_logs().expect("emitted logs");
+        // The bridged `tracing::error!` must be among the emitted records.
+        let rec = logs
+            .iter()
+            .map(|l| &l.record)
+            .find(|r| {
+                r.body().is_some_and(
+                    |b| matches!(b, AnyValue::String(s) if s.as_str().contains("op apply failed")),
+                )
+            })
+            .expect("the tracing::error! event must reach the OTel logs bridge");
+
+        // Correlation: the record must carry the active span's trace context.
+        let tc = rec
+            .trace_context()
+            .expect("log record must carry trace context (span correlation)");
+        assert_eq!(
+            tc.trace_id,
+            span.span_context.trace_id(),
+            "log trace_id must equal the span's trace_id"
+        );
+        assert_eq!(
+            tc.span_id,
+            span.span_context.span_id(),
+            "log span_id must equal the span's span_id"
+        );
+
+        // PII leak-guard on log attribute keys — same discipline as spans.
+        const FORBIDDEN_SUBSTRINGS: &[&str] = &[
+            "content", "to_text", "query", "tag", "property", "value", "text", "title",
+        ];
+        for (key, _value) in rec.attributes_iter() {
+            let key = key.as_str();
+            for bad in FORBIDDEN_SUBSTRINGS {
+                assert!(
+                    !key.contains(bad),
+                    "PII-leak guard: log attribute {key:?} contains forbidden substring {bad:?}"
                 );
             }
         }

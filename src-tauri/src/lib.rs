@@ -608,37 +608,41 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
             .with_ansi(false)
     });
 
-    // #2110 M1a — OpenTelemetry traces to a LOCAL FILE only (zero egress),
-    // gated OFF by default (AGARIC_OTEL unset). `obs.trace_layer` is an
-    // `Option<Layer>`: a no-op on the registry when `None` (same composition
-    // the `file_layer` above already relies on), so when observability is
-    // disabled the subscriber chain is byte-identical to before.
+    // #2110 M1a/M1b — OpenTelemetry traces + span-correlated logs to LOCAL
+    // FILES only (zero egress), gated OFF by default (AGARIC_OTEL unset).
+    // `obs.layers` is a `Vec<Box<dyn Layer<Registry>>>` (the trace bridge plus,
+    // when its sink built, the logs bridge); an empty `Vec` is a no-op on the
+    // registry, so when observability is disabled the subscriber chain is
+    // byte-identical to before.
     let obs_config = observability::ObservabilityConfig::from_env();
     let obs = observability::init(&log_dir, &obs_config);
     let obs_guard = obs.guard;
-    let obs_enabled = obs.trace_layer.is_some();
+    let obs_enabled = !obs.layers.is_empty();
 
-    // The OTel layer is a `Box<dyn Layer<Registry>>`, so it must be added
-    // directly onto the bare `Registry` (it only implements `Layer` for that
-    // exact subscriber type, not for an already-`Layered` one). It is added
-    // first; the env filter + fmt layers wrap it. Composition order does not
-    // change which spans each layer sees — the global `EnvFilter` still gates
-    // every layer, including this one. `obs.trace_layer` is `None` when
-    // disabled, which is a no-op on the registry (byte-identical chain).
+    // The OTel layers are `Box<dyn Layer<Registry>>`, so they must be added
+    // directly onto the bare `Registry` (each implements `Layer` only for that
+    // exact subscriber type, not for an already-`Layered` one). A `Vec` of them
+    // is itself one `Layer<Registry>`, which is what lets both compose in a
+    // single `.with(...)`; it is added first, and the env filter + fmt layers
+    // wrap it. Composition order does not change which spans/events each layer
+    // sees — the global `EnvFilter` still gates every layer, including these.
+    // `obs.layers` is empty when disabled, a no-op on the registry.
     tracing_subscriber::registry()
-        .with(obs.trace_layer)
+        .with(obs.layers)
         .with(env_filter)
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .with(file_layer)
         .init();
 
-    // #2110 M1a — announce only when traces are actually enabled; stay silent
-    // (no new log line) when off so the existing logging output is unchanged.
+    // #2110 M1a/M1b — announce only when telemetry is actually enabled; stay
+    // silent (no new log line) when off so the existing logging output is
+    // unchanged.
     if obs_enabled {
         tracing::info!(
             traces_dir = %log_dir.join("traces").display(),
+            otel_logs_dir = %log_dir.join("otel-logs").display(),
             sampling_ratio = obs_config.sampling_ratio,
-            "OpenTelemetry traces enabled"
+            "OpenTelemetry traces + logs enabled"
         );
     }
 

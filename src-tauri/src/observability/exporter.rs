@@ -41,27 +41,101 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use opentelemetry_sdk::error::OTelSdkResult;
+use opentelemetry_sdk::logs::{LogBatch, LogExporter, SdkLogRecord};
 use opentelemetry_sdk::trace::{SpanData, SpanExporter};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 
-/// Maximum number of rotated trace files to retain.
+/// Maximum number of rotated files to retain per OTel signal subdir.
 ///
 /// Mirrors the 14-file daily-rotation policy used for `agaric.log` in
-/// `build_log_file_appender`, so traces never grow the on-disk footprint
-/// unbounded between boots.
-const MAX_TRACE_FILES: usize = 14;
+/// `build_log_file_appender`, so the trace + log files never grow the on-disk
+/// footprint unbounded between boots.
+const MAX_OTEL_FILES: usize = 14;
 
-/// Subdirectory of the log directory that holds rotated trace files.
+/// Subdirectory of the log directory that holds rotated span (trace) files.
 const TRACES_SUBDIR: &str = "traces";
 
-/// A local-file [`SpanExporter`]: serializes each batch of spans as one
-/// human-readable line per span into a daily-rotated file.
+/// Subdirectory of the log directory that holds rotated OTel `LogRecord` files
+/// (M1b). Kept separate from `traces/` (spans) and from the human-readable
+/// `agaric.log`, so each OTel signal is its own rotated, independently-degrading
+/// stream.
+const OTEL_LOGS_SUBDIR: &str = "otel-logs";
+
+/// Shared rolling-file plumbing behind both OTel file exporters.
 ///
-/// The inner appender is wrapped in a `Mutex` because the SDK calls `export`
-/// from a dedicated batch worker; the mutex makes writes atomic per batch and
-/// keeps the type `Send + Sync` (required by the trait) without an async lock.
-pub struct FileSpanExporter {
+/// Owns a daily-rotated [`RollingFileAppender`] behind a `Mutex`: the SDK calls
+/// `export` from a dedicated batch worker, so the mutex makes per-batch writes
+/// atomic and keeps the type `Send + Sync` (required by the exporter traits)
+/// without an async lock. [`FileSpanExporter`] and [`FileLogExporter`] differ
+/// only in the per-record text format; all the directory-creation, rotation,
+/// graceful-degradation, and write/flush logic lives here, once.
+struct RollingFileSink {
     writer: Mutex<RollingFileAppender>,
+}
+
+impl RollingFileSink {
+    /// Build a sink writing daily-rotated `<log_dir>/<subdir>/<prefix>*` files,
+    /// or `None` when the subdir cannot be created or opened (read-only / full
+    /// disk). Degrades exactly like `build_log_file_appender` in `lib.rs` —
+    /// writes the failure to stderr (never silent) and never panics.
+    fn build(log_dir: &Path, subdir: &str, filename_prefix: &str) -> Option<Self> {
+        let dir = log_dir.join(subdir);
+
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            // Pre/parallel to the tracing subscriber; write to stderr directly
+            // so the failure is never silent, exactly like the log-dir degrade
+            // path.
+            eprintln!(
+                "agaric: could not create OpenTelemetry {subdir} directory {}: {e}; \
+                 that signal is disabled for this run",
+                dir.display()
+            );
+            return None;
+        }
+
+        match RollingFileAppender::builder()
+            .rotation(Rotation::DAILY)
+            .max_log_files(MAX_OTEL_FILES)
+            .filename_prefix(filename_prefix)
+            .build(&dir)
+        {
+            Ok(appender) => Some(Self {
+                writer: Mutex::new(appender),
+            }),
+            Err(e) => {
+                eprintln!(
+                    "agaric: could not open OpenTelemetry file in {}: {e}; \
+                     that signal is disabled for this run",
+                    dir.display()
+                );
+                None
+            }
+        }
+    }
+
+    /// Write a pre-built buffer under the lock, then flush.
+    ///
+    /// A write failure to the local file is non-fatal: degrade silently for the
+    /// rest of the run rather than poison the batch worker.
+    fn write_buf(&self, buf: &str) {
+        if let Ok(mut w) = self.writer.lock() {
+            let _ = w.write_all(buf.as_bytes());
+            let _ = w.flush();
+        }
+    }
+
+    /// Flush any buffered bytes (used by `SpanExporter::force_flush`).
+    fn flush(&self) {
+        if let Ok(mut w) = self.writer.lock() {
+            let _ = w.flush();
+        }
+    }
+}
+
+/// A local-file [`SpanExporter`]: serializes each batch of spans as one
+/// human-readable line per span into a daily-rotated `traces/` file.
+pub struct FileSpanExporter {
+    sink: RollingFileSink,
 }
 
 impl std::fmt::Debug for FileSpanExporter {
@@ -70,44 +144,15 @@ impl std::fmt::Debug for FileSpanExporter {
     }
 }
 
-/// Build the on-disk trace exporter, or `None` if the traces dir is unwritable.
+/// Build the on-disk span exporter, or `None` if `traces/` is unwritable.
 ///
-/// Creates `<log_dir>/traces/` and a daily `RollingFileAppender` capped at
-/// [`MAX_TRACE_FILES`] retained files. Degrades to `None` (caller skips the
-/// pipeline) on any filesystem error — never panics, mirroring
+/// Creates `<log_dir>/traces/` with a daily `RollingFileAppender` capped at
+/// [`MAX_OTEL_FILES`] retained files. Degrades to `None` (caller skips the
+/// trace pipeline) on any filesystem error — never panics, mirroring
 /// `build_log_file_appender`.
 pub fn build_file_exporter(log_dir: &Path) -> Option<FileSpanExporter> {
-    let traces_dir = log_dir.join(TRACES_SUBDIR);
-
-    if let Err(e) = std::fs::create_dir_all(&traces_dir) {
-        // Pre/parallel to the tracing subscriber; write to stderr directly so
-        // the failure is never silent, exactly like the log-dir degrade path.
-        eprintln!(
-            "agaric: could not create traces directory {}: {e}; \
-             OpenTelemetry traces disabled for this run",
-            traces_dir.display()
-        );
-        return None;
-    }
-
-    match RollingFileAppender::builder()
-        .rotation(Rotation::DAILY)
-        .max_log_files(MAX_TRACE_FILES)
-        .filename_prefix("agaric-traces.log")
-        .build(&traces_dir)
-    {
-        Ok(appender) => Some(FileSpanExporter {
-            writer: Mutex::new(appender),
-        }),
-        Err(e) => {
-            eprintln!(
-                "agaric: could not open trace file in {}: {e}; \
-                 OpenTelemetry traces disabled for this run",
-                traces_dir.display()
-            );
-            None
-        }
-    }
+    RollingFileSink::build(log_dir, TRACES_SUBDIR, "agaric-traces.log")
+        .map(|sink| FileSpanExporter { sink })
 }
 
 /// Serialize one span to a single line.
@@ -125,8 +170,7 @@ fn format_span(span: &SpanData) -> String {
     let dur_ms = span
         .end_time
         .duration_since(span.start_time)
-        .map(|d| d.as_secs_f64() * 1000.0)
-        .unwrap_or(f64::NAN);
+        .map_or(f64::NAN, |d| d.as_secs_f64() * 1000.0);
 
     // Span end time as RFC-3339 (UTC, millis) — the leading, human-readable
     // timestamp the line is keyed on.
@@ -162,19 +206,134 @@ impl SpanExporter for FileSpanExporter {
         for span in &batch {
             buf.push_str(&format_span(span));
         }
-        if let Ok(mut w) = self.writer.lock() {
-            // A write failure to the local file is non-fatal: degrade silently
-            // for the rest of the run rather than poison the batch worker.
-            let _ = w.write_all(buf.as_bytes());
-            let _ = w.flush();
-        }
+        self.sink.write_buf(&buf);
         Ok(())
     }
 
     fn force_flush(&self) -> OTelSdkResult {
-        if let Ok(mut w) = self.writer.lock() {
-            let _ = w.flush();
+        self.sink.flush();
+        Ok(())
+    }
+}
+
+/// A local-file [`LogExporter`] (M1b): serializes each OTel `LogRecord` — the
+/// bridged form of an existing `tracing` event — as one line into a daily-
+/// rotated `otel-logs/` file, carrying the active span's trace/span id so logs
+/// and traces are correlated in the local sink.
+pub struct FileLogExporter {
+    sink: RollingFileSink,
+}
+
+impl std::fmt::Debug for FileLogExporter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("FileLogExporter")
+    }
+}
+
+/// Build the on-disk log exporter, or `None` if `otel-logs/` is unwritable.
+///
+/// Same graceful degradation as [`build_file_exporter`]: on any filesystem
+/// error the caller skips just the OTel logs bridge and normal logging (plus
+/// traces, which use a separate sink) continues.
+pub fn build_log_exporter(log_dir: &Path) -> Option<FileLogExporter> {
+    RollingFileSink::build(log_dir, OTEL_LOGS_SUBDIR, "agaric-otel.log")
+        .map(|sink| FileLogExporter { sink })
+}
+
+/// Render an `AnyValue` scalar to a compact string for a log line.
+///
+/// Only the scalar variants appear in practice for bridged `tracing` events;
+/// the composite variants (`Bytes`/`ListAny`/`Map`) fall back to their `Debug`
+/// form rather than panicking.
+fn any_value_to_string(value: &opentelemetry::logs::AnyValue) -> String {
+    use opentelemetry::logs::AnyValue;
+    match value {
+        AnyValue::String(s) => s.to_string(),
+        AnyValue::Int(i) => i.to_string(),
+        AnyValue::Double(d) => d.to_string(),
+        AnyValue::Boolean(b) => b.to_string(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// Escape the characters that would break the one-line-per-record format.
+///
+/// Tabs and newlines in a body/attribute value would split or misalign a
+/// record, so they are escaped to literal two-char forms; everything else is
+/// kept verbatim (the body is the same text already written to `agaric.log`).
+fn sanitize_inline(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+}
+
+/// Serialize one OTel `LogRecord` to a single line.
+///
+/// Format (tab-separated `key=value`):
+/// `end=<rfc3339-ms>\tlevel=<severity>\ttrace=<id|->\tspan=<id|->\t`
+/// `target=<module-path>\tbody=<message>\t<attr-key>=<attr-val>…`. `trace` /
+/// `span` are the active span's ids (`-` when the event fired outside any span)
+/// — this is the log↔trace correlation. Bodies/attributes mirror what already
+/// goes to `agaric.log`; the same redaction pass that covers the human log
+/// (M7) covers this file, for defense-in-depth.
+fn format_log_record(record: &SdkLogRecord) -> String {
+    use std::fmt::Write as _;
+
+    // Prefer the event time; fall back to the SDK's observed time.
+    let end = record
+        .timestamp()
+        .or_else(|| record.observed_timestamp())
+        .map_or_else(
+            || "-".to_owned(),
+            |t| {
+                chrono::DateTime::<chrono::Utc>::from(t)
+                    .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+            },
+        );
+
+    let level = record.severity_text().unwrap_or("-");
+
+    // The correlation fields: the active span's trace + span id, or `-` when the
+    // event was emitted outside any span.
+    let (trace, span) = match record.trace_context() {
+        Some(tc) => (tc.trace_id.to_string(), tc.span_id.to_string()),
+        None => ("-".to_owned(), "-".to_owned()),
+    };
+
+    // `target` is the tracing event's module path (our source, never user data).
+    let target = record.target().map_or("-", |t| t.as_ref());
+
+    let body = record
+        .body()
+        .map(|b| sanitize_inline(&any_value_to_string(b)))
+        .unwrap_or_default();
+
+    let mut line = String::new();
+    let _ = write!(
+        line,
+        "end={end}\tlevel={level}\ttrace={trace}\tspan={span}\ttarget={target}\tbody={body}"
+    );
+    for (key, value) in record.attributes_iter() {
+        let _ = write!(
+            line,
+            "\t{}={}",
+            key,
+            sanitize_inline(&any_value_to_string(value))
+        );
+    }
+    line.push('\n');
+    line
+}
+
+impl LogExporter for FileLogExporter {
+    async fn export(&self, batch: LogBatch<'_>) -> OTelSdkResult {
+        // Build the full buffer outside the lock, then write under it.
+        let mut buf = String::with_capacity(64);
+        for (record, _scope) in batch.iter() {
+            buf.push_str(&format_log_record(record));
         }
+        self.sink.write_buf(&buf);
         Ok(())
     }
 }
@@ -204,6 +363,28 @@ mod tests {
         assert!(
             exporter.is_none(),
             "unwritable traces dir must degrade to None"
+        );
+    }
+
+    #[test]
+    fn build_log_exporter_creates_otel_logs_subdir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let exporter = build_log_exporter(tmp.path());
+        assert!(exporter.is_some(), "writable dir must yield a log exporter");
+        assert!(
+            tmp.path().join(OTEL_LOGS_SUBDIR).is_dir(),
+            "otel-logs/ subdir must be created under the log dir"
+        );
+    }
+
+    #[test]
+    fn build_log_exporter_degrades_on_unwritable_path() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let file = tmp.path().join("not-a-dir");
+        std::fs::write(&file, b"x").expect("write blocker file");
+        assert!(
+            build_log_exporter(&file).is_none(),
+            "unwritable otel-logs dir must degrade to None"
         );
     }
 }
