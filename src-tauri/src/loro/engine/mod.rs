@@ -318,6 +318,36 @@ pub enum PropertyValue {
     Null,
 }
 
+impl From<&crate::op::SetPropertyPayload> for PropertyValue {
+    /// Coerce a `SetProperty` payload's typed value fields into the engine's
+    /// native [`PropertyValue`] by precedence (text→num→date→ref→bool); no
+    /// field set ⇒ an explicit [`PropertyValue::Null`] clear. text/date/ref all
+    /// map to [`PropertyValue::Str`] (disambiguated at the SQL projection by
+    /// `property_definitions.value_type`).
+    ///
+    /// Single source of truth for the payload→engine value mapping shared by
+    /// `merge::engine_apply` and the materializer `apply_set_property_via_loro`
+    /// handler — previously copy-pasted byte-for-byte in both, flagged "MUST
+    /// mirror" (#2043). Callers that need to observe a multi-value-field op
+    /// (e.g. `engine_apply`'s #2026 divergence warn) inspect the payload
+    /// themselves; this mapping just applies the precedence coercion.
+    fn from(p: &crate::op::SetPropertyPayload) -> Self {
+        if let Some(v) = &p.value_text {
+            PropertyValue::Str(v.clone())
+        } else if let Some(v) = p.value_num {
+            PropertyValue::Num(v)
+        } else if let Some(v) = &p.value_date {
+            PropertyValue::Str(v.clone())
+        } else if let Some(v) = &p.value_ref {
+            PropertyValue::Str(v.as_str().to_owned())
+        } else if let Some(b) = p.value_bool {
+            PropertyValue::Bool(b)
+        } else {
+            PropertyValue::Null
+        }
+    }
+}
+
 impl PropertyValue {
     /// Native `LoroValue` to persist in the engine.
     fn to_loro(&self) -> LoroValue {
