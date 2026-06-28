@@ -6342,9 +6342,11 @@ async fn eval_backlink_query_grouped_paginates_correctly() {
 //
 // Proves the new `compile_backlink_filter` path (`eval_backlink_query`'s
 // correlated SQL WHERE fragment) returns IDENTICAL `items` (as an id set),
-// `total_count`, and `filtered_count` to a reference computed via the OLD
-// `resolve_filter` + base-set-intersection logic. The old resolver is kept
-// solely as this parity oracle (#346 P1 contract).
+// `total_count`, and `filtered_count` to a reference computed via the
+// `resolve_filter` + base-set-intersection logic. That resolver is NOT kept
+// solely as a parity oracle: it is also the production filter engine for the
+// grouped / unlinked-references surfaces (`backlink::grouped`). Here it
+// serves double duty as the oracle for the flat compiler (#346 P1 contract).
 //
 // EVERY leaf type is covered, with emphasis on the negative / broad trees
 // (`Not`, `PropertyIsEmpty`, broad `BlockType`, `Not(HasTag)`,
@@ -7301,6 +7303,191 @@ mod parity_p1 {
             // self-reproducing from the failure message.
             let label = format!("rand_{i}: {tree:?}");
             assert_parity(&pool, &target, &label, vec![tree]).await;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // #2044 (Stage 0) — DIRECT compiler ↔ resolver parity
+    //
+    // The existing battery proves the FLAT compiler matches the resolver
+    // ORACLE only *through* `eval_backlink_query`. This asserts the two
+    // engines agree on the raw id set DIRECTLY: run the compiled WHERE
+    // fragment as a bare `SELECT b.id FROM blocks b …` and compare it to
+    // `resolve_filter`'s `FxHashSet`, with no flat-path machinery in
+    // between. Multi-filter battery entries carry implicit-AND semantics,
+    // so the fragments are AND-joined and the resolver sets are
+    // AND-intersected — mirroring `eval_backlink_query`'s splice.
+    // ------------------------------------------------------------------
+
+    /// Compile `filters` (implicit-AND) into a single WHERE fragment + binds,
+    /// exactly as `eval_backlink_query` composes them.
+    async fn compile_filters(
+        pool: &SqlitePool,
+        filters: &[BacklinkFilter],
+    ) -> crate::backlink::filters::CompiledFilter {
+        use crate::backlink::filters::{CompiledFilter, compile_backlink_filter};
+        let mut binds = Vec::new();
+        let mut parts: Vec<String> = Vec::new();
+        for f in filters {
+            let c = compile_backlink_filter(pool, f, 0).await.unwrap();
+            binds.extend(c.binds);
+            parts.push(c.sql);
+        }
+        let sql = if parts.len() == 1 {
+            parts.into_iter().next().unwrap()
+        } else {
+            format!("({})", parts.join(" AND "))
+        };
+        CompiledFilter { sql, binds }
+    }
+
+    /// Run the compiled fragment as a standalone id query and collect the set.
+    /// Mirrors `eval_backlink_query`'s bind splice (binds applied in order).
+    async fn compiled_id_set(
+        pool: &SqlitePool,
+        cf: &crate::backlink::filters::CompiledFilter,
+    ) -> FxHashSet<String> {
+        use crate::backlink::filters::FilterBind;
+        // `b.deleted_at IS NULL` matches the leaf-level guard the resolver
+        // applies; the fragment is correlated on alias `b`.
+        let sql = format!(
+            "SELECT b.id FROM blocks b WHERE b.deleted_at IS NULL AND ({})",
+            cf.sql,
+        );
+        let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql));
+        for bind in &cf.binds {
+            q = match bind {
+                FilterBind::Text(s) => q.bind(s.clone()),
+                FilterBind::Num(n) => q.bind(*n),
+            };
+        }
+        q.fetch_all(pool).await.unwrap().into_iter().collect()
+    }
+
+    /// DIRECT engine parity: `compile_backlink_filter` and `resolve_filter`
+    /// produce the SAME id set, asserted without routing through
+    /// `eval_backlink_query`. For each battery case the compiled fragment is
+    /// executed as `SELECT b.id FROM blocks b WHERE b.deleted_at IS NULL AND
+    /// (<frag>)` and compared to the AND-intersection of the per-filter
+    /// `resolve_filter` sets.
+    #[tokio::test]
+    async fn p1_compiler_resolver_direct_id_set_parity() {
+        let (pool, _dir) = test_pool().await;
+        let _target = seed_fixture(&pool).await;
+        for (label, filters) in battery() {
+            if filters.is_empty() {
+                // No fragment to compile; the empty-filter case is the
+                // "no filter" passthrough, covered by the flat battery.
+                continue;
+            }
+            // Resolver side: AND-intersect each top-level filter's set.
+            let mut acc: Option<FxHashSet<String>> = None;
+            for f in &filters {
+                let set = resolve_filter(&pool, f, 0).await.unwrap();
+                acc = Some(match acc {
+                    None => set,
+                    Some(mut a) => {
+                        a.retain(|id| set.contains(id));
+                        a
+                    }
+                });
+            }
+            let resolver_set = acc.unwrap_or_default();
+
+            // Compiler side: run the spliced fragment directly.
+            let cf = compile_filters(&pool, &filters).await;
+            let compiler_set = compiled_id_set(&pool, &cf).await;
+
+            assert_eq!(
+                compiler_set, resolver_set,
+                "[{label}] compiler fragment id set must equal resolver id set \
+                 (compiler: {compiler_set:?}, resolver: {resolver_set:?})"
+            );
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // #2044 (Stage 0) — GROUPED-surface filter parity (the coverage gap)
+    //
+    // `eval_backlink_query_grouped` runs the resolver engine, but no test
+    // asserted its filter decisions match the flat compiler. The grouped
+    // BASE set is intentionally narrower than the flat one (it drops
+    // page_id-NULL orphans and same-root-page self-references), so the
+    // grouped union equals the flat id set INTERSECTED with those extra
+    // base predicates. Computing the expected set that way isolates the
+    // FILTER engine (the thing under test) from the deliberate base-set
+    // difference.
+    // ------------------------------------------------------------------
+
+    /// Block ids the GROUPED base predicates keep: `page_id IS NOT NULL`
+    /// and `page_id != target's root page`. Restricting the flat id set to
+    /// these yields the grouped path's expected union for the same filter.
+    async fn grouped_base_keep(pool: &SqlitePool, target: &str) -> FxHashSet<String> {
+        sqlx::query_scalar::<_, String>(
+            "SELECT b.id FROM blocks b \
+             JOIN blocks tgt ON tgt.id = ?1 \
+             WHERE b.page_id IS NOT NULL \
+               AND b.page_id != COALESCE(tgt.page_id, tgt.id)",
+        )
+        .bind(target)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .collect()
+    }
+
+    /// GROUPED filter parity: the UNION of block ids across
+    /// `eval_backlink_query_grouped`'s groups equals the flat
+    /// `eval_backlink_query` id set, restricted to the grouped base
+    /// predicates (orphans + same-root-page sources excluded). Asserted for
+    /// every battery filter, proving the resolver engine that backs the
+    /// grouped surface agrees with the flat compiler.
+    #[tokio::test]
+    async fn p1_grouped_union_matches_flat_filter_set() {
+        let (pool, _dir) = test_pool().await;
+        let target = seed_fixture(&pool).await;
+        let keep = grouped_base_keep(&pool, &target).await;
+        let page = PageRequest::new(None, Some(200)).unwrap();
+
+        for (label, filters) in battery() {
+            let filt_arg = if filters.is_empty() {
+                None
+            } else {
+                Some(filters.clone())
+            };
+
+            // Flat id set for this filter, then restrict to the grouped base.
+            let flat = eval_backlink_query(&pool, &target, filt_arg.clone(), None, &page, None)
+                .await
+                .unwrap_or_else(|e| panic!("[{label}] flat eval failed: {e:?}"));
+            let expected: FxHashSet<String> = flat
+                .items
+                .iter()
+                .map(|r| r.id.to_string())
+                .filter(|id| keep.contains(id))
+                .collect();
+
+            // Grouped union across all groups.
+            let grouped = eval_backlink_query_grouped(&pool, &target, filt_arg, None, &page, None)
+                .await
+                .unwrap_or_else(|e| panic!("[{label}] grouped eval failed: {e:?}"));
+            let got: FxHashSet<String> = grouped
+                .groups
+                .iter()
+                .flat_map(|g| g.blocks.iter().map(|b| b.id.to_string()))
+                .collect();
+
+            assert_eq!(
+                got, expected,
+                "[{label}] grouped union must equal flat filter set ∩ grouped base \
+                 (grouped: {got:?}, expected: {expected:?})"
+            );
+            assert_eq!(
+                grouped.filtered_count,
+                expected.len(),
+                "[{label}] grouped filtered_count must match the union size"
+            );
         }
     }
 }
