@@ -31,14 +31,18 @@
 //      whose body has zero `?` operators only return `Ok(...)` or
 //      explicitly-constructed `Err(AppError::Validation(...))`-style
 //      values that are safe by construction);
-//   4. Its body does NOT contain the literal token
-//      `sanitize_internal_error` anywhere.
+//   4. Its body does NOT actually CALL `sanitize_internal_error`.
 //
-// Rule 4 is intentionally lenient: a body that even *mentions*
-// `sanitize_internal_error` is presumed to call it on the error path.
-// This admits a (rare) class of false negatives but eliminates the
-// common false positive where the `.map_err(...)` is split across
-// multiple match arms (e.g. `Err(e) => Err(sanitize_internal_error(e))`).
+// Rule 4 (#2045) requires a real call, not a bare mention: the body must
+// either pipe an error through `.map_err(sanitize_internal_error)` (the
+// function used as a value) or invoke `sanitize_internal_error(<expr>)`
+// directly (e.g. `Err(e) => Err(sanitize_internal_error(e))` split across
+// match arms). A reference to the token that only appears in a comment no
+// longer satisfies the rule — `findMatchingBrace` skips comment bodies, but
+// a doc line *above* the `{` is part of the signature, not the body, and a
+// trailing comment that merely names the function used to slip through the
+// old `includes('sanitize_internal_error')` token check.
+//
 // False positives — flagging a command that legitimately can never
 // produce an error worth sanitizing — are acceptable per the spec
 // rationale: the cost of an extra `.map_err(sanitize_internal_error)`
@@ -78,22 +82,111 @@ function* walkRustFiles(dir) {
 
 /**
  * Locate the byte offset of the matching `}` for the `{` at `openIdx`.
- * Naive brace counter — does NOT skip braces inside string/char/raw-string
- * literals or `//`/`/*…*\/` comments. For our purpose (Rust function
- * bodies in `commands/`) this is good enough: Tauri command bodies are
- * straight-line IPC plumbing without pathological literal contents.
+ *
+ * Skips braces that live inside Rust string literals (`"…"`), char literals
+ * (`'{'`), raw strings (`r"…"`, `r#"…"#`, `r##"…"##`, …), and `//` line /
+ * `/* … *\/` block comments — so a `{`/`}` inside a `format!("…{…}…")` string
+ * or a comment cannot throw off the body's brace balance (#2045). Rust block
+ * comments nest, so the scanner tracks block-comment depth.
  *
  * Returns `null` if no match is found.
  */
 function findMatchingBrace(src, openIdx) {
   let depth = 0
-  for (let i = openIdx; i < src.length; i++) {
+  let i = openIdx
+  while (i < src.length) {
     const c = src[i]
+    const next = src[i + 1]
+
+    // Line comment: skip to end of line.
+    if (c === '/' && next === '/') {
+      const nl = src.indexOf('\n', i + 2)
+      if (nl === -1) return null
+      i = nl + 1
+      continue
+    }
+
+    // Block comment (nesting): skip past the matching `*/`.
+    if (c === '/' && next === '*') {
+      let commentDepth = 1
+      i += 2
+      while (i < src.length && commentDepth > 0) {
+        if (src[i] === '/' && src[i + 1] === '*') {
+          commentDepth++
+          i += 2
+        } else if (src[i] === '*' && src[i + 1] === '/') {
+          commentDepth--
+          i += 2
+        } else {
+          i++
+        }
+      }
+      continue
+    }
+
+    // Raw string: r"…", r#"…"#, r##"…"##, … — match the same number of
+    // `#`s on the closing delimiter. No escape processing inside.
+    if (c === 'r' && (next === '"' || next === '#')) {
+      let j = i + 1
+      let hashes = 0
+      while (src[j] === '#') {
+        hashes++
+        j++
+      }
+      if (src[j] === '"') {
+        // Confirmed raw-string opener `r{#*}"`.
+        const close = `"${'#'.repeat(hashes)}`
+        const end = src.indexOf(close, j + 1)
+        if (end === -1) return null
+        i = end + close.length
+        continue
+      }
+      // Not actually a raw string (e.g. an identifier starting with `r`):
+      // fall through and treat `r` as an ordinary char.
+    }
+
+    // Ordinary string literal: "…" with `\` escapes.
+    if (c === '"') {
+      i++
+      while (i < src.length) {
+        if (src[i] === '\\') {
+          i += 2
+          continue
+        }
+        if (src[i] === '"') {
+          i++
+          break
+        }
+        i++
+      }
+      continue
+    }
+
+    // Char literal: '…' with `\` escapes — but NOT a lifetime (`'a`), which
+    // has no closing quote. Only treat as a char literal when a closing `'`
+    // is present a plausible distance away.
+    if (c === "'") {
+      if (src[i + 1] === '\\') {
+        // Escaped char: '\n', '\'', '\\', '\u{7f}', … — find the closing '.
+        const end = src.indexOf("'", i + 2)
+        if (end !== -1 && end - i <= 12) {
+          i = end + 1
+          continue
+        }
+      } else if (src[i + 2] === "'") {
+        // Simple char literal like '{' or 'a'.
+        i += 3
+        continue
+      }
+      // Otherwise a lifetime/label — fall through, `'` is an ordinary char.
+    }
+
     if (c === '{') depth++
     else if (c === '}') {
       depth--
       if (depth === 0) return i
     }
+    i++
   }
   return null
 }
@@ -151,32 +244,38 @@ function propagatesErrors(body) {
 }
 
 /**
- * Pre-existing violations grandfathered in at the time (c)
- * landed. Each entry is `<filename>:<command name>` (relative to
- * `commands/`). Listed here rather than fixed inline because:
- *
- *   - The fix in some cases requires a deeper refactor (e.g. the
- *     `mcp` commands return state-summary types that arguably could
- *     leak `AppError::Sqlx` only via the snapshot decoder, which is
- * Already test-covered for non-internal payloads
- *     batch report);
- * Touching files outside the (c) scope (`mcp.rs`,
- *     `logging.rs`) would step on adjacent in-flight MAINT items.
- *
- * New `#[tauri::command]`s must NOT be added to this list; they must
- * use `.map_err(sanitize_internal_error)` (or call
- * `sanitize_internal_error` explicitly inside a match arm). When one
- * of these grandfathered commands is fixed, drop its entry here.
+ * Body actually CALLS `sanitize_internal_error` (#2045) — not a mere mention.
+ * Accepts either form (with an optional `crate::`/`super::`/… path prefix,
+ * since both `sanitize_internal_error` and `super::sanitize_internal_error`
+ * appear in the tree):
+ *   - `.map_err(sanitize_internal_error)` — the fn passed as a value;
+ *   - `sanitize_internal_error(<expr>)`   — an explicit call, e.g. in a
+ *     match arm `Err(e) => Err(sanitize_internal_error(e))`.
+ * A bare token in a comment (which `findMatchingBrace` leaves in the body
+ * for non-doc trailing comments) is rejected because neither pattern matches.
  */
-const ALLOWLIST = new Set([
-  'logging.rs:get_log_dir',
-  'mcp.rs:get_mcp_status',
-  'mcp.rs:get_mcp_socket_path',
-  'mcp.rs:mcp_set_enabled',
-  'mcp.rs:get_mcp_rw_status',
-  'mcp.rs:get_mcp_rw_socket_path',
-  'mcp.rs:mcp_rw_set_enabled',
-])
+const SANITIZE_PATH = String.raw`(?:\w+\s*::\s*)*sanitize_internal_error`
+function callsSanitize(body) {
+  return (
+    new RegExp(String.raw`\.map_err\(\s*${SANITIZE_PATH}\s*\)`).test(body) ||
+    new RegExp(String.raw`${SANITIZE_PATH}\s*\(`).test(body)
+  )
+}
+
+/**
+ * Grandfathered violations. Emptied in #2045: the 7 previously-listed
+ * commands (`logging.rs:get_log_dir` + 6 `mcp.rs` commands) already route
+ * their fallible `?` expressions through `.map_err(sanitize_internal_error)`,
+ * so the burndown was a no-op on the Rust side — only the stale allowlist
+ * entries (and the lenient rule 4 that let them through) needed removing.
+ *
+ * The set MUST stay empty. Every `#[tauri::command]` returning
+ * `Result<_, AppError>` that propagates errors via `?` must actually CALL
+ * `sanitize_internal_error` — either `.map_err(sanitize_internal_error)` or
+ * `sanitize_internal_error(e)` in a match arm (rule 4, below). A bare mention
+ * in a comment no longer satisfies the check.
+ */
+const ALLOWLIST = new Set([])
 
 const offenders = []
 for (const path of walkRustFiles(COMMANDS_DIR)) {
@@ -184,7 +283,7 @@ for (const path of walkRustFiles(COMMANDS_DIR)) {
   for (const { name, returnType, body, lineno } of iterCommandFns(src)) {
     if (!returnsResultAppError(returnType)) continue
     if (!propagatesErrors(body)) continue
-    if (body.includes('sanitize_internal_error')) continue
+    if (callsSanitize(body)) continue
     const filename = path.slice(path.lastIndexOf('/') + 1)
     if (ALLOWLIST.has(`${filename}:${name}`)) continue
     offenders.push({ path: relative(REPO_ROOT, path), name, lineno })

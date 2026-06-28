@@ -51,6 +51,11 @@ export type AppErrorKind =
   | 'conflict'
   | 'invalid_operation'
   | 'channel'
+  // #2045 — `sanitize_internal_error` collapses every masked infra failure
+  // (Database/Io/Json/Channel/Internal/Snapshot/Migration) to wire
+  // `kind:"internal"`, deliberately distinct from `invalid_operation` so the
+  // UI can tell a suppressed internal error apart from a validation reject.
+  | 'internal'
   | 'snapshot'
   | 'validation'
   | 'non_reversible'

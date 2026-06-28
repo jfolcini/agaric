@@ -928,8 +928,12 @@ fn new_error_id() -> String {
 /// Applied to every Tauri command wrapper — read and write alike — whose
 /// inner function can surface a SQL, I/O, JSON, channel, or snapshot error.
 /// The `AppError::Database` / `Migration` / `Io` / `Json` / `Channel` /
-/// `Snapshot` variants are collapsed to a generic
-/// `AppError::InvalidOperation("an internal error occurred (err: <id>)")`,
+/// `Internal` / `Snapshot` variants are collapsed to a generic
+/// `AppError::Internal("an internal error occurred (err: <id>)")`,
+/// which serialises with wire `kind: "internal"` — deliberately distinct
+/// from `invalid_operation`, the kind real business-rule rejections use, so
+/// masked infrastructure failures are never conflated with validation
+/// rejections on the wire (#2045),
 /// where `<id>` is a short correlation id (#1987). The original error is
 /// logged backend-side via `tracing::error!` keyed by the same id, so the
 /// full cause stays recoverable from the daily log without ever being
@@ -966,7 +970,7 @@ pub(crate) fn sanitize_internal_error(err: AppError) -> AppError {
                 error = %err,
                 "internal error suppressed during sanitization"
             );
-            AppError::InvalidOperation(format!("an internal error occurred (err: {id})"))
+            AppError::Internal(format!("an internal error occurred (err: {id})"))
         }
         _ => err,
     }
@@ -1002,7 +1006,10 @@ mod sanitize_internal_error_tests {
         // id must be present so the full error stays grep-able in the log.
         let sanitized = sanitize_internal_error(AppError::Io(std::io::Error::other("disk full")));
         match sanitized {
-            AppError::InvalidOperation(msg) => {
+            // #2045 — masked infra failures surface as `Internal` (wire
+            // `kind:"internal"`), NOT `InvalidOperation`, so the frontend can
+            // tell a suppressed internal error apart from a validation reject.
+            AppError::Internal(msg) => {
                 assert!(
                     !msg.contains("disk full"),
                     "raw internal detail leaked to wire: {msg:?}"
@@ -1011,7 +1018,7 @@ mod sanitize_internal_error_tests {
                 assert_eq!(id.len(), 5, "embedded id should be 5 hex chars, got {id:?}");
                 assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
             }
-            other => panic!("Io should sanitize to InvalidOperation, got {other:?}"),
+            other => panic!("Io should sanitize to Internal, got {other:?}"),
         }
     }
 

@@ -139,7 +139,13 @@ describe('notify.error debug-mode formatting (#1987)', () => {
   })
 
   it('keeps the (err: <id>) correlation code visible even with debug off', () => {
-    notify.error({ kind: 'invalid_operation', message: 'an internal error occurred (err: 7F3A2)' })
+    // #2045: sanitized infra failures arrive with wire `kind:"internal"` and
+    // the Rust `Internal error: ` Display prefix; the prefix is stripped but
+    // the `(err: <id>)` correlation code is preserved.
+    notify.error({
+      kind: 'internal',
+      message: 'Internal error: an internal error occurred (err: 7F3A2)',
+    })
 
     expect(vi.mocked(toast.error).mock.calls[0]?.[0]).toBe(
       'an internal error occurred (err: 7F3A2)',
