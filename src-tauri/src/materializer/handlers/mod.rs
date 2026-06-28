@@ -57,6 +57,11 @@ use sql_only::*;
 // External re-exports — preserve the pre-split paths so callers outside
 // this module (materializer/mod.rs, consumer.rs, tests.rs) do not change.
 pub(crate) use attachments::cleanup_orphaned_attachments;
+// #2110 M6 — the two process-global counter accessors, re-exported with
+// disambiguating names (both submodules name their getter `count()`) so
+// `materializer/mod.rs` can surface them to the OTel metrics pipeline.
+pub(crate) use descendant_fanout_dropped::count as descendant_fanout_dropped_count;
+pub(crate) use sql_only_fallback::count as sql_only_fallback_count;
 // #1257 the LOCAL create_block command path drives the engine-apply +
 // dense-position projection through this helper IN-TRANSACTION (without
 // advancing the apply cursor — that stays a boot-replay / dispatch_op concern),

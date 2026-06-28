@@ -4,11 +4,44 @@
 
 use super::*;
 
+/// RAII timer that records the elapsed wall-clock of one [`apply_op`] to the
+/// `agaric.materializer.op_apply.duration` histogram on drop — so every exit
+/// path (success AND the `?`-propagated errors) is captured without threading a
+/// record call through each early return. PII-free (an opaque duration only).
+/// When observability is off the record is a no-op (global no-op meter), so the
+/// guard costs an `Instant` + a no-op call.
+struct OpApplyTimer {
+    started: std::time::Instant,
+}
+
+impl OpApplyTimer {
+    fn start() -> Self {
+        Self {
+            started: std::time::Instant::now(),
+        }
+    }
+}
+
+impl Drop for OpApplyTimer {
+    fn drop(&mut self) {
+        crate::observability::record_op_apply_duration(
+            self.started.elapsed().as_secs_f64() * 1000.0,
+        );
+    }
+}
+
 /// /L9: takes `&Arc<OpRecord>` so callers (the
 /// `MaterializeTask::ApplyOp` arm) that already hold the record as
 /// `Arc<OpRecord>` thread the borrow through without a deep clone.
 #[tracing::instrument(skip(pool, record), fields(seq = record.seq), err)]
 pub(super) async fn apply_op(pool: &SqlitePool, record: &Arc<OpRecord>) -> Result<(), AppError> {
+    // #2110 M6 — time the whole per-op apply and record it to the
+    // `agaric.materializer.op_apply.duration` histogram on EVERY exit (the
+    // `?`-propagated error paths included), via an RAII guard. The record helper
+    // is unconditional + free when observability is off (the global meter is a
+    // no-op), so this adds an `Instant::now()` + a no-op record on the hot path.
+    let _apply_timer = OpApplyTimer::start();
+
     // SQL-review route through `begin_immediate_logged` so
     // sync-burst contention surfaces as upfront serialised wait (with
     // a `warn!` if slow) instead of mid-tx `busy_timeout` stalls
