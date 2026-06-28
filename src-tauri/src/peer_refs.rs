@@ -626,26 +626,41 @@ mod tests {
 
         // First reset, composed with a frontier advance in one tx.
         let mut tx = pool.begin().await.unwrap();
-        update_on_sync_in_tx(&mut tx, "peer-tx", "h1", "").await.unwrap();
-        increment_reset_count_in_tx(&mut tx, "peer-tx").await.unwrap();
+        update_on_sync_in_tx(&mut tx, "peer-tx", "h1", "")
+            .await
+            .unwrap();
+        increment_reset_count_in_tx(&mut tx, "peer-tx")
+            .await
+            .unwrap();
         tx.commit().await.unwrap();
 
         let peer = get_peer_ref(&pool, "peer-tx").await.unwrap().unwrap();
-        assert_eq!(peer.reset_count, 1, "reset_count must be 1 after first in-tx bump");
+        assert_eq!(
+            peer.reset_count, 1,
+            "reset_count must be 1 after first in-tx bump"
+        );
         assert!(peer.last_reset_at.is_some(), "last_reset_at must be set");
         assert_eq!(
             peer.last_hash.as_deref(),
             Some("h1"),
             "frontier advance must commit atomically with the reset bump"
         );
-        assert!(peer.synced_at.is_some(), "synced_at must be set in the same tx");
+        assert!(
+            peer.synced_at.is_some(),
+            "synced_at must be set in the same tx"
+        );
 
         // Second reset: 1 → 2.
         let mut tx = pool.begin().await.unwrap();
-        increment_reset_count_in_tx(&mut tx, "peer-tx").await.unwrap();
+        increment_reset_count_in_tx(&mut tx, "peer-tx")
+            .await
+            .unwrap();
         tx.commit().await.unwrap();
         let peer = get_peer_ref(&pool, "peer-tx").await.unwrap().unwrap();
-        assert_eq!(peer.reset_count, 2, "reset_count must be 2 after second in-tx bump");
+        assert_eq!(
+            peer.reset_count, 2,
+            "reset_count must be 2 after second in-tx bump"
+        );
     }
 
     #[tokio::test]
