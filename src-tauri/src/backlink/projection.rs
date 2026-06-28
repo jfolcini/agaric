@@ -15,8 +15,10 @@
 //! same SQL string + bind order the legacy `compile_backlink_filter` leaf
 //! arm emitted (alias `b`, the `bp` property alias, the per-op
 //! `IS NOT NULL` guards, the ULID-prefix `Created` range). The resolver
-//! (`resolve_filter_with_candidates`) remains the parity oracle. The
-//! projection-emitted [`WhereClause`] converts cleanly to the backlink
+//! (`resolve_filter_with_candidates`) is the parity oracle for this byte
+//! identity AND the production filter engine for the grouped /
+//! unlinked-references surfaces (`backlink::grouped`); it is not test-only.
+//! The projection-emitted [`WhereClause`] converts cleanly to the backlink
 //! [`CompiledFilter`] via [`From<Bind> for FilterBind`].
 
 use std::collections::HashSet;

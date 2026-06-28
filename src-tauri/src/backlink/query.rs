@@ -4,22 +4,30 @@
 //! Provides a `BacklinkFilter` tree for composing boolean filter queries
 //! on backlinks and evaluating them against the database.
 //!
-//! ## Evaluation strategy (H1: keyset + SQL COUNT)
+//! ## Evaluation strategy (H1: keyset + SQL COUNT; #346 P1: SQL-pushdown)
 //!
 //! 1. **Counts** — `SELECT COUNT(*) FROM block_links bl JOIN blocks b …`
 //!    yields `total_count` directly from SQL, without materialising the
-//!    full base id set. When filters are present they resolve to a Rust
-//!    `FxHashSet` whose size is `filtered_count`.
+//!    full base id set. When filters are present they are compiled (via
+//!    `compile_backlink_filter`) into a single correlated SQL WHERE
+//!    fragment that is spliced into a second `COUNT(*)`; `filtered_count`
+//!    comes from that count, not from a materialised Rust set. (The Rust
+//!    `FxHashSet` resolver `resolve_filter_with_candidates` now backs the
+//!    GROUPED / unlinked-references surfaces in `backlink::grouped`, not
+//!    this flat path.)
 //! 2. **Page query (Created / default sort)** — single SQL with
-//!    `(?N IS NULL OR b.id > ?N+1)` keyset clause, optional
-//!    `b.id IN (SELECT value FROM json_each(?))` constraint when a
-//!    filtered set is present, `ORDER BY b.id ASC/DESC LIMIT N+1`. The
-//!    full `BlockRow` is projected directly — no separate fetch step.
+//!    `(?N IS NULL OR b.id > ?N+1)` keyset clause, the compiled filter
+//!    fragment spliced in-line (correlated on `b`) when filters are
+//!    present, `ORDER BY b.id ASC/DESC LIMIT N+1`. The full `BlockRow`
+//!    is projected directly — no separate fetch step.
 //! 3. **Property sort** — falls back to "materialise filtered set, sort
 //!    in Rust by property value, slice the page, batch-fetch rows" because
 //!    property sorts can't be expressed as a keyset on `b.id` without
-//!    encoding the value into the cursor. The full *unfiltered* base set
-//!    is still never materialised; `total_count` comes from SQL COUNT
+//!    encoding the value into the cursor. The filtered id set is still
+//!    materialised in SQL (the compiled fragment spliced into a
+//!    `SELECT bl.source_id … WHERE <base> AND (<fragment>)`), not by
+//!    resolving leaves to Rust sets and intersecting. The full *unfiltered*
+//!    base set is never materialised; `total_count` comes from SQL COUNT
 //!    and only `filtered_ids` is held in memory (small when filters are
 //!    present; intrinsic for property sort).
 
@@ -58,13 +66,17 @@ use crate::pagination::{BlockRow, Cursor, PageRequest};
 ///    against `blocks` with the base predicates (target match,
 ///    self-exclusion, deleted-at, space). The 50k base id set is never
 ///    materialised — we count rows in SQL.
-/// 2. **Filters** — when supplied, resolve each branch to a Rust set via
-///    `resolve_filter_with_candidates`. AND-intersected across top-level
-///    filters. The resolved set is passed into the page query as a
-///    `json_each` constraint; `filtered_count` comes from a second SQL
-///    `COUNT(*)` so it correctly reflects the *intersection* with the
+/// 2. **Filters** — when supplied, each top-level branch is compiled via
+///    `compile_backlink_filter` into a correlated SQL WHERE fragment
+///    (against outer alias `b`), and the fragments are AND-joined. The
+///    fragment is spliced into the page query directly; `filtered_count`
+///    comes from a second SQL `COUNT(*)` over the base predicates ∩ the
+///    fragment, so it correctly reflects the *intersection* with the
 ///    backlink base set (filters like `SourcePage` resolve to ids
-///    outside the base set, so `filtered_ids.len()` would over-count).
+///    outside the base set, so a naive Rust `set.len()` would over-count).
+///    The Rust `FxHashSet` resolver (`resolve_filter_with_candidates`) is
+///    no longer used here; it now backs the GROUPED surfaces in
+///    `backlink::grouped`.
 /// 3. **Sort + page** — for `Created` sort we emit a single SQL with a
 ///    `(?N IS NULL OR b.id > ?N+1)` keyset clause and (when filtered) a
 ///    `b.id IN (SELECT value FROM json_each(?))` constraint, projecting
