@@ -135,7 +135,7 @@ function findMatchingBrace(src, openIdx) {
       }
       if (src[j] === '"') {
         // Confirmed raw-string opener `r{#*}"`.
-        const close = '"' + '#'.repeat(hashes)
+        const close = `"${'#'.repeat(hashes)}`
         const end = src.indexOf(close, j + 1)
         if (end === -1) return null
         i = end + close.length
