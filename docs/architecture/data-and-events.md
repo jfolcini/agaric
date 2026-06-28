@@ -70,7 +70,9 @@ If a property type is ever introduced that is *semantically* a large exact integ
 
 ## Concurrent edits
 
-There is **one op-application path**, and that path always fans out into the per-space `LoroEngine` (`src-tauri/src/loro/`). Concurrent writes from peers converge deterministically; same op inputs produce identical state on every replica. The legacy three-way merge / `is_conflict` model is gone.
+Convergence is CRDT-based: every op is **eventually** applied into the per-space `LoroEngine` (`src-tauri/src/loro/`), and the engine resolves concurrent writes deterministically — same op inputs produce identical state on every replica. The legacy three-way merge / `is_conflict` model is gone.
+
+There are, however, **two distinct apply paths** (see "Apply-cursor semantics" below for the full reconciliation). The **engine-apply path** (`apply_op` / `BatchApplyOps`, reached by boot replay and remote/sync import) feeds the op into the `LoroEngine` and advances the apply cursor in the same transaction. The **live local command path** (`CommandTx::commit_and_dispatch`) instead materializes the SQL `blocks` row synchronously and fires only background cache rebuilds — it does **not** touch the engine inline; boot replay re-applies that session's ops into the engine afterwards (idempotently). So "every op fans out into the engine" is true over the lifetime of the data, not synchronously on the local write.
 
 ## Database
 

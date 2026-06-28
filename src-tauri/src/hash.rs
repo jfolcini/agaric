@@ -27,7 +27,9 @@
 /// between user-owned devices, no adversarial peers) this is intentional;
 /// tampering protection comes from the duplicate-hash check on the composite
 /// `(device_id, seq)` primary key rather than from chain re-computation. See
-/// docs/ARCHITECTURE.md §"Hash chain" for the matching narrative.
+/// `docs/architecture/op-log-format.md` §"Chain linking" (and the "Hash
+/// chain" subsection of `docs/architecture/data-and-events.md`) for the
+/// matching narrative.
 ///
 /// - `parent_seqs`: The raw JSON string from the `parent_seqs` column, or `None`
 ///   for the genesis op (seq 1). When `None`, the empty string is used in the
@@ -345,10 +347,13 @@ mod tests {
         );
     }
 
-    /// The null-byte invariants are now `assert!` (not
-    /// `debug_assert!`), so they fire in both debug and release builds.
-    /// The hash preimage uses `\0` as a field separator, so a raw `\0`
-    /// in any input would produce an ambiguous preimage.
+    /// The null-byte invariants are `debug_assert!`s, so they fire in debug
+    /// and test builds (this `#[test]` runs under the dev profile) but are
+    /// compiled out in release. The hash preimage uses `\0` as a field
+    /// separator, so a raw `\0` in any input would produce an ambiguous
+    /// preimage; production rejects such ops at the ingest gate (see the
+    /// `\0`-rejection check in `dag::insert_remote_op`) before they reach
+    /// `compute_op_hash`.
     #[test]
     #[should_panic(expected = "serialized payload must not contain raw null bytes")]
     fn payload_with_embedded_null_byte_panics() {
