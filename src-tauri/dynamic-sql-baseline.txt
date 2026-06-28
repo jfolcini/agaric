@@ -48,7 +48,7 @@
 2 src-tauri/src/maintenance.rs
 4 src-tauri/src/materializer/coordinator.rs
 2 src-tauri/src/materializer/handlers/apply.rs
-1 src-tauri/src/materializer/handlers/attachments.rs
+2 src-tauri/src/materializer/handlers/attachments.rs
 34 src-tauri/src/materializer/handlers/loro_apply.rs
 2 src-tauri/src/materializer/handlers/pages_cache.rs
 2 src-tauri/src/materializer/retry_queue.rs
