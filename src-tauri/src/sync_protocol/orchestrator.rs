@@ -849,6 +849,7 @@ impl SyncOrchestrator {
     /// State transition: `ExchangingHeads` → `StreamingOps` (when at
     /// least one space is registered) or `ExchangingHeads` →
     /// `Complete` (empty-stream short-circuit).
+    #[tracing::instrument(skip_all, err)]
     async fn head_exchange_outgoing_loro(
         &mut self,
         peer_vvs: &[crate::sync_protocol::types::SpaceVersionVector],

@@ -58,6 +58,7 @@ pub(crate) fn ws_config() -> tokio_tungstenite::tungstenite::protocol::WebSocket
 /// so that a panic inside the verifier cannot poison the cell — there
 /// is exactly one writer (the verifier on the leaf cert) and one reader
 /// (this function), and no mutual exclusion is required.
+#[tracing::instrument(skip_all, err)]
 pub async fn connect_to_peer(
     addr: &str,
     expected_cert_hash: Option<&str>,

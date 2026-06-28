@@ -50,6 +50,7 @@
 ///
 /// Returns the hash as a lowercase hex string (64 chars for blake3's 256-bit
 /// output).
+#[tracing::instrument(level = "debug", skip(device_id, seq, parent_seqs, op_type, payload))]
 #[inline]
 #[must_use]
 pub fn compute_op_hash(
@@ -149,6 +150,10 @@ pub fn verify_op_record(record: &crate::op_log::OpRecord) -> Result<(), String> 
 /// a security boundary: the threat model is single-user/local-first with no
 /// adversarial peer (see AGENTS.md), the op hash is not a secret, and there is
 /// no timing attacker to defend against.
+#[tracing::instrument(
+    level = "debug",
+    skip(stored_hash, device_id, seq, parent_seqs, op_type, payload)
+)]
 #[inline]
 #[must_use]
 pub fn verify_op_hash(

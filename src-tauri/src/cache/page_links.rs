@@ -232,6 +232,7 @@ pub async fn reindex_page_link_cache_for_block(
 /// Per-content-edit invalidation goes through
 /// [`reindex_page_link_cache_for_block`] from
 /// `materializer::handlers::handle_background_task::ReindexBlockLinks`.
+#[tracing::instrument(skip(pool), err)]
 pub async fn rebuild_page_link_cache(pool: &SqlitePool) -> Result<(), AppError> {
     super::rebuild_with_timing("page_links", || rebuild_page_link_cache_impl(pool)).await
 }

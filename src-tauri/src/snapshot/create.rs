@@ -253,6 +253,7 @@ pub(crate) async fn collect_frontier(
 /// Table and frontier collection is wrapped in a **read transaction** (F01) so
 /// that all SELECT queries see a consistent point-in-time view, even if
 /// concurrent writes occur.
+#[tracing::instrument(skip(pool, device_id), err)]
 pub async fn create_snapshot(pool: &SqlitePool, device_id: &str) -> Result<String, AppError> {
     let snapshot_id = crate::ulid::SnapshotId::new().into_string();
 

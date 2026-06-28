@@ -363,6 +363,7 @@ async fn apply_sort_merge_rebuild(
 ///    (exactly 15 chars) -> source = `tag:<tag_id>`
 /// 3. `blocks.due_date` column -> source = `column:due_date`
 /// 4. `blocks.scheduled_date` column -> source = `column:scheduled_date`
+#[tracing::instrument(skip(pool), err)]
 pub async fn rebuild_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
     super::rebuild_with_timing("agenda", || rebuild_agenda_cache_impl(pool)).await
 }
