@@ -3077,11 +3077,12 @@ export type SortSource =
  *  # Normalisation
  * 
  *  Stored value is the canonical uppercase Crockford base32 representation —
- *  AGENTS.md invariant #8. Both `from_string`, `from_trusted`, and the
- *  `Deserialize` impl uppercase via `to_ascii_uppercase` so every path
- *  produces byte-identical output for non-ASCII inputs (e.g. "ß" stays "SS"
- *  is *not* what we want; `to_ascii_uppercase` is the only normaliser that
- *  keeps blake3 hash determinism).
+ *  AGENTS.md invariant #8. The normaliser differs by path: `from_string`
+ *  parses the input through `ulid::Ulid::from_str` and stores the crate's
+ *  canonical re-encoding (`parsed.to_string()`), while `from_trusted` and the
+ *  `Deserialize` impl skip the parse and uppercase via `to_ascii_uppercase`.
+ *  For a well-formed ASCII Crockford-base32 ULID the two forms coincide, so
+ *  every path yields byte-identical output and blake3 hash determinism holds.
  * 
  *  # Wire format
  * 

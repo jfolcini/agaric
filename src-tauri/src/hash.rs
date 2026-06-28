@@ -347,10 +347,13 @@ mod tests {
         );
     }
 
-    /// The null-byte invariants are now `assert!` (not
-    /// `debug_assert!`), so they fire in both debug and release builds.
-    /// The hash preimage uses `\0` as a field separator, so a raw `\0`
-    /// in any input would produce an ambiguous preimage.
+    /// The null-byte invariants are `debug_assert!`s, so they fire in debug
+    /// and test builds (this `#[test]` runs under the dev profile) but are
+    /// compiled out in release. The hash preimage uses `\0` as a field
+    /// separator, so a raw `\0` in any input would produce an ambiguous
+    /// preimage; production rejects such ops at the ingest gate (see the
+    /// `\0`-rejection check in `dag::insert_remote_op`) before they reach
+    /// `compute_op_hash`.
     #[test]
     #[should_panic(expected = "serialized payload must not contain raw null bytes")]
     fn payload_with_embedded_null_byte_panics() {
