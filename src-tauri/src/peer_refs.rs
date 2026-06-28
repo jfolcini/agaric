@@ -259,6 +259,43 @@ pub async fn increment_reset_count(pool: &SqlitePool, peer_id: &str) -> Result<(
     Ok(())
 }
 
+/// In-transaction variant of [`increment_reset_count`].
+///
+/// Bumps `reset_count` and stamps `last_reset_at` on the passed
+/// transaction so the increment commits **atomically** with the
+/// `synced_at`/`last_hash` advance recorded by [`update_on_sync_in_tx`]
+/// in the same `BEGIN IMMEDIATE` transaction. This is the protocol-reset
+/// (snapshot catch-up) bookkeeping path: a peer that re-syncs from a
+/// snapshot must record the reset event in the same write as the new
+/// frontier, so a crash between the two can never leave the counter and
+/// the frontier disagreeing about whether a reset happened.
+///
+/// `last_reset_at` is epoch-ms (`crate::db::now_ms()`), matching the
+/// column contract established by migration
+/// `0075_peer_refs_timestamps_ms`.
+///
+/// Returns [`AppError::NotFound`] if `peer_id` does not exist (the
+/// caller is expected to `upsert_peer_ref_in_tx` first).
+pub async fn increment_reset_count_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    peer_id: &str,
+) -> Result<(), AppError> {
+    let now = crate::db::now_ms();
+    let result = sqlx::query!(
+        "UPDATE peer_refs SET reset_count = reset_count + 1, last_reset_at = ?
+         WHERE peer_id = ?",
+        now,
+        peer_id,
+    )
+    .execute(&mut **tx)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("peer_refs ({peer_id})")));
+    }
+    Ok(())
+}
+
 /// Delete a peer ref by `peer_id`.
 ///
 /// Returns [`AppError::NotFound`] if `peer_id` does not exist.
@@ -576,6 +613,64 @@ mod tests {
         assert_eq!(
             peer.reset_count, 2,
             "reset_count must be 2 after second increment"
+        );
+    }
+
+    #[tokio::test]
+    async fn increment_reset_count_in_tx_increments_atomically() {
+        // #2046: the in-tx variant must bump reset_count + stamp
+        // last_reset_at on the passed transaction, composing with the
+        // sync-frontier advance in one commit (0 → 1 → 2).
+        let (pool, _dir) = test_pool().await;
+        upsert_peer_ref(&pool, "peer-tx").await.unwrap();
+
+        // First reset, composed with a frontier advance in one tx.
+        let mut tx = pool.begin().await.unwrap();
+        update_on_sync_in_tx(&mut tx, "peer-tx", "h1", "")
+            .await
+            .unwrap();
+        increment_reset_count_in_tx(&mut tx, "peer-tx")
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let peer = get_peer_ref(&pool, "peer-tx").await.unwrap().unwrap();
+        assert_eq!(
+            peer.reset_count, 1,
+            "reset_count must be 1 after first in-tx bump"
+        );
+        assert!(peer.last_reset_at.is_some(), "last_reset_at must be set");
+        assert_eq!(
+            peer.last_hash.as_deref(),
+            Some("h1"),
+            "frontier advance must commit atomically with the reset bump"
+        );
+        assert!(
+            peer.synced_at.is_some(),
+            "synced_at must be set in the same tx"
+        );
+
+        // Second reset: 1 → 2.
+        let mut tx = pool.begin().await.unwrap();
+        increment_reset_count_in_tx(&mut tx, "peer-tx")
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let peer = get_peer_ref(&pool, "peer-tx").await.unwrap().unwrap();
+        assert_eq!(
+            peer.reset_count, 2,
+            "reset_count must be 2 after second in-tx bump"
+        );
+    }
+
+    #[tokio::test]
+    async fn increment_reset_count_in_tx_nonexistent_peer_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+        let result = increment_reset_count_in_tx(&mut tx, "ghost-peer").await;
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "increment_reset_count_in_tx on nonexistent peer must return AppError::NotFound"
         );
     }
 
