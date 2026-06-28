@@ -292,7 +292,11 @@ fn format_log_record(record: &SdkLogRecord) -> String {
             },
         );
 
-    let level = record.severity_text().unwrap_or("-");
+    // Sanitized for uniform line integrity. In practice `level` is an
+    // enum-derived severity string and `target` a compile-time module path —
+    // neither a realistic injection vector — but routing them through the same
+    // escape as `body`/attributes guarantees no field can ever split a record.
+    let level = sanitize_inline(record.severity_text().unwrap_or("-"));
 
     // The correlation fields: the active span's trace + span id, or `-` when the
     // event was emitted outside any span.
@@ -302,7 +306,7 @@ fn format_log_record(record: &SdkLogRecord) -> String {
     };
 
     // `target` is the tracing event's module path (our source, never user data).
-    let target = record.target().map_or("-", |t| t.as_ref());
+    let target = sanitize_inline(record.target().map_or("-", |t| t.as_ref()));
 
     let body = record
         .body()
