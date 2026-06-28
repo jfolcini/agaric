@@ -71,6 +71,7 @@ pub fn get_mcp_socket_path_inner(app_data_dir: &Path) -> String {
 /// [`McpLifecycle`]. Pure function — no IO besides `is_file()` on the
 /// marker file. Safe to call regardless of whether the MCP task is
 /// currently running.
+#[tracing::instrument(skip(app_data_dir, lifecycle))]
 pub fn get_mcp_status_inner(app_data_dir: &Path, lifecycle: &McpLifecycle) -> McpStatus {
     let enabled = mcp_ro_enabled(app_data_dir);
     let socket_path = get_mcp_socket_path_inner(app_data_dir);
@@ -198,6 +199,7 @@ fn set_marker_enabled(
 /// frontend can surface "already on / already off" without an error).
 ///
 /// Thin wrapper around [`set_marker_enabled`].
+#[tracing::instrument(skip(app_data_dir, lifecycle), err)]
 pub fn mcp_set_enabled_inner(
     app_data_dir: &Path,
     lifecycle: &McpLifecycle,
@@ -428,6 +430,7 @@ pub fn get_mcp_rw_socket_path_inner(app_data_dir: &Path) -> String {
 /// Compute the RW status struct from `app_data_dir` + a shared
 /// [`McpLifecycle`]. Mirrors [`get_mcp_status_inner`] but reads the RW
 /// marker file.
+#[tracing::instrument(skip(app_data_dir, lifecycle))]
 pub fn get_mcp_rw_status_inner(app_data_dir: &Path, lifecycle: &McpLifecycle) -> McpRwStatus {
     let enabled = mcp_rw_enabled(app_data_dir);
     let socket_path = get_mcp_rw_socket_path_inner(app_data_dir);
@@ -453,6 +456,7 @@ pub fn mcp_rw_disconnect_all_inner(lifecycle: &McpLifecycle) {
 /// loop drops its listener instead of staying open until app restart.
 ///
 /// Thin wrapper around [`set_marker_enabled`].
+#[tracing::instrument(skip(app_data_dir, lifecycle), err)]
 pub fn mcp_rw_set_enabled_inner(
     app_data_dir: &Path,
     lifecycle: &McpLifecycle,

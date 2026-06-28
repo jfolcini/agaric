@@ -122,6 +122,7 @@ pub async fn get_compaction_status(
 /// value), **not** the recounted "eligible at start" figure. The
 /// pre-flight `eligible_in_tx` count is logged at `debug` level for
 /// drift observability and otherwise unused on the return path.
+#[instrument(skip(pool, device_id), fields(retention_days), err)]
 pub async fn compact_op_log_cmd_inner(
     pool: &SqlitePool,
     device_id: &str,

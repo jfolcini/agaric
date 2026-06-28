@@ -386,6 +386,7 @@ pub async fn apply_reverse_in_tx(
 /// [`SpaceScope::Global`] is the unscoped (cross-space) view.
 /// The `scope` is ignored in per-page mode (a real ULID `page_id` is
 /// already space-bound).
+#[instrument(skip_all, fields(page_id, limit), err)]
 pub async fn list_page_history_inner(
     pool: &SqlitePool,
     page_id: String,
@@ -410,6 +411,7 @@ pub async fn list_page_history_inner(
 /// All ops are processed in a single transaction for atomicity. Ops are
 /// sorted newest-first (by `created_at DESC, seq DESC`) and reversed in
 /// that order. Non-reversible ops cause early abort (before any are applied).
+#[instrument(skip_all, fields(ops_count = ops.len()), err)]
 pub async fn revert_ops_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -616,6 +618,7 @@ async fn revert_ops_in_tx(
 /// it reads a single already-committed op by `(device_id, seq)` whose
 /// timestamp is immutable, so it is not part of the membership decision and
 /// cannot be affected by a concurrent write.
+#[instrument(skip_all, fields(page_id, target_seq), err)]
 pub async fn restore_page_to_op_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -773,6 +776,7 @@ pub async fn restore_page_to_op_inner(
 /// `undo_depth` is 0-based: 0 = most recent op, 1 = second most recent, etc.
 /// Queries the page's op history (using recursive CTE), applies OFFSET to
 /// skip `undo_depth` ops, then computes and applies the reverse.
+#[instrument(skip_all, fields(page_id, undo_depth), err)]
 pub async fn undo_page_op_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -897,6 +901,7 @@ pub async fn undo_page_op_inner(
 /// The `(undo_device_id, undo_seq)` identifies the UNDO op that was
 /// previously appended. Reversing the undo effectively re-applies the
 /// original operation.
+#[instrument(skip_all, fields(undo_seq), err)]
 pub async fn redo_page_op_inner(
     pool: &SqlitePool,
     device_id: &str,
