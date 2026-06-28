@@ -70,15 +70,20 @@ describe('formatErrorForDisplay', () => {
     })
 
     it('preserves the (err: <id>) correlation code in both modes', () => {
+      // #2045: sanitized internal failures now arrive with wire
+      // `kind:"internal"` (distinct from `invalid_operation`, which real
+      // validation rejects use). The wire `message` is the Rust Display
+      // output, so it carries the `Internal error: ` prefix, which is
+      // stripped for display while the `(err: <id>)` code is preserved.
       const sanitized = {
-        kind: 'invalid_operation',
-        message: 'an internal error occurred (err: 7F3A2)',
+        kind: 'internal',
+        message: 'Internal error: an internal error occurred (err: 7F3A2)',
       }
       expect(formatErrorForDisplay(sanitized, { debug: false })).toBe(
         'an internal error occurred (err: 7F3A2)',
       )
       expect(formatErrorForDisplay(sanitized, { debug: true })).toBe(
-        'an internal error occurred (err: 7F3A2) · code: invalid_operation',
+        'an internal error occurred (err: 7F3A2) · code: internal',
       )
     })
   })

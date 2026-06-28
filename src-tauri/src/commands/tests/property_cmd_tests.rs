@@ -4402,9 +4402,10 @@ async fn delete_property_def_rejects_builtin_key() {
 // frontend. Every other write-command wrapper in the codebase applies
 // `sanitize_internal_error` to collapse internal-detail variants
 // (Database/Migration/Io/Json/Channel/Snapshot) into a generic
-// `InvalidOperation("an internal error occurred")`. These tests pin the
-// sanitization contract: user-facing variants (Validation, NotFound) pass
-// through unchanged, but a Database error becomes InvalidOperation.
+// `Internal("an internal error occurred")` (#2045 — wire `kind:"internal"`,
+// distinct from `invalid_operation` which real validation rejects use). These
+// tests pin the sanitization contract: user-facing variants (Validation,
+// NotFound) pass through unchanged, but a Database error becomes Internal.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn update_property_def_options_sanitizes_database_errors() {
@@ -4427,7 +4428,9 @@ async fn update_property_def_options_sanitizes_database_errors() {
     let sanitized = raw.map_err(sanitize_internal_error);
 
     match sanitized {
-        Err(AppError::InvalidOperation(msg)) => {
+        // #2045: masked infra failures surface as `Internal` (wire
+        // `kind:"internal"`), distinct from `invalid_operation`.
+        Err(AppError::Internal(msg)) => {
             // #1987: the generic copy is now suffixed with a short
             // correlation id — `an internal error occurred (err: <id>)` —
             // that ties the toast back to the full ERROR-level log line.
@@ -4440,7 +4443,7 @@ async fn update_property_def_options_sanitizes_database_errors() {
                 "correlation-id suffix must be closed, got: {msg:?}"
             );
         }
-        other => panic!("expected sanitized DB error to become InvalidOperation, got: {other:?}"),
+        other => panic!("expected sanitized DB error to become Internal, got: {other:?}"),
     }
 }
 
@@ -4457,7 +4460,9 @@ async fn delete_property_def_sanitizes_database_errors() {
     let sanitized = raw.map_err(sanitize_internal_error);
 
     match sanitized {
-        Err(AppError::InvalidOperation(msg)) => {
+        // #2045: masked infra failures surface as `Internal` (wire
+        // `kind:"internal"`), distinct from `invalid_operation`.
+        Err(AppError::Internal(msg)) => {
             // #1987: the generic copy is now suffixed with a short
             // correlation id — `an internal error occurred (err: <id>)` —
             // that ties the toast back to the full ERROR-level log line.
@@ -4470,7 +4475,7 @@ async fn delete_property_def_sanitizes_database_errors() {
                 "correlation-id suffix must be closed, got: {msg:?}"
             );
         }
-        other => panic!("expected sanitized DB error to become InvalidOperation, got: {other:?}"),
+        other => panic!("expected sanitized DB error to become Internal, got: {other:?}"),
     }
 }
 
