@@ -79,6 +79,10 @@ const KNOWN_UNWRAPPED = new Set([
   // body for the corresponding `commands.*` call.
   'compactOpLogCmd', // wrapped as `compactOpLog`
   'listAttachmentsBatch', // wrapped as `getBatchAttachments`
+  // (a) #2110 M3b — OTel frontend-span ingest. Infrastructure command invoked
+  // by the frontend tracer's IPC exporter, not by UI code, so it has no
+  // throw-on-error / coercion ergonomics value; consumed directly.
+  'ingestOtelSpans',
 ])
 
 const bindingsSrc = fs.readFileSync(BINDINGS, 'utf8')

@@ -53,7 +53,11 @@ use tracing_appender::rolling::{RollingFileAppender, Rotation};
 const MAX_OTEL_FILES: usize = 14;
 
 /// Subdirectory of the log directory that holds rotated span (trace) files.
-const TRACES_SUBDIR: &str = "traces";
+///
+/// Shared with the frontend-span ingestor ([`super::ingest`]) so backend span
+/// files and frontend interaction-span files land in the same `traces/` sink
+/// and can be joined by `trace_id`.
+pub(crate) const TRACES_SUBDIR: &str = "traces";
 
 /// Subdirectory of the log directory that holds rotated OTel `LogRecord` files
 /// (M1b). Kept separate from `traces/` (spans) and from the human-readable
@@ -69,7 +73,7 @@ const OTEL_LOGS_SUBDIR: &str = "otel-logs";
 /// without an async lock. [`FileSpanExporter`] and [`FileLogExporter`] differ
 /// only in the per-record text format; all the directory-creation, rotation,
 /// graceful-degradation, and write/flush logic lives here, once.
-struct RollingFileSink {
+pub(crate) struct RollingFileSink {
     writer: Mutex<RollingFileAppender>,
 }
 
@@ -78,7 +82,7 @@ impl RollingFileSink {
     /// or `None` when the subdir cannot be created or opened (read-only / full
     /// disk). Degrades exactly like `build_log_file_appender` in `lib.rs` —
     /// writes the failure to stderr (never silent) and never panics.
-    fn build(log_dir: &Path, subdir: &str, filename_prefix: &str) -> Option<Self> {
+    pub(crate) fn build(log_dir: &Path, subdir: &str, filename_prefix: &str) -> Option<Self> {
         let dir = log_dir.join(subdir);
 
         if let Err(e) = std::fs::create_dir_all(&dir) {
@@ -117,7 +121,7 @@ impl RollingFileSink {
     ///
     /// A write failure to the local file is non-fatal: degrade silently for the
     /// rest of the run rather than poison the batch worker.
-    fn write_buf(&self, buf: &str) {
+    pub(crate) fn write_buf(&self, buf: &str) {
         if let Ok(mut w) = self.writer.lock() {
             let _ = w.write_all(buf.as_bytes());
             let _ = w.flush();
@@ -261,7 +265,7 @@ fn any_value_to_string(value: &opentelemetry::logs::AnyValue) -> String {
 /// Tabs and newlines in a body/attribute value would split or misalign a
 /// record, so they are escaped to literal two-char forms; everything else is
 /// kept verbatim (the body is the same text already written to `agaric.log`).
-fn sanitize_inline(s: &str) -> String {
+pub(crate) fn sanitize_inline(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace('\n', "\\n")
         .replace('\r', "\\r")

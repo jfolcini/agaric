@@ -240,6 +240,9 @@ macro_rules! agaric_commands {
             // Frontend logging (F-19)
             $crate::commands::logging::log_frontend,
             $crate::commands::logging::get_log_dir,
+            // #2110 M3b — ingest frontend-produced OTel spans into the local
+            // trace sink (zero egress; no-op when observability is disabled).
+            $crate::commands::observability::ingest_otel_spans,
             // Op log compaction (F-20)
             $crate::commands::compaction::get_compaction_status,
             $crate::commands::compaction::compact_op_log_cmd,
@@ -698,6 +701,15 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
     if let Some(obs_guard) = obs_guard {
         app.manage(obs_guard);
     }
+
+    // #2110 M3b — manage the frontend-span ingestor so `ingest_otel_spans`'s
+    // `State` resolves. Built with the SAME enabled flag as the trace pipeline:
+    // when observability is off it holds no sink and `ingest` is a no-op, so the
+    // command stays a zero-cost local-file write that never leaves the machine.
+    app.manage(observability::build_frontend_ingestor(
+        &log_dir,
+        obs_enabled,
+    ));
 }
 
 /// Boot-phase 3 — open the read/write SQLite pools and resolve the persistent
