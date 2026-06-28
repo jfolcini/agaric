@@ -221,20 +221,7 @@ pub(crate) async fn apply_set_property_via_loro(
         // `property_definitions.value_type`. No typed field set ⇒ explicit
         // clear (`Null`). The typed SQL columns are still written from the
         // payload directly by `project_set_property_to_sql` below.
-        use crate::loro::engine::PropertyValue;
-        let value = if let Some(v) = &p.value_text {
-            PropertyValue::Str(v.clone())
-        } else if let Some(v) = p.value_num {
-            PropertyValue::Num(v)
-        } else if let Some(v) = &p.value_date {
-            PropertyValue::Str(v.clone())
-        } else if let Some(v) = &p.value_ref {
-            PropertyValue::Str(v.as_str().to_owned())
-        } else if let Some(b) = p.value_bool {
-            PropertyValue::Bool(b)
-        } else {
-            PropertyValue::Null
-        };
+        let value = crate::loro::engine::PropertyValue::from(p);
         engine.apply_set_property_typed(p.block_id.as_str(), &p.key, &value)?;
         drop(guard);
     }

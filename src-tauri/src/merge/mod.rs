@@ -191,19 +191,7 @@ pub(crate) fn engine_apply(
                     ),
                 );
             }
-            let value = if let Some(v) = &p.value_text {
-                PropertyValue::Str(v.clone())
-            } else if let Some(v) = p.value_num {
-                PropertyValue::Num(v)
-            } else if let Some(v) = &p.value_date {
-                PropertyValue::Str(v.clone())
-            } else if let Some(v) = &p.value_ref {
-                PropertyValue::Str(v.as_str().to_owned())
-            } else if let Some(b) = p.value_bool {
-                PropertyValue::Bool(b)
-            } else {
-                PropertyValue::Null
-            };
+            let value = PropertyValue::from(p);
             engine.apply_set_property_typed(p.block_id.as_str(), &p.key, &value)
         }
         crate::op::OpPayload::AddTag(p) => {
