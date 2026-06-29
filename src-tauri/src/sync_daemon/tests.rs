@@ -4816,11 +4816,17 @@ async fn e2e_two_edited_devices_converge_over_loopback_tls() {
 
     // Version vectors did not drift on the no-op re-sync.
     let vv_a2 = {
-        let mut g = state_a.registry.for_space(&space, DEV_A).expect("space A re-sync");
+        let mut g = state_a
+            .registry
+            .for_space(&space, DEV_A)
+            .expect("space A re-sync");
         loro::VersionVector::decode(&g.engine_mut().version_vector()).expect("decode vv A2")
     };
     let vv_b2 = {
-        let mut g = state_b.registry.for_space(&space, DEV_B).expect("space B re-sync");
+        let mut g = state_b
+            .registry
+            .for_space(&space, DEV_B)
+            .expect("space B re-sync");
         loro::VersionVector::decode(&g.engine_mut().version_vector()).expect("decode vv B2")
     };
     assert_eq!(
