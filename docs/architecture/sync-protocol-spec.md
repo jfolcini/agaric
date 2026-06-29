@@ -379,11 +379,15 @@ How peers compare and request missing ops:
 - **Sender** (`loro_sync::prepare_outgoing`): with `peer_vv == None` it
   exports a full `Snapshot`; with `peer_vv == Some(vv)` it exports an
   `Update` covering ops since `vv` (`export_update_since`) and stamps
-  `from_vv = vv` onto the message. Under the current protocol the
-  orchestrator always passes `peer_vv = None` (full snapshot per space);
-  per-peer version-vector tracking that would emit `Update` messages is a
-  documented follow-up — implementation detail in
-  `src-tauri/src/sync_protocol/orchestrator.rs` and `loro_sync.rs`.
+  `from_vv = vv` onto the message. Incremental sync is wired (PR #1230):
+  the orchestrator drives `peer_vv` per space from the initiator's
+  advertised version vectors. The initiator collects its per-space VVs
+  (`collect_local_loro_vvs`) and ships them in `HeadExchange.loro_vvs`; the
+  responder looks up each space's advertised vv and passes
+  `peer_vv = Some(vv)` to emit an incremental `Update`. It falls back to
+  `peer_vv = None` (full `Snapshot`) only for a space the initiator didn't
+  advertise — one it lacks, or an older peer that sent no VVs
+  (`src-tauri/src/sync_protocol/orchestrator.rs`, `loro_sync.rs`).
 - **Receiver** (`loro_sync::apply_remote`): for an `Update`, before any
   engine import it reads the local engine's current version vector
   (`version_vector()`) and runs `classify_from_vv_reachability` against the
