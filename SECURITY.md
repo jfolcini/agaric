@@ -17,7 +17,7 @@ A vulnerability report is welcome if you can demonstrate any of the following:
 - **Memory safety / undefined behaviour** in the Rust backend, despite the crate-wide `unsafe_code = "deny"` lint. New `unsafe { … }` blocks slipping past review, FFI mistakes, or out-of-bounds reads in any `bytes::` / `&[u8]` decoder all count.
 - **Accidental data exposure** — file modes that are too permissive on `notes.db` or `~/.local/share/com.agaric.app/`, secrets in logs (a `log::info!` or `console.log` that prints a private key or device-pairing certificate; the rolling `agaric.log` is in-process and unredacted), the `bug_report` deny-by-default redactor missing a code path so user content leaks into a support bundle, plaintext dumps of user content, IPC commands that return data outside the calling page.
 - **Supply-chain concerns** — a direct or transitive dependency that ships a known CVE not yet covered by the `.nsprc` exception list, a typosquat in `package.json` / `Cargo.toml`, an install/post-install script that contacts an external network.
-- **Threat-model violations in code** — anything that adds an outbound network call to a server the maintainer doesn't operate, opens a listening port the user didn't ask for, or otherwise widens the attack surface beyond "the user's own paired devices on a local network."
+- **Threat-model violations in code** — anything that adds an outbound network call to a server the maintainer doesn't operate, opens a listening port the user didn't ask for, or otherwise widens the attack surface beyond "the user's own paired devices on a local network." (The one documented, bounded exception is the opt-in, loopback-only observability exporter — see *Observability telemetry egress* below; a way to bypass its loopback enforcement is in scope.)
 - **CSP / IPC bypass** — code that escapes Tauri's command allowlist, that lets the WebView reach arbitrary `file://` or `asset:` URLs, or that defeats the `default-src 'self'` policy declared in `tauri.conf.json`.
 - **Crypto misuse** — incorrect use of the `rustls` / `blake3` / `rcgen` primitives the sync and op-log layers rely on.
 
@@ -31,6 +31,19 @@ These are not security bugs in this project — they are by design and reports d
 - DoS / rate-limit scenarios against any local-only listener (sync daemon, MCP socket).
 - Vulnerabilities that require the user to install a malicious package outside the legitimate distribution channel — that is outside the project's control surface.
 - Findings against pre-tag commits on `main`. Always reproduce against the latest tagged release.
+
+## Observability telemetry egress (opt-in, loopback-only)
+
+Agaric ships a standards-based OpenTelemetry observability layer (issue #2110) — traces, logs, and metrics that let the user (or a maintainer helping debug) see an interaction flow end-to-end. **It is off by default and, by default, zero-egress:** when enabled (`AGARIC_OTEL=1`) it writes signals only to local files under the app log directory (next to `agaric.log`), the same trust boundary as the existing rolling log.
+
+One **opt-in** path can send *traces* beyond the local file sink. Setting `AGARIC_OTEL_ENDPOINT` (in addition to `AGARIC_OTEL=1`) makes the **backend** also export spans over OTLP/HTTP to a collector the user runs themselves (e.g. a local Jaeger / Tempo / Grafana). It is constrained so it cannot become a phone-home:
+
+- **Off by default.** Unset `AGARIC_OTEL_ENDPOINT` ⇒ no OTLP exporter is constructed; behaviour is byte-identical to the file-only pipeline.
+- **Loopback-only, enforced in code.** The endpoint host must be `localhost`, `::1`, or an address in `127.0.0.0/8`; any other host (LAN IP, public host, DNS name) is **rejected at startup** (`observability::config::validate_loopback_endpoint`) and the app falls back to file-only export with a warning. The only permitted destination is a collector on the same machine — nothing can leave the host.
+- **Backend-only egress; CSP unchanged.** Export is a Rust-side HTTP call; the WebView's `connect-src` policy in `tauri.conf.json` is **not** modified and the frontend never makes a network call (it ships its spans to the backend over the existing `ingest_otel_spans` IPC — the backend is the collector).
+- **PII discipline unchanged.** OTLP carries the same spans the file sink already receives — opaque ids / counts / enums / durations / booleans only, never note content, query strings, tag names, or property values.
+
+This is a **deliberate, bounded exception** to the "no outbound network call to a server the maintainer doesn't operate" rule in *In scope* above: the destination is the user's own loopback collector, opt-in, and code-enforced never to reach off-host. A report that this opt-in egress *exists* is therefore not a finding. A report that the loopback enforcement can be **bypassed** — a non-loopback host reaching the network, the frontend gaining an egress path, the CSP being widened, or user content leaking into a span — **is** in scope and welcome.
 
 ## Supported versions
 
