@@ -47,10 +47,14 @@ async function moveCalls(
 
 /** Ctrl+Click a block's static surface to toggle it into the selection. */
 async function ctrlSelectById(page: import('@playwright/test').Page, blockId: string) {
+  // Click a stable non-interactive corner (the block's padding), not the
+  // element center — seed blocks render inline links/tag chips whose horizontal
+  // position shifts with font metrics, so a center click can land on an inner
+  // `<a>`/chip (which swallows the selection toggle) on some platforms.
   await page
     .locator(`[data-testid="sortable-block"][data-block-id="${blockId}"]`)
     .locator('[data-testid="block-static"]')
-    .click({ modifiers: ['Control'] })
+    .click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
 }
 
 test.describe('Block drag-and-drop (parent + child multi-select, #914)', () => {

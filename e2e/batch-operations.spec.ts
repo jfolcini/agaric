@@ -44,12 +44,16 @@ test.describe('Batch block operations', () => {
     await expect(firstStatic).not.toHaveClass(/block-selected/)
     await expect(secondStatic).not.toHaveClass(/block-selected/)
 
-    // Ctrl+Click first block to toggle it into selection
-    await firstStatic.click({ modifiers: ['Control'] })
+    // Ctrl+Click first block to toggle it into selection. Click a stable
+    // non-interactive corner (the block's padding) rather than the element
+    // center — seed blocks render inline links/tag chips whose horizontal
+    // position shifts with font metrics, so a center click can land on an
+    // inner `<a>`/chip (which swallows the selection toggle) on some platforms.
+    await firstStatic.click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
     await expect(firstStatic).toHaveClass(/block-selected/)
 
     // Ctrl+Click second block to add it to selection
-    await secondStatic.click({ modifiers: ['Control'] })
+    await secondStatic.click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
     await expect(firstStatic).toHaveClass(/block-selected/)
     await expect(secondStatic).toHaveClass(/block-selected/)
   })
@@ -71,7 +75,7 @@ test.describe('Batch block operations', () => {
     await blocks
       .nth(0)
       .locator('[data-testid="block-static"]')
-      .click({ modifiers: ['Control'] })
+      .click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
 
     // Toolbar appears with count 1
     await expect(batchToolbar).toBeVisible()
@@ -82,7 +86,7 @@ test.describe('Batch block operations', () => {
     await blocks
       .nth(1)
       .locator('[data-testid="block-static"]')
-      .click({ modifiers: ['Control'] })
+      .click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
     await expect(batchToolbar).toContainText('2')
     await expect(batchToolbar).toContainText('selected')
   })
@@ -99,11 +103,11 @@ test.describe('Batch block operations', () => {
     await blocks
       .nth(0)
       .locator('[data-testid="block-static"]')
-      .click({ modifiers: ['Control'] })
+      .click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
     await blocks
       .nth(1)
       .locator('[data-testid="block-static"]')
-      .click({ modifiers: ['Control'] })
+      .click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
     await expect(batchToolbar).toBeVisible()
 
     // Click TODO button in the batch toolbar
