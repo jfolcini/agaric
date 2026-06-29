@@ -4460,6 +4460,384 @@ async fn issue602_two_edited_devices_converge_without_reset_required() {
     mat_b.shutdown();
 }
 
+// ======================================================================
+// #2129 — two-edited-device convergence over REAL loopback TLS sockets
+// ======================================================================
+
+/// Run ONE orchestrator's session-loop to its terminal state over a
+/// real [`SyncConnection`], using the production wire helpers
+/// (`send_sync_message` / `recv_sync_message`) — the exact send/recv
+/// path `run_sync_session` (initiator) and `handle_incoming_sync`
+/// (responder) use, including #611 chunked reassembly.
+///
+/// `is_initiator` selects the only structural difference between the
+/// two production loops: the initiator primes the session by sending
+/// its `start()` HeadExchange first; the responder simply enters the
+/// recv→handle→send loop (its first `recv` IS that HeadExchange).
+/// Everything after that — `while !is_terminal { recv; handle_message;
+/// send reply; drain next_message }` — is byte-for-byte the same loop
+/// both production drivers run.
+///
+/// Returns the orchestrator (moved in for the spawned task) so the
+/// caller can read its terminal `session().state`.
+async fn drive_one_side_over_socket(
+    mut orch: crate::sync_protocol::SyncOrchestrator,
+    mut conn: SyncConnection,
+    is_initiator: bool,
+) -> Result<crate::sync_protocol::SyncOrchestrator, AppError> {
+    if is_initiator {
+        let first = orch.start().await?;
+        super::wire::send_sync_message(&mut conn, &first).await?;
+    }
+
+    while !orch.is_terminal() {
+        // Bound each recv so a protocol bug surfaces as a test timeout
+        // instead of hanging the whole run.
+        let incoming: SyncMessage = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            super::wire::recv_sync_message(&mut conn),
+        )
+        .await
+        .map_err(|_| AppError::InvalidOperation("session-drive recv timed out".into()))??;
+
+        if let Some(resp) = orch.handle_message(incoming).await? {
+            super::wire::send_sync_message(&mut conn, &resp).await?;
+            // Drain any pending op batches (B-3) — same as production.
+            while let Some(batch) = orch.next_message() {
+                super::wire::send_sync_message(&mut conn, &batch).await?;
+            }
+        } else if matches!(
+            orch.session().state,
+            crate::sync_protocol::SyncState::Failed(_)
+                | crate::sync_protocol::SyncState::ResetRequired
+        ) {
+            // Non-Complete terminal: stop. The keystone asserts this
+            // never happens for the two-edited-device case, but the
+            // loop must still exit rather than block on the next recv.
+            break;
+        }
+    }
+
+    let _ = conn.close().await;
+    Ok(orch)
+}
+
+/// Drive a full initiator↔responder session to terminal state on BOTH
+/// sides over real TLS sockets, running each side concurrently. Mirrors
+/// the message flow of `pump_full_session_602`, but every message
+/// crosses a real loopback TLS WebSocket via `send_sync_message` /
+/// `recv_sync_message` instead of an in-memory `VecDeque`.
+///
+/// Returns the two orchestrators (initiator, responder) so the caller
+/// can assert their terminal states.
+async fn drive_full_session_over_socket(
+    initiator: crate::sync_protocol::SyncOrchestrator,
+    responder: crate::sync_protocol::SyncOrchestrator,
+    init_conn: SyncConnection,
+    resp_conn: SyncConnection,
+) -> (
+    crate::sync_protocol::SyncOrchestrator,
+    crate::sync_protocol::SyncOrchestrator,
+) {
+    let init_task =
+        tokio::spawn(async move { drive_one_side_over_socket(initiator, init_conn, true).await });
+    let resp_task =
+        tokio::spawn(async move { drive_one_side_over_socket(responder, resp_conn, false).await });
+
+    let init_orch = init_task
+        .await
+        .expect("initiator drive task panicked")
+        .expect("initiator session-drive errored");
+    let resp_orch = resp_task
+        .await
+        .expect("responder drive task panicked")
+        .expect("responder session-drive errored");
+    (init_orch, resp_orch)
+}
+
+/// Stand up a real loopback TLS [`SyncServer`] for `responder_dev` and
+/// connect to it as `initiator_dev`, returning the matched pair of
+/// real `SyncConnection`s `(client_conn, server_conn)` together with
+/// the live server handle (kept alive for the session's duration).
+///
+/// This is the real-socket counterpart of `test_connection_pair()`:
+/// both ends are backed by genuine mTLS-authenticated WebSocket frames
+/// over `127.0.0.1`, so the session drive exercises real TLS, real
+/// WebSocket framing, and the real JSON wire encoding.
+async fn loopback_tls_pair(
+    initiator_dev: &str,
+    responder_dev: &str,
+) -> (SyncConnection, SyncConnection, SyncServer) {
+    let server_cert = sync_net::generate_self_signed_cert(responder_dev).unwrap();
+    let client_cert = sync_net::generate_self_signed_cert(initiator_dev).unwrap();
+
+    let (server_conn_tx, server_conn_rx) = tokio::sync::oneshot::channel::<SyncConnection>();
+    let server_conn_tx = std::sync::Mutex::new(Some(server_conn_tx));
+
+    let (server, port) = SyncServer::start(&server_cert, move |conn, permit| {
+        // Hold the #1581 permit for the session's lifetime by moving it
+        // into the connection-carrying closure scope (it drops with the
+        // oneshot send's temporaries only after the channel is consumed
+        // — good enough for a single-session test).
+        let _permit = permit;
+        if let Some(tx) = server_conn_tx.lock().unwrap().take() {
+            let _ = tx.send(conn);
+        }
+    })
+    .await
+    .unwrap();
+
+    let addr = format!("127.0.0.1:{port}");
+    let client_conn = sync_net::connect_to_peer(&addr, None, None, &client_cert)
+        .await
+        .expect("client must connect to loopback TLS server");
+
+    let server_conn = tokio::time::timeout(std::time::Duration::from_secs(5), server_conn_rx)
+        .await
+        .expect("timeout waiting for server-side connection")
+        .expect("server connection channel closed");
+
+    (client_conn, server_conn, server)
+}
+
+/// #2129 keystone (the real-socket sibling of #602's
+/// `issue602_two_edited_devices_converge_without_reset_required`):
+/// two devices that have BOTH made a local edit converge over a REAL
+/// loopback TLS connection — not the in-memory `VecDeque` pump.
+///
+/// Identical device/registry/edit setup to the #602 keystone (two
+/// pools, two materializers, two leaked per-device `LoroState`
+/// registries — the #602 test seam — and one divergent `make_local_edit_602`
+/// per device), but every protocol message crosses a genuine
+/// mTLS-authenticated loopback WebSocket via `SyncServer` +
+/// `connect_to_peer` + `send_sync_message` / `recv_sync_message`. This
+/// adds real TLS handshake + WebSocket framing + JSON-wire coverage on
+/// top of the protocol convergence the #602 test already pins.
+///
+/// Asserts, after one session in each direction:
+///   1. terminal state `Complete` on BOTH sides (never `ResetRequired`
+///      — the #602 failure signature — nor `Failed`),
+///   2. both SQL DBs hold both blocks with the converged content,
+///   3. both Loro engines decode to the same version vector,
+///   4. an immediate re-sync is idempotent: it also reaches `Complete`
+///      with no `ResetRequired` and the content is unchanged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_two_edited_devices_converge_over_loopback_tls() {
+    use crate::sync_protocol::{SyncOrchestrator, SyncState};
+
+    install_crypto_provider();
+
+    const DEV_A: &str = "DEV2129A";
+    const DEV_B: &str = "DEV2129B";
+    const BLOCK_A: &str = "01HZ2129BLKAXXXXXXXXXXXXXX";
+    const BLOCK_B: &str = "01HZ2129BLKBXXXXXXXXXXXXXX";
+    let space = crate::space::SpaceId::from_trusted("01HZ2129SPACEXXXXXXXXXXXXX");
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+    let mat_b = Materializer::new(pool_b.clone());
+
+    // #602 test seam: one Loro registry per device (leaked to the
+    // `&'static` shape of the production process-global state). The two
+    // devices MUST have distinct registries, which is precisely why the
+    // production `handle_incoming_sync` responder (it reads the single
+    // process-global Loro state) cannot drive both sides here — hence
+    // the socket-pump driver above rather than the production drivers.
+    let state_a: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+    let state_b: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+
+    peer_refs::upsert_peer_ref(&pool_a, DEV_B).await.unwrap();
+    peer_refs::upsert_peer_ref(&pool_b, DEV_A).await.unwrap();
+
+    // Divergent seed: each device makes one local edit of its own.
+    make_local_edit_602(
+        &pool_a,
+        &mat_a,
+        state_a,
+        DEV_A,
+        &space,
+        BLOCK_A,
+        "edit from device A",
+        1_736_942_400_000,
+    )
+    .await;
+    make_local_edit_602(
+        &pool_b,
+        &mat_b,
+        state_b,
+        DEV_B,
+        &space,
+        BLOCK_B,
+        "edit from device B",
+        1_736_942_401_000,
+    )
+    .await;
+
+    // ── Session 1: A initiates, B responds — over real loopback TLS ──
+    {
+        let init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
+            .with_loro_state(state_a)
+            .with_expected_remote_id(DEV_B.into());
+        let resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
+            .with_loro_state(state_b)
+            .with_expected_remote_id(DEV_A.into());
+
+        // A is the TLS client/initiator; B runs the loopback TLS server.
+        let (client_conn, server_conn, server) = loopback_tls_pair(DEV_A, DEV_B).await;
+        let (init_a, resp_b) =
+            drive_full_session_over_socket(init_a, resp_b, client_conn, server_conn).await;
+        server.shutdown().await;
+
+        assert_eq!(
+            resp_b.session().state,
+            SyncState::Complete,
+            "#2129: responder B must complete the real-TLS session for an \
+             initiator that advertised its own op_log head (ResetRequired \
+             here is the #602 failure signature)"
+        );
+        assert_eq!(
+            init_a.session().state,
+            SyncState::Complete,
+            "#2129: initiator A must complete session 1 over real TLS"
+        );
+    }
+
+    // ── Session 2: B initiates, A responds — reverse direction ───────
+    {
+        let init_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
+            .with_loro_state(state_b)
+            .with_expected_remote_id(DEV_A.into());
+        let resp_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
+            .with_loro_state(state_a)
+            .with_expected_remote_id(DEV_B.into());
+
+        let (client_conn, server_conn, server) = loopback_tls_pair(DEV_B, DEV_A).await;
+        let (init_b, resp_a) =
+            drive_full_session_over_socket(init_b, resp_a, client_conn, server_conn).await;
+        server.shutdown().await;
+
+        assert_eq!(
+            resp_a.session().state,
+            SyncState::Complete,
+            "#2129: responder A must complete the reverse real-TLS session"
+        );
+        assert_eq!(
+            init_b.session().state,
+            SyncState::Complete,
+            "#2129: initiator B must complete session 2 over real TLS"
+        );
+    }
+
+    // ── Convergence: both SQL DBs hold both blocks ───────────────────
+    for (label, pool) in [("A", &pool_a), ("B", &pool_b)] {
+        for (block_id, content) in [
+            (BLOCK_A, "edit from device A"),
+            (BLOCK_B, "edit from device B"),
+        ] {
+            let row: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+                .bind(block_id)
+                .fetch_optional(pool)
+                .await
+                .unwrap();
+            assert_eq!(
+                row.as_deref(),
+                Some(content),
+                "device {label}'s DB must hold block {block_id} after the real-TLS sessions"
+            );
+        }
+    }
+
+    // ── Convergence: both engines reached the same version vector ────
+    let converged_vv = {
+        let vv_a = {
+            let mut g = state_a.registry.for_space(&space, DEV_A).expect("space A");
+            g.engine_mut().version_vector()
+        };
+        let vv_b = {
+            let mut g = state_b.registry.for_space(&space, DEV_B).expect("space B");
+            g.engine_mut().version_vector()
+        };
+        let decoded_a = loro::VersionVector::decode(&vv_a).expect("decode vv A");
+        let decoded_b = loro::VersionVector::decode(&vv_b).expect("decode vv B");
+        assert_eq!(
+            decoded_a, decoded_b,
+            "#2129: both engines must converge to the same Loro version vector"
+        );
+        decoded_a
+    };
+
+    // ── Idempotency: an immediate re-sync converges again and is a
+    //    no-op — no ResetRequired, no version-vector drift, content
+    //    unchanged. ────────────────────────────────────────────────
+    {
+        let init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
+            .with_loro_state(state_a)
+            .with_expected_remote_id(DEV_B.into());
+        let resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
+            .with_loro_state(state_b)
+            .with_expected_remote_id(DEV_A.into());
+
+        let (client_conn, server_conn, server) = loopback_tls_pair(DEV_A, DEV_B).await;
+        let (init_a, resp_b) =
+            drive_full_session_over_socket(init_a, resp_b, client_conn, server_conn).await;
+        server.shutdown().await;
+
+        assert_eq!(
+            init_a.session().state,
+            SyncState::Complete,
+            "#2129: idempotent re-sync must still reach Complete (initiator)"
+        );
+        assert_eq!(
+            resp_b.session().state,
+            SyncState::Complete,
+            "#2129: idempotent re-sync must still reach Complete (responder)"
+        );
+    }
+
+    // Content unchanged after the re-sync.
+    for (label, pool) in [("A", &pool_a), ("B", &pool_b)] {
+        for (block_id, content) in [
+            (BLOCK_A, "edit from device A"),
+            (BLOCK_B, "edit from device B"),
+        ] {
+            let row: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+                .bind(block_id)
+                .fetch_optional(pool)
+                .await
+                .unwrap();
+            assert_eq!(
+                row.as_deref(),
+                Some(content),
+                "device {label}'s block {block_id} must be unchanged after the idempotent re-sync"
+            );
+        }
+    }
+
+    // Version vectors did not drift on the no-op re-sync.
+    let vv_a2 = {
+        let mut g = state_a.registry.for_space(&space, DEV_A).expect("space A re-sync");
+        loro::VersionVector::decode(&g.engine_mut().version_vector()).expect("decode vv A2")
+    };
+    let vv_b2 = {
+        let mut g = state_b.registry.for_space(&space, DEV_B).expect("space B re-sync");
+        loro::VersionVector::decode(&g.engine_mut().version_vector()).expect("decode vv B2")
+    };
+    assert_eq!(
+        vv_a2, converged_vv,
+        "#2129: device A's version vector must not drift on an idempotent re-sync"
+    );
+    assert_eq!(
+        vv_b2, converged_vv,
+        "#2129: device B's version vector must not drift on an idempotent re-sync"
+    );
+
+    mat_a.flush_background().await.unwrap();
+    mat_b.flush_background().await.unwrap();
+    mat_a.shutdown();
+    mat_b.shutdown();
+}
+
 /// #2006 — concurrent edits to the SAME block converge deterministically.
 ///
 /// #602 covers two devices editing DISTINCT blocks. This pins the conflict
