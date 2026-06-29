@@ -78,9 +78,6 @@ export type FilterToken =
   | { kind: 'notProp'; key: string; value: string; span: [number, number] }
   | { kind: 'invalid'; source: string; error: string; span: [number, number] }
 
-/** Concrete filter kinds — every shape except `invalid`. */
-export type FilterKind = Exclude<FilterToken['kind'], 'invalid'>
-
 /** Parsed result of a full query string. */
 export interface SearchQueryAST {
   /** Recognised structured filters (one chip per entry). */

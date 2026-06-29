@@ -362,7 +362,7 @@ mod tests {
             "the last in-cap attribute is kept"
         );
         assert!(
-            !contents.contains(&format!("\tattr{}=x", MAX_ATTRS_PER_SPAN)),
+            !contents.contains(&format!("\tattr{MAX_ATTRS_PER_SPAN}=x")),
             "an attribute beyond the cap is dropped"
         );
     }

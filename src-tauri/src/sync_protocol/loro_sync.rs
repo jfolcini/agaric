@@ -2992,7 +2992,7 @@ mod tests {
     fn first_engine_live_block_sql_deleted_picks_min_like_old_sort() {
         let sql_deleted: std::collections::HashSet<String> = [BLOCK_A, BLOCK_C, BLOCK_E]
             .iter()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
 
         // Engine-live set: two are soft-deleted (C3, A1), one is alive (B2).

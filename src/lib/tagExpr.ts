@@ -12,9 +12,8 @@
  * `TagFilterPanel` exposes two query surfaces:
  *
  *  1. The FLAT default (`query_by_tags`): selected-tag chips + prefix pills
- *     under a single `and` / `or` / `not` mode. See {@link TagQueryParams} and
- *     {@link compileFlatParams}. Unchanged for users who never open the
- *     composer.
+ *     under a single `and` / `or` / `not` mode. See {@link TagQueryParams}.
+ *     Unchanged for users who never open the composer.
  *
  *  2. The nested COMPOSER (`query_by_tag_expr`, #1472): a recursive builder of
  *     groups (an `And` / `Or` combinator over children) and leaves (a resolved
@@ -220,16 +219,4 @@ export function compileNode(node: TagBuilderNode): TagExpr | null {
  */
 export function compileTagExpr(root: TagBuilderGroup): TagExpr | null {
   return compileNode(root)
-}
-
-/**
- * Lower the flat (simple-mode) inputs onto the `query_by_tags` IPC params.
- * Unchanged simple-mode path: selected-tag ids + prefix pills under one mode.
- */
-export function compileFlatParams(
-  tagIds: string[],
-  prefixes: string[],
-  mode: TagQueryParams['mode'],
-): TagQueryParams {
-  return { tagIds, prefixes, mode }
 }

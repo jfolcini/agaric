@@ -59,15 +59,3 @@ export function isValidTraceId(traceId: string): boolean {
 export function isValidSpanId(spanId: string): boolean {
   return /^[0-9a-f]{16}$/.test(spanId) && spanId !== '0'.repeat(16)
 }
-
-/**
- * Build a W3C `traceparent` header value for the given context.
- *
- * `flags` is the two-hex-char trace-flags byte (`'01'` = sampled). We only ever
- * propagate sampled spans (the frontend does not export un-sampled spans), so
- * the caller passes `'01'`; the parameter exists so an un-sampled `'00'` value
- * is expressible without a second builder.
- */
-export function buildTraceparent(traceId: string, spanId: string, flags = '01'): string {
-  return `00-${traceId}-${spanId}-${flags}`
-}

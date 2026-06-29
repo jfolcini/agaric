@@ -58,6 +58,10 @@ fn sample_root(ratio: f64, trace_id: TraceId) -> SamplingDecision {
     if ratio >= 1.0 {
         return SamplingDecision::RecordAndSample;
     }
+    // `ratio` is in [0, 1) here (the `ratio >= 1.0` early return above and the
+    // `.max(0.0)` floor bound it), so `ratio * 2^63` is in [0, 2^63) — it always
+    // fits in a u64 and is never negative. The cast is therefore exact.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let upper_bound = (ratio.max(0.0) * (1u64 << 63) as f64) as u64;
     let bytes = trace_id.to_bytes();
     let low = u64::from_be_bytes(bytes[8..16].try_into().expect("8 bytes"));

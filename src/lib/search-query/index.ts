@@ -11,13 +11,7 @@ export { applyAutocompleteReplacement, detectAutocompleteAnchor } from './autoco
 export { classify, parse } from './classify'
 export { EXPANSION_CAP, expandBraces, validateGlob } from './glob-validate'
 export { ensureRegistered } from './register'
-export {
-  _resetRegistryForTests,
-  getRegisteredPrefixes,
-  looksLikeUnknownPrefix,
-  recognise,
-  registerTokenPrefix,
-} from './registry'
+export { looksLikeUnknownPrefix, recognise, registerTokenPrefix } from './registry'
 export { addFilter, removeFilterAt, serialize, tokenSource } from './serialize'
 export type { AstFilterProjection } from './to-search-filter'
 export { astToFilterProjection } from './to-search-filter'
@@ -26,7 +20,6 @@ export { tokenize } from './tokenize'
 export type {
   DateFilterValue,
   DateOp,
-  FilterKind,
   FilterToken,
   NamedDateRange,
   SearchPropertyFilter,

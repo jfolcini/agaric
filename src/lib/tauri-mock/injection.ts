@@ -18,8 +18,3 @@ export function clearMockErrors(): void {
 export function getInjectedError(cmd: string): string | undefined {
   return injectedErrors.get(cmd)
 }
-
-/** Whether `cmd` currently has an injected error. */
-export function hasInjectedError(cmd: string): boolean {
-  return injectedErrors.has(cmd)
-}

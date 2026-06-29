@@ -69,22 +69,29 @@ test.describe('FormattingToolbar (iPhone 13 viewport)', () => {
     // Real (accessible) buttons only — the off-screen measurement sentinel is
     // `aria-hidden`, so role-based queries already exclude its duplicates.
     const buttons = toolbar.getByRole('button')
-    const count = await buttons.count()
-    expect(count).toBeGreaterThan(0)
+    await expect(buttons.first()).toBeVisible()
 
-    // Single DOM pass (see overflow test) — avoids per-locator actionability
-    // waits that can hang on a disabled (e.g. Undo/Redo) button.
-    const boxes = await buttons.evaluateAll((els) =>
-      els.map((el) => {
-        const r = el.getBoundingClientRect()
-        return { w: r.width, h: r.height }
-      }),
-    )
-    expect(boxes.length).toBe(count)
-    boxes.forEach((b, i) => {
-      expect(b.h, `toolbar button ${i} height`).toBeGreaterThanOrEqual(TOUCH_FLOOR - SLACK)
-      expect(b.w, `toolbar button ${i} width`).toBeGreaterThanOrEqual(TOUCH_FLOOR - SLACK)
-    })
+    // The mobile toolbar runs a ResizeObserver-driven overflow pass on mount
+    // that briefly reflows button sizes (and moves low-priority buttons into the
+    // "More" popover), so a measurement caught mid-reflow can observe a transient
+    // sub-floor button or a changing button count. Retry the whole single-pass
+    // measurement until it settles (no arbitrary sleep) so the floor assertion is
+    // deterministic. Single DOM pass per attempt (see overflow test) — avoids
+    // per-locator actionability waits that can hang on a disabled (Undo/Redo)
+    // button.
+    await expect(async () => {
+      const boxes = await buttons.evaluateAll((els) =>
+        els.map((el) => {
+          const r = el.getBoundingClientRect()
+          return { w: r.width, h: r.height }
+        }),
+      )
+      expect(boxes.length).toBeGreaterThan(0)
+      boxes.forEach((b, i) => {
+        expect(b.h, `toolbar button ${i} height`).toBeGreaterThanOrEqual(TOUCH_FLOOR - SLACK)
+        expect(b.w, `toolbar button ${i} width`).toBeGreaterThanOrEqual(TOUCH_FLOOR - SLACK)
+      })
+    }).toPass({ timeout: 5000 })
   })
 
   test('overflow menu opens/closes on tap and its items meet the touch floor', async ({ page }) => {
