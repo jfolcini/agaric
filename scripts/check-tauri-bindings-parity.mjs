@@ -83,6 +83,10 @@ const KNOWN_UNWRAPPED = new Set([
   // by the frontend tracer's IPC exporter, not by UI code, so it has no
   // throw-on-error / coercion ergonomics value; consumed directly.
   'ingestOtelSpans',
+  // (a) #2110 M5 — runtime sampling toggle. Driven by the observability module's
+  // `setTraceSampling` (which also sets the frontend-local ratio), not by a
+  // `tauri.ts` wrapper, so it has no ergonomics value there; consumed directly.
+  'setTraceSampling',
 ])
 
 const bindingsSrc = fs.readFileSync(BINDINGS, 'utf8')

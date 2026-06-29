@@ -243,6 +243,8 @@ macro_rules! agaric_commands {
             // #2110 M3b — ingest frontend-produced OTel spans into the local
             // trace sink (zero egress; no-op when observability is disabled).
             $crate::commands::observability::ingest_otel_spans,
+            // #2110 M5 — runtime sampling↔full-tracing toggle (both halves).
+            $crate::commands::observability::set_trace_sampling,
             // Op log compaction (F-20)
             $crate::commands::compaction::get_compaction_status,
             $crate::commands::compaction::compact_op_log_cmd,

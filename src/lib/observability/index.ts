@@ -20,7 +20,7 @@
 
 import { context, type Span, SpanStatusCode, trace } from '@opentelemetry/api'
 
-import { resolveEnabled } from './config'
+import { resolveEnabled, setSamplingRatio } from './config'
 
 export { getSamplingRatio, setSamplingRatio } from './config'
 export { INTERACTIONS, type InteractionName } from './interactions'
@@ -131,6 +131,26 @@ export function traceInteraction<T>(
 /** Force-flush buffered spans to the backend. Best-effort; resolves when sent. */
 export async function flushFrontendSpans(): Promise<void> {
   await exporter?.flush()
+}
+
+/**
+ * Set the trace head-sampling ratio app-wide (#2110, M5) — the single
+ * sampling↔full-tracing toggle. Applies the ratio to the frontend tracer
+ * locally AND drives the backend's runtime sampler via the `set_trace_sampling`
+ * command, so one call switches both halves (`1` = trace everything, `0.1` =
+ * sample a tenth, `0` = drop new roots). Clamped to `[0, 1]` on both sides.
+ *
+ * The backend hop is best-effort: in a browser/test context without the IPC
+ * bridge it is swallowed and only the frontend half applies.
+ */
+export async function setTraceSampling(ratio: number): Promise<void> {
+  setSamplingRatio(ratio)
+  try {
+    const { commands } = await import('../bindings')
+    await commands.setTraceSampling(ratio)
+  } catch {
+    // IPC unavailable (browser dev / tests) — frontend half is already applied.
+  }
 }
 
 /** Whether the tracer has been initialised (enabled + registered). @internal */

@@ -88,10 +88,15 @@ mod metrics;
 mod metrics_exporter;
 mod propagation;
 mod provider;
+mod sampling;
 
 pub use config::{ObservabilityConfig, from_env};
 pub use guard::ObservabilityGuard;
 pub use ingest::{FrontendSpan, FrontendSpanIngestor, build_frontend_ingestor};
+// #2110 M5 — runtime head-sampling toggle. `set_sampling_ratio` is driven by the
+// `set_trace_sampling` command (one call toggles backend + frontend); the
+// tracer provider uses `RuntimeSampler` (re-exported to `provider`).
+pub use sampling::{sampling_ratio, set_sampling_ratio};
 // #2110 M6 — the two latency-histogram record helpers. Unconditional + free at
 // every call site: when observability is off (the default) the global meter is
 // a no-op, so these compile to a couple of moves into a no-op instrument. The

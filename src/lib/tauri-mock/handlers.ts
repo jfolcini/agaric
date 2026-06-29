@@ -931,6 +931,10 @@ export const HANDLERS: Record<string, Handler> = {
   // until the frontend producer + its own e2e coverage land.
   ingest_otel_spans: () => null,
 
+  // #2110 M5 — runtime sampling↔full-tracing toggle. Sets a process-global ratio
+  // on the real backend; in the mock it is a no-op that returns `Ok(())` (`null`).
+  set_trace_sampling: () => null,
+
   // ---------------------------------------------------------------------------
   // Block listing & CRUD
   // ---------------------------------------------------------------------------
