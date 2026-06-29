@@ -4,7 +4,7 @@ use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::peer_refs::{self, PeerRef};
 use crate::sync_events::RecordingEventSink;
-use crate::sync_net::{self, SyncConnection, SyncServer};
+use crate::sync_net::{self, SyncCert, SyncConnection, SyncServer};
 use crate::sync_protocol::{DeviceHead, SyncMessage, SyncOrchestrator};
 use crate::sync_scheduler::SyncScheduler;
 use sqlx::SqlitePool;
@@ -4289,6 +4289,36 @@ async fn make_local_edit_602(
     );
 }
 
+/// #2129: apply an ARBITRARY local op through the SAME real local-edit
+/// pipeline as `make_local_edit_602` (op_log append → materializer SQL
+/// projection → engine dispatch against THIS device's registry). Lets the
+/// real-loopback convergence test seed richer divergent state (tags, typed
+/// properties, soft-deletes) than #602's single `CreateBlock`, so the
+/// convergence assertions cover more than plain block content.
+async fn apply_local_op_602(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    state: &'static crate::loro::shared::LoroState,
+    device_id: &str,
+    space: &crate::space::SpaceId,
+    payload: crate::op::OpPayload,
+    ts: i64,
+) {
+    let record = crate::op_log::append_local_op_at(pool, device_id, payload.clone(), ts)
+        .await
+        .expect("append_local_op_at");
+    mat.dispatch_op(&record).await.expect("dispatch_op");
+    mat.flush_foreground().await.expect("flush_foreground");
+    crate::merge::engine_apply(
+        &format!("{device_id}/{}", record.seq),
+        &payload,
+        device_id,
+        space,
+        &record.created_at.to_string(),
+        state,
+    );
+}
+
 /// #602 regression (keystone of #87) — two devices that have BOTH made
 /// local edits must still be able to sync.
 ///
@@ -4439,6 +4469,459 @@ async fn issue602_two_edited_devices_converge_without_reset_required() {
     assert_eq!(
         decoded_a, decoded_b,
         "both engines must converge to the same Loro version vector"
+    );
+
+    mat_a.flush_background().await.unwrap();
+    mat_b.flush_background().await.unwrap();
+    mat_a.shutdown();
+    mat_b.shutdown();
+}
+
+// ======================================================================
+// #2129 — two-instance convergence over a REAL loopback TLS socket
+// ======================================================================
+
+/// #2129: drive ONE full sync session — initiator → responder — over a
+/// genuine loopback TLS WebSocket connection pair.
+///
+/// This is the real-transport analog of #602's in-memory
+/// `pump_full_session_602`. Where that helper hand-pumps two
+/// orchestrators through an in-process `VecDeque` (no socket, no TLS, no
+/// WebSocket framing, no binary chunking), this stands up the responder's
+/// `SyncServer` (a real `rustls` TLS endpoint), an initiator
+/// `connect_to_peer` (real TLS handshake + mTLS cert exchange), the
+/// production responder loop (`handle_incoming_sync*`) on the server-side
+/// connection, and the production initiator loop (`run_sync_session`) on
+/// the client connection, then runs the initiator to completion. Every
+/// message therefore rides `wire::{send,recv}_sync_message` over the
+/// socket — exercising the `tokio-tungstenite` frame path (and the #611
+/// chunked-binary path for over-threshold `LoroSync` payloads) that the
+/// in-memory test cannot reach.
+///
+/// Both orchestrators receive a PER-DEVICE leaked `LoroState` (the #602
+/// two-registry test seam): the initiator via `with_loro_state`, the
+/// responder via the `handle_incoming_sync_with_loro_state` test seam.
+/// This is required because the single process-global Loro registry
+/// (`loro::shared::GLOBAL`) cannot represent two distinct devices in one
+/// test process.
+///
+/// Returns the initiator orchestrator's terminal `SyncState` so the
+/// caller can assert it reached `Complete` (NOT `ResetRequired` —
+/// i.e. no snapshot fallback was taken; this is an
+/// incremental-reachable session).
+#[allow(clippy::too_many_arguments)]
+async fn run_one_real_loopback_session_2129(
+    init_pool: &SqlitePool,
+    init_mat: &Materializer,
+    init_state: &'static crate::loro::shared::LoroState,
+    init_device: &str,
+    init_cert: &SyncCert,
+    resp_pool: &SqlitePool,
+    resp_mat: &Materializer,
+    resp_state: &'static crate::loro::shared::LoroState,
+    resp_device: &str,
+    resp_cert: &SyncCert,
+) -> crate::sync_protocol::SyncState {
+    use crate::sync_protocol::SyncOrchestrator;
+
+    let timeout = std::time::Duration::from_secs(5);
+
+    // Each device carries ONE STABLE identity cert (CN = its device id),
+    // reused across every session — exactly as a real device does. mTLS
+    // identity derives from the verified cert CN (#778), and the
+    // responder's TOFU pins the cert hash on first connection (B-33), so a
+    // fresh cert per session would trip "certificate hash mismatch" on the
+    // second session. Passing the same cert in keeps the pinned hash stable.
+
+    // Stand up the responder's TLS WebSocket server and forward the
+    // accepted server-side connection out via a channel.
+    let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(1);
+    let (server, port) = SyncServer::start(resp_cert, move |conn, _permit| {
+        let _ = conn_tx.try_send(conn);
+    })
+    .await
+    .unwrap();
+
+    // Initiator connects (real TLS handshake).
+    let mut client_conn = tokio::time::timeout(
+        timeout,
+        sync_net::connect_to_peer(&format!("127.0.0.1:{port}"), None, None, init_cert),
+    )
+    .await
+    .expect("timed out connecting to peer")
+    .unwrap();
+
+    // Receive the server-side connection.
+    let server_conn = tokio::time::timeout(timeout, conn_rx.recv())
+        .await
+        .expect("timed out waiting for server connection")
+        .unwrap();
+
+    // Spawn the production responder loop with device B's own registry.
+    let resp_scheduler = Arc::new(SyncScheduler::new());
+    let resp_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let resp_handle = tokio::spawn(handle_incoming_sync_with_loro_state(
+        server_conn,
+        resp_pool.clone(),
+        resp_device.to_string(),
+        resp_mat.clone(),
+        resp_scheduler,
+        resp_sink,
+        Arc::new(AtomicBool::new(false)),
+        resp_state,
+    ));
+
+    // Run the production initiator loop with device A's own registry.
+    let mut init_orch =
+        SyncOrchestrator::new(init_pool.clone(), init_device.into(), init_mat.clone())
+            .with_loro_state(init_state)
+            .with_expected_remote_id(resp_device.into());
+    let init_cancel = AtomicBool::new(false);
+    let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    let init_result = tokio::time::timeout(
+        timeout,
+        run_sync_session(
+            &mut init_orch,
+            &mut client_conn,
+            &init_cancel,
+            init_pool,
+            init_mat,
+            &init_sink,
+        ),
+    )
+    .await
+    .expect("initiator session timed out");
+    init_result.expect("initiator run_sync_session must not error");
+
+    // Responder must finish cleanly (no panic / JoinError, no AppError).
+    let resp_result = tokio::time::timeout(timeout, resp_handle)
+        .await
+        .expect("responder handler timed out")
+        .expect("responder task panicked");
+    resp_result.expect("responder handle_incoming_sync must not error");
+
+    server.shutdown().await;
+    init_orch.session().state.clone()
+}
+
+/// #2129 keystone — two devices that have BOTH made divergent local edits
+/// converge over a REAL loopback TLS socket (not the in-memory pump).
+///
+/// This complements #602's `issue602_two_edited_devices_converge_…`,
+/// which proves convergence at the *protocol* layer by pumping two
+/// orchestrators through an in-memory `VecDeque`. That test never touches
+/// a socket, so the real TLS handshake, the `tokio-tungstenite` WebSocket
+/// framing, and the #611 chunked-binary `LoroSync` path are all
+/// un-exercised by it. THIS test closes that gap: it runs the identical
+/// bidirectional-convergence scenario end-to-end over
+/// `SyncServer` + `connect_to_peer` + `run_sync_session` (initiator) and
+/// `handle_incoming_sync` (responder), asserting byte-for-byte SQL +
+/// engine convergence after a genuine network round-trip.
+///
+/// Op coverage (broader than #602's single `CreateBlock`): device A seeds
+/// a content block, a TYPED PROPERTY on it, and a second block it then
+/// SOFT-DELETES; device B seeds a content block plus a TAG block and an
+/// `AddTag` relationship. Convergence must reproduce ALL of that state on
+/// the opposite device.
+///
+/// A single `run_sync_session` is one-directional (the initiator both
+/// pushes and pulls, but only one device acts as initiator), so — exactly
+/// like #602 — we run two sessions in opposite directions so BOTH devices
+/// end holding BOTH edit sets. A third session asserts idempotence: a
+/// re-sync of already-converged devices changes nothing and errors
+/// nowhere.
+///
+/// Runs on the multi-thread runtime (real sockets need it) with generous
+/// `tokio::time::timeout`s around every socket op so a hang fails fast in
+/// CI rather than wedging. Determinism comes from the synchronous
+/// completion of each session before the next begins — no sleeps.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_edited_devices_converge_over_real_loopback_tls() {
+    use crate::op::{
+        AddTagPayload, CreateBlockPayload, DeleteBlockPayload, OpPayload, SetPropertyPayload,
+    };
+    use crate::sync_protocol::SyncState;
+
+    install_crypto_provider();
+
+    const DEV_A: &str = "DEV2129A";
+    const DEV_B: &str = "DEV2129B";
+    // Device A's blocks: a content block (kept), a property carrier, and
+    // a second block that A soft-deletes.
+    const BLOCK_A: &str = "01HZ2129BLKAXXXXXXXXXXXXXX";
+    const BLOCK_A_DEL: &str = "01HZ2129BLKADELXXXXXXXXXX";
+    // Device B's blocks: a content block plus a tag block it links.
+    const BLOCK_B: &str = "01HZ2129BLKBXXXXXXXXXXXXXX";
+    const TAG_B: &str = "01HZ2129TAGBXXXXXXXXXXXXXX";
+    let space = crate::space::SpaceId::from_trusted("01HZ2129SPACEXXXXXXXXXXXXX");
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+    let mat_b = Materializer::new(pool_b.clone());
+
+    // #602 test seam: one leaked Loro registry per device (the single
+    // process-global registry cannot represent two devices in one
+    // process).
+    let state_a: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+    let state_b: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+
+    // Devices are mutually paired (responder rejects unpaired peers).
+    peer_refs::upsert_peer_ref(&pool_a, DEV_B).await.unwrap();
+    peer_refs::upsert_peer_ref(&pool_b, DEV_A).await.unwrap();
+
+    // One STABLE identity cert per device (CN = device id), reused as both
+    // server (when responding) and client (when initiating) cert across
+    // every session — so the responder's TOFU-pinned cert hash (B-33)
+    // stays consistent and later sessions don't trip a hash mismatch.
+    let cert_a = sync_net::generate_self_signed_cert(DEV_A).unwrap();
+    let cert_b = sync_net::generate_self_signed_cert(DEV_B).unwrap();
+
+    // ── Device A's divergent local edits ─────────────────────────────
+    // 1. A content block.
+    make_local_edit_602(
+        &pool_a,
+        &mat_a,
+        state_a,
+        DEV_A,
+        &space,
+        BLOCK_A,
+        "edit from device A",
+        1_736_942_400_000,
+    )
+    .await;
+    // 2. A typed (numeric) property on BLOCK_A.
+    apply_local_op_602(
+        &pool_a,
+        &mat_a,
+        state_a,
+        DEV_A,
+        &space,
+        // A NON-reserved key so the value projects into `block_properties`
+        // (the reserved keys `todo_state`/`priority`/`due_date`/
+        // `scheduled_date` are column-backed on `blocks` instead — see
+        // op.rs `RESERVED_PROPERTY_KEYS`).
+        OpPayload::SetProperty(SetPropertyPayload {
+            block_id: crate::ulid::BlockId::from_trusted(BLOCK_A),
+            key: "custom_rank".into(),
+            value_text: None,
+            value_num: Some(42.0),
+            value_date: None,
+            value_ref: None,
+            value_bool: None,
+        }),
+        1_736_942_400_100,
+    )
+    .await;
+    // 3. A second block that A then soft-deletes (create + delete).
+    apply_local_op_602(
+        &pool_a,
+        &mat_a,
+        state_a,
+        DEV_A,
+        &space,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: crate::ulid::BlockId::from_trusted(BLOCK_A_DEL),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(2),
+            index: None,
+            content: "to be deleted".into(),
+        }),
+        1_736_942_400_200,
+    )
+    .await;
+    apply_local_op_602(
+        &pool_a,
+        &mat_a,
+        state_a,
+        DEV_A,
+        &space,
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: crate::ulid::BlockId::from_trusted(BLOCK_A_DEL),
+        }),
+        1_736_942_400_300,
+    )
+    .await;
+
+    // ── Device B's divergent local edits ─────────────────────────────
+    // 1. A content block.
+    make_local_edit_602(
+        &pool_b,
+        &mat_b,
+        state_b,
+        DEV_B,
+        &space,
+        BLOCK_B,
+        "edit from device B",
+        1_736_942_401_000,
+    )
+    .await;
+    // 2. A tag block …
+    apply_local_op_602(
+        &pool_b,
+        &mat_b,
+        state_b,
+        DEV_B,
+        &space,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: crate::ulid::BlockId::from_trusted(TAG_B),
+            block_type: "tag".into(),
+            parent_id: None,
+            position: Some(2),
+            index: None,
+            content: "important".into(),
+        }),
+        1_736_942_401_100,
+    )
+    .await;
+    // 3. … linked to BLOCK_B via an AddTag relationship.
+    apply_local_op_602(
+        &pool_b,
+        &mat_b,
+        state_b,
+        DEV_B,
+        &space,
+        OpPayload::AddTag(AddTagPayload {
+            block_id: crate::ulid::BlockId::from_trusted(BLOCK_B),
+            tag_id: crate::ulid::BlockId::from_trusted(TAG_B),
+        }),
+        1_736_942_401_200,
+    )
+    .await;
+
+    // ── Session 1: A initiates, B responds (B's state flows to A) ────
+    let state1 = run_one_real_loopback_session_2129(
+        &pool_a, &mat_a, state_a, DEV_A, &cert_a, &pool_b, &mat_b, state_b, DEV_B, &cert_b,
+    )
+    .await;
+    assert_eq!(
+        state1,
+        SyncState::Complete,
+        "#2129 session 1 must complete incrementally over the real socket \
+         (ResetRequired would mean a snapshot fallback was taken — this is \
+         an incremental-reachable session)"
+    );
+
+    // ── Session 2: B initiates, A responds (A's state flows to B) ────
+    let state2 = run_one_real_loopback_session_2129(
+        &pool_b, &mat_b, state_b, DEV_B, &cert_b, &pool_a, &mat_a, state_a, DEV_A, &cert_a,
+    )
+    .await;
+    assert_eq!(
+        state2,
+        SyncState::Complete,
+        "#2129 session 2 (reverse direction) must complete incrementally"
+    );
+
+    // ── Convergence: both SQL DBs hold both content blocks ───────────
+    for (label, pool) in [("A", &pool_a), ("B", &pool_b)] {
+        for (block_id, content) in [
+            (BLOCK_A, "edit from device A"),
+            (BLOCK_B, "edit from device B"),
+        ] {
+            let row: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+                .bind(block_id)
+                .fetch_optional(pool)
+                .await
+                .unwrap();
+            assert_eq!(
+                row.as_deref(),
+                Some(content),
+                "device {label}'s DB must hold block {block_id} after both sessions"
+            );
+        }
+
+        // The typed property must have converged with its exact value.
+        let prop: Option<f64> = sqlx::query_scalar(
+            "SELECT value_num FROM block_properties WHERE block_id = ? AND key = 'custom_rank'",
+        )
+        .bind(BLOCK_A)
+        .fetch_optional(pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            prop,
+            Some(42.0),
+            "device {label} must hold the converged typed property on {BLOCK_A}"
+        );
+
+        // The tag relationship must have converged.
+        let tag: Option<String> =
+            sqlx::query_scalar("SELECT tag_id FROM block_tags WHERE block_id = ? AND tag_id = ?")
+                .bind(BLOCK_B)
+                .bind(TAG_B)
+                .fetch_optional(pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            tag.as_deref(),
+            Some(TAG_B),
+            "device {label} must hold the converged tag link {BLOCK_B} -> {TAG_B}"
+        );
+
+        // The soft-deleted block must converge as deleted (row present
+        // with a non-NULL deleted_at).
+        let deleted_at: Option<Option<i64>> =
+            sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(BLOCK_A_DEL)
+                .fetch_optional(pool)
+                .await
+                .unwrap();
+        assert!(
+            matches!(deleted_at, Some(Some(_))),
+            "device {label} must hold {BLOCK_A_DEL} as soft-deleted \
+             (row present, deleted_at set); got {deleted_at:?}"
+        );
+    }
+
+    // ── Convergence: both engines reached the same version vector ────
+    let vv_a = {
+        let mut g = state_a.registry.for_space(&space, DEV_A).expect("space A");
+        g.engine_mut().version_vector()
+    };
+    let vv_b = {
+        let mut g = state_b.registry.for_space(&space, DEV_B).expect("space B");
+        g.engine_mut().version_vector()
+    };
+    let decoded_a = loro::VersionVector::decode(&vv_a).expect("decode vv A");
+    let decoded_b = loro::VersionVector::decode(&vv_b).expect("decode vv B");
+    assert_eq!(
+        decoded_a, decoded_b,
+        "#2129: both engines must converge to the same Loro version vector \
+         after a real-socket bidirectional sync"
+    );
+
+    // ── Idempotence: a third session changes nothing ─────────────────
+    // Re-running A→B against already-converged devices must complete
+    // without error and leave both version vectors stable.
+    let state3 = run_one_real_loopback_session_2129(
+        &pool_a, &mat_a, state_a, DEV_A, &cert_a, &pool_b, &mat_b, state_b, DEV_B, &cert_b,
+    )
+    .await;
+    assert_eq!(
+        state3,
+        SyncState::Complete,
+        "#2129 idempotence: a re-sync of converged devices must complete"
+    );
+    let vv_a2 = {
+        let mut g = state_a.registry.for_space(&space, DEV_A).expect("space A");
+        g.engine_mut().version_vector()
+    };
+    let vv_b2 = {
+        let mut g = state_b.registry.for_space(&space, DEV_B).expect("space B");
+        g.engine_mut().version_vector()
+    };
+    assert_eq!(
+        loro::VersionVector::decode(&vv_a2).unwrap(),
+        decoded_a,
+        "#2129 idempotence: device A's version vector must be unchanged"
+    );
+    assert_eq!(
+        loro::VersionVector::decode(&vv_b2).unwrap(),
+        decoded_b,
+        "#2129 idempotence: device B's version vector must be unchanged"
     );
 
     mat_a.flush_background().await.unwrap();
