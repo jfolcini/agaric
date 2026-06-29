@@ -3287,8 +3287,8 @@ async fn loro_sync_e2e_inbound_purge_projects_to_sql_with_local_parity() {
         ),
     ];
     for (table, sql) in table_queries {
-        let b_ids = ids_of(&pool_b, *sql).await;
-        let oracle_ids = ids_of(&pool_oracle, *sql).await;
+        let b_ids = ids_of(&pool_b, sql).await;
+        let oracle_ids = ids_of(&pool_oracle, sql).await;
         assert_eq!(
             b_ids, oracle_ids,
             "PARITY: table {table} must match between remote-purge (B) and local-purge (oracle)"
