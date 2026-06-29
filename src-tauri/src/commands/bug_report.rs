@@ -366,6 +366,23 @@ const MAX_BUNDLE_BYTES: usize = 10 * 1024 * 1024;
 /// dialog preview; long enough to capture a crash + a few surrounding hints.
 const RECENT_ERRORS_CAP: usize = 20;
 
+/// OpenTelemetry signal subdirectories (relative to `<log_dir>`) whose live
+/// file is folded into the bug-report bundle by
+/// [`read_logs_for_report_inner`]. Written by the off-by-default
+/// observability stack (M1/M1b/M6): `traces/` holds backend + frontend
+/// interaction spans, `otel-logs/` the span-correlated log bridge, and
+/// `metrics/` the periodic metrics dump. Each is a daily-rotated
+/// [`tracing_appender::rolling`] sink mirroring `agaric.log`'s convention,
+/// so the newest file is the live tail (see [`newest_otel_file`]).
+///
+/// Kept as a `&str` slice rather than importing the `*_SUBDIR` consts from
+/// `crate::observability::exporter` / `::metrics_exporter` so the bundle's
+/// view of "which dirs to scoop" stays self-contained here — the subdir
+/// names are part of the on-disk layout contract, not a runtime coupling.
+/// When tracing was never enabled these dirs simply do not exist and are
+/// skipped (no error) by [`newest_otel_file`].
+const OTEL_SUBDIRS: &[&str] = &["traces", "otel-logs", "metrics"];
+
 /// Pin level detection to the tracing-subscriber default format
 /// configured in `lib.rs::run` (`fmt::layer().with_writer(non_blocking)
 /// .with_ansi(false)`). The disk format is:
@@ -619,6 +636,55 @@ fn read_capped_file(path: &Path) -> std::io::Result<String> {
     Ok(format!(
         "…[truncated {skip} bytes of older content]\n{tail}"
     ))
+}
+
+/// Return the most-recently-modified regular file in an OTel signal subdir
+/// (`subdir`), or `None` when the dir is absent, empty, unreadable, or holds
+/// no regular files.
+///
+/// The OTel sinks ([`crate::observability::exporter`] /
+/// [`crate::observability::metrics_exporter`]) use a daily-rotated
+/// [`tracing_appender::rolling`] appender exactly like `agaric.log`: the live
+/// file carries the bare prefix (`agaric-traces.log`) while rolled-over days
+/// gain a `.YYYY-MM-DD` suffix. Newest mtime therefore selects the live tail —
+/// the most diagnostically valuable file and the one most likely to overlap
+/// the `agaric.log` window the user is reporting against. Rather than re-derive
+/// the rotation naming here, we sort by mtime so the helper is agnostic to the
+/// per-signal filename prefix.
+///
+/// **Never errors** — observability is off by default, so a missing subdir is
+/// the common case and must read as "nothing to add" rather than a failure
+/// that would abort the whole report. Every fallible step (`read_dir`, per-
+/// entry `metadata`/`modified`) degrades to "skip this candidate"; an I/O
+/// failure reading the dir collapses to `None`. The caller
+/// ([`read_logs_for_report_inner`]) then `read_capped_file`s the winner through
+/// the SAME cap + redaction pipeline as `agaric.log`.
+fn newest_otel_file(subdir: &Path) -> Option<PathBuf> {
+    // `read_dir` fails (and we bail to `None`) when the subdir is absent or
+    // unreadable — the off-by-default "tracing never enabled" common case.
+    let dir = fs::read_dir(subdir).ok()?;
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    for entry in dir.flatten() {
+        let path = entry.path();
+        // `entry.metadata()` does NOT follow symlinks (cf. `Path::is_file`);
+        // a symlink/dir/socket is therefore excluded here just as the
+        // `agaric.log` enumeration excludes non-regular entries.
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        // A platform without mtime support (or a racing unlink) drops the
+        // candidate rather than the whole dir — partial coverage beats none.
+        let Ok(modified) = metadata.modified() else {
+            continue;
+        };
+        if newest.as_ref().is_none_or(|(best, _)| modified > *best) {
+            newest = Some((modified, path));
+        }
+    }
+    newest.map(|(_, path)| path)
 }
 
 /// Bundle of optional redaction inputs threaded through
@@ -1040,6 +1106,66 @@ pub fn read_logs_for_report_inner(
         };
         out.push(LogFileEntry {
             name,
+            contents: final_contents,
+        });
+    }
+
+    // #2110 (M7) — fold the live OpenTelemetry signal files into the bundle.
+    // Each of `traces/`, `otel-logs/`, `metrics/` is a daily-rotated sink
+    // mirroring `agaric.log`; we take the newest (live tail) file from each
+    // and run it through the SAME `read_capped_file` + `redact_log` pipeline.
+    //
+    // The OTel lines are PII-safe by construction (ids / counts / durations
+    // only), but still pass through `redact_log` for defense-in-depth — the
+    // JSON deny-list / home-path / device-id scrub applies identically so a
+    // future noisy span field can never widen the bundle's trust boundary.
+    //
+    // Ordering: these entries are appended AFTER the `agaric.log` block so the
+    // newest-first [`apply_bundle_cap`] walk prioritises `agaric.log` — if the
+    // 10 MiB cap trims anything, the OTel files (the supplementary signal) are
+    // dropped before the primary log tail. Observability is off by default, so
+    // a missing/empty subdir is the common case and [`newest_otel_file`] skips
+    // it without error.
+    for subdir in OTEL_SUBDIRS {
+        let dir = log_dir.join(subdir);
+        let Some(path) = newest_otel_file(&dir) else {
+            // Absent/empty/unreadable subdir (tracing never enabled, or no
+            // regular files yet) — not noteworthy, skip silently.
+            continue;
+        };
+        let contents = match read_capped_file(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(
+                    subdir = %subdir,
+                    error = %e,
+                    "skipping otel signal file — read_capped_file failed (permission denied or io error?)",
+                );
+                continue;
+            }
+        };
+        let final_contents = if redact {
+            let ctx = RedactionContext {
+                home,
+                device_id,
+                peer_device_ids,
+            };
+            redact_log(&contents, &ctx)
+        } else {
+            contents
+        };
+        // Name as `<subdir>/<filename>` so the OTel files are distinguishable
+        // from the top-level `agaric.log*` entries in the bundle listing. The
+        // filename falls back to the subdir basename only if the OS path has
+        // no final component (it always does here — `newest_otel_file` returns
+        // a real file path).
+        let file_name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(subdir)
+            .to_string();
+        out.push(LogFileEntry {
+            name: format!("{subdir}/{file_name}"),
             contents: final_contents,
         });
     }
@@ -1848,6 +1974,175 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert!(out[0].contents.contains(DEV));
         assert!(out[0].contents.contains(HOME));
+    }
+
+    // -- #2110 (M7): OpenTelemetry signal files ---------------------------
+
+    /// #2110 (M7) — newest-mtime selection. `newest_otel_file` must return
+    /// the most-recently-modified regular file (the live tail of a daily-
+    /// rotated sink), skip the older rolled sibling, and ignore non-file
+    /// entries.
+    #[test]
+    fn newest_otel_file_picks_live_tail_over_rolled() {
+        let dir = TempDir::new().unwrap();
+        let subdir = dir.path().join("traces");
+        fs::create_dir_all(&subdir).unwrap();
+        // A rolled (older) day plus the live file. Write the rolled file
+        // first, then the live one, and stamp the live file's mtime newer so
+        // selection is deterministic regardless of write-order resolution.
+        let rolled = subdir.join("agaric-traces.log.2026-06-28");
+        let live = subdir.join("agaric-traces.log");
+        fs::write(&rolled, "rolled span\n").unwrap();
+        fs::write(&live, "live span\n").unwrap();
+        // A non-file entry that must never be selected.
+        fs::create_dir(subdir.join("agaric-traces.log.dir")).unwrap();
+        // Force `rolled` strictly OLDER than `live` so newest-mtime selection
+        // is deterministic regardless of filesystem mtime resolution.
+        let older = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        fs::File::options()
+            .write(true)
+            .open(&rolled)
+            .unwrap()
+            .set_modified(older)
+            .unwrap();
+
+        let got = newest_otel_file(&subdir).expect("a regular file must be selected");
+        assert_eq!(
+            got.file_name().and_then(|s| s.to_str()),
+            Some("agaric-traces.log"),
+            "newest-mtime file (the live tail) must win, got: {got:?}"
+        );
+    }
+
+    /// #2110 (M7) — `newest_otel_file` never errors on an absent or empty
+    /// subdir: observability is off by default, so a missing `traces/` is
+    /// the common case and must read as `None`, not a failure.
+    #[test]
+    fn newest_otel_file_absent_or_empty_is_none() {
+        let dir = TempDir::new().unwrap();
+        // Absent subdir.
+        assert!(newest_otel_file(&dir.path().join("traces")).is_none());
+        // Present but empty subdir.
+        let empty = dir.path().join("metrics");
+        fs::create_dir_all(&empty).unwrap();
+        assert!(newest_otel_file(&empty).is_none());
+    }
+
+    /// #2110 (M7) — (a) a `log_dir` carrying all three OTel subdirs yields a
+    /// `LogFileEntry` per signal, named `<subdir>/<filename>`, in addition to
+    /// the `agaric.log` entry. The OTel entries come AFTER the `agaric.log`
+    /// tail so the bundle cap trims them first.
+    #[test]
+    fn read_logs_includes_otel_signal_files_with_subdir_naming() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path();
+        fs::write(log_dir.join("agaric.log"), "today content\n").unwrap();
+        for (subdir, file, body) in [
+            ("traces", "agaric-traces.log", "span line\n"),
+            ("otel-logs", "agaric-otel.log", "otel log line\n"),
+            ("metrics", "agaric-metrics.log", "metric line\n"),
+        ] {
+            let sd = log_dir.join(subdir);
+            fs::create_dir_all(&sd).unwrap();
+            fs::write(sd.join(file), body).unwrap();
+        }
+
+        let out = read_logs_for_report_inner(log_dir, true, Some(HOME), Some(DEV), &[]).unwrap();
+
+        // agaric.log + 3 OTel signal files.
+        assert_eq!(
+            out.len(),
+            4,
+            "expected agaric.log + 3 OTel files, got: {out:?}"
+        );
+        // agaric.log is prioritised first (newest-first ordering).
+        assert_eq!(out[0].name, "agaric.log");
+        let names: Vec<&str> = out.iter().map(|e| e.name.as_str()).collect();
+        assert!(
+            names.contains(&"traces/agaric-traces.log"),
+            "traces entry must use <subdir>/<name>, got: {names:?}"
+        );
+        assert!(
+            names.contains(&"otel-logs/agaric-otel.log"),
+            "otel-logs entry must use <subdir>/<name>, got: {names:?}"
+        );
+        assert!(
+            names.contains(&"metrics/agaric-metrics.log"),
+            "metrics entry must use <subdir>/<name>, got: {names:?}"
+        );
+        // The OTel entries follow the agaric.log tail (cap-trim ordering).
+        let traces_idx = names.iter().position(|n| n.starts_with("traces/")).unwrap();
+        assert!(
+            traces_idx > 0,
+            "OTel entries must come after agaric.log, got: {names:?}"
+        );
+        // Content survived the (redact=true) pipeline for a PII-free body.
+        let traces = out
+            .iter()
+            .find(|e| e.name == "traces/agaric-traces.log")
+            .unwrap();
+        assert!(traces.contents.contains("span line"));
+    }
+
+    /// #2110 (M7) — (b) absent OTel subdirs ⇒ only the `agaric.log` entries,
+    /// no error. The off-by-default observability path must not synthesize
+    /// entries or fail the report.
+    #[test]
+    fn read_logs_absent_otel_subdirs_yields_only_agaric_log() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path();
+        fs::write(log_dir.join("agaric.log"), "today content\n").unwrap();
+
+        let out = read_logs_for_report_inner(log_dir, false, None, None, &[]).unwrap();
+
+        assert_eq!(out.len(), 1, "no OTel dirs ⇒ only agaric.log, got: {out:?}");
+        assert_eq!(out[0].name, "agaric.log");
+    }
+
+    /// #2110 (M7) — (c) redaction still applies to an OTel line carrying a
+    /// home path / device id (defense-in-depth). The OTel files flow through
+    /// the SAME `redact_log` path as `agaric.log`, so a text-format line with
+    /// `$HOME` and the local device id must be scrubbed.
+    #[test]
+    fn read_logs_redacts_otel_signal_lines() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path();
+        fs::write(log_dir.join("agaric.log"), "ok\n").unwrap();
+        let sd = log_dir.join("traces");
+        fs::create_dir_all(&sd).unwrap();
+        // A span line that (hypothetically) leaked a home path + device id.
+        fs::write(
+            sd.join("agaric-traces.log"),
+            format!("span export path={HOME}/notes.db device={DEV}\n"),
+        )
+        .unwrap();
+
+        let out = read_logs_for_report_inner(log_dir, true, Some(HOME), Some(DEV), &[]).unwrap();
+
+        let traces = out
+            .iter()
+            .find(|e| e.name == "traces/agaric-traces.log")
+            .expect("traces entry must be present");
+        assert!(
+            !traces.contents.contains(HOME),
+            "home path must be scrubbed in OTel file, got: {}",
+            traces.contents
+        );
+        assert!(
+            traces.contents.contains("~/notes.db"),
+            "home must become ~, got: {}",
+            traces.contents
+        );
+        assert!(
+            !traces.contents.contains(DEV),
+            "device id must be scrubbed in OTel file, got: {}",
+            traces.contents
+        );
+        assert!(
+            traces.contents.contains("[REDACTED_DEVICE_ID]"),
+            "device-id marker must be present, got: {}",
+            traces.contents
+        );
     }
 
     // -- silent-drop sites now warn -------------------------------
