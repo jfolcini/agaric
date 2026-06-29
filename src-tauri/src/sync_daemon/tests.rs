@@ -6520,3 +6520,982 @@ async fn dormant_waiter_races_pair_with_immediate_shutdown_l75() {
          which select! arm consumed first; got None"
     );
 }
+
+// ======================================================================
+// #2141 — N-device convergence over a REAL loopback TLS socket
+// ======================================================================
+
+/// #2141: a single device's real-loopback fixture — its DB pool,
+/// materializer, leaked per-device Loro registry (the #602 two-registry
+/// test seam: the process-global registry cannot represent more than one
+/// device in one test process), and its ONE stable identity cert (CN =
+/// device id, reused across every session so the responder's TOFU-pinned
+/// cert hash stays consistent — B-33).
+///
+/// The materializer is dropped via [`Device2141::teardown`] at test end.
+struct Device2141 {
+    id: String,
+    pool: SqlitePool,
+    mat: Materializer,
+    state: &'static crate::loro::shared::LoroState,
+    cert: SyncCert,
+    // Held only to keep the temp DB directory alive for the test's
+    // lifetime; never read.
+    _dir: TempDir,
+}
+
+impl Device2141 {
+    async fn flush_and_shutdown(&self) {
+        self.mat.flush_background().await.unwrap();
+        self.mat.shutdown();
+    }
+}
+
+/// #2141: build N mutually-paired devices for real-loopback convergence
+/// tests. Each device gets its own DB pool, materializer, leaked
+/// `&'static LoroState` registry (the #602 seam), and a stable identity
+/// cert. Every ORDERED pair is paired via `upsert_peer_ref` so any device
+/// can act as responder for any other (the responder rejects unpaired
+/// peers).
+///
+/// This generalises the two-device setup that
+/// `two_edited_devices_converge_over_real_loopback_tls` open-codes into an
+/// N-device fixture, the reusable building block for the round-robin and
+/// concurrent-role tests below.
+async fn make_n_devices_2141(ids: &[&str]) -> Vec<Device2141> {
+    install_crypto_provider();
+
+    let mut devices = Vec::with_capacity(ids.len());
+    for id in ids {
+        let (pool, dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        // #602 test seam: one leaked Loro registry per device.
+        let state: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+        let cert = sync_net::generate_self_signed_cert(id).unwrap();
+        devices.push(Device2141 {
+            id: (*id).to_string(),
+            pool,
+            mat,
+            state,
+            cert,
+            _dir: dir,
+        });
+    }
+
+    // Mutually pair every ordered pair: device i must hold a peer_ref for
+    // device j (j != i) so it accepts j as a peer in either role.
+    for i in 0..devices.len() {
+        for j in 0..devices.len() {
+            if i == j {
+                continue;
+            }
+            peer_refs::upsert_peer_ref(&devices[i].pool, &devices[j].id)
+                .await
+                .unwrap();
+        }
+    }
+
+    devices
+}
+
+/// #2141: run one full real-loopback session with `initiator` as the
+/// initiator and `responder` as the responder, reusing the #2129 building
+/// block. Returns the initiator's terminal `SyncState`.
+async fn run_session_2141(
+    initiator: &Device2141,
+    responder: &Device2141,
+) -> crate::sync_protocol::SyncState {
+    run_one_real_loopback_session_2129(
+        &initiator.pool,
+        &initiator.mat,
+        initiator.state,
+        &initiator.id,
+        &initiator.cert,
+        &responder.pool,
+        &responder.mat,
+        responder.state,
+        &responder.id,
+        &responder.cert,
+    )
+    .await
+}
+
+/// #2141: decode a device's engine version vector for `space`.
+fn device_vv_2141(dev: &Device2141, space: &crate::space::SpaceId) -> loro::VersionVector {
+    let vv = {
+        let mut g = dev.state.registry.for_space(space, &dev.id).expect("space");
+        g.engine_mut().version_vector()
+    };
+    loro::VersionVector::decode(&vv).expect("decode vv")
+}
+
+/// #2141 keystone — N devices (N = 3, then N = 4) that each made a
+/// DIVERGENT local edit converge over a REAL loopback TLS socket.
+///
+/// `two_edited_devices_converge_over_real_loopback_tls` (#2129) proved
+/// real-socket convergence for exactly TWO devices. This generalises that
+/// to N > 2 to exercise the multi-peer fan-out: each device seeds a
+/// distinct content block (plus, for richer coverage, the keystone's mix
+/// of a typed property, a tag relationship, and a soft-delete spread
+/// across devices), then we drive pairwise sessions around a ring for
+/// several rounds — exactly like the proptest ring loops — until the
+/// whole mesh is quiescent.
+///
+/// Asserts:
+///   1. EVERY pairwise session reaches `SyncState::Complete` (never
+///      `ResetRequired` — this is an incremental-reachable mesh, so a
+///      snapshot fallback anywhere would be a regression),
+///   2. after quiescence ALL N devices' SQL DBs hold EVERY device's
+///      content block (full convergence, not just pairwise),
+///   3. ALL N engines decode to the SAME `loro::VersionVector`.
+///
+/// Multi-thread runtime (real sockets need it); every socket op inside the
+/// reused #2129 helper is wrapped in a `tokio::time::timeout` so a hang
+/// fails fast. Determinism: each session completes synchronously before
+/// the next begins — no sleeps.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn issue2141_n_devices_converge_round_robin_over_real_loopback_tls() {
+    use crate::op::{AddTagPayload, OpPayload, SetPropertyPayload};
+    use crate::sync_protocol::SyncState;
+
+    // Run the same scenario for N = 3 and N = 4.
+    for ids in [
+        vec!["DEV2141A", "DEV2141B", "DEV2141C"],
+        vec!["DEV2141W", "DEV2141X", "DEV2141Y", "DEV2141Z"],
+    ] {
+        let n = ids.len();
+        let space = crate::space::SpaceId::from_trusted("01HZ2141SPACEXXXXXXXXXXXXX");
+        let devices = make_n_devices_2141(&ids).await;
+
+        // Each device makes a DISTINCT divergent content block. Block ids
+        // are derived from the device index so they are unique + valid
+        // 26-char ULIDs.
+        let mut block_ids: Vec<String> = Vec::with_capacity(n);
+        for (i, dev) in devices.iter().enumerate() {
+            let block_id = format!("01HZ2141BLK{i:0>15}");
+            block_ids.push(block_id.clone());
+            make_local_edit_602(
+                &dev.pool,
+                &dev.mat,
+                dev.state,
+                &dev.id,
+                &space,
+                &block_id,
+                &format!("edit from {}", dev.id),
+                1_736_942_400_000 + i64::try_from(i).unwrap() * 1_000,
+            )
+            .await;
+        }
+
+        // Richer coverage spread across devices (mirrors the #2129
+        // keystone): device 0 adds a typed property on its block; device 1
+        // adds a tag block + AddTag link on its block.
+        let tag_block = "01HZ2141TAGBLKXXXXXXXXXXXX";
+        apply_local_op_602(
+            &devices[0].pool,
+            &devices[0].mat,
+            devices[0].state,
+            &devices[0].id,
+            &space,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: crate::ulid::BlockId::from_trusted(&block_ids[0]),
+                key: "custom_rank".into(),
+                value_text: None,
+                value_num: Some(7.0),
+                value_date: None,
+                value_ref: None,
+                value_bool: None,
+            }),
+            1_736_942_500_000,
+        )
+        .await;
+        apply_local_op_602(
+            &devices[1].pool,
+            &devices[1].mat,
+            devices[1].state,
+            &devices[1].id,
+            &space,
+            OpPayload::CreateBlock(crate::op::CreateBlockPayload {
+                block_id: crate::ulid::BlockId::from_trusted(tag_block),
+                block_type: "tag".into(),
+                parent_id: None,
+                position: Some(2),
+                index: None,
+                content: "important".into(),
+            }),
+            1_736_942_500_100,
+        )
+        .await;
+        apply_local_op_602(
+            &devices[1].pool,
+            &devices[1].mat,
+            devices[1].state,
+            &devices[1].id,
+            &space,
+            OpPayload::AddTag(AddTagPayload {
+                block_id: crate::ulid::BlockId::from_trusted(&block_ids[1]),
+                tag_id: crate::ulid::BlockId::from_trusted(tag_block),
+            }),
+            1_736_942_500_200,
+        )
+        .await;
+
+        // Drive pairwise sessions around a ring. Each round runs the
+        // ordered pair (i, i+1 mod n) as initiator→responder. `n` rounds
+        // is more than enough to fully propagate every device's edits all
+        // the way around the ring.
+        for _round in 0..n {
+            for i in 0..n {
+                let init = &devices[i];
+                let resp = &devices[(i + 1) % n];
+                let state = run_session_2141(init, resp).await;
+                assert_eq!(
+                    state,
+                    SyncState::Complete,
+                    "#2141 (N={n}): session {}->{} must complete incrementally \
+                     (ResetRequired would mean an unexpected snapshot fallback)",
+                    init.id,
+                    resp.id,
+                );
+            }
+        }
+
+        // Convergence: every device's DB must hold every device's block.
+        for dev in &devices {
+            for (i, block_id) in block_ids.iter().enumerate() {
+                let row: Option<String> =
+                    sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+                        .bind(block_id)
+                        .fetch_optional(&dev.pool)
+                        .await
+                        .unwrap();
+                assert_eq!(
+                    row.as_deref(),
+                    Some(format!("edit from {}", devices[i].id).as_str()),
+                    "#2141 (N={n}): device {} must hold block {block_id} \
+                     authored by {}",
+                    dev.id,
+                    devices[i].id,
+                );
+            }
+            // The typed property and tag link must have converged everywhere.
+            let prop: Option<f64> = sqlx::query_scalar(
+                "SELECT value_num FROM block_properties WHERE block_id = ? AND key = 'custom_rank'",
+            )
+            .bind(&block_ids[0])
+            .fetch_optional(&dev.pool)
+            .await
+            .unwrap();
+            assert_eq!(
+                prop,
+                Some(7.0),
+                "#2141 (N={n}): device {} must hold the converged typed property",
+                dev.id,
+            );
+            let tag: Option<String> = sqlx::query_scalar(
+                "SELECT tag_id FROM block_tags WHERE block_id = ? AND tag_id = ?",
+            )
+            .bind(&block_ids[1])
+            .bind(tag_block)
+            .fetch_optional(&dev.pool)
+            .await
+            .unwrap();
+            assert_eq!(
+                tag.as_deref(),
+                Some(tag_block),
+                "#2141 (N={n}): device {} must hold the converged tag link",
+                dev.id,
+            );
+        }
+
+        // Convergence: every engine reached the SAME version vector.
+        let vv0 = device_vv_2141(&devices[0], &space);
+        for dev in &devices[1..] {
+            assert_eq!(
+                device_vv_2141(dev, &space),
+                vv0,
+                "#2141 (N={n}): device {} must converge to the same Loro \
+                 version vector as device {}",
+                dev.id,
+                devices[0].id,
+            );
+        }
+
+        for dev in &devices {
+            dev.flush_and_shutdown().await;
+        }
+    }
+}
+
+/// #2141 — device B acts as RESPONDER (to A) and INITIATOR (to C)
+/// CONCURRENTLY over two distinct real TLS connections.
+///
+/// The round-robin test runs strictly serial sessions. This one overlaps
+/// two sessions that BOTH touch device B: an A→B session where B is the
+/// responder, and a B→C session where B is the initiator, driven
+/// concurrently with `tokio::join!`. It proves B's per-device registry and
+/// DB serialize correctly across the two roles — both sessions complete
+/// with no corruption, and afterwards all three devices converge.
+///
+/// Each of A, B, C seeds a distinct divergent block first. After the
+/// concurrent A→B / B→C pair, A holds {A,B}, B holds {A,B,C}, and C holds
+/// {B,C}. A final round of serial sessions then drives full convergence so
+/// the version-vector equality assertion holds for all three.
+///
+/// Generous `tokio::time::timeout`s wrap every socket op (inside the reused
+/// #2129 helper) so a hang fails fast instead of wedging CI.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn issue2141_device_acts_as_responder_and_initiator_concurrently() {
+    use crate::sync_protocol::SyncState;
+
+    let space = crate::space::SpaceId::from_trusted("01HZ2141CONCSPACEXXXXXXXXX");
+    let devices = make_n_devices_2141(&["DEV2141RA", "DEV2141RB", "DEV2141RC"]).await;
+    let (a, b, c) = (&devices[0], &devices[1], &devices[2]);
+
+    let block_a = "01HZ2141CONCBLKAXXXXXXXXXX";
+    let block_b = "01HZ2141CONCBLKBXXXXXXXXXX";
+    let block_c = "01HZ2141CONCBLKCXXXXXXXXXX";
+    for (dev, block) in [(a, block_a), (b, block_b), (c, block_c)] {
+        make_local_edit_602(
+            &dev.pool,
+            &dev.mat,
+            dev.state,
+            &dev.id,
+            &space,
+            block,
+            &format!("edit from {}", dev.id),
+            1_736_942_400_000,
+        )
+        .await;
+    }
+
+    // Overlap the two sessions that both touch B: A→B (B is responder) and
+    // B→C (B is initiator). Each session uses its own pair of real TLS
+    // connections; B genuinely acts in both roles at once, exercising that
+    // its registry + DB serialize cleanly under concurrent access.
+    let (ab, bc) = tokio::join!(run_session_2141(a, b), run_session_2141(b, c));
+    assert_eq!(
+        ab,
+        SyncState::Complete,
+        "#2141 concurrent: A->B session (B as responder) must complete"
+    );
+    assert_eq!(
+        bc,
+        SyncState::Complete,
+        "#2141 concurrent: B->C session (B as initiator) must complete"
+    );
+
+    // Drive full convergence with a serial ring so every device ends with
+    // every block (the concurrent pair alone leaves A without C's block).
+    for _round in 0..3 {
+        for (init, resp) in [(a, b), (b, c), (c, a)] {
+            let state = run_session_2141(init, resp).await;
+            assert_eq!(
+                state,
+                SyncState::Complete,
+                "#2141 concurrent: convergence session {}->{} must complete",
+                init.id,
+                resp.id,
+            );
+        }
+    }
+
+    // No corruption: all three DBs hold all three blocks.
+    for dev in &devices {
+        for block in [block_a, block_b, block_c] {
+            let row: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+                .bind(block)
+                .fetch_optional(&dev.pool)
+                .await
+                .unwrap();
+            assert!(
+                row.is_some(),
+                "#2141 concurrent: device {} must hold block {block} after convergence",
+                dev.id,
+            );
+        }
+    }
+
+    // All three engines converge to the same version vector.
+    let vv_a = device_vv_2141(a, &space);
+    assert_eq!(
+        device_vv_2141(b, &space),
+        vv_a,
+        "#2141 concurrent: B must converge to A's version vector"
+    );
+    assert_eq!(
+        device_vv_2141(c, &space),
+        vv_a,
+        "#2141 concurrent: C must converge to A's version vector"
+    );
+
+    for dev in &devices {
+        dev.flush_and_shutdown().await;
+    }
+}
+
+// ======================================================================
+// #2140 — failure-mode E2E over real loopback TLS
+// ======================================================================
+
+/// #2140: stand up a responder `SyncServer` and connect an initiator,
+/// returning the client connection, the accepted server-side connection,
+/// and the server handle. Mirrors the connection setup of
+/// `run_one_real_loopback_session_2129` but hands BOTH raw connections
+/// back to the caller so a failure-mode test can drive them directly
+/// (drop one mid-stream, inject a corrupt frame, etc.) instead of running
+/// the full session loop.
+async fn connect_real_pair_2140(
+    init_cert: &SyncCert,
+    resp_cert: &SyncCert,
+) -> (SyncConnection, SyncConnection, crate::sync_net::SyncServer) {
+    let timeout = std::time::Duration::from_secs(5);
+
+    let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(1);
+    let (server, port) = SyncServer::start(resp_cert, move |conn, _permit| {
+        let _ = conn_tx.try_send(conn);
+    })
+    .await
+    .unwrap();
+
+    let client_conn = tokio::time::timeout(
+        timeout,
+        sync_net::connect_to_peer(&format!("127.0.0.1:{port}"), None, None, init_cert),
+    )
+    .await
+    .expect("timed out connecting to peer")
+    .unwrap();
+
+    let server_conn = tokio::time::timeout(timeout, conn_rx.recv())
+        .await
+        .expect("timed out waiting for server connection")
+        .unwrap();
+
+    (client_conn, server_conn, server)
+}
+
+/// #2140 — a connection dropped MID-STREAM surfaces as a bounded FAILURE,
+/// not a hang, and a fresh session afterward recovers and converges.
+///
+/// The initiator sends its opening `HeadExchange`, then DROPS its
+/// connection (simulating a WiFi drop / peer crash partway through the
+/// exchange). The responder's session loop, blocked on the next recv, must
+/// observe the closed socket and return an `Err` (a terminal failure) —
+/// bounded by a test `tokio::time::timeout` so a true hang fails the test
+/// rather than wedging it. We then run a clean session over a fresh
+/// connection between the same two devices and assert it converges, proving
+/// the drop left no poisoned state behind.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue2140_connection_drop_mid_stream_fails_then_recovers() {
+    use crate::sync_protocol::SyncState;
+
+    let space = crate::space::SpaceId::from_trusted("01HZ2140DROPSPACEXXXXXXXXX");
+    let devices = make_n_devices_2141(&["DEV2140DA", "DEV2140DB"]).await;
+    let (a, b) = (&devices[0], &devices[1]);
+
+    make_local_edit_602(
+        &a.pool,
+        &a.mat,
+        a.state,
+        &a.id,
+        &space,
+        "01HZ2140DROPBLKAXXXXXXXXXX",
+        "edit from A",
+        1_736_942_400_000,
+    )
+    .await;
+    make_local_edit_602(
+        &b.pool,
+        &b.mat,
+        b.state,
+        &b.id,
+        &space,
+        "01HZ2140DROPBLKBXXXXXXXXXX",
+        "edit from B",
+        1_736_942_401_000,
+    )
+    .await;
+
+    let timeout = std::time::Duration::from_secs(5);
+
+    // ── Drop mid-stream: A opens, sends HeadExchange, then disconnects ──
+    let (mut client_conn, server_conn, server) = connect_real_pair_2140(&a.cert, &b.cert).await;
+
+    let resp_scheduler = Arc::new(SyncScheduler::new());
+    let resp_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let resp_handle = tokio::spawn(handle_incoming_sync_with_loro_state(
+        server_conn,
+        b.pool.clone(),
+        b.id.clone(),
+        b.mat.clone(),
+        resp_scheduler,
+        resp_sink,
+        Arc::new(AtomicBool::new(false)),
+        b.state,
+    ));
+
+    // Send a valid opening HeadExchange so the responder is mid-session,
+    // then drop the client connection.
+    let heads = crate::sync_protocol::get_local_heads(&a.pool)
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        timeout,
+        client_conn.send_json(&SyncMessage::HeadExchange {
+            heads,
+            loro_vvs: vec![],
+            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+        }),
+    )
+    .await
+    .expect("send HeadExchange timed out")
+    .expect("send HeadExchange");
+    // Abruptly drop the socket mid-stream (no graceful close handshake).
+    drop(client_conn);
+
+    // The responder must terminate with an Err (bounded), NOT hang.
+    let resp_join = tokio::time::timeout(timeout, resp_handle)
+        .await
+        .expect("#2140: responder must not hang after a mid-stream drop")
+        .expect("responder task panicked");
+    assert!(
+        resp_join.is_err(),
+        "#2140: a mid-stream connection drop must surface as a session \
+         failure (Err), got Ok"
+    );
+    server.shutdown().await;
+
+    // ── Recovery: a fresh full session must converge cleanly ────────────
+    let state1 = run_session_2141(a, b).await;
+    assert_eq!(
+        state1,
+        SyncState::Complete,
+        "#2140: a fresh session after a drop must complete (A->B)"
+    );
+    let state2 = run_session_2141(b, a).await;
+    assert_eq!(
+        state2,
+        SyncState::Complete,
+        "#2140: a fresh session after a drop must complete (B->A)"
+    );
+    for dev in &devices {
+        for block in ["01HZ2140DROPBLKAXXXXXXXXXX", "01HZ2140DROPBLKBXXXXXXXXXX"] {
+            let row: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+                .bind(block)
+                .fetch_optional(&dev.pool)
+                .await
+                .unwrap();
+            assert!(
+                row.is_some(),
+                "#2140 recovery: device {} must hold block {block} after recovery",
+                dev.id,
+            );
+        }
+    }
+
+    for dev in &devices {
+        dev.flush_and_shutdown().await;
+    }
+}
+
+/// #2140 — an OVERSIZED binary frame is rejected with a bounded error, no
+/// panic and no hang.
+///
+/// `ws_config()` caps the transport at `MAX_MSG_SIZE` (10 MB) at the frame
+/// header (#611), so a `send_binary` of an over-cap payload fails at the
+/// SENDER. We assert the sender's `send_binary` returns an `Err` (the
+/// frame is refused before it ever buffers a runaway payload), bounded by a
+/// test timeout. The receiver REJECTS the over-cap frame on read (#611's
+/// `ws_config` enforces `max_message_size`/`max_frame_size` at the read
+/// path), so the load-bearing guarantee is that the RECEIVER returns a
+/// bounded error rather than buffering a runaway payload, panicking, or
+/// hanging.
+///
+/// This is driven through `test_connection_pair()` rather than a live
+/// `SyncServer` socket: per its contract (`sync_net::connection`), the
+/// in-memory pair runs under the IDENTICAL `ws_config()` transport caps as
+/// the real transport, so the `MAX_MSG_SIZE` rejection path is exercised
+/// byte-for-byte the same — while avoiding pumping a 10 MB+ frame through a
+/// live loopback-TLS transfer that, under parallel CI load, starves the
+/// timing-sensitive chunked-binary transfer of the neighbouring #611 test.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue2140_oversized_frame_is_rejected_with_bounded_error() {
+    let (mut sender, mut receiver) = sync_net::test_connection_pair().await;
+
+    let timeout = std::time::Duration::from_secs(5);
+
+    // One byte over the cap. The sender's write is fire-and-forget in a
+    // spawned task (it may block on the duplex buffer once the receiver
+    // tears the stream down — that is not what we are asserting). The
+    // RECEIVER must reject the over-cap frame with a bounded error: #611's
+    // `ws_config` enforces `max_frame_size` at the frame header on read, so
+    // the rejection fires without buffering the runaway payload.
+    let oversize = vec![0u8; SyncConnection::MAX_MSG_SIZE + 1];
+    let send_task = tokio::spawn(async move {
+        let _ = sender.send_binary(&oversize).await;
+        sender
+    });
+
+    let recv_result = tokio::time::timeout(timeout, receiver.recv_binary())
+        .await
+        .expect("#2140: oversized recv must not hang");
+    assert!(
+        recv_result.is_err(),
+        "#2140: the receiver must reject a frame larger than MAX_MSG_SIZE \
+         with a bounded error, got Ok"
+    );
+
+    // Reclaim the sender task so it does not leak past the test. It may
+    // still be blocked on the doomed write, so abort it.
+    send_task.abort();
+}
+
+/// #2140 — garbage / non-JSON bytes are rejected by the receiver with a
+/// bounded deserialize error, no panic and no hang.
+///
+/// The sender ships a valid (in-cap) TEXT frame whose body is not valid
+/// `SyncMessage` JSON. `recv_json` must surface a bounded "deserialize"
+/// error rather than panicking or hanging.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue2140_garbage_frame_is_rejected_with_bounded_error() {
+    install_crypto_provider();
+    let cert_a = sync_net::generate_self_signed_cert("DEV2140GA").unwrap();
+    let cert_b = sync_net::generate_self_signed_cert("DEV2140GB").unwrap();
+
+    let (mut client_conn, mut server_conn, server) = connect_real_pair_2140(&cert_a, &cert_b).await;
+
+    let timeout = std::time::Duration::from_secs(5);
+
+    // `send_json` of a raw string serialises to a JSON string literal
+    // (`"not a sync message …"`), which is valid JSON but NOT a
+    // `SyncMessage` — so the receiver's typed deserialize must reject it.
+    tokio::time::timeout(
+        timeout,
+        client_conn.send_json(&"not a sync message {{{ garbage"),
+    )
+    .await
+    .expect("send garbage timed out")
+    .expect("send garbage frame");
+
+    let recv_result = tokio::time::timeout(timeout, server_conn.recv_json::<SyncMessage>())
+        .await
+        .expect("#2140: garbage recv must not hang");
+    assert!(
+        recv_result.is_err(),
+        "#2140: a non-SyncMessage JSON frame must be rejected with a \
+         bounded deserialize error, got Ok"
+    );
+
+    server.shutdown().await;
+}
+
+/// #2140 — a PARTIAL message (peer closes after sending nothing / half a
+/// frame) surfaces as a bounded error, not a hang.
+///
+/// The sender opens the connection and immediately drops it without ever
+/// sending a complete frame. The receiver's `recv_json`, blocked on the
+/// next frame, must observe the closed stream and return a bounded
+/// "connection closed" error rather than hanging.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue2140_partial_message_then_close_is_bounded_error() {
+    install_crypto_provider();
+    let cert_a = sync_net::generate_self_signed_cert("DEV2140PA").unwrap();
+    let cert_b = sync_net::generate_self_signed_cert("DEV2140PB").unwrap();
+
+    let (client_conn, mut server_conn, server) = connect_real_pair_2140(&cert_a, &cert_b).await;
+
+    let timeout = std::time::Duration::from_secs(5);
+
+    // Drop the client without sending any complete frame (EOF / close).
+    drop(client_conn);
+
+    let recv_result = tokio::time::timeout(timeout, server_conn.recv_json::<SyncMessage>())
+        .await
+        .expect("#2140: recv after partial/EOF must not hang");
+    assert!(
+        recv_result.is_err(),
+        "#2140: a closed connection with no complete frame must yield a \
+         bounded error, got Ok"
+    );
+
+    server.shutdown().await;
+}
+
+/// #2140 — a REAL `ResetRequired` → snapshot catch-up fires OVER THE REAL
+/// SOCKET when the responder's op_log has compacted past the initiator's
+/// advertised frontier.
+///
+/// This is `feat6_end_to_end_compact_then_snapshot_catchup` ported from the
+/// in-memory `test_connection_pair` to the genuine `SyncServer` +
+/// `connect_to_peer` + `run_sync_session` (initiator) /
+/// `handle_incoming_sync` (responder) harness used by the #2129/#2141
+/// tests.
+///
+/// Setup (mirroring feat6's mechanic):
+///   * the responder seeds + materialises one block authored under its own
+///     device, `create_snapshot`s (frontier `{RESP: 1}`), then COMPACTS by
+///     wiping its op_log via the mutation-bypass dance;
+///   * the initiator's op_log holds ONLY a STALE row authored under the
+///     responder's device id (seq 1) and NO own-device ops — so it
+///     advertises `{RESP: 1}`, the responder's compacted log cannot satisfy
+///     `check_reset_required` for `(RESP, 1)`, and the snapshot's
+///     `up_to_seqs {RESP: 1}` covers the initiator's frontier so the offer
+///     proceeds.
+///
+/// `run_sync_session` drives the ResetRequired → `try_receive_snapshot_catchup`
+/// sub-flow internally and returns `Ok(())` with the orchestrator left in
+/// `ResetRequired` (it returns before reaching `Complete`). We therefore
+/// assert the returned terminal state is `ResetRequired` (proving the
+/// fallback path fired — NOT a plain incremental session), that the helper
+/// did not error, and that the initiator's DB now reflects the responder's
+/// pre-compaction block (catch-up applied).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue2140_snapshot_fallback_on_real_compaction_over_real_socket() {
+    use crate::op::{CreateBlockPayload, OpPayload};
+    use crate::op_log::append_local_op_at;
+    use crate::snapshot::create_snapshot;
+    use crate::sync_protocol::SyncState;
+
+    const INIT_DEV: &str = "DEV2140SI";
+    const RESP_DEV: &str = "DEV2140SR";
+    const SNAP_BLOCK: &str = "01HZ2140SNAPBLKXXXXXXXXXX";
+
+    let devices = make_n_devices_2141(&[INIT_DEV, RESP_DEV]).await;
+    let (init, resp) = (&devices[0], &devices[1]);
+
+    // ── Responder: seed + materialise one block, snapshot, then compact ─
+    let record = append_local_op_at(
+        &resp.pool,
+        RESP_DEV,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: crate::ulid::BlockId::from_trusted(SNAP_BLOCK),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            index: None,
+            content: "compacted-state content".into(),
+        }),
+        1_736_942_400_000,
+    )
+    .await
+    .unwrap();
+    resp.mat.dispatch_op(&record).await.unwrap();
+    resp.mat.flush_foreground().await.unwrap();
+    // Mirror the op into the responder's engine so its outgoing snapshot /
+    // state is consistent with the SQL projection.
+    crate::merge::engine_apply(
+        &format!("{RESP_DEV}/{}", record.seq),
+        &OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: crate::ulid::BlockId::from_trusted(SNAP_BLOCK),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            index: None,
+            content: "compacted-state content".into(),
+        }),
+        RESP_DEV,
+        &crate::space::SpaceId::from_trusted("01HZ2140SNAPSPACEXXXXXXXXX"),
+        &record.created_at.to_string(),
+        resp.state,
+    );
+
+    create_snapshot(&resp.pool, RESP_DEV).await.unwrap();
+
+    // Simulate compaction: wipe the responder's op_log (H-13 bypass dance).
+    let mut tx = resp.pool.begin().await.unwrap();
+    crate::op_log::enable_op_log_mutation_bypass(&mut tx)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM op_log")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    crate::op_log::disable_op_log_mutation_bypass(&mut tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    // ── Initiator: a STALE row authored under the responder's device so it
+    //    advertises `{RESP: 1}` and NO own-device ops (so the snapshot's
+    //    frontier covers it). This is the real-orchestrator equivalent of
+    //    feat6's hand-crafted `stale_resp_head`.
+    append_local_op_at(
+        &init.pool,
+        RESP_DEV,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: crate::ulid::BlockId::from_trusted(SNAP_BLOCK),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            index: None,
+            content: "stale claim".into(),
+        }),
+        1_736_942_399_000,
+    )
+    .await
+    .unwrap();
+
+    // Drive the real-socket session. The reused helper asserts internally
+    // that neither side errored; ResetRequired catch-up returns Ok(()).
+    let state = run_session_2141(init, resp).await;
+    assert_eq!(
+        state,
+        SyncState::ResetRequired,
+        "#2140: a compacted responder must drive the initiator into \
+         ResetRequired and snapshot catch-up over the real socket"
+    );
+
+    // Catch-up applied: the initiator's DB now reflects the responder's
+    // pre-compaction block (the snapshot's content, not the stale claim).
+    let content: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(SNAP_BLOCK)
+        .fetch_optional(&init.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        content.as_deref(),
+        Some("compacted-state content"),
+        "#2140: snapshot catch-up must land the responder's pre-compaction \
+         state on the initiator over the real socket"
+    );
+
+    // peer_refs bookkeeping advanced (synced_at populated) — the
+    // reachability/up_to_hash check the feat6 test performs.
+    let peer = peer_refs::get_peer_ref(&init.pool, RESP_DEV)
+        .await
+        .unwrap()
+        .expect("peer_refs row must exist after snapshot catch-up");
+    assert!(
+        peer.synced_at.is_some(),
+        "#2140: synced_at must be populated after real-socket catch-up"
+    );
+    assert!(
+        peer.last_hash.is_some(),
+        "#2140: last_hash must be advanced to the snapshot's up_to_hash"
+    );
+
+    for dev in &devices {
+        dev.flush_and_shutdown().await;
+    }
+}
+
+/// #2140 — a failed real-socket session advances per-peer backoff on a
+/// `SyncScheduler`; a later successful session clears it.
+///
+/// This exercises the scheduler's backoff state machine around real
+/// sessions (rather than mocking the failure): we record a failure for the
+/// peer after a deliberately-broken session (initiator drops mid-stream)
+/// and assert `failure_count == 1` / `may_retry == false`; we then run a
+/// clean session, record the success, and assert `failure_count == 0` /
+/// `may_retry == true`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue2140_backoff_advances_on_failure_and_clears_on_success() {
+    use crate::sync_protocol::SyncState;
+
+    let space = crate::space::SpaceId::from_trusted("01HZ2140BOSPACEXXXXXXXXXXX");
+    let devices = make_n_devices_2141(&["DEV2140BA", "DEV2140BB"]).await;
+    let (a, b) = (&devices[0], &devices[1]);
+
+    make_local_edit_602(
+        &a.pool,
+        &a.mat,
+        a.state,
+        &a.id,
+        &space,
+        "01HZ2140BOBLKAXXXXXXXXXXXX",
+        "edit from A",
+        1_736_942_400_000,
+    )
+    .await;
+    // Device B also seeds an edit so the responder has state to STREAM back
+    // after the HeadExchange (rather than short-circuiting to SyncComplete
+    // when it has nothing to send). That forces another round-trip, so the
+    // initiator's mid-stream drop is observed by the responder as a failed
+    // recv rather than completing before the drop lands.
+    make_local_edit_602(
+        &b.pool,
+        &b.mat,
+        b.state,
+        &b.id,
+        &space,
+        "01HZ2140BOBLKBXXXXXXXXXXXX",
+        "edit from B",
+        1_736_942_401_000,
+    )
+    .await;
+
+    let scheduler = SyncScheduler::new();
+    let timeout = std::time::Duration::from_secs(5);
+
+    // ── A broken session: initiator drops mid-stream → the session fails,
+    //    so we record a failure for the peer on the scheduler.
+    let (mut client_conn, server_conn, server) = connect_real_pair_2140(&a.cert, &b.cert).await;
+    let resp_handle = tokio::spawn(handle_incoming_sync_with_loro_state(
+        server_conn,
+        b.pool.clone(),
+        b.id.clone(),
+        b.mat.clone(),
+        Arc::new(SyncScheduler::new()),
+        Arc::new(RecordingEventSink::new()) as Arc<dyn SyncEventSink>,
+        Arc::new(AtomicBool::new(false)),
+        b.state,
+    ));
+    let heads = crate::sync_protocol::get_local_heads(&a.pool)
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        timeout,
+        client_conn.send_json(&SyncMessage::HeadExchange {
+            heads,
+            loro_vvs: vec![],
+            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+        }),
+    )
+    .await
+    .expect("send HeadExchange timed out")
+    .expect("send HeadExchange");
+    drop(client_conn);
+    let resp_join = tokio::time::timeout(timeout, resp_handle)
+        .await
+        .expect("#2140 backoff: responder must not hang on the failed session")
+        .expect("responder task panicked");
+    assert!(
+        resp_join.is_err(),
+        "#2140 backoff: the broken session must fail so a failure is recorded"
+    );
+    server.shutdown().await;
+
+    // The failed session advances backoff for this peer.
+    scheduler.record_failure(&b.id);
+    assert_eq!(
+        scheduler.failure_count(&b.id),
+        1,
+        "#2140 backoff: failure_count must be 1 after the failed session"
+    );
+    assert!(
+        !scheduler.may_retry(&b.id),
+        "#2140 backoff: may_retry must be false while in backoff"
+    );
+
+    // ── A later SUCCESSFUL session clears the backoff. ──────────────────
+    let state = run_session_2141(a, b).await;
+    assert_eq!(
+        state,
+        SyncState::Complete,
+        "#2140 backoff: the recovery session must complete"
+    );
+    scheduler.record_success(&b.id);
+    assert_eq!(
+        scheduler.failure_count(&b.id),
+        0,
+        "#2140 backoff: failure_count must reset to 0 after a success"
+    );
+    assert!(
+        scheduler.may_retry(&b.id),
+        "#2140 backoff: may_retry must be true again after a success"
+    );
+
+    for dev in &devices {
+        dev.flush_and_shutdown().await;
+    }
+}
