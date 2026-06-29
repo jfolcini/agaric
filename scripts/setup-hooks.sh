@@ -132,7 +132,8 @@ install_lychee() {
 
 # sqlx-cli needs custom features (rustls + sqlite only) — same as CI.
 install_sqlx_cli() {
-  if have cargo-sqlx; then ok "sqlx-cli (already installed)"; return; fi
+  # sqlx-cli ships both `cargo-sqlx` and `sqlx`; check either so the skip fires.
+  if have cargo-sqlx || have sqlx; then ok "sqlx-cli (already installed)"; return; fi
   if have cargo-binstall && cargo binstall -y sqlx-cli >/dev/null 2>&1; then
     ok "sqlx-cli (binstall)"; return
   fi
@@ -184,21 +185,25 @@ if have python3; then ok "python3 (already installed)"; else pkg_install python3
 # devDependencies — `scripts/setup.sh` already ran `npm ci`, so they are on
 # PATH via node_modules/.bin and need nothing here.
 
-# --- Wire + pre-provision the git hooks ------------------------------------
+# --- Pre-provision, then conditionally wire the git hooks ------------------
+# Order matters. The `gitleaks` / `actionlint` / `conventional-pre-commit`
+# hooks are CLONED+built from github.com by prek. On a network-scoped box (e.g.
+# a Claude web VM whose git access is limited to this repo), those clones 403 —
+# and if we wire prek's git hooks anyway, EVERY `git commit` then aborts trying
+# to clone them. So: provision first; only wire the hooks if provisioning
+# succeeds. When it can't, leave the hooks unwired (commits keep working; those
+# three checks still run in CI) and tell the user how to wire them later.
 if have prek; then
-  if prek install >/dev/null 2>&1; then ok "git hooks wired (prek install)"
-  else warn "prek install failed — run it manually"; fi
-
-  # Pre-build every hook environment now (so the first commit isn't slow).
-  # The gitleaks / actionlint / conventional-pre-commit hooks are cloned+built
-  # from github.com; a network-scoped VM (e.g. one whose git access is limited
-  # to this repo) can't reach them and will provision them lazily on first use
-  # when the network allows — non-fatal here.
-  note "pre-provisioning hook environments (best-effort)…"
+  note "pre-provisioning hook environments…"
   if prek install-hooks >/dev/null 2>&1; then
     ok "all hook environments provisioned"
+    if prek install >/dev/null 2>&1; then ok "git hooks wired (prek install)"
+    else warn "prek install failed — run it manually: prek install"; fi
   else
-    warn "some remote hook environments (gitleaks/actionlint/conventional-pre-commit) were not provisioned — they clone+build from github.com and need network access; local hooks are ready"
+    warn "upstream hook repos (gitleaks/actionlint/conventional-pre-commit) are unreachable —"
+    warn "git access looks scoped to this repo. Leaving git hooks UNWIRED so commits keep"
+    warn "working (those three checks still run in CI). Once github.com clones are allowed,"
+    warn "run: prek install   — or skip just those hooks: SKIP=gitleaks,actionlint,conventional-pre-commit git commit …"
   fi
 else
   warn "prek not on PATH — install it, then run: prek install"
