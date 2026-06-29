@@ -12,6 +12,7 @@ import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { SnapshotTransferProgress } from '@/components/agenda/SnapshotTransferProgress'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -393,6 +394,10 @@ export function StatusPanel(): React.ReactElement {
                   button that re-syncs every paired peer behind the shared
                   timeout guard. */}
               <SyncRetryButton state={syncState} />
+
+              {/* #2133 — snapshot catch-up streaming progress. Inert
+                  (renders null) outside an active snapshot transfer. */}
+              <SnapshotTransferProgress />
 
               <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <MetricCard
