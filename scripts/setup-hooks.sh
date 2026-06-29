@@ -1,20 +1,26 @@
 #!/usr/bin/env bash
 # Install the prek hook toolchain and wire the git hooks.
 #
-# Every hook in prek.toml is `language = "system"`, so prek provisions
-# NOTHING itself — each hook shells out to a binary that must already be on
-# PATH. Without these, the very first `git commit` aborts. This script
-# installs that toolchain so a fresh clone is commit/push-ready, and mirrors
-# the install set CI uses in `.github/workflows/_validate.yml` so the local
-# gate (`prek run --all-files` / `just check`) matches CI.
+# prek runs the hooks in prek.toml, but it does NOT ship their tools — each
+# hook shells out to a binary (local `language = "system"` hooks) or is built
+# by prek from a pinned upstream repo (the `gitleaks` / `actionlint` Go hooks
+# and the `conventional-pre-commit` Python hook). Without the underlying
+# toolchain on the box, the very first `git commit` aborts. This script
+# installs that toolchain so a fresh clone — or a fresh dev VM — is
+# commit/push-ready, mirroring CI's install set in
+# `.github/workflows/_validate.yml` so the local gate matches CI.
+#
+# Target platforms: Ubuntu 24.04 / 26.04 (primary — apt), other Linux
+# (dnf/pacman, best-effort), macOS (brew, best-effort).
 #
 # Best-effort and idempotent by design:
 #   * tools already on PATH are skipped (fast re-runs);
-#   * a tool that can't be auto-installed on this platform prints a manual
-#     hint instead of aborting — a partial toolchain still lets you build and
-#     run the app, you just can't commit until the gap is filled.
+#   * anything that can't be auto-installed on a platform prints a manual hint
+#     instead of aborting — a partial toolchain still builds and runs the app,
+#     you just can't run every hook until the gap is filled.
 # Hence `set -u` but NOT `set -e`: a single failed installer must never sink
-# the whole bootstrap.
+# the whole bootstrap (so it is safe to call from `scripts/setup.sh` and from
+# VM provisioning).
 set -uo pipefail
 
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -25,8 +31,14 @@ warn() { printf '  \033[33m! %s\033[0m\n' "$*"; }
 
 OS="$(uname -s)"
 
-# pkg_install <brew-name> <apt-name> <binary> — install a NON-cargo host tool
-# via the platform package manager, or warn with a manual hint.
+# Cargo / local binaries land here; make sure they're visible to the rest of
+# the script (a fresh shell may not have sourced the cargo env yet).
+[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+
+# pkg_install <brew-name> <apt-name> <binary> — install a system package via
+# the platform package manager, or warn with a manual hint. (apt name doubles
+# as the dnf/pacman name; override by hand if a distro diverges.)
 pkg_install() {
   local brew_name="$1" apt_name="$2" bin="$3"
   if have "$bin"; then ok "$bin (already installed)"; return; fi
@@ -41,8 +53,9 @@ pkg_install() {
       ;;
     Linux)
       if have apt-get; then
+        sudo apt-get update -qq >/dev/null 2>&1 || true
         if sudo apt-get install -y "$apt_name" >/dev/null 2>&1; then ok "$bin (apt)"
-        else warn "apt has no '$apt_name' — install $bin manually (see its release page)"; fi
+        else warn "apt could not install '$apt_name' — install $bin manually"; fi
       elif have dnf; then
         if sudo dnf install -y "$apt_name" >/dev/null 2>&1; then ok "$bin (dnf)"
         else warn "install $bin manually"; fi
@@ -57,9 +70,25 @@ pkg_install() {
   esac
 }
 
-# cargo_get <crate> [binary] — install a Rust hook tool. Prefer cargo-binstall
-# (prebuilt release binaries — seconds, not the multi-minute from-source
-# `cargo install` compile); fall back to `cargo install --locked`.
+# cargo-binstall pulls prebuilt release binaries (seconds, low disk) instead
+# of the multi-minute from-source `cargo install` compile. Bootstrap it once
+# via its official prebuilt installer, falling back to `cargo install`.
+ensure_cargo_binstall() {
+  if have cargo-binstall; then ok "cargo-binstall (already installed)"; return; fi
+  note "installing cargo-binstall (prebuilt-binary fetcher)…"
+  if curl -fsSL --proto '=https' --tlsv1.2 \
+       https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh \
+       | bash >/dev/null 2>&1 && have cargo-binstall; then
+    ok "cargo-binstall (prebuilt)"
+  elif cargo install --locked cargo-binstall >/dev/null 2>&1; then
+    ok "cargo-binstall (cargo install)"
+  else
+    warn "cargo-binstall unavailable — remaining cargo tools will compile from source (slow)"
+  fi
+}
+
+# cargo_get <crate> [binary] — install a Rust hook tool (prebuilt via binstall,
+# else from source).
 cargo_get() {
   local crate="$1" bin="${2:-$1}"
   if have "$bin"; then ok "$bin (already installed)"; return; fi
@@ -70,6 +99,34 @@ cargo_get() {
     ok "$bin (cargo install)"
   else
     warn "could not install $crate — run: cargo install --locked $crate"
+  fi
+}
+
+# lychee is a heavy crate that cargo-binstall can't fetch prebuilt (it falls
+# back to a slow from-source compile), so — exactly like CI — pull the official
+# prebuilt release tarball instead. macOS prefers brew.
+install_lychee() {
+  if have lychee; then ok "lychee (already installed)"; return; fi
+  if [ "$OS" = "Darwin" ] && have brew && brew install lychee >/dev/null 2>&1; then
+    ok "lychee (brew)"; return
+  fi
+  local arch triple
+  arch="$(uname -m)"
+  case "$OS-$arch" in
+    Linux-x86_64)               triple=x86_64-unknown-linux-gnu ;;
+    Linux-aarch64|Linux-arm64)  triple=aarch64-unknown-linux-gnu ;;
+    Darwin-x86_64)              triple=x86_64-apple-darwin ;;
+    Darwin-arm64|Darwin-aarch64) triple=aarch64-apple-darwin ;;
+    *) warn "no prebuilt lychee for $OS-$arch — install manually (https://github.com/lycheeverse/lychee/releases)"; return ;;
+  esac
+  local url="https://github.com/lycheeverse/lychee/releases/latest/download/lychee-${triple}.tar.gz"
+  mkdir -p "$HOME/.local/bin"
+  # The tarball nests the binary under <triple>/lychee; strip that one dir.
+  if curl -fsSL "$url" | tar -xz -C "$HOME/.local/bin" --strip-components=1 "${triple}/lychee" >/dev/null 2>&1 \
+     && [ -x "$HOME/.local/bin/lychee" ]; then
+    ok "lychee (prebuilt $triple)"
+  else
+    warn "could not download prebuilt lychee — install manually (https://github.com/lycheeverse/lychee/releases)"
   fi
 }
 
@@ -86,20 +143,14 @@ install_sqlx_cli() {
   fi
 }
 
-echo "Setting up the prek hook toolchain…"
+echo "Setting up the prek hook toolchain (OS: $OS)…"
 
+# --- Rust hook tools -------------------------------------------------------
 if ! have cargo; then
   warn "Rust/cargo not found — install via https://rustup.rs, then re-run."
   warn "Skipping the cargo-based tools (prek, cargo-deny, sqlx-cli, …)."
 else
-  # cargo-binstall makes the rest near-instant; bootstrap it once if missing.
-  if ! have cargo-binstall; then
-    note "installing cargo-binstall (prebuilt-binary fetcher) for fast tool installs…"
-    if cargo install --locked cargo-binstall >/dev/null 2>&1; then ok "cargo-binstall"
-    else warn "cargo-binstall unavailable — using cargo install (slower)"; fi
-  fi
-
-  # The Rust-based hook tools (matches the taiki-e/install-action set in CI).
+  ensure_cargo_binstall
   cargo_get prek
   cargo_get cargo-deny
   cargo_get cargo-machete
@@ -110,23 +161,45 @@ else
   cargo_get taplo-cli taplo
   cargo_get cargo-nextest cargo-nextest
   cargo_get just
-  cargo_get lychee
+  install_lychee
   install_sqlx_cli
 fi
 
-# Non-cargo host tools used by `system`-language hooks.
+# --- System hook tools -----------------------------------------------------
+# The ShellCheck hook calls the system `shellcheck` binary directly.
 pkg_install shellcheck shellcheck shellcheck
-pkg_install gitleaks gitleaks gitleaks
-pkg_install actionlint actionlint actionlint
+
+# go: prek BUILDS the `gitleaks` and `actionlint` hooks from their pinned
+# upstream repos via its Go backend, so the box needs a Go toolchain (the
+# hooks do NOT use a system gitleaks/actionlint binary — which is also why
+# `actionlint` isn't in apt). On macOS the brew package is `go`; on Debian/
+# Ubuntu it is `golang-go`.
+if have go; then ok "go (already installed)"; else pkg_install go golang-go go; fi
+
+# python3: prek runs the `conventional-pre-commit` (commit-msg) hook via its
+# Python backend. Present by default on Ubuntu and macOS; install if missing.
+if have python3; then ok "python3 (already installed)"; else pkg_install python3 python3 python3; fi
 
 # Frontend hook tools (oxlint, oxfmt, knip, markdownlint-cli2) ship as npm
 # devDependencies — `scripts/setup.sh` already ran `npm ci`, so they are on
 # PATH via node_modules/.bin and need nothing here.
 
-# Finally, wire the git hooks so commit/push run the suite.
+# --- Wire + pre-provision the git hooks ------------------------------------
 if have prek; then
-  if prek install >/dev/null 2>&1; then ok "git hooks installed (prek install)"
+  if prek install >/dev/null 2>&1; then ok "git hooks wired (prek install)"
   else warn "prek install failed — run it manually"; fi
+
+  # Pre-build every hook environment now (so the first commit isn't slow).
+  # The gitleaks / actionlint / conventional-pre-commit hooks are cloned+built
+  # from github.com; a network-scoped VM (e.g. one whose git access is limited
+  # to this repo) can't reach them and will provision them lazily on first use
+  # when the network allows — non-fatal here.
+  note "pre-provisioning hook environments (best-effort)…"
+  if prek install-hooks >/dev/null 2>&1; then
+    ok "all hook environments provisioned"
+  else
+    warn "some remote hook environments (gitleaks/actionlint/conventional-pre-commit) were not provisioned — they clone+build from github.com and need network access; local hooks are ready"
+  fi
 else
   warn "prek not on PATH — install it, then run: prek install"
 fi
