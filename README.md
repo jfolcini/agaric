@@ -145,11 +145,13 @@ See **[docs/BUILD.md](docs/BUILD.md)** for the complete build guide — prerequi
 ### Quick Start
 
 ```bash
-npm run setup                # Bootstrap: deps + .env + dev DB + prek hook toolchain
+bash scripts/setup.sh        # One command: provisions Node + deps + .env + dev DB + prek hook toolchain
 cargo tauri dev              # Launch app with hot reload
 ```
 
-`npm run setup` (wraps `scripts/setup.sh`) installs frontend deps, copies `src-tauri/.env.example` to the gitignored `.env` beside it (sqlx reads `DATABASE_URL` from it at compile time), seeds the sidecar placeholder, provisions the local dev DB, and installs the **prek hook toolchain** (`prek` plus every host binary the commit/push hooks call — cargo-deny, sqruff, typos, zizmor, taplo, lychee, shellcheck, … — then `prek install`). The toolchain step is best-effort and idempotent; re-run `scripts/setup-hooks.sh` to fill any gaps it reports. Without the `.env` copy, a fresh clone fails to compile. See [docs/BUILD.md](docs/BUILD.md#after-clone-setup) for the manual steps.
+**One command sets up the whole dev environment.** `bash scripts/setup.sh` (equivalently `npm run setup`, or `just setup` if you have [`just`](#just-task-runner-optional)) is idempotent and handles everything: it provisions the Node version pinned in [`.nvmrc`](.nvmrc) via `nvm` if your `node` is older than the `>=24` floor, runs `npm ci`, copies `src-tauri/.env.example` to the gitignored `.env` beside it (sqlx reads `DATABASE_URL` from it at compile time — without this a fresh clone fails to compile), seeds the sidecar placeholder, provisions the local dev DB, and installs the **prek hook toolchain** (`prek` plus every host binary the commit/push hooks call — cargo-deny, sqruff, typos, zizmor, taplo, lychee, shellcheck, … — then `prek install`). The toolchain step is best-effort; re-run `scripts/setup-hooks.sh` to fill any gaps it reports. See [docs/BUILD.md](docs/BUILD.md#after-clone-setup) for details and the manual fallback.
+
+On **Claude Code on the web / cloud VMs** this runs automatically on session start (via the committed `SessionStart` hook), so a fresh cloud session is ready with no manual step — see [docs/BUILD.md → Claude Code on the web](docs/BUILD.md#claude-code-on-the-web).
 
 #### `just` task runner (optional)
 

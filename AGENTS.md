@@ -51,7 +51,7 @@ See **[docs/BUILD.md](docs/BUILD.md)** for the full build guide (prerequisites, 
 
 ```bash
 # Quick reference
-npm run setup                # One-shot bootstrap: deps + .env + dev DB + prek hook toolchain
+bash scripts/setup.sh        # ONE-command dev-env setup (Node + deps + .env + dev DB + prek hook toolchain); = npm run setup = just setup
 cargo tauri dev              # Dev mode with hot reload
 cargo tauri build            # Production build (per-platform)
 npm run test                 # Vitest (frontend test suite)
@@ -62,7 +62,9 @@ cargo tauri android build --target aarch64            # Android release APK (~24
 prek run --all-files         # Pre-commit hooks
 ```
 
-**`just` task runner (optional).** A [`justfile`](justfile) is a thin, discoverable façade over the canonical commands above — every recipe shells out to the real `npm`/`cargo`/`prek`/`scripts/*` entry point, so it cannot drift. `cargo install --locked just` (or let `npm run setup` install it), then `just --list`. Common: `just setup` (full bootstrap), `just install-hooks` ((re)install the prek toolchain + git hooks), `just dev`, `just test`, `just check` (= `prek run --all-files`), `just verify` (pre-push CI mirror). Optional — nothing in build/CI/hooks depends on it. **Bootstrap installs the prek toolchain:** every hook in `prek.toml` is `language = "system"`, so `scripts/setup-hooks.sh` (run by `npm run setup` / `just setup`) installs each host binary the hooks shell out to — mirroring CI's install set — and runs `prek install`. Best-effort and idempotent.
+**Dev-env setup is one command.** `bash scripts/setup.sh` (identical: `npm run setup`; or `just setup`) is the single canonical bootstrap and handles everything, idempotently: it provisions the `.nvmrc`-pinned Node version via `nvm` when the active `node` is older than the `>=24` floor (Claude's cloud VMs ship Node 20–22, so this matters there), runs `npm ci`, seeds `.env` (from `src-tauri/.env.example`) and the sidecar placeholder, provisions the dev DB, and installs the prek hook toolchain. **It auto-runs on Claude Code on the web** via the committed `SessionStart` hook ([`.claude/hooks/session-start.sh`](.claude/hooks/session-start.sh), gated on `CLAUDE_CODE_REMOTE=true`), so a fresh cloud session is ready with no manual step. See [docs/BUILD.md → Claude Code on the web](docs/BUILD.md#claude-code-on-the-web) (incl. why prek's three git-cloned hooks stay unwired in repo-scoped sandboxes). **Prek toolchain:** every hook in `prek.toml` is `language = "system"`, so `scripts/setup-hooks.sh` installs each host binary the hooks shell out to — mirroring CI's install set — and runs `prek install`; best-effort and idempotent (re-run to fill gaps).
+
+**`just` task runner (optional).** A [`justfile`](justfile) is a thin, discoverable façade over the canonical commands above — every recipe shells out to the real `npm`/`cargo`/`prek`/`scripts/*` entry point, so it cannot drift. `cargo install --locked just` (or let `scripts/setup.sh` install it), then `just --list`. Common: `just setup` (full bootstrap), `just install-hooks` ((re)install the prek toolchain + git hooks), `just dev`, `just test`, `just check` (= `prek run --all-files`), `just verify` (pre-push CI mirror). Optional — nothing in build/CI/hooks depends on it.
 
 **Daily dev loop:** prefer `npm run dev` (browser, ~50 ms HMR) for pure UI work; reach for `cargo tauri dev` (~10-20 s per Rust edit) only when touching backend behaviour. Backend-only iteration: `bacon` in a sidecar terminal. Linux: activate the staged mold linker (`sudo apt install mold && cp .cargo/config.toml{.example,}`) to drop incremental link time ~3-4×. Full guidance in [docs/BUILD.md § Development](docs/BUILD.md#development).
 

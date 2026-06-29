@@ -6,23 +6,35 @@ Everything you need to build, test, and release Agaric. Self-contained.
 ## TL;DR
 
 ```bash
-npm run setup                            # deps + .env + dev DB + prek hook toolchain (wraps scripts/setup.sh)
+bash scripts/setup.sh                    # ONE command: Node + deps + .env + dev DB + prek hook toolchain
 cargo tauri dev                          # run the app
 prek run --all-files                     # run every CI gate locally (or: just check)
 ```
 
-`npm run setup` (which runs `scripts/setup.sh`) is the canonical first-time setup: it runs `npm ci`, copies `src-tauri/.env.example` to the gitignored `.env` beside it (sqlx reads `DATABASE_URL` at compile time), seeds the sidecar placeholder, provisions the local dev DB via `scripts/setup-dev-db.sh`, and installs the prek hook toolchain via `scripts/setup-hooks.sh` (see [Hook toolchain](#hook-toolchain) below). The sidecar placeholder is also re-run automatically by `beforeDevCommand`, so `cargo tauri dev` needs no manual prep step.
+**`scripts/setup.sh` is the single canonical dev-environment setup — run it and it handles everything.** `npm run setup` and `just setup` are exact aliases for it (use whichever you have; `just` is optional). It is idempotent, so re-run it any time. It provisions the Node version pinned in [`.nvmrc`](../.nvmrc) via `nvm` when your active `node` is older than the `engines` floor (`>=24`), runs `npm ci`, copies `src-tauri/.env.example` to the gitignored `.env` beside it (sqlx reads `DATABASE_URL` at compile time), seeds the sidecar placeholder, provisions the local dev DB via `scripts/setup-dev-db.sh`, and installs the prek hook toolchain via `scripts/setup-hooks.sh` (see [Hook toolchain](#hook-toolchain) below). The sidecar placeholder is also re-run automatically by `beforeDevCommand`, so `cargo tauri dev` needs no manual prep step. On Claude's cloud VMs it runs automatically — see [Claude Code on the web](#claude-code-on-the-web).
 
 Tests: `npx vitest run` (frontend), `cd src-tauri && cargo nextest run` (backend), `npx playwright test` (e2e), `cargo bench --bench interactive_slo` (perf SLO).
 
 ## After-clone setup
 
-Run `npm run setup` (wraps `scripts/setup.sh`) and you are ready for `cargo tauri dev`. The two steps that actually gate a fresh clone are:
+Run `bash scripts/setup.sh` (or its aliases `npm run setup` / `just setup`) and you are ready for `cargo tauri dev`. The steps that actually gate a fresh clone are:
 
+0. **Node** — the `engines` floor is `>=24` (pinned in `.nvmrc`); a mismatched `node` makes `npm ci` abort with `EBADENGINE`. The script provisions the pinned version via `nvm` (Node from `nodejs.org`, both it and `raw.githubusercontent.com` for `nvm.sh` reachable over plain HTTPS — never `git clone`, so it works inside repo-scoped sandboxes too) when your active `node` is older, and leaves it as the `nvm` default. Already on Node ≥24? It's a no-op.
 1. `npm ci` — frontend deps.
 2. `cp src-tauri/.env.example src-tauri/.env` — sqlx reads `DATABASE_URL` from here at compile time (offline mode uses `.sqlx/` cache, but the env file must exist). Skipping this is the classic fresh-clone compile failure.
 
-`scripts/setup.sh` does both of the above, then provisions the dev DB (`scripts/setup-dev-db.sh`) so pre-push Rust checks pass, and installs the hook toolchain (`scripts/setup-hooks.sh`, below). It also seeds the `agaric-mcp` sidecar placeholder — but you do not need to run `node scripts/prepare-external-bins.mjs --placeholder-only` by hand, because `beforeDevCommand` in `src-tauri/tauri.conf.json` re-runs it on every `cargo tauri dev`. The real sidecar is produced later by `cargo build --bin agaric-mcp`; the placeholder just unblocks the chicken-and-egg first compile.
+`scripts/setup.sh` does all of the above, then provisions the dev DB (`scripts/setup-dev-db.sh`) so pre-push Rust checks pass, and installs the hook toolchain (`scripts/setup-hooks.sh`, below). Playwright's chromium is fetched best-effort (e2e isn't needed to build or commit, and the step is skipped when `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`, as on the cloud VMs). It also seeds the `agaric-mcp` sidecar placeholder — but you do not need to run `node scripts/prepare-external-bins.mjs --placeholder-only` by hand, because `beforeDevCommand` in `src-tauri/tauri.conf.json` re-runs it on every `cargo tauri dev`. The real sidecar is produced later by `cargo build --bin agaric-mcp`; the placeholder just unblocks the chicken-and-egg first compile.
+
+### Claude Code on the web
+
+On [Claude Code on the web](https://code.claude.com/docs/en/claude-code-on-the-web) the dev environment bootstraps **automatically**: the repo ships a `SessionStart` hook ([`.claude/hooks/session-start.sh`](../.claude/hooks/session-start.sh)) that runs `scripts/setup.sh` whenever `CLAUDE_CODE_REMOTE=true`, so a fresh cloud session lands build-, test-, and commit-ready with no manual step. Nothing to configure — it's part of the clone.
+
+A few specifics for that environment:
+
+- **Node.** The cloud VMs ship Node 20/21/22 (via `nvm`) by default, all older than the `>=24` floor — `scripts/setup.sh` provisions Node 24 via `nvm` on startup, so you don't have to.
+- **Faster startup (optional).** `SessionStart` hooks run on every session and aren't filesystem-cached. For the quickest starts you can *also* paste `bash scripts/setup.sh` into your environment's **Setup script** field in the web UI: setup scripts run once and Anthropic snapshots the result, so the heavy cargo-tool installs land in the cache instead of re-running each session. The committed hook still guarantees bootstrap even if you skip this.
+- **Network.** `npm ci`, `nvm install` (`nodejs.org`), and `nvm.sh` (`raw.githubusercontent.com`) all use hosts on the default **Trusted** allowlist, so bootstrap works at every network-access level. Only `git clone` of third-party repos is blocked — the GitHub git proxy scopes the credential to this repo, independent of the network level.
+- **prek's git-cloned hooks.** Because of that git scoping, prek's three hooks built from upstream repos — `gitleaks`, `actionlint`, and `conventional-pre-commit` — can't be provisioned in a sandboxed session, so `scripts/setup-hooks.sh` leaves the git hooks **unwired** there (commits keep working; those three still run in CI). Every `language = "system"` hook works once its host binary is installed. Locally, with normal git access, all hooks wire up.
 
 ### Hook toolchain
 
