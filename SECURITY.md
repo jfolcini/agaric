@@ -87,7 +87,7 @@ Researchers who report a valid in-scope vulnerability are credited here unless t
 
 | Reporter | Advisory | First fixed in |
 | --- | --- | --- |
-| _(none yet — this section will populate as advisories are resolved)_ | — | — |
+| *(none yet — this section will populate as advisories are resolved)* | — | — |
 
 > If you would prefer to remain anonymous, say so in your initial report and the row above will record only "anonymous" + the advisory ID. The disclosure timeline (acknowledgement within 7 days, triage within 14 days, fix-or-plan within 30 days where feasible) is the same either way.
 
@@ -107,7 +107,7 @@ A report that points at an issue already covered by one of the above is still us
 
 For transparency, two Scorecard checks read **0** on this repository today, and both are deliberate consequences of the single-maintainer workflow rather than gaps a contributor should report:
 
-- **`Code-Review` = 0** ([#144](https://github.com/jfolcini/agaric/issues/144)) — the solo maintainer pushes directly to `main` under an admin bypass on the branch ruleset, so Scorecard's rolling window of recent commits sees "0 reviewed" and floors the check. There is no per-check waiver knob for Scorecard, and "fixing" it would mean abolishing the solo-development workflow. It auto-recovers once a second contributor's reviewed PRs start landing. Full rationale: [`docs/architecture/ci-and-tooling.md`](docs/architecture/ci-and-tooling.md) § _Asymmetric branch-protection convention_.
+- **`Code-Review` = 0** ([#144](https://github.com/jfolcini/agaric/issues/144)) — the solo maintainer pushes directly to `main` under an admin bypass on the branch ruleset, so Scorecard's rolling window of recent commits sees "0 reviewed" and floors the check. There is no per-check waiver knob for Scorecard, and "fixing" it would mean abolishing the solo-development workflow. It auto-recovers once a second contributor's reviewed PRs start landing. Full rationale: [`docs/architecture/ci-and-tooling.md`](docs/architecture/ci-and-tooling.md) § *Asymmetric branch-protection convention*.
 - **`Vulnerabilities` = 0** ([#145](https://github.com/jfolcini/agaric/issues/145)) — transitive GTK3 RustSec advisories reaching us via `wry → tauri` on Linux, all waived with rationale in [`src-tauri/deny.toml`](src-tauri/deny.toml) `[advisories].ignore` and recovering when upstream completes its GTK4 migration.
 
 Neither is an in-scope finding; both have open tracking issues with explicit revisit triggers.
@@ -174,7 +174,7 @@ The following are explicitly outside this threat model. Reports that fit these c
 - Adversarial-peer hardening. See AGENTS.md § Threat Model and the In-scope / Out-of-scope sections above.
 - DoS / rate-limiting on local-only listeners (sync daemon, MCP socket).
 
-**If a future change shifts any of these into scope** — for example a server-mode build, a multi-user feature, or a public deployment — this document must be revisited _before_ the change lands. The trust anchors, untrusted-input list, and mitigation set above all assume the local-first, single-user framing.
+**If a future change shifts any of these into scope** — for example a server-mode build, a multi-user feature, or a public deployment — this document must be revisited *before* the change lands. The trust anchors, untrusted-input list, and mitigation set above all assume the local-first, single-user framing.
 
 ## Updater signing-key rotation
 
@@ -188,7 +188,7 @@ The `TAURI_SIGNING_PRIVATE_KEY` repo secret is the **root of trust for every aut
 2. Update the GitHub Actions repo secrets `TAURI_SIGNING_PRIVATE_KEY` (the new private key file's contents) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (its password) under repo Settings → Secrets and variables → Actions.
 3. Update the embedded **public** key in [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json) `plugins.updater.pubkey` (the `cargo tauri signer generate` output prints both halves; the public half is what goes here). Commit on `main`.
 4. Cut a release with `scripts/bump-version.sh` — the matrix runs against the new secrets, the new bundle is signed by the new key, and the new binary embeds the new public key.
-5. **Document the user-facing consequence in the release notes.** Existing installs hold the _old_ public key, so when their auto-updater fetches the new bundle the signature check fails (different key, signature can't be verified) and the update is refused. Users on the old binary will need to **manually download and re-install** the new release from GitHub Releases. This is the cost of rotation; advertise it loudly in the release notes and the GitHub Security Advisory (below) so users don't read the refusal as a bug.
+5. **Document the user-facing consequence in the release notes.** Existing installs hold the *old* public key, so when their auto-updater fetches the new bundle the signature check fails (different key, signature can't be verified) and the update is refused. Users on the old binary will need to **manually download and re-install** the new release from GitHub Releases. This is the cost of rotation; advertise it loudly in the release notes and the GitHub Security Advisory (below) so users don't read the refusal as a bug.
 
 **Revocation.** Tauri's updater ships no online revocation channel — there is no CRL, no OCSP, no Rekor lookup. The implicit revocation is bidirectional and mechanical: the new binary will not trust anything signed by the old key (its embedded pubkey is the new one), and the old binary will not trust anything signed by the new key. Both directions are blocked by construction. That is the only revocation path available today.
 
