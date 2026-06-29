@@ -21,6 +21,7 @@
 import { context, type Span, SpanStatusCode, trace } from '@opentelemetry/api'
 
 import { resolveEnabled, setSamplingRatio } from './config'
+import type { InteractionName } from './interactions'
 
 export { getSamplingRatio, setSamplingRatio } from './config'
 export { INTERACTIONS, type InteractionName } from './interactions'
@@ -106,7 +107,7 @@ function endError(span: Span, error: unknown): never {
  * raw `await` boundaries (a deliberate WebKit-portability trade-off).
  */
 export function traceInteraction<T>(
-  name: string,
+  name: InteractionName,
   fn: (span: Span) => T,
   attributes?: Record<string, string | number | boolean>,
 ): T {

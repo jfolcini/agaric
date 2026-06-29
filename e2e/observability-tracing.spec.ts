@@ -87,8 +87,9 @@ test.describe('frontend OTel tracing (#2110)', () => {
     await expect
       .poll(async () => (await getInvokeCalls(page, 'search_blocks')).length)
       .toBeGreaterThan(0)
-    // Give any (non-existent) flush timer time to fire, then assert silence.
-    await page.waitForTimeout(2500)
+    // When disabled the tracer never registers an exporter, so nothing can ever
+    // call `ingest_otel_spans` — there is no flush timer to wait on. The check is
+    // race-free immediately after the search IPC is observed (no `waitForTimeout`).
     expect(await getInvokeCalls(page, 'ingest_otel_spans')).toHaveLength(0)
   })
 })

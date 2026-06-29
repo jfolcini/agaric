@@ -21,6 +21,7 @@ import {
   setTraceSampling,
   traceInteraction,
 } from '../index'
+import { INTERACTIONS } from '../interactions'
 import { setSpanSink } from '../transport'
 
 interface InvokeCall {
@@ -147,7 +148,7 @@ describe('disabled (default) is a zero-cost no-op', () => {
     await initFrontendObservability({ enabled: false })
     const batches = captureSpans()
 
-    const result = await traceInteraction('test.noop', async () => {
+    const result = await traceInteraction(INTERACTIONS.SEARCH, async () => {
       await patchedInvoke('get_status', {})
       return 'value'
     })
@@ -169,7 +170,7 @@ describe('enabled: end-to-end propagation + export', () => {
     const batches = captureSpans()
 
     await traceInteraction(
-      'page.open',
+      INTERACTIONS.PAGE_OPEN,
       async () => {
         await patchedInvoke('get_status', {})
       },
@@ -191,7 +192,7 @@ describe('enabled: end-to-end propagation + export', () => {
     // All spans share the interaction's trace id (the cross-boundary join key).
     expect(spans.every((s) => s.trace_id === tpTrace)).toBe(true)
 
-    const root = spans.find((s) => s.name === 'page.open')
+    const root = spans.find((s) => s.name === INTERACTIONS.PAGE_OPEN)
     const child = spans.find((s) => s.name === 'ipc get_status')
     expect(root).toBeDefined()
     expect(child).toBeDefined()
@@ -208,7 +209,7 @@ describe('enabled: end-to-end propagation + export', () => {
     const calls = installFakeInternals()
     await initFrontendObservability({ enabled: true })
     captureSpans()
-    await traceInteraction('x', async () => {
+    await traceInteraction(INTERACTIONS.PALETTE_QUERY, async () => {
       await patchedInvoke('ingest_otel_spans', { spans: [] })
     })
     // The ingest call must not have carried a traceparent (it is UNTRACED).
