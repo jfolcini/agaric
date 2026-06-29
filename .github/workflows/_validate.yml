@@ -385,6 +385,19 @@ jobs:
         # check and does not cover advisories.
         run: prek run --all-files --hook-stage pre-push npm-audit
 
+      - name: Run knip (dead-code / unused-dependency analysis)
+        # knip is staged `pre-push` in prek.toml (it is a whole-repo analysis
+        # that goes red on stale branches for diffs unrelated to the commit, so
+        # it doesn't belong on the commit path). Unlike npm-audit / lychee, the
+        # `prek run --all-files --hook-stage pre-push knip` selector SKIPS with
+        # "no files to check" (knip declares `pass_filenames = false` with a
+        # `types` filter, which prek resolves to an empty set under --all-files),
+        # so routing through prek here would be a silent false-green. Invoke the
+        # underlying command (the hook's own `entry`) directly instead — the
+        # `npm ci` above provides node_modules. This closes the gap where knip
+        # ran only on local pre-push and drifted red on main unnoticed.
+        run: npx knip
+
       - name: Migrations append-only backstop (#806)
         # `prek run --all-files` cannot enforce the append-only
         # invariant — the migrations-immutable hook's staged-index scan
