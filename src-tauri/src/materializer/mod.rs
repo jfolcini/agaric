@@ -23,6 +23,10 @@ use dedup::dedup_tasks;
 // can route a create through the engine IN-TRANSACTION without advancing the
 // apply cursor.
 pub(crate) use handlers::apply_create_block_via_loro;
+// #2128 test-only: surface the LOCAL SQL purge cascade so the inbound-purge
+// parity test (`sync_protocol::tests`) can build a local-purge oracle DB.
+#[cfg(test)]
+pub(crate) use handlers::purge_block_sql_cascade;
 // #1257 re-export the simple-op engine helpers so the LOCAL command paths
 // (edit_block / set_property / delete_property / add_tag / remove_tag) can route
 // through the engine IN-TRANSACTION without advancing the apply cursor.

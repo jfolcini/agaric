@@ -102,6 +102,11 @@ pub(crate) use apply::{
     collect_delete_cohort, collect_restore_cohort, dispatch_delete_descendants,
     dispatch_restore_ancestors, dispatch_restore_descendants,
 };
+// #2128 test-only: surface the LOCAL SQL purge cascade so the inbound-purge
+// parity test can build a local-purge oracle DB (re-exported up through
+// `materializer/mod.rs`).
+#[cfg(test)]
+pub(crate) use loro_apply::purge_block_sql_cascade;
 pub(crate) use pages_cache::recompute_pages_cache_counts_for_pages;
 pub(crate) use task_handlers::{handle_background_task, handle_foreground_task};
 

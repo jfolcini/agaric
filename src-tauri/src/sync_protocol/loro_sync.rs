@@ -606,14 +606,21 @@ pub(crate) async fn import_and_project(
     inbox_id: i64,
 ) -> Result<Vec<crate::ulid::BlockId>, AppError> {
     use crate::loro::projection::{
-        project_block_full_to_sql, reproject_block_deleted_at_from_engine,
-        reproject_block_properties_from_engine, reproject_block_tags_from_engine,
+        project_block_full_to_sql, project_purge_blocks_to_sql,
+        reproject_block_deleted_at_from_engine, reproject_block_properties_from_engine,
+        reproject_block_tags_from_engine,
     };
 
-    // Phase 1 — import bytes into the engine, capture changed blocks.
-    let changed_blocks: Vec<crate::ulid::BlockId> = {
+    // Phase 1 — import bytes into the engine, capture changed AND purged
+    // blocks. #2128: a remote `PurgeBlock` removes the seed + its whole
+    // subtree from the engine index and so never appears in `changed_blocks`
+    // (which enumerates only the live tree). The purged delta drives Pass D
+    // below; without it the purged rows + descendants linger in SQL forever.
+    let (changed_blocks, purged_blocks): (Vec<crate::ulid::BlockId>, Vec<crate::ulid::BlockId>) = {
         let mut guard = registry.for_space(space_id, device_id)?;
-        guard.engine_mut().import_with_changed_blocks(bytes)?
+        guard
+            .engine_mut()
+            .import_with_changed_and_purged_blocks(bytes)?
     };
 
     // Phase 2 — project each changed block to SQL in a single tx.
@@ -692,6 +699,24 @@ pub(crate) async fn import_and_project(
     for (block_id, (_, _, _, engine_deleted_at)) in changed_blocks.iter().zip(&block_states) {
         reproject_block_deleted_at_from_engine(&mut tx, block_id, engine_deleted_at.as_deref())
             .await?;
+    }
+
+    // Pass D — hard-purge (#2128). Mirrors a remote `PurgeBlock` by deleting
+    // the purged seed + every descendant from ALL derived tables (the same
+    // table set as the local SQL cascade). Runs LAST and in the SAME tx so it
+    // removes any rows the earlier passes may have upserted for a block that is
+    // net-purged in this import: Pass A's `project_block_full_to_sql(None)`
+    // already skips a purged id (the engine returns no live snapshot for it),
+    // but a block that was changed earlier in the same import and then purged
+    // could still have a stale row — Pass D guarantees it is gone. The engine
+    // handed us the COMPLETE purged set, so no descendant CTE is needed.
+    // Atomic with the rest of the projection: a rollback leaves SQL untouched.
+    if !purged_blocks.is_empty() {
+        let purged_refs: Vec<&str> = purged_blocks
+            .iter()
+            .map(crate::ulid::BlockId::as_str)
+            .collect();
+        project_purge_blocks_to_sql(&mut tx, &purged_refs).await?;
     }
 
     // #535: clear the write-ahead inbox slot in the SAME tx as the SQL

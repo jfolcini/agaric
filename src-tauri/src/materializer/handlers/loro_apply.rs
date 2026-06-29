@@ -530,7 +530,10 @@ pub(crate) async fn apply_purge_block_via_loro(
 /// rather than being absorbed into a projection. Every row that
 /// descends from the purged block must go. `depth < 100` is the
 /// runaway-recursion guard.
-pub(super) async fn purge_block_sql_cascade(
+// `pub(crate)` (was `pub(super)`): the #2128 inbound-purge parity test in
+// `sync_protocol::tests` drives this LOCAL cascade against an oracle DB to
+// assert remote-purge SQL == local-purge SQL across every derived table.
+pub(crate) async fn purge_block_sql_cascade(
     conn: &mut sqlx::SqliteConnection,
     p: &PurgeBlockPayload,
 ) -> Result<(), AppError> {

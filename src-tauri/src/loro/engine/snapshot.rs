@@ -187,6 +187,43 @@ impl LoroEngine {
         &mut self,
         bytes: &[u8],
     ) -> Result<Vec<crate::ulid::BlockId>, AppError> {
+        // Thin wrapper over the changed+purged variant — discard the purged
+        // delta so existing callers keep their `Vec<BlockId>` contract. The
+        // shared body lives in `import_with_changed_and_purged_blocks` so the
+        // import/rebuild/DFS logic is not duplicated.
+        self.import_with_changed_and_purged_blocks(bytes)
+            .map(|(changed, _purged)| changed)
+    }
+
+    /// Like [`Self::import_with_changed_blocks`] but ALSO returns the set of
+    /// block_ids hard-purged (`PurgeBlock`) by THIS import.
+    ///
+    /// ## Why a separate purged delta (#2128)
+    ///
+    /// `import_with_changed_blocks` enumerates only the LIVE tree, so a remote
+    /// `PurgeBlock` — which `tree.delete`s the seed and prunes the whole
+    /// subtree (seed + descendants) from `self.index` — is INVISIBLE to the
+    /// returned changed-blocks vector. The inbound projection loop therefore
+    /// never hard-deletes the purged rows from SQL, leaving the block row and
+    /// every descendant + derived-cache row behind → silent divergence.
+    ///
+    /// The purged set is computed as a pure index delta:
+    /// `(block ids in `self.index` BEFORE `doc.import`) − (block ids AFTER the
+    /// rebuild)`. Because `apply_purge_block` removed the entire subtree from
+    /// the index and `rebuild_index()` only re-adds live tree nodes, this
+    /// difference is exactly the seed + all descendants purged by this import.
+    /// A block that merely moved/changed but stayed live is present in both
+    /// snapshots and so is NOT in the delta. The caller projects the changed
+    /// (live) set with the A/B/C passes and the purged set with a final
+    /// hard-delete pass.
+    pub fn import_with_changed_and_purged_blocks(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<(Vec<crate::ulid::BlockId>, Vec<crate::ulid::BlockId>), AppError> {
+        // Snapshot the live index keys BEFORE import — `self.index` is keyed
+        // by block_id string (`HashMap<String, TreeID>`, engine/mod.rs).
+        let before: std::collections::HashSet<String> = self.index.keys().cloned().collect();
+
         self.doc
             .import(bytes)
             .map(|_status| ())
@@ -228,7 +265,18 @@ impl LoroEngine {
                 stack.extend(children);
             }
         }
-        Ok(out)
+
+        // #2128: purged delta = ids present before the import but absent after
+        // the rebuilt live index. `rebuild_index()` re-adds only live tree
+        // nodes, so any id that was in the index before and is gone now was
+        // hard-purged (its whole subtree) by this import.
+        let after: std::collections::HashSet<String> = self.index.keys().cloned().collect();
+        let purged: Vec<crate::ulid::BlockId> = before
+            .difference(&after)
+            .map(|s| crate::ulid::BlockId::from_trusted(s))
+            .collect();
+
+        Ok((out, purged))
     }
     /// Reject a legacy v1 (flat-map) snapshot loudly (#332).
     ///
