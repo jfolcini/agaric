@@ -1114,6 +1114,25 @@ mod n_way {
     /// while still exercising hundreds of distinct K-peer interleavings.
     const N_WAY_TOPOLOGY_CASES: u32 = 96;
 
+    /// Per-case budget for the randomized isolation/reorder-window test.
+    /// Each case builds K peers and replays a multi-round, randomized,
+    /// staggered exchange schedule (every peer re-imports every other
+    /// peer's evolving snapshot across several rounds) PLUS a final
+    /// all-to-all fixpoint sweep — several full snapshot exports per case,
+    /// markedly heavier than the single-sweep all-to-all test. 64 cases
+    /// keeps each run comfortably under ~5 s wall-clock while still
+    /// exercising dozens of distinct isolation windows + apply orders.
+    const N_WAY_REORDER_CASES: u32 = 48;
+
+    /// Per-case budget for the mid-stream-snapshot test. Each case builds
+    /// K peers, plus one extra device whose op stream is replayed across a
+    /// snapshot export/import boundary on a FRESH engine, then runs the
+    /// all-to-all fixpoint convergence sweep. The fixpoint sweep dominates
+    /// runtime (multiple full snapshot exports per engine per case), so 64
+    /// cases keeps it under ~5 s while still exercising many split points
+    /// and surrounding peer interleavings.
+    const N_WAY_SNAPSHOT_CASES: u32 = 64;
+
     /// Drive `imports` (one snapshot per peer, including this peer's own
     /// already-folded-in state, which is a harmless no-op re-import)
     /// into `engine` in the supplied order. The order is varied per
@@ -1121,6 +1140,38 @@ mod n_way {
     fn import_all(engine: &mut LoroEngine, snapshots: &[Vec<u8>]) {
         for snap in snapshots {
             engine.import(snap).expect("import peer snapshot");
+        }
+    }
+
+    /// Run all-to-all snapshot exchange rounds until the op-log frontier
+    /// reaches a FIXPOINT (every engine's `oplog_vv` stops changing) or a
+    /// small round cap is hit.
+    ///
+    /// Why more than one round is needed: `export_snapshot` is not a pure
+    /// read — it `stamp`s the engine's `format_version` marker (#1584) the
+    /// first time it runs on a doc, minting one op under the exporting
+    /// peer. When several peers each stamp concurrently and then exchange,
+    /// the *state* converges immediately but a single export-then-import
+    /// sweep can leave the peers' op-log FRONTIERS one stamp apart (the
+    /// exporter's local frontier advances past the bytes it just
+    /// serialized). A second exchange round carries those trailing stamps
+    /// everywhere, so the frontiers converge too. Real sync runs to
+    /// quiescence; this models that. The cap (4) is generous — empirically
+    /// two rounds always suffice for the stamp case — and prevents a hang
+    /// if some future change failed to converge.
+    fn converge_all_to_all(engines: &mut [LoroEngine]) {
+        for _ in 0..4 {
+            let snapshots: Vec<Vec<u8>> = engines
+                .iter_mut()
+                .map(|e| e.export_snapshot().expect("export peer"))
+                .collect();
+            for engine in engines.iter_mut() {
+                import_all(engine, &snapshots);
+            }
+            // Stop as soon as every engine shares peer 0's frontier.
+            if assert_same_version_vector(engines).is_ok() {
+                return;
+            }
         }
     }
 
@@ -1146,11 +1197,38 @@ mod n_way {
         (engines, all_ids)
     }
 
+    /// Assert every engine in `engines` has decoded the SAME Loro
+    /// `VersionVector` as peer 0. A version vector is the per-peer
+    /// op-log frontier; equal VVs across all engines is the strongest
+    /// state-level convergence signal there is — two replicas with the
+    /// same VV have, by construction, seen exactly the same set of ops.
+    /// This catches divergence that read-back compares can miss (e.g. a
+    /// peer that is silently behind on ops whose effects don't happen to
+    /// change any read we sample). REUSES the decode+compare pattern from
+    /// `sync_daemon::tests` (the production convergence assertion).
+    fn assert_same_version_vector(engines: &[LoroEngine]) -> Result<(), String> {
+        let reference = loro::VersionVector::decode(&engines[0].version_vector())
+            .map_err(|e| format!("decode peer 0 vv: {e}"))?;
+        for (i, peer) in engines.iter().enumerate().skip(1) {
+            let peer_vv = loro::VersionVector::decode(&peer.version_vector())
+                .map_err(|e| format!("decode peer {i} vv: {e}"))?;
+            if peer_vv != reference {
+                return Err(format!(
+                    "version vector diverged: peer {i} vv != peer 0 vv \
+                     (peer0={reference:?}, peer{i}={peer_vv:?})"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Assert every engine in `engines` reads back identically for every
-    /// id in `ids` and every property key in `prop_key_strategy`'s set.
+    /// id in `ids` and every property key in `prop_key_strategy`'s set,
+    /// AND that every engine has converged to peer 0's version vector.
     /// REUSES `compare_block_reads` / `compare_property_reads` against
     /// `engines[0]` as the reference peer (transitive equality: if all
-    /// agree with peer 0, all agree with each other).
+    /// agree with peer 0, all agree with each other), plus
+    /// `assert_same_version_vector` for the op-log-frontier check.
     fn assert_converged(engines: &[LoroEngine], ids: &[String]) -> Result<(), String> {
         // The 4 keys the SetProperty generator can emit (see
         // `prop_key_strategy`). Reading a never-set key returns
@@ -1167,6 +1245,13 @@ mod n_way {
                 }
             }
         }
+
+        // Op-log-frontier convergence: stronger than the read-back
+        // compare above. Every all-to-all / ring / star / reorder /
+        // snapshot test that calls `assert_converged` now also proves the
+        // peers ended on identical version vectors, not just identical
+        // sampled reads.
+        assert_same_version_vector(engines)?;
         Ok(())
     }
 
@@ -1195,17 +1280,12 @@ mod n_way {
         ) {
             let (mut engines, all_ids) = build_peers(&streams);
 
-            // All-to-all: snapshot every peer ONCE (pre-merge state),
-            // then have every peer import every snapshot. Because each
-            // snapshot is the peer's INDEPENDENT pre-merge state, this
-            // is the full join of all op-logs on every engine.
-            let snapshots: Vec<Vec<u8>> = engines
-                .iter_mut()
-                .map(|e| e.export_snapshot().expect("export peer"))
-                .collect();
-            for engine in &mut engines {
-                import_all(engine, &snapshots);
-            }
+            // All-to-all: every peer imports every other peer's snapshot,
+            // run to a frontier fixpoint (see `converge_all_to_all` for
+            // why a single round can leave op-log frontiers one
+            // format-version stamp apart while state already agrees).
+            // The result is the full join of all op-logs on every engine.
+            converge_all_to_all(&mut engines);
 
             if let Err(msg) = assert_converged(&engines, &all_ids) {
                 prop_assert!(false, "N-way all-to-all divergence: {msg}");
@@ -1241,27 +1321,28 @@ mod n_way {
             let k = streams.len();
 
             // --- All-to-all (reference topology) ---
+            // Run to a frontier fixpoint (see `converge_all_to_all`).
             let (mut ata, all_ids) = build_peers(&streams);
-            let ata_snaps: Vec<Vec<u8>> = ata
-                .iter_mut()
-                .map(|e| e.export_snapshot().expect("export ata"))
-                .collect();
-            for engine in &mut ata {
-                import_all(engine, &ata_snaps);
-            }
+            converge_all_to_all(&mut ata);
             if let Err(msg) = assert_converged(&ata, &all_ids) {
                 prop_assert!(false, "N-way all-to-all self-divergence: {msg}");
             }
 
-            // --- Ring: peer i pulls peer (i-1), looped K-1 times so a
-            // delta originating anywhere reaches every peer. After full
-            // propagation the ring must converge to the same join. ---
+            // --- Ring: peer i pulls peer (i-1). One sweep around the ring
+            // is repeated until both data AND the op-log frontier settle
+            // (`k` sweeps propagate any delta all the way around; extra
+            // sweeps carry trailing format-version stamps so the frontier
+            // converges too — see `converge_all_to_all`). The bounded loop
+            // proves the ring reaches the SAME fixpoint as all-to-all. ---
             let (mut ring, _) = build_peers(&streams);
-            for _ in 0..k {
+            for _ in 0..(k + 4) {
                 for i in 0..k {
                     let prev = (i + k - 1) % k;
                     let snap = ring[prev].export_snapshot().expect("export ring prev");
                     ring[i].import(&snap).expect("ring import");
+                }
+                if assert_same_version_vector(&ring).is_ok() {
+                    break;
                 }
             }
             if let Err(msg) = assert_converged(&ring, &all_ids) {
@@ -1269,15 +1350,23 @@ mod n_way {
             }
 
             // --- Star: hub (peer 0) imports every leaf, then every leaf
-            // imports the now-complete hub. Two-phase gather/scatter. ---
+            // imports the now-complete hub. Two-phase gather/scatter,
+            // repeated until the frontier settles (a single gather/scatter
+            // converges state but can leave the hub one stamp ahead of the
+            // leaves — see `converge_all_to_all`). ---
             let (mut star, _) = build_peers(&streams);
-            let leaf_snaps: Vec<Vec<u8>> = (1..k)
-                .map(|i| star[i].export_snapshot().expect("export star leaf"))
-                .collect();
-            import_all(&mut star[0], &leaf_snaps);
-            let hub_snap = star[0].export_snapshot().expect("export star hub");
-            for leaf in star.iter_mut().skip(1) {
-                leaf.import(&hub_snap).expect("star leaf import hub");
+            for _ in 0..4 {
+                let leaf_snaps: Vec<Vec<u8>> = (1..k)
+                    .map(|i| star[i].export_snapshot().expect("export star leaf"))
+                    .collect();
+                import_all(&mut star[0], &leaf_snaps);
+                let hub_snap = star[0].export_snapshot().expect("export star hub");
+                for leaf in star.iter_mut().skip(1) {
+                    leaf.import(&hub_snap).expect("star leaf import hub");
+                }
+                if assert_same_version_vector(&star).is_ok() {
+                    break;
+                }
             }
             if let Err(msg) = assert_converged(&star, &all_ids) {
                 prop_assert!(false, "N-way star self-divergence: {msg}");
@@ -1306,6 +1395,196 @@ mod n_way {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: N_WAY_REORDER_CASES,
+            .. ProptestConfig::default()
+        })]
+
+        /// Test 3 — randomized isolation/reorder-window convergence.
+        ///
+        /// K devices (K in 3..=5) each run an independent
+        /// `op_stream_strategy` stream. Instead of one synchronized
+        /// all-to-all exchange, we drive a *staggered, randomized* gossip
+        /// schedule over several rounds:
+        ///   * `round_membership` (a generated `Vec<Vec<bool>>`, one bool
+        ///     per device per round) decides which devices PARTICIPATE in
+        ///     each round. A device that is `false` for a window of rounds
+        ///     is "isolated" — it neither publishes nor receives during
+        ///     that window, then rejoins later and catches up.
+        ///   * `apply_order` (a generated permutation index per round)
+        ///     randomizes the order in which a participant applies the
+        ///     other participants' snapshots, so apply order varies
+        ///     case-to-case.
+        ///
+        /// To guarantee the schedule eventually delivers EVERY device's
+        /// state to EVERY device (the precondition for convergence — a
+        /// permanently-partitioned device can never converge), the final
+        /// round is forced to be a full all-to-all exchange of current
+        /// snapshots. After the schedule completes, all K engines must
+        /// converge on BOTH version vector AND data read-back.
+        ///
+        /// This proves convergence is independent of the
+        /// isolation/reorder schedule: no matter who fell behind, for how
+        /// long, or in what order deltas were applied, the CRDT lands on
+        /// one agreed state with one agreed op-log frontier. A failure
+        /// here is a real ordering/partition-sensitivity bug invisible to
+        /// the synchronized all-to-all test.
+        #[test]
+        fn n_way_randomized_isolation_reorder_converges(
+            streams in proptest::collection::vec(op_stream_strategy(1..=20), 3..=5),
+            // Up to 4 staggered rounds; each inner Vec is per-device
+            // participation for that round. Sized loosely — we index it
+            // defensively against the actual K below.
+            round_membership in proptest::collection::vec(
+                proptest::collection::vec(any::<bool>(), 5),
+                1..=4,
+            ),
+            // One seed per round used to derive a participant apply order.
+            apply_seeds in proptest::collection::vec(any::<u64>(), 1..=4),
+        ) {
+            let k = streams.len();
+            let (mut engines, all_ids) = build_peers(&streams);
+
+            // Replay each generated round as a staggered exchange. In a
+            // round, the set of participants publish their CURRENT
+            // snapshot (post any earlier-round imports), then every
+            // participant imports every (other) participant's snapshot in
+            // a per-round randomized order. Non-participants are isolated.
+            for (r, membership) in round_membership.iter().enumerate() {
+                // Participants for this round (defensive index into the
+                // loosely-sized membership Vec; clamp to actual K).
+                let participants: Vec<usize> =
+                    (0..k).filter(|&i| *membership.get(i).unwrap_or(&true)).collect();
+                if participants.len() < 2 {
+                    // A round with <2 participants exchanges nothing — a
+                    // pure isolation window for everyone. Skip the I/O.
+                    continue;
+                }
+
+                // Snapshot every participant's current state up front so
+                // the round models a simultaneous exchange (no participant
+                // sees another's in-round import early).
+                let snaps: Vec<(usize, Vec<u8>)> = participants
+                    .iter()
+                    .map(|&i| (i, engines[i].export_snapshot().expect("export round peer")))
+                    .collect();
+
+                // Derive a randomized apply order for this round from the
+                // generated seed (a cheap deterministic shuffle: rotate by
+                // seed, then reverse on the low bit). REUSES the generated
+                // `apply_seeds` input rather than pulling in an rng dep.
+                let seed = *apply_seeds.get(r).unwrap_or(&0);
+                let mut order: Vec<usize> = (0..snaps.len()).collect();
+                let rot = usize::try_from(seed % snaps.len() as u64).unwrap_or(0);
+                order.rotate_left(rot);
+                if seed & 1 == 1 {
+                    order.reverse();
+                }
+
+                for &(importer, _) in &snaps {
+                    for &si in &order {
+                        let (src, ref snap) = snaps[si];
+                        if src == importer {
+                            continue;
+                        }
+                        engines[importer].import(snap).expect("round import");
+                    }
+                }
+            }
+
+            // Force a final full all-to-all exchange so the schedule is
+            // guaranteed to have delivered every device's state to every
+            // device (otherwise a device isolated in every generated round
+            // could never converge — that's a schedule artifact, not a
+            // CRDT bug). This is the "everyone eventually catches up"
+            // step, run to a frontier fixpoint (see `converge_all_to_all`).
+            converge_all_to_all(&mut engines);
+
+            if let Err(msg) = assert_converged(&engines, &all_ids) {
+                prop_assert!(false, "N-way reorder/isolation divergence: {msg}");
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: N_WAY_SNAPSHOT_CASES,
+            .. ProptestConfig::default()
+        })]
+
+        /// Test 4 — mid-stream snapshot round-trip convergence.
+        ///
+        /// At least one device in the N-device set has its op replay
+        /// interrupted by a snapshot export/import:
+        ///   1. apply the FIRST half of its op stream to engine A;
+        ///   2. `export_snapshot()` A's partial state;
+        ///   3. build a FRESH engine with the same peer id, `import` that
+        ///      snapshot (rebuilding A's mid-replay state from bytes);
+        ///   4. apply the SECOND half of the stream to the fresh engine.
+        ///
+        /// The fresh, rebuilt-from-snapshot engine then takes part in the
+        /// normal all-to-all convergence sweep alongside K other peers
+        /// whose streams were replayed straight through. After the sweep
+        /// all engines must converge on BOTH version vector AND data.
+        ///
+        /// This proves snapshot serialization round-trips correctly
+        /// *partway through* a device's op log — the rebuilt engine
+        /// continues authoring on top of deserialized state and still
+        /// merges/converges identically to a peer that never serialized.
+        /// A failure is a snapshot encode/decode or op-log-continuation
+        /// bug that the export-once-at-the-end tests cannot see.
+        #[test]
+        fn n_way_mid_stream_snapshot_converges(
+            // The straight-through peers (K-1 of them after we add the
+            // snapshot-rebuilt one): 2..=4 here keeps total K in 3..=5.
+            streams in proptest::collection::vec(op_stream_strategy(1..=20), 2..=4),
+            // The op stream for the mid-stream-snapshot device. Min length
+            // 2 so the split into two non-trivial halves is meaningful.
+            snap_stream in op_stream_strategy(2..=24),
+        ) {
+            // Build the straight-through peers normally.
+            let (mut engines, mut all_ids) = build_peers(&streams);
+            let snap_peer_id = format!("DEV-PROP-NWAY-SNAP-{:02}", streams.len());
+
+            // --- Mid-stream snapshot for the extra device ---
+            let mid = snap_stream.len() / 2;
+            let (first_half, second_half) = snap_stream.split_at(mid);
+
+            // 1) apply first half to engine A.
+            let mut staging = LoroEngine::with_peer_id(&snap_peer_id)
+                .expect("with_peer_id snap staging");
+            let mut created = apply_stream(&mut staging, first_half);
+
+            // 2) export A's PARTIAL (mid-replay) state.
+            let mid_snap = staging.export_snapshot().expect("export mid-stream snapshot");
+
+            // 3) build a FRESH engine (same peer id) and import the
+            //    partial snapshot, rebuilding A's state from bytes.
+            let mut fresh = LoroEngine::with_peer_id(&snap_peer_id)
+                .expect("with_peer_id snap fresh");
+            fresh.import(&mid_snap).expect("import mid-stream snapshot");
+
+            // 4) continue the replay (second half) on the fresh engine.
+            created.extend(apply_stream(&mut fresh, second_half));
+            all_ids.extend(created);
+            all_ids.sort();
+            all_ids.dedup();
+
+            // The snapshot-rebuilt device joins the peer set.
+            engines.push(fresh);
+
+            // All-to-all convergence sweep across the full K-device set
+            // (straight-through peers + the snapshot-rebuilt one), run to a
+            // frontier fixpoint (see `converge_all_to_all`).
+            converge_all_to_all(&mut engines);
+
+            if let Err(msg) = assert_converged(&engines, &all_ids) {
+                prop_assert!(false, "N-way mid-stream-snapshot divergence: {msg}");
             }
         }
     }
