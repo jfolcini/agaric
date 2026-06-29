@@ -357,6 +357,170 @@ pub async fn project_purge_block_to_sql(
     Ok(())
 }
 
+/// Project a remote-purge delta into SQL by hard-deleting an EXPLICIT id set
+/// (#2128).
+///
+/// Unlike [`project_purge_block_to_sql`] (which clears only the three engine
+/// tables for one id) and unlike the local SQL cascade
+/// (`materializer/handlers/loro_apply.rs::purge_block_sql_cascade`, which
+/// derives the descendant set from the recursive purge CTE), this helper is
+/// given the COMPLETE purged set — seed + every descendant — directly by the
+/// engine (`import_with_changed_and_purged_blocks`). The engine pruned the
+/// whole subtree from its index, so there is nothing left in the live tree to
+/// drive a descendant walk: we delete `WHERE <key> IN (ids)` against the
+/// provided set instead.
+///
+/// The table set mirrors `purge_block_sql_cascade` exactly (it is the
+/// canonical record of every derived table PURGE touches) so a remote purge
+/// projects to byte-identical SQL state as a local purge. Mechanics also
+/// mirror that function: build a `_purge_ids` TEMP table once, run every
+/// DELETE joined to it under `defer_foreign_keys = ON`, then drop the temp
+/// table to keep the pooled connection's temp namespace clean.
+///
+/// Empty `block_ids` ⇒ no-op. Idempotent: re-running with the same ids
+/// deletes nothing the second time (every row is already gone).
+pub async fn project_purge_blocks_to_sql(
+    conn: &mut SqliteConnection,
+    block_ids: &[&str],
+) -> Result<(), AppError> {
+    if block_ids.is_empty() {
+        return Ok(());
+    }
+    sqlx::query("PRAGMA defer_foreign_keys = ON")
+        .execute(&mut *conn)
+        .await?;
+    // Defensive drop guards against a prior crash that leaked the table on
+    // this pooled connection (mirrors `purge_block_sql_cascade`).
+    sqlx::query("DROP TABLE IF EXISTS _purge_ids")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("CREATE TEMP TABLE _purge_ids (id TEXT PRIMARY KEY)")
+        .execute(&mut *conn)
+        .await?;
+    for id in block_ids {
+        sqlx::query("INSERT OR IGNORE INTO _purge_ids (id) VALUES (?)")
+            .bind(id)
+            .execute(&mut *conn)
+            .await?;
+    }
+    // Same DELETE set as the local cascade, joined to `_purge_ids` instead of
+    // `_purge_descendants`. Order: child/edge tables before `blocks` so the
+    // final `blocks` delete has no dangling references (also covered by
+    // `defer_foreign_keys = ON`).
+    sqlx::query(
+        "DELETE FROM block_tags \
+         WHERE block_id IN (SELECT id FROM _purge_ids) \
+            OR tag_id IN (SELECT id FROM _purge_ids)",
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "DELETE FROM block_tag_inherited \
+         WHERE block_id IN (SELECT id FROM _purge_ids) \
+            OR tag_id IN (SELECT id FROM _purge_ids) \
+            OR inherited_from IN (SELECT id FROM _purge_ids)",
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "DELETE FROM block_properties \
+         WHERE block_id IN (SELECT id FROM _purge_ids)",
+    )
+    .execute(&mut *conn)
+    .await?;
+    // block_properties: a `value_ref` pointing into the purged set — DELETE
+    // the property row (not SET NULL) to satisfy migration 0062's
+    // exactly_one_value CHECK. Mirrors the local cascade.
+    sqlx::query(
+        "DELETE FROM block_properties \
+         WHERE value_ref IN (SELECT id FROM _purge_ids)",
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "DELETE FROM block_links \
+         WHERE source_id IN (SELECT id FROM _purge_ids) \
+            OR target_id IN (SELECT id FROM _purge_ids)",
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "DELETE FROM agenda_cache \
+         WHERE block_id IN (SELECT id FROM _purge_ids)",
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "DELETE FROM tags_cache \
+         WHERE tag_id IN (SELECT id FROM _purge_ids)",
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "DELETE FROM pages_cache \
+         WHERE page_id IN (SELECT id FROM _purge_ids)",
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "DELETE FROM attachments \
+         WHERE block_id IN (SELECT id FROM _purge_ids)",
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "DELETE FROM block_drafts \
+         WHERE block_id IN (SELECT id FROM _purge_ids)",
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "DELETE FROM fts_blocks \
+         WHERE block_id IN (SELECT id FROM _purge_ids)",
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "DELETE FROM page_aliases \
+         WHERE page_id IN (SELECT id FROM _purge_ids)",
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "DELETE FROM projected_agenda_cache \
+         WHERE block_id IN (SELECT id FROM _purge_ids)",
+    )
+    .execute(&mut *conn)
+    .await?;
+    // block_tag_refs / page_link_cache: both columns FK into blocks(id) ON
+    // DELETE CASCADE, but delete explicitly anyway (issue #1583) so this list
+    // stays the canonical record of every derived table PURGE touches.
+    sqlx::query(
+        "DELETE FROM block_tag_refs \
+         WHERE source_id IN (SELECT id FROM _purge_ids) \
+            OR tag_id IN (SELECT id FROM _purge_ids)",
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "DELETE FROM page_link_cache \
+         WHERE source_page_id IN (SELECT id FROM _purge_ids) \
+            OR target_page_id IN (SELECT id FROM _purge_ids)",
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "DELETE FROM blocks \
+         WHERE id IN (SELECT id FROM _purge_ids)",
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query("DROP TABLE _purge_ids")
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Day-11 stubs — wired in day-12+
 // ---------------------------------------------------------------------------
@@ -1669,6 +1833,135 @@ mod tests {
         .await
         .expect("fetch post");
         assert_eq!(post, (0, 0, 0), "purge must cascade to all three tables");
+    }
+
+    /// #2128 — `project_purge_blocks_to_sql` deletes an EXPLICIT seed +
+    /// descendant id set from EVERY derived table (the canonical purge table
+    /// set), while leaving an unrelated block untouched.
+    #[tokio::test]
+    async fn project_purge_blocks_deletes_explicit_set_from_all_tables() {
+        let (pool, _dir) = fresh_pool().await;
+        let seed = BLOCK_A;
+        let descendant = BLOCK_B;
+        let survivor = TAG_C;
+        let tag = "01HZ2128PROJUNITTAGBLOCKXX1";
+
+        // blocks: seed, its descendant, a survivor, and a tag-block.
+        for id in [seed, descendant, survivor, tag] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+                 VALUES (?, 'content', 'x', NULL, 0)",
+            )
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        // Derived rows for the purged set (seed + descendant) across the
+        // canonical table list, plus survivor rows that must be untouched.
+        sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'k', 'v')")
+            .bind(descendant)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(seed)
+            .bind(tag)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, 'find me')")
+            .bind(descendant)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+             VALUES ('01HZ2128PROJUNITATTACHROW1', ?, 'text/plain', 'a.txt', 3, 'p/a.txt', 0)",
+        )
+        .bind(seed)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Survivor keeps a property — must remain after the purge.
+        sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'sk', 'sv')")
+            .bind(survivor)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_purge_blocks_to_sql(&mut conn, &[seed, descendant])
+            .await
+            .expect("project purge set");
+        drop(conn);
+
+        // Purged ids gone from every queried table.
+        for id in [seed, descendant] {
+            let counts: (i64, i64, i64, i64, i64) = sqlx::query_as(
+                "SELECT \
+                    (SELECT COUNT(*) FROM blocks WHERE id = ?1), \
+                    (SELECT COUNT(*) FROM block_properties WHERE block_id = ?1), \
+                    (SELECT COUNT(*) FROM block_tags WHERE block_id = ?1 OR tag_id = ?1), \
+                    (SELECT COUNT(*) FROM fts_blocks WHERE block_id = ?1), \
+                    (SELECT COUNT(*) FROM attachments WHERE block_id = ?1)",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .expect("count purged");
+            assert_eq!(counts, (0, 0, 0, 0, 0), "purged id {id} must be gone everywhere");
+        }
+        // Survivor + tag-block untouched.
+        let survivors: (i64, i64, i64) = sqlx::query_as(
+            "SELECT \
+                (SELECT COUNT(*) FROM blocks WHERE id = ?), \
+                (SELECT COUNT(*) FROM block_properties WHERE block_id = ?), \
+                (SELECT COUNT(*) FROM blocks WHERE id = ?)",
+        )
+        .bind(survivor)
+        .bind(survivor)
+        .bind(tag)
+        .fetch_one(&pool)
+        .await
+        .expect("count survivors");
+        assert_eq!(survivors, (1, 1, 1), "survivor block/prop and tag-block must remain");
+    }
+
+    /// #2128 — empty id set is a no-op (early return), and a re-run over an
+    /// already-purged set deletes nothing (idempotent).
+    #[tokio::test]
+    async fn project_purge_blocks_empty_is_noop_and_idempotent() {
+        let (pool, _dir) = fresh_pool().await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'x', NULL, 0)",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        // Empty set: no-op, survivor stays.
+        project_purge_blocks_to_sql(&mut conn, &[])
+            .await
+            .expect("empty no-op");
+        // First purge removes it; second is idempotent.
+        project_purge_blocks_to_sql(&mut conn, &[BLOCK_A])
+            .await
+            .expect("first purge");
+        project_purge_blocks_to_sql(&mut conn, &[BLOCK_A])
+            .await
+            .expect("second purge idempotent");
+        drop(conn);
+
+        let cnt: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+        assert_eq!(cnt, 0, "block must be purged and stay purged");
     }
 
     #[tokio::test]

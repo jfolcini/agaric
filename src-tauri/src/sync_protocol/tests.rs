@@ -2940,3 +2940,362 @@ async fn loro_sync_e2e_concurrent_disjoint_creates_converge() {
     materializer_a.shutdown();
     materializer_b.shutdown();
 }
+
+/// #2128 — inbound (remote) hard-purge parity.
+///
+/// A remote `PurgeBlock` removes the seed + its whole subtree from the
+/// sender's engine; the receiver's `import_with_changed_and_purged_blocks`
+/// surfaces those ids as the purged delta so Pass D of `import_and_project`
+/// hard-deletes them from EVERY derived SQL table. Before the #2128 fix the
+/// purged rows were invisible to the projection loop (it enumerates only the
+/// LIVE tree) and lingered in SQL forever → silent divergence.
+///
+/// This test pins the parity guard: after a remote purge, B's SQL state for
+/// the purged subtree is byte-identical to a LOCAL purge cascade run against
+/// an oracle DB seeded with the same tree. It also asserts engine removal and
+/// idempotency (re-applying the same purge sync leaves B unchanged).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn loro_sync_e2e_inbound_purge_projects_to_sql_with_local_parity() {
+    use crate::loro::registry::LoroEngineRegistry;
+    use crate::op::PurgeBlockPayload;
+    use crate::space::SpaceId;
+    use crate::sync_protocol::loro_sync;
+    use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
+
+    // ── Identifiers. `page` is the purge seed (subtree root); `c1`/`c2`
+    // are its children; `c1` carries a property + a tag (referencing the
+    // `tagblk` tag-block, a sibling root that must SURVIVE the purge).
+    let space = SpaceId::from_trusted("01HZ2128INBOUNDPURGEPARITYX");
+    let page = "01HZ2128PURGEPAGESEEDAAAAA1";
+    let c1 = "01HZ2128PURGECHILDONEBBBB2";
+    let c2 = "01HZ2128PURGECHILDTWOCCCC3";
+    let tagblk = "01HZ2128PURGETAGBLOCKDDDD4";
+
+    // Tables to assert empty/parity for the purged ids. fts_blocks /
+    // attachments are NOT written by the sync projection, so the test seeds
+    // them by hand (on B *and* the oracle) to prove Pass D sweeps them too.
+    let (pool_a, _dir_a) = test_pool().await;
+    let (pool_b, _dir_b) = test_pool().await;
+    let (pool_oracle, _dir_oracle) = test_pool().await;
+    let materializer_b = Materializer::new(pool_b.clone());
+
+    // ── Engine A — build the tree: page → {c1, c2}; c1 has a property and
+    // a tag; `tagblk` is a separate root tag-block.
+    let registry_a = LoroEngineRegistry::new();
+    {
+        let mut g = registry_a.for_space(&space, "device-A").expect("for_space A");
+        let e = g.engine_mut();
+        e.apply_create_block(page, "page", "Parent Page", None, 0)
+            .expect("create page");
+        e.apply_create_block(c1, "content", "child one", Some(page), 0)
+            .expect("create c1");
+        e.apply_create_block(c2, "content", "child two", Some(page), 1)
+            .expect("create c2");
+        e.apply_create_block(tagblk, "tag", "tag-X", None, 1)
+            .expect("create tagblk");
+        e.apply_set_property(c1, "effort", Some("3"))
+            .expect("set property on c1");
+        e.apply_add_tag(c1, tagblk).expect("add tag to c1");
+    }
+
+    // Helper: build outgoing sync (snapshot or update) from A, wire-roundtrip
+    // the envelope, then apply on a target registry+pool. Returns the outcome.
+    async fn sync_a_to_target(
+        pool_a: &SqlitePool,
+        registry_a: &LoroEngineRegistry,
+        space: &SpaceId,
+        peer_vv: Option<&[u8]>,
+        pool_t: &SqlitePool,
+        registry_t: &LoroEngineRegistry,
+        device_t: &str,
+    ) {
+        let inner =
+            loro_sync::prepare_outgoing_for_pool(pool_a, registry_a, space, "device-A", peer_vv)
+                .await
+                .expect("prepare_outgoing")
+                .expect("#1257 freshness gate must not refuse a consistent engine");
+        let outgoing = SyncMessage::LoroSync {
+            msg: inner,
+            is_last: true,
+        };
+        let json = serde_json::to_string(&outgoing).expect("serialise");
+        let received: SyncMessage = serde_json::from_str(&json).expect("deserialise");
+        let received_inner: LoroSyncMessage = match received {
+            SyncMessage::LoroSync { msg, .. } => msg,
+            other => panic!("expected LoroSync, got {other:?}"),
+        };
+        let outcome = loro_sync::apply_remote(pool_t, registry_t, device_t, received_inner)
+            .await
+            .expect("apply_remote");
+        assert!(
+            matches!(outcome, loro_sync::ApplyOutcome::Imported { .. }),
+            "apply must report Imported, got {outcome:?}",
+        );
+    }
+
+    // ── Sync #1 (A → B): the full tree.
+    let registry_b = LoroEngineRegistry::new();
+    sync_a_to_target(
+        &pool_a,
+        &registry_a,
+        &space,
+        None,
+        &pool_b,
+        &registry_b,
+        "device-B",
+    )
+    .await;
+
+    // B's engine + SQL must hold the full tree.
+    {
+        let mut g = registry_b.for_space(&space, "device-B").expect("for_space B");
+        let e = g.engine_mut();
+        for id in [page, c1, c2, tagblk] {
+            assert!(
+                e.read_block(id).expect("read").is_some(),
+                "B engine must hold {id} after first sync"
+            );
+        }
+    }
+    let present: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id IN (?, ?, ?, ?)")
+        .bind(page)
+        .bind(c1)
+        .bind(c2)
+        .bind(tagblk)
+        .fetch_one(&pool_b)
+        .await
+        .expect("count present");
+    assert_eq!(present, 4, "B SQL must hold all 4 blocks after first sync");
+    // Property + tag projected for c1.
+    let prop_cnt: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM block_properties WHERE block_id = ?")
+            .bind(c1)
+            .fetch_one(&pool_b)
+            .await
+            .expect("count props");
+    assert_eq!(prop_cnt, 1, "c1 property projected on B");
+    let tag_cnt: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_tags WHERE block_id = ?")
+        .bind(c1)
+        .fetch_one(&pool_b)
+        .await
+        .expect("count tags");
+    assert_eq!(tag_cnt, 1, "c1 tag projected on B");
+
+    // Seed fts_blocks + attachments rows for the purged subtree on B by hand
+    // (the sync projection does not write these; we prove Pass D still sweeps
+    // them). attachments.block_id FKs blocks(id), so c1 must already exist.
+    for id in [page, c1, c2] {
+        sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, 'searchable')")
+            .bind(id)
+            .execute(&pool_b)
+            .await
+            .expect("seed fts on B");
+    }
+    sqlx::query(
+        "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+         VALUES (?, ?, 'text/plain', 'a.txt', 4, 'att/a.txt', 0)",
+    )
+    .bind("01HZ2128ATTACHMENTROWEEEE5")
+    .bind(c1)
+    .execute(&pool_b)
+    .await
+    .expect("seed attachment on B");
+
+    // ── Build the LOCAL-purge ORACLE. Sync the full tree into a separate
+    // oracle pool (its own registry), seed the same fts/attachment rows, then
+    // run the LOCAL SQL purge cascade against it — this is the authoritative
+    // "what local purge leaves behind" baseline the remote purge must match.
+    let registry_oracle = LoroEngineRegistry::new();
+    sync_a_to_target(
+        &pool_a,
+        &registry_a,
+        &space,
+        None,
+        &pool_oracle,
+        &registry_oracle,
+        "device-O",
+    )
+    .await;
+    for id in [page, c1, c2] {
+        sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, 'searchable')")
+            .bind(id)
+            .execute(&pool_oracle)
+            .await
+            .expect("seed fts on oracle");
+    }
+    sqlx::query(
+        "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+         VALUES (?, ?, 'text/plain', 'a.txt', 4, 'att/a.txt', 0)",
+    )
+    .bind("01HZ2128ATTACHMENTROWEEEE5")
+    .bind(c1)
+    .execute(&pool_oracle)
+    .await
+    .expect("seed attachment on oracle");
+    {
+        let mut conn = pool_oracle.acquire().await.expect("oracle acquire");
+        crate::materializer::purge_block_sql_cascade(
+            &mut conn,
+            &PurgeBlockPayload {
+                block_id: BlockId::from_trusted(page),
+            },
+        )
+        .await
+        .expect("local purge cascade on oracle");
+    }
+
+    // ── On A: capture B's vv, hard-purge the page subtree in A's engine, then
+    // project that purge into A's SQL so the #1257 freshness gate stays green
+    // and A is internally consistent before the second export.
+    let b_vv: Vec<u8> = {
+        let mut g = registry_b.for_space(&space, "device-B").expect("for_space B-vv");
+        g.engine_mut().version_vector()
+    };
+    {
+        let mut g = registry_a.for_space(&space, "device-A").expect("for_space A-purge");
+        g.engine_mut().apply_purge_block(page).expect("purge page on A");
+    }
+    {
+        let mut conn = pool_a.acquire().await.expect("A acquire");
+        crate::materializer::purge_block_sql_cascade(
+            &mut conn,
+            &PurgeBlockPayload {
+                block_id: BlockId::from_trusted(page),
+            },
+        )
+        .await
+        .expect("project purge to A SQL");
+    }
+
+    // ── Sync #2 (A → B): the purge, as an incremental Update against B's vv.
+    sync_a_to_target(
+        &pool_a,
+        &registry_a,
+        &space,
+        Some(&b_vv),
+        &pool_b,
+        &registry_b,
+        "device-B",
+    )
+    .await;
+
+    // ── ASSERT: B's engine no longer holds the purged subtree; tagblk lives.
+    {
+        let mut g = registry_b.for_space(&space, "device-B").expect("for_space B-post");
+        let e = g.engine_mut();
+        for id in [page, c1, c2] {
+            assert!(
+                e.read_block(id).expect("read").is_none(),
+                "B engine must NOT hold purged {id} after purge sync"
+            );
+        }
+        assert!(
+            e.read_block(tagblk).expect("read tagblk").is_some(),
+            "tagblk (sibling root) must survive the purge"
+        );
+    }
+
+    // ── ASSERT: B's SQL has NO rows for any purged id across EVERY derived
+    // table. Each table queried explicitly (the canonical purge table set).
+    let purged_ids = [page, c1, c2];
+    for id in purged_ids {
+        let counts: (i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT \
+                (SELECT COUNT(*) FROM blocks WHERE id = ?1), \
+                (SELECT COUNT(*) FROM block_properties WHERE block_id = ?1), \
+                (SELECT COUNT(*) FROM block_tags WHERE block_id = ?1 OR tag_id = ?1), \
+                (SELECT COUNT(*) FROM block_tag_inherited WHERE block_id = ?1 OR tag_id = ?1 OR inherited_from = ?1), \
+                (SELECT COUNT(*) FROM fts_blocks WHERE block_id = ?1), \
+                (SELECT COUNT(*) FROM attachments WHERE block_id = ?1), \
+                (SELECT COUNT(*) FROM agenda_cache WHERE block_id = ?1)",
+        )
+        .bind(id)
+        .fetch_one(&pool_b)
+        .await
+        .expect("count purged rows on B");
+        assert_eq!(
+            counts,
+            (0, 0, 0, 0, 0, 0, 0),
+            "B SQL must have zero rows for purged id {id} across all derived tables"
+        );
+    }
+    // tagblk (the tag-block) survives in SQL — only its FK edge to c1 is gone.
+    let tagblk_present: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+        .bind(tagblk)
+        .fetch_one(&pool_b)
+        .await
+        .expect("count tagblk");
+    assert_eq!(tagblk_present, 1, "tagblk must survive the purge in B SQL");
+
+    // ── ASSERT PARITY: B's post-purge state == the local-purge oracle's, for
+    // each table, across both the purged subtree and the surviving tagblk.
+    // Compares the full row-id set so a stray lingering row on either side
+    // fails the test. (remote-purge projection == local-purge projection.)
+    async fn ids_of(pool: &SqlitePool, sql: &'static str) -> Vec<String> {
+        let mut v: Vec<String> = sqlx::query_scalar(sql)
+            .fetch_all(pool)
+            .await
+            .expect("fetch ids");
+        v.sort();
+        v
+    }
+    let table_queries: &[(&'static str, &'static str)] = &[
+        ("blocks", "SELECT id FROM blocks ORDER BY id"),
+        (
+            "block_properties",
+            "SELECT block_id FROM block_properties ORDER BY block_id",
+        ),
+        (
+            "block_tags",
+            "SELECT block_id FROM block_tags ORDER BY block_id",
+        ),
+        (
+            "block_tag_inherited",
+            "SELECT block_id FROM block_tag_inherited ORDER BY block_id",
+        ),
+        ("fts_blocks", "SELECT block_id FROM fts_blocks ORDER BY block_id"),
+        ("attachments", "SELECT block_id FROM attachments ORDER BY block_id"),
+        ("agenda_cache", "SELECT block_id FROM agenda_cache ORDER BY block_id"),
+        ("pages_cache", "SELECT page_id FROM pages_cache ORDER BY page_id"),
+        ("tags_cache", "SELECT tag_id FROM tags_cache ORDER BY tag_id"),
+    ];
+    for (table, sql) in table_queries {
+        let b_ids = ids_of(&pool_b, *sql).await;
+        let oracle_ids = ids_of(&pool_oracle, *sql).await;
+        assert_eq!(
+            b_ids, oracle_ids,
+            "PARITY: table {table} must match between remote-purge (B) and local-purge (oracle)"
+        );
+    }
+
+    // ── ASSERT IDEMPOTENCY: applying the SAME purge sync again is a no-op on
+    // B (no error; engine + SQL unchanged). Re-export the purge Update against
+    // B's PRE-purge vv (`b_vv` still describes B's state before sync #2 from
+    // its own perspective — re-importing the same ops is idempotent in Loro).
+    sync_a_to_target(
+        &pool_a,
+        &registry_a,
+        &space,
+        Some(&b_vv),
+        &pool_b,
+        &registry_b,
+        "device-B",
+    )
+    .await;
+    for id in purged_ids {
+        let still_gone: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool_b)
+            .await
+            .expect("count after idempotent re-sync");
+        assert_eq!(still_gone, 0, "idempotent re-sync must keep {id} purged");
+    }
+    let tagblk_still: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+        .bind(tagblk)
+        .fetch_one(&pool_b)
+        .await
+        .expect("count tagblk after idempotent");
+    assert_eq!(tagblk_still, 1, "tagblk must remain after idempotent re-sync");
+
+    materializer_b.shutdown();
+}
