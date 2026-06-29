@@ -591,6 +591,33 @@ pass_filenames = false
 files = "^scripts/check-tauri-command-instrumented\\.mjs$"
 stages = ["pre-commit"]
 
+# #2110 (M4) — frontend trace-interaction naming. Every `traceInteraction`
+# span must be named from the central `INTERACTIONS` registry
+# (`src/lib/observability/interactions.ts`), never an interpolated string, so
+# exported span names stay PII-safe by construction (the registry values are
+# reviewed, opaque labels). The guard parses each call's first argument and
+# fails any that is not an `INTERACTIONS.<KEY>` member access.
+[[repos.hooks]]
+id = "trace-interactions-named"
+name = "frontend traceInteraction naming"
+entry = "node scripts/check-trace-interactions.mjs"
+language = "system"
+pass_filenames = false
+files = "^src/.*\\.tsx?$"
+stages = ["pre-commit"]
+
+# Self-test the trace-interaction naming guard's own detection (member access
+# PASSES, string/template/variable/call FAIL) whenever the guard script itself
+# changes. Mirrors `tauri-command-instrumented-selftest`.
+[[repos.hooks]]
+id = "trace-interactions-named-selftest"
+name = "frontend traceInteraction naming self-test"
+entry = "node scripts/check-trace-interactions.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-trace-interactions\\.mjs$"
+stages = ["pre-commit"]
+
 # Rust: raw write-tx guard (#110). replaced ad-hoc
 # `pool.begin_with("BEGIN IMMEDIATE")` write transactions on user-edit
 # paths with the `CommandTx` convention (open via

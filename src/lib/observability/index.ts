@@ -23,6 +23,7 @@ import { context, type Span, SpanStatusCode, trace } from '@opentelemetry/api'
 import { resolveEnabled } from './config'
 
 export { getSamplingRatio, setSamplingRatio } from './config'
+export { INTERACTIONS, type InteractionName } from './interactions'
 
 /** Instrumentation scope name — the backend tags these `service.name=agaric-frontend`. */
 const SCOPE = 'agaric-frontend'

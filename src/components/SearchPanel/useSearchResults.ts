@@ -29,6 +29,7 @@ import { parseValidationReason, ValidationCode } from '@/lib/search-query/valida
 import { useListKeyboardNavigation } from '../../hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '../../hooks/usePaginatedQuery'
 import { logger } from '../../lib/logger'
+import { INTERACTIONS, traceInteraction } from '../../lib/observability'
 import { reportIpcError } from '../../lib/report-ipc-error'
 import type { BlockRow, SearchBlockRow } from '../../lib/tauri'
 import { batchResolve, getBlock, searchBlocks } from '../../lib/tauri'
@@ -120,22 +121,36 @@ export function useSearchResults({
     // Forward the AbortSignal so a superseded search is cancelled
     // mid-flight instead of running the backend scan to completion.
     (cursor?: string, signal?: AbortSignal) =>
-      // Phase 4 — `searchBlocks` requires `spaceId`. The `?? ''`
-      // fallback is intentional pre-bootstrap behaviour: empty string forces
-      // a no-match SQL filter (returning empty results) rather than a runtime
-      // null deref.
-      searchBlocks(
+      // #2110 (M4) — trace the search interaction. `searchBlocks` is dispatched
+      // synchronously inside the callback, so the invoke patch parents the
+      // backend command span under this span. Attributes are opaque booleans —
+      // never the query text. `is_paged` distinguishes first-page from loadMore.
+      traceInteraction(
+        INTERACTIONS.SEARCH,
+        () =>
+          // Phase 4 — `searchBlocks` requires `spaceId`. The `?? ''`
+          // fallback is intentional pre-bootstrap behaviour: empty string forces
+          // a no-match SQL filter (returning empty results) rather than a runtime
+          // null deref.
+          searchBlocks(
+            {
+              query: debouncedAst.freeText,
+              ...filterParams,
+              cursor,
+              limit: PAGINATION_LIMIT,
+              spaceId: currentSpaceId ?? '',
+              caseSensitive: toggles.caseSensitive,
+              wholeWord: toggles.wholeWord,
+              isRegex: toggles.isRegex,
+            },
+            signal,
+          ),
         {
-          query: debouncedAst.freeText,
-          ...filterParams,
-          cursor,
-          limit: PAGINATION_LIMIT,
-          spaceId: currentSpaceId ?? '',
-          caseSensitive: toggles.caseSensitive,
-          wholeWord: toggles.wholeWord,
-          isRegex: toggles.isRegex,
+          is_regex: toggles.isRegex,
+          case_sensitive: toggles.caseSensitive,
+          whole_word: toggles.wholeWord,
+          is_paged: cursor != null,
         },
-        signal,
       ),
     [
       debouncedAst.freeText,

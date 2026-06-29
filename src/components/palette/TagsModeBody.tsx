@@ -15,6 +15,7 @@ import { useGenerationGuard } from '@/hooks/useGenerationGuard'
 import { isCancellation } from '@/lib/app-error'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { INTERACTIONS, traceInteraction } from '@/lib/observability'
 import type { SearchBlockRow } from '@/lib/tauri'
 import { searchBlocks, searchBlocksLimit } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
@@ -61,12 +62,17 @@ export function TagsModeBody({
     if (!spaceIsReady) return
     const gen = tagsGen.next()
     setLoading(true)
-    searchBlocks({
-      query: debouncedQuery,
-      blockTypeFilter: 'tag',
-      limit: searchBlocksLimit(TAGS_QUERY_LIMIT),
-      spaceId: currentSpaceId ?? '',
-    })
+    // #2110 (M4) — trace the palette tag-lookup interaction. The invoke is
+    // dispatched synchronously inside the callback so the backend command span
+    // parents under it; no attributes (the query text is never traced).
+    traceInteraction(INTERACTIONS.PALETTE_QUERY, () =>
+      searchBlocks({
+        query: debouncedQuery,
+        blockTypeFilter: 'tag',
+        limit: searchBlocksLimit(TAGS_QUERY_LIMIT),
+        spaceId: currentSpaceId ?? '',
+      }),
+    )
       .then((resp) => {
         if (!tagsGen.isCurrent(gen)) return
         setTags(resp.items)
