@@ -227,13 +227,14 @@ mod tests {
         let batches = exporter.get_finished_metrics().expect("finished metrics");
         let observed = batches
             .iter()
-            .flat_map(|rm| rm.scope_metrics())
-            .flat_map(|sm| sm.metrics())
+            .flat_map(opentelemetry_sdk::metrics::data::ResourceMetrics::scope_metrics)
+            .flat_map(opentelemetry_sdk::metrics::data::ScopeMetrics::metrics)
             .find(|m| m.name() == "agaric.test.observable")
             .and_then(|m| match m.data() {
-                AggregatedMetrics::U64(MetricData::Sum(sum)) => {
-                    sum.data_points().next().map(|p| p.value())
-                }
+                AggregatedMetrics::U64(MetricData::Sum(sum)) => sum
+                    .data_points()
+                    .next()
+                    .map(opentelemetry_sdk::metrics::data::SumDataPoint::value),
                 _ => None,
             });
         assert_eq!(
@@ -257,14 +258,13 @@ mod tests {
         let provider = SdkMeterProvider::builder().with_reader(reader).build();
 
         let meter = provider.meter("agaric");
-        // Build, then IMMEDIATELY drop the handle (mirrors register_instruments
-        // binding to `_`-prefixed locals that drop when the fn returns).
-        drop(
-            meter
-                .u64_observable_counter("agaric.test.dropped")
-                .with_callback(|observer| observer.observe(7, &[]))
-                .build(),
-        );
+        // Build, then IMMEDIATELY discard the handle (mirrors register_instruments
+        // binding to `_`-prefixed locals that drop when the fn returns). The
+        // instrument handle is not `Drop`, so bind-to-`_` rather than `drop()`.
+        let _ = meter
+            .u64_observable_counter("agaric.test.dropped")
+            .with_callback(|observer| observer.observe(7, &[]))
+            .build();
 
         provider.force_flush().expect("force_flush");
 
@@ -272,13 +272,14 @@ mod tests {
             .get_finished_metrics()
             .expect("finished metrics")
             .iter()
-            .flat_map(|rm| rm.scope_metrics())
-            .flat_map(|sm| sm.metrics())
+            .flat_map(opentelemetry_sdk::metrics::data::ResourceMetrics::scope_metrics)
+            .flat_map(opentelemetry_sdk::metrics::data::ScopeMetrics::metrics)
             .find(|m| m.name() == "agaric.test.dropped")
             .and_then(|m| match m.data() {
-                AggregatedMetrics::U64(MetricData::Sum(sum)) => {
-                    sum.data_points().next().map(|p| p.value())
-                }
+                AggregatedMetrics::U64(MetricData::Sum(sum)) => sum
+                    .data_points()
+                    .next()
+                    .map(opentelemetry_sdk::metrics::data::SumDataPoint::value),
                 _ => None,
             });
         assert_eq!(

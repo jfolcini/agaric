@@ -154,11 +154,6 @@ export async function setTraceSampling(ratio: number): Promise<void> {
   }
 }
 
-/** Whether the tracer has been initialised (enabled + registered). @internal */
-export function isFrontendObservabilityInitialized(): boolean {
-  return initialized
-}
-
 /**
  * Tear down global tracer state. Test-only — restores the API to its no-op
  * defaults so a subsequent `initFrontendObservability` re-registers cleanly.

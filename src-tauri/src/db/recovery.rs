@@ -991,10 +991,8 @@ pub(crate) async fn recover_derived_state_from_op_log(
                     // so there is no FK-guard concern (unlike `set_property` /
                     // `add_tag`, which keep their guards inline). All branches are
                     // idempotent (0-row UPDATE/DELETE no-ops).
-                    crate::loro::projection::project_delete_property_to_sql(
-                        &mut *tx, block_id, key,
-                    )
-                    .await?;
+                    crate::loro::projection::project_delete_property_to_sql(&mut tx, block_id, key)
+                        .await?;
                 }
                 "add_tag" => {
                     let block_id = payload["block_id"].as_str().unwrap_or("");

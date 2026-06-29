@@ -2,13 +2,20 @@
   "$schema": "https://unpkg.com/knip@latest/schema.json",
   "entry": ["src/App.tsx"],
   "project": ["src/**/*.{ts,tsx}"],
-  "ignore": ["src/lib/bindings.ts", "src/vitest-axe.d.ts"],
+  "ignore": [
+    "src/lib/bindings.ts",
+    "src/vitest-axe.d.ts",
+    "src/editor/turndown-plugin-gfm.d.ts",
+    "src/types/speech-recognition.d.ts"
+  ],
+  "ignoreBinaries": ["taplo", "rustc"],
   "ignoreDependencies": [
     "tailwindcss",
     "markdownlint-cli2",
     "better-npm-audit",
-    "depcheck",
-    "license-checker"
+    "license-checker",
+    "tw-animate-css",
+    "istanbul-lib-coverage"
   ],
   "ignoreExportsUsedInFile": true
 }

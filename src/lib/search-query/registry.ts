@@ -47,11 +47,6 @@ export function registerTokenPrefix(prefix: string, parse: ValueParser): void {
   registrations.sort((a, b) => b.prefix.length - a.prefix.length)
 }
 
-/** Returns the list of registered prefixes (longest-first). */
-export function getRegisteredPrefixes(): readonly string[] {
-  return registrations.map((r) => r.prefix)
-}
-
 /**
  * Try to match a raw token against the registered prefixes.
  *
@@ -92,9 +87,4 @@ export function looksLikeUnknownPrefix(raw: string): { key: string } | null {
   // invalid chip so the URL isn't silently stripped from the query.
   if (raw.slice(m[0].length).startsWith('//')) return null
   return { key: m[1] }
-}
-
-/** Test-only: wipe the registry. Production code never calls this. */
-export function _resetRegistryForTests(): void {
-  registrations.length = 0
 }

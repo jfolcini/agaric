@@ -29,9 +29,6 @@ import { toast } from 'sonner'
 import { formatErrorForDisplay } from '@/lib/error-display'
 import { t } from '@/lib/i18n'
 
-/** Re-export sonner's option shape so callers don't need to import it from sonner directly. */
-export type NotifyOptions = ExternalToast
-
 /** Message accepted by `notify` family methods. Strings only (i18n callers must call `t()` first). */
 type NotifyMessage = string | number
 

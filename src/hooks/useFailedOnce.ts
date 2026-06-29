@@ -47,12 +47,3 @@ export function useFailedOnce(): (key: string, run: () => void) => boolean {
     return true
   }, [])
 }
-
-/**
- * Test-only: clear the per-session record. Tests that simulate a
- * fresh-session-each-test pattern can call this in their `beforeEach`
- * to reset the gate.
- */
-export function _resetFailedOnceForTests(): void {
-  firedThisSession.clear()
-}
