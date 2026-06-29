@@ -33,6 +33,17 @@ export interface PeerInfo {
  */
 export type FilePhase = 'sending' | 'receiving' | 'complete' | null
 
+/**
+ * Snapshot catch-up transfer phase (#2133).
+ *
+ * `null` means no snapshot transfer is active. The string values mirror
+ * the backend's `SyncProgressUpdate::Snapshot.phase`: `"sending"` (the
+ * responder is shipping the compressed snapshot blob), `"receiving"`
+ * (we're pulling it during catch-up), and `"complete"` (the blob finished
+ * transferring — terminal tick before reset).
+ */
+export type SnapshotPhase = 'sending' | 'receiving' | 'complete' | null
+
 interface SyncStore {
   state: SyncState
   error: string | null
@@ -48,6 +59,11 @@ interface SyncStore {
   filesTotal: number
   bytesDone: number
   bytesTotal: number
+  // Snapshot catch-up transfer progress (#2133). `snapshotPhase === null`
+  // means no snapshot transfer is active and the UI hides the affordance.
+  snapshotPhase: SnapshotPhase
+  snapshotBytesDone: number
+  snapshotBytesTotal: number
 
   // Actions
   setState: (state: SyncState, error?: string | null) => void
@@ -63,6 +79,12 @@ interface SyncStore {
     bytesTotal: number,
   ) => void
   resetFileProgress: () => void
+  setSnapshotProgress: (
+    phase: Exclude<SnapshotPhase, null>,
+    bytesDone: number,
+    bytesTotal: number,
+  ) => void
+  resetSnapshotProgress: () => void
   reset: () => void
 }
 
@@ -74,6 +96,12 @@ const INITIAL_FILE_PROGRESS = {
   bytesTotal: 0,
 }
 
+const INITIAL_SNAPSHOT_PROGRESS = {
+  snapshotPhase: null as SnapshotPhase,
+  snapshotBytesDone: 0,
+  snapshotBytesTotal: 0,
+}
+
 const INITIAL_STATE = {
   state: 'idle' as SyncState,
   error: null as string | null,
@@ -82,6 +110,7 @@ const INITIAL_STATE = {
   opsReceived: 0,
   opsSent: 0,
   ...INITIAL_FILE_PROGRESS,
+  ...INITIAL_SNAPSHOT_PROGRESS,
 }
 
 export const useSyncStore = create<SyncStore>((set) => ({
@@ -119,6 +148,18 @@ export const useSyncStore = create<SyncStore>((set) => ({
 
   resetFileProgress: () => {
     set({ ...INITIAL_FILE_PROGRESS })
+  },
+
+  setSnapshotProgress: (phase, bytesDone, bytesTotal) => {
+    set({
+      snapshotPhase: phase,
+      snapshotBytesDone: bytesDone,
+      snapshotBytesTotal: bytesTotal,
+    })
+  },
+
+  resetSnapshotProgress: () => {
+    set({ ...INITIAL_SNAPSHOT_PROGRESS })
   },
 
   reset: () => {

@@ -26,6 +26,10 @@ describe('useSyncStore', () => {
       expect(state.filesTotal).toBe(0)
       expect(state.bytesDone).toBe(0)
       expect(state.bytesTotal).toBe(0)
+      // #2133: snapshot-transfer progress defaults to "no transfer active".
+      expect(state.snapshotPhase).toBeNull()
+      expect(state.snapshotBytesDone).toBe(0)
+      expect(state.snapshotBytesTotal).toBe(0)
     })
   })
 
@@ -188,6 +192,54 @@ describe('useSyncStore', () => {
   })
 
   // ---------------------------------------------------------------------------
+  // setSnapshotProgress / resetSnapshotProgress (#2133)
+  // ---------------------------------------------------------------------------
+  describe('setSnapshotProgress', () => {
+    it('records the active snapshot-transfer phase and byte counters', () => {
+      useSyncStore.getState().setSnapshotProgress('receiving', 5_000_000, 20_000_000)
+      const state = useSyncStore.getState()
+      expect(state.snapshotPhase).toBe('receiving')
+      expect(state.snapshotBytesDone).toBe(5_000_000)
+      expect(state.snapshotBytesTotal).toBe(20_000_000)
+    })
+
+    it('does not clobber file-transfer or unrelated state', () => {
+      useSyncStore.getState().setState('syncing')
+      useSyncStore.getState().setFileProgress('sending', 1, 3, 1_000, 3_000)
+
+      useSyncStore.getState().setSnapshotProgress('sending', 0, 256_000_000)
+
+      const state = useSyncStore.getState()
+      expect(state.state).toBe('syncing')
+      // File-transfer progress untouched (snapshot is additive).
+      expect(state.filePhase).toBe('sending')
+      expect(state.filesDone).toBe(1)
+      expect(state.snapshotPhase).toBe('sending')
+      expect(state.snapshotBytesTotal).toBe(256_000_000)
+    })
+  })
+
+  describe('resetSnapshotProgress', () => {
+    it('clears snapshot-transfer fields without touching the rest', () => {
+      useSyncStore.getState().setState('syncing')
+      useSyncStore.getState().setOpsReceived(12)
+      useSyncStore.getState().setFileProgress('sending', 2, 2, 10, 10)
+      useSyncStore.getState().setSnapshotProgress('receiving', 9_000_000, 10_000_000)
+
+      useSyncStore.getState().resetSnapshotProgress()
+
+      const state = useSyncStore.getState()
+      expect(state.snapshotPhase).toBeNull()
+      expect(state.snapshotBytesDone).toBe(0)
+      expect(state.snapshotBytesTotal).toBe(0)
+      // Unrelated + file-transfer fields untouched.
+      expect(state.state).toBe('syncing')
+      expect(state.opsReceived).toBe(12)
+      expect(state.filePhase).toBe('sending')
+    })
+  })
+
+  // ---------------------------------------------------------------------------
   // reset
   // ---------------------------------------------------------------------------
   describe('reset', () => {
@@ -201,6 +253,7 @@ describe('useSyncStore', () => {
       useSyncStore.getState().setOpsReceived(42)
       useSyncStore.getState().setOpsSent(17)
       useSyncStore.getState().setFileProgress('sending', 1, 2, 5_000_000, 10_000_000)
+      useSyncStore.getState().setSnapshotProgress('receiving', 7_000_000, 14_000_000)
 
       // Reset
       useSyncStore.getState().reset()
@@ -218,6 +271,9 @@ describe('useSyncStore', () => {
       expect(state.filesTotal).toBe(0)
       expect(state.bytesDone).toBe(0)
       expect(state.bytesTotal).toBe(0)
+      expect(state.snapshotPhase).toBeNull()
+      expect(state.snapshotBytesDone).toBe(0)
+      expect(state.snapshotBytesTotal).toBe(0)
     })
   })
 

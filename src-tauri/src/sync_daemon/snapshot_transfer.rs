@@ -278,7 +278,12 @@ pub(crate) async fn try_offer_snapshot_catchup(
                 snapshot_id = %snapshot_id,
                 "initiator accepted snapshot; streaming bytes"
             );
-            send_snapshot_bytes(conn, &compressed).await?;
+            let progress = SnapshotTransferProgress {
+                event_sink,
+                remote_device_id,
+                bytes_total: size_bytes,
+            };
+            send_snapshot_bytes(conn, &compressed, &progress).await?;
             Ok(OfferOutcome::Sent {
                 bytes_sent: size_bytes,
             })
@@ -308,18 +313,63 @@ pub(crate) async fn try_offer_snapshot_catchup(
     }
 }
 
+/// Per-frame snapshot-transfer progress reporting hook.
+///
+/// Mirrors [`FileTransferProgress`](crate::sync_files::FileTransferProgress)
+/// for the snapshot catch-up blob: when threaded into the send/receive
+/// paths, the streaming chunk loops emit
+/// [`SyncEvent::SnapshotProgress`] after each 5 MB binary frame so the
+/// active sync's `Channel<SyncProgressUpdate>` carries a real bytes-done
+/// signal to the UI. No throttling — the attachment path emits one event
+/// per frame and we match its cadence (a 256 MB blob is at most ~52
+/// frames at 5 MB each, well within event-bus budget). A terminal
+/// `"complete"` tick is emitted once the blob finishes.
+struct SnapshotTransferProgress<'a> {
+    event_sink: &'a Arc<dyn SyncEventSink>,
+    remote_device_id: &'a str,
+    bytes_total: u64,
+}
+
+impl SnapshotTransferProgress<'_> {
+    fn emit(&self, phase: &str, bytes_done: u64) {
+        self.event_sink.on_sync_event(SyncEvent::SnapshotProgress {
+            phase: phase.to_string(),
+            remote_device_id: self.remote_device_id.to_string(),
+            bytes_done,
+            bytes_total: self.bytes_total,
+        });
+    }
+}
+
 /// Send the compressed snapshot bytes over the WebSocket in
 /// [`BINARY_FRAME_CHUNK_SIZE`]-sized binary frames.
 ///
-/// Thin wrapper around
-/// [`SyncConnection::send_binary_chunked`](crate::sync_net::SyncConnection::send_binary_chunked),
-/// the single shared implementation used by both this module and
-/// [`sync_files`](crate::sync_files). A zero-length snapshot is
-/// delivered as a single empty frame so the receiver's frame
-/// accounting terminates cleanly.
-async fn send_snapshot_bytes(conn: &mut SyncConnection, compressed: &[u8]) -> Result<(), AppError> {
-    conn.send_binary_chunked(compressed, BINARY_FRAME_CHUNK_SIZE)
-        .await
+/// Streams via
+/// [`SyncConnection::send_binary_streaming_with_progress`](crate::sync_net::SyncConnection::send_binary_streaming_with_progress)
+/// so each 5 MB frame ticks a [`SyncEvent::SnapshotProgress`] with the
+/// `"sending"` phase, mirroring the attachment-transfer path in
+/// [`sync_files`](crate::sync_files). A zero-length snapshot is delivered
+/// as a single empty frame so the receiver's frame accounting terminates
+/// cleanly. A terminal `"complete"` tick is emitted once all bytes ship.
+async fn send_snapshot_bytes(
+    conn: &mut SyncConnection,
+    compressed: &[u8],
+    progress: &SnapshotTransferProgress<'_>,
+) -> Result<(), AppError> {
+    let total = compressed.len() as u64;
+    // `&[u8]` implements `tokio::io::AsyncRead` (+ Unpin), so the
+    // in-memory compressed blob can be streamed straight through the
+    // shared progress-aware sender without an intermediate file or a
+    // sync `std::io::Cursor` (which is NOT `AsyncRead`).
+    conn.send_binary_streaming_with_progress(
+        compressed,
+        total,
+        BINARY_FRAME_CHUNK_SIZE,
+        |bytes_sent| progress.emit("sending", bytes_sent),
+    )
+    .await?;
+    progress.emit("complete", total);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -481,7 +531,17 @@ pub(crate) async fn try_receive_snapshot_catchup(
     // `SnapshotTempFile::Drop` unlinks the temp on every exit path
     // (success, decode failure, panic) — see the type's docs.
     let app_data_dir = app_data_dir_from_pool(pool).await?;
-    let temp = receive_snapshot_to_temp(conn, &app_data_dir, size_bytes).await?;
+    let recv_progress = SnapshotTransferProgress {
+        event_sink,
+        remote_device_id,
+        bytes_total: size_bytes,
+    };
+    let temp =
+        receive_snapshot_to_temp(conn, &app_data_dir, size_bytes, Some(&recv_progress)).await?;
+    // #2133 — terminal tick: the full blob is now on disk. Emit a
+    // `"complete"` SnapshotProgress so the UI can clear the transfer
+    // affordance before the (potentially slow) decode/apply begins.
+    recv_progress.emit("complete", size_bytes);
 
     // #706 item 2 — verify the transfer integrity hash BEFORE the
     // expensive decode/apply. Re-hash the received compressed bytes and
@@ -819,11 +879,12 @@ async fn blake3_of_file(path: &Path) -> Result<String, AppError> {
 /// The returned [`SnapshotTempFile`] guard unlinks the file on
 /// drop, so the caller does not need an explicit cleanup branch on
 /// the apply / decode error paths.
-#[tracing::instrument(skip(conn, app_data_dir), err)]
-pub(crate) async fn receive_snapshot_to_temp(
+#[tracing::instrument(skip(conn, app_data_dir, progress), err)]
+async fn receive_snapshot_to_temp(
     conn: &mut SyncConnection,
     app_data_dir: &Path,
     size_bytes: u64,
+    progress: Option<&SnapshotTransferProgress<'_>>,
 ) -> Result<SnapshotTempFile, AppError> {
     // ULID gives us 128 bits of entropy + a monotonic timestamp
     // prefix — collisions across overlapping snapshot transfers
@@ -847,8 +908,22 @@ pub(crate) async fn receive_snapshot_to_temp(
     // pulled off the wire and written to the file as they arrive,
     // so neither the compressed payload nor the partially-buffered
     // chunk accumulator from the old `receive_binary_chunked` ever
-    // grows beyond a single frame.
-    conn.receive_binary_streaming(&mut file, size_bytes).await?;
+    // grows beyond a single frame. When a progress hook is present
+    // (#2133), each frame ticks a `"receiving"` SnapshotProgress event
+    // so the UI sees a real bytes-done bar for the catch-up blob.
+    match progress {
+        Some(p) => {
+            conn.receive_binary_streaming_with_progress(
+                &mut file,
+                size_bytes,
+                |bytes_received| p.emit("receiving", bytes_received),
+            )
+            .await?;
+        }
+        None => {
+            conn.receive_binary_streaming(&mut file, size_bytes).await?;
+        }
+    }
 
     file.flush().await.map_err(|e| {
         AppError::Io(std::io::Error::new(
@@ -1312,7 +1387,8 @@ mod tests {
         let materializer = Materializer::new(init_pool.clone());
 
         let (mut server_conn, mut client_conn) = test_connection_pair().await;
-        let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+        let recording = Arc::new(RecordingEventSink::new());
+        let event_sink: Arc<dyn SyncEventSink> = recording.clone();
 
         // Server side (responder): send offer + bytes.
         let bytes_clone = snap_bytes.clone();
@@ -1391,8 +1467,168 @@ mod tests {
             "last_hash must be populated after catch-up"
         );
 
+        // #2133 — the receive path must surface streaming progress. Filter
+        // the recording sink for SnapshotProgress events: there must be at
+        // least one "receiving" tick and exactly one terminal "complete"
+        // tick whose bytes_done == bytes_total == expected_size.
+        let snapshot_events: Vec<(String, u64, u64)> = snapshot_progress_events(&recording);
+        assert!(
+            snapshot_events
+                .iter()
+                .any(|(phase, _, _)| phase == "receiving"),
+            "receive path must emit at least one 'receiving' SnapshotProgress tick"
+        );
+        let complete: Vec<&(String, u64, u64)> = snapshot_events
+            .iter()
+            .filter(|(phase, _, _)| phase == "complete")
+            .collect();
+        assert_eq!(
+            complete.len(),
+            1,
+            "receive path must emit exactly one terminal 'complete' tick"
+        );
+        assert_eq!(
+            complete[0].1, expected_size,
+            "complete tick bytes_done must equal the full snapshot size"
+        );
+        assert_eq!(
+            complete[0].2, expected_size,
+            "complete tick bytes_total must equal the full snapshot size"
+        );
+
         materializer.shutdown();
         resp_materializer.shutdown();
+    }
+
+    // -----------------------------------------------------------------
+    // #2133 — snapshot-transfer streaming progress
+    // -----------------------------------------------------------------
+
+    /// Pull the SnapshotProgress events out of a recording sink as
+    /// `(phase, bytes_done, bytes_total)` tuples for assertion.
+    fn snapshot_progress_events(sink: &RecordingEventSink) -> Vec<(String, u64, u64)> {
+        sink.events()
+            .into_iter()
+            .filter_map(|e| match e {
+                SyncEvent::SnapshotProgress {
+                    phase,
+                    bytes_done,
+                    bytes_total,
+                    ..
+                } => Some((phase, bytes_done, bytes_total)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// #2133 happy path (send side): an accepted multi-frame snapshot
+    /// transfer must emit a `"sending"` tick whose running `bytes_done`
+    /// reaches the full size, then exactly one terminal `"complete"` tick.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn try_offer_snapshot_catchup_emits_streaming_progress() {
+        let (pool, _dir) = test_pool().await;
+        seed_one_op(&pool, LOCAL_DEV).await;
+        create_snapshot(&pool, LOCAL_DEV).await.unwrap();
+        let (_id, latest_bytes) = get_latest_snapshot(&pool).await.unwrap().unwrap();
+        let expected_size = latest_bytes.len() as u64;
+
+        let (mut server_conn, mut client_conn) = test_connection_pair().await;
+        let recording = Arc::new(RecordingEventSink::new());
+        let event_sink: Arc<dyn SyncEventSink> = recording.clone();
+
+        let pool_clone = pool.clone();
+        let sink_clone = event_sink.clone();
+        let responder = tokio::spawn(async move {
+            try_offer_snapshot_catchup(&mut server_conn, &pool_clone, &sink_clone, REMOTE_DEV, &[])
+                .await
+        });
+
+        // Accept the offer and drain all frames.
+        let _offer: SyncMessage = client_conn.recv_json().await.unwrap();
+        client_conn
+            .send_json(&SyncMessage::SnapshotAccept)
+            .await
+            .unwrap();
+        let mut received: u64 = 0;
+        while received < expected_size {
+            let chunk = client_conn.recv_binary().await.unwrap();
+            received += chunk.len() as u64;
+        }
+
+        responder.await.unwrap().unwrap();
+
+        let snapshot_events = snapshot_progress_events(&recording);
+        assert!(
+            snapshot_events
+                .iter()
+                .any(|(phase, _, _)| phase == "sending"),
+            "send path must emit at least one 'sending' SnapshotProgress tick"
+        );
+        // Every tick advertises the same bytes_total (the full size).
+        assert!(
+            snapshot_events
+                .iter()
+                .all(|(_, _, total)| *total == expected_size),
+            "every SnapshotProgress tick must carry bytes_total == size"
+        );
+        let complete: Vec<&(String, u64, u64)> = snapshot_events
+            .iter()
+            .filter(|(phase, _, _)| phase == "complete")
+            .collect();
+        assert_eq!(
+            complete.len(),
+            1,
+            "send path must emit exactly one terminal 'complete' tick"
+        );
+        assert_eq!(
+            complete[0].1, expected_size,
+            "complete tick bytes_done must equal the full snapshot size"
+        );
+    }
+
+    /// #2133 edge: a zero-size snapshot blob still emits a single
+    /// `"complete"` terminal tick with bytes_done == bytes_total == 0.
+    /// Exercises the `send_binary_streaming_with_progress` zero-size
+    /// sentinel path directly via `send_snapshot_bytes`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn send_snapshot_bytes_zero_size_emits_complete() {
+        let (mut server_conn, mut client_conn) = test_connection_pair().await;
+        let recording = Arc::new(RecordingEventSink::new());
+        let event_sink: Arc<dyn SyncEventSink> = recording.clone();
+
+        let sink_clone = event_sink.clone();
+        let sender = tokio::spawn(async move {
+            let progress = SnapshotTransferProgress {
+                event_sink: &sink_clone,
+                remote_device_id: REMOTE_DEV,
+                bytes_total: 0,
+            };
+            send_snapshot_bytes(&mut server_conn, &[], &progress)
+                .await
+                .unwrap();
+        });
+
+        // Zero-size sentinel: exactly one empty frame on the wire.
+        let frame = client_conn.recv_binary().await.unwrap();
+        assert!(frame.is_empty(), "zero-size snapshot sends one empty frame");
+
+        sender.await.unwrap();
+
+        let snapshot_events = snapshot_progress_events(&recording);
+        let complete: Vec<&(String, u64, u64)> = snapshot_events
+            .iter()
+            .filter(|(phase, _, _)| phase == "complete")
+            .collect();
+        assert_eq!(
+            complete.len(),
+            1,
+            "zero-size send must emit exactly one terminal 'complete' tick"
+        );
+        assert_eq!(
+            (complete[0].1, complete[0].2),
+            (0, 0),
+            "zero-size complete tick must report 0/0 bytes"
+        );
     }
 
     // -----------------------------------------------------------------

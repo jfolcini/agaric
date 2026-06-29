@@ -117,6 +117,19 @@ async function syncOnePeerWithToast(
           store.setState(mapBackendState(update.state))
           store.setOpsReceived(update.ops_received)
           store.setOpsSent(update.ops_sent)
+        } else if (update.kind === 'snapshot') {
+          // #2133 — snapshot catch-up blob transfer. Mirrors the `files`
+          // handling: a terminal `complete` tick clears the affordance,
+          // and `sending`/`receiving` ticks drive the bytes-done bar.
+          if (update.phase === 'complete') {
+            store.resetSnapshotProgress()
+          } else if (update.phase === 'sending' || update.phase === 'receiving') {
+            store.setSnapshotProgress(
+              update.phase,
+              Number(update.bytes_done),
+              Number(update.bytes_total),
+            )
+          }
         } else if (update.phase === 'complete') {
           store.resetFileProgress()
         } else if (update.phase === 'sending' || update.phase === 'receiving') {

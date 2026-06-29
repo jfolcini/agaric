@@ -50,6 +50,22 @@ pub enum SyncProgressUpdate {
         /// Aggregate byte total advertised for the current `phase`.
         bytes_total: u64,
     },
+    /// Per-frame snapshot catch-up transfer progress. Emitted by
+    /// `sync_daemon::snapshot_transfer` between 5 MB binary frames while
+    /// the compressed snapshot blob streams over the wire, so the UI can
+    /// render a real bytes-done bar for the catch-up blob the same way the
+    /// `Files` variant does for attachments.
+    Snapshot {
+        /// `"sending"` (responder is shipping the snapshot blob),
+        /// `"receiving"` (initiator is pulling it), or `"complete"`
+        /// (the blob finished transferring for this session).
+        phase: String,
+        remote_device_id: String,
+        /// Bytes shipped/received so far in the current `phase`.
+        bytes_done: u64,
+        /// Total compressed snapshot size advertised for the transfer.
+        bytes_total: u64,
+    },
 }
 
 /// Payload sent over Tauri events for sync progress/completion/errors.
@@ -91,6 +107,17 @@ pub enum SyncEvent {
         remote_device_id: String,
         files_done: u64,
         files_total: u64,
+        bytes_done: u64,
+        bytes_total: u64,
+    },
+    /// Per-frame snapshot catch-up transfer progress emitted by
+    /// `sync_daemon::snapshot_transfer`. The [`ChannelEventSink`] forwards
+    /// these to the `Channel<SyncProgressUpdate>` as the `Snapshot`
+    /// variant; the production [`TauriEventSink`] drops them (the
+    /// channel is the single canonical source, mirroring `FileProgress`).
+    SnapshotProgress {
+        phase: String,
+        remote_device_id: String,
         bytes_done: u64,
         bytes_total: u64,
     },
@@ -164,6 +191,10 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
             // means no active sync command is listening, and there's
             // nothing for a side-channel `app.emit` to deliver to.
             SyncEvent::FileProgress { .. } => return,
+            // Snapshot-transfer progress, like FileProgress, was never on
+            // the legacy `app.emit` bus — the channel is the canonical
+            // source — so this sink drops it.
+            SyncEvent::SnapshotProgress { .. } => return,
         };
         if let Err(e) = self.0.emit(event_name, &event) {
             tracing::warn!(%event_name, error = %e, "Failed to emit sync event");
@@ -214,7 +245,9 @@ impl SyncEventSink for ChannelEventSink {
         // progress, so there's no inner listener to feed.
         let channel_only = matches!(
             event,
-            SyncEvent::Progress { .. } | SyncEvent::FileProgress { .. }
+            SyncEvent::Progress { .. }
+                | SyncEvent::FileProgress { .. }
+                | SyncEvent::SnapshotProgress { .. }
         );
         if !channel_only {
             self.inner.on_sync_event(event.clone());
@@ -278,6 +311,19 @@ impl SyncEventSink for ChannelEventSink {
                     remote_device_id,
                     files_done,
                     files_total,
+                    bytes_done,
+                    bytes_total,
+                });
+            }
+            SyncEvent::SnapshotProgress {
+                phase,
+                remote_device_id,
+                bytes_done,
+                bytes_total,
+            } => {
+                let _ = self.channel.send(SyncProgressUpdate::Snapshot {
+                    phase,
+                    remote_device_id,
                     bytes_done,
                     bytes_total,
                 });
@@ -904,6 +950,40 @@ mod tests {
         assert_eq!(msgs[0]["files_total"], 3);
         assert_eq!(msgs[0]["bytes_done"], 5_000_000);
         assert_eq!(msgs[0]["bytes_total"], 15_000_000);
+    }
+
+    #[test]
+    fn channel_event_sink_snapshot_progress_forwards_to_channel_only() {
+        // SnapshotProgress is channel-only by construction, mirroring
+        // FileProgress: the legacy event bus never carried snapshot
+        // catch-up progress, so the inner sink stays silent and the
+        // channel receives a `SyncProgressUpdate::Snapshot` payload.
+        let inner = Arc::new(RecordingEventSink::new());
+        let (channel, captured) = capturing_channel();
+        let sink = ChannelEventSink {
+            inner: Arc::clone(&inner) as Arc<dyn SyncEventSink>,
+            channel,
+        };
+
+        sink.on_sync_event(SyncEvent::SnapshotProgress {
+            phase: "receiving".into(),
+            remote_device_id: "DEV_PEER".into(),
+            bytes_done: 5_000_000,
+            bytes_total: 20_000_000,
+        });
+
+        assert!(
+            inner.events().is_empty(),
+            "SnapshotProgress must NOT reach the inner sink (channel is canonical)"
+        );
+
+        let msgs = captured.lock().unwrap().clone();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["kind"], "snapshot");
+        assert_eq!(msgs[0]["phase"], "receiving");
+        assert_eq!(msgs[0]["remote_device_id"], "DEV_PEER");
+        assert_eq!(msgs[0]["bytes_done"], 5_000_000);
+        assert_eq!(msgs[0]["bytes_total"], 20_000_000);
     }
 
     #[test]
