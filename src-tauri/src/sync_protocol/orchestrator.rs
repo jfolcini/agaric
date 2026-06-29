@@ -281,7 +281,13 @@ impl SyncOrchestrator {
             ops_received: self.session.ops_received,
             ops_sent: self.session.ops_sent,
         });
-        Ok(SyncMessage::HeadExchange { heads, loro_vvs })
+        Ok(SyncMessage::HeadExchange {
+            heads,
+            loro_vvs,
+            // Advertise our engine format so a peer on an incompatible format
+            // is rejected up front in the responder's HeadExchange arm (#2130).
+            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+        })
     }
 
     /// Process a received message and optionally produce a response.
@@ -395,7 +401,38 @@ impl SyncOrchestrator {
 
         match msg {
             // ---- HeadExchange ------------------------------------------------
-            SyncMessage::HeadExchange { heads, loro_vvs } => {
+            SyncMessage::HeadExchange {
+                heads,
+                loro_vvs,
+                engine_format_version,
+            } => {
+                // Gate raw-byte Loro merges by engine format before doing any
+                // import work (#2130). An incompatible peer is rejected up
+                // front with a clear `SyncEvent::Error` rather than failing
+                // mid-session on a raw-byte merge.
+                //
+                // `engine_format_version == 0` means a legacy peer predating
+                // this field — fall through to the existing import-time
+                // v1/unknown-format guards (`reject_legacy_v1_snapshot` /
+                // `reject_unknown_format_version`) for those.
+                //
+                // Only `engine_format_version` is gated here; sibling-order
+                // divergence is still resolved by import-time migration, not a
+                // hard incompatibility, so it is intentionally not gated.
+                let local = crate::loro::engine::ENGINE_FORMAT_VERSION;
+                if engine_format_version != 0 && engine_format_version != local {
+                    let msg = format!(
+                        "peer engine format v{engine_format_version} incompatible with local v{local}"
+                    );
+                    self.state = SyncState::Failed(msg.clone());
+                    self.session.state = self.state.clone();
+                    self.emit(crate::sync_events::SyncEvent::Error {
+                        message: msg.clone(),
+                        remote_device_id: self.session.remote_device_id.clone(),
+                    });
+                    return Err(AppError::InvalidOperation(msg));
+                }
+
                 // Identify the remote device from received heads. A peer that
                 // has never originated its own ops will only advertise per-
                 // device heads for *other* devices (including ours), so an

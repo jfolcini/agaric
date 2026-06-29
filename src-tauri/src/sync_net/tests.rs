@@ -118,6 +118,7 @@ fn sync_message_roundtrip_head_exchange() {
             hash: "abc123".into(),
         }],
         loro_vvs: vec![],
+        engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
     };
     let json = serde_json::to_string(&msg).unwrap();
     let parsed: SyncMessage = serde_json::from_str(&json).unwrap();
@@ -511,6 +512,7 @@ async fn tls_roundtrip_json_exchange() {
             hash: "abc123".into(),
         }],
         loro_vvs: vec![],
+        engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
     };
     client.send_json(&msg).await.unwrap();
 
@@ -1374,6 +1376,7 @@ async fn mtls_full_handshake_both_sides_see_peer_identity() {
                 hash: "head_hash_alice".into(),
             }],
             loro_vvs: vec![],
+            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
         })
         .await
         .unwrap();
@@ -1403,6 +1406,7 @@ async fn mtls_full_handshake_both_sides_see_peer_identity() {
                 hash: "head_hash_bob".into(),
             }],
             loro_vvs: vec![],
+            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
         })
         .await
         .unwrap();

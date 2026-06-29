@@ -262,6 +262,7 @@ mod tests {
             SyncMessage::HeadExchange {
                 heads: vec![],
                 loro_vvs: vec![],
+                engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             },
             SyncMessage::SyncComplete {
                 last_hash: "abc123".into(),
