@@ -64,9 +64,19 @@
 //!
 //! # Three invariants (hard rules)
 //!
-//! 1. **Zero egress.** Spans and log records go ONLY to local files. There is
-//!    no `opentelemetry-otlp` / HTTP / gRPC exporter anywhere in this crate. The
-//!    app's "nothing leaves your machine" promise + CSP forbid it.
+//! 1. **Zero egress BY DEFAULT.** With the default configuration (env unset),
+//!    spans, log records, and metrics go ONLY to local files — nothing leaves
+//!    the machine. The SINGLE exception is an OPT-IN, OFF-BY-DEFAULT,
+//!    LOOPBACK-ONLY OTLP/HTTP span exporter (M8, #2121): it is built ONLY when
+//!    the user sets `AGARIC_OTEL_ENDPOINT` to a loopback collector
+//!    (`127.0.0.0/8`, `::1`, or `localhost`), validated IN CODE by
+//!    [`config::validate_loopback_endpoint`] — ANY other host (LAN IP, public
+//!    host, DNS name) is rejected at parse time, logged, and dropped to
+//!    file-only. When enabled it is ADDITIVE: spans fan out to BOTH the local
+//!    file and the loopback collector ([`otlp`] + [`provider`]); the local-file
+//!    sink is never replaced. So the default + the privacy promise = local
+//!    files only, and a user cannot accidentally egress spans off-machine.
+//!    (Logs/metrics OTLP are a deferred follow-up; only traces egress in M8.)
 //! 2. **Off by default.** When `AGARIC_OTEL` is unset, [`init`] returns a no-op
 //!    `Observability { layers: <empty>, guard: None }`. An empty `Vec<Layer>`
 //!    is a no-op on the registry, so the existing logging behaviour is
@@ -86,6 +96,11 @@ mod ingest;
 mod layer;
 mod metrics;
 mod metrics_exporter;
+// M8 (#2110, #2121) — the opt-in, off-by-default, loopback-only OTLP/HTTP span
+// exporter. The ONLY network-egress path in this crate; built only when
+// `AGARIC_OTEL_ENDPOINT` resolves to a loopback collector (validated in
+// `config::validate_loopback_endpoint`) and additive to the file sink.
+mod otlp;
 mod propagation;
 mod provider;
 mod sampling;
@@ -225,6 +240,7 @@ mod tests {
         let cfg = ObservabilityConfig {
             enabled: false,
             sampling_ratio: 1.0,
+            endpoint: None,
         };
         let obs = init(tmp.path(), &cfg);
         assert!(obs.layers.is_empty(), "disabled ⇒ no OTel layers");
@@ -239,6 +255,7 @@ mod tests {
         let cfg = ObservabilityConfig {
             enabled: true,
             sampling_ratio: 1.0,
+            endpoint: None,
         };
         let obs = init(tmp.path(), &cfg);
         assert_eq!(

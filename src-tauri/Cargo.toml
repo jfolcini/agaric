@@ -173,11 +173,12 @@ ciborium = "0.2"
 tracing = { version = "0.1.44", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 
-# OpenTelemetry tracing (issue #2110, milestone M1a). Backend traces ONLY,
-# written to a LOCAL FILE — ZERO network egress (no opentelemetry-otlp / no
-# HTTP/gRPC exporter is in this graph by design; the app's "nothing leaves
-# your machine" promise + CSP forbid it). The whole pipeline is gated OFF by
-# default (AGARIC_OTEL unset) and is a ~zero-overhead no-op when disabled.
+# OpenTelemetry tracing (issue #2110, milestone M1a). Backend traces are
+# written to a LOCAL FILE by default — ZERO network egress unless the user
+# explicitly opts in (see opentelemetry-otlp below). The local-file sink is
+# the always-on default and is never replaced; the OTLP exporter, when
+# enabled, is purely additive. The whole pipeline is gated OFF by default
+# (AGARIC_OTEL unset) and is a ~zero-overhead no-op when disabled.
 #
 # Mutually-compatible version set — all three agree on the `opentelemetry`
 # 0.32 API surface, which is what makes them link together:
@@ -211,6 +212,26 @@ tracing-opentelemetry = "0.33"
 # (GPL-3-compatible per deny.toml's allow-list). Default features only — the
 # `experimental_*` attribute features are not needed for span-correlated logs.
 opentelemetry-appender-tracing = "0.32"
+# M8 (issue #2110, #2121) — OPT-IN, OFF-BY-DEFAULT, LOOPBACK-ONLY OTLP/HTTP
+# span exporter. This is the ONLY network-egress path in the crate and it is
+# built ONLY when `AGARIC_OTEL_ENDPOINT` is set to a loopback OTLP collector
+# (127.0.0.0/8, ::1, or localhost — enforced in code by
+# `observability::config::validate_loopback_endpoint`; any other host is
+# rejected at config-parse time and the app falls back to file-only export).
+# When enabled it is ADDITIVE: spans fan out to BOTH the local-file sink and
+# the loopback collector — the file sink is never replaced. Default (env
+# unset) = unchanged, zero egress.
+#
+# Feature choice: `default-features = false` drops the gRPC/tonic transport
+# and tokio. `http-proto` selects OTLP/HTTP + protobuf (the common
+# `http://127.0.0.1:4318` collector case, no TLS needed for loopback);
+# `reqwest-blocking-client` uses the BLOCKING reqwest HTTP client so export
+# runs synchronously on the `BatchSpanProcessor`'s own worker thread with NO
+# tokio runtime — matching the existing "no rt-tokio / thread-based" posture
+# of the span/log batch processors and the metrics `PeriodicReader`. `trace`
+# limits the API surface to spans (logs/metrics OTLP are a deferred
+# follow-up). Apache-2.0 (GPL-3-compatible per deny.toml's allow-list).
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client"] }
 
 # Sync
 tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }
