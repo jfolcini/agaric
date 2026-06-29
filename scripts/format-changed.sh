@@ -9,13 +9,20 @@
 # exactly one place. Prefer this over `npm run format` (`oxfmt --write .`),
 # which reformats the whole repo and produces large unrelated diffs.
 #
-# --diff-filter=d drops deleted paths (oxfmt would error on a missing file);
-# the empty-list guard avoids invoking `oxfmt --write` with no arguments.
+# --diff-filter=d drops deleted paths (oxfmt would error on a missing file).
+# Paths are read NUL-delimited (`git diff -z` into an array) so filenames with
+# spaces or newlines survive intact, and the array-length guard avoids invoking
+# `oxfmt --write` with no arguments. The read loop (rather than `xargs -0 -r`)
+# keeps this portable to the macOS system bash, whose xargs lacks `-r`.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-files=$(git diff --name-only --diff-filter=d HEAD)
-if [ -n "$files" ]; then
-  echo "$files" | xargs oxfmt --write
+files=()
+while IFS= read -r -d '' f; do
+  files+=("$f")
+done < <(git diff -z --name-only --diff-filter=d HEAD)
+
+if [ ${#files[@]} -gt 0 ]; then
+  oxfmt --write "${files[@]}"
 fi
