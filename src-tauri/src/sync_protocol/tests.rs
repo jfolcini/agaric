@@ -2844,7 +2844,9 @@ async fn loro_sync_e2e_inbound_purge_projects_to_sql_with_local_parity() {
     // a tag; `tagblk` is a separate root tag-block.
     let registry_a = LoroEngineRegistry::new();
     {
-        let mut g = registry_a.for_space(&space, "device-A").expect("for_space A");
+        let mut g = registry_a
+            .for_space(&space, "device-A")
+            .expect("for_space A");
         let e = g.engine_mut();
         e.apply_create_block(page, "page", "Parent Page", None, 0)
             .expect("create page");
@@ -2909,7 +2911,9 @@ async fn loro_sync_e2e_inbound_purge_projects_to_sql_with_local_parity() {
 
     // B's engine + SQL must hold the full tree.
     {
-        let mut g = registry_b.for_space(&space, "device-B").expect("for_space B");
+        let mut g = registry_b
+            .for_space(&space, "device-B")
+            .expect("for_space B");
         let e = g.engine_mut();
         for id in [page, c1, c2, tagblk] {
             assert!(
@@ -3009,12 +3013,18 @@ async fn loro_sync_e2e_inbound_purge_projects_to_sql_with_local_parity() {
     // project that purge into A's SQL so the #1257 freshness gate stays green
     // and A is internally consistent before the second export.
     let b_vv: Vec<u8> = {
-        let mut g = registry_b.for_space(&space, "device-B").expect("for_space B-vv");
+        let mut g = registry_b
+            .for_space(&space, "device-B")
+            .expect("for_space B-vv");
         g.engine_mut().version_vector()
     };
     {
-        let mut g = registry_a.for_space(&space, "device-A").expect("for_space A-purge");
-        g.engine_mut().apply_purge_block(page).expect("purge page on A");
+        let mut g = registry_a
+            .for_space(&space, "device-A")
+            .expect("for_space A-purge");
+        g.engine_mut()
+            .apply_purge_block(page)
+            .expect("purge page on A");
     }
     {
         let mut conn = pool_a.acquire().await.expect("A acquire");
@@ -3042,7 +3052,9 @@ async fn loro_sync_e2e_inbound_purge_projects_to_sql_with_local_parity() {
 
     // ── ASSERT: B's engine no longer holds the purged subtree; tagblk lives.
     {
-        let mut g = registry_b.for_space(&space, "device-B").expect("for_space B-post");
+        let mut g = registry_b
+            .for_space(&space, "device-B")
+            .expect("for_space B-post");
         let e = g.engine_mut();
         for id in [page, c1, c2] {
             assert!(
@@ -3114,11 +3126,26 @@ async fn loro_sync_e2e_inbound_purge_projects_to_sql_with_local_parity() {
             "block_tag_inherited",
             "SELECT block_id FROM block_tag_inherited ORDER BY block_id",
         ),
-        ("fts_blocks", "SELECT block_id FROM fts_blocks ORDER BY block_id"),
-        ("attachments", "SELECT block_id FROM attachments ORDER BY block_id"),
-        ("agenda_cache", "SELECT block_id FROM agenda_cache ORDER BY block_id"),
-        ("pages_cache", "SELECT page_id FROM pages_cache ORDER BY page_id"),
-        ("tags_cache", "SELECT tag_id FROM tags_cache ORDER BY tag_id"),
+        (
+            "fts_blocks",
+            "SELECT block_id FROM fts_blocks ORDER BY block_id",
+        ),
+        (
+            "attachments",
+            "SELECT block_id FROM attachments ORDER BY block_id",
+        ),
+        (
+            "agenda_cache",
+            "SELECT block_id FROM agenda_cache ORDER BY block_id",
+        ),
+        (
+            "pages_cache",
+            "SELECT page_id FROM pages_cache ORDER BY page_id",
+        ),
+        (
+            "tags_cache",
+            "SELECT tag_id FROM tags_cache ORDER BY tag_id",
+        ),
     ];
     for (table, sql) in table_queries {
         let b_ids = ids_of(&pool_b, *sql).await;
@@ -3156,7 +3183,10 @@ async fn loro_sync_e2e_inbound_purge_projects_to_sql_with_local_parity() {
         .fetch_one(&pool_b)
         .await
         .expect("count tagblk after idempotent");
-    assert_eq!(tagblk_still, 1, "tagblk must remain after idempotent re-sync");
+    assert_eq!(
+        tagblk_still, 1,
+        "tagblk must remain after idempotent re-sync"
+    );
 
     materializer_b.shutdown();
 }

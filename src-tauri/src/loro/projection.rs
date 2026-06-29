@@ -1859,11 +1859,13 @@ mod tests {
         }
         // Derived rows for the purged set (seed + descendant) across the
         // canonical table list, plus survivor rows that must be untouched.
-        sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'k', 'v')")
-            .bind(descendant)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'k', 'v')",
+        )
+        .bind(descendant)
+        .execute(&pool)
+        .await
+        .unwrap();
         sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
             .bind(seed)
             .bind(tag)
@@ -1884,11 +1886,13 @@ mod tests {
         .await
         .unwrap();
         // Survivor keeps a property — must remain after the purge.
-        sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'sk', 'sv')")
-            .bind(survivor)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'sk', 'sv')",
+        )
+        .bind(survivor)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let mut conn = pool.acquire().await.expect("acquire");
         project_purge_blocks_to_sql(&mut conn, &[seed, descendant])
@@ -1910,7 +1914,11 @@ mod tests {
             .fetch_one(&pool)
             .await
             .expect("count purged");
-            assert_eq!(counts, (0, 0, 0, 0, 0), "purged id {id} must be gone everywhere");
+            assert_eq!(
+                counts,
+                (0, 0, 0, 0, 0),
+                "purged id {id} must be gone everywhere"
+            );
         }
         // Survivor + tag-block untouched.
         let survivors: (i64, i64, i64) = sqlx::query_as(
@@ -1925,7 +1933,11 @@ mod tests {
         .fetch_one(&pool)
         .await
         .expect("count survivors");
-        assert_eq!(survivors, (1, 1, 1), "survivor block/prop and tag-block must remain");
+        assert_eq!(
+            survivors,
+            (1, 1, 1),
+            "survivor block/prop and tag-block must remain"
+        );
     }
 
     /// #2128 — empty id set is a no-op (early return), and a re-run over an
