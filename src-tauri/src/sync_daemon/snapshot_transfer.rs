@@ -913,11 +913,9 @@ async fn receive_snapshot_to_temp(
     // so the UI sees a real bytes-done bar for the catch-up blob.
     match progress {
         Some(p) => {
-            conn.receive_binary_streaming_with_progress(
-                &mut file,
-                size_bytes,
-                |bytes_received| p.emit("receiving", bytes_received),
-            )
+            conn.receive_binary_streaming_with_progress(&mut file, size_bytes, |bytes_received| {
+                p.emit("receiving", bytes_received)
+            })
             .await?;
         }
         None => {

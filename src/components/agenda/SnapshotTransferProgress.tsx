@@ -36,8 +36,11 @@ export function SnapshotTransferProgress() {
   const bytesTotal = useSyncStore((s) => s.snapshotBytesTotal)
   const { t } = useTranslation()
 
-  // Inert when no snapshot transfer is active.
-  if (phase === null) return null
+  // Inert when no snapshot transfer is active. `!phase` (not
+  // `=== null`) so a consumer that omits the field entirely — e.g. a
+  // partial store mock — is treated as "no transfer" rather than
+  // rendering a NaN-valued bar.
+  if (!phase) return null
 
   const percent = snapshotProgressPercent(bytesDone, bytesTotal)
   const label =
@@ -56,19 +59,16 @@ export function SnapshotTransferProgress() {
           {t('status.snapshotPercent', { percent })}
         </span>
       </div>
-      <div
-        className="snapshot-transfer-bar h-1.5 w-full overflow-hidden rounded-full bg-muted"
-        role="progressbar"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={percent}
+      {/* No design-system Progress primitive yet — use the native
+          <progress> element (the lint-approved, natively-accessible
+          determinate bar), mirroring DataSettingsTab's import bars. */}
+      <progress
+        className="snapshot-transfer-bar w-full h-1.5"
+        data-testid="snapshot-transfer-bar"
         aria-label={t('status.snapshotProgressLabel')}
-      >
-        <div
-          className="snapshot-transfer-bar-fill h-full rounded-full bg-primary transition-[width]"
-          style={{ width: `${percent}%` }}
-        />
-      </div>
+        value={percent}
+        max={100}
+      />
     </div>
   )
 }
