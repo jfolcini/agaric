@@ -687,7 +687,7 @@ jobs:
       - name: Attest desktop bundles (Linux)
         id: attest_linux
         if: matrix.platform == 'ubuntu-24.04'
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: |
             src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
@@ -698,7 +698,7 @@ jobs:
       - name: Attest desktop bundles (Windows)
         id: attest_windows
         if: matrix.platform == 'windows-2025-vs2026'
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: |
             src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
@@ -709,7 +709,7 @@ jobs:
       - name: Attest desktop bundles (macOS)
         id: attest_macos
         if: matrix.platform == 'macos-15'
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: |
             src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
@@ -1075,7 +1075,7 @@ jobs:
       # PEND-41 R9 — same attest now also covers the SBOM files.
       - name: Attest Android APK
         id: attest_android
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: |
             ${{ steps.sign_apk.outputs.apk }}
@@ -1187,7 +1187,7 @@ jobs:
 
       - name: Attest OpenVEX document
         id: attest_vex
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: ${{ env.OPENVEX_FILE }}
 
