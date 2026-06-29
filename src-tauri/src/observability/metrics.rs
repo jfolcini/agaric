@@ -242,4 +242,49 @@ mod tests {
             "the observable counter must report the value its callback observed"
         );
     }
+
+    /// The collection callback keeps firing AFTER the returned instrument handle
+    /// is dropped — the exact production shape, since [`register_instruments`]
+    /// lets each `ObservableCounter` handle drop at function exit. SDK 0.32
+    /// registers the callback on the meter's collection pipeline (the callback
+    /// owns its own `Arc` to the observable), so a dropped handle does NOT
+    /// unregister it. This guards against a future SDK bump — or a refactor that
+    /// stored the callback on the handle — silently zeroing the counters.
+    #[test]
+    fn observable_counter_collects_after_handle_dropped() {
+        let exporter = InMemoryMetricExporter::default();
+        let reader = PeriodicReader::builder(exporter.clone()).build();
+        let provider = SdkMeterProvider::builder().with_reader(reader).build();
+
+        let meter = provider.meter("agaric");
+        // Build, then IMMEDIATELY drop the handle (mirrors register_instruments
+        // binding to `_`-prefixed locals that drop when the fn returns).
+        drop(
+            meter
+                .u64_observable_counter("agaric.test.dropped")
+                .with_callback(|observer| observer.observe(7, &[]))
+                .build(),
+        );
+
+        provider.force_flush().expect("force_flush");
+
+        let observed = exporter
+            .get_finished_metrics()
+            .expect("finished metrics")
+            .iter()
+            .flat_map(|rm| rm.scope_metrics())
+            .flat_map(|sm| sm.metrics())
+            .find(|m| m.name() == "agaric.test.dropped")
+            .and_then(|m| match m.data() {
+                AggregatedMetrics::U64(MetricData::Sum(sum)) => {
+                    sum.data_points().next().map(|p| p.value())
+                }
+                _ => None,
+            });
+        assert_eq!(
+            observed,
+            Some(7),
+            "the callback must still collect after the instrument handle is dropped"
+        );
+    }
 }
