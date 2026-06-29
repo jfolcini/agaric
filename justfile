@@ -23,10 +23,13 @@ setup:
 setup-db:
     bash scripts/setup-dev-db.sh
 
-# Install the prek git hooks (pre-commit, pre-push, commit-msg, …).
+# Install the prek hook TOOLCHAIN (prek + every host binary the hooks call:
+# cargo-deny, sqruff, typos, zizmor, taplo, lychee, shellcheck, …) and wire
+# the git hooks (pre-commit, pre-push, commit-msg, …). Best-effort; re-run any
+# time. `just setup` already calls this — use it standalone to fill gaps.
 [group('bootstrap')]
 install-hooks:
-    prek install
+    bash scripts/setup-hooks.sh
 
 # --- Develop ---------------------------------------------------------------
 

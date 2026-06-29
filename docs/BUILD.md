@@ -6,12 +6,12 @@ Everything you need to build, test, and release Agaric. Self-contained.
 ## TL;DR
 
 ```bash
-npm run setup                            # frontend deps + .env + dev DB (wraps scripts/setup.sh)
+npm run setup                            # deps + .env + dev DB + prek hook toolchain (wraps scripts/setup.sh)
 cargo tauri dev                          # run the app
-prek run --all-files                     # run every CI gate locally
+prek run --all-files                     # run every CI gate locally (or: just check)
 ```
 
-`npm run setup` (which runs `scripts/setup.sh`) is the canonical first-time setup: it runs `npm ci`, copies `src-tauri/.env.example` to the gitignored `.env` beside it (sqlx reads `DATABASE_URL` at compile time), seeds the sidecar placeholder, and provisions the local dev DB via `scripts/setup-dev-db.sh`. The sidecar placeholder is also re-run automatically by `beforeDevCommand`, so `cargo tauri dev` needs no manual prep step.
+`npm run setup` (which runs `scripts/setup.sh`) is the canonical first-time setup: it runs `npm ci`, copies `src-tauri/.env.example` to the gitignored `.env` beside it (sqlx reads `DATABASE_URL` at compile time), seeds the sidecar placeholder, provisions the local dev DB via `scripts/setup-dev-db.sh`, and installs the prek hook toolchain via `scripts/setup-hooks.sh` (see [Hook toolchain](#hook-toolchain) below). The sidecar placeholder is also re-run automatically by `beforeDevCommand`, so `cargo tauri dev` needs no manual prep step.
 
 Tests: `npx vitest run` (frontend), `cd src-tauri && cargo nextest run` (backend), `npx playwright test` (e2e), `cargo bench --bench interactive_slo` (perf SLO).
 
@@ -22,7 +22,17 @@ Run `npm run setup` (wraps `scripts/setup.sh`) and you are ready for `cargo taur
 1. `npm ci` — frontend deps.
 2. `cp src-tauri/.env.example src-tauri/.env` — sqlx reads `DATABASE_URL` from here at compile time (offline mode uses `.sqlx/` cache, but the env file must exist). Skipping this is the classic fresh-clone compile failure.
 
-`scripts/setup.sh` does both of the above, then provisions the dev DB (`scripts/setup-dev-db.sh`) so pre-push Rust checks pass. It also seeds the `agaric-mcp` sidecar placeholder — but you do not need to run `node scripts/prepare-external-bins.mjs --placeholder-only` by hand, because `beforeDevCommand` in `src-tauri/tauri.conf.json` re-runs it on every `cargo tauri dev`. The real sidecar is produced later by `cargo build --bin agaric-mcp`; the placeholder just unblocks the chicken-and-egg first compile.
+`scripts/setup.sh` does both of the above, then provisions the dev DB (`scripts/setup-dev-db.sh`) so pre-push Rust checks pass, and installs the hook toolchain (`scripts/setup-hooks.sh`, below). It also seeds the `agaric-mcp` sidecar placeholder — but you do not need to run `node scripts/prepare-external-bins.mjs --placeholder-only` by hand, because `beforeDevCommand` in `src-tauri/tauri.conf.json` re-runs it on every `cargo tauri dev`. The real sidecar is produced later by `cargo build --bin agaric-mcp`; the placeholder just unblocks the chicken-and-egg first compile.
+
+### Hook toolchain
+
+Every hook in `prek.toml` is `language = "system"`, so prek installs **none** of its own tools — each hook shells out to a binary that must already be on PATH, or your first `git commit` aborts. `scripts/setup-hooks.sh` (run by `npm run setup` / `just install-hooks`) installs that toolchain, mirroring CI's install set in `.github/workflows/_validate.yml` so the local gate matches CI:
+
+- **Cargo tools** (via `cargo-binstall` when present — prebuilt, fast — else `cargo install --locked`): `prek`, `cargo-deny`, `cargo-machete`, `cargo-audit`, `sqruff`, `typos-cli`, `zizmor`, `taplo-cli`, `cargo-nextest`, `just`, `lychee`, and `sqlx-cli` (with `--no-default-features --features rustls,sqlite`).
+- **Platform package manager** (`brew` on macOS, `apt`/`dnf`/`pacman` on Linux): `shellcheck`, `gitleaks`, `actionlint`.
+- **npm devDependencies** (already installed by `npm ci`): `oxlint`, `oxfmt`, `knip`, `markdownlint-cli2`.
+
+The script is best-effort and idempotent: tools already on PATH are skipped, and anything it can't auto-install on your platform prints a manual hint instead of failing (a partial toolchain still builds and runs the app — you just can't commit until the gap is filled). It finishes with `prek install` to wire the git hooks. Re-run it any time to fill gaps.
 
 ## Prerequisites by platform
 

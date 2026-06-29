@@ -12,4 +12,9 @@ node scripts/prepare-external-bins.mjs --placeholder-only
 # (pre-push Phase E) passes locally. Non-fatal: a frontend-only setup (or one
 # without network for the sqlx-cli install) still completes.
 bash scripts/setup-dev-db.sh || echo "warning: dev DB setup skipped — run scripts/setup-dev-db.sh before pushing Rust changes"
+# Install the prek hook toolchain (every binary the commit/push hooks call)
+# and wire the git hooks. Best-effort + idempotent: never fatal, so a missing
+# tool can't block a fresh clone from building. Re-run scripts/setup-hooks.sh
+# (or `just install-hooks`) to fill any gaps reported above.
+bash scripts/setup-hooks.sh || echo "warning: hook toolchain setup skipped — run scripts/setup-hooks.sh before committing"
 echo "Ready. Run: cargo tauri dev"
