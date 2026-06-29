@@ -10,6 +10,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { App } from './App.tsx'
 import { PrimaryFocusProvider } from './hooks/usePrimaryFocus'
 import { logger } from './lib/logger'
+import { initFrontendObservability } from './lib/observability'
 
 // Global catch-all: capture uncaught errors and unhandled rejections
 // before React mounts, so even early failures are logged persistently.
@@ -52,6 +53,13 @@ async function main() {
     const { setupMock } = await import('./lib/tauri-mock')
     setupMock()
   }
+
+  // Initialise frontend observability (#2110, M3b). Off by default — this is a
+  // no-op unless explicitly enabled (window.__AGARIC_OTEL__ / VITE_OTEL_FRONTEND),
+  // in which case it lazily registers the tracer + installs the invoke
+  // trace-context propagation patch. Awaited (after mock setup so the IPC bridge
+  // exists) so the patch is in place before the app dispatches its first command.
+  await initFrontendObservability()
 
   const rootEl = document.getElementById('root')
   if (!rootEl) throw new Error('Root element not found')
