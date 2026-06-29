@@ -55,6 +55,12 @@ ignored = [
 
 [lints.rust]
 unsafe_code = "deny"
+# `fuzzing` is set by cargo-fuzz when the src-tauri/fuzz crate compiles this lib
+# as a path dependency. `run()` (the tauri app entry, which expands
+# `generate_context!`) is gated `#[cfg(not(fuzzing))]` so the parser-only fuzz
+# targets never compile the GUI/ACL codegen (#2123). Declare the cfg so the
+# normal `-D warnings` build doesn't reject it as unexpected.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
 
 [lints.clippy]
 cast_possible_truncation = "warn"

@@ -552,14 +552,23 @@ jobs:
           # when libc is statically linked ("sanitizer is incompatible with
           # statically linked libc"). Disable crt-static for the fuzz build;
           # cargo-fuzz reads RUSTFLAGS and appends its own sanitizer flags, so
-          # both survive. (gnu defaults to dynamic libc, but the nightly + ASan
-          # combo enables crt-static implicitly here — see rust-fuzz/cargo-fuzz.)
+          # both survive. gnu defaults to dynamic libc, so the gnu target pinned
+          # below is ASan-compatible.
           RUSTFLAGS: "-C target-feature=-crt-static"
         run: |
           set -euo pipefail
           for target in snapshot_decode deeplink_parse; do
             echo "::group::fuzz $target"
-            cargo +nightly fuzz run "$target" -- \
+            # `--target x86_64-unknown-linux-gnu` pins the gnu HOST target.
+            # Recent cargo-fuzz defaults `--target` to
+            # x86_64-unknown-linux-musl (for a statically-linked fuzzer), but
+            # the nightly toolchain installed here only ships the host (gnu)
+            # std, so the musl default fails to build with
+            # `error[E0463]: can't find crate for std` (#2123). Pinning the
+            # host target builds against the installed std and keeps the
+            # dynamic-libc that ASan requires.
+            cargo +nightly fuzz run "$target" \
+              --target x86_64-unknown-linux-gnu -- \
               -max_total_time="$FUZZ_SECONDS" -rss_limit_mb=4096
             echo "::endgroup::"
           done

@@ -1735,6 +1735,14 @@ fn format_panic_report(payload: &str, location: &str, backtrace: &str) -> String
     format!("PANIC at {location}: {payload}\nstack backtrace:\n{backtrace}")
 }
 
+// #2123: the src-tauri/fuzz crate compiles this lib as a path dependency under
+// `--cfg fuzzing` to reach the byte-level parsers (`snapshot::decode_snapshot`,
+// `deeplink::parse_deep_link`). `run()` is the tauri app entry; its
+// `generate_context!` ACL codegen is both irrelevant to fuzzing pure parsers and
+// fragile under the nightly + sanitizer fuzz build, so exclude the whole GUI
+// builder from the fuzz build. Only `main.rs` (not compiled by the fuzz crate's
+// path dependency) calls `run()`.
+#[cfg(not(fuzzing))]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // #1058: most boot-wiring imports moved into the focused helper
