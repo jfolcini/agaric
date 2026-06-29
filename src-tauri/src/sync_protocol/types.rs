@@ -186,10 +186,20 @@ pub enum SyncMessage {
     /// (the delta since the initiator's vv) instead of a full snapshot. It is
     /// `#[serde(default)]` for wire back-compat: an older initiator omits it,
     /// and the responder falls back to a full snapshot per space.
+    ///
+    /// `engine_format_version` advertises the sender's
+    /// [`crate::loro::engine::ENGINE_FORMAT_VERSION`] so the responder can
+    /// reject an incompatible peer up front (before any raw-byte Loro merge)
+    /// rather than failing mid-session on an import. It is `#[serde(default)]`
+    /// for wire back-compat: a peer predating this field omits it and
+    /// deserializes as `0`, which the responder treats as "legacy peer" and
+    /// lets fall through to the import-time format guards (#2130).
     HeadExchange {
         heads: Vec<DeviceHead>,
         #[serde(default)]
         loro_vvs: Vec<SpaceVersionVector>,
+        #[serde(default)]
+        engine_format_version: u32,
     },
     /// Loro-CRDT-based sync wire envelope.
     ///

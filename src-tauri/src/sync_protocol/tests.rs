@@ -576,8 +576,17 @@ async fn orchestrator_start_returns_head_exchange() {
     let msg = orchestrator.start().await.unwrap();
 
     match msg {
-        SyncMessage::HeadExchange { heads, .. } => {
+        SyncMessage::HeadExchange {
+            heads,
+            engine_format_version,
+            ..
+        } => {
             assert!(heads.is_empty(), "empty DB should produce empty heads");
+            assert_eq!(
+                engine_format_version,
+                crate::loro::engine::ENGINE_FORMAT_VERSION,
+                "start() must advertise the local ENGINE_FORMAT_VERSION (#2130)"
+            );
         }
         other => panic!("expected HeadExchange, got {other:?}"),
     }
@@ -597,6 +606,7 @@ fn sync_message_serde_roundtrip() {
                 hash: "abc123".into(),
             }],
             loro_vvs: vec![],
+            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
         },
         SyncMessage::LoroSync {
             msg: crate::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot {
@@ -673,6 +683,113 @@ async fn orchestrator_handles_error_message() {
     );
 
     materializer.shutdown();
+}
+
+/// #2130: a responder must reject a peer advertising an incompatible
+/// `engine_format_version` UP FRONT in the HeadExchange arm — before any
+/// raw-byte Loro merge — emitting a `SyncEvent::Error`, transitioning to the
+/// terminal `Failed` state, and never producing a `LoroSync` payload.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_rejects_incompatible_engine_format() {
+    use crate::sync_events::{RecordingEventSink, SyncEvent};
+    use std::sync::Arc;
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    let sink = Arc::new(RecordingEventSink::new());
+    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone())
+        .with_event_sink(Box::new(sink.clone()));
+
+    // A peer one major engine format ahead of us. The responder must reject it
+    // up front rather than letting the bytes reach an import.
+    let incompatible = crate::loro::engine::ENGINE_FORMAT_VERSION + 1;
+    let result = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "remote-dev".into(),
+                seq: 1,
+                hash: "abc".into(),
+            }],
+            loro_vvs: vec![],
+            engine_format_version: incompatible,
+        })
+        .await;
+
+    assert!(
+        result.is_err(),
+        "an incompatible engine_format_version must be rejected with an error"
+    );
+    assert!(
+        matches!(orch.session().state, SyncState::Failed(_)),
+        "session must transition to the terminal Failed state, got {:?}",
+        orch.session().state
+    );
+
+    let events = sink.events();
+    let err = events
+        .iter()
+        .find_map(|e| match e {
+            SyncEvent::Error { message, .. } => Some(message.clone()),
+            _ => None,
+        })
+        .expect("a SyncEvent::Error must be emitted on rejection");
+    assert!(
+        err.contains("engine format"),
+        "the error message must mention the engine format, got: {err:?}"
+    );
+    // No LoroSync payload is ever produced: the rejection returns Err before
+    // `head_exchange_outgoing_loro`, so there is nothing queued to drain.
+    assert!(
+        orch.next_message().is_none(),
+        "a rejected session must not queue any LoroSync (or other) payload"
+    );
+
+    materializer.shutdown();
+}
+
+/// #2130 back-compat: `engine_format_version == 0` (a legacy peer predating the
+/// field) is ACCEPTED and falls through to the normal head-exchange path, and a
+/// matching version is accepted too. Mirrors
+/// [`loro_sync_orchestrator_handles_empty_registry_without_panic`].
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_accepts_legacy_and_matching_engine_format() {
+    let _state = crate::loro::shared::install_for_test();
+
+    for version in [0, crate::loro::engine::ENGINE_FORMAT_VERSION] {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+
+        let resp = orch
+            .handle_message(SyncMessage::HeadExchange {
+                heads: vec![],
+                loro_vvs: vec![],
+                engine_format_version: version,
+            })
+            .await
+            .unwrap_or_else(|e| {
+                panic!("engine_format_version={version} must be accepted, got error: {e:?}")
+            });
+
+        // Accepted ⇒ proceeds to the normal outgoing head-exchange path: either
+        // the empty-registry short-circuit (`SyncComplete`/`Complete`) or a real
+        // `LoroSync` (`StreamingOps`). Never `Failed`.
+        assert!(
+            !matches!(orch.session().state, SyncState::Failed(_)),
+            "engine_format_version={version} must not fail the session, state={:?}",
+            orch.session().state
+        );
+        assert!(
+            matches!(
+                resp,
+                Some(SyncMessage::SyncComplete { .. } | SyncMessage::LoroSync { .. })
+            ),
+            "engine_format_version={version} must proceed to the outgoing path, got {resp:?}"
+        );
+
+        materializer.shutdown();
+    }
 }
 
 /// Receiving a ResetRequired message transitions to ResetRequired state.
@@ -931,6 +1048,7 @@ async fn orchestrator_rejects_messages_in_terminal_state() {
         .handle_message(SyncMessage::HeadExchange {
             heads: vec![],
             loro_vvs: vec![],
+            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
         })
         .await;
     assert!(
@@ -1040,6 +1158,7 @@ async fn orchestrator_rejects_messages_in_failed_terminal_state() {
         .handle_message(SyncMessage::HeadExchange {
             heads: vec![],
             loro_vvs: vec![],
+            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
         })
         .await;
 
@@ -1140,6 +1259,7 @@ async fn orchestrator_rejects_head_exchange_in_streaming_state() {
         .handle_message(SyncMessage::HeadExchange {
             heads: vec![],
             loro_vvs: vec![],
+            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
         })
         .await;
     assert!(
@@ -1295,6 +1415,7 @@ async fn orchestrator_rejects_unexpected_peer_device_id() {
                 hash: "abc".into(),
             }],
             loro_vvs: vec![],
+            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
         })
         .await;
 
@@ -1335,6 +1456,7 @@ async fn orchestrator_accepts_matching_peer_device_id() {
                 hash: "abc".into(),
             }],
             loro_vvs: vec![],
+            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
         })
         .await;
 
@@ -1408,6 +1530,7 @@ async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
                 hash: "abc".into(),
             }],
             loro_vvs: vec![],
+            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
         })
         .await
         .unwrap();
@@ -1544,6 +1667,7 @@ fn serde_roundtrip_sync_message_head_exchange() {
             },
         ],
         loro_vvs: vec![],
+        engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
     };
     let json = serde_json::to_string(&msg).expect("serialize HeadExchange");
     let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize HeadExchange");
@@ -1618,6 +1742,7 @@ fn json_shape_head_exchange_matches_wire_format() {
             hash: "abc".into(),
         }],
         loro_vvs: vec![],
+        engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
     };
     let json: serde_json::Value =
         serde_json::to_value(&msg).expect("SyncMessage must serialize to Value");
@@ -1645,11 +1770,19 @@ fn head_exchange_deserializes_without_loro_vvs_field() {
     let msg: SyncMessage =
         serde_json::from_str(json).expect("old-format HeadExchange (no loro_vvs) must deserialize");
     match msg {
-        SyncMessage::HeadExchange { heads, loro_vvs } => {
+        SyncMessage::HeadExchange {
+            heads,
+            loro_vvs,
+            engine_format_version,
+        } => {
             assert_eq!(heads.len(), 1, "heads must round-trip");
             assert!(
                 loro_vvs.is_empty(),
                 "a missing loro_vvs field must default to empty"
+            );
+            assert_eq!(
+                engine_format_version, 0,
+                "a missing engine_format_version field must default to 0 (legacy peer)"
             );
         }
         other => panic!("expected HeadExchange, got {other:?}"),
@@ -1666,6 +1799,7 @@ fn json_shape_all_variants_have_type_tag() {
             SyncMessage::HeadExchange {
                 heads: vec![],
                 loro_vvs: vec![],
+                engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             },
         ),
         (
@@ -1797,6 +1931,7 @@ fn serde_roundtrip_empty_heads() {
     let msg = SyncMessage::HeadExchange {
         heads: vec![],
         loro_vvs: vec![],
+        engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
     };
     let json = serde_json::to_string(&msg).expect("serialize empty HeadExchange");
     let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize empty HeadExchange");
@@ -1838,6 +1973,7 @@ fn serde_roundtrip_many_heads() {
     let msg = SyncMessage::HeadExchange {
         heads: heads.clone(),
         loro_vvs: vec![],
+        engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
     };
     let json = serde_json::to_string(&msg).expect("serialize many-heads HeadExchange");
     let deser: SyncMessage =
@@ -1927,6 +2063,7 @@ async fn orchestrator_errors_on_head_exchange_during_streaming_ops() {
         .handle_message(SyncMessage::HeadExchange {
             heads: vec![],
             loro_vvs: vec![],
+            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
         })
         .await;
     assert!(
@@ -2019,6 +2156,7 @@ async fn handle_message_emits_within_sync_msg_span() {
         .handle_message(SyncMessage::HeadExchange {
             heads: vec![],
             loro_vvs: vec![],
+            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
         })
         .await;
 
@@ -2068,6 +2206,7 @@ async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
         .handle_message(SyncMessage::HeadExchange {
             heads: vec![],
             loro_vvs: vec![],
+            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
         })
         .await
         .expect("HeadExchange must not error under the engine path");

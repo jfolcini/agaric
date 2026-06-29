@@ -79,6 +79,12 @@ The FTS index is rebuilt incrementally on every block edit. A background optimiz
 
 The strip pass (`src-tauri/src/fts/strip.rs`) resolves `[[ULID]]` / `#[ULID]` to target titles before indexing, so a search for a page name matches blocks that link to it (not just blocks that contain the literal ULID).
 
+## Engine format version & downgrade recovery
+
+The per-space Loro engine stamps `ENGINE_FORMAT_VERSION` (currently `2`) into each snapshot on export and checks it on import (`src-tauri/src/loro/engine/mod.rs`). Once a snapshot has been re-saved under engine format v2, **downgrading to a pre-#332 build is the only forward-migration route** — there is no in-place v2→v1 conversion, so a host that must run an older build has to restore from a v1-era snapshot or re-derive state from the op log on that build.
+
+A v1 peer cannot sync with a v2 peer: the raw Loro bytes are incompatible across the format boundary. As of #2130 the sync handshake gates this **up front**. The initiator advertises its `engine_format_version` in the `HeadExchange` message, and the responder rejects an incompatible peer before any raw-byte merge — emitting a clear `SyncEvent::Error` ("peer engine format vN incompatible with local vM") and failing the session, instead of letting the bytes reach an import and surfacing a confusing mid-session failure. A version of `0` denotes a legacy peer predating the field; it is accepted and falls through to the existing import-time format guards (`reject_legacy_v1_snapshot` / `reject_unknown_format_version`).
+
 ## Roadmap
 
 What's not yet shipped is tracked separately. High-level items today:
