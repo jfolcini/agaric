@@ -145,11 +145,26 @@ See **[docs/BUILD.md](docs/BUILD.md)** for the complete build guide — prerequi
 ### Quick Start
 
 ```bash
-npm run setup                # Install deps + copy src-tauri/.env + provision dev DB
+npm run setup                # Bootstrap: deps + .env + dev DB + prek hook toolchain
 cargo tauri dev              # Launch app with hot reload
 ```
 
-`npm run setup` (wraps `scripts/setup.sh`) installs frontend deps, copies `src-tauri/.env.example` to the gitignored `.env` beside it (sqlx reads `DATABASE_URL` from it at compile time), seeds the sidecar placeholder, and provisions the local dev DB. Without the `.env` copy, a fresh clone fails to compile. See [docs/BUILD.md](docs/BUILD.md#after-clone-setup) for the manual steps.
+`npm run setup` (wraps `scripts/setup.sh`) installs frontend deps, copies `src-tauri/.env.example` to the gitignored `.env` beside it (sqlx reads `DATABASE_URL` from it at compile time), seeds the sidecar placeholder, provisions the local dev DB, and installs the **prek hook toolchain** (`prek` plus every host binary the commit/push hooks call — cargo-deny, sqruff, typos, zizmor, taplo, lychee, shellcheck, … — then `prek install`). The toolchain step is best-effort and idempotent; re-run `scripts/setup-hooks.sh` to fill any gaps it reports. Without the `.env` copy, a fresh clone fails to compile. See [docs/BUILD.md](docs/BUILD.md#after-clone-setup) for the manual steps.
+
+#### `just` task runner (optional)
+
+A [`justfile`](justfile) provides a discoverable façade over the day-to-day commands — `cargo install --locked just` (or let `npm run setup` install it), then `just` (or `just --list`) shows every recipe grouped by purpose:
+
+```bash
+just setup                   # = npm run setup (full bootstrap, incl. hook toolchain)
+just install-hooks           # (re)install the prek toolchain + git hooks
+just dev                     # cargo tauri dev
+just test                    # Vitest + cargo nextest
+just check                   # prek run --all-files (local CI mirror)
+just verify                  # pre-push CI-equivalent verifier
+```
+
+`just` is optional — nothing in the build, CI, or git hooks depends on it; each recipe just shells out to the canonical `npm`/`cargo`/`prek`/`scripts/*` entry point.
 
 ### Testing
 

@@ -51,6 +51,7 @@ See **[docs/BUILD.md](docs/BUILD.md)** for the full build guide (prerequisites, 
 
 ```bash
 # Quick reference
+npm run setup                # One-shot bootstrap: deps + .env + dev DB + prek hook toolchain
 cargo tauri dev              # Dev mode with hot reload
 cargo tauri build            # Production build (per-platform)
 npm run test                 # Vitest (frontend test suite)
@@ -60,6 +61,8 @@ cargo tauri android build --target aarch64 --debug   # Android debug APK
 cargo tauri android build --target aarch64            # Android release APK (~24 MB)
 prek run --all-files         # Pre-commit hooks
 ```
+
+**`just` task runner (optional).** A [`justfile`](justfile) is a thin, discoverable façade over the canonical commands above — every recipe shells out to the real `npm`/`cargo`/`prek`/`scripts/*` entry point, so it cannot drift. `cargo install --locked just` (or let `npm run setup` install it), then `just --list`. Common: `just setup` (full bootstrap), `just install-hooks` ((re)install the prek toolchain + git hooks), `just dev`, `just test`, `just check` (= `prek run --all-files`), `just verify` (pre-push CI mirror). Optional — nothing in build/CI/hooks depends on it. **Bootstrap installs the prek toolchain:** every hook in `prek.toml` is `language = "system"`, so `scripts/setup-hooks.sh` (run by `npm run setup` / `just setup`) installs each host binary the hooks shell out to — mirroring CI's install set — and runs `prek install`. Best-effort and idempotent.
 
 **Daily dev loop:** prefer `npm run dev` (browser, ~50 ms HMR) for pure UI work; reach for `cargo tauri dev` (~10-20 s per Rust edit) only when touching backend behaviour. Backend-only iteration: `bacon` in a sidecar terminal. Linux: activate the staged mold linker (`sudo apt install mold && cp .cargo/config.toml{.example,}`) to drop incremental link time ~3-4×. Full guidance in [docs/BUILD.md § Development](docs/BUILD.md#development).
 
