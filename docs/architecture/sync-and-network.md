@@ -56,7 +56,7 @@ If you re-install Agaric on a peer, its certificate hash changes — you'll need
 
 ### Loro sync flow
 
-1. **Head exchange.** Each side sends its frontier (`{device_id → seq}` per space).
+1. **Head exchange.** The initiator sends its per-space frontier (`{device_id → seq}`) **and** its per-space Loro version vectors (`HeadExchange.loro_vvs`, collected by `collect_local_loro_vvs`). The responder uses each advertised vv to pick an incremental `Update` (delta since that vv) over a full `Snapshot`, per space — incremental sync is live, not aspirational.
 2. **Engine computes delta.** Loro's `oplog_vv()` diff between local and peer-frontier yields the export envelope. No `compute_ops_to_send` — the engine owns it.
 3. **Push.** Sender exports `LoroDoc::export(ExportMode::Snapshot | Updates(peer_vv))`, ships as `LoroSyncMessage`.
 4. **Apply.** Receiver imports into per-space `LoroEngine`. Materializer projects engine state into SQL primary state post-import.
