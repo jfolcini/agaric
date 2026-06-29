@@ -67,6 +67,10 @@ pub(crate) use orchestrator::{
 // Same rationale as above: only the test sibling reaches into these.
 #[allow(unused_imports)]
 pub(crate) use server::{CertVerifyResult, handle_incoming_sync, verify_peer_cert};
+// #2129: test-only responder seam that injects a per-device Loro registry,
+// consumed exclusively by the real-loopback convergence test in `tests.rs`.
+#[cfg(test)]
+pub(crate) use server::handle_incoming_sync_with_loro_state;
 
 // ---------------------------------------------------------------------------
 // SharedEventSink — wrapper to satisfy Sized bound
