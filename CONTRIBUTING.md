@@ -32,6 +32,15 @@ prek install -f
 
 After this, every `git commit` runs the fast subset (lint + format + static checks, no tests), every `git push` runs the slower CI-equivalent gate (`scripts/verify-ci-equivalent.sh`, which adds nextest + clippy + knip + lychee + the related-test suites), and the commit message is checked against Conventional Commits. The full surface — including all rules, hook IDs, and stage assignments — lives in [`prek.toml`](prek.toml); the same hooks run again in CI via `.github/workflows/_validate.yml`, so green local prek ⇒ green CI validate.
 
+### Optional: `just` task runner
+
+A [`justfile`](justfile) at the repo root provides short, discoverable aliases for the everyday commands (`just dev`, `just test`, `just check`, `just fmt`, …). It is a thin façade — every recipe shells out to the canonical entry point (`npm` script, `cargo`, `prek`, or a `scripts/*` helper), so `package.json` and `prek.toml` stay the source of truth and the justfile cannot silently drift from them. It is **entirely optional**: nothing in the build, CI, or git hooks depends on it, so you can keep calling the underlying commands directly.
+
+```bash
+cargo install --locked just   # one-time install
+just                          # list every recipe (alias for `just --list`)
+```
+
 The hooks shell out to a handful of host-installed binaries (lychee, typos-cli, shellcheck, zizmor, taplo-cli, …). Install them once via [`docs/BUILD.md` → Developer tools (prek hook host-binaries)](docs/BUILD.md#developer-tools-prek-hook-host-binaries) so a local `prek run --all-files` is green; otherwise individual hooks fail with `command not found`.
 
 **If you cannot install prek locally** (e.g., contributor without Rust toolchain): your patch is welcome anyway; CI will run the same gate on the PR. Open the PR and iterate based on CI feedback.
@@ -63,16 +72,18 @@ cd src-tauri && cargo nextest run   # Rust tests
 prek run --all-files         # Full local gate (mirror of CI's `validate` job)
 ```
 
+With the optional [`just`](#optional-just-task-runner) runner installed, the same four are `just dev`, `just test-fe`, `just test-be`, and `just check` (and `just test` runs both test suites); run `just --list` for the rest.
+
 ### Fixing a format check failure
 
 The pre-commit hooks split formatting by language. If a hook fails:
 
 ```bash
-git diff --name-only | xargs oxfmt --write   # oxfmt — fixes JS/TS/JSON in CHANGED files only (matches the staged-files hook)
-npm run format:toml                           # taplo — fixes TOML (a `taplo fmt --check` failure is NOT fixed by oxfmt)
+npm run format:changed   # oxfmt — fixes JS/TS/JSON in CHANGED files only (vs HEAD; wraps scripts/format-changed.sh)
+npm run format:toml      # taplo — fixes TOML (a `taplo fmt --check` failure is NOT fixed by oxfmt)
 ```
 
-Prefer formatting only the files you changed (as above), since `npm run format` is `oxfmt --write .` — a whole-repo reformat that can produce large unrelated diffs; reserve it for intentional repo-wide passes. Either way, oxfmt only touches JS/TS/JSON and never reformats TOML, so a `taplo fmt --check` hook failure must be fixed with `npm run format:toml`. The `format:toml` script needs the `taplo` binary on `PATH` (`cargo install taplo-cli --locked`).
+Prefer formatting only the files you changed (as above), since `npm run format` is `oxfmt --write .` — a whole-repo reformat that can produce large unrelated diffs; reserve it for intentional repo-wide passes. (`just fmt` runs both commands above.) Either way, oxfmt only touches JS/TS/JSON and never reformats TOML, so a `taplo fmt --check` hook failure must be fixed with `npm run format:toml`. The `format:toml` script needs the `taplo` binary on `PATH` (`cargo install taplo-cli --locked`).
 
 Every change must:
 

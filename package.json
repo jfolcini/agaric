@@ -16,6 +16,7 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "format": "oxfmt --write .",
+    "format:changed": "bash scripts/format-changed.sh",
     "format:check": "oxfmt --check .",
     "format:toml": "taplo fmt",
     "format:toml:check": "taplo fmt --check",
