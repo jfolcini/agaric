@@ -37,6 +37,7 @@ import { computeIndentedBlocks, findPrevSiblingAt, planSplit } from '../lib/bloc
 import { recordGraphStructureChange } from '../lib/graph-structure-events'
 import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
+import { INTERACTIONS, traceInteraction } from '../lib/observability'
 import type { BlockRow, CreateBlockSpec } from '../lib/tauri'
 import {
   createBlock,
@@ -604,7 +605,12 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         // Single-SELECT descendant load via the materializer-maintained
         // `page_id` index — replaces the recursive per-parent
         // `listBlocks` walk that silently clamped each level to 100.
-        const subtree = await loadPageSubtree(rootParentId, spaceId)
+        // #2110 (M4) — trace the page-open data load. `loadPageSubtree`
+        // dispatches its IPC synchronously inside the callback, so the backend
+        // command + SQLite/materializer spans parent under this interaction.
+        const subtree = await traceInteraction(INTERACTIONS.PAGE_OPEN, () =>
+          loadPageSubtree(rootParentId, spaceId),
+        )
         const allBlocks = subtree.blocks
         // Defensive: discard if rootParentId changed (shouldn't happen with per-page stores)
         if (get().rootParentId !== rootParentId) return
