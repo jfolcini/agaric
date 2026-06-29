@@ -12,25 +12,27 @@ Thanks for your interest in contributing. Agaric is a local-first block-based no
 
 ## Bootstrap
 
-The toolchain set is documented in [`docs/BUILD.md`](docs/BUILD.md): Rust stable (`rustup default stable`), Node 24 LTS (pinned in [`.nvmrc`](.nvmrc)), and Tauri's CLI. On top of that, two one-time installs wire up the local pre-commit / pre-push checks:
+**One command sets up everything:**
 
 ```bash
-# 1. Install prek (Rust reimplementation of pre-commit; no Python toolchain needed).
-cargo install --locked prek
-
-# 2. Wire all five git shims (pre-commit, commit-msg, prepare-commit-msg,
-#    pre-push, post-commit) to invoke prek. The shim list is declared via
-#    `default_install_hook_types` in prek.toml, so plain `prek install`
-#    writes all of them.
-prek install
-
-# Already cloned before the commit-msg shim was added? Re-run once with -f
-# to overwrite the existing shims and pick up the new commit-msg hook (this
-# is what makes the Conventional-Commits check actually fire locally):
-prek install -f
+bash scripts/setup.sh      # or: npm run setup  (identical)  ·  or: just setup  (if you have just)
 ```
 
-After this, every `git commit` runs the fast subset (lint + format + static checks, no tests), every `git push` runs the slower CI-equivalent gate (`scripts/verify-ci-equivalent.sh`, which adds nextest + clippy + knip + lychee + the related-test suites), and the commit message is checked against Conventional Commits. The full surface — including all rules, hook IDs, and stage assignments — lives in [`prek.toml`](prek.toml); the same hooks run again in CI via `.github/workflows/_validate.yml`, so green local prek ⇒ green CI validate.
+That is the whole dev-environment setup. The script is idempotent — safe to re-run any time — and handles all of it for you:
+
+- **Node** — provisions the version pinned in [`.nvmrc`](.nvmrc) via `nvm` if your active `node` is older (the `engines` floor is `>=24`), so you don't have to match it by hand.
+- **Dependencies** — `npm ci` (deterministic install from the lockfile) and Playwright's chromium.
+- **`.env`** — copies `src-tauri/.env.example` to the gitignored `.env` beside it (sqlx reads `DATABASE_URL` from it at compile time; skipping this is the classic fresh-clone compile failure).
+- **Dev DB** — provisions the local sqlx offline-check database so pre-push Rust checks pass.
+- **prek hook toolchain + git hooks** — installs `prek` and every host binary the commit/push hooks shell out to (cargo-deny, sqruff, typos, zizmor, taplo, lychee, shellcheck, `just`, …), then runs `prek install` to wire the git shims (pre-commit, commit-msg, prepare-commit-msg, pre-push, post-commit). This step is best-effort: anything it can't auto-install on your platform prints a manual hint instead of failing, and you can re-run `scripts/setup-hooks.sh` (or `just install-hooks`) any time to fill gaps. See [`docs/BUILD.md` → Hook toolchain](docs/BUILD.md#hook-toolchain) for the full install set (which mirrors CI).
+
+The base toolchain the script builds on — Rust stable (`rustup default stable`) and Tauri's CLI (the pinned `@tauri-apps/cli` devDependency, installed by `npm ci`) — is documented in [`docs/BUILD.md`](docs/BUILD.md).
+
+After bootstrap, every `git commit` runs the fast subset (lint + format + static checks, no tests), every `git push` runs the slower CI-equivalent gate (`scripts/verify-ci-equivalent.sh`, which adds nextest + clippy + knip + lychee + the related-test suites), and the commit message is checked against Conventional Commits. The full surface — including all rules, hook IDs, and stage assignments — lives in [`prek.toml`](prek.toml); the same hooks run again in CI via `.github/workflows/_validate.yml`, so green local prek ⇒ green CI validate.
+
+> **Claude Code on the web / cloud VMs:** bootstrap runs **automatically**. The repo ships a `SessionStart` hook ([`.claude/hooks/session-start.sh`](.claude/hooks/session-start.sh)) that runs `scripts/setup.sh` when `CLAUDE_CODE_REMOTE=true`, so a fresh cloud session lands build- and commit-ready with no manual step. For the fastest startup you can _also_ paste `bash scripts/setup.sh` into your environment's **Setup script** field in the web UI — that runs once and is filesystem-cached across sessions. (One sandbox caveat: prek's three git-cloned hooks — gitleaks, actionlint, conventional-pre-commit — can't be provisioned when the session's git credential is scoped to a single repo, so they stay unwired locally and run in CI instead. Every other hook works.)
+
+If you'd rather wire just the git hooks by hand (e.g. you already have the toolchain): `cargo install --locked prek && prek install` (add `-f` to overwrite stale shims). **If you cannot install prek at all** (e.g. no Rust toolchain): your patch is welcome anyway; CI runs the same gate on the PR.
 
 ### Optional: `just` task runner
 

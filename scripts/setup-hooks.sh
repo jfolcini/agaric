@@ -121,13 +121,22 @@ install_lychee() {
   esac
   local url="https://github.com/lycheeverse/lychee/releases/latest/download/lychee-${triple}.tar.gz"
   mkdir -p "$HOME/.local/bin"
-  # The tarball nests the binary under <triple>/lychee; strip that one dir.
-  if curl -fsSL "$url" | tar -xz -C "$HOME/.local/bin" --strip-components=1 "${triple}/lychee" >/dev/null 2>&1 \
-     && [ -x "$HOME/.local/bin/lychee" ]; then
+  # Extract to a temp dir and FIND the binary rather than hard-coding its path:
+  # recent release tarballs nest it under `lychee-<triple>/lychee`, older ones
+  # under `<triple>/lychee`, and pinning one layout silently broke the install
+  # when upstream changed it (the curl|tar just found no such member and the
+  # hook went missing). `find` is layout- and portable across GNU/bsd tar.
+  local tmp bin=""
+  tmp="$(mktemp -d)"
+  if curl -fsSL "$url" | tar -xz -C "$tmp" >/dev/null 2>&1; then
+    bin="$(find "$tmp" -type f -name lychee 2>/dev/null | head -1)"
+  fi
+  if [ -n "$bin" ] && install -m 0755 "$bin" "$HOME/.local/bin/lychee" 2>/dev/null; then
     ok "lychee (prebuilt $triple)"
   else
     warn "could not download prebuilt lychee — install manually (https://github.com/lycheeverse/lychee/releases)"
   fi
+  rm -rf "$tmp"
 }
 
 # sqlx-cli needs custom features (rustls + sqlite only) — same as CI.
