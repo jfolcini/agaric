@@ -2,6 +2,31 @@
 # One-shot post-clone setup. Idempotent: safe to re-run.
 set -euo pipefail
 
+# --- Transient-failure retry ----------------------------------------------
+# Retry a flaky network command with exponential backoff (2s, 4s, 8s, 16s;
+# 5 attempts total). Container provisioning sometimes runs this script before
+# the proxied network is fully up, so a SINGLE transient fetch failure would
+# otherwise abort the whole `set -euo pipefail` bootstrap — and with it the
+# best-effort steps that follow (npm ci, .env, dev DB, git hooks), leaving a
+# clone that can't build/test/commit. A retry lets that startup race self-heal.
+# Mirrors the git push retry convention used elsewhere in this repo.
+retry() {
+  local -i attempt=1 max=5 delay=2
+  while true; do
+    if "$@"; then
+      return 0
+    fi
+    if [ "$attempt" -ge "$max" ]; then
+      echo "retry: command failed after ${max} attempts: $*" >&2
+      return 1
+    fi
+    echo "retry: attempt ${attempt}/${max} failed: $* — retrying in ${delay}s…" >&2
+    sleep "$delay"
+    attempt=$((attempt + 1))
+    delay=$((delay * 2))
+  done
+}
+
 # --- Node toolchain --------------------------------------------------------
 # Everything below needs the Node version pinned in .nvmrc. package.json's
 # `engines` enforces it (>=24), so a mismatched node makes the very first
@@ -38,11 +63,15 @@ ensure_node() {
   if [ ! -s "$NVM_DIR/nvm.sh" ]; then
     echo "nvm not found — fetching nvm.sh over HTTPS…"
     mkdir -p "$NVM_DIR"
-    curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/nvm.sh -o "$NVM_DIR/nvm.sh"
+    # Retry: the proxied network may not be ready at provisioning time.
+    retry curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/nvm.sh -o "$NVM_DIR/nvm.sh"
   fi
   # shellcheck disable=SC1091
   . "$NVM_DIR/nvm.sh"
-  nvm install "$want"                   # Node tarball comes from nodejs.org
+  # Retry: the Node tarball download from nodejs.org is the step most likely
+  # to hit the provisioning-time network race (it aborted the bootstrap before
+  # this fix). `nvm install` is idempotent, so re-running is safe.
+  retry nvm install "$want"             # Node tarball comes from nodejs.org
   nvm use "$want" >/dev/null            # activate for npm ci / npx below
   nvm alias default "$want" >/dev/null  # and for fresh shells (cargo tauri dev, etc.)
   echo "using node $(node -v) (npm $(npm -v)); nvm default -> Node ${want}"
