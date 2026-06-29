@@ -4943,6 +4943,261 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
     mat_b.shutdown();
 }
 
+/// #2129 (bullet 1 op-coverage completion) — MOVE, soft-delete/RESTORE, and
+/// soft-delete/PURGE converge over a REAL loopback TLS socket.
+///
+/// The keystone (`two_edited_devices_converge_over_real_loopback_tls`) proves
+/// content / typed-property / tag / soft-delete convergence over the real
+/// transport; #2129 §2B's bullet 1 also lists `move`, `restore`, and `purge`.
+/// This closes that op-coverage gap end-to-end over the genuine
+/// `SyncServer` + `connect_to_peer` + `run_sync_session` /
+/// `handle_incoming_sync` harness (not the in-memory pump).
+///
+/// Shape: a shared base (parent P, child C, blocks D and E) is created on A and
+/// synced to B so BOTH devices hold it. Then divergent ops on DISTINCT blocks
+/// (so there is no concurrent-same-block conflict to muddy the op semantics):
+///   * A reparents C under P (`MoveBlock`),
+///   * A soft-deletes then restores D (`DeleteBlock` + `RestoreBlock`),
+///   * B soft-deletes then purges E (`DeleteBlock` + `PurgeBlock`).
+/// After a bidirectional sync, BOTH devices must converge: C parented under P,
+/// D present and live (`deleted_at` NULL), E physically gone — plus identical
+/// engine version vectors.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
+    use crate::op::{
+        DeleteBlockPayload, MoveBlockPayload, OpPayload, PurgeBlockPayload, RestoreBlockPayload,
+    };
+    use crate::sync_protocol::SyncState;
+
+    install_crypto_provider();
+
+    const DEV_A: &str = "DEV2129MA";
+    const DEV_B: &str = "DEV2129MB";
+    // Parent container, child-to-move, restore-target, purge-target.
+    const BLOCK_P: &str = "01HZ21290000000000000000PP";
+    const BLOCK_C: &str = "01HZ21290000000000000000CC";
+    const BLOCK_D: &str = "01HZ21290000000000000000DD";
+    const BLOCK_E: &str = "01HZ21290000000000000000EE";
+    let space = crate::space::SpaceId::from_trusted("01HZ2129MOVESPACEXXXXXXXXX");
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+    let mat_b = Materializer::new(pool_b.clone());
+
+    // #602 test seam: one leaked Loro registry per device.
+    let state_a: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+    let state_b: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+
+    peer_refs::upsert_peer_ref(&pool_a, DEV_B).await.unwrap();
+    peer_refs::upsert_peer_ref(&pool_b, DEV_A).await.unwrap();
+
+    let cert_a = sync_net::generate_self_signed_cert(DEV_A).unwrap();
+    let cert_b = sync_net::generate_self_signed_cert(DEV_B).unwrap();
+
+    // ── Shared base: A creates P, C, D, E (all top-level content blocks) ──
+    let mut ts = 1_736_950_000_000_i64;
+    for (block, content) in [
+        (BLOCK_P, "parent container"),
+        (BLOCK_C, "child to move"),
+        (BLOCK_D, "to delete then restore"),
+        (BLOCK_E, "to delete then purge"),
+    ] {
+        make_local_edit_602(&pool_a, &mat_a, state_a, DEV_A, &space, block, content, ts).await;
+        ts += 1_000;
+    }
+
+    // Sync the base both directions so B holds every base block.
+    let s = run_one_real_loopback_session_2129(
+        &pool_a, &mat_a, state_a, DEV_A, &cert_a, &pool_b, &mat_b, state_b, DEV_B, &cert_b,
+    )
+    .await;
+    assert_eq!(
+        s,
+        SyncState::Complete,
+        "#2129 mvp: base sync A->B must complete"
+    );
+    let s = run_one_real_loopback_session_2129(
+        &pool_b, &mat_b, state_b, DEV_B, &cert_b, &pool_a, &mat_a, state_a, DEV_A, &cert_a,
+    )
+    .await;
+    assert_eq!(
+        s,
+        SyncState::Complete,
+        "#2129 mvp: base sync B->A must complete"
+    );
+
+    // Sanity: B must hold the purge target before it can delete+purge it.
+    let e_on_b: Option<String> = sqlx::query_scalar("SELECT id FROM blocks WHERE id = ?")
+        .bind(BLOCK_E)
+        .fetch_optional(&pool_b)
+        .await
+        .unwrap();
+    assert_eq!(
+        e_on_b.as_deref(),
+        Some(BLOCK_E),
+        "#2129 mvp: base block E must reach B before the purge"
+    );
+
+    // ── Divergent ops on A: move C under P, then delete+restore D ─────────
+    apply_local_op_602(
+        &pool_a,
+        &mat_a,
+        state_a,
+        DEV_A,
+        &space,
+        OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: crate::ulid::BlockId::from_trusted(BLOCK_C),
+            new_parent_id: Some(crate::ulid::BlockId::from_trusted(BLOCK_P)),
+            new_position: 1,
+            new_index: Some(0),
+        }),
+        ts,
+    )
+    .await;
+    ts += 1_000;
+
+    let del_d_ts = ts;
+    apply_local_op_602(
+        &pool_a,
+        &mat_a,
+        state_a,
+        DEV_A,
+        &space,
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: crate::ulid::BlockId::from_trusted(BLOCK_D),
+        }),
+        del_d_ts,
+    )
+    .await;
+    ts += 1_000;
+    apply_local_op_602(
+        &pool_a,
+        &mat_a,
+        state_a,
+        DEV_A,
+        &space,
+        OpPayload::RestoreBlock(RestoreBlockPayload {
+            block_id: crate::ulid::BlockId::from_trusted(BLOCK_D),
+            // The restore guard matches the delete op's epoch-ms created_at.
+            deleted_at_ref: del_d_ts,
+        }),
+        ts,
+    )
+    .await;
+    ts += 1_000;
+
+    // ── Divergent ops on B: delete+purge E ───────────────────────────────
+    let del_e_ts = ts;
+    apply_local_op_602(
+        &pool_b,
+        &mat_b,
+        state_b,
+        DEV_B,
+        &space,
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: crate::ulid::BlockId::from_trusted(BLOCK_E),
+        }),
+        del_e_ts,
+    )
+    .await;
+    ts += 1_000;
+    apply_local_op_602(
+        &pool_b,
+        &mat_b,
+        state_b,
+        DEV_B,
+        &space,
+        OpPayload::PurgeBlock(PurgeBlockPayload {
+            block_id: crate::ulid::BlockId::from_trusted(BLOCK_E),
+        }),
+        ts,
+    )
+    .await;
+
+    // ── Final bidirectional sync ─────────────────────────────────────────
+    let s = run_one_real_loopback_session_2129(
+        &pool_a, &mat_a, state_a, DEV_A, &cert_a, &pool_b, &mat_b, state_b, DEV_B, &cert_b,
+    )
+    .await;
+    assert_eq!(
+        s,
+        SyncState::Complete,
+        "#2129 mvp: final sync A->B must complete"
+    );
+    let s = run_one_real_loopback_session_2129(
+        &pool_b, &mat_b, state_b, DEV_B, &cert_b, &pool_a, &mat_a, state_a, DEV_A, &cert_a,
+    )
+    .await;
+    assert_eq!(
+        s,
+        SyncState::Complete,
+        "#2129 mvp: final sync B->A must complete"
+    );
+
+    // ── Convergence on BOTH devices ──────────────────────────────────────
+    for (label, pool) in [("A", &pool_a), ("B", &pool_b)] {
+        // Move converged: C is parented under P.
+        let parent: Option<Option<String>> =
+            sqlx::query_scalar("SELECT parent_id FROM blocks WHERE id = ?")
+                .bind(BLOCK_C)
+                .fetch_optional(pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            parent,
+            Some(Some(BLOCK_P.to_string())),
+            "#2129 device {label}: moved child C must be parented under P; got {parent:?}"
+        );
+
+        // Restore converged: D present and live (deleted_at NULL).
+        let d_deleted: Option<Option<i64>> =
+            sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(BLOCK_D)
+                .fetch_optional(pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            d_deleted,
+            Some(None),
+            "#2129 device {label}: restored block D must be present and live \
+             (deleted_at NULL); got {d_deleted:?}"
+        );
+
+        // Purge converged: E physically gone (no row).
+        let e_row: Option<String> = sqlx::query_scalar("SELECT id FROM blocks WHERE id = ?")
+            .bind(BLOCK_E)
+            .fetch_optional(pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            e_row, None,
+            "#2129 device {label}: purged block E must be physically gone; got {e_row:?}"
+        );
+    }
+
+    // ── Engines converged to the same version vector ─────────────────────
+    let vv_a = {
+        let mut g = state_a.registry.for_space(&space, DEV_A).expect("space A");
+        g.engine_mut().version_vector()
+    };
+    let vv_b = {
+        let mut g = state_b.registry.for_space(&space, DEV_B).expect("space B");
+        g.engine_mut().version_vector()
+    };
+    assert_eq!(
+        loro::VersionVector::decode(&vv_a).unwrap(),
+        loro::VersionVector::decode(&vv_b).unwrap(),
+        "#2129 move/restore/purge: both engines must converge to the same \
+         version vector over the real socket"
+    );
+
+    mat_a.flush_background().await.unwrap();
+    mat_b.flush_background().await.unwrap();
+    mat_a.shutdown();
+    mat_b.shutdown();
+}
+
 /// #2006 — concurrent edits to the SAME block converge deterministically.
 ///
 /// #602 covers two devices editing DISTINCT blocks. This pins the conflict
