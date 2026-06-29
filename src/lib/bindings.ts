@@ -584,6 +584,21 @@ export const commands = {
 	 *  guard while keeping content/PII out of the span.
 	 */
 	ingestOtelSpans: (spans: FrontendSpan[]) => typedError<null, AppError>(__TAURI_INVOKE("ingest_otel_spans", { spans })),
+	/**
+	 *  Set the runtime trace head-sampling ratio (#2110, M5).
+	 * 
+	 *  One call toggles the whole app between full-tracing and sampling: the
+	 *  backend's runtime sampler reads the new ratio on the next root span (see
+	 *  [`crate::observability::set_sampling_ratio`]), and the frontend tracer sets
+	 *  the same ratio locally — so "sample 10%" or "trace everything" is a single
+	 *  app-wide switch. `ratio` is clamped to `[0.0, 1.0]`; `1.0` = full tracing,
+	 *  `0.0` = drop new roots.
+	 * 
+	 *  No-op-safe when observability is disabled: the ratio is just a process-global
+	 *  number; with no provider installed nothing samples regardless. The `ratio`
+	 *  is a bare number (no content/PII), so the span records it directly.
+	 */
+	setTraceSampling: (ratio: number | null) => typedError<null, AppError>(__TAURI_INVOKE("set_trace_sampling", { ratio })),
 	/**  Tauri command: return op log compaction statistics for the UI. */
 	getCompactionStatus: () => typedError<CompactionStatus, AppError>(__TAURI_INVOKE("get_compaction_status")),
 	/**

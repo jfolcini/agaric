@@ -32,3 +32,23 @@ pub async fn ingest_otel_spans(
     ingestor.ingest(&spans);
     Ok(())
 }
+
+/// Set the runtime trace head-sampling ratio (#2110, M5).
+///
+/// One call toggles the whole app between full-tracing and sampling: the
+/// backend's runtime sampler reads the new ratio on the next root span (see
+/// [`crate::observability::set_sampling_ratio`]), and the frontend tracer sets
+/// the same ratio locally — so "sample 10%" or "trace everything" is a single
+/// app-wide switch. `ratio` is clamped to `[0.0, 1.0]`; `1.0` = full tracing,
+/// `0.0` = drop new roots.
+///
+/// No-op-safe when observability is disabled: the ratio is just a process-global
+/// number; with no provider installed nothing samples regardless. The `ratio`
+/// is a bare number (no content/PII), so the span records it directly.
+#[tauri::command]
+#[instrument]
+#[specta::specta]
+pub fn set_trace_sampling(ratio: f64) -> Result<(), AppError> {
+    crate::observability::set_sampling_ratio(ratio);
+    Ok(())
+}

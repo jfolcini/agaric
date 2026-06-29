@@ -11,12 +11,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { FrontendSpan } from '../../bindings'
+import { commands } from '../../bindings'
 import { getSamplingRatio, resolveEnabled, setSamplingRatio, shouldSampleRoot } from '../config'
 import { generateSpanId, generateTraceId, isValidSpanId, isValidTraceId } from '../ids'
 import {
   _resetFrontendObservabilityForTest,
   flushFrontendSpans,
   initFrontendObservability,
+  setTraceSampling,
   traceInteraction,
 } from '../index'
 import { setSpanSink } from '../transport'
@@ -116,6 +118,26 @@ describe('config / sampling', () => {
     draw.mockReturnValue(0.9)
     expect(shouldSampleRoot()).toBe(false)
     draw.mockRestore()
+  })
+
+  it('setTraceSampling (M5) drives both the frontend ratio and the backend command', async () => {
+    const spy = vi
+      .spyOn(commands, 'setTraceSampling')
+      .mockResolvedValue({ status: 'ok', data: null })
+    await setTraceSampling(0.25)
+    expect(getSamplingRatio()).toBe(0.25) // frontend half
+    expect(spy).toHaveBeenCalledWith(0.25) // backend half (one app-wide toggle)
+    // Clamp applies on the frontend side too.
+    await setTraceSampling(5)
+    expect(getSamplingRatio()).toBe(1)
+    spy.mockRestore()
+  })
+
+  it('setTraceSampling tolerates a missing IPC bridge (frontend half still applies)', async () => {
+    const spy = vi.spyOn(commands, 'setTraceSampling').mockRejectedValue(new Error('no IPC'))
+    await expect(setTraceSampling(0.5)).resolves.toBeUndefined()
+    expect(getSamplingRatio()).toBe(0.5)
+    spy.mockRestore()
   })
 })
 

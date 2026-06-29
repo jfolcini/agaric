@@ -19,9 +19,10 @@
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::logs::{LogExporter, SdkLoggerProvider};
-use opentelemetry_sdk::trace::{Sampler, SdkTracer, SdkTracerProvider, SpanExporter};
+use opentelemetry_sdk::trace::{SdkTracer, SdkTracerProvider, SpanExporter};
 
 use super::config::ObservabilityConfig;
+use super::sampling::{RuntimeSampler, set_sampling_ratio};
 
 /// Logical service name stamped on every span's resource.
 const SERVICE_NAME: &str = "agaric";
@@ -59,14 +60,16 @@ pub fn build_tracer_provider<E>(config: &ObservabilityConfig, exporter: E) -> Sd
 where
     E: SpanExporter + 'static,
 {
-    // ParentBased: honour an upstream sampling decision when a parent span
-    // exists; for root spans, fall back to the trace-id ratio sampler. This is
-    // the standard "sample whole traces consistently" configuration.
-    let sampler = Sampler::ParentBased(Box::new(Sampler::TraceIdRatioBased(config.sampling_ratio)));
+    // #2110 M5 — seed the process-global runtime ratio from config, then install
+    // the runtime-adjustable `ParentBased(TraceIdRatioBased(ratio))` sampler.
+    // Identical sampling semantics to the previous fixed sampler, except the
+    // ratio is read live on each root decision so the `set_trace_sampling`
+    // command can toggle full-tracing ↔ sampling without a provider rebuild.
+    set_sampling_ratio(config.sampling_ratio);
 
     SdkTracerProvider::builder()
         .with_resource(resource())
-        .with_sampler(sampler)
+        .with_sampler(RuntimeSampler)
         .with_batch_exporter(exporter)
         .build()
 }
