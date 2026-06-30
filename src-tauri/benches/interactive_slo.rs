@@ -1232,10 +1232,23 @@ fn bench_list_page_links(c: &mut Criterion) {
 }
 
 /// `list_projected_agenda` — repeating-task projection over 100K rows.
-/// **Currently ~620 ms** (O(n×m) in-memory expansion; see
+/// **Was ~620 ms** (O(n×m) in-memory expansion; see
 /// docs/architecture/operations.md § Product SLO known-exceeds-budget note).
 ///
-/// TODO: drop the `problem_skipped` gate once the SQL/CTE pushdown lands.
+/// #2069: the "push the date-range projection into SQL" framing in the
+/// issue is INFEASIBLE — the recurrence grammar (sticky monthly clamp,
+/// `.+` / `++` today-anchored catch-up, 10K safety bound, 1900-2200 rail)
+/// is stateful Rust (`crate::recurrence`), so it cannot be a recursive-CTE
+/// / `generate_series` rewrite. Instead the on-the-fly fallback
+/// (`list_projected_agenda_on_the_fly`) now carries a superset date-overlap
+/// PREFILTER that drops blocks which provably cannot project into
+/// `[range_start, range_end]` BEFORE the Rust expansion, shrinking the
+/// expansion set. The 100K bench is not runnable in this environment, so
+/// the `problem_skipped` gate stays IN PLACE — SLO confirmation is deferred
+/// to the nightly lane, which runs the real 100K fixture against the budget.
+///
+/// TODO: drop the `problem_skipped` gate once the nightly lane confirms the
+/// #2069 prefilter brings `list_projected_agenda @ 100K` under the 200ms SLO.
 fn bench_list_projected_agenda(c: &mut Criterion) {
     const BUDGET_MS: f64 = 200.0;
     if problem_skipped("list_projected_agenda @ 100K") {
