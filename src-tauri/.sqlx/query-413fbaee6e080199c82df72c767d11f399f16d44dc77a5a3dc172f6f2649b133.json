@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT b.id, b.deleted_at FROM blocks b WHERE b.id IN (SELECT value FROM json_each(?1)) AND b.deleted_at IS NOT NULL",
+  "query": "SELECT b.id, b.block_type FROM blocks b WHERE b.id IN (SELECT value FROM json_each(?1)) AND b.deleted_at IS NOT NULL",
   "describe": {
     "columns": [
       {
@@ -15,13 +15,13 @@
         }
       },
       {
-        "name": "deleted_at",
+        "name": "block_type",
         "ordinal": 1,
-        "type_info": "Integer",
+        "type_info": "Text",
         "origin": {
           "Table": {
             "table": "blocks",
-            "name": "deleted_at"
+            "name": "block_type"
           }
         }
       }
@@ -31,8 +31,8 @@
     },
     "nullable": [
       false,
-      true
+      false
     ]
   },
-  "hash": "534a7afe97f69c48f212af92f2c276083c69ebcc196cbb910ce072cad6313810"
+  "hash": "413fbaee6e080199c82df72c767d11f399f16d44dc77a5a3dc172f6f2649b133"
 }
