@@ -136,22 +136,33 @@ pub async fn list_page_links_inner_split(
     // of recomputing the 3-JOIN `block_links × blocks × block_properties`
     // roll-up on every call. The cache holds one row per
     // `(source_page_id, target_page_id, edge_count)` triple, so the
-    // read collapses to two index joins (one per endpoint of `blocks`
-    // for the `deleted_at IS NULL` filter) plus the optional
+    // read collapses to a single indexed cache scan plus the optional
     // space / tag filters. Replaces the documented 1.3 s @ 100K
     // bottleneck called out in docs/architecture/operations.md
     // § Product SLO (the Problem-tier row in `interactive_slo`).
+    //
+    // #2070: the two residual `blocks` joins this read used to carry —
+    // `JOIN blocks src ON … deleted_at IS NULL` and `JOIN blocks tgt ON
+    // … block_type = 'page' AND deleted_at IS NULL` — were the remaining
+    // bottleneck at 100K (the 0065 cache already removed the title
+    // roll-up; the issue's "titles" premise is stale). Migration 0096
+    // denormalises those three predicates into the cache as
+    // `src_deleted` / `tgt_deleted` / `tgt_is_page` flags (kept current
+    // by the rebuild + incremental reindex below), so the unscoped
+    // (`SpaceScope::Global`) hot path — the one the SLO bench measures —
+    // is now a single covering-index scan (`idx_page_link_cache_live`)
+    // with ZERO `blocks` joins.
     //
     // The cache mirrors the legacy query's semantics ("source page =
     // COALESCE(parent_id, source_id), target page = target_id, drop
     // self-edges, soft-deleted source blocks contribute zero edges")
     // inside the materializer (see
     // `cache::page_links::reindex_page_link_cache_for_block`), so the
-    // read no longer needs to re-derive any of that. The remaining
-    // `blocks` joins enforce only the soft-delete filter — `block_type
-    // = 'page'` stays on the target side because `block_links.target_id`
-    // is by construction a page id (the `[[ULID]]` token only ever
-    // resolves to a page in the markdown serializer).
+    // read no longer needs to re-derive any of that. `block_type =
+    // 'page'` is enforced on the target side via `plc.tgt_is_page`
+    // because `block_links.target_id` is by construction a page id (the
+    // `[[ULID]]` token only ever resolves to a page in the markdown
+    // serializer).
     //
     // (preserved) — `(?1 IS NULL OR...)` filters both
     // endpoints by space membership. Cross-space rows cannot exist in
@@ -177,12 +188,10 @@ pub async fn list_page_links_inner_split(
             plc.target_page_id AS "target_id!: crate::ulid::ActiveBlockId",
             plc.edge_count AS "ref_count!: i64"
          FROM page_link_cache plc
-         JOIN blocks src ON src.id = plc.source_page_id
-             AND src.deleted_at IS NULL
-         JOIN blocks tgt ON tgt.id = plc.target_page_id
-             AND tgt.block_type = 'page'
-             AND tgt.deleted_at IS NULL
          WHERE plc.source_page_id != plc.target_page_id
+             AND plc.src_deleted = 0
+             AND plc.tgt_deleted = 0
+             AND plc.tgt_is_page = 1
              AND (?1 IS NULL OR (
                  plc.source_page_id IN (SELECT block_id FROM space_members)
                  AND plc.target_page_id IN (SELECT block_id FROM space_members)
