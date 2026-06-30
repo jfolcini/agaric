@@ -70,21 +70,56 @@ pkg_install() {
   esac
 }
 
+# verify_sha256 <file> <expected-hex> — true iff <file>'s SHA-256 equals the
+# pinned digest. Uses sha256sum (Linux/coreutils) or `shasum -a 256` (macOS);
+# returns non-zero if neither tool exists, so the caller can fail closed.
+verify_sha256() {
+  local file="$1" want="$2" got=""
+  if have sha256sum; then
+    got="$(sha256sum "$file" | awk '{print $1}')"
+  elif have shasum; then
+    got="$(shasum -a 256 "$file" | awk '{print $1}')"
+  else
+    return 1
+  fi
+  [ "$got" = "$want" ]
+}
+
 # cargo-binstall pulls prebuilt release binaries (seconds, low disk) instead
 # of the multi-minute from-source `cargo install` compile. Bootstrap it once
 # via its official prebuilt installer, falling back to `cargo install`.
+#
+# Pinned-Dependencies (OpenSSF Scorecard, code-scanning #215): the installer
+# is fetched and run, so it must NOT come from a mutable ref piped straight
+# into a shell. Pin it to a cargo-binstall release *commit* (immutable) and
+# verify the script's SHA-256 before executing it, and pin the binary it then
+# downloads via BINSTALL_VERSION. A moved tag, a tampered CDN response, or a
+# truncated download therefore can never reach `bash`; on any mismatch we fall
+# back to the equally-pinned `cargo install --locked`.
+#
+# To bump: pick the new release, set BINSTALL_REF to that tag's commit SHA and
+# BINSTALL_VERSION to the tag, then set BINSTALL_INSTALLER_SHA256 to
+#   curl -fsSL https://raw.githubusercontent.com/cargo-bins/cargo-binstall/<ref>/install-from-binstall-release.sh | sha256sum
+BINSTALL_REF="732870f031d2fb36309d0deaf36abcc704a7be65"  # tag v1.20.1
+BINSTALL_VERSION="1.20.1"
+BINSTALL_INSTALLER_SHA256="d3a93702160e0ec03e2a4e996855db1f01adee801fb84a43add24e0877ef8eae"
 ensure_cargo_binstall() {
   if have cargo-binstall; then ok "cargo-binstall (already installed)"; return; fi
   note "installing cargo-binstall (prebuilt-binary fetcher)…"
-  if curl -fsSL --proto '=https' --tlsv1.2 \
-       https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh \
-       | bash >/dev/null 2>&1 && have cargo-binstall; then
-    ok "cargo-binstall (prebuilt)"
+  local url="https://raw.githubusercontent.com/cargo-bins/cargo-binstall/${BINSTALL_REF}/install-from-binstall-release.sh"
+  local tmp
+  tmp="$(mktemp)"
+  if curl -fsSL --proto '=https' --tlsv1.2 "$url" -o "$tmp" \
+       && verify_sha256 "$tmp" "$BINSTALL_INSTALLER_SHA256" \
+       && BINSTALL_VERSION="$BINSTALL_VERSION" bash "$tmp" >/dev/null 2>&1 \
+       && have cargo-binstall; then
+    ok "cargo-binstall (prebuilt, pinned v${BINSTALL_VERSION})"
   elif cargo install --locked cargo-binstall >/dev/null 2>&1; then
     ok "cargo-binstall (cargo install)"
   else
     warn "cargo-binstall unavailable — remaining cargo tools will compile from source (slow)"
   fi
+  rm -f "$tmp"
 }
 
 # cargo_get <crate> [binary] — install a Rust hook tool (prebuilt via binstall,
