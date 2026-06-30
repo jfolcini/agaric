@@ -139,11 +139,21 @@ fn op_task(op_type: &str, payload: &str) -> MaterializeTask {
     MaterializeTask::ApplyOp(StdArc::new(fake_op_record(op_type, payload)))
 }
 
-/// Drive the FG ApplyOp + the matching BG ReindexBlockLinks (when
-/// applicable) so the materialised counts settle to their canonical
-/// values for both `child_block_count` (FG) and `inbound_link_count`
-/// (BG, after `block_links` is updated).
+/// Drive the FG ApplyOp + the matching BG tasks (when applicable) so the
+/// materialised counts settle to their canonical values for both
+/// `child_block_count` and `inbound_link_count` — mirroring production's
+/// background dispatch after the foreground apply.
 async fn run_op(pool: &SqlitePool, task: MaterializeTask, link_block_ids: &[&str]) {
+    // #2042: delete / restore / purge defer the page-wide pages_cache count
+    // recompute to the background `RebuildPagesCacheCounts` task (production
+    // enqueues it via the lifecycle rebuild set). Capture whether this is a
+    // cohort lifecycle op before the FG handler consumes the borrow.
+    let is_lifecycle = matches!(
+        &task,
+        MaterializeTask::ApplyOp(r)
+            if matches!(r.op_type.as_str(), "delete_block" | "restore_block" | "purge_block")
+    );
+
     handle_foreground_task(pool, &task).await.unwrap();
     // Drive ReindexBlockLinks for every block whose `block_links`
     // rows changed. The dispatch in production fires this for
@@ -159,6 +169,14 @@ async fn run_op(pool: &SqlitePool, task: MaterializeTask, link_block_ids: &[&str
         )
         .await
         .unwrap();
+    }
+    // #2042: drive the deferred page-wide count recompute for cohort lifecycle
+    // ops so the parity assertions see canonical counts (matching production
+    // after the background queue drains). Idempotent full-table recompute.
+    if is_lifecycle {
+        handle_background_task(pool, &MaterializeTask::RebuildPagesCacheCounts, None, None)
+            .await
+            .unwrap();
     }
 }
 
