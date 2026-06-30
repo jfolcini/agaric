@@ -89,6 +89,37 @@ pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 8] = [
     MaterializeTask::RebuildPageLinkCache,
 ];
 
+/// #2037: property keys that drive `agenda_cache` irrespective of value type —
+/// `template` (the page-level agenda carve-out in `DESIRED_AGENDA_SQL`) and the
+/// `due`/`scheduled` date columns. A date-VALUED property of ANY key also drives
+/// it (it surfaces as a `property:<key>` source where `value_date IS NOT NULL`);
+/// that is checked separately via the payload's `value_date`.
+const AGENDA_PROPERTY_KEYS: [&str; 3] = ["template", "due", "scheduled"];
+
+/// #2037: property keys that drive `projected_agenda_cache` — the recurrence
+/// keys (`cache/projected_agenda.rs` joins `key = 'repeat'` and reads
+/// `repeat-until`/`repeat-count`/`repeat-seq`), the `due`/`scheduled` date
+/// columns a repeating block projects from, and the `template` carve-out.
+const PROJECTED_AGENDA_PROPERTY_KEYS: [&str; 7] = [
+    "repeat",
+    "repeat-until",
+    "repeat-count",
+    "repeat-seq",
+    "template",
+    "due",
+    "scheduled",
+];
+
+/// #2037: minimal payload view for `set_property` / `delete_property` dispatch
+/// narrowing. `delete_property` has no value fields, so `value_date` defaults to
+/// `None` there.
+#[derive(serde::Deserialize)]
+struct PropertyOpHint {
+    key: String,
+    #[serde(default)]
+    value_date: Option<String>,
+}
+
 /// #421: inbound-sync FTS-reindex strategy threshold. When an inbound sync
 /// message changes at most this many blocks, FTS is reindexed per-block via
 /// `UpdateFtsBlock` (targeted, O(changed)); above it, a single chunked full
@@ -458,7 +489,13 @@ fn invalidations_for_op(
                 }
             }
             tasks.push(MaterializeTask::RebuildTagInheritanceCache);
-            tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
+            // #2037: a freshly created block carries no properties (those arrive
+            // via later SetProperty ops), so it cannot yet have a `repeat`
+            // property and therefore cannot be a row in `projected_agenda_cache`
+            // (`cache/projected_agenda.rs` joins `key = 'repeat'`). The
+            // SetProperty('repeat', …) that later makes it repeating enqueues the
+            // projected rebuild itself, so enqueuing it here was pure O(vault)
+            // waste on every block creation.
         }
         OpType::EditBlock => {
             // Use the cached `OpRecord::block_id` sidecar
@@ -599,8 +636,48 @@ fn invalidations_for_op(
             // `block_properties.value_text` / `value_ref` and are never scanned
             // for link tokens, FTS text, or tag refs — that graph derives solely
             // from `blocks.content` — so no link/FTS/tag-ref rebuild is enqueued.
-            tasks.push(MaterializeTask::RebuildAgendaCache);
-            tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
+            //
+            // #2037: narrow FURTHER by the property key/value so an ordinary
+            // property edit (status, colour, text, ref…) enqueues neither agenda
+            // rebuild. `agenda_cache` depends on date-VALUED properties + the
+            // `template`/`due`/`scheduled` keys; `projected_agenda_cache` depends
+            // on the recurrence keys + date columns + `template`. A
+            // `delete_property` payload carries no value, so its date-ness is
+            // unknown — keep its agenda rebuild (a deleted key may have held a
+            // date) and narrow only its projected rebuild by key. A corrupt
+            // payload falls back to both rebuilds.
+            let is_set = matches!(op_type, OpType::SetProperty);
+            match serde_json::from_str::<PropertyOpHint>(&record.payload) {
+                Ok(hint) => {
+                    let key = hint.key.as_str();
+                    let has_date_value = hint.value_date.is_some();
+                    let agenda_relevant = if is_set {
+                        has_date_value || AGENDA_PROPERTY_KEYS.contains(&key)
+                    } else {
+                        // delete_property: value unknown ⇒ conservative.
+                        true
+                    };
+                    let projected_relevant =
+                        has_date_value || PROJECTED_AGENDA_PROPERTY_KEYS.contains(&key);
+                    if agenda_relevant {
+                        tasks.push(MaterializeTask::RebuildAgendaCache);
+                    }
+                    if projected_relevant {
+                        tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        op_type = %record.op_type,
+                        device_id = %record.device_id,
+                        seq = record.seq,
+                        error = %e,
+                        "set/delete_property payload unparseable — enqueueing full agenda rebuilds"
+                    );
+                    tasks.push(MaterializeTask::RebuildAgendaCache);
+                    tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
+                }
+            }
         }
         OpType::MoveBlock => {
             tasks.push(MaterializeTask::RebuildTagInheritanceCache);
@@ -803,7 +880,6 @@ mod tests {
                 "ReindexBlockTagRefs(BLK1)",
                 "SetBlockPageId(BLK1)",
                 "RebuildTagInheritanceCache",
-                "RebuildProjectedAgendaCache",
             ],
         );
     }
@@ -822,7 +898,6 @@ mod tests {
                 "UpdateFtsBlock(PG1)",
                 "ReindexBlockTagRefs(PG1)",
                 "RebuildTagInheritanceCache",
-                "RebuildProjectedAgendaCache",
             ],
         );
     }
@@ -840,7 +915,6 @@ mod tests {
                 "ReindexBlockTagRefs(C1)",
                 "SetBlockPageId(C1)",
                 "RebuildTagInheritanceCache",
-                "RebuildProjectedAgendaCache",
             ],
         );
     }
@@ -1106,6 +1180,77 @@ mod tests {
             r#"{"block_id":"BLK1","key":"due"}"#,
             Some("BLK1"),
         );
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        assert_eq!(
+            labels(&tasks),
+            vec!["RebuildAgendaCache", "RebuildProjectedAgendaCache"],
+        );
+    }
+
+    /// #2037: an ordinary (non-date, non-agenda-key) `set_property` enqueues
+    /// NEITHER agenda rebuild — the property cannot feed either agenda cache.
+    #[test]
+    fn invalidations_for_op_set_property_plain_key_skips_both_agenda_caches() {
+        let r = make_record(
+            "set_property",
+            r#"{"block_id":"BLK1","key":"status","value_text":"done"}"#,
+            Some("BLK1"),
+        );
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        assert!(
+            tasks.is_empty(),
+            "a plain property set must enqueue no cache rebuilds, got {:?}",
+            labels(&tasks),
+        );
+    }
+
+    /// #2037: a `repeat` set drives ONLY the projected (repeating) agenda cache,
+    /// not the flat agenda cache (which keys off date values, not `repeat`).
+    #[test]
+    fn invalidations_for_op_set_property_repeat_key_only_projected() {
+        let r = make_record(
+            "set_property",
+            r#"{"block_id":"BLK1","key":"repeat","value_text":"FREQ=DAILY"}"#,
+            Some("BLK1"),
+        );
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        assert_eq!(labels(&tasks), vec!["RebuildProjectedAgendaCache"]);
+    }
+
+    /// #2037: a date-VALUED property of any key drives BOTH agenda caches.
+    #[test]
+    fn invalidations_for_op_set_property_date_value_enqueues_both() {
+        let r = make_record(
+            "set_property",
+            r#"{"block_id":"BLK1","key":"reminder","value_date":"2026-01-01"}"#,
+            Some("BLK1"),
+        );
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        assert_eq!(
+            labels(&tasks),
+            vec!["RebuildAgendaCache", "RebuildProjectedAgendaCache"],
+        );
+    }
+
+    /// #2037: `delete_property` of a plain key keeps the agenda rebuild (the
+    /// deleted value's date-ness is unknown) but skips the projected one (only
+    /// recurrence/date-column keys feed it).
+    #[test]
+    fn invalidations_for_op_delete_property_plain_key_keeps_agenda_only() {
+        let r = make_record(
+            "delete_property",
+            r#"{"block_id":"BLK1","key":"status"}"#,
+            Some("BLK1"),
+        );
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        assert_eq!(labels(&tasks), vec!["RebuildAgendaCache"]);
+    }
+
+    /// #2037: a corrupt property payload falls back to BOTH agenda rebuilds
+    /// rather than silently skipping a needed one.
+    #[test]
+    fn invalidations_for_op_set_property_corrupt_payload_falls_back() {
+        let r = make_record("set_property", r#"{"block_id":"BLK1"}"#, Some("BLK1"));
         let tasks = invalidations_for_op(&r, None).unwrap();
         assert_eq!(
             labels(&tasks),
