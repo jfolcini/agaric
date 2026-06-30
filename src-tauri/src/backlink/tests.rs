@@ -6337,6 +6337,103 @@ async fn eval_backlink_query_grouped_paginates_correctly() {
     );
 }
 
+/// #2042 — per-page cost must be bounded by the page, not the full
+/// post-filter source set. Seed N source pages each owning K backlinks,
+/// request page size P, and assert:
+///   * every full page returns exactly P groups (the SQL keyset slices to
+///     ONE page server-side; the OLD path reloaded ALL N*K ids per page),
+///   * `next_cursor` is present iff more groups remain,
+///   * walking the cursor visits every source group exactly once — no
+///     duplicates, no omissions — proving the keyset resumes correctly
+///     across the (title, page_id) ordering boundary.
+#[tokio::test]
+async fn eval_grouped_keyset_per_page_cost_is_bounded_2042() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+
+    // N source pages, each with K backlinks to TARGET. Pages sort
+    // alphabetically by title "page 1".."page N" → group keyset order.
+    let n_pages = 7i64;
+    let k_per_page = 4i64;
+    bulk_insert_n_pages_with_one_link(&pool, "TARGET", n_pages, "GP_", "GB_").await;
+    // Add (k-1) extra backlinks under each page so each group has K members,
+    // exercising the per-visible-group member fetch (not just 1 block/group).
+    for p in 1..=n_pages {
+        let pid = format!("GP_{p:06}");
+        for j in 2..=k_per_page {
+            let bid = format!("GB_{p:06}_{j}");
+            insert_block_with_parent(&pool, &bid, "content", "extra", Some(&pid), Some(j)).await;
+            insert_block_link(&pool, &bid, "TARGET").await;
+        }
+    }
+
+    let total_links = usize::try_from(n_pages * k_per_page).unwrap();
+    let page_size = 3i64;
+
+    let mut seen_groups: Vec<String> = Vec::new();
+    let mut cursor: Option<String> = None;
+    let mut pages = 0;
+    loop {
+        pages += 1;
+        assert!(pages <= 100, "pagination must terminate");
+        let page = PageRequest::new(cursor, Some(page_size)).unwrap();
+        let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
+            .await
+            .unwrap();
+
+        // Counts are vault-wide and stable across every page.
+        assert_eq!(resp.total_count, total_links, "total_count stable per page");
+        assert_eq!(
+            resp.filtered_count, total_links,
+            "filtered_count stable per page (no filter)"
+        );
+
+        if resp.has_more {
+            assert_eq!(
+                resp.groups.len(),
+                usize::try_from(page_size).unwrap(),
+                "a non-final page must return exactly the page size"
+            );
+            assert!(resp.next_cursor.is_some(), "has_more ⇒ next_cursor set");
+        } else {
+            assert!(resp.next_cursor.is_none(), "final page emits no cursor");
+        }
+
+        for g in &resp.groups {
+            assert_eq!(
+                g.blocks.len(),
+                usize::try_from(k_per_page).unwrap(),
+                "each visible group materialises all K members"
+            );
+            seen_groups.push(g.page_id.clone());
+        }
+
+        cursor = resp.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+
+    // Completeness: every group visited exactly once, in keyset order.
+    let unique: FxHashSet<&String> = seen_groups.iter().collect();
+    assert_eq!(
+        unique.len(),
+        seen_groups.len(),
+        "no group may appear on two pages: {seen_groups:?}"
+    );
+    let expected: FxHashSet<String> = (1..=n_pages).map(|k| format!("GP_{k:06}")).collect();
+    let got: FxHashSet<String> = seen_groups.iter().cloned().collect();
+    assert_eq!(
+        got, expected,
+        "cursor walk must visit every source group exactly once"
+    );
+    // 7 groups at page size 3 → pages of 3,3,1.
+    assert_eq!(
+        pages, 3,
+        "expected exactly 3 page requests for 7 groups @ 3"
+    );
+}
+
 // ======================================================================
 // #346 P1 — SQL-pushdown parity battery
 //

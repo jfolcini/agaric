@@ -170,12 +170,30 @@ pub async fn eval_backlink_query_grouped(
         _ => None,
     };
 
-    // Materialise the post-filter, post-base-predicate id set. SQL
-    // applies the same predicates as the COUNT above plus the
-    // optional filter intersection. We can't avoid materialising
-    // because the grouped path needs to bucket by root page.
-    let filtered_ids: FxHashSet<String> = sqlx::query_scalar::<_, String>(
-        "SELECT bl.source_id FROM block_links bl \
+    // #2042 — the OLD path materialised the ENTIRE post-filter source-id
+    // set into a Rust `FxHashSet`, resolved root pages for ALL of them,
+    // bucketed + sorted the FULL group list, then cursor-sliced to ONE
+    // page. So every page request reloaded all (e.g. 50k) ids regardless
+    // of `page.limit`. The grouping dimension is now pushed into SQL:
+    // because a source block's root page is the denormalised `b.page_id`
+    // column (`resolve_root_pages` is a flat `JOIN blocks p ON p.id =
+    // b.page_id`, NOT a recursive walk), the group key is simply
+    // `GROUP BY b.page_id` and the group title is `p.content` via that
+    // same join. The visible page of groups is fetched with a keyset
+    // cursor (steps a-d below), so per-page cost is proportional to the
+    // page, not the vault.
+
+    // (a) #2042 — `filtered_count` via SQL `COUNT(DISTINCT bl.source_id)`
+    //     over the SAME predicates the old `filtered_ids` query used. The
+    //     OLD code derived this from an `FxHashSet`, which collapsed a
+    //     source block with multiple `block_links` rows to the target down
+    //     to ONE. `block_links` carries `PRIMARY KEY (source_id, target_id)`
+    //     so duplicates can't actually occur, but we keep `DISTINCT
+    //     bl.source_id` everywhere (count + member fetch) for parity with
+    //     the old set semantics and defensive safety. With no filter this
+    //     equals `total_count`; we still run the query for simplicity.
+    let filtered_count_i64: i64 = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
          JOIN blocks b ON b.id = bl.source_id \
          JOIN blocks tgt ON tgt.id = ?1 \
          WHERE bl.target_id = ?1 \
@@ -189,12 +207,9 @@ pub async fn eval_backlink_query_grouped(
     .bind(block_id)
     .bind(space_id)
     .bind(filter_json.as_deref())
-    .fetch_all(pool)
-    .await?
-    .into_iter()
-    .collect();
-
-    let filtered_count = filtered_ids.len();
+    .fetch_one(pool)
+    .await?;
+    let filtered_count: usize = usize::try_from(filtered_count_i64).unwrap_or(0);
 
     if filtered_count == 0 {
         return Ok(GroupedBacklinkResponse {
@@ -207,54 +222,98 @@ pub async fn eval_backlink_query_grouped(
         });
     }
 
-    // Resolve root pages for the materialised, post-filter id set so we
-    // can bucket downstream. Every entry in `filtered_ids` has a
-    // corresponding root-page mapping because the SQL above filters
-    // `b.page_id IS NOT NULL` and `b.page_id != target_root` — so
-    // orphans and same-page self-references are already excluded.
-    let root_map = resolve_root_pages(pool, &filtered_ids).await?;
+    // (b) #2042 — grouped keyset page query. ONE SQL pass that buckets the
+    //     post-filter source blocks by root page (`GROUP BY b.page_id`),
+    //     returns `(page_id, page_title, cnt)`, applies the keyset cursor,
+    //     orders by the target ordering and `LIMIT limit+1` (the +1 row
+    //     detects `has_more`). Predicates are identical to (a) PLUS the
+    //     keyset filter.
+    //
+    //     Target ordering — MUST match `cmp_group` exactly (the #625 cursor
+    //     contract): `page_title` ASC with NULL LAST, then `page_id` ASC,
+    //     i.e. `ORDER BY (p.content IS NULL) ASC, p.content ASC, b.page_id
+    //     ASC`. `(p.content IS NULL) ASC` sorts non-null titles (0) before
+    //     null titles (1), mirroring `cmp_group`'s `Some < None`.
+    //
+    //     Keyset filter (#625) — only spliced when a cursor is present. The
+    //     cursor stashes the group's `page_title` in the `deleted_at` slot
+    //     and the `page_id` in the `id` slot (see `Cursor::for_group`). We
+    //     emit groups STRICTLY GREATER than the cursor in the target order.
+    //     Because `p.content` and `b.page_id` are constant within a
+    //     `GROUP BY b.page_id` group, this row-level WHERE is equivalent to
+    //     a group-level keyset filter, so it can be applied pre-aggregation.
+    //     The three OR-arms mirror `cmp_group`:
+    //       * cursor title non-null, row title null → row sorts AFTER cursor
+    //         (null titles come last), always greater;
+    //       * cursor title non-null, row title non-null → strictly greater
+    //         by (title, page_id);
+    //       * cursor title null, row title null → both in the null bucket,
+    //         compare by page_id (a non-null row title in this arm is
+    //         already LESS than a null cursor, so it is correctly excluded).
+    //     This resumes correctly from the last non-null group into the
+    //     remaining non-null groups and then the null-title groups.
+    let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
+    let fetch_limit_i64 = page.limit.saturating_add(1);
+    let (cursor_title, cursor_pid): (Option<&str>, Option<&str>) = match page.after.as_ref() {
+        Some(c) => (c.deleted_at.as_deref(), Some(c.id.as_str())),
+        None => (None, None),
+    };
+    let keyset_clause = if cursor_pid.is_some() {
+        // `?4` = cursor title (may be NULL), `?5` = cursor page_id.
+        " AND ( \
+            ( (p.content IS NULL) AND (?4 IS NOT NULL) ) \
+            OR ( (p.content IS NOT NULL) AND (?4 IS NOT NULL) \
+                 AND ( p.content > ?4 OR (p.content = ?4 AND b.page_id > ?5) ) ) \
+            OR ( (p.content IS NULL) AND (?4 IS NULL) AND b.page_id > ?5 ) \
+          )"
+    } else {
+        ""
+    };
+    let group_sql = format!(
+        "SELECT b.page_id AS page_id, p.content AS page_title, \
+                COUNT(DISTINCT bl.source_id) AS cnt \
+         FROM block_links bl \
+         JOIN blocks b ON b.id = bl.source_id \
+         JOIN blocks p ON p.id = b.page_id \
+         JOIN blocks tgt ON tgt.id = ?1 \
+         WHERE bl.target_id = ?1 \
+           AND bl.source_id != ?1 \
+           AND b.deleted_at IS NULL \
+           AND b.page_id IS NOT NULL \
+           AND b.page_id != COALESCE(tgt.page_id, tgt.id) \
+           AND (?2 IS NULL OR b.space_id = ?2) \
+           AND (?3 IS NULL OR b.id IN (SELECT value FROM json_each(?3))){keyset_clause} \
+         GROUP BY b.page_id \
+         ORDER BY (p.content IS NULL) ASC, p.content ASC, b.page_id ASC \
+         LIMIT ?6"
+    );
 
-    // Group blocks by root page. The `if let Some(...)` here is purely
-    // defensive against a race between resolve and group.
-    // `FxHashMap` for the by-page bucket — keys are
-    // owned `String` page-ids; the FNV hash matters here because this
-    // map is built per query.
-    let mut page_groups: FxHashMap<String, (Option<String>, Vec<String>)> = FxHashMap::default();
-    for block_id_item in &filtered_ids {
-        if let Some((page_id, page_title)) = root_map.get(block_id_item) {
-            page_groups
-                .entry(page_id.clone())
-                .or_insert_with(|| (page_title.clone(), Vec::new()))
-                .1
-                .push(block_id_item.clone());
-        }
+    #[derive(sqlx::FromRow)]
+    struct GroupRow {
+        page_id: String,
+        page_title: Option<String>,
+        cnt: i64,
     }
 
-    // 5. Sort groups alphabetically by page_title (None sorts last)
-    let mut group_list: Vec<(String, Option<String>, Vec<String>)> = page_groups
-        .into_iter()
-        .map(|(pid, (title, blocks))| (pid, title, blocks))
-        .collect();
-    group_list.sort_by(|a, b| cmp_group(a.1.as_deref(), &a.0, b.1.as_deref(), &b.0));
+    let group_rows: Vec<GroupRow> =
+        sqlx::query_as::<_, GroupRow>(sqlx::AssertSqlSafe(group_sql.as_str()))
+            .bind(block_id)
+            .bind(space_id)
+            .bind(filter_json.as_deref())
+            .bind(cursor_title)
+            .bind(cursor_pid)
+            .bind(fetch_limit_i64)
+            .fetch_all(pool)
+            .await?;
 
-    // 6. Apply cursor pagination on groups. #625 — resume by sort-order
-    //    comparison (next-greater group), NOT by equality on the cursor's
-    //    page_id, so a vanished cursor group does not terminate pagination.
-    let groups_after_cursor = groups_after_cursor(&group_list, page.after.as_ref());
-
-    // page.limit is a validated positive pagination bound; safe to convert
-    let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
-    let fetch_limit = limit_usize.saturating_add(1);
-    let page_groups_slice: Vec<&(String, Option<String>, Vec<String>)> =
-        groups_after_cursor.into_iter().take(fetch_limit).collect();
-    let has_more = page_groups_slice.len() > limit_usize;
-    let actual_groups: Vec<&(String, Option<String>, Vec<String>)> = if has_more {
-        page_groups_slice[..limit_usize].to_vec()
+    let has_more = group_rows.len() > limit_usize;
+    let visible_groups: &[GroupRow] = if has_more {
+        &group_rows[..limit_usize]
     } else {
-        page_groups_slice
+        &group_rows[..]
     };
 
-    if actual_groups.is_empty() {
+    if visible_groups.is_empty() {
         return Ok(GroupedBacklinkResponse {
             groups: vec![],
             next_cursor: None,
@@ -265,68 +324,105 @@ pub async fn eval_backlink_query_grouped(
         });
     }
 
-    // 7. Sort all block IDs across groups by the user-specified sort, then
-    //    distribute. Sorting only orders ids (cheap); the expensive
-    //    `fetch_block_rows_by_ids` below runs AFTER the per-group cap so we
-    //    never load full rows for blocks the response will discard (#380).
+    // (c) #2042 — member-id fetch for the VISIBLE groups only. The visible
+    //     page-id set is small (≤ `limit`, typically ≤ ~50), so a single
+    //     `json_each(?)` membership test is the simplest bound — no need for
+    //     the positional/json_each dual-branch the larger helpers use.
+    //     `SELECT DISTINCT bl.source_id, b.page_id` over the SAME predicates
+    //     + filter_json, bucketed by `page_id`. `cnt` from (b) already gives
+    //     the TRUE untruncated group size (so `truncated` stays accurate);
+    //     this fetch only materialises the member slice we will cap.
+    let visible_pids: Vec<&str> = visible_groups.iter().map(|g| g.page_id.as_str()).collect();
+    let visible_pids_json = serde_json::to_string(&visible_pids)?;
+    let member_rows: Vec<(String, String)> = sqlx::query_as::<_, (String, String)>(
+        "SELECT DISTINCT bl.source_id, b.page_id FROM block_links bl \
+         JOIN blocks b ON b.id = bl.source_id \
+         JOIN blocks tgt ON tgt.id = ?1 \
+         WHERE bl.target_id = ?1 \
+           AND bl.source_id != ?1 \
+           AND b.deleted_at IS NULL \
+           AND b.page_id IS NOT NULL \
+           AND b.page_id != COALESCE(tgt.page_id, tgt.id) \
+           AND (?2 IS NULL OR b.space_id = ?2) \
+           AND (?3 IS NULL OR b.id IN (SELECT value FROM json_each(?3))) \
+           AND b.page_id IN (SELECT value FROM json_each(?4))",
+    )
+    .bind(block_id)
+    .bind(space_id)
+    .bind(filter_json.as_deref())
+    .bind(&visible_pids_json)
+    .fetch_all(pool)
+    .await?;
+
+    // Bucket member ids by page_id (bounded by #visible groups).
+    let mut members_by_page: FxHashMap<&str, Vec<String>> = FxHashMap::default();
+    for (source_id, page_id) in &member_rows {
+        members_by_page
+            .entry(page_id.as_str())
+            .or_default()
+            .push(source_id.clone());
+    }
+
+    // Sort all member ids across the visible groups by the user-specified
+    // sort, then cap each group. Sorting only orders ids (cheap); the
+    // expensive `fetch_block_rows_by_ids` below runs AFTER the per-group
+    // cap so we never load full rows for blocks the response discards.
     let sort = sort.unwrap_or(BacklinkSort::Created { dir: SortDir::Asc });
-    let all_block_ids: FxHashSet<String> = actual_groups
-        .iter()
-        .flat_map(|(_, _, block_ids_in_group)| block_ids_in_group.iter().cloned())
+    let all_block_ids: FxHashSet<String> = members_by_page
+        .values()
+        .flat_map(|ids| ids.iter().cloned())
         .collect();
     let sorted_all = sort_ids(pool, &all_block_ids, &sort).await?;
-
-    // Build a position map from sorted order.
     let sort_order: FxHashMap<&str, usize> = sorted_all
         .iter()
         .enumerate()
         .map(|(i, id)| (id.as_str(), i))
         .collect();
 
-    // 8. Build each group's sorted, capped id list FIRST, recording
-    //    truncation. `filtered_count` was summed from the untruncated group
-    //    sizes above, so the badge stays accurate (#380); only the
-    //    materialised slice is bounded. The cap is applied AFTER sorting so
-    //    the visible window is the first `MAX_BLOCKS_PER_GROUP` ids in the
-    //    user's sort order, deterministically.
-    let mut capped_groups: Vec<(&String, &Option<String>, Vec<&str>, bool)> =
-        Vec::with_capacity(actual_groups.len());
-    for (page_id, page_title, block_ids_in_group) in &actual_groups {
-        let mut blocks: Vec<(&str, usize)> = block_ids_in_group
-            .iter()
-            .filter_map(|bid| sort_order.get(bid.as_str()).map(|&pos| (bid.as_str(), pos)))
-            .collect();
+    // Build each visible group's sorted, capped id list in the SAME order
+    // as the keyset page (b). `truncated` comes from the TRUE `cnt` (b), so
+    // the badge stays accurate (#380) even though the cap bounds the
+    // materialised slice to `MAX_BLOCKS_PER_GROUP`.
+    let mut capped_groups: Vec<(&str, &Option<String>, Vec<&str>, bool)> =
+        Vec::with_capacity(visible_groups.len());
+    for g in visible_groups {
+        // `cnt` is `COUNT(DISTINCT …)` so it is non-negative; compare on the
+        // usize side to avoid a (lint-flagged) usize→i64 cast.
+        let group_truncated = usize::try_from(g.cnt).unwrap_or(0) > super::MAX_BLOCKS_PER_GROUP;
+        let mut blocks: Vec<(&str, usize)> = members_by_page
+            .get(g.page_id.as_str())
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(|bid| sort_order.get(bid.as_str()).map(|&pos| (bid.as_str(), pos)))
+                    .collect()
+            })
+            .unwrap_or_default();
         blocks.sort_by_key(|&(_, pos)| pos);
-
-        let group_truncated = blocks.len() > super::MAX_BLOCKS_PER_GROUP;
-        if group_truncated {
+        if blocks.len() > super::MAX_BLOCKS_PER_GROUP {
             blocks.truncate(super::MAX_BLOCKS_PER_GROUP);
         }
         let ids: Vec<&str> = blocks.into_iter().map(|(bid, _)| bid).collect();
-        capped_groups.push((page_id, page_title, ids, group_truncated));
+        capped_groups.push((g.page_id.as_str(), &g.page_title, ids, group_truncated));
     }
 
-    // 9. Fetch full BlockRow data for ONLY the capped, post-truncation id
-    //    set — one batch, bounded by `#groups * MAX_BLOCKS_PER_GROUP`.
+    // (d) #2042 — fetch full BlockRow data for ONLY the capped,
+    //     post-truncation id set — one batch, bounded by
+    //     `#visible groups * MAX_BLOCKS_PER_GROUP`.
     let fetch_ids: Vec<&str> = capped_groups
         .iter()
         .flat_map(|(_, _, ids, _)| ids.iter().copied())
         .collect();
     let fetched_rows = fetch_block_rows_by_ids(pool, &fetch_ids).await?;
 
-    // Build a lookup map from id -> BlockRow.
-    // Short-lived per-query map keyed on borrowed `&str`s —
-    // `FxHashMap` skips SipHash setup with no behavioural change.
+    // Short-lived per-query map keyed on borrowed `&str`s.
     let row_map: FxHashMap<&str, &BlockRow> =
         fetched_rows.iter().map(|r| (r.id.as_str(), r)).collect();
 
-    // 10. Distribute fetched rows back into groups (already in sort order).
-    // `all_block_ids` traces back to active candidates
-    //     (the grouped query's base set filters `deleted_at IS NULL`), so
-    //     the per-group rows are also active. The boundary cast records
-    //     that claim in the type system.
+    // Distribute fetched rows back into groups (already in sort order). The
+    // grouped base set filters `deleted_at IS NULL`, so the per-group rows
+    // are active by construction; the boundary cast records that claim.
     let mut groups: Vec<BacklinkGroup> = Vec::with_capacity(capped_groups.len());
-    for (page_id, page_title, ids, group_truncated) in capped_groups {
+    for (page_id, page_title, ids, group_truncated) in &capped_groups {
         let block_rows: Vec<crate::pagination::ActiveBlockRow> = ids
             .iter()
             .filter_map(|&bid| row_map.get(bid).map(|r| (*r).clone()))
@@ -334,19 +430,20 @@ pub async fn eval_backlink_query_grouped(
             .collect();
 
         groups.push(BacklinkGroup {
-            page_id: page_id.clone(),
-            page_title: page_title.clone(),
+            page_id: (*page_id).to_string(),
+            page_title: (*page_title).clone(),
             blocks: block_rows,
-            truncated: group_truncated,
+            truncated: *group_truncated,
         });
     }
 
-    // 11. Build cursor from last group's (page_title, page_id) if has_more.
-    //     #625 — the cursor now carries the sort key (title + id) so the next
-    //     page resumes via `cmp_group` comparison, surviving a vanished group.
+    // Build cursor from the last VISIBLE group's (page_title, page_id) if
+    // has_more. #625 — the cursor carries the sort key (title + id) so the
+    // next page resumes via the keyset filter in (b), surviving a vanished
+    // group by construction (the keyset resumes at the next-greater group).
     let next_cursor = if has_more {
-        let last = actual_groups.last().expect("has_more implies non-empty");
-        Some(Cursor::for_group(last.0.clone(), last.1.clone()).encode()?)
+        let last = visible_groups.last().expect("has_more implies non-empty");
+        Some(Cursor::for_group(last.page_id.clone(), last.page_title.clone()).encode()?)
     } else {
         None
     };
