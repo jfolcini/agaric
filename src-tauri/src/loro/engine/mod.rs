@@ -572,6 +572,8 @@ mod reads;
 
 /// Snapshot import/export I/O and the legacy-v1 rejection (#332).
 mod snapshot;
+/// #2036: how the caller should refresh the inherited-tag cache after an import.
+pub(crate) use snapshot::TagScope;
 
 /// Sync-update generation + inbound-blob inspection (#792 / #1054).
 mod sync;
