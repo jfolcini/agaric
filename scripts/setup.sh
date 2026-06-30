@@ -143,5 +143,35 @@ bash scripts/setup-dev-db.sh || echo "warning: dev DB setup skipped — run scri
 # and wire the git hooks. Best-effort + idempotent: never fatal, so a missing
 # tool can't block a fresh clone from building. Re-run scripts/setup-hooks.sh
 # (or `just install-hooks`) to fill any gaps reported above.
-bash scripts/setup-hooks.sh || echo "warning: hook toolchain setup skipped — run scripts/setup-hooks.sh before committing"
+#
+# This is by far the SLOWEST part of setup: it fetches ~10 cargo tools plus
+# shellcheck and only THEN wires the git hooks (the wiring is the very last
+# step). Under the remote SessionStart hook, all of setup.sh shares one hard
+# ~600s provisioning budget — and the hook-toolchain install reproducibly
+# overran it: the provisioner SIGKILLed setup mid-install (right after
+# cargo-machete), so the slower tools never landed and — because wiring runs
+# last — the git hooks were left UNWIRED. The fast critical path above (Node,
+# npm ci, .env, dev DB) had already finished by then, so the clone was
+# build/test-ready; only the commit/push gate was missing.
+#
+# Fix: when provisioning a remote sandbox, run this step DETACHED instead of on
+# the time-boxed critical path. setsid puts it in its own session so the
+# provisioner reaping the (now fast-returning) SessionStart hook can't take it
+# down with a process-group signal; output is redirected to a log. The session lands
+# build/test-ready immediately and the hooks finish wiring a couple of minutes
+# later. It's best-effort + idempotent, so a detached run that is itself cut
+# short (e.g. the container is reclaimed) just gets completed on the next
+# session start. Local/manual runs stay synchronous — there's no hook timeout
+# there and a developer wants to watch it finish.
+hooks_log="${TMPDIR:-/tmp}/agaric-setup-hooks.log"
+if [ "${CLAUDE_CODE_REMOTE:-}" = "true" ] && command -v setsid >/dev/null 2>&1; then
+  echo "Provisioning the prek hook toolchain in the background (log: ${hooks_log})…"
+  echo "  Watch with: tail -f ${hooks_log}"
+  echo "  Git hooks become active once it logs 'git hooks wired'; until then commits"
+  echo "  still work (those checks run in CI). Re-run scripts/setup-hooks.sh to fill gaps."
+  setsid bash scripts/setup-hooks.sh </dev/null >"${hooks_log}" 2>&1 &
+  disown 2>/dev/null || true
+else
+  bash scripts/setup-hooks.sh || echo "warning: hook toolchain setup skipped — run scripts/setup-hooks.sh before committing"
+fi
 echo "Ready. Run: cargo tauri dev"
