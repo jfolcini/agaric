@@ -121,7 +121,15 @@ jobs:
           # run ended "success" with ~20 permission denials and zero output
           # (diagnosed 2026-06-10). No generic Bash, no write outside the two
           # gh pr verbs, gh api restricted to this repo read paths.
+          #
+          # Pin the reviewer to Claude Opus 4.8 with its 1M-token context
+          # window. 1M is native to Opus 4.8 (no beta header — the
+          # context-1m-2025-08-07 header was retired 2026-04-30); the `[1m]`
+          # suffix selects the 1M variant for the Claude Code CLI. This lets a
+          # large diff plus the full code-review plugin context fit without
+          # truncation, so the merge verdict is cast over the whole change.
           claude_args: >-
+            --model claude-opus-4-8[1m]
             --allowed-tools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr review:*),Bash(gh pr comment:*),Bash(gh api repos/jfolcini/agaric/*),Read,Grep,Glob"
           # claude-code-action refuses to run on bot-triggered PRs by default
           # ("Workflow initiated by non-human actor: dependabot (type: Bot)").

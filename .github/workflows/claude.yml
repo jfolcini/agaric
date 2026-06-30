@@ -68,7 +68,12 @@ jobs:
           # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
           # prompt: 'Update the pull request description to include a summary of changes.'
 
-          # Optional: Add claude_args to customize behavior and configuration
+          # Pin the @claude agent to Claude Opus 4.8 with its 1M-token context
+          # window. 1M is native to Opus 4.8 (no beta header — the
+          # context-1m-2025-08-07 header was retired 2026-04-30); the `[1m]`
+          # suffix selects the 1M variant for the Claude Code CLI, so the agent
+          # can read large PRs and CI logs without truncation.
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
-          # claude_args: '--allowed-tools Bash(gh pr *)'
+          claude_args: >-
+            --model claude-opus-4-8[1m]
