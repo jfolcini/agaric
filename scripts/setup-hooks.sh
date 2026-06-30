@@ -86,40 +86,59 @@ verify_sha256() {
 }
 
 # cargo-binstall pulls prebuilt release binaries (seconds, low disk) instead
-# of the multi-minute from-source `cargo install` compile. Bootstrap it once
-# via its official prebuilt installer, falling back to `cargo install`.
+# of the multi-minute from-source `cargo install` compile. Install it from the
+# pinned upstream prebuilt release TARBALL — NOT by piping the upstream install
+# script into a shell.
 #
-# Pinned-Dependencies (OpenSSF Scorecard, code-scanning #215): the installer
-# is fetched and run, so it must NOT come from a mutable ref piped straight
-# into a shell. Pin it to a cargo-binstall release *commit* (immutable) and
-# verify the script's SHA-256 before executing it, and pin the binary it then
-# downloads via BINSTALL_VERSION. A moved tag, a tampered CDN response, or a
-# truncated download therefore can never reach `bash`; on any mismatch we fall
-# back to the equally-pinned `cargo install --locked`.
+# Pinned-Dependencies (OpenSSF Scorecard, code-scanning #215): a `curl | bash`
+# — or a curl-to-temp-then-`bash` — of the install script is a download-then-run
+# that Scorecard flags *regardless of any hash check*, because the static check
+# only cares that a downloaded file reaches a shell interpreter. So fetch the
+# release *binary* tarball directly (the same `curl … | tar` shape as
+# `install_lychee`, which Scorecard accepts) and verify its SHA-256 before
+# extracting. The matrix below is Linux-only (where the dev VMs run and where
+# the prebuilt speed matters); macOS / other arches fall back to the
+# equally-pinned `cargo install --locked` to keep the pinned-hash set small.
 #
-# To bump: pick the new release, set BINSTALL_REF to that tag's commit SHA and
-# BINSTALL_VERSION to the tag, then set BINSTALL_INSTALLER_SHA256 to
-#   curl -fsSL https://raw.githubusercontent.com/cargo-bins/cargo-binstall/<ref>/install-from-binstall-release.sh | sha256sum
-BINSTALL_REF="732870f031d2fb36309d0deaf36abcc704a7be65"  # tag v1.20.1
+# To bump: set BINSTALL_VERSION to the new release tag and refresh the two
+# linux-musl digests with, for each <triple>:
+#   curl -fsSL https://github.com/cargo-bins/cargo-binstall/releases/download/v<ver>/cargo-binstall-<triple>.tgz | sha256sum
 BINSTALL_VERSION="1.20.1"
-BINSTALL_INSTALLER_SHA256="d3a93702160e0ec03e2a4e996855db1f01adee801fb84a43add24e0877ef8eae"
+BINSTALL_SHA256_X86_64="f12954bc382e1d0b2df3fbfb217a05d92c25570e4517841e0613499a24f4594e"
+BINSTALL_SHA256_AARCH64="23679581c4cfa1782953264a6e36965198aed995b3a5287550dd78a113ce2288"
 ensure_cargo_binstall() {
   if have cargo-binstall; then ok "cargo-binstall (already installed)"; return; fi
   note "installing cargo-binstall (prebuilt-binary fetcher)…"
-  local url="https://raw.githubusercontent.com/cargo-bins/cargo-binstall/${BINSTALL_REF}/install-from-binstall-release.sh"
-  local tmp
-  tmp="$(mktemp)"
-  if curl -fsSL --proto '=https' --tlsv1.2 "$url" -o "$tmp" \
-       && verify_sha256 "$tmp" "$BINSTALL_INSTALLER_SHA256" \
-       && BINSTALL_VERSION="$BINSTALL_VERSION" bash "$tmp" >/dev/null 2>&1 \
-       && have cargo-binstall; then
-    ok "cargo-binstall (prebuilt, pinned v${BINSTALL_VERSION})"
-  elif cargo install --locked cargo-binstall >/dev/null 2>&1; then
+  local triple="" want=""
+  case "${OS}-$(uname -m)" in
+    Linux-x86_64)               triple="x86_64-unknown-linux-musl";  want="$BINSTALL_SHA256_X86_64" ;;
+    Linux-aarch64|Linux-arm64)  triple="aarch64-unknown-linux-musl"; want="$BINSTALL_SHA256_AARCH64" ;;
+  esac
+  if [ -n "$triple" ]; then
+    local url="https://github.com/cargo-bins/cargo-binstall/releases/download/v${BINSTALL_VERSION}/cargo-binstall-${triple}.tgz"
+    local dest="$HOME/.cargo/bin" tmp
+    tmp="$(mktemp -d)"
+    mkdir -p "$dest"
+    # Download the tarball, verify its pinned SHA-256, then extract the single
+    # `cargo-binstall` binary and install it. No downloaded content is ever
+    # handed to a shell interpreter.
+    if curl -fsSL --proto '=https' --tlsv1.2 "$url" -o "$tmp/cb.tgz" \
+         && verify_sha256 "$tmp/cb.tgz" "$want" \
+         && tar -xzf "$tmp/cb.tgz" -C "$tmp" cargo-binstall \
+         && install -m 0755 "$tmp/cargo-binstall" "$dest/cargo-binstall" \
+         && have cargo-binstall; then
+      ok "cargo-binstall (prebuilt v${BINSTALL_VERSION}, ${triple})"
+      rm -rf "$tmp"
+      return
+    fi
+    rm -rf "$tmp"
+    warn "prebuilt cargo-binstall download/verify failed — falling back to cargo install"
+  fi
+  if cargo install --locked cargo-binstall >/dev/null 2>&1; then
     ok "cargo-binstall (cargo install)"
   else
     warn "cargo-binstall unavailable — remaining cargo tools will compile from source (slow)"
   fi
-  rm -f "$tmp"
 }
 
 # cargo_get <crate> [binary] — install a Rust hook tool (prebuilt via binstall,
