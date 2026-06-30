@@ -424,12 +424,31 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
     // lower bound, because a past base with a forward repeat can still
     // land inside the window. NULL due/scheduled compare as not-`<=`,
     // which is correct (the base-set predicate already requires at least
-    // one non-NULL). The `LOWER(TRIM(...))` mirrors the `repeat_rule.trim()
-    // .to_lowercase()` that `project_block_dates` applies before dispatch,
-    // so a `.+`/`++` typed in any case (or padded) is still recognised as
-    // today-anchored. `.` and `+` are not LIKE metacharacters (only `%`
-    // and `_` are), so the prefixes match literally; the trailing `%` is
-    // the only wildcard.
+    // one non-NULL).
+    //
+    // #2069 review nit (silent-drop fix): the today-anchored arms use a
+    // SUBSTRING-CONTAINS test (`LIKE '%.+%'` / `LIKE '%++%'`) rather than a
+    // `LOWER(TRIM(...)) LIKE '.+%'` PREFIX test. Rationale:
+    //   * `.+` and `++` contain NO alphabetic characters, so case is
+    //     irrelevant — no `LOWER()` needed.
+    //   * `.` and `+` are not LIKE metacharacters (only `%` and `_` are),
+    //     so they match literally; the surrounding `%` are the only
+    //     wildcards.
+    //   * Any rule that `project_block_dates` would classify as
+    //     today-anchored is `repeat_rule.trim().to_lowercase()` then
+    //     dispatched on a `.+` / `++` PREFIX, so the literal substring `.+`
+    //     or `++` is necessarily PRESENT in the raw `value_text` regardless
+    //     of leading whitespace (ASCII space OR any Unicode whitespace such
+    //     as a leading TAB/NEWLINE) or case. The old `TRIM()` strips only
+    //     ASCII space, whereas Rust's `str::trim()` strips all Unicode
+    //     whitespace — so a rule like `"\t.+1w"` with a base AFTER
+    //     `range_end` was classified base-anchored by SQL and DROPPED while
+    //     the Rust projector trimmed the tab and projected it from today,
+    //     silently diverging from the cache path. The contains-test keeps
+    //     every today-anchored block, closing that gap — a strict superset.
+    //   * Base-anchored forms (daily / weekly / monthly / +Nd / +Nw / +Nm /
+    //     +Ny) never contain `.+` or `++` as a substring, so they are not
+    //     falsely kept (no perf regression).
     let range_end_str = range_end.format("%Y-%m-%d").to_string();
     let rows = sqlx::query_as!(
         RepeatingBlockRow,
@@ -456,8 +475,8 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
            )
            AND (?1 IS NULL OR b.space_id = ?1)
            AND (
-               LOWER(TRIM(bp.value_text)) LIKE '.+%'
-               OR LOWER(TRIM(bp.value_text)) LIKE '++%'
+               bp.value_text LIKE '%.+%'
+               OR bp.value_text LIKE '%++%'
                OR b.due_date <= ?2
                OR b.scheduled_date <= ?2
            )"#,

@@ -3690,6 +3690,16 @@ async fn projected_agenda_cached_equals_on_the_fly() {
 //        shift lands EXACTLY on range_end (2051-04-06). Exercises the
 //        inclusive upper bound (`<= range_end`) and the prefilter keep
 //        for a base just inside the window. MUST appear, exactly once.
+//   F8 — `"\t.+1w"` count=2, due_date = 2060-01-01 (AFTER range_end), with
+//        a LEADING TAB before the `.+`. Rust's `repeat_rule.trim()` strips
+//        the tab and classifies it today-anchored (projects from today);
+//        SQLite `TRIM()` strips only ASCII space, so the OLD prefilter
+//        (`LOWER(TRIM(bp.value_text)) LIKE '.+%'`) left the tab in place,
+//        FAILED to match, and — base after range_end — DROPPED the block,
+//        silently diverging from the cache path. The new contains-test
+//        (`bp.value_text LIKE '%.+%'`) matches regardless of the leading
+//        tab, so it MUST appear. This is the discriminating case for the
+//        #2069 review nit.
 //
 // today / range are pinned to 2050 (matching the sibling parity test) so
 // the cache rebuild's 365-day horizon and the on-the-fly anchors line up
@@ -3760,6 +3770,11 @@ async fn projected_agenda_prefilter_is_superset_2069() {
         Some(3.0),
     )
     .await;
+    // F8: leading TAB before `.+` (the #2069 review-nit discriminator). The
+    // base is AFTER range_end so the old `LOWER(TRIM(...)) LIKE '.+%'` clause
+    // would classify it base-anchored and drop it; the new `LIKE '%.+%'`
+    // substring test keeps it.
+    seed(&pool, "F8_DOTPLUS_TAB", "2060-01-01", "\t.+1w", Some(2.0)).await;
 
     let pinned_today = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
     let range_start = pinned_today;
@@ -3825,6 +3840,8 @@ async fn projected_agenda_prefilter_is_superset_2069() {
             ("F6_PLUS3D_BEFORE", "2050-04-10"),
             ("F6_PLUS3D_BEFORE", "2050-04-13"),
             ("F7_WEEKLY_BOUNDARY", "2051-04-06"),
+            ("F8_DOTPLUS_TAB", "2050-04-13"),
+            ("F8_DOTPLUS_TAB", "2050-04-20"),
         ];
         // Sort by the same (projected_date, block_id) key the BTreeMap /
         // SQL ORDER BY use, so the comparison is order-stable.
@@ -3882,6 +3899,20 @@ async fn projected_agenda_prefilter_is_superset_2069() {
         !otf_pairs.iter().any(|(id, _)| id == "F5_WEEKLY_AFTER"),
         "F5 (weekly, base after range_end) is base-anchored beyond the \
          window and must be absent"
+    );
+    // #2069 review nit: the today-anchored block with a LEADING TAB before
+    // `.+` and a base AFTER range_end (F8). Rust's `repeat_rule.trim()`
+    // strips the tab and projects from today, but SQLite `TRIM()` strips
+    // only ASCII space — so the OLD `LOWER(TRIM(...)) LIKE '.+%'` prefilter
+    // would have silently DROPPED it. The new `LIKE '%.+%'` substring test
+    // keeps it. This assertion fails with the old clause, passes with the
+    // new one.
+    assert!(
+        otf_pairs.iter().any(|(id, _)| id == "F8_DOTPLUS_TAB"),
+        "F8 (\"\\t.+1w\", leading tab, base after range_end) must survive the \
+         prefilter via the substring contains-test — the old `TRIM()`-based \
+         prefix clause would drop it (SQLite TRIM strips only ASCII space, \
+         while Rust's trim() strips the tab and projects from today)"
     );
 }
 
