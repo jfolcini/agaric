@@ -616,11 +616,19 @@ pub(crate) async fn import_and_project(
     // subtree from the engine index and so never appears in `changed_blocks`
     // (which enumerates only the live tree). The purged delta drives Pass D
     // below; without it the purged rows + descendants linger in SQL forever.
-    let (changed_blocks, purged_blocks): (Vec<crate::ulid::BlockId>, Vec<crate::ulid::BlockId>) = {
+    // #2036: the engine resolves the import diff to the precise set of changed
+    // (live) blocks, the purged set, and a `TagScope` describing how to refresh
+    // the inherited-tag cache — falling back to a whole-tree enumeration +
+    // global rebuild on any diff shape it cannot resolve.
+    let (changed_blocks, purged_blocks, tag_scope): (
+        Vec<crate::ulid::BlockId>,
+        Vec<crate::ulid::BlockId>,
+        crate::loro::engine::TagScope,
+    ) = {
         let mut guard = registry.for_space(space_id, device_id)?;
         guard
             .engine_mut()
-            .import_with_changed_and_purged_blocks(bytes)?
+            .import_with_changed_purged_tagscope(bytes)?
     };
 
     // Phase 2 — project each changed block to SQL in a single tx.
@@ -731,16 +739,36 @@ pub(crate) async fn import_and_project(
 
     tx.commit().await?;
 
-    // Rebuild the derived `block_tag_inherited` cache.
-    // `block_tags` only carries direct edges; inherited tags are a
-    // derived recursive-CTE projection over `(block_tags, blocks.parent_id)`,
-    // so a remote tag change to any block can shift inherited rows for its
-    // whole subtree.  This is a GLOBAL rebuild chosen for correctness-first;
-    // a targeted per-block (per-subtree) reindex is a documented perf
-    // follow-up (the plan's "prefer targeted reindex" note).  Skipped when
-    // nothing changed so a no-op import stays cheap.
-    if !changed_blocks.is_empty() {
-        crate::tag_inheritance::rebuild_all(pool).await?;
+    // Refresh the derived `block_tag_inherited` cache. `block_tags` only carries
+    // direct edges; inherited tags are a recursive-CTE projection over
+    // `(block_tags, blocks.parent_id)`, so a remote tag change shifts inherited
+    // rows for the changed block's whole subtree, and a structural move/create
+    // re-inherits the moved subtree's new ancestor chain.
+    //
+    // #2036 stage 3: scope the recompute to the affected subtrees (the engine
+    // deduped them to top-most roots). Falls back to the global rebuild when the
+    // import could not be resolved incrementally. Purged blocks' inherited rows
+    // were already removed by Pass D. Runs after the projection tx commits (the
+    // subtree CTE reads the just-projected `blocks.parent_id`), mirroring the
+    // previous global rebuild's placement.
+    match tag_scope {
+        crate::loro::engine::TagScope::Global => {
+            crate::tag_inheritance::rebuild_all(pool).await?;
+        }
+        crate::loro::engine::TagScope::Subtrees(roots) => {
+            if !roots.is_empty() {
+                let mut tag_tx =
+                    crate::db::begin_immediate_logged(pool, "tag_inheritance_subtrees").await?;
+                for root in &roots {
+                    crate::tag_inheritance::recompute_subtree_inheritance(
+                        &mut tag_tx,
+                        root.as_str(),
+                    )
+                    .await?;
+                }
+                tag_tx.commit().await?;
+            }
+        }
     }
 
     Ok(changed_blocks)
@@ -2744,6 +2772,100 @@ mod tests {
         assert_eq!(
             inherited.0, 1,
             "child must inherit the parent's tag after apply_remote (rebuild_all ran)"
+        );
+    }
+
+    /// #2036 stage 3 divergence guard: after a sequence of INCREMENTAL updates
+    /// applied through the scoped per-subtree recompute path (tag-add, then a
+    /// structural move that drops an inherited tag), `block_tag_inherited` must
+    /// be byte-identical to a from-scratch global `rebuild_all`.
+    #[tokio::test]
+    async fn incremental_tag_inheritance_matches_global_rebuild() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // A: parent BLOCK_A with children BLOCK_C, BLOCK_D; BLOCK_B is the tag.
+        let reg_a = LoroEngineRegistry::new();
+        {
+            let mut g = reg_a.for_space(&space, "device-A").expect("for_space");
+            let e = g.engine_mut();
+            e.apply_create_block(BLOCK_A, "content", "parent", None, 0)
+                .unwrap();
+            e.apply_create_block(BLOCK_C, "content", "c1", Some(BLOCK_A), 0)
+                .unwrap();
+            e.apply_create_block(BLOCK_D, "content", "c2", Some(BLOCK_A), 1)
+                .unwrap();
+            e.apply_create_block(BLOCK_B, "tag", "tag-X", None, 1)
+                .unwrap();
+        }
+
+        // Initial snapshot sync A -> B.
+        let reg_b = LoroEngineRegistry::new();
+        let msg = prepare_outgoing_for_pool(&pool, &reg_a, &space, "device-A", None)
+            .await
+            .unwrap()
+            .unwrap();
+        apply_remote(&pool, &reg_b, "device-B", msg).await.unwrap();
+
+        let b_vv = |reg_b: &LoroEngineRegistry| {
+            let mut g = reg_b.for_space(&space, "device-B").unwrap();
+            g.engine_mut().version_vector()
+        };
+
+        // Update 1: tag the parent — BLOCK_C and BLOCK_D inherit it.
+        {
+            let mut g = reg_a.for_space(&space, "device-A").unwrap();
+            g.engine_mut().apply_add_tag(BLOCK_A, BLOCK_B).unwrap();
+        }
+        let vv = b_vv(&reg_b);
+        let msg = prepare_outgoing_for_pool(&pool, &reg_a, &space, "device-A", Some(&vv))
+            .await
+            .unwrap()
+            .unwrap();
+        apply_remote(&pool, &reg_b, "device-B", msg).await.unwrap();
+
+        // Update 2: move BLOCK_D out to root — it must LOSE the inherited tag.
+        {
+            let mut g = reg_a.for_space(&space, "device-A").unwrap();
+            g.engine_mut().apply_move_block(BLOCK_D, None, 2).unwrap();
+        }
+        let vv = b_vv(&reg_b);
+        let msg = prepare_outgoing_for_pool(&pool, &reg_a, &space, "device-A", Some(&vv))
+            .await
+            .unwrap()
+            .unwrap();
+        apply_remote(&pool, &reg_b, "device-B", msg).await.unwrap();
+
+        // Scoped-incremental result.
+        let scoped: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT block_id, tag_id, inherited_from FROM block_tag_inherited ORDER BY 1, 2, 3",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        // Force a global rebuild and re-read.
+        crate::tag_inheritance::rebuild_all(&pool).await.unwrap();
+        let global: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT block_id, tag_id, inherited_from FROM block_tag_inherited ORDER BY 1, 2, 3",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            scoped, global,
+            "scoped incremental inheritance diverged from global rebuild",
+        );
+        assert!(
+            scoped.iter().any(|(b, t, f)| b.as_str() == BLOCK_C
+                && t.as_str() == BLOCK_B
+                && f.as_str() == BLOCK_A),
+            "BLOCK_C must still inherit the parent's tag, got {scoped:?}",
+        );
+        assert!(
+            !scoped.iter().any(|(b, _, _)| b.as_str() == BLOCK_D),
+            "moved BLOCK_D must not inherit any tag, got {scoped:?}",
         );
     }
 

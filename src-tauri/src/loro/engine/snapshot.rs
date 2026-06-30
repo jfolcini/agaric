@@ -231,64 +231,134 @@ impl LoroEngine {
         &mut self,
         bytes: &[u8],
     ) -> Result<(Vec<crate::ulid::BlockId>, Vec<crate::ulid::BlockId>), AppError> {
-        // #2036: capture the oplog frontiers BEFORE import so we can detect a
-        // no-op import (one that applied zero new ops) and short-circuit the
-        // O(N) reprojection below. The pre-import index snapshot used for the
-        // purged delta is deferred until AFTER the no-op check so a redelivered
-        // import skips that O(N) key-clone too (it is unused on the early return,
-        // and `self.index` is untouched between here and `rebuild_index`).
+        // Thin compatibility wrapper — discard the tag-inheritance scope. The
+        // shared body lives in `import_with_changed_purged_tagscope`.
+        self.import_with_changed_purged_tagscope(bytes)
+            .map(|(changed, purged, _scope)| (changed, purged))
+    }
+
+    /// Sync-pull import driver returning the changed (live) blocks to reproject,
+    /// the hard-purged blocks, AND the [`TagScope`] telling the caller how to
+    /// refresh the derived `block_tag_inherited` cache (#2036 stage 2/3).
+    ///
+    /// ## Incremental fast path vs brute-force fallback
+    ///
+    /// `doc.import` is subscribed for the duration of the import so the
+    /// resulting [`loro::event::DiffEvent`] reveals exactly which containers
+    /// changed. Each changed container is mapped back to the block(s) whose
+    /// projected SQL state it affects:
+    ///
+    /// * a node meta-map / content `LoroText` change → that node's block
+    ///   (`Index::Node(TreeID)` carried in the diff `path`);
+    /// * a `block_properties` / `block_tags` sub-map change → its `block_id`
+    ///   (the `Index::Key` in the diff `path`, or the updated keys of a
+    ///   root-level map diff);
+    /// * a `blocks_tree` structural change (create / move / delete) → the
+    ///   moved node PLUS every sibling at the affected parent(s), because the
+    ///   projected `position` is a per-parent dense rank that shifts for the
+    ///   whole sibling group (`TreeDiffItem.action` carries `parent` /
+    ///   `old_parent`).
+    ///
+    /// Soft-delete / restore need NO special handling: they are meta-map
+    /// changes (the seed only), and Pass C of the caller re-derives the SQL
+    /// cascade to descendants from the seed. Hard-purge is captured by the
+    /// index delta below (and the caller's Pass D removes its derived rows).
+    ///
+    /// If ANY diff is shaped in a way the resolver does not recognise (an
+    /// unknown root/container, an `is_unknown` diff, or — defensively — the
+    /// one-time legacy sibling-order migration appending ops after import),
+    /// the method FALLS BACK to the historical brute-force enumeration of the
+    /// whole live tree and a [`TagScope::Global`] rebuild. Correctness is thus
+    /// never worse than the pre-#2036 behaviour; only the recognised (and
+    /// overwhelmingly common) shapes take the O(changed) fast path.
+    pub fn import_with_changed_purged_tagscope(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<
+        (
+            Vec<crate::ulid::BlockId>,
+            Vec<crate::ulid::BlockId>,
+            TagScope,
+        ),
+        AppError,
+    > {
+        // #2036: capture pre-import oplog frontiers for the no-op short-circuit.
         let before_frontiers = self.doc.oplog_frontiers();
 
-        self.doc
-            .import(bytes)
-            .map(|_status| ())
+        // Subscribe to the root so the import's diff is captured. The callback
+        // only records owned diff metadata (container ids, paths, tree items);
+        // block-id resolution happens after the import, against post-import
+        // engine state.
+        let capture = std::sync::Arc::new(std::sync::Mutex::new(DiffCapture::default()));
+        let subscription = {
+            let capture = std::sync::Arc::clone(&capture);
+            self.doc
+                .subscribe_root(std::sync::Arc::new(move |ev: loro::event::DiffEvent| {
+                    let mut cap = capture.lock().expect("diff capture mutex poisoned");
+                    for cd in &ev.events {
+                        classify_import_diff(cd, &mut cap);
+                    }
+                }))
+        };
+
+        let import_result = self.doc.import(bytes).map(|_status| ());
+        // Flush so the import diff is delivered to the subscriber, then
+        // unsubscribe before any local migration ops below.
+        self.doc.commit();
+        drop(subscription);
+        import_result
             .map_err(|e| AppError::Validation(format!("loro: import_with_changed_blocks: {e}")))?;
         self.reject_legacy_v1_snapshot()?;
-        // #1584: same forward-version gate as `import` (see there) on the
-        // sync-pull path — reject an unknown/newer stamp before projection.
+        // #1584: same forward-version gate as `import` on the sync-pull path.
         self.reject_unknown_format_version()?;
 
-        // #2036: no-op short-circuit. If the import advanced the oplog by zero
-        // ops — the peer already had every op in `bytes` (a duplicate/redelivered
-        // update, common on reconnect catch-up and gossip overlap) — the doc
-        // state is byte-identical to before the import: no block changed and
-        // none was purged. `self.index` already reflects that state, so skip the
-        // O(N_live) `rebuild_index`, the full-tree pre-order DFS, the legacy
-        // sibling-order migration, AND (via the empty return) the caller's
-        // global tag-inheritance rebuild. Without this, a redelivered update in
-        // an N-block space costs a full reproject + tag recompute for a delta of
-        // zero. Frontiers compare equal iff no op was appended to the oplog.
+        // #2036: no-op short-circuit — zero ops appended ⇒ state unchanged ⇒
+        // nothing to reproject, purge, or re-inherit.
         if self.doc.oplog_frontiers() == before_frontiers {
-            return Ok((Vec::new(), Vec::new()));
+            return Ok((Vec::new(), Vec::new(), TagScope::Subtrees(Vec::new())));
         }
+        let after_import_frontiers = self.doc.oplog_frontiers();
 
-        // Snapshot the live index keys BEFORE the rebuild — `self.index` is keyed
-        // by block_id string (`HashMap<String, TreeID>`, engine/mod.rs) and is
-        // unchanged by `doc.import`, so this still reflects the pre-import live
-        // set used to compute the purged delta further down.
+        // Pre-import live index keys for the purged delta (`self.index` is
+        // untouched by `doc.import`; deferred past the no-op check so a
+        // redelivered import skips this O(N) clone).
         let before: std::collections::HashSet<String> = self.index.keys().cloned().collect();
 
         self.rebuild_index();
-        // Mirror `import`'s one-time legacy sibling-order migration so a pre-#400
-        // doc arriving over the sync-pull path (not just a local snapshot) is
-        // also reordered onto the fractional index before projection (#400).
-        // Best-effort for the same reason as `import` — a migration error must
-        // not abort the sync-pull and drop the space's engine.
+        // One-time legacy sibling-order migration (#400). If it appended ops it
+        // reordered siblings whose shifts are NOT in the captured import diff —
+        // force the brute-force fallback so those reprojections are not missed.
         self.migrate_legacy_sibling_order_best_effort();
+        let migrated = self.doc.oplog_frontiers() != after_import_frontiers;
 
-        // Enumerate every live block_id **parent-before-child** (pre-order
-        // DFS from the tree roots) so the caller's Pass-A projection inserts
-        // a parent's SQL row before any child's — the `blocks.parent_id`
-        // self-FK rejects the reverse order. Soft-deleted nodes are
-        // included (still live in the tree; the projection refreshes their
-        // core columns without touching SQL `deleted_at`); hard-purged
-        // nodes are absent from `children`/`roots` and so excluded.
+        // #2128: purged delta = ids live before but gone after the rebuild.
+        let after: std::collections::HashSet<String> = self.index.keys().cloned().collect();
+        let purged: Vec<crate::ulid::BlockId> = before
+            .difference(&after)
+            .map(|s| crate::ulid::BlockId::from_trusted(s))
+            .collect();
+
+        let cap = std::mem::take(&mut *capture.lock().expect("diff capture mutex poisoned"));
+
+        if cap.fallback || migrated {
+            // Brute-force: reproject the whole live tree + globally rebuild the
+            // inherited-tag cache. Identical to the pre-#2036 behaviour.
+            return Ok((self.enumerate_live_preorder(), purged, TagScope::Global));
+        }
+
+        let changed = self.resolve_changed_blocks(&cap);
+        let tag_scope = TagScope::Subtrees(self.resolve_tag_scope(&cap));
+        Ok((changed, purged, tag_scope))
+    }
+
+    /// Brute-force enumeration of every live block_id in parent-before-child
+    /// pre-order (the historical sync-pull projection driver; also the #2036
+    /// fast-path fallback). The FK-ordered caller relies on a parent's row
+    /// being projected before any child's.
+    fn enumerate_live_preorder(&self) -> Vec<crate::ulid::BlockId> {
         let tree = self.tree();
         let mut out: Vec<crate::ulid::BlockId> = Vec::with_capacity(self.index.len());
         let mut stack: Vec<TreeID> = tree.roots();
-        // `roots()` is unordered; reverse so pre-order emits roots in a
-        // stable forward order (cosmetic — FK-correctness only needs
-        // parent-before-child, which the DFS guarantees regardless).
         stack.reverse();
         while let Some(node) = stack.pop() {
             if let Ok(meta) = tree.get_meta(node)
@@ -301,18 +371,127 @@ impl LoroEngine {
                 stack.extend(children);
             }
         }
+        out
+    }
 
-        // #2128: purged delta = ids present before the import but absent after
-        // the rebuilt live index. `rebuild_index()` re-adds only live tree
-        // nodes, so any id that was in the index before and is gone now was
-        // hard-purged (its whole subtree) by this import.
-        let after: std::collections::HashSet<String> = self.index.keys().cloned().collect();
-        let purged: Vec<crate::ulid::BlockId> = before
-            .difference(&after)
-            .map(|s| crate::ulid::BlockId::from_trusted(s))
+    /// Resolve a [`DiffCapture`] into the precise set of LIVE blocks to
+    /// reproject, ordered parent-before-child (by tree depth, so a created
+    /// parent is projected before its created child — the caller's `parent_id`
+    /// self-FK demands it). Purged ids are excluded (handled by the purged
+    /// delta + caller Pass D).
+    fn resolve_changed_blocks(&self, cap: &DiffCapture) -> Vec<crate::ulid::BlockId> {
+        let tree = self.tree();
+        let mut set: std::collections::HashSet<String> = cap.block_id_keys.clone();
+        for tid in &cap.node_ids {
+            if let Ok(meta) = tree.get_meta(*tid)
+                && let Ok(bid) = read_string(&meta, FIELD_BLOCK_ID)
+            {
+                set.insert(bid);
+            }
+        }
+        // Sibling rank shifts: every child of an affected parent is reprojected.
+        for parent in &cap.affected_parents {
+            if let Some(children) = tree.children(*parent) {
+                for c in children {
+                    if let Ok(meta) = tree.get_meta(c)
+                        && let Ok(bid) = read_string(&meta, FIELD_BLOCK_ID)
+                    {
+                        set.insert(bid);
+                    }
+                }
+            }
+        }
+        // Live blocks only (a purged/deleted-from-tree id that surfaced via a
+        // root-map key removal is dropped here; the purged delta covers it).
+        set.retain(|b| self.index.contains_key(b));
+
+        let mut ranked: Vec<(usize, String)> = set
+            .into_iter()
+            .map(|b| (self.tree_depth_of(&b, &tree), b))
             .collect();
+        ranked.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        ranked
+            .into_iter()
+            .map(|(_, b)| crate::ulid::BlockId::from_trusted(&b))
+            .collect()
+    }
 
-        Ok((out, purged))
+    /// Resolve the subtree roots whose inherited-tag rows may have shifted:
+    /// blocks whose direct tags changed, and structurally created/moved nodes
+    /// (their subtree re-inherits a new ancestor chain). Deduplicated to the
+    /// TOP-MOST roots so a snapshot-shaped import recomputes each tree once
+    /// rather than once per node.
+    fn resolve_tag_scope(&self, cap: &DiffCapture) -> Vec<crate::ulid::BlockId> {
+        let tree = self.tree();
+        let mut set: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for b in &cap.tag_changed {
+            if self.index.contains_key(b) {
+                set.insert(b.clone());
+            }
+        }
+        for tid in &cap.struct_roots {
+            if let Ok(meta) = tree.get_meta(*tid)
+                && let Ok(bid) = read_string(&meta, FIELD_BLOCK_ID)
+                && self.index.contains_key(&bid)
+            {
+                set.insert(bid);
+            }
+        }
+        // Drop any root that is a descendant of another root in the set — its
+        // subtree recompute is already covered by the ancestor's.
+        let owned: Vec<String> = set.iter().cloned().collect();
+        owned
+            .into_iter()
+            .filter(|b| !self.has_ancestor_in(b, &set, &tree))
+            .map(|b| crate::ulid::BlockId::from_trusted(&b))
+            .collect()
+    }
+
+    /// Number of `Node` ancestors of `block_id` (root depth = 0).
+    fn tree_depth_of(&self, block_id: &str, tree: &LoroTree) -> usize {
+        let Some(&node) = self.index.get(block_id) else {
+            return 0;
+        };
+        let mut depth = 0usize;
+        let mut cur = node;
+        while let Some(TreeParentId::Node(p)) = tree.parent(cur) {
+            depth += 1;
+            cur = p;
+            // Defensive bound against a pathological cycle (the tree is
+            // convergent/cycle-safe, so this never trips in practice).
+            if depth > 1_000_000 {
+                break;
+            }
+        }
+        depth
+    }
+
+    /// Whether any strict ancestor of `block_id` is present in `set`.
+    fn has_ancestor_in(
+        &self,
+        block_id: &str,
+        set: &std::collections::HashSet<String>,
+        tree: &LoroTree,
+    ) -> bool {
+        let Some(&node) = self.index.get(block_id) else {
+            return false;
+        };
+        let mut cur = node;
+        let mut guard = 0usize;
+        while let Some(TreeParentId::Node(p)) = tree.parent(cur) {
+            if let Ok(meta) = tree.get_meta(p)
+                && let Ok(pb) = read_string(&meta, FIELD_BLOCK_ID)
+                && set.contains(&pb)
+            {
+                return true;
+            }
+            cur = p;
+            guard += 1;
+            if guard > 1_000_000 {
+                break;
+            }
+        }
+        false
     }
     /// Reject a legacy v1 (flat-map) snapshot loudly (#332).
     ///
@@ -337,6 +516,127 @@ impl LoroEngine {
         }
         Ok(())
     }
+}
+
+/// How the caller must refresh the derived `block_tag_inherited` cache after an
+/// import (#2036 stage 3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TagScope {
+    /// Recompute inherited-tag rows only for these subtree roots' subtrees
+    /// (top-most roots; deduped). An empty vector means nothing to recompute.
+    Subtrees(Vec<crate::ulid::BlockId>),
+    /// The import could not be resolved incrementally — rebuild the whole
+    /// inherited-tag cache.
+    Global,
+}
+
+/// Owned, post-import-resolvable summary of a Loro import diff, accumulated by
+/// [`classify_import_diff`] inside the `subscribe_root` callback (#2036).
+#[derive(Default)]
+struct DiffCapture {
+    /// Any diff whose shape the resolver does not recognise sets this, forcing
+    /// the brute-force fallback.
+    fallback: bool,
+    /// Tree nodes whose meta-map / content changed (from `Index::Node` in the
+    /// diff path) — resolved to block_ids after import.
+    node_ids: std::collections::HashSet<TreeID>,
+    /// Block ids touched via the `block_properties` / `block_tags` roots.
+    block_id_keys: std::collections::HashSet<String>,
+    /// Subset of `block_id_keys` whose `block_tags` changed (drives tag scope).
+    tag_changed: std::collections::HashSet<String>,
+    /// Structurally created/moved nodes (drive tag-inheritance subtree roots).
+    struct_roots: std::collections::HashSet<TreeID>,
+    /// Parents whose child sibling-group rank shifted (create/move/delete).
+    affected_parents: Vec<TreeParentId>,
+}
+
+/// Classify a single [`loro::event::ContainerDiff`] from an import into
+/// [`DiffCapture`]. Sets `fallback` on anything unrecognised so the caller
+/// reprojects the whole tree (correctness is never worse than brute force).
+fn classify_import_diff(cd: &loro::event::ContainerDiff, cap: &mut DiffCapture) {
+    if cd.is_unknown {
+        cap.fallback = true;
+        return;
+    }
+    // The diff path starts at the root container; root-targeted diffs (purge of
+    // a root key) have a single-element path whose container is the root.
+    let root = cd.path.first().map_or(cd.target, |(c, _)| c);
+    let loro::ContainerID::Root { name, .. } = root else {
+        cap.fallback = true;
+        return;
+    };
+    match name.to_string().as_str() {
+        // Engine metadata (format-version stamp, sibling-order marker) is not a
+        // block — ignore.
+        ENGINE_META_ROOT => {}
+        BLOCKS_TREE_ROOT => {
+            if let loro::event::Diff::Tree(td) = &cd.diff {
+                for item in &td.diff {
+                    cap.struct_roots.insert(item.target);
+                    match &item.action {
+                        loro::TreeExternalDiff::Create { parent, .. } => {
+                            cap.affected_parents.push(*parent);
+                        }
+                        loro::TreeExternalDiff::Move {
+                            parent, old_parent, ..
+                        } => {
+                            cap.affected_parents.push(*parent);
+                            cap.affected_parents.push(*old_parent);
+                        }
+                        loro::TreeExternalDiff::Delete { old_parent, .. } => {
+                            cap.affected_parents.push(*old_parent);
+                        }
+                    }
+                }
+            } else if let Some(tid) = cd.path.iter().find_map(|(_, idx)| match idx {
+                loro::Index::Node(t) => Some(*t),
+                _ => None,
+            }) {
+                // Meta-map or content `LoroText` change on a node.
+                cap.node_ids.insert(tid);
+            } else {
+                cap.fallback = true;
+            }
+        }
+        BLOCK_PROPERTIES_ROOT => {
+            collect_block_id_keys(cd, &mut cap.block_id_keys, &mut cap.fallback);
+        }
+        BLOCK_TAGS_ROOT => {
+            let mut ids = std::collections::HashSet::new();
+            collect_block_id_keys(cd, &mut ids, &mut cap.fallback);
+            for id in ids {
+                cap.tag_changed.insert(id.clone());
+                cap.block_id_keys.insert(id);
+            }
+        }
+        // LEGACY_BLOCKS_ROOT (rejected upstream) or any unknown root.
+        _ => cap.fallback = true,
+    }
+}
+
+/// Extract the block_id(s) a `block_properties` / `block_tags` diff touches:
+/// the `Index::Key(block_id)` of a per-block sub-map diff, or the updated keys
+/// of a root-level map diff (first-time insert / purge removal).
+fn collect_block_id_keys(
+    cd: &loro::event::ContainerDiff,
+    out: &mut std::collections::HashSet<String>,
+    fallback: &mut bool,
+) {
+    if cd.path.len() >= 2 {
+        if let loro::Index::Key(k) = &cd.path[1].1 {
+            out.insert(k.to_string());
+        } else {
+            *fallback = true;
+        }
+        return;
+    }
+    if let loro::event::Diff::Map(delta) = &cd.diff {
+        for k in delta.updated.keys() {
+            out.insert(k.to_string());
+        }
+        return;
+    }
+    *fallback = true;
 }
 
 #[cfg(test)]
@@ -539,5 +839,160 @@ mod noop_short_circuit_tests {
         // Duplicate import hits the no-op short-circuit; state unchanged.
         b.import(&bytes).unwrap();
         assert_eq!(b.count_alive_blocks().unwrap(), 1);
+    }
+}
+
+#[cfg(test)]
+mod incremental_detection_tests {
+    //! #2036 stage 2/3: the import diff resolver must return the PRECISE set of
+    //! changed (live) blocks, the purged set, and a correctly-scoped
+    //! [`TagScope`] for each block-mutation type.
+    use super::*;
+
+    fn ids(v: &[crate::ulid::BlockId]) -> Vec<String> {
+        let mut s: Vec<String> = v.iter().map(|b| b.as_str().to_string()).collect();
+        s.sort();
+        s
+    }
+    fn scope(s: &TagScope) -> Option<Vec<String>> {
+        match s {
+            TagScope::Global => None,
+            TagScope::Subtrees(v) => {
+                let mut x: Vec<String> = v.iter().map(|b| b.as_str().to_string()).collect();
+                x.sort();
+                Some(x)
+            }
+        }
+    }
+    /// `a` = source device with AA (root) and BB (child of AA); `b` = receiver
+    /// seeded from a's snapshot.
+    fn seed() -> (LoroEngine, LoroEngine) {
+        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
+        a.apply_create_block("AA", "content", "a", None, 0).unwrap();
+        a.apply_create_block("BB", "content", "b", Some("AA"), 0)
+            .unwrap();
+        let mut b = LoroEngine::new();
+        b.import(&a.export_snapshot().unwrap()).unwrap();
+        (a, b)
+    }
+    fn push(a: &LoroEngine, b: &mut LoroEngine) -> (Vec<String>, Vec<String>, Option<Vec<String>>) {
+        let upd = a.export_update_since(&b.version_vector()).unwrap();
+        let (c, p, s) = b.import_with_changed_purged_tagscope(&upd).unwrap();
+        (ids(&c), ids(&p), scope(&s))
+    }
+
+    #[test]
+    fn content_edit_changes_only_that_block() {
+        let (mut a, mut b) = seed();
+        a.apply_edit_content("BB", 0, 0, "X").unwrap();
+        let (changed, purged, sc) = push(&a, &mut b);
+        assert_eq!(changed, vec!["BB"], "only the edited block reprojects");
+        assert!(purged.is_empty());
+        assert_eq!(
+            sc,
+            Some(vec![]),
+            "content edit does not touch tag inheritance"
+        );
+    }
+
+    #[test]
+    fn property_set_changes_only_that_block() {
+        let (mut a, mut b) = seed();
+        a.apply_set_property("BB", "k", Some("v")).unwrap();
+        let (changed, purged, sc) = push(&a, &mut b);
+        assert_eq!(changed, vec!["BB"]);
+        assert!(purged.is_empty());
+        assert_eq!(sc, Some(vec![]));
+    }
+
+    #[test]
+    fn tag_add_changes_block_and_scopes_its_subtree() {
+        let (mut a, mut b) = seed();
+        a.apply_add_tag("AA", "T1").unwrap();
+        let (changed, purged, sc) = push(&a, &mut b);
+        assert_eq!(changed, vec!["AA"]);
+        assert!(purged.is_empty());
+        assert_eq!(
+            sc,
+            Some(vec!["AA".to_string()]),
+            "AA's subtree re-inherits the new tag"
+        );
+    }
+
+    #[test]
+    fn create_child_reprojects_new_block_and_siblings() {
+        let (mut a, mut b) = seed();
+        a.apply_create_block("CC", "content", "c", Some("AA"), 1)
+            .unwrap();
+        let (changed, purged, sc) = push(&a, &mut b);
+        assert_eq!(
+            changed,
+            vec!["BB", "CC"],
+            "new child + existing sibling (dense-rank shift) reproject; AA unchanged",
+        );
+        assert!(purged.is_empty());
+        assert_eq!(
+            sc,
+            Some(vec!["CC".to_string()]),
+            "new node re-inherits ancestor tags"
+        );
+    }
+
+    #[test]
+    fn move_block_reprojects_both_sibling_groups() {
+        let (mut a, mut b) = seed();
+        a.apply_create_block("CC", "content", "c", None, 1).unwrap();
+        let _ = push(&a, &mut b); // sync the create
+        a.apply_move_block("BB", None, 0).unwrap(); // BB: child of AA -> root
+        let (changed, purged, sc) = push(&a, &mut b);
+        assert!(changed.contains(&"BB".to_string()), "moved node reprojects");
+        assert!(
+            changed.contains(&"AA".to_string()) && changed.contains(&"CC".to_string()),
+            "new-parent (root) siblings reproject for rank shift, got {changed:?}",
+        );
+        assert!(purged.is_empty());
+        assert_eq!(
+            sc,
+            Some(vec!["BB".to_string()]),
+            "moved subtree re-inherits new ancestors"
+        );
+    }
+
+    #[test]
+    fn soft_delete_changes_seed_only() {
+        let (mut a, mut b) = seed();
+        a.apply_delete_block("BB", "2026-01-01T00:00:00Z").unwrap();
+        let (changed, purged, sc) = push(&a, &mut b);
+        assert_eq!(changed, vec!["BB"], "Pass C cascades from the seed in SQL");
+        assert!(purged.is_empty());
+        assert_eq!(sc, Some(vec![]));
+    }
+
+    #[test]
+    fn purge_reports_purged_excludes_from_changed() {
+        let (mut a, mut b) = seed();
+        a.apply_purge_block("BB").unwrap(); // BB is a leaf child of AA
+        let (changed, purged, sc) = push(&a, &mut b);
+        assert_eq!(purged, vec!["BB"]);
+        assert!(
+            !changed.contains(&"BB".to_string()),
+            "purged block is not in the live changed set, got {changed:?}",
+        );
+        assert_eq!(
+            sc,
+            Some(vec![]),
+            "purged subtree handled by Pass D, not a tag recompute",
+        );
+    }
+
+    #[test]
+    fn duplicate_update_short_circuits() {
+        let (mut a, mut b) = seed();
+        a.apply_edit_content("BB", 0, 0, "X").unwrap();
+        let _ = push(&a, &mut b);
+        let upd = a.export_update_since(&b.version_vector()).unwrap();
+        let (c, p, s) = b.import_with_changed_purged_tagscope(&upd).unwrap();
+        assert!(c.is_empty() && p.is_empty());
+        assert_eq!(s, TagScope::Subtrees(vec![]));
     }
 }
