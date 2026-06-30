@@ -247,21 +247,67 @@ jobs:
           benches=$(grep -A1 '^\[\[bench\]\]' Cargo.toml \
             | sed -n 's/^name = "\(.*\)"/\1/p' \
             | grep -vx interactive_slo)
-          for name in $benches; do
-            bin=$(newest_bench_bin "$name")
+          # #2122: run the smoke checks IN PARALLEL with bounded concurrency.
+          # Each bench is a PREBUILT binary (built once by `--no-run` above), so
+          # concurrent execution is safe — there is NO per-bench recompile, so
+          # the cargo #6313 link race the prebuilt-binary approach avoids is
+          # unaffected by running the binaries at once. The SEQUENTIAL walk was
+          # the job's bottleneck: the cold 100K-seed benches summed to >57 min
+          # and blew the 90 min budget (compile is only ~31 min). Cap at 3
+          # concurrent (`wait -n` gate) to cut wall-clock ~3× while keeping peak
+          # memory sane on the 100K-seed benches.
+          #
+          # Each bench is backgrounded with its stdout/stderr BUFFERED to a
+          # per-bench `.log` and its verdict written to a per-bench `.status`
+          # (a backgrounded subshell can't mutate the parent's `fail`). After
+          # the barrier we replay the logs in bench order, each wrapped in its
+          # own `::group::` — so log folding stays intact even though execution
+          # interleaved — and reduce the verdicts. A MISSING `.status` (the
+          # subshell was killed mid-run before writing it, e.g. an OOM on a
+          # 100K-seed bench) is treated as a FAILURE, never a silent pass.
+          status_dir="$(mktemp -d)"
+          smoke_one() {
+            local name="$1" bin
+            bin="$(newest_bench_bin "$name")"
             if [ -z "$bin" ]; then
               echo "::error::no prebuilt binary for bench '$name' (did --no-run compile it?)"
-              fail=1
-              continue
+              echo fail > "$status_dir/$name.status"
+              return
             fi
-            echo "::group::smoke $name ($bin --test)"
+            echo "running: $bin --test"
             if "$bin" --test; then
               echo "smoke OK: $name"
+              echo ok > "$status_dir/$name.status"
             else
               echo "::error::bench '$name' FAILED its --test smoke run (seed/fixture drift?)"
+              echo fail > "$status_dir/$name.status"
+            fi
+          }
+          jobs=$(( $(nproc) < 3 ? $(nproc) : 3 ))
+          echo "smoke-running $(grep -c . <<< "$benches") benches at concurrency $jobs"
+          running=0
+          for name in $benches; do
+            # Per-call redirect captures this bench's output; the inner
+            # `echo … > *.status` redirects override it for the verdict file.
+            smoke_one "$name" > "$status_dir/$name.log" 2>&1 &
+            running=$((running + 1))
+            if (( running >= jobs )); then
+              wait -n
+              running=$((running - 1))
+            fi
+          done
+          wait
+          # Replay buffered logs in bench order (folding intact) + reduce.
+          for name in $benches; do
+            echo "::group::smoke $name"
+            [ -f "$status_dir/$name.log" ] && cat "$status_dir/$name.log"
+            echo "::endgroup::"
+            if [ ! -f "$status_dir/$name.status" ]; then
+              echo "::error::bench '$name' wrote no status — killed before completion (OOM?)"
+              fail=1
+            elif [ "$(cat "$status_dir/$name.status")" = fail ]; then
               fail=1
             fi
-            echo "::endgroup::"
           done
           exit "$fail"
 
