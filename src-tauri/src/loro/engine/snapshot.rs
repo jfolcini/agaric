@@ -120,6 +120,9 @@ impl LoroEngine {
     /// v2) and rebuilds the `block_id → TreeID` index — the imported bytes
     /// may have created tree nodes the incremental index never saw.
     pub fn import(&mut self, bytes: &[u8]) -> Result<(), AppError> {
+        // #2036: capture pre-import oplog frontiers for the no-op short-circuit
+        // below.
+        let before_frontiers = self.doc.oplog_frontiers();
         self.doc
             .import(bytes)
             .map(|_status| ())
@@ -129,6 +132,14 @@ impl LoroEngine {
         // index work — a newer-than-supported (or corrupt) stamp is rejected up
         // front instead of trusting the bytes and failing later on projection.
         self.reject_unknown_format_version()?;
+        // #2036: no-op short-circuit — if the import appended zero ops (the doc
+        // already had everything in `bytes`), the materialised state is
+        // unchanged and `self.index` is still current, so the O(N_live)
+        // `rebuild_index` + one-time sibling-order migration scan below are pure
+        // waste. Frontiers compare equal iff nothing was appended to the oplog.
+        if self.doc.oplog_frontiers() == before_frontiers {
+            return Ok(());
+        }
         self.rebuild_index();
         // A pre-#400 snapshot carries sibling order only in the `position`
         // meta; migrate it onto the fractional index exactly once. The guard (a
@@ -179,10 +190,10 @@ impl LoroEngine {
     ///   refreshes their core columns (content/parent/position) without
     ///   touching the SQL `deleted_at`, so the block stays soft-deleted.
     /// * If the import added zero new ops (peer was up-to-date), the
-    ///   walk still returns every block_id — the projection helper
-    ///   becomes a sequence of idempotent core-column UPSERTs, which
-    ///   is correct but wasteful. A future iteration may short-circuit
-    ///   on `ImportStatus.success.is_empty()` to skip the walk.
+    ///   walk is skipped entirely and an empty `(changed, purged)` pair
+    ///   is returned (#2036 no-op short-circuit, keyed off the oplog
+    ///   frontiers being unchanged across `doc.import`) — a redelivered
+    ///   update no longer costs a full reproject.
     pub fn import_with_changed_blocks(
         &mut self,
         bytes: &[u8],
@@ -223,6 +234,10 @@ impl LoroEngine {
         // Snapshot the live index keys BEFORE import — `self.index` is keyed
         // by block_id string (`HashMap<String, TreeID>`, engine/mod.rs).
         let before: std::collections::HashSet<String> = self.index.keys().cloned().collect();
+        // #2036: capture the oplog frontiers BEFORE import so we can detect a
+        // no-op import (one that applied zero new ops) and short-circuit the
+        // O(N) reprojection below.
+        let before_frontiers = self.doc.oplog_frontiers();
 
         self.doc
             .import(bytes)
@@ -232,6 +247,21 @@ impl LoroEngine {
         // #1584: same forward-version gate as `import` (see there) on the
         // sync-pull path — reject an unknown/newer stamp before projection.
         self.reject_unknown_format_version()?;
+
+        // #2036: no-op short-circuit. If the import advanced the oplog by zero
+        // ops — the peer already had every op in `bytes` (a duplicate/redelivered
+        // update, common on reconnect catch-up and gossip overlap) — the doc
+        // state is byte-identical to before the import: no block changed and
+        // none was purged. `self.index` already reflects that state, so skip the
+        // O(N_live) `rebuild_index`, the full-tree pre-order DFS, the legacy
+        // sibling-order migration, AND (via the empty return) the caller's
+        // global tag-inheritance rebuild. Without this, a redelivered update in
+        // an N-block space costs a full reproject + tag recompute for a delta of
+        // zero. Frontiers compare equal iff no op was appended to the oplog.
+        if self.doc.oplog_frontiers() == before_frontiers {
+            return Ok((Vec::new(), Vec::new()));
+        }
+
         self.rebuild_index();
         // Mirror `import`'s one-time legacy sibling-order migration so a pre-#400
         // doc arriving over the sync-pull path (not just a local snapshot) is
@@ -409,6 +439,98 @@ mod format_version_tests {
         );
 
         let mut b = LoroEngine::new();
+        b.import(&bytes).unwrap();
+        assert_eq!(b.count_alive_blocks().unwrap(), 1);
+    }
+}
+
+#[cfg(test)]
+mod noop_short_circuit_tests {
+    //! #2036: a no-op import (one that appends zero ops to the oplog — a
+    //! duplicate/redelivered snapshot or update) must short-circuit to an empty
+    //! changed/purged set without reprojecting the whole space.
+    use super::*;
+
+    /// Re-importing the SAME snapshot bytes a second time appends no ops, so the
+    /// second call returns an empty changed+purged pair (no reproject), while the
+    /// first call still reports the imported block.
+    #[test]
+    fn import_with_changed_blocks_empty_on_duplicate_snapshot() {
+        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
+        a.apply_create_block("AA", "content", "ca", None, 0)
+            .unwrap();
+        let bytes = a.export_snapshot().unwrap();
+
+        let mut b = LoroEngine::new();
+        let (changed1, purged1) = b.import_with_changed_and_purged_blocks(&bytes).unwrap();
+        assert!(
+            changed1.iter().any(|bid| bid.as_str() == "AA"),
+            "first import must report the new block, got {changed1:?}",
+        );
+        assert!(purged1.is_empty(), "first import purged nothing");
+        assert_eq!(b.count_alive_blocks().unwrap(), 1);
+
+        // Second import of identical bytes — zero new ops → short-circuit.
+        let (changed2, purged2) = b.import_with_changed_and_purged_blocks(&bytes).unwrap();
+        assert!(
+            changed2.is_empty() && purged2.is_empty(),
+            "duplicate import must short-circuit to empty, got changed={changed2:?} purged={purged2:?}",
+        );
+        assert_eq!(
+            b.count_alive_blocks().unwrap(),
+            1,
+            "duplicate import must not alter state",
+        );
+    }
+
+    /// Realistic sync flow: snapshot then incremental update. A genuinely new
+    /// update reports a non-empty changed set; re-applying the same update is a
+    /// no-op and returns empty.
+    #[test]
+    fn import_with_changed_blocks_empty_on_duplicate_update() {
+        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
+        a.apply_create_block("AA", "content", "ca", None, 0)
+            .unwrap();
+
+        // Seed b from a's snapshot.
+        let mut b = LoroEngine::new();
+        b.import(&a.export_snapshot().unwrap()).unwrap();
+        assert_eq!(b.count_alive_blocks().unwrap(), 1);
+
+        // a adds a second block; export only the ops b is missing.
+        a.apply_create_block("BB", "content", "cb", None, 1)
+            .unwrap();
+        let update = a.export_update_since(&b.version_vector()).unwrap();
+
+        // First application: real ops → non-empty, includes the new block.
+        let (changed1, _purged1) = b.import_with_changed_and_purged_blocks(&update).unwrap();
+        assert!(
+            changed1.iter().any(|bid| bid.as_str() == "BB"),
+            "real update must report the new block, got {changed1:?}",
+        );
+        assert_eq!(b.count_alive_blocks().unwrap(), 2);
+
+        // Re-applying the identical update appends nothing → short-circuit.
+        let (changed2, purged2) = b.import_with_changed_and_purged_blocks(&update).unwrap();
+        assert!(
+            changed2.is_empty() && purged2.is_empty(),
+            "duplicate update must short-circuit to empty, got changed={changed2:?} purged={purged2:?}",
+        );
+        assert_eq!(b.count_alive_blocks().unwrap(), 2);
+    }
+
+    /// `import` (snapshot/boot path) is idempotent across a duplicate import and
+    /// the no-op short-circuit leaves the materialised state intact.
+    #[test]
+    fn import_idempotent_on_duplicate() {
+        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
+        a.apply_create_block("x", "content", "X", None, 0).unwrap();
+        let bytes = a.export_snapshot().unwrap();
+
+        let mut b = LoroEngine::new();
+        b.import(&bytes).unwrap();
+        assert_eq!(b.count_alive_blocks().unwrap(), 1);
+        // Duplicate import hits the no-op short-circuit; state unchanged.
         b.import(&bytes).unwrap();
         assert_eq!(b.count_alive_blocks().unwrap(), 1);
     }
