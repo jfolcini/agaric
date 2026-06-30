@@ -319,26 +319,37 @@ impl LoroEngine {
         }
         let after_import_frontiers = self.doc.oplog_frontiers();
 
-        // Pre-import live index keys for the purged delta (`self.index` is
-        // untouched by `doc.import`; deferred past the no-op check so a
-        // redelivered import skips this O(N) clone).
-        let before: std::collections::HashSet<String> = self.index.keys().cloned().collect();
-
-        self.rebuild_index();
-        // One-time legacy sibling-order migration (#400). If it appended ops it
-        // reordered siblings whose shifts are NOT in the captured import diff —
-        // force the brute-force fallback so those reprojections are not missed.
+        // One-time legacy sibling-order migration (#400). It operates on the doc
+        // tree (not `self.index`), so it is order-independent w.r.t. the rebuild
+        // below. If it appended reorder ops, those sibling shifts are NOT in the
+        // captured import diff — force the brute-force fallback so they are not
+        // missed.
         self.migrate_legacy_sibling_order_best_effort();
         let migrated = self.doc.oplog_frontiers() != after_import_frontiers;
 
-        // #2128: purged delta = ids live before but gone after the rebuild.
+        let cap = std::mem::take(&mut *capture.lock().expect("diff capture mutex poisoned"));
+
+        // #2036 follow-up: `rebuild_index` (an O(N_live) tree meta-walk) and the
+        // two index-key clones for the purged delta are needed ONLY when the
+        // import changed the tree STRUCTURE (a node created / moved / deleted), or
+        // when we are falling back. A content / property / tag edit touches no
+        // tree node, so `self.index` is already current and nothing was purged —
+        // take the truly-O(changed) fast path and skip all of it.
+        if !cap.has_tree_diff && !cap.fallback && !migrated {
+            let changed = self.resolve_changed_blocks(&cap);
+            let tag_scope = TagScope::Subtrees(self.resolve_tag_scope(&cap));
+            return Ok((changed, Vec::new(), tag_scope));
+        }
+
+        // Structural / fallback path: rebuild the index and compute the purged
+        // delta (#2128: ids live before the import but gone after the rebuild).
+        let before: std::collections::HashSet<String> = self.index.keys().cloned().collect();
+        self.rebuild_index();
         let after: std::collections::HashSet<String> = self.index.keys().cloned().collect();
         let purged: Vec<crate::ulid::BlockId> = before
             .difference(&after)
             .map(|s| crate::ulid::BlockId::from_trusted(s))
             .collect();
-
-        let cap = std::mem::take(&mut *capture.lock().expect("diff capture mutex poisoned"));
 
         if cap.fallback || migrated {
             // Brute-force: reproject the whole live tree + globally rebuild the
@@ -346,6 +357,8 @@ impl LoroEngine {
             return Ok((self.enumerate_live_preorder(), purged, TagScope::Global));
         }
 
+        // Recognised structural change (create / move / delete): resolve the
+        // precise changed set (incl. affected siblings) + scoped tag inheritance.
         let changed = self.resolve_changed_blocks(&cap);
         let tag_scope = TagScope::Subtrees(self.resolve_tag_scope(&cap));
         Ok((changed, purged, tag_scope))
@@ -548,6 +561,12 @@ struct DiffCapture {
     struct_roots: std::collections::HashSet<TreeID>,
     /// Parents whose child sibling-group rank shifted (create/move/delete).
     affected_parents: Vec<TreeParentId>,
+    /// Whether the import carried any `blocks_tree` structural (`Diff::Tree`)
+    /// change — i.e. a node was created, moved, or deleted. When false, the
+    /// `block_id → TreeID` index is unchanged (content/property/tag edits touch
+    /// no tree nodes), so the O(N_live) `rebuild_index` + purged-delta clones can
+    /// be skipped entirely (#2036 follow-up).
+    has_tree_diff: bool,
 }
 
 /// Classify a single [`loro::event::ContainerDiff`] from an import into
@@ -571,6 +590,7 @@ fn classify_import_diff(cd: &loro::event::ContainerDiff, cap: &mut DiffCapture) 
         ENGINE_META_ROOT => {}
         BLOCKS_TREE_ROOT => {
             if let loro::event::Diff::Tree(td) = &cd.diff {
+                cap.has_tree_diff = true;
                 for item in &td.diff {
                     cap.struct_roots.insert(item.target);
                     match &item.action {
@@ -994,5 +1014,37 @@ mod incremental_detection_tests {
         let (c, p, s) = b.import_with_changed_purged_tagscope(&upd).unwrap();
         assert!(c.is_empty() && p.is_empty());
         assert_eq!(s, TagScope::Subtrees(vec![]));
+    }
+
+    /// #2036 follow-up: a non-structural edit takes the `rebuild_index`-skipping
+    /// fast path, yet `self.index` stays correct across it — proven by sandwiching
+    /// the skipped-rebuild content edit between two STRUCTURAL ops on the same
+    /// block. If the edit had left the index stale, resolving / moving `CC`
+    /// afterwards would break.
+    #[test]
+    fn fast_path_edit_preserves_index_across_structural_ops() {
+        let (mut a, mut b) = seed(); // AA(root), BB(child of AA)
+
+        // Structural: create CC under AA (takes the rebuild path → CC indexed).
+        a.apply_create_block("CC", "content", "c", Some("AA"), 1)
+            .unwrap();
+        let _ = push(&a, &mut b);
+        assert_eq!(b.count_alive_blocks().unwrap(), 3);
+
+        // Non-structural: edit CC's content (no Tree diff → skips rebuild_index).
+        a.apply_edit_content("CC", 0, 0, "x").unwrap();
+        let (changed, purged, _) = push(&a, &mut b);
+        assert_eq!(changed, vec!["CC"]);
+        assert!(purged.is_empty());
+
+        // Structural again: move CC to the root. CC must still be in the index
+        // after the rebuild-skipped edit, or this resolves/moves the wrong node.
+        a.apply_move_block("CC", None, 0).unwrap();
+        let (changed2, _purged2, _) = push(&a, &mut b);
+        assert!(
+            changed2.contains(&"CC".to_string()),
+            "moved CC must resolve after a rebuild-skipped edit, got {changed2:?}",
+        );
+        assert_eq!(b.count_alive_blocks().unwrap(), 3);
     }
 }
