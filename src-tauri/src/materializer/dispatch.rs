@@ -89,18 +89,30 @@ pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 8] = [
     MaterializeTask::RebuildPageLinkCache,
 ];
 
-/// #2037: property keys that drive `agenda_cache` irrespective of value type —
-/// `template` (the page-level agenda carve-out in `DESIRED_AGENDA_SQL`) and the
-/// `due`/`scheduled` date columns. A date-VALUED property of ANY key also drives
-/// it (it surfaces as a `property:<key>` source where `value_date IS NOT NULL`);
-/// that is checked separately via the payload's `value_date`.
-const AGENDA_PROPERTY_KEYS: [&str; 3] = ["template", "due", "scheduled"];
+/// #2037: property keys that drive `agenda_cache` irrespective of value type.
+/// `template` is the page-level agenda carve-out in `DESIRED_AGENDA_SQL`. The
+/// RESERVED column-backed keys `due_date`/`scheduled_date` (stored in
+/// `blocks.due_date`/`blocks.scheduled_date`, written via `SetProperty` —
+/// `set_due_date_inner`/`set_scheduled_date_inner`) are read by Source 3/4 of
+/// `DESIRED_AGENDA_SQL` (`WHERE b.due_date IS NOT NULL` / `b.scheduled_date IS
+/// NOT NULL`), so clearing them (value_date=None) MUST still rebuild — they
+/// cannot be caught by the payload's `value_date`. `due`/`scheduled` are the
+/// non-reserved date-property aliases (date value caught via `value_date`, but
+/// kept here so the value-cleared case is covered too). A date-VALUED property
+/// of ANY key also drives it (a `property:<key>` source where `value_date IS NOT
+/// NULL`); that is checked separately via the payload's `value_date`.
+const AGENDA_PROPERTY_KEYS: [&str; 5] =
+    ["template", "due", "scheduled", "due_date", "scheduled_date"];
 
 /// #2037: property keys that drive `projected_agenda_cache` — the recurrence
 /// keys (`cache/projected_agenda.rs` joins `key = 'repeat'` and reads
 /// `repeat-until`/`repeat-count`/`repeat-seq`), the `due`/`scheduled` date
-/// columns a repeating block projects from, and the `template` carve-out.
-const PROJECTED_AGENDA_PROPERTY_KEYS: [&str; 7] = [
+/// columns a repeating block projects from (reserved `due_date`/`scheduled_date`
+/// → `blocks.due_date`/`scheduled_date`, read by `WHERE b.due_date IS NOT NULL
+/// OR b.scheduled_date IS NOT NULL`), the reserved `todo_state` (the
+/// `todo_state != 'DONE'` filter drops a repeating block from the projection
+/// when it is completed), and the `template` carve-out.
+const PROJECTED_AGENDA_PROPERTY_KEYS: [&str; 10] = [
     "repeat",
     "repeat-until",
     "repeat-count",
@@ -108,6 +120,9 @@ const PROJECTED_AGENDA_PROPERTY_KEYS: [&str; 7] = [
     "template",
     "due",
     "scheduled",
+    "due_date",
+    "scheduled_date",
+    "todo_state",
 ];
 
 /// #2037: minimal payload view for `set_property` / `delete_property` dispatch
@@ -1256,6 +1271,55 @@ mod tests {
             labels(&tasks),
             vec!["RebuildAgendaCache", "RebuildProjectedAgendaCache"],
         );
+    }
+
+    /// #2037 regression (agaric-reviewer): the RESERVED column-backed key
+    /// `due_date` (→ `blocks.due_date`, read by both agenda caches) must rebuild
+    /// BOTH even when CLEARED (value_date=None), since its date-ness can't be
+    /// inferred from the payload — it lives in a column, not `value_date`.
+    #[test]
+    fn invalidations_for_op_set_property_due_date_cleared_rebuilds_both() {
+        let r = make_record(
+            "set_property",
+            r#"{"block_id":"BLK1","key":"due_date","value_text":null,"value_date":null}"#,
+            Some("BLK1"),
+        );
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        assert_eq!(
+            labels(&tasks),
+            vec!["RebuildAgendaCache", "RebuildProjectedAgendaCache"],
+            "clearing the reserved due_date column must refresh both agenda caches",
+        );
+    }
+
+    /// #2037 regression: same for the reserved `scheduled_date` column key.
+    #[test]
+    fn invalidations_for_op_set_property_scheduled_date_cleared_rebuilds_both() {
+        let r = make_record(
+            "set_property",
+            r#"{"block_id":"BLK1","key":"scheduled_date","value_date":null}"#,
+            Some("BLK1"),
+        );
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        assert_eq!(
+            labels(&tasks),
+            vec!["RebuildAgendaCache", "RebuildProjectedAgendaCache"],
+        );
+    }
+
+    /// #2037 regression: `todo_state` (→ `blocks.todo_state`) feeds ONLY the
+    /// projected cache's `todo_state != 'DONE'` filter — marking a repeating
+    /// block DONE must drop it from `projected_agenda_cache`. It does NOT feed
+    /// the flat agenda cache.
+    #[test]
+    fn invalidations_for_op_set_property_todo_state_rebuilds_projected_only() {
+        let r = make_record(
+            "set_property",
+            r#"{"block_id":"BLK1","key":"todo_state","value_text":"DONE"}"#,
+            Some("BLK1"),
+        );
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        assert_eq!(labels(&tasks), vec!["RebuildProjectedAgendaCache"]);
     }
 
     // ── move_block ───────────────────────────────────────────────────
