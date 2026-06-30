@@ -247,21 +247,51 @@ jobs:
           benches=$(grep -A1 '^\[\[bench\]\]' Cargo.toml \
             | sed -n 's/^name = "\(.*\)"/\1/p' \
             | grep -vx interactive_slo)
-          for name in $benches; do
-            bin=$(newest_bench_bin "$name")
+          # #2122: run the smoke checks IN PARALLEL with bounded concurrency.
+          # Each bench is a PREBUILT binary (built once by `--no-run` above), so
+          # concurrent execution is safe — there is NO per-bench recompile, so
+          # the cargo #6313 link race the prebuilt-binary approach avoids is
+          # unaffected by running the binaries at once. The SEQUENTIAL walk was
+          # the job's bottleneck: the cold 100K-seed benches summed to >57 min
+          # and blew the 90 min budget (compile is only ~31 min). Cap at 3
+          # concurrent (`wait -n` gate) to cut wall-clock ~3× while keeping peak
+          # memory sane on the 100K-seed benches. Each bench is backgrounded and
+          # records its verdict in a per-bench status file — a backgrounded
+          # subshell can't mutate the parent's `fail`, so we reduce them after.
+          status_dir="$(mktemp -d)"
+          smoke_one() {
+            local name="$1" bin
+            bin="$(newest_bench_bin "$name")"
             if [ -z "$bin" ]; then
               echo "::error::no prebuilt binary for bench '$name' (did --no-run compile it?)"
-              fail=1
-              continue
+              echo fail > "$status_dir/$name"
+              return
             fi
             echo "::group::smoke $name ($bin --test)"
             if "$bin" --test; then
               echo "smoke OK: $name"
+              echo ok > "$status_dir/$name"
             else
               echo "::error::bench '$name' FAILED its --test smoke run (seed/fixture drift?)"
-              fail=1
+              echo fail > "$status_dir/$name"
             fi
             echo "::endgroup::"
+          }
+          jobs=$(( $(nproc) < 3 ? $(nproc) : 3 ))
+          echo "smoke-running $(grep -c . <<< "$benches") benches at concurrency $jobs"
+          running=0
+          for name in $benches; do
+            smoke_one "$name" &
+            running=$((running + 1))
+            if (( running >= jobs )); then
+              wait -n
+              running=$((running - 1))
+            fi
+          done
+          wait
+          for f in "$status_dir"/*; do
+            [ -f "$f" ] || continue
+            [ "$(cat "$f")" = fail ] && fail=1
           done
           exit "$fail"
 
