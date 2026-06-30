@@ -17,11 +17,14 @@
 //! `page_id` was never stamped (test fixtures / partial state); the final
 //! `id` fallback covers top-level tags with neither.
 //!
-//! The read path (`list_page_links_inner`) selects from this table
-//! plus a `blocks` join on each endpoint to enforce
-//! `deleted_at IS NULL`, replacing the previous 3-JOIN superlinear
+//! The read path (`list_page_links_inner`) selects from this table as a
+//! single covering-index scan, replacing the previous 3-JOIN superlinear
 //! `block_links × blocks × block_properties` shape that measured
-//! ~1.3 s @ 100K in the interactive SLO bench.
+//! ~1.3 s @ 100K in the interactive SLO bench. #2070 denormalised the
+//! `deleted_at` / `block_type = 'page'` predicates into the
+//! `src_deleted` / `tgt_deleted` / `tgt_is_page` flag columns (migration
+//! 0096) so the unscoped read no longer needs even the two residual
+//! `blocks` joins it carried after 0065.
 //!
 //! Two public entry points:
 //!
@@ -54,10 +57,11 @@ use sqlx::SqlitePool;
 use crate::db::MAX_SQL_PARAMS;
 use crate::error::AppError;
 
-/// `page_link_cache` has 3 columns per row → `MAX_SQL_PARAMS / 3 = 333`
-/// rows per chunk. Mirrors the chunk-size derivation in
-/// `cache/pages.rs` and `cache/agenda.rs`.
-const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 3; // 333
+/// `page_link_cache` has 6 columns per row since #2070 denormalised the
+/// `src_deleted` / `tgt_deleted` / `tgt_is_page` predicate flags
+/// (migration 0096) → `MAX_SQL_PARAMS / 6 = 166` rows per chunk. Mirrors
+/// the chunk-size derivation in `cache/pages.rs` and `cache/agenda.rs`.
+const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 6; // 166
 
 // ---------------------------------------------------------------------------
 // Per-block incremental update
@@ -171,20 +175,38 @@ pub async fn reindex_page_link_cache_for_block(
     }
     let targets_json = serde_json::to_string(&touched_targets)?;
 
+    // #2070: also compute and write the denormalised predicate flags so
+    // an incremental upsert never resurrects a row with stale default
+    // flags. `src_deleted` is the soft-delete state of the source PAGE
+    // (`?1`), looked up once; `tgt_deleted` / `tgt_is_page` come from the
+    // target block joined per row. The `DO UPDATE SET` refreshes all
+    // three alongside `edge_count`. `MAX`/`MIN` just satisfy the GROUP BY
+    // (the flags are constant per target group).
     sqlx::query!(
         "WITH desired AS ( \
-             SELECT bl.target_id AS target, COUNT(*) AS edge_count \
+             SELECT bl.target_id AS target, \
+                    COUNT(*) AS edge_count, \
+                    MAX(tb.deleted_at IS NOT NULL) AS tgt_deleted, \
+                    MIN(tb.block_type = 'page') AS tgt_is_page \
              FROM block_links bl \
              JOIN blocks sb ON sb.id = bl.source_id \
+             JOIN blocks tb ON tb.id = bl.target_id \
              WHERE COALESCE(sb.page_id, sb.parent_id, sb.id) = ?1 \
                AND sb.deleted_at IS NULL \
                AND bl.target_id IN (SELECT value FROM json_each(?2)) \
              GROUP BY 1 \
          ) \
-         INSERT INTO page_link_cache (source_page_id, target_page_id, edge_count) \
-         SELECT ?1, target, edge_count FROM desired WHERE true \
+         INSERT INTO page_link_cache \
+             (source_page_id, target_page_id, edge_count, src_deleted, tgt_deleted, tgt_is_page) \
+         SELECT ?1, target, edge_count, \
+                COALESCE((SELECT (b.deleted_at IS NOT NULL) FROM blocks b WHERE b.id = ?1), 1), \
+                tgt_deleted, tgt_is_page \
+         FROM desired WHERE true \
          ON CONFLICT(source_page_id, target_page_id) \
-         DO UPDATE SET edge_count = excluded.edge_count",
+         DO UPDATE SET edge_count = excluded.edge_count, \
+                       src_deleted = excluded.src_deleted, \
+                       tgt_deleted = excluded.tgt_deleted, \
+                       tgt_is_page = excluded.tgt_is_page",
         source_page,
         targets_json,
     )
@@ -250,33 +272,77 @@ async fn rebuild_page_link_cache_impl(pool: &SqlitePool) -> Result<u64, AppError
     // `blocks` on the source side to read `parent_id`; output cardinality
     // is bounded by `min(distinct sources, distinct targets) ≤ #pages`,
     // typically a few thousand rows on a 100K-block vault.
-    let rows: Vec<(String, String, i64)> = sqlx::query!(
+    //
+    // #2070 parity design: keep the legacy `WHERE sb.deleted_at IS NULL`
+    // so `edge_count` counts only LIVE source blocks (a deleted source
+    // block must not inflate the count — matches the legacy rebuild and
+    // the incremental path). We denormalise the three READ-side
+    // predicates as flags by also joining `blocks` for the target:
+    //   - `src_deleted` is the source PAGE's delete state (the group
+    //     key), NOT an aggregate over source blocks — mirroring the
+    //     legacy read's `JOIN blocks src ON src.id = source_page_id AND
+    //     src.deleted_at IS NULL`. It comes from the `LEFT JOIN blocks
+    //     sp` on the rolled-up page id; a missing/purged source page
+    //     (`sp.id IS NULL`) maps to deleted (`CASE WHEN sp.id IS NULL
+    //     THEN 1 …`) so a dangling page reference is masked exactly like
+    //     the legacy inner join and the incremental path drop it. So a
+    //     page mid-cascade (deleted page, still-live block) is correctly
+    //     masked even though its block survives the `deleted_at IS NULL`
+    //     filter; a fully-deleted page produces no row at all (its blocks
+    //     are filtered out), same as legacy. The page state is constant
+    //     per `(source_page)` group, so the wrapping `MAX` is identity
+    //     (just satisfies the GROUP BY aggregate requirement).
+    //   - `tgt_deleted` / `tgt_is_page` come from the target block
+    //     (`target_page_id = bl.target_id` is a single block, so the
+    //     `MAX`/`MIN` are identity per group).
+    let rows: Vec<(String, String, i64, i64, i64, i64)> = sqlx::query!(
         "SELECT
-             COALESCE(sb.page_id, sb.parent_id, bl.source_id) AS \"source_page_id!\",
-             bl.target_id AS \"target_page_id!\",
-             COUNT(*) AS \"edge_count!\"
+             COALESCE(sb.page_id, sb.parent_id, bl.source_id) AS \"source_page_id!: String\",
+             bl.target_id AS \"target_page_id!: String\",
+             COUNT(*) AS \"edge_count!: i64\",
+             MAX(CASE WHEN sp.id IS NULL THEN 1 ELSE (sp.deleted_at IS NOT NULL) END) AS \"src_deleted!: i64\",
+             MAX(tb.deleted_at IS NOT NULL) AS \"tgt_deleted!: i64\",
+             MIN(tb.block_type = 'page') AS \"tgt_is_page!: i64\"
          FROM block_links bl
          JOIN blocks sb ON sb.id = bl.source_id
+         JOIN blocks tb ON tb.id = bl.target_id
+         LEFT JOIN blocks sp ON sp.id = COALESCE(sb.page_id, sb.parent_id, bl.source_id)
          WHERE sb.deleted_at IS NULL
          GROUP BY 1, 2",
     )
     .fetch_all(&mut *tx)
     .await?
     .into_iter()
-    .map(|r| (r.source_page_id, r.target_page_id, r.edge_count))
+    .map(|r| {
+        (
+            r.source_page_id,
+            r.target_page_id,
+            r.edge_count,
+            r.src_deleted,
+            r.tgt_deleted,
+            r.tgt_is_page,
+        )
+    })
     .collect();
 
     let mut inserted: u64 = 0;
     for chunk in rows.chunks(REBUILD_CHUNK) {
-        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?)").collect();
+        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?, ?, ?, ?)").collect();
         let sql = format!(
-            "INSERT OR IGNORE INTO page_link_cache (source_page_id, target_page_id, edge_count) \
+            "INSERT OR IGNORE INTO page_link_cache \
+             (source_page_id, target_page_id, edge_count, src_deleted, tgt_deleted, tgt_is_page) \
              VALUES {}",
             placeholders.join(", ")
         );
         let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
-        for (src, tgt, count) in chunk {
-            q = q.bind(src).bind(tgt).bind(count);
+        for (src, tgt, count, src_del, tgt_del, tgt_page) in chunk {
+            q = q
+                .bind(src)
+                .bind(tgt)
+                .bind(count)
+                .bind(src_del)
+                .bind(tgt_del)
+                .bind(tgt_page);
         }
         let res = q.execute(&mut *tx).await?;
         inserted += res.rows_affected();
@@ -305,20 +371,43 @@ async fn rebuild_page_link_cache_split_impl(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
 ) -> Result<u64, AppError> {
-    let rows: Vec<(String, String, i64)> = sqlx::query!(
+    // #2070 parity design (see `rebuild_page_link_cache_impl`): keep the
+    // legacy `WHERE sb.deleted_at IS NULL` so `edge_count` counts only
+    // live source blocks, and denormalise the read-side predicates as
+    // flags. `src_deleted` is the source PAGE's delete state (group key,
+    // via the `LEFT JOIN blocks sp` on the rolled-up page id), NOT a
+    // source-block aggregate; `tgt_deleted` / `tgt_is_page` come from the
+    // single target block.
+    // The `MAX`/`MIN` aggregates are identity per group, present only to
+    // satisfy the GROUP BY.
+    let rows: Vec<(String, String, i64, i64, i64, i64)> = sqlx::query!(
         "SELECT
-             COALESCE(sb.page_id, sb.parent_id, bl.source_id) AS \"source_page_id!\",
-             bl.target_id AS \"target_page_id!\",
-             COUNT(*) AS \"edge_count!\"
+             COALESCE(sb.page_id, sb.parent_id, bl.source_id) AS \"source_page_id!: String\",
+             bl.target_id AS \"target_page_id!: String\",
+             COUNT(*) AS \"edge_count!: i64\",
+             MAX(CASE WHEN sp.id IS NULL THEN 1 ELSE (sp.deleted_at IS NOT NULL) END) AS \"src_deleted!: i64\",
+             MAX(tb.deleted_at IS NOT NULL) AS \"tgt_deleted!: i64\",
+             MIN(tb.block_type = 'page') AS \"tgt_is_page!: i64\"
          FROM block_links bl
          JOIN blocks sb ON sb.id = bl.source_id
+         JOIN blocks tb ON tb.id = bl.target_id
+         LEFT JOIN blocks sp ON sp.id = COALESCE(sb.page_id, sb.parent_id, bl.source_id)
          WHERE sb.deleted_at IS NULL
          GROUP BY 1, 2",
     )
     .fetch_all(read_pool)
     .await?
     .into_iter()
-    .map(|r| (r.source_page_id, r.target_page_id, r.edge_count))
+    .map(|r| {
+        (
+            r.source_page_id,
+            r.target_page_id,
+            r.edge_count,
+            r.src_deleted,
+            r.tgt_deleted,
+            r.tgt_is_page,
+        )
+    })
     .collect();
 
     let mut tx =
@@ -330,15 +419,22 @@ async fn rebuild_page_link_cache_split_impl(
 
     let mut inserted: u64 = 0;
     for chunk in rows.chunks(REBUILD_CHUNK) {
-        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?)").collect();
+        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?, ?, ?, ?)").collect();
         let sql = format!(
-            "INSERT OR IGNORE INTO page_link_cache (source_page_id, target_page_id, edge_count) \
+            "INSERT OR IGNORE INTO page_link_cache \
+             (source_page_id, target_page_id, edge_count, src_deleted, tgt_deleted, tgt_is_page) \
              VALUES {}",
             placeholders.join(", ")
         );
         let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
-        for (src, tgt, count) in chunk {
-            q = q.bind(src).bind(tgt).bind(count);
+        for (src, tgt, count, src_del, tgt_del, tgt_page) in chunk {
+            q = q
+                .bind(src)
+                .bind(tgt)
+                .bind(count)
+                .bind(src_del)
+                .bind(tgt_del)
+                .bind(tgt_page);
         }
         let res = q.execute(&mut *tx).await?;
         inserted += res.rows_affected();

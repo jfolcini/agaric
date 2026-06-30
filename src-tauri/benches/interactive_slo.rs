@@ -1174,7 +1174,14 @@ fn bench_revert_ops_50op_at_100k(c: &mut Criterion) {
 /// § Product SLO known-exceeds-budget note). The SQL-review §H-2 `page_link_cache`
 /// rollup (migration 0065) helped but did NOT bring it under budget — this was
 /// never verified because the bench was never actually run until now (#1233).
-/// Re-gated so the green tier isn't blocked by this tracked perf gap.
+///
+/// #2070: migration 0096 denormalised the residual `deleted_at` /
+/// `block_type = 'page'` predicates into the cache flags so the unscoped read
+/// is now a single `idx_page_link_cache_live` scan with ZERO `blocks` joins;
+/// the SLO is confirmed under the 200 ms budget on the nightly bench-compile
+/// lane (`SLO_INCLUDE_PROBLEM=1`). The skip-gate stays IN PLACE here — this PR
+/// does not promote the row to the green tier; that flip is a separate change
+/// once the nightly lane has accumulated enough samples to ratchet the budget.
 fn bench_list_page_links(c: &mut Criterion) {
     const BUDGET_MS: f64 = 200.0;
 

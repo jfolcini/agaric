@@ -4207,6 +4207,248 @@ async fn page_link_cache_read_path_matches_legacy_query() {
     }
 }
 
+/// #2070: the legacy 3-JOIN oracle for the page-link read path. Mirrors
+/// the SQL frozen in `page_link_cache_read_path_matches_legacy_query` —
+/// it joins `blocks` live on both endpoints to enforce
+/// `src.deleted_at IS NULL`, `tgt.deleted_at IS NULL`, and
+/// `tgt.block_type = 'page'`. Since #2070 denormalised those three
+/// predicates into the cache flags, the cache-backed read must still
+/// produce exactly this set after a soft-delete / non-page target /
+/// incremental edit. Returned sorted so callers can compare
+/// order-insensitively.
+async fn legacy_page_link_oracle(pool: &SqlitePool) -> Vec<(String, String, i64)> {
+    let mut rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT
+             COALESCE(sb.parent_id, bl.source_id) AS source_id,
+             bl.target_id AS target_id,
+             COUNT(*) AS ref_count
+         FROM block_links bl
+         JOIN blocks tb ON tb.id = bl.target_id
+             AND tb.block_type = 'page'
+             AND tb.deleted_at IS NULL
+         JOIN blocks sb ON sb.id = bl.source_id
+             AND sb.deleted_at IS NULL
+         LEFT JOIN blocks pb ON pb.id = sb.parent_id
+             AND pb.deleted_at IS NULL
+             AND pb.block_type = 'page'
+         WHERE COALESCE(sb.parent_id, bl.source_id) != bl.target_id
+             AND (sb.parent_id IS NULL OR pb.id IS NOT NULL)
+         GROUP BY 1, 2",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    rows.sort();
+    rows
+}
+
+/// Read the cache-backed path and project to sorted
+/// `(source_id, target_id, ref_count)` tuples for order-insensitive
+/// comparison against [`legacy_page_link_oracle`].
+async fn read_page_links_sorted(pool: &SqlitePool) -> Vec<(String, String, i64)> {
+    let mut rows: Vec<(String, String, i64)> =
+        crate::commands::list_page_links_inner(pool, &crate::space::SpaceScope::Global, None)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|l| {
+                (
+                    l.source_id.as_str().to_owned(),
+                    l.target_id.as_str().to_owned(),
+                    l.ref_count,
+                )
+            })
+            .collect();
+    rows.sort();
+    rows
+}
+
+/// #2070: denormalised `src_deleted` / `tgt_deleted` / `tgt_is_page`
+/// flags must keep the read path identical to the legacy live-join
+/// oracle after a soft-delete (full rebuild), an incremental source
+/// edit, and against a non-page target. Without the flags the read would
+/// surface masked edges because the two `blocks` joins were dropped.
+#[tokio::test]
+async fn page_link_cache_denormalized_flags_match_legacy_after_mutation() {
+    // (a) Soft-delete a TARGET page, FULL rebuild → masked, == oracle.
+    {
+        let (pool, _dir) = test_pool().await;
+        seed_page_link_fixture(
+            &pool,
+            "PA000000000000000000000000",
+            "PB000000000000000000000000",
+            4,
+        )
+        .await;
+        rebuild_page_link_cache(&pool).await.unwrap();
+        // Baseline: edge surfaces before any deletion.
+        assert_eq!(
+            read_page_links_sorted(&pool).await,
+            legacy_page_link_oracle(&pool).await,
+            "baseline read must match the legacy oracle",
+        );
+
+        // Soft-delete the target page, then run the full rebuild (the
+        // FULL_CACHE_REBUILD_TASKS path on delete cascades). The edge
+        // must vanish from the read via tgt_deleted, exactly as the
+        // legacy `tgt.deleted_at IS NULL` join did.
+        sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
+            .bind(FIXED_DELETED_AT)
+            .bind("PB000000000000000000000000")
+            .execute(&pool)
+            .await
+            .unwrap();
+        rebuild_page_link_cache(&pool).await.unwrap();
+        let oracle = legacy_page_link_oracle(&pool).await;
+        assert!(oracle.is_empty(), "oracle: deleted target masks the edge");
+        assert_eq!(
+            read_page_links_sorted(&pool).await,
+            oracle,
+            "deleted-target read must match the legacy oracle (edge masked)",
+        );
+    }
+
+    // (b) Edit a SOURCE page, INCREMENTAL reindex → == oracle.
+    {
+        let (pool, _dir) = test_pool().await;
+        let children = seed_page_link_fixture(
+            &pool,
+            "PA000000000000000000000000",
+            "PB000000000000000000000000",
+            3,
+        )
+        .await;
+        // Incremental path: reindex the changed source block.
+        reindex_page_link_cache_for_block(&pool, &children[0])
+            .await
+            .unwrap();
+        assert_eq!(
+            read_page_links_sorted(&pool).await,
+            legacy_page_link_oracle(&pool).await,
+            "incremental reindex read must match the legacy oracle",
+        );
+
+        // Soft-delete the SOURCE page, reindex its child block again.
+        // The incremental upsert must refresh src_deleted so the read
+        // masks the edge — matching the legacy `sb.deleted_at IS NULL`.
+        sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
+            .bind(FIXED_DELETED_AT)
+            .bind("PA000000000000000000000000")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Also soft-delete the child so the source-page roll-up has no
+        // live contributor, mirroring a page-delete cascade.
+        sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
+            .bind(FIXED_DELETED_AT)
+            .bind(&children[0])
+            .execute(&pool)
+            .await
+            .unwrap();
+        reindex_page_link_cache_for_block(&pool, &children[0])
+            .await
+            .unwrap();
+        assert_eq!(
+            read_page_links_sorted(&pool).await,
+            legacy_page_link_oracle(&pool).await,
+            "incremental reindex after source delete must match the oracle",
+        );
+    }
+
+    // (c) Non-page TARGET (tgt_is_page = 0) must be masked.
+    {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "PA000000000000000000000000", "page", "Page A").await;
+        // Target is a CONTENT block, not a page.
+        insert_block(&pool, "TC000000000000000000000000", "content", "not a page").await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', ?, ?, ?)",
+        )
+        .bind("CC000000000000000000000000")
+        .bind("link [[TC000000000000000000000000]]")
+        .bind("PA000000000000000000000000")
+        .bind(1)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind("CC000000000000000000000000")
+            .bind("TC000000000000000000000000")
+            .execute(&pool)
+            .await
+            .unwrap();
+        rebuild_page_link_cache(&pool).await.unwrap();
+        let oracle = legacy_page_link_oracle(&pool).await;
+        assert!(oracle.is_empty(), "oracle: non-page target masks the edge");
+        assert_eq!(
+            read_page_links_sorted(&pool).await,
+            oracle,
+            "non-page-target read must match the legacy oracle (edge masked)",
+        );
+    }
+
+    // (d) MIXED partial block deletion under a LIVE source page. Two
+    // source blocks on the alive page P both link target T; delete ONE.
+    // Legacy semantics: the edge stays VISIBLE with ref_count = 1 (only
+    // the surviving block counts) — `src_deleted` reflects the PAGE
+    // (alive), NOT an aggregate over the blocks. This is the case that
+    // catches a rebuild that wrongly counts deleted blocks (ref_count=2)
+    // or masks on a block-level aggregate (src_deleted=1 → hidden).
+    {
+        let (pool, _dir) = test_pool().await;
+        // Two child blocks on the SAME live page, both linking the same
+        // target page (`seed_page_link_fixture` makes each edge a
+        // distinct child block under page A → exactly this shape).
+        let children = seed_page_link_fixture(
+            &pool,
+            "PA000000000000000000000000",
+            "PB000000000000000000000000",
+            2,
+        )
+        .await;
+        // Soft-delete ONE of the two source blocks; the page stays alive.
+        sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
+            .bind(FIXED_DELETED_AT)
+            .bind(&children[0])
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // FULL rebuild → edge visible, ref_count = 1 (surviving block).
+        rebuild_page_link_cache(&pool).await.unwrap();
+        let oracle = legacy_page_link_oracle(&pool).await;
+        assert_eq!(
+            oracle,
+            vec![(
+                "PA000000000000000000000000".to_string(),
+                "PB000000000000000000000000".to_string(),
+                1,
+            )],
+            "oracle: live page with one deleted block → edge visible, ref_count=1",
+        );
+        assert_eq!(
+            read_page_links_sorted(&pool).await,
+            oracle,
+            "rebuild: live page + partial block deletion must match the legacy \
+             oracle — edge visible with ref_count=1 (deleted block excluded), \
+             NOT ref_count=2 and NOT masked",
+        );
+
+        // Symmetric incremental path: reindex the surviving child block
+        // (the change the materializer would enqueue) → same result.
+        reindex_page_link_cache_for_block(&pool, &children[1])
+            .await
+            .unwrap();
+        assert_eq!(
+            read_page_links_sorted(&pool).await,
+            oracle,
+            "incremental reindex: live page + partial block deletion must \
+             match the legacy oracle (ref_count=1, edge visible)",
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Issue #103: contention-mode regression guard for the
 // `pool.begin()` → `begin_immediate_logged` migration. A cache rebuild
