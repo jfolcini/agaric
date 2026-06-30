@@ -5,7 +5,7 @@
 # Format: <count> <path-relative-to-repo-root>
 
 21 src-tauri/src/backlink/filters.rs
-5 src-tauri/src/backlink/grouped.rs
+7 src-tauri/src/backlink/grouped.rs
 8 src-tauri/src/backlink/query.rs
 1 src-tauri/src/backlink/sort.rs
 4 src-tauri/src/block_descendants.rs
