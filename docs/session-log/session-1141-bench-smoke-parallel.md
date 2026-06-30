@@ -32,12 +32,16 @@ recompile, so the cargo #6313 link race that the prebuilt-binary approach
 deliberately avoids is unaffected by running the binaries at once. The loop now
 backgrounds each `smoke_one` with a `wait -n` gate capping concurrency at
 `min(nproc, 3)` (3 on the standard runner) — enough to cut wall-clock ~3× while
-keeping peak memory sane on the 100K-seed benches. Each bench records its
-pass/fail verdict in a per-bench status file (a backgrounded subshell can't
-mutate the parent's `fail`), which is reduced after `wait` to produce the job's
-exit code. The seed/fixture-drift guarantee (#978), the `interactive_slo` skip
-(warm-gated separately), and the per-bench `::group::`/`::error::` annotations
-are all preserved.
+keeping peak memory sane on the 100K-seed benches. Each bench's stdout/stderr is
+BUFFERED to a per-bench `.log` and its verdict to a per-bench `.status` (a
+backgrounded subshell can't mutate the parent's `fail`). After the barrier the
+logs are replayed in bench order, each wrapped in its own `::group::`, so log
+folding stays intact despite interleaved execution (#2175 review). Verdicts are
+then reduced: a `fail` status fails the job, and a MISSING `.status` — the
+subshell was killed mid-run before writing it (e.g. an OOM on a 100K-seed
+bench) — is also treated as a FAILURE rather than a silent pass (#2175 review).
+The seed/fixture-drift guarantee (#978), the `interactive_slo` skip (warm-gated
+separately), and the per-bench `::error::` annotations are all preserved.
 
 Expected wall-clock: compile ~31 min + smoke ~20 min ≈ ~51 min, comfortably
 under the (unchanged) 90-min budget.
@@ -46,9 +50,10 @@ under the (unchanged) 90-min budget.
 
 - `shellcheck -s bash` on the extracted run-block script — clean (no warnings).
 - `bash -n` syntax check — clean.
-- Functional test of the concurrency gate + failure aggregation with stubbed
-  benches: all inputs processed, an injected failure propagates to `exit 1`,
-  the `wait -n` gate bounds concurrency.
+- Functional test of the concurrency gate + verdict reduction with stubbed
+  benches: an ok bench passes, an injected failure propagates to `exit 1`, and
+  a bench whose subshell is killed before writing its `.status` (simulated OOM)
+  is correctly counted as a failure — not a silent pass.
 - Wall-clock improvement is confirmable only on the nightly lane (the full bench
   suite is not runnable in the dev sandbox); the `timeout-minutes` is left at 90
   so a regression still surfaces as a timeout rather than being masked.
