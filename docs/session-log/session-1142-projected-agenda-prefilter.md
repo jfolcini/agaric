@@ -33,8 +33,8 @@ untouched.
 - `src-tauri/src/commands/agenda.rs` — `list_projected_agenda_on_the_fly`:
   added one `AND ( ... )` clause to the existing `sqlx::query_as!` fallback
   SELECT (a new `?2` bind = `range_end` as `YYYY-MM-DD`). A block is KEPT iff
-  its repeat rule is today-anchored (`LOWER(TRIM(bp.value_text)) LIKE '.+%'`
-  OR `LIKE '++%'`) OR `b.due_date <= ?2` OR `b.scheduled_date <= ?2`. Only the
+  its repeat rule is today-anchored (`bp.value_text LIKE '%.+%'` OR
+  `LIKE '%++%'`) OR `b.due_date <= ?2` OR `b.scheduled_date <= ?2`. Only the
   UPPER bound is filtered; the lower bound is never touched (a past base with a
   forward repeat can still land in the window). All other predicates
   (`deleted_at`, `todo_state != 'DONE'`, has-repeat-rule, template carve-out,
@@ -42,10 +42,18 @@ untouched.
   - Today-anchored prefixes verified against `recurrence::parser::shift_date`
     and `recurrence::projection::project_block_dates`: exactly `.+` (dot_plus)
     and `++` (plus_plus); every other form (daily / weekly / monthly / +Nd /
-    +Nw / +Nm / +Ny) is base-anchored. `LOWER(TRIM(...))` mirrors the
-    `repeat_rule.trim().to_lowercase()` the projector applies before dispatch.
-    `.` and `+` are not LIKE metacharacters (only `%`/`_` are), so the
-    prefixes match literally.
+    +Nw / +Nm / +Ny) is base-anchored.
+  - The today-anchored arms use a SUBSTRING-CONTAINS test (`LIKE '%.+%'` /
+    `'%++%'`) rather than a `LOWER(TRIM(...)) LIKE '.+%'` PREFIX test (#2069
+    review fix). `.+` / `++` contain no alphabetic characters (so case is
+    irrelevant — no `LOWER`) and `.` / `+` are not LIKE metacharacters, so any
+    rule the projector would classify as today-anchored necessarily contains
+    the literal `.+` / `++` substring regardless of leading whitespace —
+    closing the SQLite `TRIM()` (ASCII-space only) vs Rust `str::trim()` (all
+    Unicode whitespace) gap, under which a `"\t.+1w"`-style rule with a base
+    after `range_end` would otherwise be wrongly dropped. Base-anchored forms
+    never contain those substrings, so they are not falsely kept (no perf
+    regression). Strict superset preserved.
 - `src-tauri/src/commands/tests/agenda_cmd_tests.rs` — new sibling parity test
   `projected_agenda_prefilter_is_superset_2069`; the existing
   `projected_agenda_cached_equals_on_the_fly` is kept UNMODIFIED.
