@@ -231,12 +231,12 @@ impl LoroEngine {
         &mut self,
         bytes: &[u8],
     ) -> Result<(Vec<crate::ulid::BlockId>, Vec<crate::ulid::BlockId>), AppError> {
-        // Snapshot the live index keys BEFORE import — `self.index` is keyed
-        // by block_id string (`HashMap<String, TreeID>`, engine/mod.rs).
-        let before: std::collections::HashSet<String> = self.index.keys().cloned().collect();
         // #2036: capture the oplog frontiers BEFORE import so we can detect a
         // no-op import (one that applied zero new ops) and short-circuit the
-        // O(N) reprojection below.
+        // O(N) reprojection below. The pre-import index snapshot used for the
+        // purged delta is deferred until AFTER the no-op check so a redelivered
+        // import skips that O(N) key-clone too (it is unused on the early return,
+        // and `self.index` is untouched between here and `rebuild_index`).
         let before_frontiers = self.doc.oplog_frontiers();
 
         self.doc
@@ -261,6 +261,12 @@ impl LoroEngine {
         if self.doc.oplog_frontiers() == before_frontiers {
             return Ok((Vec::new(), Vec::new()));
         }
+
+        // Snapshot the live index keys BEFORE the rebuild — `self.index` is keyed
+        // by block_id string (`HashMap<String, TreeID>`, engine/mod.rs) and is
+        // unchanged by `doc.import`, so this still reflects the pre-import live
+        // set used to compute the purged delta further down.
+        let before: std::collections::HashSet<String> = self.index.keys().cloned().collect();
 
         self.rebuild_index();
         // Mirror `import`'s one-time legacy sibling-order migration so a pre-#400
