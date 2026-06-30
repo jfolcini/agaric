@@ -1177,11 +1177,12 @@ fn bench_revert_ops_50op_at_100k(c: &mut Criterion) {
 ///
 /// #2070: migration 0096 denormalised the residual `deleted_at` /
 /// `block_type = 'page'` predicates into the cache flags so the unscoped read
-/// is now a single `idx_page_link_cache_live` scan with ZERO `blocks` joins;
-/// the SLO is confirmed under the 200 ms budget on the nightly bench-compile
-/// lane (`SLO_INCLUDE_PROBLEM=1`). The skip-gate stays IN PLACE here — this PR
-/// does not promote the row to the green tier; that flip is a separate change
-/// once the nightly lane has accumulated enough samples to ratchet the budget.
+/// is now a single `idx_page_link_cache_live` scan with ZERO `blocks` joins.
+/// The under-budget win is EXPECTED but not yet confirmed — the 100K bench is
+/// not runnable in the dev sandbox, so it must be verified on the nightly
+/// bench-compile lane (`SLO_INCLUDE_PROBLEM=1`). The skip-gate therefore stays
+/// IN PLACE here — this PR does not promote the row to the green tier; that
+/// flip is a separate change once the nightly lane confirms the budget.
 fn bench_list_page_links(c: &mut Criterion) {
     const BUDGET_MS: f64 = 200.0;
 
