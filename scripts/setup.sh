@@ -144,9 +144,9 @@ bash scripts/setup-dev-db.sh || echo "warning: dev DB setup skipped — run scri
 # tool can't block a fresh clone from building. Re-run scripts/setup-hooks.sh
 # (or `just install-hooks`) to fill any gaps reported above.
 #
-# This is by far the SLOWEST part of setup: it fetches ~10 cargo tools plus
-# shellcheck and only THEN wires the git hooks (the wiring is the very last
-# step). Under the remote SessionStart hook, all of setup.sh shares one hard
+# This is by far the SLOWEST part of setup: it fetches ~10 cargo tools and a
+# system shellcheck, and only THEN wires the git hooks (the wiring is the very
+# last step). Under the remote SessionStart hook, all of setup.sh shares one hard
 # ~600s provisioning budget — and the hook-toolchain install reproducibly
 # overran it: the provisioner SIGKILLed setup mid-install (right after
 # cargo-machete), so the slower tools never landed and — because wiring runs
