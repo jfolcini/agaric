@@ -474,17 +474,14 @@ pub async fn delete_block_inner(
     // P-4: Remove inherited entries for soft-deleted subtree
     crate::tag_inheritance::remove_subtree_inherited(&mut tx, &block_id).await?;
 
-    // #417: keep `pages_cache.{child_block_count,inbound_link_count}`
-    // correct on the LOCAL delete path WITHOUT relying on the full-table
-    // recompute that the per-op `RebuildPagesCache` task no longer
-    // carries. Affected pages = (a) every page that owned a block in the
-    // just-soft-deleted subtree (loses children) UNION (b) every page
-    // that was the link TARGET of an outbound edge from the subtree
-    // (loses an inbound link). Run AFTER the soft-delete UPDATE so the
-    // count subqueries see `deleted_at` set. Bounded by the same
-    // depth-100 `descendants` CTE walk and indexed `block_links` joins.
-    let affected_pages = affected_pages_for_subtree(&mut tx, &block_id).await?;
-    crate::materializer::recompute_pages_cache_counts_for_pages(&mut tx, &affected_pages).await?;
+    // #2042: `pages_cache.{child_block_count,inbound_link_count}` for the pages
+    // this subtree owned / linked into are recomputed by the background
+    // `RebuildPagesCacheCounts` task (enqueued by `enqueue_lifecycle_background`
+    // below, via `dispatch`'s lifecycle rebuild set) — NOT synchronously here.
+    // A large-subtree delete must not hold the single-writer lock for the
+    // O(descendants) `COUNT(DISTINCT)` walk. The counts are briefly stale until
+    // the background drain (eventual consistency, same model as the link
+    // caches that already rebuild on this path).
 
     // Commit + fire-and-forget background cache dispatch. #2037 pt2: thread
     // the block's type so the materializer narrows the rebuild fan-out for a
@@ -497,99 +494,6 @@ pub async fn delete_block_inner(
         deleted_at: now,
         descendants_affected: result.rows_affected(),
     })
-}
-
-/// #417: resolve the set of pages whose `pages_cache` counts may have
-/// changed when the subtree rooted at `block_id` is soft-deleted /
-/// restored on the LOCAL command path.
-///
-/// The set is the UNION of:
-///   (a) `SELECT DISTINCT page_id FROM blocks WHERE id IN (subtree) AND
-///       page_id IS NOT NULL` — pages that own a block in the subtree
-///       (their `child_block_count` changes), and
-///   (b) `SELECT DISTINCT b.page_id FROM block_links bl JOIN blocks b ON
-///       b.id = bl.target_id WHERE bl.source_id IN (subtree) AND
-///       b.page_id IS NOT NULL` — pages that are the link TARGET of an
-///       outbound edge from the subtree (their `inbound_link_count`
-///       changes when the source is (un)deleted).
-///
-/// `subtree` is the depth-100-bounded recursive `descendants` set rooted
-/// at `block_id` WITHOUT the `deleted_at` filter (it must include the
-/// blocks regardless of their current deleted state — delete sets the
-/// flag, restore clears it, and the caller invokes this after that
-/// mutation). The canonical recompute then re-derives the counts from
-/// current `blocks.deleted_at`, so timing of this call relative to the
-/// mutation only affects which rows are CANDIDATES, not the values.
-async fn affected_pages_for_subtree(
-    tx: &mut sqlx::SqliteConnection,
-    block_id: &str,
-) -> Result<Vec<String>, AppError> {
-    use std::collections::HashSet;
-    let rows = sqlx::query_scalar::<_, String>(
-        "WITH RECURSIVE subtree(id, depth) AS ( \
-             SELECT id, 0 FROM blocks WHERE id = ?1 \
-             UNION ALL \
-             SELECT b.id, s.depth + 1 FROM blocks b \
-             JOIN subtree s ON b.parent_id = s.id \
-             WHERE s.depth < 100 \
-         ) \
-         SELECT DISTINCT page_id FROM blocks \
-             WHERE id IN (SELECT id FROM subtree) AND page_id IS NOT NULL \
-         UNION \
-         SELECT DISTINCT b.page_id FROM block_links bl \
-             JOIN blocks b ON b.id = bl.target_id \
-             WHERE bl.source_id IN (SELECT id FROM subtree) \
-               AND b.page_id IS NOT NULL",
-    )
-    .bind(block_id)
-    .fetch_all(&mut *tx)
-    .await?;
-    let unique: HashSet<String> = rows.into_iter().collect();
-    Ok(unique.into_iter().collect())
-}
-
-/// Multi-root variant of [`affected_pages_for_subtree`].
-///
-/// Returns the union of all page IDs that own any block in the combined
-/// subtrees rooted at `root_ids`, plus any pages that are targeted by
-/// `block_links` whose source is within those subtrees. Called by the
-/// batch delete/restore/purge paths (#461) to populate the affected-page
-/// set that `recompute_pages_cache_counts_for_pages` must update.
-///
-/// Uses `json_each` to seed the CTE from the entire root list in one
-/// query, matching the pattern already used by the cascade UPDATE in
-/// `delete_blocks_by_ids_inner`. Runtime `sqlx::query_scalar::<_, String>`
-/// (no `!`) avoids `.sqlx` cache regeneration.
-async fn affected_pages_for_subtrees(
-    tx: &mut sqlx::SqliteConnection,
-    root_ids: &[String],
-) -> Result<Vec<String>, AppError> {
-    if root_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    use std::collections::HashSet;
-    let json = serde_json::to_string(root_ids)?;
-    let rows = sqlx::query_scalar::<_, String>(
-        "WITH RECURSIVE subtree(id, depth) AS ( \
-             SELECT id, 0 FROM blocks WHERE id IN (SELECT value FROM json_each(?1)) \
-             UNION ALL \
-             SELECT b.id, s.depth + 1 FROM blocks b \
-             JOIN subtree s ON b.parent_id = s.id \
-             WHERE s.depth < 100 \
-         ) \
-         SELECT DISTINCT page_id FROM blocks \
-             WHERE id IN (SELECT id FROM subtree) AND page_id IS NOT NULL \
-         UNION \
-         SELECT DISTINCT b.page_id FROM block_links bl \
-             JOIN blocks b ON b.id = bl.target_id \
-             WHERE bl.source_id IN (SELECT id FROM subtree) \
-               AND b.page_id IS NOT NULL",
-    )
-    .bind(&json)
-    .fetch_all(&mut *tx)
-    .await?;
-    let unique: HashSet<String> = rows.into_iter().collect();
-    Ok(unique.into_iter().collect())
 }
 
 /// Batch variant of [`delete_block_inner`].
@@ -789,10 +693,6 @@ pub async fn delete_blocks_by_ids_inner(
     // to filter selected descendants client-side because each root
     // ran in its own tx; a single CTE that already unions every
     // root's subtree subsumes the same set without the JS pre-walk.
-    // #461 — capture affected pages BEFORE the soft-delete so the blocks
-    // still carry their page_id. The recompute runs after the UPDATE.
-    let affected_pages = affected_pages_for_subtrees(&mut tx, &live_roots).await?;
-
     let live_roots_json = serde_json::to_string(&live_roots)?;
     let result = sqlx::query(
         "WITH RECURSIVE descendants(id, depth) AS ( \
@@ -834,12 +734,11 @@ pub async fn delete_blocks_by_ids_inner(
         crate::tag_inheritance::remove_subtree_inherited(&mut tx, root).await?;
     }
 
-    // #461 — recompute pages_cache counts for all pages affected by the
-    // soft-delete (mirrors the single-row `delete_block_inner` path).
-    if !affected_pages.is_empty() {
-        crate::materializer::recompute_pages_cache_counts_for_pages(&mut tx, &affected_pages)
-            .await?;
-    }
+    // #2042: pages_cache counts are recomputed by the background
+    // `RebuildPagesCacheCounts` task (enqueued per root via
+    // `enqueue_lifecycle_background` above), not synchronously here — a
+    // multi-root subtree delete must not hold the single-writer lock for the
+    // O(descendants) count walk. See `delete_block_inner`.
 
     tx.commit_and_dispatch(materializer).await?;
 
@@ -1197,13 +1096,10 @@ pub async fn restore_block_inner(
     // P-4: Recompute inherited tags for restored subtree
     crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &inheritance_root).await?;
 
-    // #417: symmetric to delete — refresh `pages_cache` counts for the
-    // pages the restored subtree owns / links into, WITHOUT the full-table
-    // pass. Run AFTER the restore UPDATE + `page_id` re-derivation above so
-    // the count subqueries see `deleted_at IS NULL` and the corrected
-    // `page_id` for every restored block.
-    let affected_pages = affected_pages_for_subtree(&mut tx, &inheritance_root).await?;
-    crate::materializer::recompute_pages_cache_counts_for_pages(&mut tx, &affected_pages).await?;
+    // #2042: pages_cache counts for the restored subtree's pages are recomputed
+    // by the background `RebuildPagesCacheCounts` task (enqueued via
+    // `enqueue_lifecycle_background` below), not synchronously here — see
+    // `delete_block_inner`. Counts are briefly stale until the background drain.
 
     // Commit + fire-and-forget background cache dispatch. #2037 pt2: thread
     // the block's type so the materializer narrows the rebuild fan-out for a
@@ -1304,40 +1200,12 @@ pub async fn purge_block_inner(
         .execute(&mut **tx)
         .await?;
 
-    // #417/#446: capture, BEFORE the `block_links` + `blocks` DELETEs below
-    // erase the rows, every SURVIVING page whose `pages_cache` count changes
-    // when this subtree is hard-deleted. Two branches, both excluding pages
-    // that are THEMSELVES in the purged subtree (`page_id NOT IN descendants`)
-    // — those pages' `pages_cache` rows are purged outright (see the
-    // `pages_cache` purge below), so recomputing them is pointless:
-    //   (a) inbound: pages targeted by an outbound edge from the subtree
-    //       (they lose an inbound link), and
-    //   (b) #446 ownership: pages that OWN a block in the subtree
-    //       (`SELECT DISTINCT page_id FROM blocks WHERE id IN descendants`)
-    //       — e.g. purging a content child under page P leaves P (an
-    //       ancestor, not a descendant) with a stale `child_block_count`.
-    //       Before #417 the unconditional full-table recompute repaired P;
-    //       now that it is gated out, P must be recomputed explicitly here
-    //       (mirrors `affected_pages_for_subtree`'s ownership branch on the
-    //       delete/restore path). The recompute runs AFTER the DELETEs so the
-    //       count subqueries no longer see the purged rows. Bounded by the
-    //       same depth-100 purge CTE + indexed joins.
-    let purge_affected_pages: Vec<String> = sqlx::query_scalar::<_, String>(concat!(
-        crate::descendants_cte_purge!(),
-        "SELECT DISTINCT b.page_id FROM block_links bl \
-             JOIN blocks b ON b.id = bl.target_id \
-         WHERE bl.source_id IN (SELECT id FROM descendants) \
-           AND b.page_id IS NOT NULL \
-           AND b.page_id NOT IN (SELECT id FROM descendants) \
-         UNION \
-         SELECT DISTINCT page_id FROM blocks \
-         WHERE id IN (SELECT id FROM descendants) \
-           AND page_id IS NOT NULL \
-           AND page_id NOT IN (SELECT id FROM descendants)",
-    ))
-    .bind(&block_id)
-    .fetch_all(&mut **tx)
-    .await?;
+    // #2042: pages_cache counts for surviving pages that lose an inbound edge
+    // (or a child) from this purged subtree are recomputed by the background
+    // `RebuildPagesCacheCounts` task (enqueued via `enqueue_lifecycle_background`
+    // below), not synchronously here — a large-subtree purge must not hold the
+    // single-writer lock for the O(descendants) count walk. See
+    // `delete_block_inner`.
 
     // PURGE: erase every row descended from the purged block. The
     // single-root `descendants_cte_purge!()` walks the subtree without
@@ -1356,14 +1224,8 @@ pub async fn purge_block_inner(
     )
     .await?;
 
-    // #417: refresh `inbound_link_count` for the OTHER pages that lost an
-    // inbound edge from the purged subtree (captured pre-DELETE above).
-    // Runs AFTER the block + block_links DELETEs so the count subqueries
-    // see the edges gone. The subtree's own pages already had their
-    // `pages_cache` rows purged, so they are not in this set and the
-    // recompute is a bounded no-op for any missing row.
-    crate::materializer::recompute_pages_cache_counts_for_pages(&mut tx, &purge_affected_pages)
-        .await?;
+    // #2042: see the note above — surviving pages' counts are recomputed by the
+    // background `RebuildPagesCacheCounts` task, not synchronously here.
 
     // Commit + fire-and-forget background cache dispatch. #2037 pt2: thread
     // the block's type so the materializer narrows the rebuild fan-out for a
@@ -1827,14 +1689,10 @@ pub async fn restore_blocks_by_ids_inner(
         crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &root.id).await?;
     }
 
-    // #461 — recompute pages_cache counts for all pages affected by the
-    // restore (mirrors the single-row `restore_block_inner` path).
-    let root_ids: Vec<String> = roots.iter().map(|r| r.id.clone()).collect();
-    let affected_pages = affected_pages_for_subtrees(&mut tx, &root_ids).await?;
-    if !affected_pages.is_empty() {
-        crate::materializer::recompute_pages_cache_counts_for_pages(&mut tx, &affected_pages)
-            .await?;
-    }
+    // #2042: pages_cache counts for the restored subtrees' pages are recomputed
+    // by the background `RebuildPagesCacheCounts` task (enqueued per root via
+    // `enqueue_lifecycle_background` above), not synchronously here — see
+    // `delete_block_inner`.
 
     // Commit + drain enqueued background dispatches.
     tx.commit_and_dispatch(materializer).await?;
@@ -2022,15 +1880,6 @@ pub async fn purge_blocks_by_ids_inner(
         purge_fanout.push((op_record, cohort, purge_space_id));
     }
 
-    // #461 — collect affected pages BEFORE the cascade deletes so the
-    // page_id refs are still present in the blocks table. For purged
-    // pages, `pages_cache` rows are deleted by the DELETE below and the
-    // recompute is a no-op for those pages; only non-purged pages that
-    // had inbound links from the purged subtrees need their
-    // `inbound_link_count` decremented.
-    let root_ids_for_recompute: Vec<String> = roots.iter().map(|r| r.id.clone()).collect();
-    let affected_pages = affected_pages_for_subtrees(&mut tx, &root_ids_for_recompute).await?;
-
     // Defer FK checks until commit — the entire subtree(s) will be gone
     // by then so no constraints will be violated.
     sqlx::query("PRAGMA defer_foreign_keys = ON")
@@ -2051,14 +1900,11 @@ pub async fn purge_blocks_by_ids_inner(
     )
     .await?;
 
-    // #461 — recompute pages_cache counts for non-purged pages that had
-    // inbound links from the purged subtrees. Pages whose own `pages_cache`
-    // row was deleted by the DELETE above are a no-op here (the WHERE filter
-    // in `recompute_pages_cache_counts_for_pages` matches nothing).
-    if !affected_pages.is_empty() {
-        crate::materializer::recompute_pages_cache_counts_for_pages(&mut tx, &affected_pages)
-            .await?;
-    }
+    // #2042: pages_cache counts for surviving pages that had inbound links from
+    // the purged subtrees are recomputed by the background
+    // `RebuildPagesCacheCounts` task (enqueued per root via
+    // `enqueue_lifecycle_background` above), not synchronously here — see
+    // `delete_block_inner`.
 
     // Commit + drain enqueued background dispatches.
     tx.commit_and_dispatch(materializer).await?;

@@ -68,9 +68,19 @@ fn sender_or_closed(
 /// upstream column/table. Keeping the array in this loose order keeps
 /// the test assertions stable; the dedup + eventual consistency
 /// combine to make the discrepancy invisible to users in practice.
-pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 8] = [
+pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 9] = [
     MaterializeTask::RebuildTagsCache,
     MaterializeTask::RebuildPagesCache,
+    // #2042: the page-wide `pages_cache.{inbound_link_count,child_block_count}`
+    // recompute used to run SYNCHRONOUSLY in the foreground command / apply tx
+    // (`recompute_pages_cache_counts_for_pages`), holding the single-writer
+    // lock for the whole descendant walk on a large-subtree delete / restore /
+    // purge. It now runs here on the background queue instead. It MUST come
+    // AFTER `RebuildPagesCache` (which re-inserts the page ROWS); the count
+    // UPDATE only touches existing `pages_cache` rows, so a restored page needs
+    // its row back first. `dedup_tasks` preserves enqueue order (global tasks
+    // dedup by discriminant, first occurrence kept), so this ordering holds.
+    MaterializeTask::RebuildPagesCacheCounts,
     MaterializeTask::RebuildAgendaCache,
     MaterializeTask::RebuildProjectedAgendaCache,
     MaterializeTask::RebuildTagInheritanceCache,
@@ -96,13 +106,14 @@ pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 8] = [
 /// the page *rows* `(page_id, title)` from `block_type = 'page'` blocks and
 /// deletes orphaned rows — the `inbound_link_count` / `child_block_count`
 /// recompute was extracted out of it (#417) into the separate
-/// `RebuildPagesCacheCounts` task, and per-op counts are maintained in the
-/// foreground (`maintain_pages_cache_counts_after_op` /
-/// `recompute_pages_cache_counts_for_pages`). A CONTENT block's lifecycle
-/// (soft-delete / restore / hard purge) cannot add, remove, or rename a
-/// `block_type = 'page'` row, so the O(pages) row rebuild is pure waste for
-/// a content-block delete — and the counts it no longer owns are handled
-/// elsewhere. So `RebuildPagesCache` is the one rebuild we can safely drop.
+/// `RebuildPagesCacheCounts` task. A CONTENT block's lifecycle (soft-delete /
+/// restore / hard purge) cannot add, remove, or rename a `block_type = 'page'`
+/// row, so the O(pages) row rebuild is pure waste for a content-block delete.
+/// So `RebuildPagesCache` is the one rebuild we can safely drop — but a content
+/// block's lifecycle DOES change its owning page's counts, so
+/// `RebuildPagesCacheCounts` is RETAINED below (#2042: it took over the
+/// page-cache count recompute that used to run synchronously in the foreground
+/// `maintain_pages_cache_counts_after_op` / `recompute_pages_cache_counts_for_pages`).
 ///
 /// `RebuildTagsCache` is DELIBERATELY KEPT (this is the correction for the
 /// #2172 review): although the `tags_cache` *rows* are keyed by
@@ -130,14 +141,24 @@ pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 8] = [
 ///     disappear / reappear.
 ///   * `RebuildPageLinkCache` — the page-level link roll-up changes when a
 ///     subtree's `block_links` rows are cascaded away / restored.
+///   * `RebuildPagesCacheCounts` (#2042) — a content block's delete / restore /
+///     purge changes its owning page's `child_block_count` and (via its
+///     subtree's `block_links`) other pages' `inbound_link_count`. This is the
+///     background replacement for the former synchronous foreground recompute.
 ///
 /// This narrowing is applied ONLY when the dispatch site can prove the
 /// block is `"content"` (see `lifecycle_rebuild_tasks`). For `"page"` /
 /// `"tag"` / an unknown / absent hint the full set is kept — correctness
 /// over the perf win when the scope is uncertain (a page block's delete DOES
 /// change `pages_cache`).
-const CONTENT_LIFECYCLE_REBUILD_TASKS: [MaterializeTask; 7] = [
+const CONTENT_LIFECYCLE_REBUILD_TASKS: [MaterializeTask; 8] = [
     MaterializeTask::RebuildTagsCache,
+    // #2042: see the doc comment above — a content block's lifecycle changes
+    // its owning page's counts, now recomputed on the background queue. Placed
+    // right after `RebuildTagsCache` so this set stays exactly FULL minus
+    // `RebuildPagesCache` with order preserved (the
+    // `content_lifecycle_set_is_full_minus_pages_cache` invariant).
+    MaterializeTask::RebuildPagesCacheCounts,
     MaterializeTask::RebuildAgendaCache,
     MaterializeTask::RebuildProjectedAgendaCache,
     MaterializeTask::RebuildTagInheritanceCache,
@@ -1298,17 +1319,19 @@ mod tests {
         );
     }
 
-    /// #417 — the full-table `RebuildPagesCacheCounts` recompute is a
-    /// RESET-only repair (enqueued by `apply_snapshot`). NO per-op
-    /// invalidation fan-out — for ANY op type, with or without a block-type
-    /// hint — may enqueue it; per-op count maintenance happens in-tx on the
-    /// sync `ApplyOp` and local command paths. This pins the gate: a future
-    /// edit that re-adds the full-table pass to a per-op trigger (the exact
-    /// O(pages) regression #417 removed) fails here.
+    /// #417 / #2042 — the full-table `RebuildPagesCacheCounts` recompute is
+    /// enqueued per-op ONLY by the cohort lifecycle ops (delete / restore /
+    /// purge). #2042 moved their page-wide count recompute off the foreground
+    /// tx onto the background queue, so those ops now enqueue it (for every
+    /// block-type hint). The bounded single-block ops (create / edit / move)
+    /// still maintain their counts SYNCHRONOUSLY in-tx and must NOT enqueue the
+    /// O(pages) full-table pass — that is the #417 invariant this still pins.
     #[test]
-    fn no_per_op_invalidation_enqueues_rebuild_pages_cache_counts() {
+    fn rebuild_pages_cache_counts_enqueued_only_for_cohort_lifecycle_ops() {
         let probe = MaterializeTask::RebuildPagesCacheCounts;
-        let cases: &[(&str, &str, Option<&str>)] = &[
+
+        // Single-block ops keep synchronous in-tx counts — NO full-table pass.
+        let no_counts: &[(&str, &str, Option<&str>)] = &[
             (
                 "create_block",
                 r#"{"block_id":"X1","block_type":"page"}"#,
@@ -1322,18 +1345,37 @@ mod tests {
             ("edit_block", r#"{"block_id":"X3"}"#, Some("page")),
             ("edit_block", r#"{"block_id":"X4"}"#, Some("content")),
             ("edit_block", r#"{"block_id":"X5"}"#, None),
-            ("delete_block", r#"{"block_id":"X6"}"#, None),
-            ("restore_block", r#"{"block_id":"X7"}"#, None),
-            ("purge_block", r#"{"block_id":"X8"}"#, None),
             ("move_block", r#"{"block_id":"X9"}"#, None),
         ];
-        for (op_type, payload, hint) in cases {
+        for (op_type, payload, hint) in no_counts {
             let r = make_record(op_type, payload, Some("XID"));
             let tasks = invalidations_for_op(&r, *hint).unwrap();
             assert!(
                 !contains_kind(&tasks, &probe),
-                "op `{op_type}` (hint {hint:?}) must NOT enqueue RebuildPagesCacheCounts \
-                 — it is a RESET-only task (#417); got {:?}",
+                "op `{op_type}` (hint {hint:?}) keeps synchronous per-op counts and must \
+                 NOT enqueue the full-table RebuildPagesCacheCounts (#417); got {:?}",
+                labels(&tasks),
+            );
+        }
+
+        // #2042: cohort lifecycle ops defer the page-wide count recompute to the
+        // background queue, so they DO enqueue it — for every block-type hint
+        // (a content-block delete still changes its owning page's counts).
+        let with_counts: &[(&str, Option<&str>)] = &[
+            ("delete_block", None),
+            ("delete_block", Some("content")),
+            ("restore_block", None),
+            ("restore_block", Some("content")),
+            ("purge_block", None),
+            ("purge_block", Some("content")),
+        ];
+        for (op_type, hint) in with_counts {
+            let r = make_record(op_type, r#"{"block_id":"X6"}"#, Some("X6"));
+            let tasks = invalidations_for_op(&r, *hint).unwrap();
+            assert!(
+                contains_kind(&tasks, &probe),
+                "#2042: op `{op_type}` (hint {hint:?}) must enqueue the background \
+                 RebuildPagesCacheCounts (deferred count recompute); got {:?}",
                 labels(&tasks),
             );
         }

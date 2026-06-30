@@ -273,6 +273,28 @@ pub(super) async fn maintain_pages_cache_counts_after_op(
 ) -> Result<(), AppError> {
     use std::collections::HashSet;
 
+    // #2042: the DELETE / RESTORE / PURGE cohort ops can touch the counts of
+    // arbitrarily many pages across an arbitrarily large descendant subtree.
+    // Running the correlated `COUNT(DISTINCT)`-over-descendants recompute HERE
+    // (the `recompute_pages_cache_counts_for_pages` call at the bottom) would
+    // hold the single-writer apply lock for the whole walk. Defer it to the
+    // background `RebuildPagesCacheCounts` task instead — `dispatch.rs` enqueues
+    // it in the lifecycle rebuild set for exactly these ops, and it is
+    // retry-queue-backstopped. The bounded single-block ops below
+    // (Create / Edit / Move) KEEP the synchronous in-tx recompute: #1548
+    // requires their counts to be correct immediately and their affected set is
+    // tiny. The cohort match arms further down are retained as the canonical
+    // documentation of each op's count impact, but this guard returns before
+    // they run.
+    if matches!(
+        pre_state,
+        PreOpState::Cohort(_)
+            | PreOpState::RestoreCohortAndAncestors { .. }
+            | PreOpState::Purge { .. }
+    ) {
+        return Ok(());
+    }
+
     let mut affected: HashSet<String> = HashSet::new();
 
     match pre_state {

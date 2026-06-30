@@ -298,11 +298,11 @@ async fn local_delete_of_linking_block_decrements_target_inbound() {
     );
 }
 
-/// #461 — `delete_blocks_by_ids_inner` (batch soft-delete) must call the
-/// in-tx `recompute_pages_cache_counts_for_pages` that the single-row path
-/// (`delete_block_inner`) already calls, so `pages_cache.child_block_count`
-/// is correct immediately after the batch commit without waiting for a
-/// background flush.
+/// #461 / #2042 — `delete_blocks_by_ids_inner` (batch soft-delete) must keep
+/// `pages_cache.child_block_count` correct. #2042 moved the page-wide count
+/// recompute off the foreground tx onto the background `RebuildPagesCacheCounts`
+/// task, so the count is now correct after the background drain (`settle`),
+/// not synchronously in-tx.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_delete_maintains_pages_cache_counts() {
     let (pool, _dir) = test_pool().await;
@@ -343,18 +343,21 @@ async fn batch_delete_maintains_pages_cache_counts() {
     delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![c1.id.clone(), c2.id.clone()])
         .await
         .unwrap();
-    // No settle — the recompute must happen synchronously in-tx (#461).
+    // #2042: the page-wide count recompute is deferred to the background
+    // RebuildPagesCacheCounts task — drain it before asserting.
+    settle(&mat).await;
 
     let (_in1, ch1) = read_counts(&pool, p.id.as_str()).await;
     assert_eq!(
         ch1, 0,
-        "child_block_count must drop to 0 immediately after batch delete (#461)"
+        "child_block_count must drop to 0 after the deferred background recompute (#2042)"
     );
 }
 
-/// #461 — `restore_blocks_by_ids_inner` (batch restore) must call the in-tx
-/// `recompute_pages_cache_counts_for_pages` so `pages_cache.child_block_count`
-/// is correct immediately after the batch commit.
+/// #461 / #2042 — `restore_blocks_by_ids_inner` (batch restore) must keep
+/// `pages_cache.child_block_count` correct. #2042 defers the page-wide count
+/// recompute to the background `RebuildPagesCacheCounts` task, so the count is
+/// correct after the background drain (`settle`), not synchronously in-tx.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_restore_maintains_pages_cache_counts() {
     let (pool, _dir) = test_pool().await;
@@ -393,6 +396,8 @@ async fn batch_restore_maintains_pages_cache_counts() {
     delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![c1.id.clone(), c2.id.clone()])
         .await
         .unwrap();
+    // #2042: counts are deferred to the background recompute — drain it.
+    settle(&mat).await;
     let (_in0, ch0) = read_counts(&pool, p.id.as_str()).await;
     assert_eq!(ch0, 0, "baseline after batch delete: P owns 0 children");
 
@@ -400,12 +405,14 @@ async fn batch_restore_maintains_pages_cache_counts() {
     restore_blocks_by_ids_inner(&pool, DEV, &mat, vec![c1.id.clone(), c2.id.clone()])
         .await
         .unwrap();
-    // No settle — the recompute must happen synchronously in-tx (#461).
+    // #2042: the page-wide count recompute is deferred to the background
+    // RebuildPagesCacheCounts task — drain it before asserting.
+    settle(&mat).await;
 
     let (_in1, ch1) = read_counts(&pool, p.id.as_str()).await;
     assert_eq!(
         ch1, 2,
-        "child_block_count must rise back to 2 immediately after batch restore (#461)"
+        "child_block_count must rise back to 2 after the deferred background recompute (#2042)"
     );
 }
 
