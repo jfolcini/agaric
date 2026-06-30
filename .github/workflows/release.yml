@@ -230,17 +230,15 @@ jobs:
             echo "Creating draft release for tag $TAG..."
             # `--generate-notes` asks GitHub to auto-generate the
             # "What's Changed" changelog from PR titles merged since
-            # the previous tag. Before this, the step set
-            # `--notes "Release notes will be finalized by the
-            # workflow."` as literal text, but no later step actually
-            # finalised it — every release (0.1.37, 0.1.38) shipped
-            # with that placeholder + the appended SLSA recipe and
-            # nothing else, so consumers saw no changelog. The
-            # `finalize-release-notes` job at the bottom of this
-            # workflow appends the SLSA recipe to whatever body lands
-            # here, so swapping the placeholder for `--generate-notes`
-            # produces a `<auto-changelog> --- <SLSA recipe>` body
-            # without any other workflow changes.
+            # the previous tag, giving the draft a real body during the
+            # build window. NOTE: tauri-action v1.0.0 later overwrites
+            # this body (semi-breaking #1277), so it is NOT the body
+            # that ships — the `finalize-release-notes` job at the
+            # bottom of this workflow regenerates the same changelog via
+            # the release-notes API and writes the final
+            # `<auto-changelog> --- <SLSA recipe>` body, immune to that
+            # overwrite. This pre-create changelog is therefore a
+            # best-effort placeholder; finalize owns the published body.
             gh release create "$TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --draft \
@@ -519,19 +517,23 @@ jobs:
           gh release upload "${GITHUB_REF_NAME}" "${sigs[0]}" --clobber
 
       # macOS: tauri-action ALREADY produces the updater archive and uploads it
-      # to the release as `Agaric_<arch>.app.tar.gz` (arch = `x64` | `aarch64`)
-      # even with `createUpdaterArtifacts=false` — it just never gets a `.sig`.
-      # The `_<arch>` token only exists on the RELEASE ASSET: tauri-action adds
-      # it when it renames the file during upload. The bundler's on-disk name is
-      # the arch-less `bundle/macos/Agaric.app.tar.gz` (confirmed by the 0.6.7
-      # build log: "Packaging ... into .../Agaric.app.tar.gz"). The earlier
+      # to the release as `Agaric_<version>_<arch>.app.tar.gz` (arch = `x64` |
+      # `aarch64`) even with `createUpdaterArtifacts=false` — it just never gets
+      # a `.sig`. The `_<version>_<arch>` tokens only exist on the RELEASE ASSET:
+      # tauri-action adds them when it renames the file during upload. (The
+      # `_<version>` token is a tauri-action v1.0.0 breaking change — #1194; in
+      # v0.6.x the asset was the version-less `Agaric_<arch>.app.tar.gz`.) The
+      # bundler's on-disk name is the arch-less, version-less
+      # `bundle/macos/Agaric.app.tar.gz` (confirmed by the 0.6.7 build log:
+      # "Packaging ... into .../Agaric.app.tar.gz"). The earlier
       # `Agaric_*.app.tar.gz` glob therefore matched zero files on disk and
       # failed every macOS release (it conflated the release-asset name with the
       # on-disk one). Sign the bundler's canonical on-disk tarball in place —
       # signing covers the bytes, not the filename, so the `.sig` is valid for
       # the renamed release asset. Each macos-15 cell sees exactly one
-      # `Agaric.app.tar.gz`; the upload step below re-attaches the arch token so
-      # the two cells' signatures don't collide on the release.
+      # `Agaric.app.tar.gz`; the upload step below re-attaches the version+arch
+      # tokens so the two cells' signatures don't collide on the release and so
+      # the `.sig` name matches the versioned payload generate-latest-json maps.
       - name: Sign updater payload (macOS app.tar.gz)
         if: matrix.platform == 'macos-15'
         env:
@@ -558,13 +560,16 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           # Only the `.sig` is uploaded here; tauri-action already uploaded the
-          # `.app.tar.gz` payload itself (renamed to `Agaric_<arch>.app.tar.gz`)
-          # during its bundle step. The bundler's on-disk signature is the
-          # arch-less `Agaric.app.tar.gz.sig`, so re-attach the same arch token
+          # `.app.tar.gz` payload itself (renamed to
+          # `Agaric_<version>_<arch>.app.tar.gz`) during its bundle step. The
+          # bundler's on-disk signature is the arch-less, version-less
+          # `Agaric.app.tar.gz.sig`, so re-attach the same version+arch tokens
           # tauri-action used before uploading: both macos-15 cells otherwise
           # write the identical basename (clobbering each other on the release),
           # and generate-latest-json pairs each `.sig` with its payload by the
-          # `Agaric_<arch>.app.tar.gz.sig` name.
+          # `Agaric_<version>_<arch>.app.tar.gz.sig` name — which must match the
+          # versioned payload asset or the derived updater URL 404s (tauri-action
+          # v1.0.0 #1194 added `_<version>` to the macOS asset name).
           sigs=("$BUNDLE_DIR"/*.app.tar.gz.sig)
           [ ${#sigs[@]} -eq 1 ] || { echo "::error::expected exactly 1 app.tar.gz .sig, found ${#sigs[@]}"; exit 1; }
           case "$TARGET" in
@@ -572,7 +577,11 @@ jobs:
             aarch64-apple-darwin) arch=aarch64 ;;
             *) echo "::error::unexpected macOS target $TARGET"; exit 1 ;;
           esac
-          dest="$RUNNER_TEMP/Agaric_${arch}.app.tar.gz.sig"
+          # Strip an optional leading "v" so the sig name carries the same bare
+          # version tauri-action embeds (verify-version already proved the tag
+          # matches the in-manifest version tauri-action names the bundle from).
+          version="${GITHUB_REF_NAME#v}"
+          dest="$RUNNER_TEMP/Agaric_${version}_${arch}.app.tar.gz.sig"
           cp "${sigs[0]}" "$dest"
           gh release upload "${GITHUB_REF_NAME}" "$dest" --clobber
 
@@ -1212,17 +1221,15 @@ jobs:
             echo "Creating draft release for tag $TAG..."
             # `--generate-notes` asks GitHub to auto-generate the
             # "What's Changed" changelog from PR titles merged since
-            # the previous tag. Before this, the step set
-            # `--notes "Release notes will be finalized by the
-            # workflow."` as literal text, but no later step actually
-            # finalised it — every release (0.1.37, 0.1.38) shipped
-            # with that placeholder + the appended SLSA recipe and
-            # nothing else, so consumers saw no changelog. The
-            # `finalize-release-notes` job at the bottom of this
-            # workflow appends the SLSA recipe to whatever body lands
-            # here, so swapping the placeholder for `--generate-notes`
-            # produces a `<auto-changelog> --- <SLSA recipe>` body
-            # without any other workflow changes.
+            # the previous tag, giving the draft a real body during the
+            # build window. NOTE: tauri-action v1.0.0 later overwrites
+            # this body (semi-breaking #1277), so it is NOT the body
+            # that ships — the `finalize-release-notes` job at the
+            # bottom of this workflow regenerates the same changelog via
+            # the release-notes API and writes the final
+            # `<auto-changelog> --- <SLSA recipe>` body, immune to that
+            # overwrite. This pre-create changelog is therefore a
+            # best-effort placeholder; finalize owns the published body.
             gh release create "$TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --draft \
@@ -1276,10 +1283,11 @@ jobs:
           gh release upload "${GITHUB_REF_NAME}" "${OPENVEX_FILE}" --clobber
 
   # ---------------------------------------------------------------------------
-  # PEND-41 R18 — append a copy-pasteable verify-recipe section to the draft
-  # release notes after all bundles + SBOMs have been attested + uploaded.
-  # End users (and downstream packagers / security-conscious tinkerers) get
-  # an in-line invocation showing exactly how to verify SLSA provenance on
+  # PEND-41 R18 — finalize the draft release notes after all bundles + SBOMs
+  # have been attested + uploaded: regenerate the changelog (tauri-action v1.0.0
+  # clobbers the pre-created one) and append a copy-pasteable verify-recipe
+  # section. End users (and downstream packagers / security-conscious tinkerers)
+  # get an in-line invocation showing exactly how to verify SLSA provenance on
   # what they just downloaded; the same content also lands on the workflow
   # run's step-summary page for the maintainer's at-a-glance check.
   # ---------------------------------------------------------------------------
@@ -1320,10 +1328,13 @@ jobs:
           shopt -s nullglob
           for sig in "$tmp"/*.sig; do
             base="$(basename "${sig%.sig}")"
-            # Payload basenames as Tauri actually names them (verified against
-            # the real 0.6.6 release): Agaric_<v>_amd64.AppImage,
-            # Agaric_<v>_x64-setup.exe, Agaric_x64.app.tar.gz,
-            # Agaric_aarch64.app.tar.gz.
+            # Payload basenames as Tauri actually names them: Agaric_<v>_amd64.AppImage,
+            # Agaric_<v>_x64-setup.exe, Agaric_<v>_x64.app.tar.gz,
+            # Agaric_<v>_aarch64.app.tar.gz. The macOS `.app.tar.gz` gained its
+            # `_<v>` token in tauri-action v1.0.0 (#1194); the `*_<arch>.app.tar.gz`
+            # globs below match the versioned name (the leading `*` swallows
+            # `Agaric_<v>`), and `${base_url}/${base}` derives the correct URL
+            # for the versioned payload asset because `base` IS that asset name.
             case "$base" in
               *_amd64.AppImage)    key="linux-x86_64" ;;
               *-setup.exe)         key="windows-x86_64" ;;
@@ -1382,7 +1393,19 @@ jobs:
                    and (to_entries|all(.value.signature != "" and .value.url != ""))' \
             "$tmp/latest.json" >/dev/null \
             || { echo "::error::latest.json platforms incomplete"; exit 1; }
-          echo "latest.json smoke check passed."
+          # Guard the exact regression #2148 introduced: every updater payload
+          # URL must point at an asset that actually exists on the release. The
+          # `.sig` names generate-latest-json derives URLs from must stay in
+          # lockstep with tauri-action's payload naming (e.g. the v1.0.0 #1194
+          # `_<version>` insertion on macOS .app.tar.gz) — otherwise the in-app
+          # updater 404s at download time, which the non-empty url/signature
+          # checks above would NOT catch.
+          while IFS= read -r url; do
+            name="$(basename "$url")"
+            grep -qx "$name" <<<"$assets" \
+              || { echo "::error::latest.json references missing release asset: $name (updater would 404)"; exit 1; }
+          done < <(jq -r '.platforms[].url' "$tmp/latest.json")
+          echo "latest.json smoke check passed (all updater payload URLs resolve to release assets)."
 
   finalize-release-notes:
     needs: [verify-version, validate, build-and-release, android-build-and-release, generate-vex, generate-latest-json]
@@ -1393,7 +1416,7 @@ jobs:
     # PEND-41 R1 — pure gh-API edits; trivial. 5-min budget.
     timeout-minutes: 5
     steps:
-      - name: Append SLSA-verify recipe to release notes
+      - name: Finalize release notes (changelog + SLSA-verify recipe)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -1444,26 +1467,39 @@ jobs:
           set -euo pipefail
           # Substitute __REPO__ → actual `owner/repo`.
           recipe="${RECIPE_TEMPLATE//__REPO__/$REPO}"
-          # Fetch the existing draft notes (whatever tauri-action wrote),
-          # guard against double-append on rerun, then edit.
+          # Regenerate the "What's Changed" changelog and OWN the whole release
+          # body, rather than appending the recipe to whatever body is on the
+          # draft right now.
           #
-          # `gh release view` / `gh release edit` auto-detect the repo
-          # from `.git/config` when `--repo` is unset, but this job
-          # doesn't run `actions/checkout` (it operates on artefacts
-          # already attached to the release), so the implicit lookup
-          # would fail with `fatal: not a git repository`. Pass
-          # `--repo "$REPO"` explicitly to keep the job stateless.
-          existing=$(gh release view "$TAG" --repo "$REPO" --json body --jq '.body // ""')
-          if grep -q '^## Verifying this release' <<<"$existing"; then
-            echo "Verify-recipe already present in release notes; skipping append."
-          else
-            combined=$(printf '%s\n\n---\n\n%s\n' "$existing" "$recipe")
-            gh release edit "$TAG" --repo "$REPO" --notes "$combined"
-            echo "Appended verify-recipe to release ${TAG} notes."
-          fi
+          # Why regenerate instead of append: tauri-action v1.0.0 (semi-breaking,
+          # #1277) now overwrites the name AND body of the existing draft when it
+          # runs, replacing the `--generate-notes` changelog the "Ensure draft
+          # release exists" step wrote with the literal `releaseBody` input. By
+          # the time this job runs that changelog is already gone, so appending
+          # to the existing body would ship only the placeholder + recipe (the
+          # exact regression #2148 introduced). Instead, ask GitHub's
+          # release-notes API for the changelog again — the same source the
+          # pre-create's `gh release create --generate-notes` used (PR titles
+          # since the previous tag, auto-detected) — and write
+          # `<changelog> --- <recipe>` as the entire body. Overwriting (not
+          # appending) is idempotent on reruns, so no double-append guard.
+          #
+          # `gh` auto-detects the repo from `.git/config` when `--repo`/`-R` is
+          # unset, but this job runs no `actions/checkout` (it operates on
+          # artefacts already attached to the release), so pass the repo
+          # explicitly to keep the job stateless.
+          changelog=$(gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${REPO}/releases/generate-notes" \
+            -f tag_name="$TAG" \
+            --jq '.body // ""')
+          combined=$(printf '%s\n\n---\n\n%s\n' "$changelog" "$recipe")
+          gh release edit "$TAG" --repo "$REPO" --notes "$combined"
+          echo "Set release ${TAG} notes to regenerated changelog + verify-recipe."
           # Also surface to step summary for the maintainer.
           {
-            echo "## Release notes appended"
+            echo "## Release notes finalized"
             echo
             printf '%s\n' "$recipe"
           } >> "$GITHUB_STEP_SUMMARY"
