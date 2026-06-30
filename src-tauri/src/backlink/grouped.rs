@@ -192,6 +192,9 @@ pub async fn eval_backlink_query_grouped(
     //     bl.source_id` everywhere (count + member fetch) for parity with
     //     the old set semantics and defensive safety. With no filter this
     //     equals `total_count`; we still run the query for simplicity.
+    // dynamic-sql: runtime builder mirroring the grandfathered `total_count`
+    // query above — optional `json_each(?3)` filter intersection, all values
+    // bound, no string interpolation (#2042).
     let filtered_count_i64: i64 = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
          JOIN blocks b ON b.id = bl.source_id \
@@ -295,6 +298,10 @@ pub async fn eval_backlink_query_grouped(
         cnt: i64,
     }
 
+    // dynamic-sql: the keyset WHERE clause (`keyset_clause`) is conditionally
+    // spliced at runtime, so this is a genuine dynamic query; every user value
+    // (block_id, space_id, filter_json, cursor title/pid, limit) is still bound
+    // via `?N` placeholders — only the static clause text is interpolated (#2042).
     let group_rows: Vec<GroupRow> =
         sqlx::query_as::<_, GroupRow>(sqlx::AssertSqlSafe(group_sql.as_str()))
             .bind(block_id)
@@ -334,6 +341,9 @@ pub async fn eval_backlink_query_grouped(
     //     this fetch only materialises the member slice we will cap.
     let visible_pids: Vec<&str> = visible_groups.iter().map(|g| g.page_id.as_str()).collect();
     let visible_pids_json = serde_json::to_string(&visible_pids)?;
+    // dynamic-sql: runtime builder; the visible page-id set is passed as a
+    // bound `json_each(?4)` array (not interpolated), same filter shape as the
+    // grandfathered queries in this fn (#2042).
     let member_rows: Vec<(String, String)> = sqlx::query_as::<_, (String, String)>(
         "SELECT DISTINCT bl.source_id, b.page_id FROM block_links bl \
          JOIN blocks b ON b.id = bl.source_id \
