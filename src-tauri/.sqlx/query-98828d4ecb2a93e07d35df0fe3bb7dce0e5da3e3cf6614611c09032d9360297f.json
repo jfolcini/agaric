@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT deleted_at, block_type FROM blocks WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "deleted_at",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "deleted_at"
+          }
+        }
+      },
+      {
+        "name": "block_type",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "block_type"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "98828d4ecb2a93e07d35df0fe3bb7dce0e5da3e3cf6614611c09032d9360297f"
+}

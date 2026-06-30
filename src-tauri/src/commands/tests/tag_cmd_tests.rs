@@ -48,6 +48,75 @@ async fn add_tag_success() {
     );
 }
 
+/// #2037 pt2 / #2172 regression: deleting (then restoring) a CONTENT block
+/// that carries a tag must keep `tags_cache.usage_count` in sync.
+///
+/// The content-lifecycle invalidation narrowing drops the page-row
+/// `RebuildPagesCache` rebuild but DELIBERATELY keeps `RebuildTagsCache`,
+/// because `usage_count` counts the live blocks referencing each tag —
+/// overwhelmingly CONTENT blocks. The #2172 review caught that an earlier
+/// revision dropped `RebuildTagsCache` for content blocks, which would leave
+/// the count stale at 1 after the only referencing content block was
+/// deleted. This drives the real command path (`delete_block_inner` /
+/// `restore_block_inner` → `enqueue_lifecycle_background`) end-to-end and
+/// asserts the count converges after the background fan-out settles.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn content_delete_restore_keeps_tag_usage_count_in_sync_2172() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    insert_block(&pool, "CBLK", "content", "tagged content", None, Some(1)).await;
+    insert_block(&pool, "CTAG", "tag", "urgent", None, None).await;
+
+    // Tag the content block; add_tag recomputes the tag's usage_count via its
+    // scoped RefreshTagUsageCount task.
+    add_tag_inner(&pool, DEV, &mat, "CBLK".into(), "CTAG".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    async fn usage(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT usage_count FROM tags_cache WHERE tag_id = 'CTAG'")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    assert_eq!(
+        usage(&pool).await,
+        1,
+        "tag should count its one live referencing content block",
+    );
+
+    // Delete the content block via the real command path. The content
+    // lifecycle narrowing keeps RebuildTagsCache, so usage_count must drop.
+    let deleted = delete_block_inner(&pool, DEV, &mat, crate::ulid::BlockId::from_trusted("CBLK"))
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        usage(&pool).await,
+        0,
+        "deleting the only referencing content block must drop usage_count to 0 (#2172 regression)",
+    );
+
+    // Restore it — usage_count must climb back to 1.
+    restore_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        crate::ulid::BlockId::from_trusted("CBLK"),
+        deleted.deleted_at,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        usage(&pool).await,
+        1,
+        "restoring the content block must restore usage_count to 1 (#2172 regression)",
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn add_tag_duplicate_returns_error() {
     let (pool, _dir) = test_pool().await;

@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id, b.deleted_at, b.block_type FROM blocks b WHERE b.deleted_at IS NOT NULL AND ( EXISTS ( SELECT 1 FROM op_log o WHERE o.op_type = 'delete_block' AND o.block_id = b.id AND o.created_at = b.deleted_at ) OR ( NOT EXISTS ( SELECT 1 FROM op_log o WHERE o.op_type = 'delete_block' AND o.block_id = b.id ) AND ( b.parent_id IS NULL OR NOT EXISTS ( SELECT 1 FROM blocks p WHERE p.id = b.parent_id AND p.deleted_at = b.deleted_at ) ) ) )",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "deleted_at",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "deleted_at"
+          }
+        }
+      },
+      {
+        "name": "block_type",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "block_type"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "090d961863686ac7f57333db216b4fb73f8705c3b7d05fb6ae685c60b9a8bba3"
+}

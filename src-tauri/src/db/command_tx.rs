@@ -94,6 +94,17 @@ enum PendingDispatch {
         record: Arc<crate::op_log::OpRecord>,
         block_type: String,
     },
+    /// Lifecycle-op (`delete_block` / `restore_block` / `purge_block`)
+    /// dispatch with a `block_type` hint — invokes
+    /// [`Materializer::dispatch_lifecycle_background`] and warns on error.
+    /// #2037 pt2: the hint lets the materializer skip the
+    /// `RebuildTagsCache` + `RebuildPagesCache` rebuilds when the deleted /
+    /// restored / purged block is CONTENT (their caches are scoped to
+    /// page/tag blocks and a content block's lifecycle cannot change them).
+    LifecycleBackground {
+        record: Arc<crate::op_log::OpRecord>,
+        block_type: String,
+    },
 }
 
 pub struct CommandTx {
@@ -204,6 +215,30 @@ impl CommandTx {
         });
     }
 
+    /// Queue a lifecycle op record (`delete_block` / `restore_block` /
+    /// `purge_block`) with a `block_type` hint for post-commit dispatch.
+    ///
+    /// Invokes [`Materializer::dispatch_lifecycle_background`] during
+    /// `commit_and_dispatch`. Dispatch failures are logged at warn level
+    /// (matching the `_or_warn` convention) rather than propagated — the op
+    /// has already committed, so a missed cache rebuild is recoverable.
+    ///
+    /// #2037 pt2: `block_type` is the deleted / restored / purged block's
+    /// type ("content" / "page" / "tag"). For "content" the materializer
+    /// drops the `RebuildTagsCache` + `RebuildPagesCache` rebuilds from the
+    /// fan-out; any other value keeps the full set. Same `Into<…>` shape as
+    /// [`Self::enqueue_background`].
+    pub fn enqueue_lifecycle_background(
+        &mut self,
+        record: impl Into<Arc<crate::op_log::OpRecord>>,
+        block_type: impl Into<String>,
+    ) {
+        self.pending.push(PendingDispatch::LifecycleBackground {
+            record: record.into(),
+            block_type: block_type.into(),
+        });
+    }
+
     /// Commit the transaction, then drain the pending queue into the
     /// materializer in enqueue order.
     ///
@@ -256,6 +291,19 @@ impl CommandTx {
                             block_type = %block_type,
                             error = %e,
                             "failed to dispatch edit background cache task"
+                        );
+                    }
+                }
+                PendingDispatch::LifecycleBackground { record, block_type } => {
+                    if let Err(e) = materializer.dispatch_lifecycle_background(&record, &block_type)
+                    {
+                        tracing::warn!(
+                            op_type = %record.op_type,
+                            seq = record.seq,
+                            device_id = %record.device_id,
+                            block_type = %block_type,
+                            error = %e,
+                            "failed to dispatch lifecycle background cache task"
                         );
                     }
                 }

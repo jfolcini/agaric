@@ -373,16 +373,22 @@ pub async fn delete_block_inner(
     // commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "cmd_delete_block").await?;
 
-    // Validate inside transaction (TOCTOU-safe)
-    let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", block_id)
-        .fetch_optional(&mut **tx)
-        .await?;
+    // Validate inside transaction (TOCTOU-safe). #2037 pt2: also read
+    // `block_type` so the post-commit dispatch can narrow the cache-rebuild
+    // fan-out for a CONTENT block (skip `RebuildTagsCache`/`RebuildPagesCache`).
+    let row = sqlx::query!(
+        "SELECT deleted_at, block_type FROM blocks WHERE id = ?",
+        block_id
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
     let row = row.ok_or_else(|| AppError::NotFound(format!("block '{block_id}'")))?;
     if row.deleted_at.is_some() {
         return Err(AppError::InvalidOperation(format!(
             "block '{block_id}' is already deleted"
         )));
     }
+    let block_type = row.block_type;
 
     // Refuse to delete a non-empty space. The frontend
     // SpaceManageDialog already disables the delete button until the space
@@ -480,8 +486,10 @@ pub async fn delete_block_inner(
     let affected_pages = affected_pages_for_subtree(&mut tx, &block_id).await?;
     crate::materializer::recompute_pages_cache_counts_for_pages(&mut tx, &affected_pages).await?;
 
-    // Commit + fire-and-forget background cache dispatch.
-    tx.enqueue_background(Arc::new(op_record));
+    // Commit + fire-and-forget background cache dispatch. #2037 pt2: thread
+    // the block's type so the materializer narrows the rebuild fan-out for a
+    // content-block delete (the page/tag-scoped caches can't change).
+    tx.enqueue_lifecycle_background(Arc::new(op_record), block_type);
     tx.commit_and_dispatch(materializer).await?;
 
     Ok(DeleteResponse {
@@ -752,7 +760,14 @@ pub async fn delete_blocks_by_ids_inner(
         )
         .await?;
         let op_record = Arc::new(op_record);
-        tx.enqueue_background(Arc::clone(&op_record));
+        // #2037 pt2: read this root's `block_type` (indexed PK lookup, same
+        // shape as the cohort/space resolution below) so the dispatch can
+        // narrow the rebuild fan-out for a CONTENT root.
+        let root_block_type: String =
+            sqlx::query_scalar!("SELECT block_type FROM blocks WHERE id = ?", root)
+                .fetch_one(&mut **tx)
+                .await?;
+        tx.enqueue_lifecycle_background(Arc::clone(&op_record), root_block_type);
 
         // PRE-UPDATE capture (load-bearing — see comment above): the active
         // subtree cohort (seed + active descendants) and the seed's space,
@@ -1054,12 +1069,17 @@ pub async fn restore_block_inner(
     // begin_immediate_logged AND couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "cmd_restore_block").await?;
 
-    // Validate inside transaction (TOCTOU-safe)
-    let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", block_id)
-        .fetch_optional(&mut **tx)
-        .await?;
+    // Validate inside transaction (TOCTOU-safe). #2037 pt2: also read
+    // `block_type` so the post-commit dispatch can narrow the cache-rebuild
+    // fan-out for a CONTENT block.
+    let row = sqlx::query!(
+        "SELECT deleted_at, block_type FROM blocks WHERE id = ?",
+        block_id
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
 
-    match row {
+    let block_type = match row {
         None => {
             return Err(AppError::NotFound(format!("block '{block_id}'")));
         }
@@ -1068,7 +1088,7 @@ pub async fn restore_block_inner(
                 "block '{block_id}' is not deleted"
             )));
         }
-        Some(ref r) => {
+        Some(r) => {
             if let Some(ref actual_deleted_at) = r.deleted_at
                 && *actual_deleted_at != deleted_at_ref
             {
@@ -1076,8 +1096,9 @@ pub async fn restore_block_inner(
                     "block '{block_id}' deleted_at mismatch: expected '{deleted_at_ref}', got '{actual_deleted_at}'"
                 )));
             }
+            r.block_type
         }
-    }
+    };
 
     let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
         block_id: BlockId::from_trusted(&block_id),
@@ -1184,8 +1205,10 @@ pub async fn restore_block_inner(
     let affected_pages = affected_pages_for_subtree(&mut tx, &inheritance_root).await?;
     crate::materializer::recompute_pages_cache_counts_for_pages(&mut tx, &affected_pages).await?;
 
-    // Commit + fire-and-forget background cache dispatch.
-    tx.enqueue_background(Arc::new(op_record));
+    // Commit + fire-and-forget background cache dispatch. #2037 pt2: thread
+    // the block's type so the materializer narrows the rebuild fan-out for a
+    // content-block restore.
+    tx.enqueue_lifecycle_background(Arc::new(op_record), block_type);
     tx.commit_and_dispatch(materializer).await?;
 
     Ok(RestoreResponse {
@@ -1228,12 +1251,17 @@ pub async fn purge_block_inner(
     // begin_immediate_logged AND couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "cmd_purge_block").await?;
 
-    // Validate inside transaction (TOCTOU-safe)
-    let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", block_id)
-        .fetch_optional(&mut **tx)
-        .await?;
+    // Validate inside transaction (TOCTOU-safe). #2037 pt2: also read
+    // `block_type` so the post-commit dispatch can narrow the cache-rebuild
+    // fan-out for a CONTENT block.
+    let row = sqlx::query!(
+        "SELECT deleted_at, block_type FROM blocks WHERE id = ?",
+        block_id
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
 
-    match row {
+    let block_type = match row {
         None => {
             return Err(AppError::NotFound(format!("block \'{block_id}\'")));
         }
@@ -1242,8 +1270,8 @@ pub async fn purge_block_inner(
                 "block \'{block_id}\' must be soft-deleted before purging"
             )));
         }
-        Some(_) => {} // block is deleted, proceed with purge
-    }
+        Some(r) => r.block_type, // block is deleted, proceed with purge
+    };
 
     // Refuse to purge a tree that is so deep the cascade
     // would saturate the depth-100 cap. Hard delete must be
@@ -1337,8 +1365,10 @@ pub async fn purge_block_inner(
     crate::materializer::recompute_pages_cache_counts_for_pages(&mut tx, &purge_affected_pages)
         .await?;
 
-    // Commit + fire-and-forget background cache dispatch.
-    tx.enqueue_background(op_record);
+    // Commit + fire-and-forget background cache dispatch. #2037 pt2: thread
+    // the block's type so the materializer narrows the rebuild fan-out for a
+    // content-block purge.
+    tx.enqueue_lifecycle_background(op_record, block_type);
     tx.commit_and_dispatch(materializer).await?;
 
     // #85 F2: unlink the purged attachment files post-commit (best-effort).
@@ -1406,8 +1436,10 @@ pub async fn restore_all_deleted_inner(
     // `cascade_soft_delete` primitive (which does not append to `op_log`).
     // For those there is no op id to key on, so the original parent-vs-self
     // `deleted_at` comparison remains the best available signal.
+    // #2037 pt2: select `block_type` so each per-root dispatch can narrow
+    // the rebuild fan-out for a CONTENT root.
     let roots = sqlx::query!(
-        "SELECT b.id, b.deleted_at FROM blocks b \
+        "SELECT b.id, b.deleted_at, b.block_type FROM blocks b \
          WHERE b.deleted_at IS NOT NULL \
          AND ( \
            EXISTS ( \
@@ -1455,7 +1487,7 @@ pub async fn restore_all_deleted_inner(
             deleted_at_ref,
         });
         let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
-        tx.enqueue_background(Arc::new(op_record));
+        tx.enqueue_lifecycle_background(Arc::new(op_record), root.block_type.clone());
     }
 
     // Bulk restore: clear deleted_at on ALL deleted blocks
@@ -1550,8 +1582,10 @@ pub async fn purge_all_deleted_inner(
     // same-ms window the old `parent.deleted_at = b.deleted_at` heuristic
     // conflated. See the matching block in `restore_all_deleted_inner` for
     // the full rationale.
+    // #2037 pt2: select `block_type` so each per-root dispatch can narrow
+    // the rebuild fan-out for a CONTENT root.
     let roots = sqlx::query!(
-        "SELECT b.id, b.deleted_at FROM blocks b \
+        "SELECT b.id, b.deleted_at, b.block_type FROM blocks b \
          WHERE b.deleted_at IS NOT NULL \
          AND ( \
            EXISTS ( \
@@ -1588,7 +1622,7 @@ pub async fn purge_all_deleted_inner(
             block_id: BlockId::from_trusted(&root.id),
         });
         let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
-        tx.enqueue_background(op_record);
+        tx.enqueue_lifecycle_background(op_record, root.block_type.clone());
     }
 
     // Defer FK checks until commit
@@ -1684,8 +1718,10 @@ pub async fn restore_blocks_by_ids_inner(
     // present, deleted block. Skips ids that are alive or missing
     // (mirrors `restore_all_deleted_inner`'s no-throw policy on its
     // sweep). Each surviving root contributes one `RestoreBlock` op.
+    // #2037 pt2: select `block_type` so each per-root dispatch can narrow
+    // the rebuild fan-out for a CONTENT root.
     let roots = sqlx::query!(
-        "SELECT b.id, b.deleted_at FROM blocks b \
+        "SELECT b.id, b.deleted_at, b.block_type FROM blocks b \
          WHERE b.id IN (SELECT value FROM json_each(?1)) \
            AND b.deleted_at IS NOT NULL",
         ids_json,
@@ -1738,7 +1774,9 @@ pub async fn restore_blocks_by_ids_inner(
         )
         .await?;
         let op_record = Arc::new(op_record);
-        tx.enqueue_background(Arc::clone(&op_record));
+        // #2037 pt2: thread this root's type so a content-block restore
+        // skips the page/tag-scoped rebuilds.
+        tx.enqueue_lifecycle_background(Arc::clone(&op_record), root.block_type.clone());
 
         // PRE-UPDATE capture of the connected cohort (#1055 contiguous walk).
         let cohort = crate::materializer::collect_restore_cohort(&mut tx, &inner_payload).await?;
@@ -1865,8 +1903,10 @@ pub async fn purge_blocks_by_ids_inner(
     // soft-deleted rows" lookup — the input IS the root set. Non-deleted
     // / missing ids get silently skipped, matching the "all" variant's
     // implicit behaviour against a mixed table.
+    // #2037 pt2: select `block_type` so each per-root dispatch can narrow
+    // the rebuild fan-out for a CONTENT root.
     let roots = sqlx::query!(
-        "SELECT b.id FROM blocks b \
+        "SELECT b.id, b.block_type FROM blocks b \
          WHERE b.id IN (SELECT value FROM json_each(?1)) \
            AND b.deleted_at IS NOT NULL",
         ids_json,
@@ -1955,7 +1995,9 @@ pub async fn purge_blocks_by_ids_inner(
         )
         .await?;
         let op_record = Arc::new(op_record);
-        tx.enqueue_background(Arc::clone(&op_record));
+        // #2037 pt2: thread this root's type so a content-block purge skips
+        // the page/tag-scoped rebuilds.
+        tx.enqueue_lifecycle_background(Arc::clone(&op_record), root.block_type.clone());
 
         // PRE-CASCADE capture: the full subtree (purge ignores `deleted_at`,
         // invariant #9 exception — mirror the same shape the cascade walks)

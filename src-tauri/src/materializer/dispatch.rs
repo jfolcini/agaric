@@ -89,6 +89,79 @@ pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 8] = [
     MaterializeTask::RebuildPageLinkCache,
 ];
 
+/// #2037 pt2: the lifecycle rebuild set for a CONTENT block delete /
+/// restore / purge — [`FULL_CACHE_REBUILD_TASKS`] minus `RebuildPagesCache`.
+///
+/// `RebuildPagesCache` ([`crate::cache::rebuild_pages_cache`]) only rebuilds
+/// the page *rows* `(page_id, title)` from `block_type = 'page'` blocks and
+/// deletes orphaned rows — the `inbound_link_count` / `child_block_count`
+/// recompute was extracted out of it (#417) into the separate
+/// `RebuildPagesCacheCounts` task, and per-op counts are maintained in the
+/// foreground (`maintain_pages_cache_counts_after_op` /
+/// `recompute_pages_cache_counts_for_pages`). A CONTENT block's lifecycle
+/// (soft-delete / restore / hard purge) cannot add, remove, or rename a
+/// `block_type = 'page'` row, so the O(pages) row rebuild is pure waste for
+/// a content-block delete — and the counts it no longer owns are handled
+/// elsewhere. So `RebuildPagesCache` is the one rebuild we can safely drop.
+///
+/// `RebuildTagsCache` is DELIBERATELY KEPT (this is the correction for the
+/// #2172 review): although the `tags_cache` *rows* are keyed by
+/// `block_type = 'tag'` blocks, its `usage_count` column counts the DISTINCT
+/// *live* blocks referencing each tag via `block_tags` / `block_tag_refs`
+/// (`DESIRED_TAGS_SQL`, `cache/tags.rs`) — and those reference sources are
+/// overwhelmingly CONTENT blocks (inline `#tag` / `#[ULID]`). Deleting /
+/// restoring / purging a content block that carries tags therefore changes
+/// those tags' `usage_count`, and ONLY `RebuildTagsCache` recomputes it
+/// (`RebuildBlockTagRefsCache` rebuilds the refs *table*, not the count).
+/// Dropping it would leave `usage_count` stale until an unrelated page/tag
+/// op or an `add_tag`/`remove_tag` healed it, breaking eventual consistency.
+///
+/// Everything else in the full set is RETAINED, because a content block's
+/// lifecycle DOES affect it:
+///   * `RebuildTagsCache` — see the `usage_count` note above.
+///   * `RebuildTagInheritanceCache` — the inheritance recursive CTE filters
+///     `deleted_at IS NULL`, so soft-deleting / restoring a content block
+///     changes which tags its descendants inherit.
+///   * `RebuildAgendaCache` / `RebuildProjectedAgendaCache` — a content
+///     block can carry `due`/`scheduled`/`repeat` and appear in either
+///     agenda projection.
+///   * `RebuildPageIds` — the block's `page_id` membership changes.
+///   * `RebuildBlockTagRefsCache` — inline `#[ULID]` refs in the (sub)tree
+///     disappear / reappear.
+///   * `RebuildPageLinkCache` — the page-level link roll-up changes when a
+///     subtree's `block_links` rows are cascaded away / restored.
+///
+/// This narrowing is applied ONLY when the dispatch site can prove the
+/// block is `"content"` (see `lifecycle_rebuild_tasks`). For `"page"` /
+/// `"tag"` / an unknown / absent hint the full set is kept — correctness
+/// over the perf win when the scope is uncertain (a page block's delete DOES
+/// change `pages_cache`).
+const CONTENT_LIFECYCLE_REBUILD_TASKS: [MaterializeTask; 7] = [
+    MaterializeTask::RebuildTagsCache,
+    MaterializeTask::RebuildAgendaCache,
+    MaterializeTask::RebuildProjectedAgendaCache,
+    MaterializeTask::RebuildTagInheritanceCache,
+    MaterializeTask::RebuildPageIds,
+    MaterializeTask::RebuildBlockTagRefsCache,
+    MaterializeTask::RebuildPageLinkCache,
+];
+
+/// #2037 pt2: pick the lifecycle (delete / restore / purge) rebuild set
+/// for a block of the given `block_type_hint`.
+///
+/// A hint of exactly `Some("content")` narrows to
+/// [`CONTENT_LIFECYCLE_REBUILD_TASKS`] (drops the page-row `RebuildPagesCache`
+/// rebuild only; `RebuildTagsCache` is kept for its content-aggregated
+/// `usage_count`). Every other hint — `Some("page")`, `Some("tag")`,
+/// `Some(<unknown>)`, or `None` — falls back to the full
+/// [`FULL_CACHE_REBUILD_TASKS`], the correctness-preserving default.
+fn lifecycle_rebuild_tasks(block_type_hint: Option<&str>) -> &'static [MaterializeTask] {
+    match block_type_hint {
+        Some("content") => &CONTENT_LIFECYCLE_REBUILD_TASKS,
+        _ => &FULL_CACHE_REBUILD_TASKS,
+    }
+}
+
 /// #2037: property keys that drive `agenda_cache` irrespective of value type.
 /// `template` is the page-level agenda carve-out in `DESIRED_AGENDA_SQL`. The
 /// RESERVED column-backed keys `due_date`/`scheduled_date` (stored in
@@ -215,6 +288,25 @@ impl Materializer {
     }
 
     pub fn dispatch_edit_background(
+        &self,
+        record: &OpRecord,
+        block_type: &str,
+    ) -> Result<(), AppError> {
+        self.enqueue_background_tasks(record, Some(block_type))
+    }
+
+    /// Dispatch the background fan-out for a `delete_block` / `restore_block`
+    /// / `purge_block` op, threading the block's `block_type` so
+    /// [`invalidations_for_op`] can narrow the rebuild set for a CONTENT
+    /// block (#2037 pt2 — skip the page-row `RebuildPagesCache`).
+    ///
+    /// `block_type` is the block's type as read at the lifecycle site
+    /// ("content" / "page" / "tag"). For "content" the fan-out drops the
+    /// page-row `RebuildPagesCache` rebuild; for any other value the full set is kept
+    /// (see [`lifecycle_rebuild_tasks`]). Shares the per-op-type dispatch
+    /// table with the plain/edit variants — the FTS-optimize threshold is
+    /// gated on `edit_block` so it never fires for these ops.
+    pub fn dispatch_lifecycle_background(
         &self,
         record: &OpRecord,
         block_type: &str,
@@ -574,8 +666,16 @@ fn invalidations_for_op(
             // Use the cached sidecar instead of re-parsing
             // `record.payload`.  Same rationale as the `edit_block`
             // arm above.
+            //
+            // #2037 pt2: narrow the rebuild fan-out for a CONTENT block —
+            // its lifecycle cannot change a `block_type = 'page'` row, so
+            // `lifecycle_rebuild_tasks` drops the page-row `RebuildPagesCache`
+            // when the dispatch site proves `block_type_hint == Some("content")`.
+            // `RebuildTagsCache` is KEPT (its `usage_count` aggregates
+            // content-block tag refs — #2172). `Some("page")`/`Some("tag")`/
+            // `None` keep the full set.
             let block_id = record.block_id.as_deref().unwrap_or_default();
-            tasks.extend(FULL_CACHE_REBUILD_TASKS.iter().cloned());
+            tasks.extend(lifecycle_rebuild_tasks(block_type_hint).iter().cloned());
             if !block_id.is_empty() {
                 tasks.push(MaterializeTask::RemoveFtsBlock {
                     block_id: Arc::from(block_id),
@@ -584,8 +684,9 @@ fn invalidations_for_op(
         }
         OpType::RestoreBlock => {
             // Cached sidecar — no JSON re-parse.
+            // #2037 pt2: same content-block narrowing as `DeleteBlock`.
             let block_id = record.block_id.as_deref().unwrap_or_default();
-            tasks.extend(FULL_CACHE_REBUILD_TASKS.iter().cloned());
+            tasks.extend(lifecycle_rebuild_tasks(block_type_hint).iter().cloned());
             if !block_id.is_empty() {
                 tasks.push(MaterializeTask::UpdateFtsBlock {
                     block_id: Arc::from(block_id),
@@ -594,8 +695,9 @@ fn invalidations_for_op(
         }
         OpType::PurgeBlock => {
             // Cached sidecar — no JSON re-parse.
+            // #2037 pt2: same content-block narrowing as `DeleteBlock`.
             let block_id = record.block_id.as_deref().unwrap_or_default();
-            tasks.extend(FULL_CACHE_REBUILD_TASKS.iter().cloned());
+            tasks.extend(lifecycle_rebuild_tasks(block_type_hint).iter().cloned());
             if !block_id.is_empty() {
                 tasks.push(MaterializeTask::RemoveFtsBlock {
                     block_id: Arc::from(block_id),
@@ -1044,6 +1146,156 @@ mod tests {
         let mut want = full_rebuild_labels();
         want.push("RemoveFtsBlock(P1)".into());
         assert_eq!(labels(&tasks), want);
+    }
+
+    // ── #2037 pt2: content-block lifecycle narrowing ────────────────
+
+    fn content_rebuild_labels() -> Vec<String> {
+        CONTENT_LIFECYCLE_REBUILD_TASKS
+            .iter()
+            .map(task_label)
+            .collect()
+    }
+
+    /// #2037 pt2: a CONTENT-block delete drops the page-row
+    /// `RebuildPagesCache` rebuild but RETAINS `RebuildTagsCache` (its
+    /// `usage_count` counts content-block tag refs — #2172 review fix) and
+    /// `RebuildTagInheritanceCache` (the inheritance CTE filters
+    /// `deleted_at IS NULL`, so a content soft-delete DOES change descendant
+    /// inheritance) and every other lifecycle rebuild. The exact set is
+    /// pinned so a future edit cannot silently re-add or drop a task.
+    #[test]
+    fn invalidations_for_op_delete_content_block_skips_pages_cache() {
+        let r = make_record("delete_block", r#"{"block_id":"D1"}"#, Some("D1"));
+        let tasks = invalidations_for_op(&r, Some("content")).unwrap();
+        let mut want = content_rebuild_labels();
+        want.push("RemoveFtsBlock(D1)".into());
+        assert_eq!(
+            labels(&tasks),
+            want,
+            "content delete must emit the narrowed set + RemoveFtsBlock",
+        );
+        // Regression sentinel: the page-row O(pages) rebuild must NOT appear.
+        assert!(
+            !contains_kind(&tasks, &MaterializeTask::RebuildPagesCache),
+            "content delete must NOT enqueue RebuildPagesCache; got {:?}",
+            labels(&tasks),
+        );
+        // ...but RebuildTagsCache MUST be retained — `usage_count` aggregates
+        // content-block tag refs, so a content delete changes it (#2172).
+        assert!(
+            contains_kind(&tasks, &MaterializeTask::RebuildTagsCache),
+            "content delete MUST retain RebuildTagsCache (usage_count); got {:?}",
+            labels(&tasks),
+        );
+        // ...and the tag-inheritance rebuild MUST be retained.
+        assert!(
+            contains_kind(&tasks, &MaterializeTask::RebuildTagInheritanceCache),
+            "content delete MUST retain RebuildTagInheritanceCache; got {:?}",
+            labels(&tasks),
+        );
+    }
+
+    /// #2037 pt2: restore + purge of a content block share the same
+    /// narrowing (only the trailing FTS task differs — restore re-adds,
+    /// delete/purge remove).
+    #[test]
+    fn invalidations_for_op_restore_content_block_skips_pages_cache() {
+        let r = make_record("restore_block", r#"{"block_id":"R1"}"#, Some("R1"));
+        let tasks = invalidations_for_op(&r, Some("content")).unwrap();
+        let mut want = content_rebuild_labels();
+        want.push("UpdateFtsBlock(R1)".into());
+        assert_eq!(labels(&tasks), want);
+        assert!(!contains_kind(&tasks, &MaterializeTask::RebuildPagesCache));
+        assert!(contains_kind(&tasks, &MaterializeTask::RebuildTagsCache));
+        assert!(contains_kind(
+            &tasks,
+            &MaterializeTask::RebuildTagInheritanceCache
+        ));
+    }
+
+    #[test]
+    fn invalidations_for_op_purge_content_block_skips_pages_cache() {
+        let r = make_record("purge_block", r#"{"block_id":"P1"}"#, Some("P1"));
+        let tasks = invalidations_for_op(&r, Some("content")).unwrap();
+        let mut want = content_rebuild_labels();
+        want.push("RemoveFtsBlock(P1)".into());
+        assert_eq!(labels(&tasks), want);
+        assert!(!contains_kind(&tasks, &MaterializeTask::RebuildPagesCache));
+        assert!(contains_kind(&tasks, &MaterializeTask::RebuildTagsCache));
+        assert!(contains_kind(
+            &tasks,
+            &MaterializeTask::RebuildTagInheritanceCache
+        ));
+    }
+
+    /// #2037 pt2 correctness guard: a PAGE-block delete keeps the FULL set
+    /// (its lifecycle DOES change `pages_cache`). Pins that the narrowing
+    /// does not trigger for page blocks.
+    #[test]
+    fn invalidations_for_op_delete_page_block_keeps_full_cache_rebuild() {
+        let r = make_record("delete_block", r#"{"block_id":"PG1"}"#, Some("PG1"));
+        let tasks = invalidations_for_op(&r, Some("page")).unwrap();
+        let mut want = full_rebuild_labels();
+        want.push("RemoveFtsBlock(PG1)".into());
+        assert_eq!(labels(&tasks), want, "page delete must keep the full set");
+        assert!(contains_kind(&tasks, &MaterializeTask::RebuildPagesCache));
+        assert!(contains_kind(&tasks, &MaterializeTask::RebuildTagsCache));
+    }
+
+    /// #2037 pt2 correctness guard: a TAG-block delete keeps the FULL set
+    /// (its lifecycle DOES change `tags_cache`). The narrowing is gated on
+    /// exactly `Some("content")`, so a tag hint falls through to the full
+    /// default.
+    #[test]
+    fn invalidations_for_op_delete_tag_block_keeps_full_cache_rebuild() {
+        let r = make_record("delete_block", r#"{"block_id":"TG1"}"#, Some("TG1"));
+        let tasks = invalidations_for_op(&r, Some("tag")).unwrap();
+        let mut want = full_rebuild_labels();
+        want.push("RemoveFtsBlock(TG1)".into());
+        assert_eq!(labels(&tasks), want, "tag delete must keep the full set");
+        assert!(contains_kind(&tasks, &MaterializeTask::RebuildTagsCache));
+        assert!(contains_kind(&tasks, &MaterializeTask::RebuildPagesCache));
+    }
+
+    /// #2037 pt2: an absent hint (`None`) — the correctness-preserving
+    /// default — keeps the full set for delete/restore/purge, matching the
+    /// pre-#2037-pt2 behaviour. Pins that the narrowing never triggers
+    /// without a positive `"content"` proof.
+    #[test]
+    fn invalidations_for_op_delete_unknown_hint_keeps_full_cache_rebuild() {
+        let r = make_record("delete_block", r#"{"block_id":"U1"}"#, Some("U1"));
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        let mut want = full_rebuild_labels();
+        want.push("RemoveFtsBlock(U1)".into());
+        assert_eq!(labels(&tasks), want);
+        // Also a genuinely-unknown string hint stays full (defensive).
+        let tasks_unknown = invalidations_for_op(&r, Some("widget")).unwrap();
+        assert_eq!(labels(&tasks_unknown), want);
+    }
+
+    /// #2037 pt2 / #2172: lock the narrowed set's exact membership — it is
+    /// the full set MINUS exactly `RebuildPagesCache` (the page-row rebuild),
+    /// nothing else added or removed. `RebuildTagsCache` is RETAINED because
+    /// its `usage_count` aggregates content-block tag refs (#2172 review).
+    #[test]
+    fn content_lifecycle_set_is_full_minus_pages_cache() {
+        let full: Vec<String> = full_rebuild_labels();
+        let narrowed: Vec<String> = content_rebuild_labels();
+        let expected: Vec<String> = full
+            .iter()
+            .filter(|l| l.as_str() != "RebuildPagesCache")
+            .cloned()
+            .collect();
+        assert_eq!(
+            narrowed, expected,
+            "CONTENT_LIFECYCLE_REBUILD_TASKS must be FULL minus only the \
+             page-row RebuildPagesCache rebuild, preserving order",
+        );
+        assert!(
+            narrowed.iter().any(|l| l == "RebuildTagsCache"),
+            "RebuildTagsCache MUST be retained (usage_count aggregates content refs)",
+        );
     }
 
     /// #417 — the full-table `RebuildPagesCacheCounts` recompute is a
