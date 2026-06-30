@@ -399,6 +399,38 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
     // Mirrors `crate::space_filter_canonical::SPACE_FILTER_CANONICAL` — kept inline because
     // `sqlx::query_as!` requires a string literal directly. Filters on the
     // first-class `b.space_id` column (#533, migration 0086).
+    //
+    // #2069: superset date-overlap PREFILTER (`?2 = range_end`). The Rust
+    // expansion below is O(blocks × horizon); at 100K repeating blocks the
+    // whole-table scan + expand-then-paginate path runs ~620ms, blowing the
+    // 200ms SLO. A block can only project an occurrence into
+    // `[range_start, range_end]` if its FIRST possible occurrence is
+    // `<= range_end`, so we drop blocks that provably cannot — BEFORE the
+    // expansion — shrinking the work set without changing results.
+    //
+    // The first-occurrence rule depends on the repeat mode:
+    //   * TODAY-anchored (`.+` dot-plus, `++` plus-plus — the only two
+    //     today-anchored prefixes in `recurrence::parser`/`projection`):
+    //     projection starts from `today` (dot-plus) or the catch-up date
+    //     `> today` (plus-plus), so the base date (`due_date` /
+    //     `scheduled_date`) says NOTHING about window membership — these
+    //     are ALWAYS kept.
+    //   * base-anchored (daily / weekly / monthly / +Nd / +Nw / +Nm / +Ny):
+    //     the first occurrence is the base date itself, so a base
+    //     `> range_end` can never reach the window (the series only moves
+    //     forward) and is safely dropped.
+    //
+    // We filter ONLY on the upper bound (`<= range_end`); never on the
+    // lower bound, because a past base with a forward repeat can still
+    // land inside the window. NULL due/scheduled compare as not-`<=`,
+    // which is correct (the base-set predicate already requires at least
+    // one non-NULL). The `LOWER(TRIM(...))` mirrors the `repeat_rule.trim()
+    // .to_lowercase()` that `project_block_dates` applies before dispatch,
+    // so a `.+`/`++` typed in any case (or padded) is still recognised as
+    // today-anchored. `.` and `+` are not LIKE metacharacters (only `%`
+    // and `_` are), so the prefixes match literally; the trailing `%` is
+    // the only wildcard.
+    let range_end_str = range_end.format("%Y-%m-%d").to_string();
     let rows = sqlx::query_as!(
         RepeatingBlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
@@ -422,8 +454,15 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
                SELECT 1 FROM block_properties tp
                WHERE tp.block_id = b.page_id AND tp.key = 'template'
            )
-           AND (?1 IS NULL OR b.space_id = ?1)"#,
-        space_id, // ?1
+           AND (?1 IS NULL OR b.space_id = ?1)
+           AND (
+               LOWER(TRIM(bp.value_text)) LIKE '.+%'
+               OR LOWER(TRIM(bp.value_text)) LIKE '++%'
+               OR b.due_date <= ?2
+               OR b.scheduled_date <= ?2
+           )"#,
+        space_id,      // ?1
+        range_end_str, // ?2
     )
     .fetch_all(pool)
     .await?;

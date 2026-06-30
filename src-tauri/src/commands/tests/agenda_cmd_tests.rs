@@ -3651,6 +3651,241 @@ async fn projected_agenda_cached_equals_on_the_fly() {
 }
 
 // ======================================================================
+// #2069 — on-the-fly prefilter superset parity
+// ======================================================================
+//
+// `list_projected_agenda_on_the_fly` now carries a date-overlap PREFILTER
+// (`agenda.rs`): a repeating block is dropped from the fallback SELECT
+// before the Rust expansion unless its repeat rule is today-anchored
+// (`.+` / `++`) OR `due_date <= range_end` OR `scheduled_date <= range_end`.
+// The prefilter must be a PROVABLE SUPERSET — it may shrink the work set
+// but must never drop a block that would have projected an occurrence into
+// `[range_start, range_end]`.
+//
+// The cache rebuild path runs the FULL expansion (no prefilter), so
+// parity (on-the-fly == cache) proves the prefilter dropped nothing the
+// full expansion includes. This fixture is engineered to catch a bad
+// prefilter:
+//
+//   F2 — `.+1w` count=2, due_date = 2060-01-01 (AFTER range_end).
+//        dot-plus is today-anchored ⇒ projects 2050-04-13 / 2050-04-20
+//        into the window REGARDLESS of its base. A naive
+//        `base <= range_end` prefilter would WRONGLY drop it. MUST appear.
+//   F4 — `.+1w` count=2, due_date = 2000-01-01 (FAR BEFORE range_start).
+//        Same today-anchored projection; base is irrelevant. MUST appear.
+//   F3 — `++1w` count=2, due_date = 2050-01-01 (BEFORE range_start). The
+//        plus-plus catch-up advances from the base past `today`, landing
+//        2050-04-09 / 2050-04-16 in the window. MUST appear.
+//   F5 — `weekly` count=3, due_date = 2052-01-01 (AFTER range_end).
+//        Base-anchored, first occurrence is the base, which is beyond the
+//        window and the series only moves forward ⇒ correctly ABSENT.
+//        The prefilter drops it; the cache expands it to zero in-window
+//        rows. Parity holds either way.
+//   F6 — `+3d` count=4, due_date = 2050-04-01 (BEFORE range_start). The
+//        first shift (04-04) lands before range_start and is skipped, the
+//        next three (04-07/04-10/04-13) land in-window. Base before window
+//        with a repeat that lands inside ⇒ present. Prefilter keeps it
+//        (base <= range_end).
+//   F7 — `weekly` count=3, due_date = 2051-03-30 — chosen so the first
+//        shift lands EXACTLY on range_end (2051-04-06). Exercises the
+//        inclusive upper bound (`<= range_end`) and the prefilter keep
+//        for a base just inside the window. MUST appear, exactly once.
+//
+// today / range are pinned to 2050 (matching the sibling parity test) so
+// the cache rebuild's 365-day horizon and the on-the-fly anchors line up
+// and the fixture is stable for ~25 years regardless of the wall clock.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn projected_agenda_prefilter_is_superset_2069() {
+    let (pool, _dir) = test_pool().await;
+
+    // Insert a repeating block directly via SQL: a `due_date` column value
+    // plus a `repeat` property (and an optional `repeat-count`). Raw SQL
+    // gives precise control over base dates relative to the window without
+    // routing through the command layer's date validators.
+    async fn seed(
+        pool: &sqlx::SqlitePool,
+        id: &str,
+        due_date: &str,
+        repeat_rule: &str,
+        repeat_count: Option<f64>,
+    ) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, due_date, todo_state) \
+             VALUES (?, 'content', 'repeating task', ?, 'TODO')",
+        )
+        .bind(id)
+        .bind(due_date)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) \
+             VALUES (?, 'repeat', ?)",
+        )
+        .bind(id)
+        .bind(repeat_rule)
+        .execute(pool)
+        .await
+        .unwrap();
+        if let Some(count) = repeat_count {
+            sqlx::query(
+                "INSERT INTO block_properties (block_id, key, value_num) \
+                 VALUES (?, 'repeat-count', ?)",
+            )
+            .bind(id)
+            .bind(count)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    seed(&pool, "F2_DOTPLUS_AFTER", "2060-01-01", ".+1w", Some(2.0)).await;
+    seed(&pool, "F3_PLUSPLUS_BEFORE", "2050-01-01", "++1w", Some(2.0)).await;
+    seed(
+        &pool,
+        "F4_DOTPLUS_FARBEFORE",
+        "2000-01-01",
+        ".+1w",
+        Some(2.0),
+    )
+    .await;
+    seed(&pool, "F5_WEEKLY_AFTER", "2052-01-01", "weekly", Some(3.0)).await;
+    seed(&pool, "F6_PLUS3D_BEFORE", "2050-04-01", "+3d", Some(4.0)).await;
+    seed(
+        &pool,
+        "F7_WEEKLY_BOUNDARY",
+        "2051-03-30",
+        "weekly",
+        Some(3.0),
+    )
+    .await;
+
+    let pinned_today = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
+    let range_start = pinned_today;
+    let range_end = pinned_today + chrono::Duration::days(365); // 2051-04-06
+    let range_end_str = range_end.format("%Y-%m-%d").to_string();
+
+    // 1. Build the cache (full expansion, no prefilter) with the pinned
+    //    `today`, then page through the cached path.
+    crate::cache::rebuild_projected_agenda_cache_with_today(&pool, pinned_today)
+        .await
+        .unwrap();
+    let mut cached_results = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let page = list_projected_agenda_inner(
+            &pool,
+            range_start.format("%Y-%m-%d").to_string(),
+            range_end_str.clone(),
+            cursor.clone(),
+            Some(500),
+            &SpaceScope::Global,
+        )
+        .await
+        .unwrap();
+        cached_results.extend(page.items);
+        match page.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+
+    // 2. Wipe the cache so the on-the-fly (prefiltered) path runs.
+    sqlx::query("DELETE FROM projected_agenda_cache")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let on_the_fly_results = list_projected_agenda_on_the_fly(
+        &pool,
+        range_start,
+        range_end,
+        500,
+        pinned_today,
+        None,
+        None,
+    )
+    .await
+    .unwrap()
+    .items;
+
+    // 3. Explicit expected (block_id, projected_date) set. All entries use
+    //    the `due_date` source. Computed by hand against
+    //    `recurrence::project_block_dates` (see the fixture doc above).
+    //    F5 contributes nothing (correctly filtered / out of window).
+    let expected: Vec<(&str, &str)> = {
+        let mut v = vec![
+            ("F2_DOTPLUS_AFTER", "2050-04-13"),
+            ("F2_DOTPLUS_AFTER", "2050-04-20"),
+            ("F4_DOTPLUS_FARBEFORE", "2050-04-13"),
+            ("F4_DOTPLUS_FARBEFORE", "2050-04-20"),
+            ("F3_PLUSPLUS_BEFORE", "2050-04-09"),
+            ("F3_PLUSPLUS_BEFORE", "2050-04-16"),
+            ("F6_PLUS3D_BEFORE", "2050-04-07"),
+            ("F6_PLUS3D_BEFORE", "2050-04-10"),
+            ("F6_PLUS3D_BEFORE", "2050-04-13"),
+            ("F7_WEEKLY_BOUNDARY", "2051-04-06"),
+        ];
+        // Sort by the same (projected_date, block_id) key the BTreeMap /
+        // SQL ORDER BY use, so the comparison is order-stable.
+        v.sort_by(|a, b| (a.1, a.0).cmp(&(b.1, b.0)));
+        v
+    };
+
+    let to_pairs =
+        |items: &[crate::pagination::ActiveProjectedAgendaEntry]| -> Vec<(String, String)> {
+            items
+                .iter()
+                .map(|e| (e.block.id.as_str().to_string(), e.projected_date.clone()))
+                .collect()
+        };
+    let cached_pairs = to_pairs(&cached_results);
+    let otf_pairs = to_pairs(&on_the_fly_results);
+    let expected_pairs: Vec<(String, String)> = expected
+        .iter()
+        .map(|(id, d)| ((*id).to_string(), (*d).to_string()))
+        .collect();
+
+    // The prefiltered on-the-fly path, the full-expansion cache path, and
+    // the explicit expected set must all be byte-for-byte identical and
+    // order-stable. Equality of on-the-fly and cache proves the prefilter
+    // is a superset (it dropped nothing the full expansion includes); the
+    // explicit set pins the exact occurrences so a future refactor cannot
+    // drift both paths together.
+    assert_eq!(
+        otf_pairs, expected_pairs,
+        "on-the-fly (prefiltered) result must match the explicit expected set"
+    );
+    assert_eq!(
+        cached_pairs, expected_pairs,
+        "cache (full expansion) result must match the explicit expected set"
+    );
+    assert_eq!(
+        otf_pairs, cached_pairs,
+        "on-the-fly == cache: the #2069 prefilter must be a provable superset"
+    );
+
+    // Discriminating assertions: the today-anchored block whose base is
+    // AFTER range_end (F2) is exactly the entry a naive `base <= range_end`
+    // prefilter would wrongly drop — assert it is present. The base-anchored
+    // block whose base is AFTER range_end (F5) must be absent.
+    assert!(
+        otf_pairs.iter().any(|(id, _)| id == "F2_DOTPLUS_AFTER"),
+        "F2 (.+1w, base after range_end) must survive the prefilter via \
+         today-anchoring — a naive `base <= range_end` filter would drop it"
+    );
+    assert!(
+        otf_pairs.iter().any(|(id, _)| id == "F3_PLUSPLUS_BEFORE"),
+        "F3 (++1w, base before range_start) must catch up into the window"
+    );
+    assert!(
+        !otf_pairs.iter().any(|(id, _)| id == "F5_WEEKLY_AFTER"),
+        "F5 (weekly, base after range_end) is base-anchored beyond the \
+         window and must be absent"
+    );
+}
+
+// ======================================================================
 // Agenda projection silently skips malformed dates
 // ======================================================================
 
