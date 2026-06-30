@@ -58,6 +58,25 @@ ensure_node() {
   fi
 
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+
+  # nvm is NOT compatible with `set -euo pipefail` — its own README says so.
+  # Sourcing nvm.sh and running nvm subcommands trip errexit/nounset/pipefail on
+  # code paths we don't control. On the first-time-install path this surfaced as
+  # a silent `exit 3` that aborted the whole bootstrap before the best-effort
+  # steps (npm ci, dev DB, hooks) ran — and BEFORE the `retry` below, since the
+  # death was at `. nvm.sh` / `nvm use`, neither of which was guarded. So: relax
+  # the strict options for the entire nvm region (source + install + use +
+  # alias) and restore them after. Only `nvm install` is retried — it owns the
+  # network-prone steps (nvm's pre-fetch version resolution and the nodejs.org
+  # tarball download) that hit the provisioning-time race; `use`/`alias` chain
+  # after it as local-state ops that need no retry. All of it is idempotent.
+  #
+  # We hard-restore `set -euo pipefail` afterwards rather than snapshotting with
+  # `set +o`: command substitution `$(set +o)` captures errexit as OFF (bash
+  # auto-disables errexit inside `$(...)`), so an eval-restore would silently
+  # leave errexit disabled for the rest of the bootstrap. The script header pins
+  # these three options, so re-asserting them literally is correct and clearer.
+  set +e +u +o pipefail           # relax: nvm trips errexit/nounset/pipefail
   # nvm ships pre-installed on the cloud VMs; restore just nvm.sh over HTTPS if a
   # box is missing it (never `git clone` — see note above).
   if [ ! -s "$NVM_DIR/nvm.sh" ]; then
@@ -68,12 +87,26 @@ ensure_node() {
   fi
   # shellcheck disable=SC1091
   . "$NVM_DIR/nvm.sh"
-  # Retry: the Node tarball download from nodejs.org is the step most likely
-  # to hit the provisioning-time network race (it aborted the bootstrap before
-  # this fix). `nvm install` is idempotent, so re-running is safe.
-  retry nvm install "$want"             # Node tarball comes from nodejs.org
-  nvm use "$want" >/dev/null            # activate for npm ci / npx below
-  nvm alias default "$want" >/dev/null  # and for fresh shells (cargo tauri dev, etc.)
+  retry nvm install "$want" \
+    && nvm use "$want" >/dev/null \
+    && nvm alias default "$want" >/dev/null
+  set -euo pipefail               # restore the strict bootstrap options
+
+  # Verify we actually ended up on a new-enough node and fail LOUD + actionable,
+  # rather than letting `npm ci` die later with a cryptic EBADENGINE (or, worse,
+  # the bootstrap exiting with an opaque code and no explanation).
+  if ! command -v node >/dev/null 2>&1; then
+    echo "error: node provisioning failed — no 'node' on PATH after 'nvm install ${want}'." >&2
+    echo "       Fix: run 'nvm install ${want}' manually, then re-run scripts/setup.sh." >&2
+    exit 1
+  fi
+  local now_major
+  now_major="$(node -v | sed 's/^v//; s/\..*//')"
+  if ! [ "${now_major:-0}" -ge "$want_major" ] 2>/dev/null; then
+    echo "error: node $(node -v) is still older than required Node ${want} after provisioning." >&2
+    echo "       Fix: run 'nvm install ${want} && nvm use ${want}', then re-run scripts/setup.sh." >&2
+    exit 1
+  fi
   echo "using node $(node -v) (npm $(npm -v)); nvm default -> Node ${want}"
 }
 ensure_node
