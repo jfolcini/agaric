@@ -25,7 +25,7 @@
 #![allow(clippy::cast_possible_wrap)]
 
 use crate::db::init_pool;
-use crate::op::{CreateBlockPayload, OpPayload};
+use crate::op::{CreateBlockPayload, DeleteBlockPayload, MoveBlockPayload, OpPayload};
 use crate::ulid::BlockId;
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -132,6 +132,26 @@ async fn build_child_batch(pool: &SqlitePool, n: usize) -> Vec<crate::op_log::Op
     records
 }
 
+/// Append a single `CreateBlock` op (child of `PAGE_ID` at `index`) and return
+/// the record. Shared by the mixed-op parity tests.
+async fn build_one_create(
+    pool: &SqlitePool,
+    block_id: &str,
+    index: i64,
+) -> crate::op_log::OpRecord {
+    let payload = OpPayload::CreateBlock(CreateBlockPayload {
+        block_id: BlockId::from_trusted(block_id),
+        block_type: "content".into(),
+        parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+        position: None,
+        index: Some(index),
+        content: format!("child-{block_id}"),
+    });
+    crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+        .await
+        .expect("append child create")
+}
+
 /// Read the dense `position` ranks for the N children, ordered by insertion
 /// index (child_id ascending == insertion order here).
 async fn child_ranks(pool: &SqlitePool, n: usize) -> Vec<i64> {
@@ -174,6 +194,34 @@ async fn stamp_page_ids_and_recompute(pool: &SqlitePool, n: usize) {
         .await
         .expect("recompute counts");
     tx.commit().await.expect("commit recompute");
+}
+
+/// Stamp `page_id` + `space_id` on a freshly-created content child, mimicking
+/// the background `SetBlockPageId` materialize task. Without this a mid-batch
+/// `MoveBlock`/`DeleteBlock` on the block cannot resolve its space and falls to
+/// the SQL-only path; stamping keeps the op on the engine path (the realistic
+/// post-import steady state).
+async fn stamp_child_page_and_space(pool: &SqlitePool, block_id: &str) {
+    sqlx::query("UPDATE blocks SET page_id = ?, space_id = ? WHERE id = ?")
+        .bind(PAGE_ID)
+        .bind(SPACE_ID)
+        .bind(block_id)
+        .execute(pool)
+        .await
+        .expect("stamp child page_id + space_id");
+}
+
+/// Create a content child under `PAGE_ID` at `index` via the single-op path
+/// (committed) and stamp its page_id/space_id so later moves/deletes resolve the
+/// engine. Used to establish pre-existing siblings before a mixed-op batch.
+async fn seed_committed_child(pool: &SqlitePool, block_id: &str, index: i64) {
+    let record = build_one_create(pool, block_id, index).await;
+    let mut tx = pool.begin().await.expect("begin");
+    super::apply_op_tx(&mut tx, &record, None)
+        .await
+        .expect("apply seed child");
+    tx.commit().await.expect("commit seed child");
+    stamp_child_page_and_space(pool, block_id).await;
 }
 
 /// (a)+(b)+(c): a `BatchApplyOps` chunk of N sibling creates reprojects the
@@ -384,5 +432,323 @@ async fn single_op_path_matches_batch_final_state() {
         child_block_count(&pool).await,
         N as i64,
         "single-op child_block_count must equal N"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #2208 / #2200 correctness: the reprojection deferral is GATED to all-create
+// chunks. A mixed-op batch (create + move/delete of a sibling) must produce the
+// SAME final dense ranks as applying those ops one-at-a-time INLINE — proving
+// the stale-snapshot clobbering the deferral would cause cannot happen.
+// ---------------------------------------------------------------------------
+
+/// Append a single `MoveBlock` op (move `block` to `new_index` under `PAGE_ID`)
+/// to the op_log and return the record.
+async fn move_child_record(
+    pool: &SqlitePool,
+    block_id: &str,
+    new_index: i64,
+) -> crate::op_log::OpRecord {
+    let payload = OpPayload::MoveBlock(MoveBlockPayload {
+        block_id: BlockId::from_trusted(block_id),
+        new_parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+        new_position: new_index,
+        new_index: Some(new_index),
+    });
+    crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+        .await
+        .expect("append move")
+}
+
+/// Append a single `DeleteBlock` op for `block_id` to the op_log and return the
+/// record.
+async fn delete_child_record(pool: &SqlitePool, block_id: &str) -> crate::op_log::OpRecord {
+    let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
+        block_id: BlockId::from_trusted(block_id),
+    });
+    crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+        .await
+        .expect("append delete")
+}
+
+/// Dense `position` rank of a single child by id.
+async fn rank_of(pool: &SqlitePool, block_id: &str) -> i64 {
+    sqlx::query_scalar("SELECT position FROM blocks WHERE id = ?")
+        .bind(block_id)
+        .fetch_one(pool)
+        .await
+        .expect("fetch position")
+}
+
+/// Apply a slice of records as one `BatchApplyOps` chunk through the REAL
+/// pipeline.
+async fn apply_as_batch(pool: &SqlitePool, records: Vec<crate::op_log::OpRecord>) {
+    let task = crate::materializer::MaterializeTask::BatchApplyOps(Arc::new(records));
+    super::handle_foreground_task(pool, &task)
+        .await
+        .expect("batch apply");
+}
+
+/// #2208: a mixed-op batch containing a create AND a move of an existing sibling
+/// must leave the SAME final dense ranks as applying those ops one-at-a-time
+/// INLINE.
+///
+/// Setup: a (rank 1) and b (rank 2) already exist under P (committed, space
+/// stamped). The batch is `[Create(c→P at end), Move(b to front)]`. The correct
+/// final tree order is `[b, a, c]` ⇒ dense ranks b=1, a=2, c=3.
+///
+/// This is the discriminating case for the deferral gate. If the accumulator
+/// were (wrongly) used for this mixed batch, the `Create(c)` would snapshot the
+/// sibling order `[a, b, c]`, then the inline `Move(b to front)` would correctly
+/// reproject to `[b, a, c]` (b=1,a=2,c=3), and finally the end-of-chunk flush
+/// would REPLAY the stale `[a, b, c]` snapshot — clobbering the move back to
+/// a=1,b=2,c=3. The gate forces `None` for any non-all-create batch, so every op
+/// (create included) reprojects inline and the move survives.
+///
+/// MUTATION CHECK: removing the `all_create` gate in `task_handlers.rs` (always
+/// passing `Some(&mut chunk)`) makes this FAIL with b=2,a=1 — confirming the
+/// test actually exercises the stale-snapshot clobber.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mixed_create_and_move_matches_inline_path() {
+    let _state = crate::loro::shared::install_for_test();
+
+    let dir = TempDir::new().expect("tempdir");
+    let pool = init_pool(&dir.path().join("mixed_move.db"))
+        .await
+        .expect("init_pool");
+    seed_space_and_page(&pool).await;
+    seed_page_via_loro(&pool).await;
+
+    let a = child_id(0);
+    let b = child_id(1);
+    let c = child_id(2);
+
+    // Pre-existing siblings a (rank 1) and b (rank 2), space-stamped so the
+    // in-batch move resolves the engine (not the SQL-only fallback).
+    seed_committed_child(&pool, &a, 0).await;
+    seed_committed_child(&pool, &b, 1).await;
+
+    // Mixed batch: create c at the end, then move b to the front.
+    let create_c = build_one_create(&pool, &c, 2).await;
+    let move_b = move_child_record(&pool, &b, 0).await;
+    apply_as_batch(&pool, vec![create_c, move_b]).await;
+
+    // Correct final order [b, a, c]. A stale-snapshot flush would clobber this
+    // back to [a, b, c].
+    assert_eq!(rank_of(&pool, &b).await, 1, "moved b must land at rank 1");
+    assert_eq!(rank_of(&pool, &a).await, 2, "a must be pushed to rank 2");
+    assert_eq!(rank_of(&pool, &c).await, 3, "appended c stays at rank 3");
+}
+
+/// Inline-parity control for [`mixed_create_and_move_matches_inline_path`]:
+/// apply the SAME `Create(c), Move(b)` sequence one-at-a-time (single-op inline
+/// path, `None` accumulator) and assert the identical final ranks. The batch
+/// gate must not change the outcome relative to the known-correct inline path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mixed_create_and_move_single_op_parity() {
+    let _state = crate::loro::shared::install_for_test();
+
+    let dir = TempDir::new().expect("tempdir");
+    let pool = init_pool(&dir.path().join("mixed_move_single.db"))
+        .await
+        .expect("init_pool");
+    seed_space_and_page(&pool).await;
+    seed_page_via_loro(&pool).await;
+
+    let a = child_id(0);
+    let b = child_id(1);
+    let c = child_id(2);
+
+    seed_committed_child(&pool, &a, 0).await;
+    seed_committed_child(&pool, &b, 1).await;
+
+    for record in [
+        build_one_create(&pool, &c, 2).await,
+        move_child_record(&pool, &b, 0).await,
+    ] {
+        let mut tx = pool.begin().await.expect("begin");
+        super::apply_op_tx(&mut tx, &record, None)
+            .await
+            .expect("apply single op");
+        tx.commit().await.expect("commit");
+    }
+
+    assert_eq!(rank_of(&pool, &b).await, 1, "inline: b at rank 1");
+    assert_eq!(rank_of(&pool, &a).await, 2, "inline: a at rank 2");
+    assert_eq!(rank_of(&pool, &c).await, 3, "inline: c at rank 3");
+}
+
+/// #2208 (Create + Delete-of-sibling hazard): a mixed batch containing a create
+/// AND a delete of an existing sibling must produce the SAME final ranks as the
+/// inline single-op path. The delete removes a live sibling; the surviving group
+/// must be reprojected inline (by the create's own inline reproject on the
+/// non-all-create batch), not from a stale end-of-chunk snapshot that would
+/// re-rank the now-deleted sibling.
+///
+/// Setup: a (rank 1) and b (rank 2) exist. Batch `[Create(c→P at end),
+/// Delete(a)]`. a is soft-deleted; live siblings are b and c. The batch result
+/// must byte-match the inline result (asserted below by running both and
+/// comparing) — proving the gate keeps the mixed batch on the inline path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mixed_create_and_delete_sibling_matches_inline_path() {
+    let _state = crate::loro::shared::install_for_test();
+
+    // Batch path.
+    let dir_b = TempDir::new().expect("tempdir");
+    let pool_b = init_pool(&dir_b.path().join("mixed_delete_batch.db"))
+        .await
+        .expect("init_pool");
+    seed_space_and_page(&pool_b).await;
+    seed_page_via_loro(&pool_b).await;
+    let a = child_id(0);
+    let b = child_id(1);
+    let c = child_id(2);
+    seed_committed_child(&pool_b, &a, 0).await;
+    seed_committed_child(&pool_b, &b, 1).await;
+    let create_c = build_one_create(&pool_b, &c, 2).await;
+    let delete_a = delete_child_record(&pool_b, &a).await;
+    apply_as_batch(&pool_b, vec![create_c, delete_a]).await;
+
+    // Inline path (fresh DB), same op sequence one-at-a-time.
+    let dir_i = TempDir::new().expect("tempdir");
+    let pool_i = init_pool(&dir_i.path().join("mixed_delete_inline.db"))
+        .await
+        .expect("init_pool");
+    seed_space_and_page(&pool_i).await;
+    seed_page_via_loro(&pool_i).await;
+    seed_committed_child(&pool_i, &a, 0).await;
+    seed_committed_child(&pool_i, &b, 1).await;
+    for record in [
+        build_one_create(&pool_i, &c, 2).await,
+        delete_child_record(&pool_i, &a).await,
+    ] {
+        let mut tx = pool_i.begin().await.expect("begin");
+        super::apply_op_tx(&mut tx, &record, None)
+            .await
+            .expect("apply single op");
+        tx.commit().await.expect("commit");
+    }
+
+    // a is soft-deleted on both paths; the surviving b/c ranks must match the
+    // inline path exactly.
+    for id in [&a, &b, &c] {
+        let batch_pos: Option<i64> = sqlx::query_scalar("SELECT position FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool_b)
+            .await
+            .expect("batch pos");
+        let inline_pos: Option<i64> =
+            sqlx::query_scalar("SELECT position FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool_i)
+                .await
+                .expect("inline pos");
+        assert_eq!(
+            batch_pos, inline_pos,
+            "mixed create+delete batch rank for {id} must match the inline path",
+        );
+    }
+    let a_deleted: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(&a)
+        .fetch_one(&pool_b)
+        .await
+        .expect("fetch a deleted_at");
+    assert!(
+        a_deleted.is_some(),
+        "a must be soft-deleted on the batch path"
+    );
+}
+
+/// #2208 multi-space all-create batch: creates in DIFFERENT spaces within one
+/// all-create batch must each get a correct dense rank in their OWN space's
+/// sibling group. The accumulator's reproject key is space-qualified
+/// (`(space_id, Option<parent>)`), so cross-space sibling groups never clobber
+/// one another at the end-of-chunk flush — the concrete guard behind the #2208
+/// secondary finding (an unqualified key could let one space's ordering
+/// overwrite another's, most sharply for the shared top-level `None` key).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn multi_space_all_create_batch_does_not_collide_across_spaces() {
+    let _state = crate::loro::shared::install_for_test();
+
+    let dir = TempDir::new().expect("tempdir");
+    let pool = init_pool(&dir.path().join("multi_space.db"))
+        .await
+        .expect("init_pool");
+
+    // Two independent spaces, each with a top-level block that IS its own space
+    // root (parent_id NULL) so a create under it resolves that space.
+    const SPACE_A: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    const SPACE_B: &str = "01ARZ3NDEKTSV4RRFFQ69G5FBW";
+    for sid in [SPACE_A, SPACE_B] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+                 VALUES (?, 'tag', 'space', NULL, 0)",
+        )
+        .bind(sid)
+        .execute(&pool)
+        .await
+        .expect("seed space block");
+        sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+            .bind(sid)
+            .execute(&pool)
+            .await
+            .expect("register space");
+        sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ?")
+            .bind(sid)
+            .bind(sid)
+            .execute(&pool)
+            .await
+            .expect("stamp space root space_id");
+        // Push the space root into the engine tree so children resolve it.
+        let payload = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(sid),
+            block_type: "tag".into(),
+            parent_id: None,
+            position: Some(0),
+            index: None,
+            content: "space".into(),
+        });
+        let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+            .await
+            .expect("append space root create");
+        let mut tx = pool.begin().await.expect("begin");
+        super::apply_op_tx(&mut tx, &record, None)
+            .await
+            .expect("apply space root");
+        tx.commit().await.expect("commit");
+    }
+
+    // One top-level (parent = the space root) create in each space, in one batch.
+    let child_a = "01HZ0000000000000000IMCSPA".to_owned();
+    let child_b = "01HZ0000000000000000IMCSPB".to_owned();
+    let mut records = Vec::new();
+    for (sid, cid) in [(SPACE_A, &child_a), (SPACE_B, &child_b)] {
+        let payload = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(cid),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::from_trusted(sid)),
+            position: None,
+            index: Some(0),
+            content: "child".into(),
+        });
+        records.push(
+            crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+                .await
+                .expect("append child"),
+        );
+    }
+    apply_as_batch(&pool, records).await;
+
+    // Each space's lone child is dense rank 1 in its OWN space. A collision on
+    // the top-level key would have dropped one space's reproject.
+    assert_eq!(
+        rank_of(&pool, &child_a).await,
+        1,
+        "space A child must be rank 1"
+    );
+    assert_eq!(
+        rank_of(&pool, &child_b).await,
+        1,
+        "space B child must be rank 1"
     );
 }

@@ -143,7 +143,10 @@ pub(crate) async fn apply_create_block_via_loro(
     match chunk {
         Some(acc) => {
             let parent_key = p.parent_id.as_ref().map(|id| id.as_str().to_owned());
-            acc.record_reproject(parent_key, siblings);
+            // Space-qualify the key: an all-create chunk may span spaces, and
+            // the `None` (top-level) parent key would otherwise collide across
+            // spaces (see `ChunkAccumulator::reproject_groups`).
+            acc.record_reproject(space_id.as_str().to_owned(), parent_key, siblings);
         }
         None => {
             projection::reproject_dense_positions(conn, &siblings).await?;
