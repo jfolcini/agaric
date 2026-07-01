@@ -105,7 +105,18 @@ fn bench_list_property_defs(c: &mut Criterion) {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("list_pd_{count}")));
 
+        // Migrations seed built-in property definitions (0014/0016), so the
+        // list returns those plus our seeded keys. Measure the baseline before
+        // seeding and assert against `baseline + count` rather than a fixed
+        // total that silently breaks whenever the built-in set changes.
+        let baseline = rt
+            .block_on(list_property_defs_inner(&pool, None, Some(200)))
+            .unwrap()
+            .items
+            .len();
+
         rt.block_on(seed_property_defs(&pool, count));
+        let expected = baseline + count;
 
         group.throughput(Throughput::Elements(1));
         group.bench_with_input(
@@ -124,8 +135,9 @@ fn bench_list_property_defs(c: &mut Criterion) {
                             .unwrap();
                         assert_eq!(
                             page.items.len(),
-                            count,
-                            "expected exactly {count} property definitions"
+                            expected,
+                            "expected {expected} property definitions \
+                             (baseline {baseline} + {count} seeded)"
                         );
                     }
                 });

@@ -17,6 +17,11 @@ use tokio::runtime::Runtime;
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Page id used by both the seed and the export call. `export_page_markdown_inner`
+/// now parses its argument as a ULID, so this must be a canonical 26-char
+/// Crockford base32 string (no I/L/O/U, first char 0-7).
+const EXPORT_PAGE_ID: &str = "0000000000000000EXP0RTPAGE";
+
 /// Spin up a fresh SQLite pool (with migrations) in a temp directory.
 async fn fresh_pool(dir: &TempDir, name: &str) -> SqlitePool {
     let db_path = dir.path().join(format!("{name}.db"));
@@ -28,7 +33,7 @@ async fn fresh_pool(dir: &TempDir, name: &str) -> SqlitePool {
 /// Children alternate between short (~50 chars) and long (~200 chars) content
 /// to simulate realistic page bodies.
 async fn seed_page_with_children(pool: &SqlitePool, n: usize) {
-    let page_id = "EXPORTPAGE0000000000000";
+    let page_id = EXPORT_PAGE_ID;
     let mut tx = pool.begin().await.unwrap();
 
     // Parent page. A 'page' block must set `page_id = id` (migration 0073's
@@ -93,7 +98,7 @@ fn bench_export_page_markdown(c: &mut Criterion) {
                 b.to_async(&rt).iter(|| {
                     let pool = pool.clone();
                     async move {
-                        export_page_markdown_inner(&pool, "EXPORTPAGE0000000000000")
+                        export_page_markdown_inner(&pool, EXPORT_PAGE_ID)
                             .await
                             .unwrap()
                     }

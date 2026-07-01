@@ -57,21 +57,19 @@ async fn seed_typed_blocks(pool: &sqlx::SqlitePool, block_type: &str, n: usize) 
 /// Seed `n` soft-deleted blocks with distinct timestamps.
 async fn seed_trash(pool: &sqlx::SqlitePool, n: usize) {
     let mut tx = pool.begin().await.unwrap();
+    // `blocks.deleted_at` is INTEGER epoch-ms since migration 0080; seed a
+    // distinct, monotonically increasing timestamp per row (base = 2025-01-01
+    // UTC) so trash ordering / cursor pagination stays deterministic.
+    const BASE_MS: i64 = 1_735_689_600_000;
     for i in 0..n {
         let id = format!("TRASH{i:020}");
-        let ts = format!(
-            "2025-01-{:02}T{:02}:{:02}:{:02}+00:00",
-            i / 86400 + 1,
-            (i / 3600) % 24,
-            (i / 60) % 60,
-            i % 60
-        );
+        let ts = BASE_MS + i as i64;
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, deleted_at) VALUES (?, 'content', ?, ?)",
         )
         .bind(&id)
         .bind(format!("trash {i}"))
-        .bind(&ts)
+        .bind(ts)
         .execute(&mut *tx)
         .await
         .unwrap();
@@ -127,6 +125,31 @@ async fn seed_tagged_blocks(pool: &sqlx::SqlitePool, n: usize) {
     tx.commit().await.unwrap();
 }
 
+/// Walk keyset pages (each capped at `MAX_PAGE_SIZE` = 200) until roughly the
+/// middle of the dataset, returning a mid-list cursor for the `cursor_page`
+/// benchmarks. A single `PageRequest` may not exceed 200 rows, so we page
+/// forward instead of requesting `total / 2` in one shot (which now surfaces
+/// as `AppError::Validation`). `fetch` returns `(items_returned, next_cursor)`.
+async fn walk_to_mid<F, Fut>(total: usize, mut fetch: F) -> Option<String>
+where
+    F: FnMut(Option<String>, i64) -> Fut,
+    Fut: std::future::Future<Output = (usize, Option<String>)>,
+{
+    let target = total / 2;
+    let mut cursor: Option<String> = None;
+    let mut seen = 0usize;
+    while seen < target {
+        let step = (target - seen).min(200) as i64;
+        let (n, next) = fetch(cursor.clone(), step).await;
+        seen += n;
+        cursor = next;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    cursor
+}
+
 // ---------------------------------------------------------------------------
 // Benchmarks
 // ---------------------------------------------------------------------------
@@ -151,13 +174,16 @@ fn bench_list_children(c: &mut Criterion) {
         });
 
         // Mid-point cursor page
-        let mid_cursor = rt.block_on(async {
-            let half = PageRequest::new(None, Some((total / 2) as i64)).unwrap();
-            let resp = list_children(&pool, Some("PARENT"), &half, None)
-                .await
-                .unwrap();
-            resp.next_cursor
-        });
+        let mid_cursor = rt.block_on(walk_to_mid(total, |cur, step| {
+            let pool = &pool;
+            async move {
+                let page = PageRequest::new(cur, Some(step)).unwrap();
+                let resp = list_children(pool, Some("PARENT"), &page, None)
+                    .await
+                    .unwrap();
+                (resp.items.len(), resp.next_cursor)
+            }
+        }));
 
         if mid_cursor.is_some() {
             group.bench_with_input(BenchmarkId::new("cursor_page", total), &total, |b, _| {
@@ -188,11 +214,14 @@ fn bench_list_by_type(c: &mut Criterion) {
                 .iter(|| list_by_type(&pool, "page", &page, None));
         });
 
-        let mid_cursor = rt.block_on(async {
-            let half = PageRequest::new(None, Some((total / 2) as i64)).unwrap();
-            let resp = list_by_type(&pool, "page", &half, None).await.unwrap();
-            resp.next_cursor
-        });
+        let mid_cursor = rt.block_on(walk_to_mid(total, |cur, step| {
+            let pool = &pool;
+            async move {
+                let page = PageRequest::new(cur, Some(step)).unwrap();
+                let resp = list_by_type(pool, "page", &page, None).await.unwrap();
+                (resp.items.len(), resp.next_cursor)
+            }
+        }));
 
         if mid_cursor.is_some() {
             group.bench_with_input(BenchmarkId::new("cursor_page", total), &total, |b, _| {
@@ -222,11 +251,14 @@ fn bench_list_trash(c: &mut Criterion) {
             b.to_async(&rt).iter(|| list_trash(&pool, &page, None));
         });
 
-        let mid_cursor = rt.block_on(async {
-            let half = PageRequest::new(None, Some((total / 2) as i64)).unwrap();
-            let resp = list_trash(&pool, &half, None).await.unwrap();
-            resp.next_cursor
-        });
+        let mid_cursor = rt.block_on(walk_to_mid(total, |cur, step| {
+            let pool = &pool;
+            async move {
+                let page = PageRequest::new(cur, Some(step)).unwrap();
+                let resp = list_trash(pool, &page, None).await.unwrap();
+                (resp.items.len(), resp.next_cursor)
+            }
+        }));
 
         if mid_cursor.is_some() {
             group.bench_with_input(BenchmarkId::new("cursor_page", total), &total, |b, _| {
@@ -256,11 +288,14 @@ fn bench_list_by_tag(c: &mut Criterion) {
                 .iter(|| list_by_tag(&pool, "TAG01", &page, None));
         });
 
-        let mid_cursor = rt.block_on(async {
-            let half = PageRequest::new(None, Some((total / 2) as i64)).unwrap();
-            let resp = list_by_tag(&pool, "TAG01", &half, None).await.unwrap();
-            resp.next_cursor
-        });
+        let mid_cursor = rt.block_on(walk_to_mid(total, |cur, step| {
+            let pool = &pool;
+            async move {
+                let page = PageRequest::new(cur, Some(step)).unwrap();
+                let resp = list_by_tag(pool, "TAG01", &page, None).await.unwrap();
+                (resp.items.len(), resp.next_cursor)
+            }
+        }));
 
         if mid_cursor.is_some() {
             group.bench_with_input(BenchmarkId::new("cursor_page", total), &total, |b, _| {
@@ -291,11 +326,14 @@ fn bench_list_undated_tasks(c: &mut Criterion) {
                 .iter(|| list_undated_tasks(&pool, &page, None));
         });
 
-        let mid_cursor = rt.block_on(async {
-            let half = PageRequest::new(None, Some((total / 2) as i64)).unwrap();
-            let resp = list_undated_tasks(&pool, &half, None).await.unwrap();
-            resp.next_cursor
-        });
+        let mid_cursor = rt.block_on(walk_to_mid(total, |cur, step| {
+            let pool = &pool;
+            async move {
+                let page = PageRequest::new(cur, Some(step)).unwrap();
+                let resp = list_undated_tasks(pool, &page, None).await.unwrap();
+                (resp.items.len(), resp.next_cursor)
+            }
+        }));
 
         if mid_cursor.is_some() {
             group.bench_with_input(BenchmarkId::new("cursor_page", total), &total, |b, _| {
