@@ -1477,6 +1477,7 @@ async fn purge_block_unlinks_attachment_files() {
         "image/png".into(),
         3,
         file_rel.into(),
+        None,
     )
     .await
     .unwrap();
@@ -3470,6 +3471,7 @@ async fn add_attachment_creates_row() {
         "image/png".into(),
         1024,
         "attachments/photo.png".into(),
+        None,
     )
     .await
     .unwrap();
@@ -3549,6 +3551,7 @@ async fn add_attachment_persists_blake3_content_hash() {
         "application/zip".into(),
         size,
         fs_path.into(),
+        None,
     )
     .await
     .unwrap();
@@ -3617,6 +3620,7 @@ async fn rename_attachment_updates_filename() {
         "image/png".into(),
         16,
         "attachments/photo.png".into(),
+        None,
     )
     .await
     .unwrap();
@@ -3684,6 +3688,7 @@ async fn delete_attachment_removes_row() {
         "application/pdf".into(),
         2048,
         "attachments/doc.pdf".into(),
+        None,
     )
     .await
     .unwrap();
@@ -3762,6 +3767,7 @@ async fn delete_attachment_unlinks_file_and_records_fs_path_in_op_log() {
         "application/pdf".into(),
         64,
         rel_path.into(),
+        None,
     )
     .await
     .unwrap();
@@ -3865,6 +3871,7 @@ async fn delete_attachment_succeeds_when_file_already_missing_on_disk() {
         "application/pdf".into(),
         1,
         rel_path.into(),
+        None,
     )
     .await
     .unwrap();
@@ -3934,6 +3941,7 @@ async fn add_attachment_validates_size_limit() {
         "application/zip".into(),
         over_limit,
         "attachments/big.bin".into(),
+        None,
     )
     .await;
 
@@ -3978,6 +3986,7 @@ async fn add_attachment_validates_mime_type() {
         "application/x-msdownload".into(),
         1024,
         "attachments/virus.exe".into(),
+        None,
     )
     .await;
 
@@ -4035,6 +4044,7 @@ async fn add_attachment_size_mismatch_returns_validation_error() {
         "image/png".into(),
         64, // declared, not the actual on-disk size
         rel_path.into(),
+        None,
     )
     .await;
 
@@ -4109,6 +4119,7 @@ async fn list_attachments_returns_for_block() {
         "image/png".into(),
         100,
         "attachments/a1.png".into(),
+        None,
     )
     .await
     .unwrap();
@@ -4123,6 +4134,7 @@ async fn list_attachments_returns_for_block() {
         "application/pdf".into(),
         200,
         "attachments/a2.pdf".into(),
+        None,
     )
     .await
     .unwrap();
@@ -4138,6 +4150,7 @@ async fn list_attachments_returns_for_block() {
         "text/plain".into(),
         50,
         "attachments/b1.txt".into(),
+        None,
     )
     .await
     .unwrap();
@@ -4233,6 +4246,7 @@ async fn list_attachments_batch_returns_full_lists_per_block() {
         "image/png".into(),
         10,
         "attachments/a1.png".into(),
+        None,
     )
     .await
     .unwrap();
@@ -4246,6 +4260,7 @@ async fn list_attachments_batch_returns_full_lists_per_block() {
         "application/pdf".into(),
         20,
         "attachments/a2.pdf".into(),
+        None,
     )
     .await
     .unwrap();
@@ -4259,6 +4274,7 @@ async fn list_attachments_batch_returns_full_lists_per_block() {
         "text/plain".into(),
         5,
         "attachments/b1.txt".into(),
+        None,
     )
     .await
     .unwrap();
@@ -4391,6 +4407,7 @@ async fn list_attachments_batch_filters_by_block_id() {
         "image/png".into(),
         10,
         "attachments/a1.png".into(),
+        None,
     )
     .await
     .unwrap();
@@ -4404,6 +4421,7 @@ async fn list_attachments_batch_filters_by_block_id() {
         "text/plain".into(),
         5,
         "attachments/b1.txt".into(),
+        None,
     )
     .await
     .unwrap();
@@ -4466,6 +4484,7 @@ async fn list_attachments_batch_attachment_row_shape_matches_list_attachments() 
         "image/png".into(),
         7,
         "attachments/shape.png".into(),
+        None,
     )
     .await
     .unwrap();
@@ -4590,6 +4609,7 @@ async fn add_attachment_returns_io_error_when_file_missing_on_disk() {
         "image/png".into(),
         1024,
         "attachments/ghost.png".into(),
+        None,
     )
     .await;
 
@@ -4667,6 +4687,7 @@ async fn add_attachment_duplicate_fs_path_returns_error_m30() {
         "image/png".into(),
         16,
         rel_path.into(),
+        None,
     )
     .await
     .expect("first add_attachment must succeed");
@@ -4683,6 +4704,7 @@ async fn add_attachment_duplicate_fs_path_returns_error_m30() {
         "image/png".into(),
         16,
         rel_path.into(),
+        None,
     )
     .await;
     assert!(
@@ -4756,6 +4778,7 @@ async fn add_attachment_after_soft_delete_can_reuse_fs_path_m30() {
         "image/png".into(),
         8,
         rel_path.into(),
+        None,
     )
     .await
     .expect("first add_attachment must succeed");
@@ -4783,6 +4806,7 @@ async fn add_attachment_after_soft_delete_can_reuse_fs_path_m30() {
         "image/png".into(),
         8,
         rel_path.into(),
+        None,
     )
     .await
     .expect("re-adding a fs_path after soft-delete must succeed");
@@ -6949,6 +6973,136 @@ async fn add_attachment_with_bytes_writes_persists_and_reads_back() {
     assert_eq!(
         read_back, bytes,
         "read_attachment must return the uploaded bytes"
+    );
+
+    mat.shutdown();
+}
+
+/// #2192: the bytes path hashes the in-memory buffer instead of re-reading
+/// the file from disk. The stored `content_hash` must be byte-identical to
+/// BOTH `blake3::hash(&bytes).to_hex()` (the precomputed hash) AND the hash
+/// the disk-read helper (`read_attachment_file`) produces for the same
+/// bytes — proving the perf shortcut did not change the persisted value or
+/// the content-addressed dedup key.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_attachment_with_bytes_stores_in_memory_hash_matching_disk_2192() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let app_data_dir = _dir.path();
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "hashme".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    let bytes: Vec<u8> = b"hash these exact bytes in memory and off disk".to_vec();
+    let att = add_attachment_with_bytes_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block.id.clone(),
+        "h.bin".into(),
+        "application/zip".into(),
+        bytes.clone(),
+    )
+    .await
+    .unwrap();
+
+    let in_memory_hash = blake3::hash(&bytes).to_hex().to_string();
+    assert_eq!(
+        att.content_hash.as_deref(),
+        Some(in_memory_hash.as_str()),
+        "#2192: stored content_hash must equal blake3(bytes).to_hex()"
+    );
+
+    // The disk-read helper hashes the same bytes it reads back; that hash must
+    // match too (the two paths must be byte-identical).
+    let (_disk_bytes, disk_hash) =
+        crate::sync_files::read_attachment_file(app_data_dir, &att.fs_path).unwrap();
+    assert_eq!(
+        att.content_hash.as_deref(),
+        Some(disk_hash.as_str()),
+        "#2192: in-memory hash must equal the disk-read hash for the same bytes"
+    );
+
+    mat.shutdown();
+}
+
+/// #2192: pasting the SAME bytes twice must content-address-dedup to exactly
+/// one `attachment_blobs` row (the in-memory hash is the dedup key, so the
+/// second paste's hash matches the first and reuses its blob).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_attachment_with_bytes_identical_paste_dedups_to_one_blob_2192() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let app_data_dir = _dir.path();
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "paste".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    let bytes: Vec<u8> = b"clipboard bytes pasted twice".to_vec();
+
+    let first = add_attachment_with_bytes_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block.id.clone(),
+        "p1.bin".into(),
+        "application/zip".into(),
+        bytes.clone(),
+    )
+    .await
+    .expect("first paste succeeds");
+    let second = add_attachment_with_bytes_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block.id.clone(),
+        "p2.bin".into(),
+        "application/zip".into(),
+        bytes.clone(),
+    )
+    .await
+    .expect("second identical paste succeeds (dedup)");
+
+    // Two attachment rows, same content hash, same canonical blob path.
+    assert_ne!(first.id, second.id);
+    assert_eq!(
+        first.content_hash, second.content_hash,
+        "identical bytes must hash identically"
+    );
+    assert_eq!(
+        first.fs_path, second.fs_path,
+        "second paste must be repointed at the first paste's blob file"
+    );
+
+    // Exactly one blob row for the two identical pastes.
+    let blobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachment_blobs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        blobs, 1,
+        "#2192: identical pastes must dedup to one blob row"
     );
 
     mat.shutdown();
