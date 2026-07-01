@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT fs_path AS \"fs_path!\", size_bytes AS \"size_bytes!\", content_hash\n           FROM attachments WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "fs_path!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachments",
+            "name": "fs_path"
+          }
+        }
+      },
+      {
+        "name": "size_bytes!",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "attachments",
+            "name": "size_bytes"
+          }
+        }
+      },
+      {
+        "name": "content_hash",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachments",
+            "name": "content_hash"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "9b000199a34248823cd3988e0649ba92ab73732dd3c7718aec736d942d788040"
+}
