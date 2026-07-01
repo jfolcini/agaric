@@ -10,6 +10,55 @@ import { renderBlock, renderBlockInline } from './RichContentRenderer/marks/bloc
 export { CALLOUT_CONFIG } from './RichContentRenderer/context'
 
 /**
+ * Bounded LRU cache for the pure `parse(markdown)` step.
+ *
+ * `parse` is a pure function of the markdown string alone: the top-level
+ * caller always invokes it with the default `depth = 0`, and the render
+ * `options` (resolve callbacks, `interactive`, `inline`, …) only feed the
+ * downstream RENDER pass — they never touch `parse`. So the produced
+ * `DocNode` is fully determined by the markdown string and safe to memoize on
+ * that key. (Mirrors the single-entry `parseMemoized` in `use-roving-editor`.)
+ *
+ * Backlink / diff / agenda list views re-render on every keystroke or
+ * arrow-key focus change, re-running `parse` for every visible row. This cache
+ * turns those repeat parses of unchanged content into O(1) lookups.
+ *
+ * The render pass only READS the cached `DocNode` (walking `.content` to build
+ * fresh React elements); it never mutates it, so sharing the node across calls
+ * is safe. Recency is refreshed on read (delete + re-set), and the oldest
+ * entry is evicted once the cache is full — `Map` preserves insertion order,
+ * so `keys().next()` yields the oldest.
+ */
+const PARSE_CACHE_MAX = 300
+const parseCache = new Map<string, DocNode>()
+
+function parseCached(markdown: string): DocNode {
+  const hit = parseCache.get(markdown)
+  if (hit !== undefined) {
+    // Refresh recency: re-insert so this key becomes the most recent.
+    parseCache.delete(markdown)
+    parseCache.set(markdown, hit)
+    return hit
+  }
+  const doc = parse(markdown) as DocNode
+  if (parseCache.size >= PARSE_CACHE_MAX) {
+    const oldest = parseCache.keys().next().value
+    if (oldest !== undefined) parseCache.delete(oldest)
+  }
+  parseCache.set(markdown, doc)
+  return doc
+}
+
+/**
+ * Clear the module-level parse cache. Intended for test isolation — tests that
+ * spy on `parse` and assert its call count must flush the cache in `beforeEach`
+ * so a prior test's cached entry doesn't suppress an expected parse.
+ */
+export function clearRichContentParseCache(): void {
+  parseCache.clear()
+}
+
+/**
  * Render markdown content as rich React nodes for the static view.
  * Inline tokens (block_link, tag_ref) become styled/clickable spans.
  *
@@ -40,7 +89,7 @@ export function renderRichContent(
   },
 ): React.ReactNode {
   if (!markdown) return null
-  const doc = parse(markdown) as DocNode
+  const doc = parseCached(markdown)
   if (!doc.content) return null
 
   const inline = options.inline ?? false

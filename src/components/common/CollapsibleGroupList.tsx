@@ -7,11 +7,35 @@
  */
 
 import type React from 'react'
+import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { PageLink } from '@/components/pages/PageLink'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
-import { getPageDisplayName } from '@/lib/page-display'
+import { getPageDisplayName, type PageDisplay } from '@/lib/page-display'
+
+/**
+ * Bounded cache for the per-group `getPageDisplayName(title,
+ * 'leaf-with-breadcrumb')` split. The result is a pure function of the title
+ * string, so memoizing it avoids re-splitting every group header on each
+ * parent re-render (LinkedReferences / UnlinkedReferences re-render on every
+ * arrow-key / focus change). Oldest-first eviction keeps memory bounded;
+ * `Map` preserves insertion order so `keys().next()` yields the oldest entry.
+ */
+const DISPLAY_NAME_CACHE_MAX = 500
+const displayNameCache = new Map<string, PageDisplay>()
+
+function getDisplayNameCached(title: string): PageDisplay {
+  const hit = displayNameCache.get(title)
+  if (hit !== undefined) return hit
+  const display = getPageDisplayName(title, 'leaf-with-breadcrumb')
+  if (displayNameCache.size >= DISPLAY_NAME_CACHE_MAX) {
+    const oldest = displayNameCache.keys().next().value
+    if (oldest !== undefined) displayNameCache.delete(oldest)
+  }
+  displayNameCache.set(title, display)
+  return display
+}
 
 export interface GroupItem {
   page_id: string
@@ -92,7 +116,7 @@ export interface CollapsibleGroupListProps<G extends GroupItem> {
   renderGroupList?: (group: G, title: string) => React.ReactNode
 }
 
-export function CollapsibleGroupList<G extends GroupItem>({
+function CollapsibleGroupListInner<G extends GroupItem>({
   groups,
   expandedGroups,
   onToggleGroup,
@@ -123,7 +147,7 @@ export function CollapsibleGroupList<G extends GroupItem>({
         // mirroring the picker visual treatment (leaf as the primary label,
         // ancestor segments below in a smaller muted line). The `title=""`
         // tooltip preserves the full path on hover.
-        const display = getPageDisplayName(title, 'leaf-with-breadcrumb')
+        const display = getDisplayNameCached(title)
         return (
           <div key={group.page_id} className={groupClassName}>
             {onPageTitleClick ? (
@@ -216,3 +240,15 @@ export function CollapsibleGroupList<G extends GroupItem>({
     </>
   )
 }
+
+/**
+ * Memoized so consumers (LinkedReferences / UnlinkedReferences) re-rendering
+ * on unrelated arrow-key / focus state changes don't re-run the group map when
+ * their props are referentially stable. `memo` erases the generic `<G>`
+ * signature (it types the wrapped component as `ComponentType<Props>` with the
+ * default type parameter), so we re-assert the original generic function type
+ * via `as typeof CollapsibleGroupListInner` to keep call-site inference.
+ */
+export const CollapsibleGroupList = memo(
+  CollapsibleGroupListInner,
+) as typeof CollapsibleGroupListInner

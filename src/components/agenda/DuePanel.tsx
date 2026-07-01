@@ -15,7 +15,7 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Repeat } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DuePanelFilters } from '@/components/agenda/DuePanelFilters'
@@ -36,11 +36,16 @@ import { useDuePanelData } from '@/hooks/useDuePanelData'
 import { useKeyboardNavigableList } from '@/hooks/useKeyboardNavigableList'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { usePriorityLevels } from '@/hooks/usePriorityLevels'
-import { useRichContentCallbacks, useTagClickHandler } from '@/hooks/useRichContentCallbacks'
+import {
+  type RichContentCallbacks,
+  useRichContentCallbacks,
+  useTagClickHandler,
+} from '@/hooks/useRichContentCallbacks'
 import { useToday } from '@/hooks/useToday'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { priorityRank } from '@/lib/priority-levels'
 import { cn } from '@/lib/utils'
+import { useResolveStore } from '@/stores/resolve'
 
 export interface DuePanelProps {
   date: string // YYYY-MM-DD
@@ -60,6 +65,54 @@ export interface DuePanelProps {
 // matches the canonical agenda grouping (`agenda-sort.ts`: DOING > TODO
 // > DONE > CANCELLED > null) and the existing DONE precedent.
 const GROUP_ORDER = ['DOING', 'TODO', 'DONE', 'CANCELLED', null] as const
+
+interface ProjectedEntryContentProps {
+  content: string
+  onTagClick: (id: string) => void
+  callbacks: RichContentCallbacks
+}
+
+/**
+ * Rich-content body of a projected agenda entry. Memoized (#2193) so the
+ * `renderRichContent` → `parse(content)` cost isn't paid for every projected
+ * row each time DuePanel re-renders (arrow-key roving focus flips
+ * `focusedIndex` on the parent on every keypress).
+ *
+ * The parse is wrapped in a `useMemo` keyed on `content` plus the resolve
+ * `version`; the `onTagClick` / resolve callbacks are threaded via refs read
+ * at call-time so a fresh parent closure doesn't bust the memo. Any change to
+ * what the resolve callbacks return bumps `version`, which forces a recompute.
+ */
+function ProjectedEntryContentInner({
+  content,
+  onTagClick,
+  callbacks,
+}: ProjectedEntryContentProps): React.ReactElement {
+  const onTagClickRef = useRef(onTagClick)
+  onTagClickRef.current = onTagClick
+  const callbacksRef = useRef(callbacks)
+  callbacksRef.current = callbacks
+
+  const resolveVersion = useResolveStore((s) => s.version)
+  const rendered = useMemo(
+    () =>
+      renderRichContent(content, {
+        interactive: true,
+        onTagClick: (id) => onTagClickRef.current(id),
+        resolveBlockTitle: (id) => callbacksRef.current.resolveBlockTitle(id),
+        resolveBlockStatus: (id) => callbacksRef.current.resolveBlockStatus(id),
+        resolveTagName: (id) => callbacksRef.current.resolveTagName(id),
+        resolveTagStatus: (id) => callbacksRef.current.resolveTagStatus(id),
+      }),
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- onTagClick/resolve callbacks captured via refs (intentional perf optimization — see comment above); resolveVersion drives recomputation on cache updates
+    [content, resolveVersion],
+  )
+
+  return <>{rendered}</>
+}
+
+const ProjectedEntryContent = memo(ProjectedEntryContentInner)
+ProjectedEntryContent.displayName = 'ProjectedEntryContent'
 
 export function DuePanel({
   date,
@@ -533,13 +586,15 @@ export function DuePanel({
                               className="min-w-0 flex-1 truncate"
                               title={entry.block.content ?? ''}
                             >
-                              {entry.block.content
-                                ? renderRichContent(entry.block.content, {
-                                    interactive: true,
-                                    onTagClick,
-                                    ...callbacks,
-                                  })
-                                : t('duePanel.emptyContent')}
+                              {entry.block.content ? (
+                                <ProjectedEntryContent
+                                  content={entry.block.content}
+                                  onTagClick={onTagClick}
+                                  callbacks={callbacks}
+                                />
+                              ) : (
+                                t('duePanel.emptyContent')
+                              )}
                             </span>
                             {entry.block.priority && (
                               <Badge

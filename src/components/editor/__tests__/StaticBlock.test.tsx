@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { StaticBlock } from '@/components/editor/StaticBlock'
+import { clearRichContentParseCache } from '@/components/RichContentRenderer'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import type { AttachmentRow } from '@/lib/tauri'
 
@@ -146,6 +147,11 @@ class AutoEnterIntersectionObserver {
 describe('StaticBlock', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // #2193: flush the module-level markdown parse LRU so a `DocNode` cached by
+    // an earlier test (real parse) can't be served in place of this test's
+    // `mockedParse.mockReturnValueOnce(...)` — the cache is keyed on the markdown
+    // string and would otherwise bypass the per-test mock.
+    clearRichContentParseCache()
     vi.stubGlobal('IntersectionObserver', AutoEnterIntersectionObserver)
     // Restore default behavior for mocked tauri functions.
     // `getProperty` returns the single row (or
