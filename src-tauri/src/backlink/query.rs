@@ -31,12 +31,11 @@
 //!    and only `filtered_ids` is held in memory (small when filters are
 //!    present; intrinsic for property sort).
 
-use futures_util::future::try_join_all;
 use rustc_hash::{FxHashMap, FxHashSet};
 use sqlx::SqlitePool;
 
 use super::SMALL_IN_LIMIT;
-use super::filters::{CompiledFilter, FilterBind, compile_backlink_filter};
+use super::filters::{CompiledFilter, FilterBind, compile_backlink_filters};
 use super::sort::sort_ids;
 use super::types::*;
 use crate::error::AppError;
@@ -127,33 +126,8 @@ pub async fn eval_backlink_query(
     //    `json_each` membership test. The base-set predicates (target
     //    match, self-exclusion, deleted_at, space) live in the surrounding
     //    queries; the fragment only adds the user filter.
-    let compiled_filter: Option<CompiledFilter> = match filters.as_ref() {
-        Some(filter_list) if !filter_list.is_empty() => {
-            let compiled = try_join_all(
-                filter_list
-                    .iter()
-                    .map(|f| compile_backlink_filter(pool, f, 0)),
-            )
-            .await?;
-            let mut binds = Vec::new();
-            let parts: Vec<String> = compiled
-                .into_iter()
-                .map(|c| {
-                    binds.extend(c.binds);
-                    c.sql
-                })
-                .collect();
-            // Single fragment ⇒ use it directly; multiple ⇒ AND-join in a
-            // parenthesised group so it nests safely under the base WHERE.
-            let sql = if parts.len() == 1 {
-                parts.into_iter().next().unwrap()
-            } else {
-                format!("({})", parts.join(" AND "))
-            };
-            Some(CompiledFilter { sql, binds })
-        }
-        _ => None,
-    };
+    let compiled_filter: Option<CompiledFilter> =
+        compile_backlink_filters(pool, filters.as_deref()).await?;
 
     // Resolve sort (default = Created Asc).
     let sort = sort.unwrap_or(BacklinkSort::Created { dir: SortDir::Asc });

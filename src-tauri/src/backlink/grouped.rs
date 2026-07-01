@@ -1,10 +1,9 @@
 //! Grouped backlink queries and unlinked reference detection.
 
-use futures_util::future::try_join_all;
 use rustc_hash::{FxHashMap, FxHashSet};
 use sqlx::SqlitePool;
 
-use super::filters::resolve_filter_with_candidates;
+use super::filters::{CompiledFilter, FilterBind, compile_backlink_filters};
 use super::query::{fetch_block_rows_by_ids, resolve_root_pages};
 use super::sort::sort_ids;
 use super::types::*;
@@ -140,35 +139,18 @@ pub async fn eval_backlink_query_grouped(
         });
     }
 
-    // 2. Resolve filters (if any) — same shape as `eval_backlink_query`.
-    //    No candidate set is fed in; the base predicates (target match,
-    //    self-exclusion, same-page exclusion, space) are re-applied at
-    //    the page-id materialise step below.
-    let filter_json: Option<String> = match filters.as_ref() {
-        Some(filter_list) if !filter_list.is_empty() => {
-            let futures = filter_list
-                .iter()
-                .map(|f| resolve_filter_with_candidates(pool, f, 0, None));
-            let results = try_join_all(futures).await?;
-            let mut iter = results.into_iter();
-            let mut acc = iter.next().unwrap_or_default();
-            for set in iter {
-                acc.retain(|id| set.contains(id));
-            }
-            if acc.is_empty() {
-                return Ok(GroupedBacklinkResponse {
-                    groups: vec![],
-                    next_cursor: None,
-                    has_more: false,
-                    total_count,
-                    filtered_count: 0,
-                    truncated: false,
-                });
-            }
-            Some(serde_json::to_string(&acc.iter().collect::<Vec<_>>())?)
-        }
-        _ => None,
-    };
+    // 2. Compile filters (if any) into a single correlated SQL WHERE
+    //    fragment (#2195) — the SAME `compile_backlink_filter` pushdown the
+    //    flat path uses, replacing the old whole-vault Rust materialisation.
+    //    The fragment is correlated on the outer source-block alias `b`
+    //    (which every grouped query below joins as `blocks b ON b.id =
+    //    bl.source_id`), so SQLite intersects it with the base predicates
+    //    row-by-row — no `resolve_filter_with_candidates` + `json_each(?)`
+    //    id-set round-trip. An empty/absent filter compiles to `None`; an
+    //    empty-set leaf compiles to `1=0`, which the `filtered_count == 0`
+    //    short-circuit below handles.
+    let compiled_filter: Option<CompiledFilter> =
+        compile_backlink_filters(pool, filters.as_deref()).await?;
 
     // #2042 — the OLD path materialised the ENTIRE post-filter source-id
     // set into a Rust `FxHashSet`, resolved root pages for ALL of them,
@@ -192,26 +174,43 @@ pub async fn eval_backlink_query_grouped(
     //     bl.source_id` everywhere (count + member fetch) for parity with
     //     the old set semantics and defensive safety. With no filter this
     //     equals `total_count`; we still run the query for simplicity.
-    // dynamic-sql: runtime builder mirroring the grandfathered `total_count`
-    // query above — optional `json_each(?3)` filter intersection, all values
-    // bound, no string interpolation (#2042).
-    let filtered_count_i64: i64 = sqlx::query_scalar::<_, i64>(
+    // dynamic-sql (#2195): the compiled filter fragment (`compiled_filter`)
+    // is spliced inline with bare `?` placeholders; every user value
+    // (block_id, space_id, and the fragment binds) is applied via `.bind()`
+    // in declaration order so the positional binds interleave correctly —
+    // the base-query `?` come first, then the fragment `?` in fragment
+    // order. An absent filter emits no extra clause (identical to the old
+    // `?3 IS NULL` no-op branch).
+    let filter_clause = match compiled_filter.as_ref() {
+        Some(cf) => format!(" AND ({})", cf.sql),
+        None => String::new(),
+    };
+    let filtered_count_sql = format!(
         "SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
          JOIN blocks b ON b.id = bl.source_id \
-         JOIN blocks tgt ON tgt.id = ?1 \
-         WHERE bl.target_id = ?1 \
-           AND bl.source_id != ?1 \
+         JOIN blocks tgt ON tgt.id = ? \
+         WHERE bl.target_id = ? \
+           AND bl.source_id != ? \
            AND b.deleted_at IS NULL \
            AND b.page_id IS NOT NULL \
            AND b.page_id != COALESCE(tgt.page_id, tgt.id) \
-           AND (?2 IS NULL OR b.space_id = ?2) \
-           AND (?3 IS NULL OR b.id IN (SELECT value FROM json_each(?3)))",
-    )
-    .bind(block_id)
-    .bind(space_id)
-    .bind(filter_json.as_deref())
-    .fetch_one(pool)
-    .await?;
+           AND (? IS NULL OR b.space_id = ?){filter_clause}"
+    );
+    let mut fc_q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(filtered_count_sql))
+        .bind(block_id) // tgt.id = ?
+        .bind(block_id) // bl.target_id = ?
+        .bind(block_id) // bl.source_id != ?
+        .bind(space_id) // ? IS NULL
+        .bind(space_id); // b.space_id = ?
+    if let Some(cf) = compiled_filter.as_ref() {
+        for b in &cf.binds {
+            fc_q = match b {
+                FilterBind::Text(s) => fc_q.bind(s.clone()),
+                FilterBind::Num(n) => fc_q.bind(*n),
+            };
+        }
+    }
+    let filtered_count_i64: i64 = fc_q.fetch_one(pool).await?;
     let filtered_count: usize = usize::try_from(filtered_count_i64).unwrap_or(0);
 
     if filtered_count == 0 {
@@ -262,12 +261,14 @@ pub async fn eval_backlink_query_grouped(
         None => (None, None),
     };
     let keyset_clause = if cursor_pid.is_some() {
-        // `?4` = cursor title (may be NULL), `?5` = cursor page_id.
+        // Bare `?` placeholders in appearance order (#2195): cursor_title,
+        // cursor_title, cursor_title, cursor_title, cursor_pid,
+        // cursor_title, cursor_pid.
         " AND ( \
-            ( (p.content IS NULL) AND (?4 IS NOT NULL) ) \
-            OR ( (p.content IS NOT NULL) AND (?4 IS NOT NULL) \
-                 AND ( p.content > ?4 OR (p.content = ?4 AND b.page_id > ?5) ) ) \
-            OR ( (p.content IS NULL) AND (?4 IS NULL) AND b.page_id > ?5 ) \
+            ( (p.content IS NULL) AND (? IS NOT NULL) ) \
+            OR ( (p.content IS NOT NULL) AND (? IS NOT NULL) \
+                 AND ( p.content > ? OR (p.content = ? AND b.page_id > ?) ) ) \
+            OR ( (p.content IS NULL) AND (? IS NULL) AND b.page_id > ?) \
           )"
     } else {
         ""
@@ -278,17 +279,16 @@ pub async fn eval_backlink_query_grouped(
          FROM block_links bl \
          JOIN blocks b ON b.id = bl.source_id \
          JOIN blocks p ON p.id = b.page_id \
-         JOIN blocks tgt ON tgt.id = ?1 \
-         WHERE bl.target_id = ?1 \
-           AND bl.source_id != ?1 \
+         JOIN blocks tgt ON tgt.id = ? \
+         WHERE bl.target_id = ? \
+           AND bl.source_id != ? \
            AND b.deleted_at IS NULL \
            AND b.page_id IS NOT NULL \
            AND b.page_id != COALESCE(tgt.page_id, tgt.id) \
-           AND (?2 IS NULL OR b.space_id = ?2) \
-           AND (?3 IS NULL OR b.id IN (SELECT value FROM json_each(?3))){keyset_clause} \
+           AND (? IS NULL OR b.space_id = ?){filter_clause}{keyset_clause} \
          GROUP BY b.page_id \
          ORDER BY (p.content IS NULL) ASC, p.content ASC, b.page_id ASC \
-         LIMIT ?6"
+         LIMIT ?"
     );
 
     #[derive(sqlx::FromRow)]
@@ -298,20 +298,35 @@ pub async fn eval_backlink_query_grouped(
         cnt: i64,
     }
 
-    // dynamic-sql: the keyset WHERE clause (`keyset_clause`) is conditionally
-    // spliced at runtime, so this is a genuine dynamic query; every user value
-    // (block_id, space_id, filter_json, cursor title/pid, limit) is still bound
-    // via `?N` placeholders — only the static clause text is interpolated (#2042).
-    let group_rows: Vec<GroupRow> =
-        sqlx::query_as::<_, GroupRow>(sqlx::AssertSqlSafe(group_sql.as_str()))
-            .bind(block_id)
-            .bind(space_id)
-            .bind(filter_json.as_deref())
-            .bind(cursor_title)
-            .bind(cursor_pid)
-            .bind(fetch_limit_i64)
-            .fetch_all(pool)
-            .await?;
+    // dynamic-sql (#2195): bare `?` placeholders bound left-to-right so the
+    // compiled filter fragment's binds interleave between the space clause
+    // and the keyset clause. Order: block_id ×3, space_id ×2, fragment
+    // binds, cursor binds (only when a cursor is present), then the limit.
+    let mut gq = sqlx::query_as::<_, GroupRow>(sqlx::AssertSqlSafe(group_sql.as_str()))
+        .bind(block_id) // tgt.id = ?
+        .bind(block_id) // bl.target_id = ?
+        .bind(block_id) // bl.source_id != ?
+        .bind(space_id) // ? IS NULL
+        .bind(space_id); // b.space_id = ?
+    if let Some(cf) = compiled_filter.as_ref() {
+        for b in &cf.binds {
+            gq = match b {
+                FilterBind::Text(s) => gq.bind(s.clone()),
+                FilterBind::Num(n) => gq.bind(*n),
+            };
+        }
+    }
+    if cursor_pid.is_some() {
+        gq = gq
+            .bind(cursor_title) // (? IS NOT NULL)
+            .bind(cursor_title) // (? IS NOT NULL)
+            .bind(cursor_title) // p.content > ?
+            .bind(cursor_title) // p.content = ?
+            .bind(cursor_pid) // b.page_id > ?
+            .bind(cursor_title) // (? IS NULL)
+            .bind(cursor_pid); // b.page_id > ?
+    }
+    let group_rows: Vec<GroupRow> = gq.bind(fetch_limit_i64).fetch_all(pool).await?;
 
     let has_more = group_rows.len() > limit_usize;
     let visible_groups: &[GroupRow] = if has_more {
@@ -336,33 +351,47 @@ pub async fn eval_backlink_query_grouped(
     //     `json_each(?)` membership test is the simplest bound — no need for
     //     the positional/json_each dual-branch the larger helpers use.
     //     `SELECT DISTINCT bl.source_id, b.page_id` over the SAME predicates
-    //     + filter_json, bucketed by `page_id`. `cnt` from (b) already gives
+    //     + compiled filter fragment, bucketed by `page_id`. `cnt` from (b)
+    //     already gives
     //     the TRUE untruncated group size (so `truncated` stays accurate);
     //     this fetch only materialises the member slice we will cap.
     let visible_pids: Vec<&str> = visible_groups.iter().map(|g| g.page_id.as_str()).collect();
     let visible_pids_json = serde_json::to_string(&visible_pids)?;
-    // dynamic-sql: runtime builder; the visible page-id set is passed as a
-    // bound `json_each(?4)` array (not interpolated), same filter shape as the
-    // grandfathered queries in this fn (#2042).
-    let member_rows: Vec<(String, String)> = sqlx::query_as::<_, (String, String)>(
+    // dynamic-sql (#2195): bare `?` placeholders bound left-to-right — the
+    // compiled filter fragment's binds interleave between the space clause
+    // and the visible-page-id membership clause. Order: block_id ×3,
+    // space_id ×2, fragment binds, then the visible-pids JSON array.
+    let member_filter_clause = match compiled_filter.as_ref() {
+        Some(cf) => format!(" AND ({})", cf.sql),
+        None => String::new(),
+    };
+    let member_sql = format!(
         "SELECT DISTINCT bl.source_id, b.page_id FROM block_links bl \
          JOIN blocks b ON b.id = bl.source_id \
-         JOIN blocks tgt ON tgt.id = ?1 \
-         WHERE bl.target_id = ?1 \
-           AND bl.source_id != ?1 \
+         JOIN blocks tgt ON tgt.id = ? \
+         WHERE bl.target_id = ? \
+           AND bl.source_id != ? \
            AND b.deleted_at IS NULL \
            AND b.page_id IS NOT NULL \
            AND b.page_id != COALESCE(tgt.page_id, tgt.id) \
-           AND (?2 IS NULL OR b.space_id = ?2) \
-           AND (?3 IS NULL OR b.id IN (SELECT value FROM json_each(?3))) \
-           AND b.page_id IN (SELECT value FROM json_each(?4))",
-    )
-    .bind(block_id)
-    .bind(space_id)
-    .bind(filter_json.as_deref())
-    .bind(&visible_pids_json)
-    .fetch_all(pool)
-    .await?;
+           AND (? IS NULL OR b.space_id = ?){member_filter_clause} \
+           AND b.page_id IN (SELECT value FROM json_each(?))"
+    );
+    let mut mq = sqlx::query_as::<_, (String, String)>(sqlx::AssertSqlSafe(member_sql.as_str()))
+        .bind(block_id) // tgt.id = ?
+        .bind(block_id) // bl.target_id = ?
+        .bind(block_id) // bl.source_id != ?
+        .bind(space_id) // ? IS NULL
+        .bind(space_id); // b.space_id = ?
+    if let Some(cf) = compiled_filter.as_ref() {
+        for b in &cf.binds {
+            mq = match b {
+                FilterBind::Text(s) => mq.bind(s.clone()),
+                FilterBind::Num(n) => mq.bind(*n),
+            };
+        }
+    }
+    let member_rows: Vec<(String, String)> = mq.bind(&visible_pids_json).fetch_all(pool).await?;
 
     // Bucket member ids by page_id (bounded by #visible groups).
     let mut members_by_page: FxHashMap<&str, Vec<String>> = FxHashMap::default();
@@ -669,26 +698,39 @@ pub async fn eval_unlinked_references(
         .count();
 
     // 6. Apply filters (AND semantics at top level) — mirrors
-    //    eval_backlink_query_grouped step #2. Filters are resolved
-    //    concurrently and intersected with the FTS match set.
-    let filtered_matching: FxHashSet<String> = if let Some(ref filter_list) = filters {
-        if filter_list.is_empty() {
-            matching_ids
-        } else {
-            // I-Search-9: scope leaf filters to the FTS-match set
-            // via the candidate-aware resolver.
-            let futures = filter_list
-                .iter()
-                .map(|f| resolve_filter_with_candidates(pool, f, 0, Some(&matching_ids)));
-            let results = try_join_all(futures).await?;
-            let mut result = matching_ids;
-            for set in results {
-                result.retain(|id| set.contains(id));
+    //    eval_backlink_query_grouped step #2. Filters compile to a single
+    //    correlated SQL fragment (#2195) via `compile_backlink_filters` (the
+    //    SAME pushdown the flat path uses) instead of resolving each leaf to
+    //    a whole-vault Rust set. The fragment is correlated on `b`; we
+    //    intersect it with the FTS match set by embedding `matching_ids` as
+    //    a `json_each(?)` membership test and letting SQLite evaluate the
+    //    fragment row-by-row over that set. An absent/empty filter leaves the
+    //    FTS set untouched; an empty-set leaf compiles to `1=0`, yielding an
+    //    empty intersection.
+    let compiled_filter: Option<CompiledFilter> =
+        compile_backlink_filters(pool, filters.as_deref()).await?;
+    let filtered_matching: FxHashSet<String> = match compiled_filter.as_ref() {
+        None => matching_ids,
+        Some(cf) => {
+            let matching_json = serde_json::to_string(&matching_ids.iter().collect::<Vec<_>>())?;
+            // Bare `?` placeholders bound left-to-right: the FTS-match set
+            // (json array) first, then the fragment binds in fragment order.
+            let filter_sql = format!(
+                "SELECT b.id FROM blocks b \
+                 WHERE b.id IN (SELECT value FROM json_each(?)) \
+                   AND ({})",
+                cf.sql,
+            );
+            let mut fq = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(filter_sql))
+                .bind(&matching_json);
+            for b in &cf.binds {
+                fq = match b {
+                    FilterBind::Text(s) => fq.bind(s.clone()),
+                    FilterBind::Num(n) => fq.bind(*n),
+                };
             }
-            result
+            fq.fetch_all(pool).await?.into_iter().collect()
         }
-    } else {
-        matching_ids
     };
 
     if filtered_matching.is_empty() {

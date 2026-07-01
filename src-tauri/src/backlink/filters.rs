@@ -1047,6 +1047,53 @@ pub(crate) fn compile_backlink_filter<'a>(
     })
 }
 
+/// Compile a top-level list of `BacklinkFilter`s (AND semantics) into a
+/// single optional [`CompiledFilter`], matching the flat path in
+/// `backlink::query::eval_backlink_query` byte-for-byte.
+///
+/// Each top-level filter carries AND semantics, so each compiles
+/// independently via [`compile_backlink_filter`] (correlated on the outer
+/// source-block alias `b`) and the fragments are AND-joined. A single
+/// fragment is used directly; multiple fragments are wrapped in a
+/// parenthesised `(a AND b …)` group so the result nests safely under a
+/// surrounding `WHERE … AND (<fragment>)`. Returns `None` when the list is
+/// absent or empty (no filter constraint).
+///
+/// #2195 — this is the shared entry point that routes the GROUPED and
+/// unlinked-references surfaces through the same SQL-pushdown compiler the
+/// flat path uses, replacing the whole-vault Rust materialisation that
+/// `resolve_filter_with_candidates` performed for negative/broad leaves.
+pub(crate) async fn compile_backlink_filters(
+    pool: &SqlitePool,
+    filters: Option<&[BacklinkFilter]>,
+) -> Result<Option<CompiledFilter>, AppError> {
+    match filters {
+        Some(filter_list) if !filter_list.is_empty() => {
+            let compiled = try_join_all(
+                filter_list
+                    .iter()
+                    .map(|f| compile_backlink_filter(pool, f, 0)),
+            )
+            .await?;
+            let mut binds = Vec::new();
+            let parts: Vec<String> = compiled
+                .into_iter()
+                .map(|c| {
+                    binds.extend(c.binds);
+                    c.sql
+                })
+                .collect();
+            let sql = if parts.len() == 1 {
+                parts.into_iter().next().unwrap()
+            } else {
+                format!("({})", parts.join(" AND "))
+            };
+            Ok(Some(CompiledFilter { sql, binds }))
+        }
+        _ => Ok(None),
+    }
+}
+
 /// Recursive-CTE walk that returns every descendant (including the seed
 /// roots themselves) of a list of `page_id`s, filtering out deleted
 /// rows and bounding recursion depth at 100 (AGENTS.md
