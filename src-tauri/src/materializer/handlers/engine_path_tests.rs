@@ -83,7 +83,7 @@ async fn apply_op_tx_create_block_engine_path() {
         .expect("append op");
 
     let mut tx = pool.begin().await.expect("begin");
-    super::apply_op_tx(&mut tx, &record)
+    super::apply_op_tx(&mut tx, &record, None)
         .await
         .expect("apply_op_tx");
     tx.commit().await.expect("commit");
@@ -151,7 +151,7 @@ async fn apply_op_tx_edit_block_engine_path() {
         .await
         .expect("append create");
     let mut tx = pool.begin().await.expect("begin1");
-    super::apply_op_tx(&mut tx, &create_record)
+    super::apply_op_tx(&mut tx, &create_record, None)
         .await
         .expect("apply create");
     tx.commit().await.expect("commit1");
@@ -189,7 +189,7 @@ async fn apply_op_tx_edit_block_engine_path() {
         .await
         .expect("append edit");
     let mut tx = pool.begin().await.expect("begin2");
-    super::apply_op_tx(&mut tx, &edit_record)
+    super::apply_op_tx(&mut tx, &edit_record, None)
         .await
         .expect("apply edit");
     tx.commit().await.expect("commit2");
@@ -242,7 +242,7 @@ async fn seed_page_via_loro(pool: &SqlitePool) {
         .await
         .expect("append create page");
     let mut tx = pool.begin().await.expect("begin");
-    super::apply_op_tx(&mut tx, &record)
+    super::apply_op_tx(&mut tx, &record, None)
         .await
         .expect("apply create page");
     tx.commit().await.expect("commit");
@@ -262,7 +262,7 @@ async fn seed_block_via_loro(pool: &SqlitePool) {
         .await
         .expect("append create");
     let mut tx = pool.begin().await.expect("begin");
-    super::apply_op_tx(&mut tx, &record)
+    super::apply_op_tx(&mut tx, &record, None)
         .await
         .expect("apply create");
     tx.commit().await.expect("commit");
@@ -311,7 +311,7 @@ async fn apply_op_tx_set_property_engine_path() {
         .await
         .expect("append");
     let mut tx = pool.begin().await.expect("begin");
-    super::apply_op_tx(&mut tx, &record)
+    super::apply_op_tx(&mut tx, &record, None)
         .await
         .expect("apply_op_tx");
     tx.commit().await.expect("commit");
@@ -376,7 +376,7 @@ async fn apply_op_tx_delete_block_engine_path() {
             .await
             .expect("append child");
         let mut tx = pool.begin().await.expect("begin child");
-        super::apply_op_tx(&mut tx, &rec)
+        super::apply_op_tx(&mut tx, &rec, None)
             .await
             .expect("apply child create");
         tx.commit().await.expect("commit child");
@@ -390,7 +390,7 @@ async fn apply_op_tx_delete_block_engine_path() {
         .expect("append");
     let record_created_at = record.created_at;
     let mut tx = pool.begin().await.expect("begin");
-    super::apply_op_tx(&mut tx, &record)
+    super::apply_op_tx(&mut tx, &record, None)
         .await
         .expect("apply_op_tx");
     tx.commit().await.expect("commit");
@@ -448,7 +448,7 @@ async fn apply_op_tx_move_block_engine_path() {
         .await
         .expect("append");
     let mut tx = pool.begin().await.expect("begin");
-    super::apply_op_tx(&mut tx, &record)
+    super::apply_op_tx(&mut tx, &record, None)
         .await
         .expect("apply_op_tx");
     tx.commit().await.expect("commit");
@@ -511,7 +511,7 @@ async fn apply_op_tx_restore_block_engine_path() {
         .expect("append delete");
     let deleted_at_ref = delete_record.created_at;
     let mut tx = pool.begin().await.expect("begin1");
-    super::apply_op_tx(&mut tx, &delete_record)
+    super::apply_op_tx(&mut tx, &delete_record, None)
         .await
         .expect("apply delete");
     tx.commit().await.expect("commit1");
@@ -533,7 +533,7 @@ async fn apply_op_tx_restore_block_engine_path() {
         .await
         .expect("append restore");
     let mut tx = pool.begin().await.expect("begin2");
-    super::apply_op_tx(&mut tx, &restore_record)
+    super::apply_op_tx(&mut tx, &restore_record, None)
         .await
         .expect("apply restore");
     tx.commit().await.expect("commit2");
@@ -578,7 +578,7 @@ async fn apply_op_tx_purge_block_engine_path() {
         .await
         .expect("append");
     let mut tx = pool.begin().await.expect("begin");
-    super::apply_op_tx(&mut tx, &record)
+    super::apply_op_tx(&mut tx, &record, None)
         .await
         .expect("apply_op_tx");
     tx.commit().await.expect("commit");
@@ -632,7 +632,7 @@ async fn apply_op_tx_add_tag_engine_path() {
         .await
         .expect("append create tag");
     let mut tx = pool.begin().await.expect("begin tag");
-    super::apply_op_tx(&mut tx, &rec)
+    super::apply_op_tx(&mut tx, &rec, None)
         .await
         .expect("apply create tag");
     tx.commit().await.expect("commit tag");
@@ -646,7 +646,7 @@ async fn apply_op_tx_add_tag_engine_path() {
         .await
         .expect("append");
     let mut tx = pool.begin().await.expect("begin");
-    super::apply_op_tx(&mut tx, &record)
+    super::apply_op_tx(&mut tx, &record, None)
         .await
         .expect("apply_op_tx");
     tx.commit().await.expect("commit");
@@ -700,7 +700,7 @@ async fn apply_op_tx_remove_tag_engine_path() {
         .await
         .expect("append create tag");
     let mut tx = pool.begin().await.expect("begin tag");
-    super::apply_op_tx(&mut tx, &rec)
+    super::apply_op_tx(&mut tx, &rec, None)
         .await
         .expect("apply create tag");
     tx.commit().await.expect("commit tag");
@@ -713,7 +713,9 @@ async fn apply_op_tx_remove_tag_engine_path() {
         .await
         .expect("append add");
     let mut tx = pool.begin().await.expect("begin add");
-    super::apply_op_tx(&mut tx, &rec).await.expect("apply add");
+    super::apply_op_tx(&mut tx, &rec, None)
+        .await
+        .expect("apply add");
     tx.commit().await.expect("commit add");
 
     // Now remove.
@@ -725,7 +727,7 @@ async fn apply_op_tx_remove_tag_engine_path() {
         .await
         .expect("append");
     let mut tx = pool.begin().await.expect("begin");
-    super::apply_op_tx(&mut tx, &record)
+    super::apply_op_tx(&mut tx, &record, None)
         .await
         .expect("apply_op_tx");
     tx.commit().await.expect("commit");
@@ -779,7 +781,9 @@ async fn apply_op_tx_delete_property_engine_path() {
         .await
         .expect("append set");
     let mut tx = pool.begin().await.expect("begin set");
-    super::apply_op_tx(&mut tx, &rec).await.expect("apply set");
+    super::apply_op_tx(&mut tx, &rec, None)
+        .await
+        .expect("apply set");
     tx.commit().await.expect("commit set");
 
     // Sanity precondition: SQL has the row.
@@ -801,7 +805,7 @@ async fn apply_op_tx_delete_property_engine_path() {
         .await
         .expect("append");
     let mut tx = pool.begin().await.expect("begin");
-    super::apply_op_tx(&mut tx, &record)
+    super::apply_op_tx(&mut tx, &record, None)
         .await
         .expect("apply_op_tx");
     tx.commit().await.expect("commit");

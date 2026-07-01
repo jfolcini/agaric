@@ -57,6 +57,28 @@ use super::*;
 /// migration 0070 re-backfills existing rows with this corrected shape,
 /// which is what makes `Orphan` / `HasNoInboundLinks` / `MostLinked` /
 /// the `↗N` badge agree with the live backlink panel.
+/// #2200 test-only invocation counter for
+/// [`recompute_pages_cache_counts_for_pages`]. Lets the import-scaling tests
+/// assert the deferred flush recomputes ONCE per chunk instead of once per op.
+// The spy module lives next to the recompute fn it instruments (not at EOF);
+// the items-after-test-module organization lint is not meaningful for a small
+// test-only invocation counter.
+#[allow(clippy::items_after_test_module)]
+#[cfg(test)]
+pub(crate) mod recompute_call_spy {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    pub(crate) fn bump() {
+        CALLS.fetch_add(1, Ordering::Relaxed);
+    }
+    pub(crate) fn reset() {
+        CALLS.store(0, Ordering::Relaxed);
+    }
+    pub(crate) fn count() -> usize {
+        CALLS.load(Ordering::Relaxed)
+    }
+}
+
 pub(crate) async fn recompute_pages_cache_counts_for_pages(
     conn: &mut sqlx::SqliteConnection,
     page_ids: &[String],
@@ -64,6 +86,11 @@ pub(crate) async fn recompute_pages_cache_counts_for_pages(
     if page_ids.is_empty() {
         return Ok(());
     }
+    // #2200 test spy: count real recompute invocations so the import-scaling
+    // tests can assert the deferred flush recomputes ONCE per chunk rather than
+    // once per imported CreateBlock op.
+    #[cfg(test)]
+    recompute_call_spy::bump();
     // B-C2 (issue #108): dedupe the touched set and apply both counts
     // in one statement, replacing the per-page loop. The correlated
     // subqueries reference the outer UPDATE's `pages_cache.page_id`
@@ -267,9 +294,20 @@ async fn collect_cohort_affected_pages(
     Ok(())
 }
 
+/// `chunk`: #2200 Item 2. When `Some`, the terminal
+/// `recompute_pages_cache_counts_for_pages` (a full descendant `COUNT(*)` over
+/// each affected page) is DEFERRED — the affected page ids are handed to the
+/// accumulator and recomputed ONCE at end-of-chunk over the distinct set,
+/// instead of once per op. The per-op affected-page RESOLUTION below (with its
+/// side effects: page-create `pages_cache` row seeding, in-tx
+/// `reindex_block_links`) always runs regardless of `chunk`. When `None` the
+/// recompute runs inline, unchanged — and because the recompute is a pure
+/// function of committed `blocks`/`block_links` state, deferring it produces
+/// identical final counts.
 pub(super) async fn maintain_pages_cache_counts_after_op(
     conn: &mut sqlx::SqliteConnection,
     pre_state: &PreOpState,
+    chunk: Option<&mut super::ChunkAccumulator>,
 ) -> Result<(), AppError> {
     use std::collections::HashSet;
 
@@ -462,8 +500,15 @@ pub(super) async fn maintain_pages_cache_counts_after_op(
     if affected.is_empty() {
         return Ok(());
     }
-    let v: Vec<String> = affected.into_iter().collect();
-    recompute_pages_cache_counts_for_pages(conn, &v).await?;
+    // #2200 Item 2: on the chunk path, hand the affected pages to the
+    // accumulator (deduped across the whole chunk) and let the end-of-chunk
+    // flush recompute them ONCE; off the chunk path, recompute inline now.
+    if let Some(acc) = chunk {
+        acc.extend_affected_pages(affected);
+    } else {
+        let v: Vec<String> = affected.into_iter().collect();
+        recompute_pages_cache_counts_for_pages(conn, &v).await?;
+    }
     Ok(())
 }
 

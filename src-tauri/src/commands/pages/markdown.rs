@@ -1345,26 +1345,72 @@ pub async fn import_markdown_with_progress(
     //   * more than one (ambiguous)                   → leave plain text.
     // A name we cannot resolve or create is simply absent from the map, so the
     // rewrite leaves its original `[[Name]]` token untouched — nothing is lost.
-    let mut resolved_page_links: HashMap<String, String> = HashMap::new();
-    for name in collect_inbound_page_link_names(&parse_output.blocks) {
-        // Count same-space live pages carrying this exact title. The importing
-        // page (created above, in this tx) is visible here, so a self-reference
-        // `[[<this page title>]]` resolves to it.
-        let matches: Vec<String> = sqlx::query_scalar!(
-            r#"SELECT id FROM blocks
-               WHERE content = ?
-                 AND block_type = 'page'
+    //
+    // #2200 — snapshot the resolution matches for ALL distinct link names in ONE
+    // query instead of a per-name `SELECT … LIMIT 2` (an N+1 over distinct link
+    // targets). Mirrors the TAG pre-pass (#1990) snapshot idiom below and the
+    // batched frontmatter-declaration lookup above (`json_each(?1)`). The loop
+    // only CREATES pages (never mutates existing page content/titles), so a
+    // single pre-loop snapshot stays valid; within-pass creations are inserted
+    // straight into `resolved_page_links`, and since collected names are DISTINCT
+    // a created page never needs to be re-observed by a later name.
+    //
+    // Semantics preserved BYTE-FOR-BYTE vs the old per-name query:
+    //   * Match is BINARY/case-SENSITIVE (`content = ?` — NO normalization,
+    //     unlike the case-folding tag pre-pass). The snapshot therefore keys on
+    //     the EXACT title bytes.
+    //   * SAME-SPACE-SCOPED (`space_id = ?1`) — a colliding title in another
+    //     space must NOT match. The importing page (created above, in this tx)
+    //     is visible here, so a self-reference `[[<this page title>]]` resolves
+    //     to it.
+    //   * The old `LIMIT 2 … ORDER BY id ASC` only distinguished "unique match"
+    //     (take that id) from "ambiguous" (2+). We reproduce that exactly by
+    //     keeping AT MOST the two smallest ids per title (`ORDER BY id ASC`,
+    //     capped in Rust): `[single]` → link, `[]` → create, `_` (≥2) →
+    //     ambiguous, identical to before.
+    let link_names = collect_inbound_page_link_names(&parse_output.blocks);
+    let link_matches: HashMap<String, Vec<String>> = if link_names.is_empty() {
+        HashMap::new()
+    } else {
+        let names_json = serde_json::to_string(&link_names)?;
+        // ORDER BY id ASC so the per-title truncation below keeps the SAME two
+        // smallest-id rows the old per-name `LIMIT 2` did (the second only
+        // signals "ambiguous"). Restricting `content IN (…names…)` bounds the
+        // scan to the distinct link targets, not the whole space.
+        let rows = sqlx::query!(
+            r#"SELECT id AS "id!", content AS "content!"
+               FROM blocks
+               WHERE block_type = 'page'
                  AND deleted_at IS NULL
-                 AND space_id = ?
-               ORDER BY id ASC
-               LIMIT 2"#,
-            name,
+                 AND space_id = ?1
+                 AND content IN (SELECT value FROM json_each(?2))
+               ORDER BY id ASC"#,
             space_id,
+            names_json,
         )
         .fetch_all(&mut **tx)
         .await?;
+        let mut map: HashMap<String, Vec<String>> = HashMap::new();
+        for r in rows {
+            let ids = map.entry(r.content).or_default();
+            // Cap at 2: the old `LIMIT 2` never returned more, and only the
+            // count (1 vs ≥2) drives the branch. Keeping the first two (smallest
+            // ids, from `ORDER BY id ASC`) preserves the unique-match winner.
+            if ids.len() < 2 {
+                ids.push(r.id);
+            }
+        }
+        map
+    };
 
-        match matches.as_slice() {
+    let mut resolved_page_links: HashMap<String, String> = HashMap::new();
+    for name in link_names {
+        // Resolve against the in-memory snapshot instead of a per-name query.
+        // A name with no snapshot entry has zero same-space matches (the `[]`
+        // create-if-missing branch).
+        let matches: &[String] = link_matches.get(&name).map_or(&[], Vec::as_slice);
+
+        match matches {
             [single] => {
                 resolved_page_links.insert(name, single.clone());
             }

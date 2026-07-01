@@ -48,10 +48,22 @@ use super::*;
 /// fallback exists so that materializer / recovery / sync_daemon
 /// tests can thread synthetic bare-block ops through `apply_op`
 /// without a registered space.
+/// `chunk`: #2200 Item 1. When `Some`, the caller is importing an N-block
+/// chunk and wants the whole-sibling-group `reproject_dense_positions` DEFERRED
+/// to a single end-of-chunk flush. Instead of reprojecting here, we record the
+/// authoritative post-insert sibling ordering for this block's parent group in
+/// the accumulator (overwriting any earlier entry for the same parent — the
+/// latest ordering is the most complete). The end-of-chunk flush reprojects
+/// each touched parent ONCE, which yields IDENTICAL final ranks: the engine's
+/// `children_ordered_block_ids` returns the full post-insert order on every
+/// call, the ordering key is insertion-stable (#400), and dense ranking is a
+/// pure function of that final order. When `None` (single-op / LOCAL command
+/// path) we reproject inline immediately, unchanged.
 pub(crate) async fn apply_create_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
     p: &CreateBlockPayload,
+    chunk: Option<&mut super::ChunkAccumulator>,
 ) -> Result<(), AppError> {
     use crate::loro::engine::BlockSnapshot;
     use crate::loro::projection;
@@ -122,7 +134,21 @@ pub(crate) async fn apply_create_block_via_loro(
     // Project the engine's post-apply state into SQL, then reproject the whole
     // sibling group to dense 1-based positions matching the tree order (#400).
     projection::project_create_block_to_sql(conn, &snapshot).await?;
-    projection::reproject_dense_positions(conn, &siblings).await?;
+    // #2200 Item 1: `siblings` is the FULL authoritative ordering of this
+    // block's parent group after the insert. On the chunk path, record it in
+    // the accumulator (keyed by parent) and defer the reprojection to the
+    // end-of-chunk flush — the last create into a given parent carries the
+    // complete final order, so reprojecting it once yields identical final
+    // ranks. Off the chunk path, reproject inline immediately (unchanged).
+    match chunk {
+        Some(acc) => {
+            let parent_key = p.parent_id.as_ref().map(|id| id.as_str().to_owned());
+            acc.record_reproject(parent_key, siblings);
+        }
+        None => {
+            projection::reproject_dense_positions(conn, &siblings).await?;
+        }
+    }
 
     // Tag inheritance — derived tag rows for the new block.
     let parent_str = p.parent_id.as_ref().map(crate::ulid::BlockId::as_str);

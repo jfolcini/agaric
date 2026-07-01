@@ -341,7 +341,11 @@ pub(crate) async fn create_block_in_tx(
     // projection, which writes the provisional rank — so the row is never
     // skipped and we never crash. This mirrors the engine-absent handling the
     // sync `ApplyOp` path already relies on.
-    crate::materializer::apply_create_block_via_loro(&mut *tx, device_id, &create_payload).await?;
+    // #2200: the LOCAL create path is a "chunk of one" — pass `None` so the
+    // dense-position reprojection runs inline here, exactly as before (deferral
+    // is a batch-import-only optimisation).
+    crate::materializer::apply_create_block_via_loro(&mut *tx, device_id, &create_payload, None)
+        .await?;
 
     // #533 / #1324: `project_create_block_to_sql` INSERTs `space_id = NULL` and
     // only stamps `page_id` for PAGE blocks (a deferred `SetBlockPageId` task

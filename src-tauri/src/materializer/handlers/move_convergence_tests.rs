@@ -103,7 +103,7 @@ async fn create_via_loro(
         .await
         .expect("append create");
     let mut tx = pool.begin().await.expect("begin create");
-    super::apply_op_tx(&mut tx, &record)
+    super::apply_op_tx(&mut tx, &record, None)
         .await
         .expect("apply create");
     tx.commit().await.expect("commit create");
@@ -201,7 +201,7 @@ async fn run_engine_arm() -> (Option<String>, i64) {
         .await
         .expect("append move");
     let mut tx = pool.begin().await.expect("begin move");
-    super::apply_op_tx(&mut tx, &record)
+    super::apply_op_tx(&mut tx, &record, None)
         .await
         .expect("apply move");
     tx.commit().await.expect("commit move");
@@ -387,7 +387,7 @@ async fn run_engine_cycle_arm() -> (Option<String>, Option<String>) {
         .await
         .expect("append cycle move");
     let mut tx = pool.begin().await.expect("begin cycle move");
-    super::apply_op_tx(&mut tx, &record)
+    super::apply_op_tx(&mut tx, &record, None)
         .await
         .expect("engine cycle move returns Ok (deterministic skip, not error)");
     tx.commit().await.expect("commit cycle move");

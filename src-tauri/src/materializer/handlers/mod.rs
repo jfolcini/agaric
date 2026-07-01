@@ -121,6 +121,8 @@ mod delete_restore_convergence_tests;
 #[cfg(test)]
 mod engine_path_tests;
 #[cfg(test)]
+mod import_scaling_tests;
+#[cfg(test)]
 mod move_convergence_tests;
 #[cfg(test)]
 mod move_sql_only_cycle_tests;

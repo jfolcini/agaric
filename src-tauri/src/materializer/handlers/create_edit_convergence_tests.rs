@@ -154,7 +154,7 @@ async fn create_via_loro(
         .await
         .expect("append create");
     let mut tx = pool.begin().await.expect("begin create");
-    super::apply_op_tx(&mut tx, &record)
+    super::apply_op_tx(&mut tx, &record, None)
         .await
         .expect("apply create");
     tx.commit().await.expect("commit create");
@@ -267,7 +267,7 @@ async fn run_engine_arm() -> (Vec<ShapeRow>, Option<i64>, Option<i64>, Option<i6
         .await
         .expect("append edit");
     let mut tx = pool.begin().await.expect("begin edit");
-    super::apply_op_tx(&mut tx, &edit_record)
+    super::apply_op_tx(&mut tx, &edit_record, None)
         .await
         .expect("apply edit");
     tx.commit().await.expect("commit edit");

@@ -5077,6 +5077,131 @@ async fn import_ambiguous_wikilink_left_plain_1446() {
     mat.shutdown();
 }
 
+/// #2200 — the wiki-link pre-pass now snapshots resolution matches for ALL
+/// distinct link names in ONE query (no per-link N+1). This exercises a single
+/// import citing every branch at once — a UNIQUE match, an AMBIGUOUS
+/// (duplicate-title) name, and an UNRESOLVED (missing → create) name — plus a
+/// CASE-SENSITIVITY probe, asserting each resolves BYTE-IDENTICALLY to the
+/// pre-batch per-name behavior.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_wikilink_batch_resolution_preserves_semantics_2200() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    // A single unique-match target.
+    const UNIQUE: &str = "01AAAAAAAAAAAAAAAAAA2200UQ";
+    insert_block(&pool, UNIQUE, "page", "Uniq Page", None, Some(1)).await;
+    assign_to_space(&pool, UNIQUE, TEST_SPACE_ID).await;
+    // Two pages sharing a title → ambiguous.
+    const AMB1: &str = "01AAAAAAAAAAAAAAAAA2200AM1";
+    const AMB2: &str = "01AAAAAAAAAAAAAAAAA2200AM2";
+    insert_block(&pool, AMB1, "page", "Amb Page", None, Some(1)).await;
+    insert_block(&pool, AMB2, "page", "Amb Page", None, Some(1)).await;
+    assign_to_space(&pool, AMB1, TEST_SPACE_ID).await;
+    assign_to_space(&pool, AMB2, TEST_SPACE_ID).await;
+    // A case-variant of the unique title, present with the EXACT case only.
+    // `[[uniq page]]` (lowercase) must NOT match `Uniq Page` — resolution is
+    // binary/case-sensitive — so it is treated as missing and CREATED.
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = "- unique [[Uniq Page]]\n- ambiguous [[Amb Page]]\n- missing [[Fresh Page]]\n- casevariant [[uniq page]]";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md.into(),
+        Some("Notes.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    // UNIQUE → rewritten to the existing ULID.
+    let unique_content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND content LIKE 'unique%'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        unique_content,
+        format!("unique [[{UNIQUE}]]"),
+        "unique wiki-link must resolve to the existing target ULID"
+    );
+
+    // AMBIGUOUS → left literal + warns.
+    let amb_content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND content LIKE 'ambiguous%'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        amb_content, "ambiguous [[Amb Page]]",
+        "ambiguous wiki-link must stay literal text"
+    );
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("Amb Page") && w.contains("multiple")),
+        "ambiguous wiki-link must surface a warning; got {:?}",
+        result.warnings
+    );
+
+    // UNRESOLVED (missing) → new page created in the import's space + rewritten.
+    let fresh_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Fresh Page' AND space_id = ?",
+    )
+    .bind(TEST_SPACE_ID)
+    .fetch_one(&pool)
+    .await
+    .expect("missing wiki-link target must be created as a page");
+    let missing_content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND content LIKE 'missing%'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        missing_content,
+        format!("missing [[{fresh_id}]]"),
+        "missing wiki-link must create + rewrite to the new page ULID"
+    );
+
+    // CASE-SENSITIVITY — `[[uniq page]]` (lowercase) does NOT match `Uniq Page`,
+    // so a DISTINCT lowercase page is created and the link points at it, never
+    // at the existing mixed-case `Uniq Page`.
+    let lower_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'uniq page' AND space_id = ?",
+    )
+    .bind(TEST_SPACE_ID)
+    .fetch_one(&pool)
+    .await
+    .expect("case-variant title must be created as its own page (binary match)");
+    assert_ne!(
+        lower_id, UNIQUE,
+        "lowercase [[uniq page]] must NOT collapse onto mixed-case Uniq Page"
+    );
+    let case_content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND content LIKE 'casevariant%'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        case_content,
+        format!("casevariant [[{lower_id}]]"),
+        "case-variant wiki-link must resolve to its own freshly-created page"
+    );
+
+    mat.shutdown();
+}
+
 /// #1446 Part B — a folder-relative import path maps to the page's namespace
 /// title (`Project/Backend/API.md` → page title `Project/Backend/API`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

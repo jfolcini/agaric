@@ -122,13 +122,37 @@ pub async fn project_create_block_to_sql(
 /// During op-log replay/recovery this fires once per replayed op (O(M) single
 /// statements now); a bulk-replay fast-path that defers reprojection to the end
 /// is a future option (#400, review).
+/// #2200 test-only invocation counter for [`reproject_dense_positions`]. Lets
+/// the import-scaling tests assert the deferred flush reprojects each touched
+/// parent ONCE per chunk instead of once per imported block.
+#[cfg(test)]
+pub(crate) mod reproject_call_spy {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    pub(crate) fn bump() {
+        CALLS.fetch_add(1, Ordering::Relaxed);
+    }
+    pub(crate) fn reset() {
+        CALLS.store(0, Ordering::Relaxed);
+    }
+    pub(crate) fn count() -> usize {
+        CALLS.load(Ordering::Relaxed)
+    }
+}
+
 pub async fn reproject_dense_positions(
     conn: &mut SqliteConnection,
     ordered_block_ids: &[String],
 ) -> Result<(), AppError> {
+    // #2200 test spy: count how many times the reprojection actually runs so
+    // the import-scaling tests can assert it fires ONCE per touched parent at
+    // end-of-chunk (not once per imported block). Bumped even for the empty
+    // short-circuit is undesirable, so count only real invocations below.
     if ordered_block_ids.is_empty() {
         return Ok(());
     }
+    #[cfg(test)]
+    reproject_call_spy::bump();
     // Build the `[{"id","rank"}, …]` value list once. rank is 1-based,
     // matching the pre-#400 convention; `saturating_add` mirrors the old
     // per-row overflow guard.
