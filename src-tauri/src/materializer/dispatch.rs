@@ -167,6 +167,37 @@ const CONTENT_LIFECYCLE_REBUILD_TASKS: [MaterializeTask; 8] = [
     MaterializeTask::RebuildPageLinkCache,
 ];
 
+/// #2265: the derived-cache rebuild set for an INBOUND sync import —
+/// [`FULL_CACHE_REBUILD_TASKS`] minus `RebuildTagInheritanceCache`.
+///
+/// `apply_remote` → `import_and_project` refreshes `block_tag_inherited`
+/// synchronously, scoped to exactly the subtrees whose tag edges or tree
+/// position changed (`TagScope`, #2036), and itself falls back to the global
+/// `rebuild_all` when the import diff cannot be resolved incrementally. The
+/// cache is therefore already correct by the time the inbound fan-out is
+/// enqueued; re-running the full-vault DELETE + recursive-CTE recompute here
+/// (deltas arrive at typing cadence) would turn every remote keystroke back
+/// into an O(vault) writer-lock rebuild and defeat the scoping. Everything
+/// else in the full set is RETAINED — the per-block projection touches only
+/// base tables, so every derived cache (tag/page rows + counts, agenda,
+/// `page_id` — which is how a moved subtree's descendants get their new
+/// `page_id` — block-tag refs, page links) still needs its rebuild.
+///
+/// Exact-membership invariant pinned by
+/// `inbound_sync_set_is_full_minus_tag_inheritance`.
+const INBOUND_SYNC_CACHE_REBUILD_TASKS: [MaterializeTask; 8] = [
+    MaterializeTask::RebuildTagsCache,
+    MaterializeTask::RebuildPagesCache,
+    // Must stay AFTER `RebuildPagesCache` (count UPDATE only touches
+    // existing `pages_cache` rows) — same ordering note as the full set.
+    MaterializeTask::RebuildPagesCacheCounts,
+    MaterializeTask::RebuildAgendaCache,
+    MaterializeTask::RebuildProjectedAgendaCache,
+    MaterializeTask::RebuildPageIds,
+    MaterializeTask::RebuildBlockTagRefsCache,
+    MaterializeTask::RebuildPageLinkCache,
+];
+
 /// #2037 pt2: pick the lifecycle (delete / restore / purge) rebuild set
 /// for a block of the given `block_type_hint`.
 ///
@@ -376,19 +407,33 @@ impl Materializer {
     /// caches until the next local mutation or snapshot restore. This enqueues
     /// a global rebuild of each via the background queue — eventually
     /// consistent + deduped — mirroring the fan-out a local block-structure
-    /// mutation triggers ([`FULL_CACHE_REBUILD_TASKS`]) plus a full FTS
-    /// reindex.
+    /// mutation triggers ([`INBOUND_SYNC_CACHE_REBUILD_TASKS`], the lifecycle
+    /// set minus the tag-inheritance rebuild — see below) plus targeted FTS
+    /// reindexing.
     ///
-    /// `RebuildTagInheritanceCache` is part of [`FULL_CACHE_REBUILD_TASKS`]
-    /// and is enqueued here even though `apply_remote` already rebuilt
-    /// `block_tag_inherited` synchronously. That synchronous rebuild runs
-    /// directly against the pool, so the queue's dedup pass does NOT collapse
-    /// it (dedup only spans queue-side tasks within one drain) — `rebuild_all`
-    /// simply runs once more. This is harmless: it is a fully idempotent
-    /// DELETE-all + recursive-CTE recompute. Keeping the canonical
-    /// [`FULL_CACHE_REBUILD_TASKS`] set whole (rather than hand-excluding the
-    /// tag-inheritance task) means a future change to that set reaches the sync
-    /// path automatically.
+    /// ## #2265 — no `RebuildTagInheritanceCache` in this fan-out
+    ///
+    /// `RebuildTagInheritanceCache` (a full-vault DELETE + recursive-CTE
+    /// recompute under the `BEGIN IMMEDIATE` writer lock) is deliberately
+    /// EXCLUDED ([`INBOUND_SYNC_CACHE_REBUILD_TASKS`]): `apply_remote` →
+    /// `import_and_project` already refreshed `block_tag_inherited`
+    /// synchronously before this fan-out runs, scoped to exactly the
+    /// subtrees whose tag edges or tree position changed (`TagScope`,
+    /// #2036) and falling back to the global `rebuild_all` itself when the
+    /// import diff could not be resolved incrementally. Re-enqueueing the
+    /// global rebuild here (deltas arrive at typing cadence) would defeat
+    /// that scoping on every inbound message. Local delete / restore /
+    /// purge lifecycle paths keep it via [`FULL_CACHE_REBUILD_TASKS`].
+    ///
+    /// ## #2264 — complete-no-op short-circuit
+    ///
+    /// A redelivered / echoed payload that changed nothing (`changed_blocks`
+    /// AND `purged_blocks` both empty) projected nothing to SQL, so every
+    /// cache is already consistent — return without enqueueing anything.
+    /// A purge-only import (`changed_blocks` empty, `purged_blocks` not)
+    /// MUST still fan out: Pass D removed rows from the base tables, and the
+    /// aggregate caches (`tags_cache.usage_count`, `pages_cache` counts,
+    /// page links, …) only converge through these rebuilds.
     ///
     /// Non-fatal by convention at the call site: a queue-closed / serialization
     /// error must not unwind the sync session (the per-block projection has
@@ -409,8 +454,13 @@ impl Materializer {
     pub async fn enqueue_inbound_sync_rebuilds(
         &self,
         changed_blocks: &[crate::ulid::BlockId],
+        purged_blocks: &[crate::ulid::BlockId],
     ) -> Result<(), AppError> {
-        for task in FULL_CACHE_REBUILD_TASKS {
+        // #2264: nothing changed, nothing purged → nothing to rebuild.
+        if changed_blocks.is_empty() && purged_blocks.is_empty() {
+            return Ok(());
+        }
+        for task in INBOUND_SYNC_CACHE_REBUILD_TASKS {
             self.try_enqueue_background(task.clone())?;
         }
         // FTS is not in `FULL_CACHE_REBUILD_TASKS` (local edits reindex
@@ -1331,6 +1381,35 @@ mod tests {
         assert!(
             narrowed.iter().any(|l| l == "RebuildTagsCache"),
             "RebuildTagsCache MUST be retained (usage_count aggregates content refs)",
+        );
+    }
+
+    /// #2265 — the inbound-sync fan-out is FULL minus only
+    /// `RebuildTagInheritanceCache` (already refreshed synchronously — and
+    /// scoped — by `import_and_project`'s `TagScope` handling), preserving
+    /// order. `RebuildPageIds` in particular MUST stay: it is how a moved
+    /// subtree's descendants converge on their new `page_id` after an
+    /// inbound structural move.
+    #[test]
+    fn inbound_sync_set_is_full_minus_tag_inheritance() {
+        let full: Vec<String> = full_rebuild_labels();
+        let narrowed: Vec<String> = INBOUND_SYNC_CACHE_REBUILD_TASKS
+            .iter()
+            .map(task_label)
+            .collect();
+        let expected: Vec<String> = full
+            .iter()
+            .filter(|l| l.as_str() != "RebuildTagInheritanceCache")
+            .cloned()
+            .collect();
+        assert_eq!(
+            narrowed, expected,
+            "INBOUND_SYNC_CACHE_REBUILD_TASKS must be FULL minus only the \
+             tag-inheritance rebuild, preserving order",
+        );
+        assert!(
+            narrowed.iter().any(|l| l == "RebuildPageIds"),
+            "RebuildPageIds MUST be retained (inbound move → descendants' page_id)",
         );
     }
 

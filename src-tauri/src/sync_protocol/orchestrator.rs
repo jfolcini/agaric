@@ -533,6 +533,7 @@ impl SyncOrchestrator {
                         match outcome {
                             ApplyOutcome::Imported {
                                 changed_blocks,
+                                purged_blocks,
                                 changed_page_ids,
                                 ..
                             } => {
@@ -560,20 +561,24 @@ impl SyncOrchestrator {
                                 // #4: `apply_remote` wrote the
                                 // per-block SQL projection (core columns,
                                 // properties incl. reserved hot-path columns,
-                                // direct tag edges) and rebuilt
-                                // `block_tag_inherited`, but NOT the read-path
-                                // derived caches / FTS. Enqueue the global
-                                // rebuild fan-out via the materializer
-                                // (background, deduped). #421: FTS is driven
-                                // from `changed_blocks` (targeted per-block
-                                // reindex) instead of a full O(vault) rebuild.
+                                // direct tag edges) and refreshed
+                                // `block_tag_inherited` (scoped, #2036/#2265),
+                                // but NOT the read-path derived caches / FTS.
+                                // Enqueue the rebuild fan-out via the
+                                // materializer (background, deduped). #421:
+                                // FTS is driven from `changed_blocks`
+                                // (targeted per-block reindex) instead of a
+                                // full O(vault) rebuild. #2264: the fan-out
+                                // itself short-circuits when the import was a
+                                // complete no-op (both sets empty) — see
+                                // `enqueue_inbound_sync_rebuilds`.
                                 // Non-fatal: a queue-closed error must not
                                 // unwind the sync session — the projection
                                 // already committed — so log + continue
                                 // (mirrors `dispatch_background_or_warn`).
                                 if let Err(e) = self
                                     .materializer
-                                    .enqueue_inbound_sync_rebuilds(&changed_blocks)
+                                    .enqueue_inbound_sync_rebuilds(&changed_blocks, &purged_blocks)
                                     .await
                                 {
                                     tracing::warn!(

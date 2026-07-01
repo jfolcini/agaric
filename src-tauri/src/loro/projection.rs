@@ -845,9 +845,11 @@ pub async fn project_remove_tag_to_sql(
 ///   (`block_tags`, `block_properties`, `block_links`, `page_aliases`,
 ///   `*_cache`, …) and reset the un-listed columns (`deleted_at`,
 ///   `todo_state`, `priority`, `due_date`, `scheduled_date`, `page_id`)
-///   to their defaults. Because [`import_with_changed_blocks`] returns
-///   *every* block in the space on each import, a single inbound sync
-///   would wipe the whole space's derived/soft-delete state. The
+///   to their defaults. The changed set [`import_with_changed_blocks`]
+///   returns can span *every* block in the space (snapshot import /
+///   brute-force fallback — #2036 bounds it to the delta only for
+///   recognised incremental shapes), so a single inbound sync could wipe
+///   the whole space's derived/soft-delete state. The
 ///   conflict-update touches only the core columns and leaves the
 ///   derived and soft-delete columns intact.
 ///
@@ -1201,6 +1203,23 @@ pub async fn reproject_block_properties_from_engine(
 /// `tag_ids`, so the stale SQL edge is swept by the up-front DELETE and
 /// never re-inserted.
 ///
+/// ## #2266 — skip-unchanged guard + single batched INSERT
+///
+/// Two shapes bound the cost per changed block:
+///
+/// * **Skip-unchanged.** The block's current SQL edge set is read first
+///   (one indexed SELECT); when it already equals the engine set the
+///   DELETE + re-insert is skipped entirely — the common case for a block
+///   that reached the changed set through a content / property / position
+///   edit rather than a tag op. (The comparison uses the raw engine list,
+///   so a dangling engine tag id — see FK safety below — keeps the sets
+///   unequal and re-runs the replace; that is deliberate, since the
+///   dangling target may have arrived by the next import.)
+/// * **One `json_each` INSERT.** The re-insert is a single
+///   `INSERT … SELECT FROM json_each(?)` statement over the whole tag
+///   list (mirroring [`reproject_dense_positions`]) instead of one
+///   round-trip per tag.
+///
 /// ## FK safety (dangling / cross-space tag ids)
 ///
 /// `block_tags.tag_id` has an FK to `blocks(id)` (the tag block).
@@ -1221,27 +1240,53 @@ pub async fn reproject_block_tags_from_engine(
     block_id: &crate::ulid::BlockId,
     tag_ids: &[String],
 ) -> Result<(), AppError> {
+    let block_id_str = block_id.as_str();
+
+    // #2266 skip-unchanged guard: compare the current SQL edge set against
+    // the engine set (both as sets — `block_tags` rows are PK-unique, and
+    // the HashSet dedups any repeated engine id) and return before touching
+    // the write path when they already agree.
+    // dynamic-sql: pre-read of the current edge set for the #2266 set-equality skip;
+    // runtime form because block_tags is compared as a set before any write.
+    let existing: Vec<String> =
+        sqlx::query_scalar("SELECT tag_id FROM block_tags WHERE block_id = ?")
+            .bind(block_id_str)
+            .fetch_all(&mut *conn)
+            .await?;
+    let desired: std::collections::HashSet<&str> = tag_ids.iter().map(String::as_str).collect();
+    if existing.len() == desired.len() && existing.iter().all(|t| desired.contains(t.as_str())) {
+        return Ok(());
+    }
+
     // Authoritative replace: clear all existing edges first so remote
     // removals (absent from `tag_ids`) are swept and never re-inserted.
-    let block_id_str = block_id.as_str();
     sqlx::query!("DELETE FROM block_tags WHERE block_id = ?", block_id_str)
         .execute(&mut *conn)
         .await?;
 
-    for tag_id in tag_ids {
-        // FK-safe + idempotent: only insert when the tag block exists (see
-        // the "FK safety" doc above); `INSERT OR IGNORE` keeps re-adds a
-        // no-op like the local `add_tag_inner` path.
-        sqlx::query!(
-            "INSERT OR IGNORE INTO block_tags (block_id, tag_id) \
-             SELECT ?, ? WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
-            block_id_str,
-            tag_id,
-            tag_id,
-        )
-        .execute(&mut *conn)
-        .await?;
+    if tag_ids.is_empty() {
+        return Ok(());
     }
+
+    // #2266: one `json_each`-driven statement for the whole tag list
+    // (mirrors `reproject_dense_positions`) instead of a round-trip per
+    // tag. FK-safe + idempotent per row: the `EXISTS` guard drops a
+    // dangling/cross-space tag id (see the "FK safety" doc above — plain
+    // `INSERT OR IGNORE` would still FK-abort the inbound-sync tx) and
+    // `OR IGNORE` keeps duplicate engine ids a no-op like the local
+    // `add_tag_inner` path.
+    let payload = serde_json::Value::from(tag_ids).to_string();
+    // dynamic-sql: batched json_each re-insert (#2266), mirrors reproject_dense_positions;
+    // runtime form because the tag list arrives as a JSON payload parameter.
+    sqlx::query(
+        "INSERT OR IGNORE INTO block_tags (block_id, tag_id) \
+         SELECT ?1, je.value FROM json_each(?2) AS je \
+         WHERE EXISTS (SELECT 1 FROM blocks WHERE id = je.value)",
+    )
+    .bind(block_id_str)
+    .bind(&payload)
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 
@@ -3650,6 +3695,108 @@ mod tests {
             ids,
             vec![BLOCK_B.to_string()],
             "dangling tag id dropped; the valid edge is still projected"
+        );
+    }
+
+    /// #2266: re-projecting an UNCHANGED edge set must skip the
+    /// DELETE + re-insert entirely. Observable via `block_tags` rowids
+    /// (implicit-rowid STRICT table): a delete + re-insert mints fresh
+    /// rowids, the skip path preserves them. Set semantics — a reordered
+    /// engine list is still "unchanged".
+    #[tokio::test]
+    async fn reproject_tags_unchanged_set_skips_delete_2266() {
+        let (pool, _dir) = fresh_pool().await;
+        seed_block_and_tag_blocks(&pool).await;
+
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_tags_from_engine(
+            &mut conn,
+            &bid,
+            &[BLOCK_B.to_string(), TAG_C.to_string()],
+        )
+        .await
+        .expect("first reproject");
+        drop(conn);
+
+        let rowids_before: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT rowid, tag_id FROM block_tags WHERE block_id = ? ORDER BY tag_id",
+        )
+        .bind(BLOCK_A)
+        .fetch_all(&pool)
+        .await
+        .expect("fetch rowids before");
+        assert_eq!(rowids_before.len(), 2, "two edges projected");
+
+        // Same set, reversed order — must be treated as unchanged.
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_tags_from_engine(
+            &mut conn,
+            &bid,
+            &[TAG_C.to_string(), BLOCK_B.to_string()],
+        )
+        .await
+        .expect("second reproject (unchanged set)");
+        drop(conn);
+
+        let rowids_after: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT rowid, tag_id FROM block_tags WHERE block_id = ? ORDER BY tag_id",
+        )
+        .bind(BLOCK_A)
+        .fetch_all(&pool)
+        .await
+        .expect("fetch rowids after");
+        assert_eq!(
+            rowids_after, rowids_before,
+            "unchanged edge set must not be deleted + re-inserted \
+             (rowids must be preserved by the skip guard)"
+        );
+    }
+
+    /// #2266: a duplicated engine tag id collapses to one row (the batched
+    /// `INSERT OR IGNORE` mirrors the old per-row loop), and the
+    /// skip-unchanged comparison dedups too — a later re-projection of the
+    /// same duplicated list takes the skip path rather than looping forever
+    /// on a phantom size mismatch.
+    #[tokio::test]
+    async fn reproject_tags_duplicate_engine_id_collapses_to_one_row_2266() {
+        let (pool, _dir) = fresh_pool().await;
+        seed_block_and_tag_blocks(&pool).await;
+
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let dup = vec![BLOCK_B.to_string(), BLOCK_B.to_string(), TAG_C.to_string()];
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_tags_from_engine(&mut conn, &bid, &dup)
+            .await
+            .expect("reproject with duplicate id");
+        drop(conn);
+
+        let rowids_before: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT rowid, tag_id FROM block_tags WHERE block_id = ? ORDER BY tag_id",
+        )
+        .bind(BLOCK_A)
+        .fetch_all(&pool)
+        .await
+        .expect("fetch rows");
+        let ids: Vec<&str> = rowids_before.iter().map(|r| r.1.as_str()).collect();
+        assert_eq!(ids, vec![BLOCK_B, TAG_C], "duplicate collapses to one row");
+
+        // Re-projecting the identical duplicated list is a no-op skip.
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_tags_from_engine(&mut conn, &bid, &dup)
+            .await
+            .expect("re-reproject duplicate list");
+        drop(conn);
+        let rowids_after: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT rowid, tag_id FROM block_tags WHERE block_id = ? ORDER BY tag_id",
+        )
+        .bind(BLOCK_A)
+        .fetch_all(&pool)
+        .await
+        .expect("fetch rows after");
+        assert_eq!(
+            rowids_after, rowids_before,
+            "identical duplicated list must take the skip path"
         );
     }
 
