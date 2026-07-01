@@ -25,6 +25,22 @@ use super::sanitizer::sanitize_fts_query;
 ///
 /// The same row may appear in both partitions (a page-typed row is in
 /// `pages` AND in `blocks`); the palette merges by `page_id`.
+/// P4 (#346 / #2200 Tier-2) — DB-side cap on the `content` prefix the
+/// palette partition scans ship per row. The palette renders the
+/// highlighted match from `snippet()`; `content` is only the plain-text
+/// fallback rendered when a row has no snippet (see
+/// `src/components/palette/SearchModeGroups.tsx`), and that fallback is
+/// displayed with a single-line CSS `truncate` clip. Full block bodies
+/// (up to ~200 rows per keystroke across both partitions) are therefore
+/// never needed on the wire — a bounded prefix is more than the UI can
+/// ever show.
+///
+/// 512 codepoints mirrors the MCP `search` tool's `SEARCH_SNIPPET_CAP`
+/// (a deliberately generous, char-boundary-safe cap) so the two content
+/// truncations stay consistent. `substr` counts codepoints on a TEXT
+/// column, so the cut never splits a multi-byte character.
+const PALETTE_CONTENT_PREVIEW_CAP: usize = 512;
+
 pub(crate) struct FtsPartitionedScan {
     /// Page-only partition (`block_type = 'page'`) in rank order,
     /// capped at the caller's `page_limit`.
@@ -144,9 +160,12 @@ pub(crate) async fn search_fts_partitioned(
         Some("page"), // page-only pre-filter at SQL
         metadata,
         with_snippet,
-        // P4 (#346) — the partitioned (palette) path always returns full
-        // content; only the MCP cursor path opts into DB-side truncation.
-        None,
+        // P4 (#346 / #2200) — cap `content` to a preview-length prefix at
+        // the DB. The highlight comes from `snippet()`; `content` is only
+        // the no-snippet fallback the palette clips to one line, so a
+        // bounded prefix is all the UI can show. Ranking/order/row-count
+        // and the `snippet()` highlight are untouched.
+        Some(PALETTE_CONTENT_PREVIEW_CAP),
         // Clone the cancel token so both partition scans
         // observe the same signal. `CancellationToken: Clone` is a
         // cheap watch::Receiver refcount bump.
@@ -167,8 +186,10 @@ pub(crate) async fn search_fts_partitioned(
         None, // unrestricted
         metadata,
         with_snippet,
-        // P4 (#346) — see the pages partition above; full content here too.
-        None,
+        // P4 (#346 / #2200) — same preview-length cap as the pages
+        // partition above; the blocks partition ships far more rows, so it
+        // benefits most from not shipping full bodies per keystroke.
+        Some(PALETTE_CONTENT_PREVIEW_CAP),
         cancel,
     );
     let (pages_rows, blocks_rows) = tokio::try_join!(pages_future, blocks_future)?;
