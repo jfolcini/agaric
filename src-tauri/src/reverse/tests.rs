@@ -1524,18 +1524,16 @@ async fn snapshot_attachments(pool: &SqlitePool) -> Vec<AttachmentRow> {
     .collect()
 }
 
-/// I-Lifecycle-3 — strict round-trip parity for `create_block`.
+/// I-Lifecycle-3 — round-trip contract for `create_block`.
 ///
 /// The pre-existing `reverse_create_block_produces_delete_block` test
 /// only checks that `compute_reverse` returns the `DeleteBlock`
-/// variant for the same `block_id`. It does not verify that applying
-/// the reverse op restores the database to the pre-original state.
-/// This test extends the contract: snapshot `blocks` empty → apply
-/// `CreateBlock` → snapshot post-original → apply `compute_reverse(...)`
-/// → snapshot post-reverse → assert post-reverse equals the empty
-/// pre-state.
+/// variant for the same `block_id`. This test extends the contract to
+/// the materialized state: apply `CreateBlock` → apply
+/// `compute_reverse(...)` → assert the resulting `blocks` state.
 ///
-/// **CURRENTLY FAILS — known design divergence (not a code bug).**
+/// **Strict identity round-trip is a known design divergence (not a
+/// code bug), and this test pins the divergent behavior.**
 ///
 /// `compute_reverse(create_block)` returns `DeleteBlock`, and the
 /// materializer's `delete_block` arm is a **soft-delete** (sets
@@ -1549,18 +1547,19 @@ async fn snapshot_attachments(pool: &SqlitePool) -> Vec<AttachmentRow> {
 /// op-log convergence (sync replays must observe a deterministic
 /// sequence; a hard delete would lose the create→delete history).
 ///
-/// This is a documented design choice, not a regression to fix in
-/// I-Lifecycle-3 scope. `#[ignore]` mirrors the I-Search-5 pattern
-/// (see `tag_query/resolve/tests.rs`): the failing test is preserved
-/// so the divergence is greppable and self-documenting, and so the
-/// next maintainer revisiting undo semantics has a concrete oracle
-/// to test against.
+/// This test therefore asserts the tombstone shape instead of
+/// emptiness. If it ever fails because `blocks` came back EMPTY, the
+/// undo semantics changed to a hard-delete round-trip — revisit the
+/// op-log convergence rationale above before accepting that change.
+///
+/// (Historical note: this was previously an `#[ignore]`d,
+/// deliberately-failing oracle. The nightly deep-checks lane runs
+/// `cargo nextest run --run-ignored=only` for its perf gates, so a
+/// never-passing ignored test poisoned every nightly run; pinning the
+/// documented divergence keeps the oracle greppable AND every lane
+/// green.)
 #[tokio::test]
-#[ignore = "I-Lifecycle-3: strict round-trip cannot hold for create_block — \
-    reverse is DeleteBlock (soft-delete) which leaves a tombstone in `blocks`; \
-    a true identity round-trip would require PurgeBlock which is intentionally NonReversible. \
-    Test preserved as an oracle for any future change to undo semantics."]
-async fn create_block_apply_then_reverse_round_trip_i_lifecycle_3() {
+async fn create_block_apply_then_reverse_leaves_tombstone_i_lifecycle_3() {
     use crate::materializer::Materializer;
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -1592,8 +1591,21 @@ async fn create_block_apply_then_reverse_round_trip_i_lifecycle_3() {
 
     let post_reverse = snapshot_blocks(&pool).await;
     assert_eq!(
-        post_reverse, pre_state,
-        "post-reverse `blocks` must equal pre-original (empty); divergence: {post_reverse:?}"
+        post_reverse.len(),
+        1,
+        "reverse of create_block must soft-delete (tombstone), not purge; got: {post_reverse:?}"
+    );
+    let tombstone = &post_reverse[0];
+    assert_eq!(tombstone.id, BlockId::test_id("BLK_RT_CB").to_string());
+    assert_eq!(
+        tombstone.deleted_at,
+        Some(1_736_942_460_000),
+        "tombstone must carry the reverse op's created_at as deleted_at"
+    );
+    assert_eq!(
+        tombstone.content.as_deref(),
+        Some("round-trip create"),
+        "soft-delete must preserve content for op-log convergence"
     );
 }
 
