@@ -759,7 +759,12 @@ fn invalidations_for_op(
                 }
             }
             tasks.push(MaterializeTask::RebuildAgendaCache);
-            tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
+            // #2186: deliberately NO RebuildProjectedAgendaCache here. The
+            // projected-agenda rebuild query (cache/projected_agenda.rs) reads
+            // only block core columns + `block_properties` (repeat*/template)
+            // and references no tag table, so a tag edge mutation
+            // (`block_tags`) can never change the projected agenda. Enqueueing
+            // it would be wasted work.
             tasks.push(MaterializeTask::RebuildTagInheritanceCache);
             // #1715: deliberately NO Update/RemoveFtsBlock here. A block's FTS
             // row indexes only the inline `#[ULID]` TAG_REF tokens present in its
@@ -1399,7 +1404,6 @@ mod tests {
             vec![
                 "RefreshTagUsageCount(TAG1)",
                 "RebuildAgendaCache",
-                "RebuildProjectedAgendaCache",
                 "RebuildTagInheritanceCache",
             ],
         );
@@ -1408,6 +1412,13 @@ mod tests {
         assert!(
             !contains_kind(&tasks, &MaterializeTask::RebuildTagsCache),
             "add_tag must not enqueue the full O(vault) RebuildTagsCache; got {:?}",
+            labels(&tasks),
+        );
+        // #2186 regression sentinel: a tag edge can never change the
+        // projected agenda, so no projected rebuild may be enqueued.
+        assert!(
+            !contains_kind(&tasks, &MaterializeTask::RebuildProjectedAgendaCache),
+            "add_tag must not enqueue RebuildProjectedAgendaCache; got {:?}",
             labels(&tasks),
         );
     }
@@ -1427,13 +1438,19 @@ mod tests {
             vec![
                 "RefreshTagUsageCount(TAG1)",
                 "RebuildAgendaCache",
-                "RebuildProjectedAgendaCache",
                 "RebuildTagInheritanceCache",
             ],
         );
         assert!(
             !contains_kind(&tasks, &MaterializeTask::RebuildTagsCache),
             "remove_tag must not enqueue the full O(vault) RebuildTagsCache; got {:?}",
+            labels(&tasks),
+        );
+        // #2186 regression sentinel: a tag edge can never change the
+        // projected agenda, so no projected rebuild may be enqueued.
+        assert!(
+            !contains_kind(&tasks, &MaterializeTask::RebuildProjectedAgendaCache),
+            "remove_tag must not enqueue RebuildProjectedAgendaCache; got {:?}",
             labels(&tasks),
         );
     }
@@ -1450,7 +1467,6 @@ mod tests {
             vec![
                 "RebuildTagsCache",
                 "RebuildAgendaCache",
-                "RebuildProjectedAgendaCache",
                 "RebuildTagInheritanceCache",
             ],
         );
