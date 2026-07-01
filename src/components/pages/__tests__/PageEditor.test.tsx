@@ -86,18 +86,24 @@ vi.mock('@/components/backlinks/UnlinkedReferences', () => ({
 }))
 
 let capturedDuePanelDate: string | undefined
+let capturedDuePanelExcludePageId: string | undefined
 vi.mock('@/components/agenda/DuePanel', () => ({
-  DuePanel: (props: { date: string; onNavigateToPage?: unknown }) => {
+  DuePanel: (props: { date: string; onNavigateToPage?: unknown; excludePageId?: string }) => {
     capturedDuePanelDate = props.date
-    return <div data-testid="due-panel" data-date={props.date} />
+    capturedDuePanelExcludePageId = props.excludePageId
+    return <div data-testid="due-panel" data-date={props.date} data-exclude={props.excludePageId} />
   },
 }))
 
 let capturedDonePanelDate: string | undefined
+let capturedDonePanelExcludePageId: string | undefined
 vi.mock('@/components/agenda/DonePanel', () => ({
-  DonePanel: (props: { date: string; onNavigateToPage?: unknown }) => {
+  DonePanel: (props: { date: string; onNavigateToPage?: unknown; excludePageId?: string }) => {
     capturedDonePanelDate = props.date
-    return <div data-testid="done-panel" data-date={props.date} />
+    capturedDonePanelExcludePageId = props.excludePageId
+    return (
+      <div data-testid="done-panel" data-date={props.date} data-exclude={props.excludePageId} />
+    )
   },
 }))
 
@@ -140,6 +146,8 @@ beforeEach(() => {
   capturedPageHeaderProps = null
   capturedDuePanelDate = undefined
   capturedDonePanelDate = undefined
+  capturedDuePanelExcludePageId = undefined
+  capturedDonePanelExcludePageId = undefined
   // Reset the Zustand stores to a clean state before each test
   useBlockStore.setState({
     focusedBlockId: null,
@@ -554,6 +562,18 @@ describe('PageEditor date-page panels (B-1)', () => {
     expect(screen.getByTestId('done-panel')).toHaveAttribute('data-date', '2026-04-06')
     expect(capturedDuePanelDate).toBe('2026-04-06')
     expect(capturedDonePanelDate).toBe('2026-04-06')
+  })
+
+  // #2217 — both panels must receive excludePageId={pageId} so the current
+  // date page's own items are filtered out of its Due/Done lists. Previously
+  // DuePanel omitted the prop while DonePanel passed it.
+  it('passes excludePageId to both DuePanel and DonePanel', () => {
+    render(<PageEditor pageId="PAGE_DATE" title="2026-04-06" />)
+
+    expect(screen.getByTestId('due-panel')).toHaveAttribute('data-exclude', 'PAGE_DATE')
+    expect(screen.getByTestId('done-panel')).toHaveAttribute('data-exclude', 'PAGE_DATE')
+    expect(capturedDuePanelExcludePageId).toBe('PAGE_DATE')
+    expect(capturedDonePanelExcludePageId).toBe('PAGE_DATE')
   })
 
   it('does not render DuePanel/DonePanel for non-date page title', () => {

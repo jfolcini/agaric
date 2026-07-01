@@ -202,6 +202,29 @@ function AttachmentImage({
   // until the placeholder actually approaches the viewport.
   const [inView, viewGateRef] = useEnteredViewport<HTMLSpanElement>()
 
+  // Caption state (#2214). The input is *controlled* rather than uncontrolled
+  // (`defaultValue`): the field mounts only once the image bytes resolve, so if
+  // that read wins the race against the async caption fetch the field would
+  // capture the empty caption and a later blur could persist '' over the real
+  // caption (data loss). A controlled value that re-seeds from the committed
+  // caption — but only while the field is neither dirty nor focused — makes a
+  // late-arriving caption populate the field and reflects external sync updates,
+  // without clobbering an edit in progress.
+  const [captionDraft, setCaptionDraft] = useState(imageCaption)
+  // Whether the user has edited the field since it was last seeded/committed.
+  const captionDirtyRef = useRef(false)
+  // Whether the field currently holds focus (a caption resolving mid-edit must
+  // not overwrite what the user is looking at / typing).
+  const captionFocusedRef = useRef(false)
+
+  useEffect(() => {
+    // Re-seed the draft when the committed caption changes from outside — but
+    // never while the user is editing (dirty) or has the field focused, so an
+    // in-progress edit is never clobbered by a late fetch or external update.
+    if (captionDirtyRef.current || captionFocusedRef.current) return
+    setCaptionDraft(imageCaption)
+  }, [imageCaption])
+
   // Inline drag-to-resize (#294 item 6). The corner handle drives a live width
   // preview (`dragWidth`, a percent); on release we snap to the nearest preset
   // and persist `image_width` — the same source of truth the toolbar writes.
@@ -308,7 +331,18 @@ function AttachmentImage({
   // empty value as "no caption").
   const handleCaptionBlur = useCallback(
     (e: React.FocusEvent<HTMLInputElement>) => {
+      captionFocusedRef.current = false
       const next = e.target.value
+      const wasDirty = captionDirtyRef.current
+      captionDirtyRef.current = false
+      if (!wasDirty) {
+        // Field never edited — never persist. This is the #2214 guard: a field
+        // that captured '' before the caption resolved (and was only focused,
+        // not typed into) must not overwrite the real caption with ''. Re-seed
+        // to the latest committed caption now that the field is idle again.
+        setCaptionDraft(imageCaption)
+        return
+      }
       if (next === imageCaption) return
       onImageCaptionChange(next)
       setProperty({
@@ -319,6 +353,7 @@ function AttachmentImage({
         logger.warn('AttachmentRenderer', 'caption save failed', { blockId }, err)
         // Revert on failure — restore the previous caption.
         onImageCaptionChange(imageCaption)
+        setCaptionDraft(imageCaption)
         notify.error(t('imageCaption.saveFailed'))
       })
     },
@@ -500,12 +535,19 @@ function AttachmentImage({
           hover/focus reveal and blur-collapse behaviour. */}
       <input
         type="text"
-        defaultValue={imageCaption}
+        value={captionDraft}
         placeholder={t('imageCaption.placeholder')}
         aria-label={t('imageCaption.label')}
         className="mt-1 w-full border-0 bg-transparent px-0 text-center text-xs text-muted-foreground placeholder:text-muted-foreground/60 focus:outline-none focus-visible:outline-none"
         data-testid="image-caption-input"
         onClick={(e) => e.stopPropagation()}
+        onFocus={() => {
+          captionFocusedRef.current = true
+        }}
+        onChange={(e) => {
+          captionDirtyRef.current = true
+          setCaptionDraft(e.target.value)
+        }}
         onKeyDown={(e) => {
           // Don't let Enter/Space bubble to the group's toolbar toggle; Enter
           // commits the caption by blurring the input.

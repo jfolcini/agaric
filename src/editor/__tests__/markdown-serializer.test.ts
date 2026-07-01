@@ -978,6 +978,75 @@ describe('round-trip: serialize(parse(s)) === s', () => {
   })
 })
 
+// -- #2213: block content inside a list item ----------------------------------
+// The TipTap ListItem schema is `paragraph block*`, so an item can hold a
+// codeBlock / heading / blockquote / table / horizontalRule (toggle a code
+// block with the caret in an item, or paste HTML). `serializeListItem`
+// previously routed every non-list child through `serializeParagraph`, silently
+// dropping code fences and `#` heading prefixes on blur. These assert the full
+// serialize→parse→structure round-trip (the acceptance bar) plus string
+// idempotence.
+describe('list item with block content (#2213)', () => {
+  it('serializes an item-nested code block (with language) indented under the marker', () => {
+    const input = doc(bulletList(listItem(paragraph(text('item')), codeBlock('const x = 1', 'js'))))
+    expect(serialize(input)).toBe('- item\n  ```js\n  const x = 1\n  ```')
+  })
+
+  it('round-trips an item-nested code block with language', () => {
+    const input = doc(bulletList(listItem(paragraph(text('item')), codeBlock('const x = 1', 'js'))))
+    const md = serialize(input)
+    expect(parse(md)).toEqual(input)
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  it('round-trips an item-nested multi-line code block', () => {
+    const input = doc(bulletList(listItem(paragraph(text('code:')), codeBlock('a\nb\nc'))))
+    const md = serialize(input)
+    expect(parse(md)).toEqual(input)
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  it('round-trips an item-nested heading', () => {
+    const input = doc(bulletList(listItem(paragraph(text('item')), heading(2, text('Sub')))))
+    const md = serialize(input)
+    expect(md).toBe('- item\n  ## Sub')
+    expect(parse(md)).toEqual(input)
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  it('round-trips an item-nested blockquote', () => {
+    const input = doc(
+      bulletList(listItem(paragraph(text('item')), blockquote(paragraph(text('quote'))))),
+    )
+    const md = serialize(input)
+    expect(md).toBe('- item\n  > quote')
+    expect(parse(md)).toEqual(input)
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  it('round-trips block content inside an ordered list item', () => {
+    const input = doc(orderedList(listItem(paragraph(text('step')), codeBlock('run()', 'sh'))))
+    const md = serialize(input)
+    expect(parse(md)).toEqual(input)
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  it('still round-trips a nested list alongside a code block in the same item', () => {
+    const input = doc(
+      bulletList(
+        listItem(
+          paragraph(text('item')),
+          codeBlock('x', 'js'),
+          bulletList(listItem(paragraph(text('child')))),
+        ),
+      ),
+    )
+    const md = serialize(input)
+    expect(parse(md)).toEqual(input)
+    expect(serialize(parse(md))).toBe(md)
+  })
+})
+
 // -- #1960: "Turn into" menu — per-style markdown round-trip ------------------
 // A single auditable matrix mapping every block style the "Turn into" menu can
 // produce (TURN_INTO_OPTIONS in lib/slash-commands.ts) plus the Divider insert

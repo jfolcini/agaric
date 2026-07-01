@@ -293,4 +293,40 @@ describe('applyAutocompleteReplacement', () => {
     const anchor = detectAutocompleteAnchor('path:', 5)
     expect(applyAutocompleteReplacement('path:', 5, anchor, '"ab"').nextValue).toBe('path:""ab"" ')
   })
+
+  // #2215 — a mid-token apply must replace the WHOLE token, not just the head
+  // up to the caret (which stranded the tail, e.g. `tag:#urgent gent`).
+  it('#2215 — mid-token apply replaces the whole token (no stranded tail)', () => {
+    // Caret after `#ur` in `tag:#urgent` (column 7).
+    const input = 'tag:#urgent'
+    const anchor = detectAutocompleteAnchor(input, 7)
+    const { nextValue, nextCaret } = applyAutocompleteReplacement(input, 7, anchor, 'urgent')
+    expect(nextValue).toBe('tag:#urgent ')
+    expect(nextCaret).toBe(nextValue.length)
+  })
+
+  it('#2215 — mid-token apply only consumes the active token, keeps later tokens', () => {
+    // Caret after `#ur` in the first token; `path:Foo` must survive intact.
+    const input = 'tag:#urgent path:Foo'
+    const anchor = detectAutocompleteAnchor(input, 7)
+    const { nextValue } = applyAutocompleteReplacement(input, 7, anchor, 'urgent')
+    expect(nextValue).toBe('tag:#urgent path:Foo')
+  })
+
+  it('#2215 — caret at token end is unchanged (nothing to absorb)', () => {
+    const input = 'tag:#urg'
+    const anchor = detectAutocompleteAnchor(input, input.length)
+    const { nextValue } = applyAutocompleteReplacement(input, input.length, anchor, 'urgent')
+    expect(nextValue).toBe('tag:#urgent ')
+  })
+
+  it('#2215 — mid-token apply on a quoted value with spaces consumes the whole phrase', () => {
+    // A quoted path value with an internal space is one token; a caret inside it
+    // must not stop the replacement at the space (that would strand `b/*"`).
+    const input = 'path:"a b/*"'
+    // Caret just after `path:"a` (column 7), inside the quoted phrase.
+    const anchor = detectAutocompleteAnchor(input, 7)
+    const { nextValue } = applyAutocompleteReplacement(input, 7, anchor, 'Meeting Notes/*')
+    expect(nextValue).toBe('path:"Meeting Notes/*" ')
+  })
 })
