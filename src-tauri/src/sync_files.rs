@@ -350,18 +350,17 @@ async fn get_attachment_send_meta(
     pool: &SqlitePool,
     attachment_id: &str,
 ) -> Result<Option<AttachmentSendMeta>, AppError> {
-    let row: Option<(String, i64, Option<String>)> =
-        sqlx::query_as("SELECT fs_path, size_bytes, content_hash FROM attachments WHERE id = ?")
-            .bind(attachment_id)
-            .fetch_optional(pool)
-            .await?;
-    Ok(
-        row.map(|(fs_path, size_bytes, content_hash)| AttachmentSendMeta {
-            fs_path,
-            size_bytes,
-            content_hash,
-        }),
+    // #2189: compile-checked macro (not runtime `query_as`) so the query is
+    // validated against the schema at build time and lands in the .sqlx cache.
+    let row = sqlx::query_as!(
+        AttachmentSendMeta,
+        r#"SELECT fs_path AS "fs_path!", size_bytes AS "size_bytes!", content_hash
+           FROM attachments WHERE id = ?"#,
+        attachment_id,
     )
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
 }
 
 /// Decide the `(size_bytes, blake3_hex)` pair a `FileOffer` should carry,

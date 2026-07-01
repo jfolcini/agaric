@@ -794,11 +794,9 @@ pub async fn add_tags_by_ids_inner(
         .map(BlockId::as_str)
         .collect();
 
-    let block_spaces = crate::spaces::cross_space_validation::resolve_block_spaces_batch(
-        &mut tx,
-        &candidate_ids,
-    )
-    .await?;
+    let block_spaces =
+        crate::spaces::cross_space_validation::resolve_block_spaces_batch(&mut tx, &candidate_ids)
+            .await?;
 
     // #2191: pre-fetch the WHOLE dup set for this tag in ONE query, replacing
     // the former per-block `block_tags` dup SELECT inside the loop. A block in
