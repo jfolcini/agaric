@@ -512,6 +512,88 @@ describe('useGraphSimulation', () => {
       // zoom behavior attached to the persistent `g`.
       expect(vi.mocked(zoom).mock.calls.length).toBe(zoomCallsAfterMount)
     })
+
+    // #2194: a filter toggle between two NON-empty sets must post an in-place
+    // `update` on the SAME live worker instead of terminating it + spawning a
+    // fresh one (which stripped positions → full re-scatter + re-converge).
+    it('posts an `update` on the live worker (no terminate + respawn) when nodes change', () => {
+      const { rerender } = render(
+        React.createElement(Harness, {
+          nodes: makeNodes(),
+          edges: makeEdges(),
+          onResult: () => {},
+          navigateToPage: stableNavigate,
+        }),
+      )
+      expect(MockWorker.instances).toHaveLength(1)
+      const worker = MockWorker.instances[0] as InstanceType<typeof MockWorker>
+
+      // Filter toggle: new array identity (a smaller set), same worker alive.
+      const nextNodes = makeNodes().slice(0, 1)
+      rerender(
+        React.createElement(Harness, {
+          nodes: nextNodes,
+          edges: [],
+          onResult: () => {},
+          navigateToPage: stableNavigate,
+        }),
+      )
+
+      // No respawn: still exactly one worker and it was NOT terminated.
+      expect(MockWorker.instances).toHaveLength(1)
+      expect(worker.terminated).toBe(false)
+      // An `update` message was posted (in place), and NOT a second `start`.
+      const updates = worker.postMessageCalls.filter((m: { type?: string }) => m.type === 'update')
+      expect(updates).toHaveLength(1)
+      expect(updates[0]).toMatchObject({
+        type: 'update',
+        nodes: [expect.objectContaining({ id: 'a' })],
+      })
+      const starts = worker.postMessageCalls.filter((m: { type?: string }) => m.type === 'start')
+      expect(starts).toHaveLength(1)
+    })
+
+    it('updates the live main-thread simulation in place (no new forceSimulation) when nodes change', () => {
+      delete (globalThis as Record<string, unknown>)['Worker']
+      const simInstance = {
+        force: vi.fn().mockReturnThis(),
+        on: vi.fn().mockReturnThis(),
+        stop: vi.fn(),
+        alpha: vi.fn().mockReturnThis(),
+        alphaDecay: vi.fn().mockReturnThis(),
+        tick: vi.fn(),
+        restart: vi.fn(),
+        nodes: vi.fn().mockReturnThis(),
+      }
+      vi.mocked(forceSimulation).mockReturnValue(
+        simInstance as unknown as ReturnType<typeof forceSimulation>,
+      )
+
+      const { rerender } = render(
+        React.createElement(Harness, {
+          nodes: makeNodes(),
+          edges: makeEdges(),
+          onResult: () => {},
+          navigateToPage: stableNavigate,
+        }),
+      )
+      expect(forceSimulation).toHaveBeenCalledTimes(1)
+
+      rerender(
+        React.createElement(Harness, {
+          nodes: makeNodes().slice(0, 1),
+          edges: [],
+          onResult: () => {},
+          navigateToPage: stableNavigate,
+        }),
+      )
+
+      // In-place update: the same sim was re-pointed at the new node set
+      // (sim.nodes(...) called) and NOT stopped/rebuilt.
+      expect(forceSimulation).toHaveBeenCalledTimes(1)
+      expect(simInstance.stop).not.toHaveBeenCalled()
+      expect(simInstance.nodes).toHaveBeenCalled()
+    })
   })
 
   // BUG #746: filtering to zero nodes must clear the rendered graph and

@@ -19,7 +19,11 @@ import {
   type SimulationNodeDatum,
 } from 'd3-force'
 
-import type { NodePosition, WorkerErrorMessage, WorkerInboundMessage } from './graph-worker-types'
+import type {
+  WorkerErrorMessage,
+  WorkerInboundMessage,
+  WorkerNodeUpdate,
+} from './graph-worker-types'
 
 // ── Internal node / edge types (d3-mutated) ──────────────────────────
 
@@ -41,12 +45,55 @@ let simNodes: SimNode[] = []
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-function collectPositions(): NodePosition[] {
-  return simNodes.map((n) => ({
-    id: n.id,
-    x: n.x ?? 0,
-    y: n.y ?? 0,
-  }))
+/**
+ * Pack the current `simNodes` positions into a fresh `Float32Array`
+ * (`[x0,y0,x1,y1,…]`) in `simNodes` order (#2194). A fresh buffer is
+ * allocated per call because the caller transfers ownership to the main
+ * thread — a transferred buffer is detached and cannot be reused. The win is
+ * the zero-copy transfer plus the elimination of the per-node `{id,x,y}`
+ * object allocation the old structured-clone path incurred every tick.
+ *
+ * Index→id mapping lives with the main thread, which holds the same node
+ * ordering (posted on `start`/`update`); id order is fixed to `simNodes`.
+ */
+export function packPositions(nodes: readonly SimNode[]): Float32Array {
+  const buf = new Float32Array(nodes.length * 2)
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i]
+    buf[i * 2] = n?.x ?? 0
+    buf[i * 2 + 1] = n?.y ?? 0
+  }
+  return buf
+}
+
+/**
+ * `self.postMessage` narrowed to the worker-scope `(message, transfer)` form.
+ * The project's tsconfig uses the `DOM` lib (not `WebWorker`), so `self` is
+ * typed as `Window`, whose `postMessage` overloads don't include the transfer
+ * list. Resolve it at call time (NOT bound once at module load) so test spies
+ * on `self.postMessage` are honoured.
+ */
+type PostWithTransfer = (message: unknown, transfer: Transferable[]) => void
+
+function postPositions(type: 'tick' | 'done'): void {
+  const positions = packPositions(simNodes)
+  const post = self.postMessage as unknown as PostWithTransfer
+  post({ type, positions, count: simNodes.length }, [positions.buffer])
+}
+
+/**
+ * Build a fresh `SimNode` from an `update` payload node, carrying any known
+ * `x`/`y`/`vx`/`vy` so persisting nodes drift rather than re-scatter. Position
+ * fields are only set when present: a brand-new node (no prior position)
+ * leaves them `undefined` so d3 seeds it on the next tick (#2194).
+ */
+function assignUpdateNode(n: WorkerNodeUpdate): SimNode {
+  const node: SimNode = { id: n.id, label: n.label }
+  if (n.x !== undefined) node.x = n.x
+  if (n.y !== undefined) node.y = n.y
+  if (n.vx !== undefined) node.vx = n.vx
+  if (n.vy !== undefined) node.vy = n.vy
+  return node
 }
 
 // ── Message handler ──────────────────────────────────────────────────
@@ -82,13 +129,50 @@ self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => 
           .force('y', forceY(height / 2).strength(0.05))
 
         simulation.on('tick', () => {
-          self.postMessage({ type: 'tick', positions: collectPositions() })
+          postPositions('tick')
         })
 
         simulation.on('end', () => {
-          self.postMessage({ type: 'done', positions: collectPositions() })
+          postPositions('done')
         })
 
+        break
+      }
+
+      case 'update': {
+        // #2194: swap the node/edge set on the EXISTING simulation instead of
+        // tearing the worker down and re-posting `start` (which strips
+        // positions → full re-scatter + re-converge, ~300 ticks, on every
+        // filter toggle). Mirrors the `resize` philosophy: mutate the live sim
+        // in place, then nudge alpha so the layout DRIFTS to the new topology.
+        //
+        // Positions carried in `msg.nodes` (x/y/vx/vy) are applied to persisting
+        // nodes so they keep their spot; brand-new nodes arrive without
+        // positions and d3 seeds them on the next tick. Nodes removed by the
+        // filter simply drop out of the rebuilt array.
+        if (!simulation) break
+
+        simNodes = msg.nodes.map((n) => assignUpdateNode(n))
+
+        // Re-bind the node set. d3 assigns each node a fresh `.index` here and
+        // reuses carried x/y/vx/vy from the plain objects above.
+        simulation.nodes(simNodes)
+
+        // Re-bind the link force to the new edges. `forceLink.links(...)`
+        // re-resolves string source/target ids against the *current* node
+        // array (via the `.id` accessor set on `start`), so edge endpoints and
+        // d3's internal `index` bookkeeping stay consistent after the swap.
+        const linkForce = simulation.force('link') as ReturnType<
+          typeof forceLink<SimNode, SimEdge>
+        > | null
+        if (linkForce) {
+          const simEdges: SimEdge[] = msg.edges.map((e) => Object.assign({}, e))
+          linkForce.links(simEdges)
+        }
+
+        // Nudge alpha so the existing layout re-settles around the new
+        // topology instead of restarting cold (mirror `resize`).
+        simulation.alpha(0.3).restart()
         break
       }
 

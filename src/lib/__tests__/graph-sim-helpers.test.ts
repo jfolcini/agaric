@@ -11,7 +11,9 @@ import type { GraphEdge, GraphNode } from '@/lib/graph-types'
 
 import {
   createZoomKeyHandler,
+  packPositions,
   renderGraphElements,
+  unpackPositions,
   ZOOM_STEP,
   zoomIdentity,
 } from '../graph-sim-helpers'
@@ -259,5 +261,59 @@ describe('createZoomKeyHandler \u2014 keyboard zoom dispatch (#1172)', () => {
 
     expect(zb.scaleBy).not.toHaveBeenCalled()
     expect(zb.transform).not.toHaveBeenCalled()
+  })
+})
+
+// ── #2194: transferable Float32Array position (un)packing ──────────────
+
+describe('packPositions / unpackPositions — transferable tick round-trip (#2194)', () => {
+  it('packs {x,y}[] into a flat Float32Array [x0,y0,x1,y1,…]', () => {
+    const buf = packPositions([
+      { x: 1, y: 2 },
+      { x: 3, y: 4 },
+      { x: 5, y: 6 },
+    ])
+    expect(buf).toBeInstanceOf(Float32Array)
+    expect(buf).toHaveLength(6)
+    expect(Array.from(buf)).toEqual([1, 2, 3, 4, 5, 6])
+  })
+
+  it('coalesces undefined x/y to 0 (a node d3 has not yet placed)', () => {
+    const buf = packPositions([{}, { x: 7 }, { y: 9 }])
+    expect(Array.from(buf)).toEqual([0, 0, 7, 0, 0, 9])
+  })
+
+  it('round-trips pack → unpack back to {id,x,y}[] given the fixed id order', () => {
+    const nodes = [
+      { x: 10, y: 20 },
+      { x: 30, y: 40 },
+    ]
+    const ids = ['a', 'b']
+    const buf = packPositions(nodes)
+    // Whole-number floats survive Float32 exactly.
+    expect(unpackPositions(buf, ids)).toEqual([
+      { id: 'a', x: 10, y: 20 },
+      { id: 'b', x: 30, y: 40 },
+    ])
+  })
+
+  it('unpacks only as many entries as the shorter of ids / buffer length', () => {
+    // A tick packed for 3 nodes but only 2 ids known (e.g. a stale tick that
+    // raced an `update` shrinking the set): read the safe prefix, no overrun.
+    const buf = Float32Array.from([1, 1, 2, 2, 3, 3])
+    expect(unpackPositions(buf, ['a', 'b'])).toEqual([
+      { id: 'a', x: 1, y: 1 },
+      { id: 'b', x: 2, y: 2 },
+    ])
+    // Fewer buffer entries than ids: only the covered ids come back.
+    expect(unpackPositions(Float32Array.from([9, 8]), ['a', 'b', 'c'])).toEqual([
+      { id: 'a', x: 9, y: 8 },
+    ])
+  })
+
+  it('an empty node set packs to a zero-length buffer and unpacks to []', () => {
+    const buf = packPositions([])
+    expect(buf).toHaveLength(0)
+    expect(unpackPositions(buf, [])).toEqual([])
   })
 })

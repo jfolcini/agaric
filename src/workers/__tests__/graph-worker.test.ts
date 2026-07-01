@@ -22,7 +22,28 @@ const forceSimulation = vi.fn()
 const forceCenter = vi.fn((x: number, y: number) => ({ kind: 'center', x, y }))
 const forceX = vi.fn((x: number) => ({ kind: 'x', x, strength: () => ({ kind: 'x', x }) }))
 const forceY = vi.fn((y: number) => ({ kind: 'y', y, strength: () => ({ kind: 'y', y }) }))
-const forceLink = vi.fn(() => ({ id: () => ({ distance: () => ({ kind: 'link' }) }) }))
+// The link force stub exposes a chainable `.links(edges)` setter so the
+// `update` handler (#2194) can re-bind edges on the existing force. We record
+// the last edges passed so the test can assert the swap happened.
+interface FakeLinkForce {
+  kind: 'link'
+  linkedEdges: unknown
+  links: (edges?: unknown) => FakeLinkForce
+}
+let lastLinkForce: FakeLinkForce | null = null
+function makeFakeLinkForce(): FakeLinkForce {
+  const lf: FakeLinkForce = {
+    kind: 'link',
+    linkedEdges: undefined,
+    links(edges?: unknown) {
+      if (edges !== undefined) lf.linkedEdges = edges
+      return lf
+    },
+  }
+  lastLinkForce = lf
+  return lf
+}
+const forceLink = vi.fn(() => ({ id: () => ({ distance: () => makeFakeLinkForce() }) }))
 const forceManyBody = vi.fn(() => ({ strength: () => ({ kind: 'charge' }) }))
 const forceCollide = vi.fn(() => ({ kind: 'collide' }))
 
@@ -46,7 +67,12 @@ interface FakeSimNode {
 }
 
 interface FakeSim {
-  nodes: FakeSimNode[]
+  /**
+   * The live node array. Read directly by tests; also swapped in place by
+   * the `update` handler via the `nodes(newArray)` d3-style setter below
+   * (#2194). Reads use `sim.nodeList`; the worker calls `sim.nodes(...)`.
+   */
+  nodeList: FakeSimNode[]
   forces: Map<string, unknown>
   alphaValue: number
   /** Last value passed to `alphaTarget(v)` (#1687: drag lifecycle). */
@@ -56,6 +82,8 @@ interface FakeSim {
   stopped: number
   handlers: Map<string, () => void>
   force: (name: string, value?: unknown) => unknown
+  /** d3-style getter/setter: `nodes()` reads, `nodes(arr)` swaps in place. */
+  nodes: (v?: FakeSimNode[]) => FakeSim | FakeSimNode[]
   alpha: (v?: number) => FakeSim
   restart: () => FakeSim
   stop: () => FakeSim
@@ -65,7 +93,7 @@ interface FakeSim {
 
 function makeFakeSim(nodes: FakeSimNode[]): FakeSim {
   const sim: FakeSim = {
-    nodes,
+    nodeList: nodes,
     forces: new Map(),
     alphaValue: 1,
     alphaTargetValue: null,
@@ -76,6 +104,13 @@ function makeFakeSim(nodes: FakeSimNode[]): FakeSim {
       if (value === undefined) return sim.forces.get(name)
       sim.forces.set(name, value)
       return sim
+    },
+    nodes(v?: FakeSimNode[]) {
+      if (v !== undefined) {
+        sim.nodeList = v
+        return sim
+      }
+      return sim.nodeList
     },
     alpha(v?: number) {
       if (v !== undefined) sim.alphaValue = v
@@ -103,6 +138,8 @@ function makeFakeSim(nodes: FakeSimNode[]): FakeSim {
 
 describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)', () => {
   let posted: Array<{ type: string; [k: string]: unknown }>
+  // #2194: the transfer list passed alongside each post (2nd postMessage arg).
+  let transfers: Array<Transferable[] | undefined>
   let lastSim: FakeSim | null
 
   // Import the worker module exactly ONCE so only a single `message` listener
@@ -118,7 +155,9 @@ describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)'
     forceX.mockClear()
     forceY.mockClear()
     posted = []
+    transfers = []
     lastSim = null
+    lastLinkForce = null
 
     // forceSimulation(nodes) returns a chainable fake that records nodes/forces.
     forceSimulation.mockImplementation((nodes: FakeSimNode[]) => {
@@ -126,9 +165,10 @@ describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)'
       return lastSim
     })
 
-    // Capture worker → main posts.
-    vi.spyOn(self, 'postMessage').mockImplementation(((msg: unknown) => {
+    // Capture worker → main posts (message + optional transfer list).
+    vi.spyOn(self, 'postMessage').mockImplementation(((msg: unknown, transfer?: Transferable[]) => {
       posted.push(msg as { type: string })
+      transfers.push(transfer)
     }) as typeof self.postMessage)
   })
 
@@ -171,9 +211,9 @@ describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)'
     expect(forceSimulation).toHaveBeenCalledTimes(1)
     const sim = lastSim as unknown as FakeSim
     // Simulate the sim having converged to real positions.
-    Object.assign(sim.nodes[0] as object, { x: 123, y: 456 })
-    Object.assign(sim.nodes[1] as object, { x: 789, y: 12 })
-    const before = sim.nodes.map((n) => ({ ...n }))
+    Object.assign(sim.nodeList[0] as object, { x: 123, y: 456 })
+    Object.assign(sim.nodeList[1] as object, { x: 789, y: 12 })
+    const before = sim.nodeList.map((n) => ({ ...n }))
 
     forceCenter.mockClear()
     forceX.mockClear()
@@ -193,17 +233,18 @@ describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)'
     expect(sim.alphaValue).toBe(0.3)
     expect(sim.restarted).toBeGreaterThan(0)
     // Positions preserved — resize did NOT touch node x/y.
-    expect(sim.nodes).toEqual(before)
+    expect(sim.nodeList).toEqual(before)
   })
 
   // -------------------------------------------------------------------------
   // Primary output path: the `tick` / `end` handlers registered on the sim post
-  // node positions back to the main thread (graph-worker.ts:84-90 +
-  // collectPositions). These were registered by the existing tests but never
-  // invoked, so the actual posted message shapes went unasserted.
+  // node positions back to the main thread. #2194: positions are packed into a
+  // `Float32Array` ([x0,y0,x1,y1,…]) in `simNodes` order and posted as a
+  // transferable (`postMessage(msg, [buffer])`) instead of an {id,x,y}[]
+  // structured clone. The message carries `count` = number of nodes.
   // -------------------------------------------------------------------------
 
-  it('the `tick` handler posts {type:"tick", positions} with the live node x/y', () => {
+  it('the `tick` handler posts a packed Float32Array (+count) with the live node x/y', () => {
     send({
       type: 'start',
       nodes: [
@@ -217,26 +258,24 @@ describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)'
     const sim = lastSim as unknown as FakeSim
 
     // d3 mutates node x/y in place each tick; simulate a settled frame.
-    Object.assign(sim.nodes[0] as object, { x: 11, y: 22 })
-    Object.assign(sim.nodes[1] as object, { x: 33, y: 44 })
+    Object.assign(sim.nodeList[0] as object, { x: 11, y: 22 })
+    Object.assign(sim.nodeList[1] as object, { x: 33, y: 44 })
 
     posted.length = 0
     const tick = sim.handlers.get('tick')
     expect(tick).toBeTypeOf('function')
     tick?.()
 
-    expect(posted).toEqual([
-      {
-        type: 'tick',
-        positions: [
-          { id: 'a', x: 11, y: 22 },
-          { id: 'b', x: 33, y: 44 },
-        ],
-      },
-    ])
+    expect(posted).toHaveLength(1)
+    const msg = posted[0] as { type: string; positions: Float32Array; count: number }
+    expect(msg.type).toBe('tick')
+    expect(msg.count).toBe(2)
+    expect(Array.from(msg.positions)).toEqual([11, 22, 33, 44])
+    // Posted as a transferable (buffer handed off zero-copy).
+    expect(transfers[0]).toEqual([msg.positions.buffer])
   })
 
-  it('the `end` handler posts {type:"done", positions} with the final node x/y', () => {
+  it('the `end` handler posts {type:"done"} with a packed Float32Array of final x/y', () => {
     send({
       type: 'start',
       nodes: [{ id: 'a', label: 'A' }],
@@ -245,20 +284,23 @@ describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)'
       height: 600,
     })
     const sim = lastSim as unknown as FakeSim
-    Object.assign(sim.nodes[0] as object, { x: 7, y: 9 })
+    Object.assign(sim.nodeList[0] as object, { x: 7, y: 9 })
 
     posted.length = 0
     const end = sim.handlers.get('end')
     expect(end).toBeTypeOf('function')
     end?.()
 
-    expect(posted).toEqual([{ type: 'done', positions: [{ id: 'a', x: 7, y: 9 }] }])
+    expect(posted).toHaveLength(1)
+    const msg = posted[0] as { type: string; positions: Float32Array; count: number }
+    expect(msg.type).toBe('done')
+    expect(msg.count).toBe(1)
+    expect(Array.from(msg.positions)).toEqual([7, 9])
   })
 
-  it('collectPositions defaults missing x/y to 0 in posted positions', () => {
-    // A node d3 has not yet placed has undefined x/y; collectPositions
-    // (graph-worker.ts:44-50) coalesces to 0 so the main thread always receives
-    // numeric coordinates.
+  it('packs missing x/y as 0 in the posted Float32Array', () => {
+    // A node d3 has not yet placed has undefined x/y; packing coalesces to 0
+    // so the main thread always receives numeric coordinates.
     send({
       type: 'start',
       nodes: [{ id: 'a', label: 'A' }],
@@ -272,7 +314,9 @@ describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)'
     posted.length = 0
     sim.handlers.get('tick')?.()
 
-    expect(posted).toEqual([{ type: 'tick', positions: [{ id: 'a', x: 0, y: 0 }] }])
+    const msg = posted[0] as { type: string; positions: Float32Array; count: number }
+    expect(msg.type).toBe('tick')
+    expect(Array.from(msg.positions)).toEqual([0, 0])
   })
 
   it('`resize` before any `start` is a no-op (does not throw, builds nothing)', () => {
@@ -311,7 +355,7 @@ describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)'
     expect(sim.alphaTargetValue).toBe(0.3)
     expect(sim.restarted).toBe(restartsBefore + 1)
     // Node pinned to the pointer via fx/fy.
-    const node = sim.nodes.find((n) => n.id === 'a')
+    const node = sim.nodeList.find((n) => n.id === 'a')
     expect(node?.fx).toBe(10)
     expect(node?.fy).toBe(20)
     // No error posted.
@@ -325,7 +369,7 @@ describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)'
 
     send({ type: 'drag', nodeId: 'a', x: 55, y: 66, phase: 'drag' })
 
-    const node = sim.nodes.find((n) => n.id === 'a')
+    const node = sim.nodeList.find((n) => n.id === 'a')
     expect(node?.fx).toBe(55)
     expect(node?.fy).toBe(66)
     // The `drag` phase only repositions — it must NOT restart the sim again
@@ -341,7 +385,7 @@ describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)'
     send({ type: 'drag', nodeId: 'a', x: 10, y: 20, phase: 'end' })
 
     expect(sim.alphaTargetValue).toBe(0)
-    const node = sim.nodes.find((n) => n.id === 'a')
+    const node = sim.nodeList.find((n) => n.id === 'a')
     expect(node?.fx).toBeNull()
     expect(node?.fy).toBeNull()
   })
@@ -355,12 +399,70 @@ describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)'
     // Unknown id guard (graph-worker.ts:123-124): nothing pinned, sim untouched.
     expect(sim.restarted).toBe(restartsBefore)
     expect(sim.alphaTargetValue).toBeNull()
-    expect(sim.nodes.every((n) => n.fx == null && n.fy == null)).toBe(true)
+    expect(sim.nodeList.every((n) => n.fx == null && n.fy == null)).toBe(true)
     expect(posted.some((m) => m.type === 'error')).toBe(false)
   })
 
   it('`drag` before any `start` is a no-op (does not throw, posts nothing)', () => {
     send({ type: 'drag', nodeId: 'a', x: 1, y: 2, phase: 'start' })
+    expect(forceSimulation).not.toHaveBeenCalled()
+    expect(posted.some((m) => m.type === 'error')).toBe(false)
+  })
+
+  // -------------------------------------------------------------------------
+  // #2194 — `update`: swap the node/edge set on the LIVE simulation in place
+  // instead of tearing the worker down and re-posting `start`.
+  // -------------------------------------------------------------------------
+
+  it('`update` swaps nodes/links in place WITHOUT rebuilding the sim, preserving carried positions', () => {
+    send({
+      type: 'start',
+      nodes: [
+        { id: 'a', label: 'A' },
+        { id: 'b', label: 'B' },
+      ],
+      edges: [{ source: 'a', target: 'b', ref_count: 1 }],
+      width: 800,
+      height: 600,
+    })
+    expect(forceSimulation).toHaveBeenCalledTimes(1)
+    const sim = lastSim as unknown as FakeSim
+
+    // A filter toggle: drop 'b', keep 'a' (carrying its position), add 'c' new.
+    send({
+      type: 'update',
+      nodes: [
+        { id: 'a', label: 'A', x: 111, y: 222, vx: 1, vy: 2 },
+        { id: 'c', label: 'C' },
+      ],
+      edges: [{ source: 'a', target: 'c', ref_count: 3 }],
+    })
+
+    // No rebuild: forceSimulation NOT called a second time.
+    expect(forceSimulation).toHaveBeenCalledTimes(1)
+
+    // The sim's node array was swapped to the new set (via sim.nodes(newArray)).
+    expect(sim.nodeList.map((n) => n.id)).toEqual(['a', 'c'])
+    // Persisting node 'a' keeps its carried position; brand-new 'c' is left
+    // for d3 to seed (x/y undefined).
+    const a = sim.nodeList.find((n) => n.id === 'a')
+    expect(a).toMatchObject({ x: 111, y: 222, vx: 1, vy: 2 })
+    const c = sim.nodeList.find((n) => n.id === 'c')
+    expect(c?.x).toBeUndefined()
+    expect(c?.y).toBeUndefined()
+
+    // Link force re-bound to the new edges.
+    expect(lastLinkForce?.linkedEdges).toEqual([{ source: 'a', target: 'c', ref_count: 3 }])
+
+    // Alpha nudged + restarted so the layout DRIFTS (not re-scatter).
+    expect(sim.alphaValue).toBe(0.3)
+    expect(sim.restarted).toBeGreaterThan(0)
+    // No error posted.
+    expect(posted.some((m) => m.type === 'error')).toBe(false)
+  })
+
+  it('`update` before any `start` is a no-op (does not throw, builds nothing)', () => {
+    send({ type: 'update', nodes: [{ id: 'a', label: 'A' }], edges: [] })
     expect(forceSimulation).not.toHaveBeenCalled()
     expect(posted.some((m) => m.type === 'error')).toBe(false)
   })
