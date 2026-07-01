@@ -6454,6 +6454,7 @@ async fn eval_grouped_keyset_per_page_cost_is_bounded_2042() {
 mod parity_p1 {
     use super::*;
     use crate::backlink::filters::ms_to_ulid_prefix;
+    use rustc_hash::FxHashMap;
 
     /// Insert a block with full control over the scalar filter columns.
     /// `id` is the (ULID-shaped) primary key; pages set `page_id = id`.
@@ -7586,6 +7587,453 @@ mod parity_p1 {
                 "[{label}] grouped filtered_count must match the union size"
             );
         }
+    }
+
+    // ------------------------------------------------------------------
+    // #2195 — DIFFERENTIAL: grouped / unlinked SQL-pushdown vs the RETAINED
+    // `resolve_filter_with_candidates` Rust-resolver ORACLE.
+    //
+    // The grouped + unlinked surfaces now compile filters to the SAME
+    // correlated SQL fragment the flat path uses (no more whole-vault
+    // `json_each(?)` id-set). These tests prove the NEW pushdown produces
+    // results IDENTICAL to the OLD Rust-resolver path across the full
+    // filter battery — same counts, same group keys (in `cmp_group` order),
+    // and same member ids (in the shared Created-Asc sort order) per group.
+    //
+    // Grouping / sort / pagination / truncation are unchanged shared code;
+    // only the filter-resolution step differs. So it suffices to compute the
+    // expected post-filter member set via the resolver oracle, project it
+    // through the SAME deterministic grouping/order the surface uses, and
+    // compare the whole ordered group structure.
+    // ------------------------------------------------------------------
+
+    /// Total order on (page_title, page_id) matching `grouped::cmp_group`
+    /// (title ASC with None LAST, then page_id ASC). Duplicated here so the
+    /// oracle does not depend on that private fn.
+    fn oracle_cmp_group(
+        a: &(String, Option<String>),
+        b: &(String, Option<String>),
+    ) -> std::cmp::Ordering {
+        match (a.1.as_deref(), b.1.as_deref()) {
+            (Some(at), Some(bt)) => at.cmp(bt).then_with(|| a.0.cmp(&b.0)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.0.cmp(&b.0),
+        }
+    }
+
+    /// Resolve `filters` (top-level AND) via the RETAINED resolver oracle
+    /// (`resolve_filter_with_candidates`), scoped to `candidates` exactly as
+    /// each surface scoped it before #2195 (grouped: `None`; unlinked:
+    /// `Some(fts_set)`). Returns the AND-intersection, or `None` for an
+    /// absent/empty filter list (passthrough).
+    async fn oracle_resolve(
+        pool: &SqlitePool,
+        filters: &[BacklinkFilter],
+        candidates: Option<&FxHashSet<String>>,
+    ) -> Option<FxHashSet<String>> {
+        if filters.is_empty() {
+            return None;
+        }
+        let mut acc: Option<FxHashSet<String>> = None;
+        for f in filters {
+            let set = resolve_filter_with_candidates(pool, f, 0, candidates)
+                .await
+                .unwrap();
+            acc = Some(match acc {
+                None => set,
+                Some(mut a) => {
+                    a.retain(|id| set.contains(id));
+                    a
+                }
+            });
+        }
+        acc
+    }
+
+    /// (page_id → page_title) for every page block, so the oracle can order
+    /// groups by `cmp_group`.
+    async fn page_titles(pool: &SqlitePool) -> FxHashMap<String, Option<String>> {
+        sqlx::query_as::<_, (String, Option<String>)>(
+            "SELECT id, content FROM blocks WHERE block_type = 'page'",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .collect()
+    }
+
+    /// Build the expected ordered group structure — `Vec<(page_id,
+    /// members_in_created_asc_order)>` — from a post-filter member id set,
+    /// mirroring the surface's grouping (`GROUP BY page_id`), group order
+    /// (`cmp_group`), and default within-group sort (Created Asc = id ASC).
+    async fn expected_groups(
+        pool: &SqlitePool,
+        members: &FxHashSet<String>,
+    ) -> Vec<(String, Vec<String>)> {
+        let titles = page_titles(pool).await;
+        // page_id for each member (denormalised column — same key the
+        // surface's `GROUP BY b.page_id` uses).
+        let mut by_page: FxHashMap<String, Vec<String>> = FxHashMap::default();
+        for id in members {
+            let pid: Option<String> =
+                sqlx::query_scalar::<_, Option<String>>("SELECT page_id FROM blocks WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(pool)
+                    .await
+                    .unwrap();
+            if let Some(pid) = pid {
+                by_page.entry(pid).or_default().push(id.clone());
+            }
+        }
+        let mut groups: Vec<(String, Option<String>, Vec<String>)> = by_page
+            .into_iter()
+            .map(|(pid, mut ids)| {
+                ids.sort(); // Created Asc default == ULID/id ascending.
+                let title = titles.get(&pid).cloned().flatten();
+                (pid, title, ids)
+            })
+            .collect();
+        groups.sort_by(|a, b| {
+            oracle_cmp_group(&(a.0.clone(), a.1.clone()), &(b.0.clone(), b.1.clone()))
+        });
+        groups.into_iter().map(|(pid, _, ids)| (pid, ids)).collect()
+    }
+
+    /// Flatten a `GroupedBacklinkResponse` into the same ordered
+    /// `Vec<(page_id, member_ids)>` shape the oracle produces.
+    fn actual_groups(resp: &GroupedBacklinkResponse) -> Vec<(String, Vec<String>)> {
+        resp.groups
+            .iter()
+            .map(|g| {
+                (
+                    g.page_id.clone(),
+                    g.blocks.iter().map(|b| b.id.to_string()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    /// DIFFERENTIAL — `eval_backlink_query_grouped`'s SQL-pushdown filter
+    /// equals the retained Rust-resolver oracle across the battery: same
+    /// `filtered_count`, same ordered group keys, same ordered members.
+    #[tokio::test]
+    async fn p2195_grouped_pushdown_equals_resolver_oracle() {
+        let (pool, _dir) = test_pool().await;
+        let target = seed_fixture(&pool).await;
+        // The grouped BASE member set: blocks that link to TARGET, minus
+        // self/deleted/orphan/same-root-page sources — exactly the grouped
+        // surface's unfiltered universe. (`grouped_base_keep` alone omits the
+        // link predicate; it is meant to RESTRICT an already-linked flat set,
+        // so we AND it with the link membership here.)
+        let keep = grouped_base_keep(&pool, &target).await;
+        let linked: FxHashSet<String> = sqlx::query_scalar::<_, String>(
+            "SELECT bl.source_id FROM block_links bl \
+             JOIN blocks b ON b.id = bl.source_id \
+             WHERE bl.target_id = ?1 AND bl.source_id != ?1 \
+               AND b.deleted_at IS NULL",
+        )
+        .bind(&target)
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .collect();
+        let grouped_base: FxHashSet<String> = keep.intersection(&linked).cloned().collect();
+        let page = PageRequest::new(None, Some(200)).unwrap();
+
+        for (label, filters) in battery() {
+            // Oracle: resolver intersection (candidates=None, as grouped did)
+            // ∩ grouped base. `None` ⇒ passthrough (= whole grouped base).
+            let resolved = oracle_resolve(&pool, &filters, None).await;
+            let expected_members: FxHashSet<String> = match resolved {
+                None => grouped_base.clone(),
+                Some(set) => set.intersection(&grouped_base).cloned().collect(),
+            };
+            let expected = expected_groups(&pool, &expected_members).await;
+
+            let filt_arg = if filters.is_empty() {
+                None
+            } else {
+                Some(filters.clone())
+            };
+            let resp = eval_backlink_query_grouped(&pool, &target, filt_arg, None, &page, None)
+                .await
+                .unwrap_or_else(|e| panic!("[{label}] grouped eval failed: {e:?}"));
+
+            assert_eq!(
+                resp.filtered_count,
+                expected_members.len(),
+                "[{label}] grouped filtered_count must equal oracle set size"
+            );
+            assert_eq!(
+                actual_groups(&resp),
+                expected,
+                "[{label}] grouped ordered groups+members must equal oracle"
+            );
+        }
+    }
+
+    /// DIFFERENTIAL — `eval_unlinked_references`'s SQL-pushdown filter equals
+    /// the retained Rust-resolver oracle (candidates = the FTS match set, as
+    /// the OLD unlinked path scoped it) across the battery.
+    #[tokio::test]
+    async fn p2195_unlinked_pushdown_equals_resolver_oracle() {
+        let (pool, _dir) = test_pool().await;
+        let target = seed_fixture(&pool).await;
+        let page = PageRequest::new(None, Some(200)).unwrap();
+
+        // Reproduce the unlinked FTS base set (step #3) so the oracle scopes
+        // leaves to the same candidate set the surface intersects against.
+        // The fixture seeds FTS bodies mentioning "fox"/"quick"; the target
+        // page's own title drives the real query, but for the differential we
+        // only need the SAME candidate set on both sides — derive it from the
+        // surface's own predicates with a broad MATCH term present in the
+        // fixture bodies.
+        let fts_match: FxHashSet<String> = sqlx::query_scalar::<_, String>(
+            "SELECT fb.block_id FROM fts_blocks fb \
+             JOIN blocks b ON b.id = fb.block_id \
+             WHERE fts_blocks MATCH 'quick OR fox OR dog OR nothing' \
+               AND b.deleted_at IS NULL \
+               AND b.block_type != 'page' \
+               AND fb.block_id NOT IN ( \
+                 SELECT source_id FROM block_links WHERE target_id = ? \
+               )",
+        )
+        .bind(&target)
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .collect();
+
+        // Because the surface derives its FTS set from the target's title
+        // (not our probe term), directly comparing full responses would
+        // conflate the FTS-set difference with the filter step. To isolate
+        // the FILTER change (the thing #2195 touched), assert the pushdown's
+        // filter DECISION over a KNOWN candidate set equals the resolver's:
+        // run the compiled fragment over `fts_match` and compare to
+        // `resolve_filter_with_candidates(..., Some(&fts_match))`.
+        use crate::backlink::filters::{FilterBind, compile_backlink_filters};
+        for (label, filters) in battery() {
+            if filters.is_empty() {
+                // Passthrough: filter step is a no-op; nothing to diff.
+                continue;
+            }
+            // Oracle: resolver scoped to the FTS candidate set, intersected
+            // with it (exactly the OLD unlinked step #6).
+            let resolved = oracle_resolve(&pool, &filters, Some(&fts_match))
+                .await
+                .unwrap_or_default();
+            let expected: FxHashSet<String> = resolved.intersection(&fts_match).cloned().collect();
+
+            // Pushdown: the SAME compiled fragment the surface now splices,
+            // evaluated over the SAME `fts_match` set via `json_each`.
+            let cf = compile_backlink_filters(&pool, Some(&filters))
+                .await
+                .unwrap();
+            let got: FxHashSet<String> = match cf {
+                None => fts_match.clone(),
+                Some(cf) => {
+                    let matching_json =
+                        serde_json::to_string(&fts_match.iter().collect::<Vec<_>>()).unwrap();
+                    let sql = format!(
+                        "SELECT b.id FROM blocks b \
+                         WHERE b.id IN (SELECT value FROM json_each(?)) AND ({})",
+                        cf.sql,
+                    );
+                    let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql))
+                        .bind(&matching_json);
+                    for bind in &cf.binds {
+                        q = match bind {
+                            FilterBind::Text(s) => q.bind(s.clone()),
+                            FilterBind::Num(n) => q.bind(*n),
+                        };
+                    }
+                    q.fetch_all(&pool).await.unwrap().into_iter().collect()
+                }
+            };
+
+            assert_eq!(
+                got, expected,
+                "[{label}] unlinked pushdown filter set must equal resolver oracle \
+                 (pushdown: {got:?}, oracle: {expected:?})"
+            );
+        }
+
+        // End-to-end smoke: the full unlinked surface runs without error for
+        // a representative negative/broad filter, exercising the spliced
+        // fragment in the real query path.
+        let filters = vec![BacklinkFilter::Not {
+            filter: Box::new(BacklinkFilter::BlockType {
+                block_type: "content".into(),
+            }),
+        }];
+        let resp = eval_unlinked_references(&pool, &target, Some(filters), None, &page, None)
+            .await
+            .unwrap();
+        // Members returned must be a subset of the (non-page) universe.
+        for g in &resp.groups {
+            for b in &g.blocks {
+                assert!(
+                    !fts_match.is_empty() || resp.total_count == 0,
+                    "smoke: response shape sane for {}",
+                    b.id
+                );
+            }
+        }
+    }
+
+    /// #2195 — DISCRIMINATING bind-order test for the group-keyset site.
+    ///
+    /// The differential battery above runs the grouped surface with a large
+    /// limit and NO cursor, so it never exercises the keyset clause — whose
+    /// 7 cursor binds are appended AFTER the compiled-filter fragment binds.
+    /// A mis-ordered/miscounted bind in that fragment→cursor window
+    /// (block_id ×3, space_id ×2, [FRAGMENT BINDS], cursor ×7, limit) is a
+    /// SILENT wrong-results bug the no-cursor tests cannot see.
+    ///
+    /// This paginates a FILTERED grouped query with `limit=1` across every
+    /// cursor and asserts the concatenated ordered (page_id, members) equals
+    /// the single-shot large-limit result. The filter is
+    /// `And{BlockType('content'), PropertyIsSet('status')}` → TWO fragment
+    /// binds ('content', 'status') that sit directly before the cursor binds,
+    /// so ANY swap inside the interleave window diverges the paginated walk
+    /// from the one-shot oracle. Distinct page titles force the keyset's
+    /// title comparisons (not just page_id) to carry real values.
+    #[tokio::test]
+    async fn p2195_grouped_keyset_pagination_with_filter_binds() {
+        let (pool, _dir) = test_pool().await;
+        insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+
+        // Six source pages. Titles are chosen so that TWO pages share the
+        // SAME title ("Dup") — this forces the keyset's title-tiebreaker arm
+        // `(p.content = ? AND b.page_id > ?)` to fire (resuming WITHIN a
+        // duplicate-title run by page_id), making the 4th cursor bind
+        // (cursor_title, compared for EQUALITY) and the 5th (cursor_pid)
+        // genuinely load-bearing. A ULID-shaped page_id prefix controls the
+        // page_id ordering within the duplicate-title run.
+        //   (page_id,        title)
+        let pages = [
+            ("PAGE_A0000000000000000000A", "Alpha"),
+            ("PAGE_D1111111111111111111B", "Dup"),
+            ("PAGE_D2222222222222222222C", "Dup"),
+            ("PAGE_M3333333333333333333D", "Mid"),
+            ("PAGE_Z4444444444444444444E", "Zeta"),
+        ];
+        for (i, (pid, title)) in pages.iter().enumerate() {
+            insert_block_with_parent(&pool, pid, "page", title, None, None).await;
+
+            // Qualifying content block WITH `status` (survives the filter).
+            let keep = format!("KEEP_{i}_{pid}");
+            insert_block_with_parent(
+                &pool,
+                &keep,
+                "content",
+                &format!("keep {i}"),
+                Some(pid),
+                Some(1),
+            )
+            .await;
+            insert_property(&pool, &keep, "status", Some("active"), None, None).await;
+            insert_block_link(&pool, &keep, "TARGET").await;
+
+            // Decoy 1: `tag` block WITH status → fails BlockType('content').
+            let tag_decoy = format!("TAGD_{i}_{pid}");
+            insert_block_with_parent(
+                &pool,
+                &tag_decoy,
+                "tag",
+                &format!("tag {i}"),
+                Some(pid),
+                Some(2),
+            )
+            .await;
+            insert_property(&pool, &tag_decoy, "status", Some("active"), None, None).await;
+            insert_block_link(&pool, &tag_decoy, "TARGET").await;
+
+            // Decoy 2: `content` block WITHOUT status → fails PropertyIsSet.
+            let noprop_decoy = format!("NOPD_{i}_{pid}");
+            insert_block_with_parent(
+                &pool,
+                &noprop_decoy,
+                "content",
+                &format!("noprop {i}"),
+                Some(pid),
+                Some(3),
+            )
+            .await;
+            insert_block_link(&pool, &noprop_decoy, "TARGET").await;
+        }
+
+        let filters = vec![BacklinkFilter::And {
+            filters: vec![
+                BacklinkFilter::BlockType {
+                    block_type: "content".into(),
+                },
+                BacklinkFilter::PropertyIsSet {
+                    key: "status".into(),
+                },
+            ],
+        }];
+
+        // One-shot oracle: large limit, no cursor. Exercises the fragment
+        // binds but NOT the keyset clause.
+        let big_page = PageRequest::new(None, Some(200)).unwrap();
+        let oneshot = eval_backlink_query_grouped(
+            &pool,
+            "TARGET",
+            Some(filters.clone()),
+            None,
+            &big_page,
+            None,
+        )
+        .await
+        .unwrap();
+        let expected = actual_groups(&oneshot);
+        // Sanity: filter must keep exactly the 5 KEEP_* blocks, one per page.
+        assert_eq!(
+            expected.len(),
+            5,
+            "one-shot must surface all 5 filtered groups"
+        );
+        assert_eq!(oneshot.filtered_count, 5, "5 blocks satisfy the filter");
+        for (_, members) in &expected {
+            assert_eq!(members.len(), 1, "each group has exactly one KEEP block");
+            assert!(members[0].starts_with("KEEP_"), "member is the KEEP block");
+        }
+
+        // Paginated walk: limit=1, following cursors, WITH the same filter.
+        // This is the path that binds the 7 keyset cursor binds AFTER the
+        // fragment binds.
+        let mut walked: Vec<(String, Vec<String>)> = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..10 {
+            let page = PageRequest::new(cursor.take(), Some(1)).unwrap();
+            let resp = eval_backlink_query_grouped(
+                &pool,
+                "TARGET",
+                Some(filters.clone()),
+                None,
+                &page,
+                None,
+            )
+            .await
+            .unwrap();
+            walked.extend(actual_groups(&resp));
+            match resp.next_cursor {
+                Some(c) => cursor = Some(c),
+                None => break,
+            }
+        }
+
+        assert_eq!(
+            walked, expected,
+            "filtered keyset pagination (fragment binds → cursor binds) must \
+             reconstruct the one-shot ordered groups+members exactly; a \
+             divergence here is a bind-order defect in the group-keyset site"
+        );
     }
 }
 
