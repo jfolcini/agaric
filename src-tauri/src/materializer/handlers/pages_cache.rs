@@ -288,9 +288,7 @@ pub(super) async fn maintain_pages_cache_counts_after_op(
     // they run.
     if matches!(
         pre_state,
-        PreOpState::Cohort(_)
-            | PreOpState::RestoreCohortAndAncestors { .. }
-            | PreOpState::Purge { .. }
+        PreOpState::Cohort(_) | PreOpState::RestoreCohortAndAncestors { .. } | PreOpState::Purge
     ) {
         return Ok(());
     }
@@ -423,15 +421,13 @@ pub(super) async fn maintain_pages_cache_counts_after_op(
             // recompute UPDATE will set its inbound_link_count to 0
             // (all descendants are now deleted_at IS NOT NULL).
         }
-        PreOpState::Purge { affected_pages } => {
-            // PurgeBlock removes the cohort's `blocks` rows entirely; FK
-            // CASCADE on `block_links` (mig 0061) clears outbound and
-            // inbound edges. We captured the affected pages BEFORE the
-            // cascade ran (see `pre_state`).
-            for p in affected_pages {
-                affected.insert(p.clone());
-            }
-        }
+        // #2183: unreachable — the guard at the top returns for every cohort op
+        // (Delete / Restore / Purge), deferring the page-wide count recompute to
+        // the background `RebuildPagesCacheCounts` task. Kept only for match
+        // exhaustiveness; `PreOpState::Purge` no longer carries an affected-pages
+        // snapshot (the eager pre-cascade walk that populated it was pure waste
+        // once the recompute moved off this foreground tx).
+        PreOpState::Purge => {}
         PreOpState::Move { block_id, src_page } => {
             // E4: a MoveBlock CAN alter `page_id`. `commands/blocks/move_ops.rs`
             // recomputes `page_id` for the moved block + its descendants on a
@@ -778,10 +774,11 @@ pub(super) enum PreOpState {
         cohort: Vec<String>,
         ancestors: Vec<String>,
     },
-    /// PurgeBlock affected-pages snapshot (captured pre-cascade because
-    /// FK CASCADE on `block_links` clears outbound/inbound edges before
-    /// the post-op recompute runs).
-    Purge { affected_pages: Vec<String> },
+    /// PurgeBlock. #2183: carries no data — the page-wide count recompute is
+    /// deferred to the background `RebuildPagesCacheCounts` task, so the former
+    /// pre-cascade affected-pages snapshot is no longer captured (its
+    /// `collect_purge_affected_pages` walk was discarded unused).
+    Purge,
     /// MoveBlock (E4). Captured BEFORE the projection reparents the block
     /// so the count hook can refresh BOTH the source page (the block's
     /// `page_id` at move time) and the destination page (derived post-move

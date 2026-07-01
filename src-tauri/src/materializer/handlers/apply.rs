@@ -661,13 +661,11 @@ pub(super) async fn apply_op_tx(
         }
         OpType::PurgeBlock => {
             let p: PurgeBlockPayload = serde_json::from_str(&record.payload)?;
-            // Capture the affected pages BEFORE the SQL
-            // cascade clears `block_links` (FK CASCADE on mig 0061).
-            // The cascade walks the descendant CTE so we mirror that
-            // shape to collect the set we need to refresh.
-            pre_state = PreOpState::Purge {
-                affected_pages: collect_purge_affected_pages(conn, p.block_id.as_str()).await?,
-            };
+            // #2183: PurgeBlock's page-wide count recompute is deferred to the
+            // background `RebuildPagesCacheCounts` task (dispatch's lifecycle
+            // set), which recomputes from post-cascade state — so we no longer
+            // capture a pre-cascade affected-pages snapshot here.
+            pre_state = PreOpState::Purge;
             apply_purge_block_via_loro(conn, &record.device_id, &p).await?;
         }
         OpType::MoveBlock => {
@@ -728,50 +726,6 @@ pub(super) async fn apply_op_tx(
     maintain_pages_cache_counts_after_op(conn, &pre_state).await?;
     tracing::debug!(op_type = %record.op_type, seq = record.seq, "applied op to materialized tables");
     Ok(effects)
-}
-
-/// Capture the set of pages whose `pages_cache` counts may be affected
-/// by a `PurgeBlock` cascade. The cascade walks the descendant CTE and
-/// removes `blocks` + cascading edges from `block_links`. We need to
-/// refresh every page that:
-///   1. owns one of the cohort blocks (its `child_block_count` drops),
-///   2. is targeted by an outbound edge from a cohort block (its
-///      `inbound_link_count` drops by 1 per distinct source).
-///
-/// Plus the cohort's own page ids if any cohort block is a page (their
-/// `pages_cache` row is itself dropped by the cascade — the UPDATE filter
-/// matches zero rows so it's a no-op, which is the desired outcome).
-pub(super) async fn collect_purge_affected_pages(
-    conn: &mut sqlx::SqliteConnection,
-    seed_block_id: &str,
-) -> Result<Vec<String>, AppError> {
-    use std::collections::HashSet;
-    // Walk the descendant CTE (PurgeBlock's `purge_block_sql_cascade`
-    // uses the same shape) to find the cohort. Then read each block's
-    // page_id + outbound target page_ids.
-    let cohort = sqlx::query!(
-        "WITH RECURSIVE descendants(id, depth) AS ( \
-             SELECT id, 0 FROM blocks WHERE id = ? \
-             UNION ALL \
-             SELECT b.id, d.depth + 1 FROM blocks b \
-             INNER JOIN descendants d ON b.parent_id = d.id \
-             WHERE d.depth < 100 \
-         ) \
-         SELECT id AS \"id!\" FROM descendants",
-        seed_block_id,
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-    let cohort_ids: Vec<String> = cohort.into_iter().map(|r| r.id).collect();
-    let mut affected: HashSet<String> = HashSet::new();
-    for p in distinct_pages_for_blocks(conn, &cohort_ids).await? {
-        affected.insert(p);
-    }
-    // #463: single batch query instead of one round-trip per cohort block.
-    for p in outbound_target_pages_for_blocks(conn, &cohort_ids).await? {
-        affected.insert(p);
-    }
-    Ok(affected.into_iter().collect())
 }
 
 /// Capture the descendant cohort that `apply_restore_block_tx` is

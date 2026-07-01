@@ -686,9 +686,8 @@ mod ancestor_db_tests {
 /// * **Single-root** (`WHERE id = ?`) — the macro family above
 ///   (`descendants_cte_*!()`) is the single source of truth. Most call
 ///   sites now `concat!` against the macro; the only ones that re-inline
-///   the body are the three `sqlx::query!()` *compile-time* sites
-///   (`materializer::handlers::apply::collect_purge_affected_pages`,
-///   `soft_delete::trash::cascade_soft_delete`, and the `page_id`/`space_id`
+///   the body are the two `sqlx::query!()` *compile-time* sites
+///   (`soft_delete::trash::cascade_soft_delete` and the `page_id`/`space_id`
 ///   rederive in `commands::block_cleanup`) whose macro form sqlx rejects
 ///   because it demands a raw string literal — see the module-level
 ///   "Sites that still inline the CTE" note.
