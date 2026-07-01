@@ -636,6 +636,68 @@ async fn insert_test_attachment(pool: &SqlitePool, att_id: &str, fs_path: &str, 
     .unwrap();
 }
 
+// ── pretally_bytes_total (#2200 Tier-2: one IN query, no N+1) ─────────
+
+/// Reference implementation of the pre-#2200 per-attachment N+1 loop.
+/// The batched `pretally_bytes_total` must return exactly this sum for
+/// every input, so the test asserts parity rather than a hardcoded total.
+async fn pretally_bytes_total_loop_reference(pool: &SqlitePool, ids: &[String]) -> u64 {
+    let mut total: u64 = 0;
+    for id in ids {
+        if let Ok(Some(meta)) = get_attachment_receive_meta(pool, id).await {
+            total = total.saturating_add(u64::try_from(meta.size_bytes).unwrap_or(0));
+        }
+    }
+    total
+}
+
+#[tokio::test]
+async fn pretally_bytes_total_matches_per_attachment_loop() {
+    let dir = TempDir::new().unwrap();
+    let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+
+    insert_test_attachment(&pool, "ATT_A", "attachments/a.bin", 1024).await;
+    insert_test_attachment(&pool, "ATT_B", "attachments/b.bin", 15).await;
+    insert_test_attachment(&pool, "ATT_C", "attachments/c.bin", 0).await;
+
+    // Mix of present ids plus a MISSING id (never inserted). The missing id
+    // must contribute nothing — exactly like the loop's `Ok(None)` arm.
+    let ids: Vec<String> = ["ATT_A", "ATT_B", "ATT_MISSING", "ATT_C"]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+
+    let batched = pretally_bytes_total(&pool, &ids).await;
+    let looped = pretally_bytes_total_loop_reference(&pool, &ids).await;
+
+    assert_eq!(
+        batched, looped,
+        "batched pre-tally must equal the per-attachment loop sum"
+    );
+    assert_eq!(batched, 1039, "1024 + 15 + 0 (+ 0 for the missing id)");
+}
+
+#[tokio::test]
+async fn pretally_bytes_total_all_missing_and_empty_are_zero() {
+    let dir = TempDir::new().unwrap();
+    let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+
+    // Empty request → zero (and no query at all).
+    let empty: Vec<String> = Vec::new();
+    assert_eq!(pretally_bytes_total(&pool, &empty).await, 0);
+    assert_eq!(pretally_bytes_total_loop_reference(&pool, &empty).await, 0);
+
+    // All-missing request → zero, matching the loop's every-id-`Ok(None)` path
+    // (COALESCE(SUM(...), 0) over zero JOIN rows).
+    let missing: Vec<String> = vec!["NOPE1".to_string(), "NOPE2".to_string()];
+    let batched = pretally_bytes_total(&pool, &missing).await;
+    assert_eq!(batched, 0, "all-missing pre-tally must be zero");
+    assert_eq!(
+        batched,
+        pretally_bytes_total_loop_reference(&pool, &missing).await,
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn protocol_initiator_requests_and_receives_files() {
     let initiator_dir = TempDir::new().unwrap();

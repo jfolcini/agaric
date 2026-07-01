@@ -436,6 +436,53 @@ async fn get_attachment_receive_meta(
     }))
 }
 
+/// #2200 (Tier-2) — pre-tally `bytes_total` for a progress-enabled send in
+/// ONE `json_each(?)` batch query instead of the former per-attachment N+1
+/// (`get_attachment_receive_meta` once per id).
+///
+/// Tally semantics are preserved exactly:
+/// - Each requested id that resolves to an `attachments` row contributes its
+///   `size_bytes` (clamped to `>= 0`, so a negative/garbage row contributes
+///   `0` — the same as the loop's `u64::try_from(...).unwrap_or(0)`).
+/// - A requested id with no matching row contributes nothing (the loop's
+///   `Ok(None)` arm).
+/// - Duplicate ids in `attachment_ids` are counted once per occurrence: the
+///   list is fanned out via `json_each` and JOINed to `attachments`, so each
+///   list element that matches yields its own summand — identical to the
+///   loop, which called the lookup once per element.
+///
+/// The whole tally is a best-effort denominator (the doc-comment at the call
+/// site), so returning `0` on a query error keeps the previous behaviour
+/// (the loop swallowed per-id errors via `if let Ok(Some(..))`).
+async fn pretally_bytes_total(pool: &SqlitePool, attachment_ids: &[String]) -> u64 {
+    if attachment_ids.is_empty() {
+        return 0;
+    }
+    // sqlx requires a `String` (JSON array text) for `json_each(?)` binds.
+    let Ok(ids_json) = serde_json::to_string(attachment_ids) else {
+        return 0;
+    };
+    // `json_each(?1) je JOIN attachments a ON a.id = je.value` yields one row
+    // per (requested-id occurrence × matching attachment); `MAX(size_bytes, 0)`
+    // clamps negatives to 0 to mirror the loop's saturating `unwrap_or(0)`, and
+    // `COALESCE(SUM(...), 0)` handles the all-missing case (SUM over zero rows
+    // is SQL NULL). Result fits i64 in the DB; we clamp to `u64` in Rust.
+    // dynamic-sql: static SQL; runtime form matches this sync module's style
+    // (get_attachment_receive_meta etc.) and json_each isn't macro-checkable.
+    let row: Result<Option<(i64,)>, _> = sqlx::query_as(
+        r"SELECT COALESCE(SUM(MAX(a.size_bytes, 0)), 0)
+          FROM json_each(?1) je
+          JOIN attachments a ON a.id = je.value",
+    )
+    .bind(&ids_json)
+    .fetch_optional(pool)
+    .await;
+    match row {
+        Ok(Some((total,))) => u64::try_from(total).unwrap_or(0),
+        Ok(None) | Err(_) => 0,
+    }
+}
+
 /// #1993 — if `content_hash` resolves to a locally-present blob, repoint the
 /// attachment row's `fs_path` at that blob file and return `true` (the bytes
 /// are already held locally, so the row is NOT missing). Returns `false` when
@@ -1019,12 +1066,10 @@ pub async fn receive_request_and_send_files(
     let files_total = attachment_ids.len() as u64;
     let mut bytes_total: u64 = 0;
     if progress.is_some() && files_total > 0 {
-        for id in &attachment_ids {
-            if let Ok(Some(meta)) = get_attachment_receive_meta(pool, id).await {
-                bytes_total =
-                    bytes_total.saturating_add(u64::try_from(meta.size_bytes).unwrap_or(0));
-            }
-        }
+        // #2200 (Tier-2): one `json_each(?)` IN query instead of the former
+        // per-attachment N+1. Same tally set + missing-id handling — see
+        // `pretally_bytes_total`.
+        bytes_total = pretally_bytes_total(pool, &attachment_ids).await;
         if let Some(p) = progress {
             p.emit("sending", 0, files_total, 0, bytes_total);
         }
