@@ -1424,19 +1424,22 @@ async fn materializer_processes_background_tasks_after_page_create() {
 
     let bg = mat.metrics().bg_processed.load(Ordering::Relaxed);
     // A `create_block` op with `block_type = "page"` fans out to exactly
-    // 4 background tasks via `dispatch::enqueue_background_tasks`:
-    // RebuildPagesCache, UpdateFtsBlock, ReindexBlockTagRefs,
-    // RebuildTagInheritanceCache. (#2037: RebuildProjectedAgendaCache is no
-    // longer enqueued on create — a freshly created block has no `repeat`
-    // property yet, so it can never be a `projected_agenda_cache` row; the
-    // later SetProperty('repeat', …) enqueues that rebuild itself.)
+    // 3 background tasks via `dispatch::enqueue_background_tasks`:
+    // RebuildPagesCache, UpdateFtsBlock, ReindexBlockTagRefs.
+    // (#2200: RebuildTagInheritanceCache is no longer enqueued on create — the
+    // in-tx `inherit_parent_tags` already populates the new childless block's
+    // inherited tags, so the vault-wide rebuild is redundant.)
+    // (#2037: RebuildProjectedAgendaCache is no longer enqueued on create —
+    // a freshly created block has no `repeat` property yet, so it can never be
+    // a `projected_agenda_cache` row; the later SetProperty('repeat', …)
+    // enqueues that rebuild itself.)
     // SetBlockPageId is skipped for page blocks — their page_id = id
     // is enforced by the page_id_self_for_pages CHECK constraint at
     // INSERT time. `flush_background` then enqueues one Barrier,
-    // which the worker also counts as a processed task — total 5.
+    // which the worker also counts as a processed task — total 4.
     assert_eq!(
-        bg, 5,
-        "page creation dispatches exactly 4 bg tasks + 1 flush barrier, got {bg}"
+        bg, 4,
+        "page creation dispatches exactly 3 bg tasks + 1 flush barrier, got {bg}"
     );
 }
 
