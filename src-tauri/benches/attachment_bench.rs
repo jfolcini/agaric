@@ -122,6 +122,9 @@ fn bench_add_attachment(c: &mut Criterion) {
                             "text/plain".into(),
                             0,
                             bench_fs_path,
+                            // #2192: path-based bench entry — no in-memory
+                            // buffer, so hash from disk.
+                            None,
                         )
                         .await
                         .unwrap();

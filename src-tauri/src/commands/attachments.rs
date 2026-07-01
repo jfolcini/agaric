@@ -52,6 +52,7 @@ pub async fn add_attachment_inner(
     mime_type: String,
     size_bytes: i64,
     fs_path: String,
+    precomputed_hash: Option<String>,
 ) -> Result<AttachmentRow, AppError> {
     // F-11 validation: size limit
     if size_bytes > MAX_ATTACHMENT_SIZE {
@@ -127,7 +128,15 @@ pub async fn add_attachment_inner(
     // Path. A hash failure is fatal here: the bytes the stat just saw are
     // unreadable, so the row would be broken regardless. #1620: computed before
     // the writer tx opens so the up-to-50-MB read doesn't hold the writer lock.
-    let content_hash = {
+    // #2192: the bytes path (`add_attachment_with_bytes_inner`) already has
+    // the full buffer in memory and hashes it while writing to disk, so it
+    // passes the hash in via `precomputed_hash` — byte-identical to what a
+    // disk read would produce, saving a redundant up-to-50-MB re-read. The
+    // path entry (`add_attachment`) passes `None` and keeps the disk-read
+    // hashing behavior (the caller wrote the bytes; we never held them).
+    let content_hash = if let Some(hash) = precomputed_hash {
+        hash
+    } else {
         let dir = app_data_dir.to_path_buf();
         let path = fs_path.clone();
         let (_bytes, hash) = tokio::task::spawn_blocking(move || {
@@ -303,15 +312,23 @@ pub async fn add_attachment_with_bytes_inner(
     // Write the bytes first (creates the attachments dir). `write_attachment_file`
     // is synchronous std::fs; run it on the blocking pool so a large write does
     // Not stall the async runtime (H rationale).
-    {
+    //
+    // #2192: we already hold the full byte buffer in memory, so hash it HERE
+    // (inside the same blocking task, before the buffer is dropped) instead of
+    // making `add_attachment_inner` re-read the file from disk and hash that.
+    // `blake3::hash(&bytes).to_hex()` is byte-identical to the disk-read hash
+    // (`read_attachment_file` hashes the exact same bytes it just read back),
+    // so the stored `content_hash` and the dedup key are unchanged.
+    let content_hash = {
         let dir = app_data_dir.to_path_buf();
         let path = fs_path.clone();
         tokio::task::spawn_blocking(move || {
-            crate::sync_files::write_attachment_file(&dir, &path, &bytes)
+            crate::sync_files::write_attachment_file(&dir, &path, &bytes)?;
+            Ok::<String, AppError>(blake3::hash(&bytes).to_hex().to_string())
         })
         .await
-        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))??;
-    }
+        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))??
+    };
 
     // Delegate for validation + op-log + row insert. On ANY failure, unlink the
     // bytes we just wrote so a rejected upload leaves nothing behind.
@@ -325,6 +342,7 @@ pub async fn add_attachment_with_bytes_inner(
         mime_type,
         size_bytes,
         fs_path.clone(),
+        Some(content_hash),
     )
     .await
     {
@@ -696,6 +714,8 @@ pub async fn add_attachment(
         mime_type,
         size_bytes,
         fs_path,
+        // #2192: path entry — we never held the bytes, so hash from disk.
+        None,
     )
     .await
     .map_err(sanitize_internal_error)

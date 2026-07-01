@@ -2424,6 +2424,7 @@ async fn add_attachment_rejects_traversal_at_command_layer() {
         "application/octet-stream".to_string(),
         10,
         "../../outside/evil.bin".to_string(),
+        None,
     )
     .await;
 
