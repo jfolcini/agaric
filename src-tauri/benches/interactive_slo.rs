@@ -662,18 +662,37 @@ fn assert_under_budget(cmd: &str, acc: &Acc, budget_ms: f64) {
     println!("interactive_slo: {cmd} = {mean_ms:.2} ms <= budget {budget_ms} ms (PASS)");
 }
 
-/// Skip-gate for problem commands. Returns `true` when the bench should
-/// be skipped (the default for CI). Set `SLO_INCLUDE_PROBLEM=1` to run.
-fn problem_skipped(cmd: &str) -> bool {
-    if std::env::var("SLO_INCLUDE_PROBLEM").is_err() {
+/// Skip-gate keyed on an env var. Returns `true` (skip) unless `env_var`
+/// is set. The message names the exact variable so the log tells a reader
+/// how to enable the bench.
+fn gate_skipped(cmd: &str, env_var: &str) -> bool {
+    if std::env::var(env_var).is_err() {
         println!(
-            "interactive_slo: {cmd} SKIPPED (set SLO_INCLUDE_PROBLEM=1 to run; \
+            "interactive_slo: {cmd} SKIPPED (set {env_var}=1 to run; \
              aspirational budget — see docs/architecture/operations.md § Product SLO)"
         );
         true
     } else {
         false
     }
+}
+
+/// Skip-gate for the confirmable problem-tier probes (`list_page_links` /
+/// `list_projected_agenda`, #2178) that the `bench-slo` workflow measures via
+/// `slo_include_problem`. Set `SLO_INCLUDE_PROBLEM=1` to run.
+fn problem_skipped(cmd: &str) -> bool {
+    gate_skipped(cmd, "SLO_INCLUDE_PROBLEM")
+}
+
+/// Skip-gate for `revert_ops @ 100K`. This is a *permanently* known-over-budget
+/// bench (~6× the 200 ms ceiling; see its doc) with no near-term promotion path,
+/// so it must NOT ride the shared `SLO_INCLUDE_PROBLEM` flag — otherwise
+/// enabling that flag to measure the #2178 probes would drag this bench in and
+/// guarantee a red job (both a pool-saturation panic and the budget breach).
+/// It gets its own dedicated `SLO_INCLUDE_REVERT` gate, which the scheduled
+/// workflow never sets.
+fn revert_gate_skipped(cmd: &str) -> bool {
+    gate_skipped(cmd, "SLO_INCLUDE_REVERT")
 }
 
 // ===========================================================================
@@ -1091,12 +1110,19 @@ fn bench_create_block(c: &mut Criterion) {
 /// `revert_ops_inner` — 50-op batch revert against a single page with
 /// 100K total ops in its history. Aspirational budget: 200 ms.
 ///
-/// PROBLEM TIER (gated behind `SLO_INCLUDE_PROBLEM`): a faithful single
-/// "50-op revert at 100K" measures ~1.2 s, ~6× over the 200 ms interactive
-/// ceiling. The cost is dominated by the per-op `compute_reverse` walk + the
-/// recursive-CTE op-log read, both O(log size). Until that read is made
-/// sublinear (mirrors the `list_projected_agenda` gate), this stays gated so
-/// the green tier isn't blocked by a known, tracked perf gap.
+/// PROBLEM TIER (gated behind its OWN `SLO_INCLUDE_REVERT`, NOT the shared
+/// `SLO_INCLUDE_PROBLEM`): a faithful single "50-op revert at 100K" measures
+/// ~1.2 s, ~6× over the 200 ms interactive ceiling. The cost is dominated by
+/// the per-op `compute_reverse` walk + the recursive-CTE op-log read, both
+/// O(log size). Until that read is made sublinear (mirrors the
+/// `list_projected_agenda` gate), this stays gated so the green tier isn't
+/// blocked by a known, tracked perf gap.
+///
+/// It gets a dedicated gate so that enabling `SLO_INCLUDE_PROBLEM` to measure
+/// the confirmable #2178 probes (`list_page_links` / `list_projected_agenda`)
+/// does not also un-gate this permanently-over-budget bench — which would both
+/// saturate the bench pool (`PoolTimedOut`) and breach the budget, guaranteeing
+/// a red job every time someone gathers the #2178 numbers.
 ///
 /// Phase 2 §B.1 gate for `history_bench::bench_revert_ops_50op`; `revert` is
 /// bulk-write but user-initiated (Cmd+Z over a selection), so it belongs in
@@ -1105,7 +1131,7 @@ fn bench_revert_ops_50op_at_100k(c: &mut Criterion) {
     const BUDGET_MS: f64 = 200.0;
     const TOTAL_OPS: usize = 100_000;
 
-    if problem_skipped("revert_ops (50op) @ 100K") {
+    if revert_gate_skipped("revert_ops (50op) @ 100K") {
         return;
     }
 

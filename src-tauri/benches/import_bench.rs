@@ -101,7 +101,13 @@ fn bench_import_markdown_inner(c: &mut Criterion) {
             &n,
             |b, _| {
                 let content = markdown.clone();
-                b.to_async(&rt).iter_batched(
+                // Synchronous `iter_batched` (not `to_async`): the async
+                // setup calls `rt.block_on`, and criterion's async bencher
+                // would run `setup` *inside* `rt.block_on`, nesting a runtime
+                // ("Cannot start a runtime from within a runtime"). Driving
+                // each async section with a top-level `rt.block_on` keeps the
+                // untimed setup and timed routine separate without nesting.
+                b.iter_batched(
                     || {
                         rt.block_on(async {
                             let dir = TempDir::new().unwrap();
@@ -128,7 +134,7 @@ fn bench_import_markdown_inner(c: &mut Criterion) {
                     },
                     |(dir, pool, materializer, space_id)| {
                         let content = content.clone();
-                        async move {
+                        rt.block_on(async move {
                             let result = import_markdown_inner(
                                 &pool,
                                 DEV_BENCH,
@@ -148,7 +154,7 @@ fn bench_import_markdown_inner(c: &mut Criterion) {
 
                             materializer.shutdown();
                             drop(dir);
-                        }
+                        });
                     },
                     BatchSize::PerIteration,
                 );

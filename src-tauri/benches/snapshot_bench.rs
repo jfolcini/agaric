@@ -209,10 +209,11 @@ fn synthetic_snapshot(n: usize) -> SnapshotData {
         });
     }
     SnapshotData {
-        // SCHEMA_VERSION is crate-private; 1 is always a valid version
-        // (decode accepts 1..=SCHEMA_VERSION) and the value does not
-        // affect encode/decode cost.
-        schema_version: 1,
+        // SCHEMA_VERSION / MIN_SCHEMA_VERSION are crate-private; decode now
+        // accepts only MIN_SCHEMA_VERSION..=SCHEMA_VERSION (currently 4..=6),
+        // so this must be a version in that window. The value does not affect
+        // encode/decode cost. Keep in sync if MIN_SCHEMA_VERSION advances.
+        schema_version: 6,
         snapshot_device_id: "dev-bench".to_string(),
         up_to_seqs: BTreeMap::new(),
         up_to_hash: String::new(),
