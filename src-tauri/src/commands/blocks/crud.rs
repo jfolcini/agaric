@@ -712,19 +712,42 @@ pub async fn delete_blocks_by_ids_inner(
     .execute(&mut **tx)
     .await?;
 
-    // Surface a per-root saturation warn so a
-    // pathological tree under any single root in the batch is still
-    // observable. The check itself is cheap (one CTE re-walk per root,
-    // no UPDATE) and runs only when the cascade actually fired.
-    for root in &live_roots {
-        if crate::block_descendants::cascade_depth_saturated(&mut **tx, root).await? {
-            tracing::warn!(
-                block_id = %root,
-                op = "delete_blocks_by_ids",
-                "cascade-depth cap reached (>=99 levels); descendants \
-                 below depth 100 were not soft-deleted. Tree is pathologically deep.",
-            );
-        }
+    // Surface a saturation warn so a pathological tree under any root in the
+    // batch is still observable. #2200 (Tier-2): collapse the former per-root
+    // `cascade_depth_saturated` loop (up to `live_roots.len()` separate
+    // recursive walks) into a SINGLE `MAX(depth)` over ONE multi-root recursive
+    // CTE, mirroring the purge path's collapsed form (see the `SELECT
+    // MAX(depth) FROM descendants` over `json_each(?1)` in
+    // `purge_blocks_by_ids_inner`). Semantics are identical to the old loop:
+    // `cascade_depth_saturated` walks `descendants_cte_standard!()` (seed
+    // `id = ?`, NO `deleted_at` filter, recursive arm capped `depth < 100`) and
+    // reports `MAX(depth) >= 99`. This multi-root CTE uses the SAME shape —
+    // seeded from every root via `json_each(?1)`, no `deleted_at` filter, same
+    // `d.depth < 100` cap — so `MAX(depth)` over the union of all roots' subtrees
+    // equals the max over the per-root walks, and `>= 99` flags saturation for
+    // the batch exactly as the loop's per-root check did (any single saturated
+    // root drives the batch max to >= 99). One walk covers every root.
+    let saturation_max_depth: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(
+        "WITH RECURSIVE descendants(id, depth) AS ( \
+             SELECT id, 0 FROM blocks \
+             WHERE id IN (SELECT value FROM json_each(?1)) \
+             UNION ALL \
+             SELECT b.id, d.depth + 1 FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+             WHERE d.depth < 100 \
+         ) \
+         SELECT MAX(depth) FROM descendants",
+    )
+    .bind(&live_roots_json)
+    .fetch_one(&mut **tx)
+    .await?;
+    if saturation_max_depth.unwrap_or(0) >= 99 {
+        tracing::warn!(
+            op = "delete_blocks_by_ids",
+            "cascade-depth cap reached (>=99 levels); descendants \
+             below depth 100 were not soft-deleted. A tree in this batch is \
+             pathologically deep.",
+        );
     }
 
     // P-4 — sweep inherited tag rows for every root. Per-root call

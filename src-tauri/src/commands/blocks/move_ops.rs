@@ -201,6 +201,22 @@ pub async fn move_block_inner(
             .await?
             .flatten();
 
+    // #2200 (Tier-2 reorder early-out): capture the moved block's OLD
+    // `parent_id` BEFORE `apply_move_block_via_loro` overwrites it. A move that
+    // keeps the block under the SAME parent is a pure sibling reorder — only
+    // ranks change; the affected pages and their descendant COUNTS are provably
+    // unchanged (the subtree stays under the same parent, hence the same owning
+    // page, and no block enters/leaves any page). We use this below to SKIP the
+    // affected-pages CTE + `recompute_pages_cache_counts_for_pages` on the
+    // hottest move gesture (drag-reorder).
+    let old_parent_id: Option<String> =
+        sqlx::query_scalar::<_, Option<String>>("SELECT parent_id FROM blocks WHERE id = ?")
+            .bind(&block_id)
+            .fetch_optional(&mut **tx)
+            .await?
+            .flatten();
+    let same_parent_reorder = old_parent_id == new_parent_id;
+
     // 5. #1257 route the move through the SAME engine-apply + dense-rank
     //    reprojection the boot-replay / sync `ApplyOp` path uses, IN this
     //    CommandTx, INSTEAD of the inline provisional `UPDATE blocks SET
@@ -255,7 +271,17 @@ pub async fn move_block_inner(
     // target pages of the moved subtree (resolved against the just-updated
     // `page_id` + `block_links`). Bounded by the same depth-100 subtree CTE
     // and indexed `block_links` join.
-    {
+    //
+    // #2200 (Tier-2 reorder early-out): SKIP this entire block on a
+    // same-parent reorder. When `old_parent_id == new_parent_id` the subtree
+    // stays under the same parent — hence the same owning page — and no block
+    // crosses into/out of any page, so `child_block_count` /
+    // `inbound_link_count` for every page are unchanged. Only sibling ranks
+    // moved, and those were already reprojected by `apply_move_block_via_loro`
+    // (step 5) above. The op-log append + engine dispatch + `page_id`/`space_id`
+    // rederive all still ran; we elide ONLY the provably-unchanged COUNT
+    // recompute (the affected-pages CTE + `recompute_pages_cache_counts_for_pages`).
+    if !same_parent_reorder {
         use std::collections::HashSet;
         let mut affected: HashSet<String> = HashSet::new();
         if let Some(p) = old_owning_page {

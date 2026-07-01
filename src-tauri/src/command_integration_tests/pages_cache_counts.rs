@@ -578,3 +578,277 @@ async fn local_purge_recomputes_surviving_owner_child_count() {
          (active) descendant (#446)"
     );
 }
+
+/// #2200 (Tier-2 reorder early-out) — a move that keeps a block under the SAME
+/// parent is a pure sibling reorder. The affected pages and their descendant
+/// COUNTS cannot change (the subtree stays under the same parent / owning
+/// page), so `move_block_inner` must SKIP the in-tx
+/// `recompute_pages_cache_counts_for_pages` on this hottest gesture — while a
+/// cross-parent move still recomputes. We OBSERVE the skip by stamping a wrong
+/// sentinel into `pages_cache.child_block_count` and asserting a same-parent
+/// reorder leaves it UNTOUCHED (proving no recompute ran), whereas a subsequent
+/// cross-parent move corrects it (proving the recompute still fires). Ranks are
+/// asserted to reprojected correctly in BOTH cases.
+///
+/// The observe is sound because `move_block` does NOT enqueue the background
+/// full-table `RebuildPagesCacheCounts` (see
+/// `dispatch::rebuild_pages_cache_counts_enqueued_only_for_cohort_lifecycle_ops`):
+/// the ONLY thing that maintains a page's counts on a move is that in-tx call,
+/// so a tampered count survives `settle` iff the recompute was skipped.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn same_parent_reorder_skips_count_recompute_cross_parent_still_recomputes() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let a = create_block_inner(&pool, DEV, &mat, "page".into(), "A".into(), None, Some(1))
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let b = create_block_inner(&pool, DEV, &mat, "page".into(), "B".into(), None, Some(2))
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // Two content children under A, in creation order c1 (slot 1) then c2
+    // (slot 2). A owns 2; B owns 0.
+    let c1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "c1".into(),
+        Some(a.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let c2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "c2".into(),
+        Some(a.id.clone()),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let (_a_in0, a_ch0) = read_counts(&pool, a.id.as_str()).await;
+    assert_eq!(a_ch0, 2, "baseline: A owns c1 + c2");
+
+    // Helper: the (id, position) sibling order under a parent, canonical
+    // `(position ASC, id ASC)`.
+    async fn sibling_order(pool: &sqlx::SqlitePool, parent: &str) -> Vec<(String, i64)> {
+        sqlx::query_as::<_, (String, i64)>(
+            "SELECT id, position FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+             ORDER BY position ASC, id ASC",
+        )
+        .bind(parent)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    let order0 = sibling_order(&pool, a.id.as_str()).await;
+    assert_eq!(
+        order0.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>(),
+        vec![c1.id.to_string(), c2.id.to_string()],
+        "baseline sibling order under A is [c1, c2]"
+    );
+
+    // Stamp a WRONG sentinel so any recompute is observable: if the reorder
+    // recomputes, this snaps back to 2; if it skips, it stays 999.
+    sqlx::query("UPDATE pages_cache SET child_block_count = 999 WHERE page_id = ?")
+        .bind(a.id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // SAME-PARENT REORDER: move c2 to slot 0 (front) under its EXISTING parent
+    // A. Ranks must reproject to [c2, c1]; the tampered count must be UNTOUCHED.
+    move_block_inner(&pool, DEV, &mat, c2.id.clone(), Some(a.id.clone()), 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let order1 = sibling_order(&pool, a.id.as_str()).await;
+    assert_eq!(
+        order1.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>(),
+        vec![c2.id.to_string(), c1.id.to_string()],
+        "a same-parent reorder must reproject ranks to [c2, c1]"
+    );
+    // c2 still owned by A (no reparent).
+    let c2_parent: Option<String> =
+        sqlx::query_scalar::<_, Option<String>>("SELECT parent_id FROM blocks WHERE id = ?")
+            .bind(c2.id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        c2_parent.as_deref(),
+        Some(a.id.as_str()),
+        "same-parent reorder must NOT reparent c2"
+    );
+
+    let (_a_in1, a_ch1) = read_counts(&pool, a.id.as_str()).await;
+    assert_eq!(
+        a_ch1, 999,
+        "#2200: a same-parent reorder must SKIP recompute_pages_cache_counts_for_pages, \
+         leaving the tampered child_block_count (999) untouched — counts cannot change \
+         when only sibling ranks move"
+    );
+
+    // CROSS-PARENT MOVE: now move c2 out of A into B (slot 0). This DOES change
+    // ownership, so the in-tx recompute must fire and correct BOTH pages'
+    // counts (A -> 1, B -> 1), overwriting the tampered sentinel.
+    move_block_inner(&pool, DEV, &mat, c2.id.clone(), Some(b.id.clone()), 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let (_a_in2, a_ch2) = read_counts(&pool, a.id.as_str()).await;
+    let (_b_in2, b_ch2) = read_counts(&pool, b.id.as_str()).await;
+    assert_eq!(
+        a_ch2, 1,
+        "#2200: a cross-parent move MUST recompute — A drops to 1 (only c1 left), \
+         overwriting the tampered 999"
+    );
+    assert_eq!(
+        b_ch2, 1,
+        "#2200: a cross-parent move MUST recompute — B rises to 1 (received c2)"
+    );
+    // And c2 really reparented to B.
+    let c2_parent2: Option<String> =
+        sqlx::query_scalar::<_, Option<String>>("SELECT parent_id FROM blocks WHERE id = ?")
+            .bind(c2.id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        c2_parent2.as_deref(),
+        Some(b.id.as_str()),
+        "cross-parent move must reparent c2 under B"
+    );
+}
+
+/// #2200 (Tier-2 batch-delete saturation collapse) — `delete_blocks_by_ids_inner`
+/// replaced the former per-root `cascade_depth_saturated` loop with a SINGLE
+/// `MAX(depth)` over ONE multi-root recursive CTE. This pins that the collapsed
+/// form preserves identical delete SEMANTICS across roots at DIFFERENT depths:
+/// every root's full subtree cascades (satellites soft-delete), the returned
+/// count equals the whole cohort, and no root's descendants are missed — which
+/// is exactly what the old loop guaranteed (its per-root walks covered every
+/// subtree). Below saturation (max depth well under the >=99 cap) the delete
+/// completes cleanly for the whole batch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_delete_multi_root_varying_depth_cascades_all() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Root R1: a page owning a depth-3 content chain  R1 > a > b > c
+    // (4 blocks incl. the root). Root R2: a page owning a depth-1 child
+    // R2 > d (2 blocks). The two roots have DIFFERENT max depths, so the
+    // collapsed multi-root MAX(depth) must span BOTH subtrees.
+    let r1 = create_block_inner(&pool, DEV, &mat, "page".into(), "R1".into(), None, Some(1))
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let r2 = create_block_inner(&pool, DEV, &mat, "page".into(), "R2".into(), None, Some(2))
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // Build R1's deep chain: a (under R1) > b > c.
+    let a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "a".into(),
+        Some(r1.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "b".into(),
+        Some(a.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let c = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "c".into(),
+        Some(b.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Build R2's shallow child d.
+    let d = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "d".into(),
+        Some(r2.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    async fn is_deleted(pool: &sqlx::SqlitePool, id: &str) -> bool {
+        sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+            .is_some()
+    }
+
+    // Sanity: nothing deleted yet.
+    for id in [&r1.id, &r2.id, &a.id, &b.id, &c.id, &d.id] {
+        assert!(!is_deleted(&pool, id.as_str()).await, "baseline: {id} live");
+    }
+
+    // Batch-delete BOTH roots in one call. The collapsed multi-root CTE walks
+    // both subtrees; the cascade soft-deletes every descendant of every root.
+    let deleted = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![r1.id.clone(), r2.id.clone()])
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // R1's subtree = 4 blocks (R1,a,b,c); R2's = 2 (R2,d). Total cohort = 6.
+    assert_eq!(
+        deleted, 6,
+        "the multi-root cascade must soft-delete the FULL cohort across both \
+         varying-depth roots (R1+a+b+c + R2+d = 6); the collapsed saturation \
+         CTE must not change the cascade set"
+    );
+
+    // Every block in both subtrees — including the deepest satellite `c` and
+    // the shallow `d` — must be tombstoned.
+    for id in [&r1.id, &r2.id, &a.id, &b.id, &c.id, &d.id] {
+        assert!(
+            is_deleted(&pool, id.as_str()).await,
+            "the cascade must reach {id} under its root — satellites at every \
+             depth cascade identically to the pre-collapse per-root walk"
+        );
+    }
+}
