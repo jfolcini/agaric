@@ -304,6 +304,12 @@ pub async fn find_missing_attachments(
 }
 
 /// Look up the `fs_path` for a given attachment ID.
+///
+/// #2189: the sender path now fetches `fs_path` + `size_bytes` +
+/// `content_hash` together via [`get_attachment_send_meta`] so it can prefer
+/// the stored hash; this bare single-column lookup remains for its focused
+/// unit test.
+#[cfg(test)]
 async fn get_attachment_fs_path(
     pool: &SqlitePool,
     attachment_id: &str,
@@ -313,6 +319,93 @@ async fn get_attachment_fs_path(
         .fetch_optional(pool)
         .await?;
     Ok(row)
+}
+
+/// Metadata loaded from the `attachments` row on the SENDER path (#2189).
+///
+/// Carries the `fs_path` plus the two columns the offer-hash short-circuit
+/// needs: the DB-authoritative `size_bytes` (the size guard) and the
+/// lazily-backfilled `content_hash` (the blake3 digest already computed on a
+/// prior boot, nullable). See [`resolve_offer_hash`].
+struct AttachmentSendMeta {
+    fs_path: String,
+    /// DB-authoritative size in bytes. Guards the stored-hash short-circuit:
+    /// if the on-disk file's length disagrees, the file drifted and we must
+    /// re-hash rather than trust a stale `content_hash`.
+    size_bytes: i64,
+    /// Persisted blake3 hex digest (migrations 0093/0094), byte-for-byte the
+    /// same value `read_attachment_file_metadata` would recompute. `NULL`
+    /// until the boot-time backfill fills it in, so the caller must fall back
+    /// to a full re-hash when this is `None`.
+    content_hash: Option<String>,
+}
+
+/// Look up `fs_path`, `size_bytes`, and `content_hash` for a requested
+/// attachment on the sender path (#2189).
+///
+/// Replaces the bare [`get_attachment_fs_path`] fetch in the send loop so the
+/// stored `content_hash` can populate `FileOffer.blake3_hash` directly instead
+/// of streaming + re-hashing the whole file on every sync round.
+async fn get_attachment_send_meta(
+    pool: &SqlitePool,
+    attachment_id: &str,
+) -> Result<Option<AttachmentSendMeta>, AppError> {
+    let row: Option<(String, i64, Option<String>)> =
+        sqlx::query_as("SELECT fs_path, size_bytes, content_hash FROM attachments WHERE id = ?")
+            .bind(attachment_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(
+        row.map(|(fs_path, size_bytes, content_hash)| AttachmentSendMeta {
+            fs_path,
+            size_bytes,
+            content_hash,
+        }),
+    )
+}
+
+/// Decide the `(size_bytes, blake3_hex)` pair a `FileOffer` should carry,
+/// preferring the DB's stored `content_hash` over a full file re-hash (#2189).
+///
+/// Fast path: when `meta.content_hash` is present AND the on-disk file's size
+/// matches `meta.size_bytes`, the persisted digest is byte-for-byte the value
+/// [`read_attachment_file_metadata`] would recompute, so we return it directly
+/// and skip streaming the whole file through blake3. The advertised
+/// `size_bytes` is the freshly-stat'd on-disk length (which equals the DB size
+/// on this branch), so the receiver's size cross-check is unaffected.
+///
+/// Fall-back (conservative — a mismatch must NEVER ship a stale hash): when
+/// `content_hash IS NULL` (not yet backfilled) OR the size guard fails (the
+/// file changed on disk since the hash was persisted) we defer to the existing
+/// full re-hash via [`read_attachment_file_metadata`]. The receiver re-verifies
+/// the hash mid-stream regardless, so integrity is unchanged either way.
+///
+/// The `attachments` table has no `mtime` column (see migration 0081's schema),
+/// so the drift guard is size-only; the receiver's mid-stream blake3 check is
+/// the backstop against a same-size content change on the stored-hash branch —
+/// but that window is identical to the pre-#2189 two-pass path, where the file
+/// could equally change between the hash pass and the stream pass.
+async fn resolve_offer_hash(
+    app_data_dir: &Path,
+    meta: &AttachmentSendMeta,
+) -> Result<(u64, String), AppError> {
+    if let Some(stored_hash) = meta.content_hash.as_ref() {
+        // Stat the file (cheap — no read) to enforce the size guard before
+        // trusting the persisted hash.
+        let full_path = validate_attachment_fs_path(app_data_dir, &meta.fs_path)?;
+        if let Ok(fs_meta) = tokio::fs::metadata(&full_path).await {
+            let on_disk_size = fs_meta.len();
+            if i64::try_from(on_disk_size).map(|s| s == meta.size_bytes) == Ok(true) {
+                // Size matches the DB row → the stored digest is trustworthy;
+                // skip the full-file re-hash entirely.
+                return Ok((on_disk_size, stored_hash.clone()));
+            }
+        }
+        // Stat failed or size drifted: fall through to the full re-hash so we
+        // never advertise a stale hash. (A stat failure also surfaces cleanly
+        // as an open error inside `read_attachment_file_metadata`.)
+    }
+    read_attachment_file_metadata(app_data_dir, &meta.fs_path).await
 }
 
 /// Metadata loaded from the `attachments` row when authorising an inbound
@@ -951,7 +1044,7 @@ pub async fn receive_request_and_send_files(
             );
             break;
         }
-        let Some(fs_path) = get_attachment_fs_path(pool, attachment_id).await? else {
+        let Some(send_meta) = get_attachment_send_meta(pool, attachment_id).await? else {
             tracing::warn!(
                 attachment_id,
                 "requested attachment not found in DB, skipping"
@@ -959,12 +1052,16 @@ pub async fn receive_request_and_send_files(
             stats.skipped_not_found += 1;
             continue;
         };
+        let fs_path = send_meta.fs_path.clone();
 
-        // Pass-1: hash the file in-place via a fixed-size buffer
-        // so the `FileOffer` carries the right hash without
-        // materialising the whole file as a `Vec<u8>`. See the module
-        // header for the two-pass rationale.
-        let (size_bytes, hash) = match read_attachment_file_metadata(app_data_dir, &fs_path).await {
+        // Pass-1: determine the offer's `(size, hash)`. #2189: prefer the
+        // DB's persisted `content_hash` (migrations 0093/0094) — which is the
+        // SAME blake3 digest a full re-hash would produce — and only stream +
+        // re-hash the whole file when the hash is NULL or the on-disk size
+        // drifted from the DB row. The receiver re-verifies mid-stream either
+        // way, so integrity is unchanged. See the module header for the
+        // two-pass rationale.
+        let (size_bytes, hash) = match resolve_offer_hash(app_data_dir, &send_meta).await {
             Ok(meta) => meta,
             Err(e) => {
                 tracing::warn!(

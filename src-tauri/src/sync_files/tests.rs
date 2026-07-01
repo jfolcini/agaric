@@ -245,6 +245,101 @@ async fn get_fs_path_returns_path_for_existing_attachment() {
     assert!(none.is_none());
 }
 
+// ── #2189: resolve_offer_hash (stored content_hash short-circuit) ─────
+
+/// (a) A backfilled `content_hash` that matches the on-disk file's size is
+/// used DIRECTLY — the returned hash equals the stored value and the file is
+/// never streamed/re-hashed. We prove "no re-hash" by storing a SENTINEL hash
+/// that does NOT equal the file's real blake3: if the fast path fired we get
+/// the sentinel back; if it fell through to a re-hash we'd get the real digest.
+#[tokio::test]
+async fn resolve_offer_hash_uses_stored_hash_without_rehash() {
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("test.db");
+    let pool = init_pool(&db_path).await.unwrap();
+
+    let att_dir = dir.path().join("attachments");
+    std::fs::create_dir_all(&att_dir).unwrap();
+    let bytes: &[u8] = b"real attachment bytes";
+    std::fs::write(att_dir.join("a.bin"), bytes).unwrap();
+    let real_hash = blake3::hash(bytes).to_hex().to_string();
+    // Deliberately-wrong stored hash so a re-hash would be observable.
+    let sentinel = "deadbeef".repeat(8);
+    assert_ne!(sentinel, real_hash);
+
+    let meta = AttachmentSendMeta {
+        fs_path: "attachments/a.bin".to_string(),
+        size_bytes: i64::try_from(bytes.len()).expect("test fixture fits in i64"),
+        content_hash: Some(sentinel.clone()),
+    };
+    let (size, hash) = resolve_offer_hash(dir.path(), &meta).await.unwrap();
+    assert_eq!(size, bytes.len() as u64);
+    assert_eq!(
+        hash, sentinel,
+        "stored hash must be used verbatim (no re-hash)"
+    );
+    // keep the pool referenced so the DB file lives for the test duration
+    drop(pool);
+}
+
+/// (b) When `content_hash IS NULL`, fall back to the full re-hash and produce
+/// the correct blake3 digest.
+#[tokio::test]
+async fn resolve_offer_hash_null_falls_back_to_rehash() {
+    let dir = TempDir::new().unwrap();
+    let att_dir = dir.path().join("attachments");
+    std::fs::create_dir_all(&att_dir).unwrap();
+    let bytes: &[u8] = b"bytes with no stored hash";
+    std::fs::write(att_dir.join("b.bin"), bytes).unwrap();
+    let real_hash = blake3::hash(bytes).to_hex().to_string();
+
+    let meta = AttachmentSendMeta {
+        fs_path: "attachments/b.bin".to_string(),
+        size_bytes: i64::try_from(bytes.len()).expect("test fixture fits in i64"),
+        content_hash: None,
+    };
+    let (size, hash) = resolve_offer_hash(dir.path(), &meta).await.unwrap();
+    assert_eq!(size, bytes.len() as u64);
+    assert_eq!(
+        hash, real_hash,
+        "NULL content_hash must fall back to a real re-hash"
+    );
+}
+
+/// (c) Size drift (the on-disk file no longer matches the DB row's
+/// `size_bytes`, with a stale stored hash) must fall back and re-hash the
+/// CURRENT bytes rather than ship the stale hash.
+#[tokio::test]
+async fn resolve_offer_hash_size_drift_falls_back_to_rehash() {
+    let dir = TempDir::new().unwrap();
+    let att_dir = dir.path().join("attachments");
+    std::fs::create_dir_all(&att_dir).unwrap();
+    // File on disk now holds DIFFERENT (longer) bytes than the DB row records.
+    let new_bytes: &[u8] = b"the file grew on disk since it was hashed";
+    std::fs::write(att_dir.join("c.bin"), new_bytes).unwrap();
+    let real_hash = blake3::hash(new_bytes).to_hex().to_string();
+    let stale_hash = "abadcafe".repeat(8);
+    assert_ne!(stale_hash, real_hash);
+
+    let meta = AttachmentSendMeta {
+        fs_path: "attachments/c.bin".to_string(),
+        // DB row records the OLD (smaller) size — the guard must reject it.
+        size_bytes: 5,
+        content_hash: Some(stale_hash.clone()),
+    };
+    let (size, hash) = resolve_offer_hash(dir.path(), &meta).await.unwrap();
+    assert_eq!(
+        size,
+        new_bytes.len() as u64,
+        "must advertise the current on-disk size"
+    );
+    assert_eq!(
+        hash, real_hash,
+        "size drift must re-hash current bytes, not ship stale hash"
+    );
+    assert_ne!(hash, stale_hash);
+}
+
 // ── read + write round-trip ──────────────────────────────────────────
 
 #[test]
