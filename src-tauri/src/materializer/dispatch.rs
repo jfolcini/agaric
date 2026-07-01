@@ -616,7 +616,14 @@ fn invalidations_for_op(
                     tasks.push(MaterializeTask::SetBlockPageId { block_id });
                 }
             }
-            tasks.push(MaterializeTask::RebuildTagInheritanceCache);
+            // #2200 (Tier-2, same safe class as #2186): the whole-vault
+            // `RebuildTagInheritanceCache` recompute is dropped from this arm.
+            // Block creation already populates the new block's inherited tags
+            // SYNCHRONOUSLY, in-transaction, via
+            // `tag_inheritance::inherit_parent_tags` (called from both the
+            // loro-apply and sql-only create handlers). A brand-new block has
+            // no children, so nothing else needs re-inheriting and the
+            // vault-wide rebuild was pure O(vault) waste.
             // #2037: a freshly created block carries no properties (those arrive
             // via later SetProperty ops), so it cannot yet have a `repeat`
             // property and therefore cannot be a row in `projected_agenda_cache`
@@ -824,17 +831,17 @@ fn invalidations_for_op(
         }
         OpType::MoveBlock => {
             tasks.push(MaterializeTask::RebuildTagInheritanceCache);
-            // E4: a cross-page move reparents the block's `page_id`
-            // (`commands/blocks/move_ops.rs`). `RebuildPageIds` is the
-            // canonical full recompute of that column; it MUST run before
-            // `RebuildPagesCache` so the page-cache rebuild observes the
-            // corrected membership. The per-op `pages_cache` count refresh
-            // happens synchronously in `apply_op_tx`
-            // (`maintain_pages_cache_counts_after_op`), but enqueue the page
-            // cache rebuild too so the invalidation matrix is honest that a
-            // move can touch `pages_cache` — the prior arm omitted it,
-            // leaving page-cache state unwired for cross-page reparents.
-            tasks.push(MaterializeTask::RebuildPageIds);
+            // #2200 (Tier-2, same safe class as #2186): the whole-vault
+            // `RebuildPageIds` recompute is dropped from this arm. A move
+            // already re-derives `page_id` AND `space_id` for the moved root
+            // and its entire active subtree SYNCHRONOUSLY, in-transaction,
+            // via `commands::block_cleanup::rederive_page_and_space_ids`
+            // (called from `commands/blocks/move_ops.rs`, `history.rs`, and
+            // the undo path). No block outside the moved subtree can change
+            // `page_id` as a result of a move, so the vault-wide rebuild was
+            // pure O(vault) waste. `RebuildPagesCache` is KEPT and still runs
+            // after the in-tx rederive, observing the already-corrected
+            // membership.
             tasks.push(MaterializeTask::RebuildPagesCache);
             // #627: a cross-page move reparents the block's `page_id`, which
             // is the source-page attribution `page_link_cache` rolls up by
@@ -1022,8 +1029,13 @@ mod tests {
                 "UpdateFtsBlock(BLK1)",
                 "ReindexBlockTagRefs(BLK1)",
                 "SetBlockPageId(BLK1)",
-                "RebuildTagInheritanceCache",
             ],
+        );
+        // #2200 sentinel: the whole-vault tag-inheritance rebuild is dropped —
+        // `inherit_parent_tags` runs in-tx for the new (childless) block.
+        assert!(
+            !contains_kind(&tasks, &MaterializeTask::RebuildTagInheritanceCache),
+            "create_block must not enqueue the vault-wide RebuildTagInheritanceCache (#2200)",
         );
     }
 
@@ -1040,7 +1052,6 @@ mod tests {
                 "RebuildPagesCache",
                 "UpdateFtsBlock(PG1)",
                 "ReindexBlockTagRefs(PG1)",
-                "RebuildTagInheritanceCache",
             ],
         );
     }
@@ -1057,7 +1068,6 @@ mod tests {
                 "UpdateFtsBlock(C1)",
                 "ReindexBlockTagRefs(C1)",
                 "SetBlockPageId(C1)",
-                "RebuildTagInheritanceCache",
             ],
         );
     }
@@ -1642,20 +1652,25 @@ mod tests {
             Some("BLK1"),
         );
         let tasks = invalidations_for_op(&r, None).unwrap();
-        // E4: a cross-page move reparents `page_id`, so the page-id rebuild
-        // and the page-cache rebuild are both enqueued — `RebuildPageIds`
-        // strictly before `RebuildPagesCache` so the latter observes the
-        // corrected membership. #627: the page-link roll-up cache is keyed
-        // by source `page_id`, so a cross-page move must rebuild it too or
-        // link attribution goes stale on both the old and new pages.
+        // #2200: a move re-derives `page_id`/`space_id` for the moved subtree
+        // in-tx (`rederive_page_and_space_ids`), so the whole-vault
+        // `RebuildPageIds` is dropped. The page-cache rebuild is KEPT and
+        // observes the already-corrected membership. #627: the page-link
+        // roll-up cache is keyed by source `page_id`, so a cross-page move
+        // must rebuild it too or link attribution goes stale on both pages.
         assert_eq!(
             labels(&tasks),
             vec![
                 "RebuildTagInheritanceCache",
-                "RebuildPageIds",
                 "RebuildPagesCache",
                 "RebuildPageLinkCache",
             ],
+        );
+        // #2200 sentinel: the whole-vault page-id rebuild is dropped — the
+        // in-tx rederive already corrects the moved subtree's page_id/space_id.
+        assert!(
+            !contains_kind(&tasks, &MaterializeTask::RebuildPageIds),
+            "move_block must not enqueue the vault-wide RebuildPageIds (#2200)",
         );
     }
 
