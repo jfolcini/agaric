@@ -228,6 +228,11 @@ export const references: Record<string, string> = {
   'search.autocompleteListLabel': 'Filter suggestions',
   'search.invalidGlob': '{{message}}',
   'search.invalidFilter': 'Invalid filter token',
+  // Accessible name for an invalid filter chip — carries the parser error so
+  // screen-reader users get the reason, not just "invalid".
+  'search.invalidFilterWithError': 'Invalid filter: {{label}} — {{error}}',
+  // One line per invalid chip in the shared row-level alert region.
+  'search.invalidFilterError': '{{label}}: {{error}}',
   'search.filterSyntaxIntro':
     'Filter syntax is live — type tag:#name or path:Journal/* in the search input, or use the + Filter button. Press ? for help.',
   'search.searchTags': 'Search tags...',

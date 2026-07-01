@@ -8,9 +8,11 @@
  *  - a11y compliance
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
+import { __resetThemeStoreForTests, useTheme } from '@/hooks/useTheme'
 
 vi.mock('mermaid', () => ({
   default: {
@@ -27,38 +29,89 @@ const mockedInitialize = vi.mocked(mermaid.initialize)
 const { MermaidDiagram } = await import('../MermaidDiagram')
 
 describe('MermaidDiagram', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    __resetThemeStoreForTests()
+    document.documentElement.classList.remove('dark')
+  })
+
   afterEach(() => {
+    localStorage.clear()
+    __resetThemeStoreForTests()
     document.documentElement.classList.remove('dark')
   })
 
   // #758 item 1: mermaid.initialize used to run once at module load, freezing
-  // the theme to whatever `.dark` was at startup. It now runs inside the
+  // the theme to whatever the theme was at startup. It now runs inside the
   // render effect so each render picks up the current theme.
-  it('re-reads the dark theme on each render instead of freezing it at module load (#758 item 1)', async () => {
+  it('initializes mermaid with the current theme from the theme store (#758 item 1)', async () => {
     mockedRender.mockResolvedValue({
       svg: '<svg><text>X</text></svg>',
       diagramType: 'flowchart',
       bindFunctions: vi.fn(),
     })
 
-    document.documentElement.classList.add('dark')
-    const { rerender } = render(<MermaidDiagram code="graph TD; A-->B;" />)
+    // Drive the canonical theme source (the module-level preference store)
+    // into dark BEFORE mounting the diagram.
+    const { result } = renderHook(() => useTheme())
+    act(() => {
+      result.current.setTheme('dark')
+    })
+
+    render(<MermaidDiagram code="graph TD; A-->B;" />)
     await screen.findByTestId('mermaid-diagram')
 
     expect(mockedInitialize).toHaveBeenLastCalledWith(
       expect.objectContaining({ theme: 'dark', securityLevel: 'strict', startOnLoad: false }),
     )
+  })
 
-    // Flip back to light and trigger a new render via a code change — the
-    // effect must re-initialize with the now-current theme.
-    document.documentElement.classList.remove('dark')
-    rerender(<MermaidDiagram code="graph TD; B-->C;" />)
+  // #2259: a rendered diagram must re-render with the new theme on a light/dark
+  // toggle even when the source `code` is unchanged. Previously the render
+  // effect depended only on [code, renderId], so a toggle left the SVG frozen
+  // to its old theme. The effect now also depends on the theme store's `isDark`.
+  it('re-renders with the new theme when the app theme is toggled (#2259)', async () => {
+    mockedRender.mockResolvedValue({
+      svg: '<svg><text>X</text></svg>',
+      diagramType: 'flowchart',
+      bindFunctions: vi.fn(),
+    })
 
+    // Start in light (default). Diagram renders with the 'default' theme.
+    render(<MermaidDiagram code="graph TD; A-->B;" />)
+    await screen.findByTestId('mermaid-diagram')
+
+    expect(mockedInitialize).toHaveBeenLastCalledWith(
+      expect.objectContaining({ theme: 'default', securityLevel: 'strict' }),
+    )
+    const rendersBeforeToggle = mockedRender.mock.calls.length
+
+    // Toggle to dark via the SAME mechanism the app uses (the theme store) —
+    // no change to the diagram source.
+    const { result } = renderHook(() => useTheme())
+    act(() => {
+      result.current.setTheme('dark')
+    })
+
+    // The diagram must re-initialize with the new theme and re-render.
+    await waitFor(() => {
+      expect(mockedInitialize).toHaveBeenLastCalledWith(
+        expect.objectContaining({ theme: 'dark', securityLevel: 'strict' }),
+      )
+    })
+    expect(mockedRender.mock.calls.length).toBeGreaterThan(rendersBeforeToggle)
+
+    // Toggle back to light — re-renders again with the light theme.
+    const rendersAfterDark = mockedRender.mock.calls.length
+    act(() => {
+      result.current.setTheme('light')
+    })
     await waitFor(() => {
       expect(mockedInitialize).toHaveBeenLastCalledWith(
         expect.objectContaining({ theme: 'default', securityLevel: 'strict' }),
       )
     })
+    expect(mockedRender.mock.calls.length).toBeGreaterThan(rendersAfterDark)
   })
 
   it('shows loading state initially', () => {

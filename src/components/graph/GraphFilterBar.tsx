@@ -131,13 +131,21 @@ export interface GraphFilterBarProps {
 function filterLabel(filter: GraphFilter, t: TFunction): string {
   switch (filter.type) {
     case 'tag': {
-      return `${t('graph.filter.tag')}: ${filter.tagIds.length}`
+      // Robustness: an empty set is a match-everything no-op (the Add-filter
+      // form now prevents constructing one — #2260); never render 'Tag: 0'.
+      return filter.tagIds.length === 0
+        ? t('graph.filter.tag')
+        : `${t('graph.filter.tag')}: ${filter.tagIds.length}`
     }
     case 'status': {
-      return `${t('graph.filter.status')}: ${filter.values.join(', ')}`
+      return filter.values.length === 0
+        ? t('graph.filter.status')
+        : `${t('graph.filter.status')}: ${filter.values.join(', ')}`
     }
     case 'priority': {
-      return `${t('graph.filter.priority')}: ${filter.values.join(', ')}`
+      return filter.values.length === 0
+        ? t('graph.filter.priority')
+        : `${t('graph.filter.priority')}: ${filter.values.join(', ')}`
     }
     case 'hasDueDate': {
       return `${t('graph.filter.hasDueDate')}: ${filter.value ? t('graph.filter.yes') : t('graph.filter.no')}`
@@ -186,9 +194,36 @@ function AddFilterForm({
   const [priorityValues, setPriorityValues] = useState<string[]>([])
   const [boolValue, setBoolValue] = useState<'true' | 'false'>('true')
 
+  // A filter is only applicable once its chosen dimension has a concrete
+  // value. Multi-value dimensions (tag/status/priority) need at least one
+  // selection — an empty array would build a match-everything no-op filter
+  // with a broken pill label ('Tag: 0' / 'Status: '). Boolean dimensions and
+  // `excludeTemplates` always carry a valid value, so they're applicable as
+  // soon as the dimension is picked (#2260).
+  const canApply = useMemo(() => {
+    switch (dimension) {
+      case '': {
+        return false
+      }
+      case 'tag': {
+        return tagIds.length > 0
+      }
+      case 'status': {
+        return statusValues.length > 0
+      }
+      case 'priority': {
+        return priorityValues.length > 0
+      }
+      default: {
+        return true
+      }
+    }
+  }, [dimension, tagIds, statusValues, priorityValues])
+
   const handleSubmit = useCallback(
     (e: React.SubmitEvent<HTMLFormElement>) => {
       e.preventDefault()
+      if (!canApply) return
       if (!dimension) return
       let filter: GraphFilter
       switch (dimension) {
@@ -223,7 +258,7 @@ function AddFilterForm({
       }
       onApply(filter)
     },
-    [dimension, tagIds, statusValues, priorityValues, boolValue, onApply],
+    [canApply, dimension, tagIds, statusValues, priorityValues, boolValue, onApply],
   )
 
   const toggleMultiValue = useCallback(
@@ -393,7 +428,7 @@ function AddFilterForm({
           type="submit"
           variant="default"
           size="xs"
-          disabled={!dimension}
+          disabled={!canApply}
           aria-label={t('graph.filter.apply')}
         >
           {t('graph.filter.apply')}

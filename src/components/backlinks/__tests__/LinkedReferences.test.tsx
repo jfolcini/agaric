@@ -581,6 +581,50 @@ describe('LinkedReferences', () => {
     expect(sourcePagesIdentities.at(-1)).toBe(identityBeforeFocus)
   })
 
+  // #2263 — roving keyboard focus must be exposed to assistive tech: the list
+  // container carries aria-activedescendant pointing at the focused row's id,
+  // and the focused row carries aria-current. Both must track arrow movement,
+  // and row ids must be stable + unique.
+  it('exposes roving focus via aria-activedescendant + aria-current (#2263)', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [
+        makeGroup('P1', 'Page One', [
+          { id: 'B1', content: 'block 1' },
+          { id: 'B2', content: 'block 2' },
+        ]),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: 2,
+      filtered_count: 2,
+      truncated: false,
+    }
+    mockInvokeWith(resp)
+
+    renderLinkedReferences({ pageId: 'PAGE1' })
+    await screen.findByText('block 1')
+
+    const container = screen.getByRole('group')
+    // Initial roving position is the first row.
+    expect(container).toHaveAttribute('aria-activedescendant', 'linked-ref-row-B1')
+    const row1 = screen.getByText('block 1').closest('li') as HTMLElement
+    const row2 = screen.getByText('block 2').closest('li') as HTMLElement
+    // Ids are stable + unique, derived from block ids.
+    expect(row1).toHaveAttribute('id', 'linked-ref-row-B1')
+    expect(row2).toHaveAttribute('id', 'linked-ref-row-B2')
+    expect(row1).toHaveAttribute('aria-current', 'true')
+    expect(row2).not.toHaveAttribute('aria-current')
+
+    // Arrow down moves the active descendant + aria-current to the next row.
+    container.focus()
+    await user.keyboard('{ArrowDown}')
+
+    expect(container).toHaveAttribute('aria-activedescendant', 'linked-ref-row-B2')
+    expect(row2).toHaveAttribute('aria-current', 'true')
+    expect(row1).not.toHaveAttribute('aria-current')
+  })
+
   // 13. pagination: shows load more when hasMore
   it('pagination: shows load more when hasMore', async () => {
     const resp = {

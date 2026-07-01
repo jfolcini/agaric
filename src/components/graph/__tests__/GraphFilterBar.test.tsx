@@ -263,6 +263,78 @@ describe('GraphFilterBar', () => {
     expect(onFiltersChange).toHaveBeenCalledWith([{ type: 'excludeTemplates', value: true }])
   })
 
+  // #2260 — Apply must stay disabled until a multi-value dimension has at
+  // least one concrete value, so an empty set can't build a match-everything
+  // no-op filter with a broken pill label ('Tag: 0' / 'Status: ').
+  describe('Apply gating (#2260)', () => {
+    it('disables Apply when a status dimension is chosen but no value is selected', async () => {
+      const user = userEvent.setup()
+      render(<GraphFilterBar filters={[]} onFiltersChange={onFiltersChange} allTags={sampleTags} />)
+
+      const dimensionSelect = screen.getByLabelText(t('graph.filter.selectDimension'))
+      await user.selectOptions(dimensionSelect, 'status')
+
+      expect(screen.getByRole('button', { name: t('graph.filter.apply') })).toBeDisabled()
+    })
+
+    it('enables Apply once a status value is picked, then applies it', async () => {
+      const user = userEvent.setup()
+      render(<GraphFilterBar filters={[]} onFiltersChange={onFiltersChange} allTags={sampleTags} />)
+
+      const dimensionSelect = screen.getByLabelText(t('graph.filter.selectDimension'))
+      await user.selectOptions(dimensionSelect, 'status')
+
+      const applyButton = screen.getByRole('button', { name: t('graph.filter.apply') })
+      expect(applyButton).toBeDisabled()
+
+      await user.click(screen.getByRole('checkbox', { name: t('graph.filter.statusValue.TODO') }))
+      expect(applyButton).toBeEnabled()
+
+      await user.click(applyButton)
+      expect(onFiltersChange).toHaveBeenCalledWith([{ type: 'status', values: ['TODO'] }])
+    })
+
+    it('disables Apply when a tag dimension is chosen but no tag is selected', async () => {
+      const user = userEvent.setup()
+      render(<GraphFilterBar filters={[]} onFiltersChange={onFiltersChange} allTags={sampleTags} />)
+
+      const dimensionSelect = screen.getByLabelText(t('graph.filter.selectDimension'))
+      await user.selectOptions(dimensionSelect, 'tag')
+
+      const applyButton = screen.getByRole('button', { name: t('graph.filter.apply') })
+      expect(applyButton).toBeDisabled()
+
+      await user.click(screen.getByRole('checkbox', { name: 'Work' }))
+      expect(applyButton).toBeEnabled()
+    })
+
+    it('enables Apply immediately for a boolean dimension', async () => {
+      const user = userEvent.setup()
+      render(<GraphFilterBar filters={[]} onFiltersChange={onFiltersChange} allTags={sampleTags} />)
+
+      const dimensionSelect = screen.getByLabelText(t('graph.filter.selectDimension'))
+      await user.selectOptions(dimensionSelect, 'hasBacklinks')
+
+      expect(screen.getByRole('button', { name: t('graph.filter.apply') })).toBeEnabled()
+    })
+
+    it('enables Apply immediately for excludeTemplates', async () => {
+      const user = userEvent.setup()
+      render(<GraphFilterBar filters={[]} onFiltersChange={onFiltersChange} allTags={sampleTags} />)
+
+      const dimensionSelect = screen.getByLabelText(t('graph.filter.selectDimension'))
+      await user.selectOptions(dimensionSelect, 'excludeTemplates')
+
+      expect(screen.getByRole('button', { name: t('graph.filter.apply') })).toBeEnabled()
+    })
+
+    it('keeps Apply disabled with no dimension chosen', () => {
+      render(<GraphFilterBar filters={[]} onFiltersChange={onFiltersChange} allTags={sampleTags} />)
+
+      expect(screen.getByRole('button', { name: t('graph.filter.apply') })).toBeDisabled()
+    })
+  })
+
   it('shows the no-tags message when allTags is empty', async () => {
     const user = userEvent.setup()
     render(<GraphFilterBar filters={[]} onFiltersChange={onFiltersChange} allTags={[]} />)

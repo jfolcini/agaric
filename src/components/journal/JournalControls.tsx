@@ -19,7 +19,7 @@ import {
 } from 'date-fns'
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-react'
 import type React from 'react'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 
@@ -44,6 +44,21 @@ import { useJournalStore } from '@/stores/journal'
 const JOURNAL_MODES = ['daily', 'weekly', 'monthly', 'stream', 'agenda'] as const
 type JournalMode = (typeof JOURNAL_MODES)[number]
 
+/**
+ * Stable DOM id for a mode tab. Shared with the rendered view panel
+ * (`JournalPage`) so the tab's `aria-controls` and the panel's
+ * `aria-labelledby` reference each other across the two subtrees (the
+ * tablist lives in the App header, the panel in `JournalPage`).
+ */
+export function journalTabId(mode: string): string {
+  return `journal-tab-${mode}`
+}
+
+/** Stable DOM id for the rendered view panel of a mode. See `journalTabId`. */
+export function journalPanelId(mode: string): string {
+  return `journal-panel-${mode}`
+}
+
 export function JournalControls(): React.ReactElement {
   const { t } = useTranslation()
   const { mode, currentDate, setMode, setCurrentDate, navigateToDate, goToDateAndScroll } =
@@ -59,6 +74,18 @@ export function JournalControls(): React.ReactElement {
     )
   const [calendarOpen, setCalendarOpen] = useState(false)
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+  // Roving-tabindex focus target — the tab that currently owns focus within
+  // the tablist. Distinct from `mode` (the ACTIVE/selected tab) because we use
+  // WAI-ARIA *manual* activation: arrows/Home/End move focus only, so a user
+  // can traverse the tablist without eagerly mounting each intermediate view
+  // (AgendaView fires IPC on mount). Enter/Space (or click) commits the focused
+  // tab to `mode`. Kept in sync whenever `mode` changes from outside (click,
+  // Today button, calendar) so tabbing back into the tablist lands on the
+  // active tab.
+  const [rovingMode, setRovingMode] = useState<JournalMode>(mode as JournalMode)
+  useEffect(() => {
+    setRovingMode(mode as JournalMode)
+  }, [mode])
   const calendarRange = useMemo(() => getCalendarMonthRange(currentDate), [currentDate])
   const { highlightedDays } = useCalendarPageDates(calendarRange)
 
@@ -74,12 +101,20 @@ export function JournalControls(): React.ReactElement {
     else setCurrentDate(addMonths(currentDate, 1))
   }
 
-  // WAI-ARIA tabs: horizontal roving tabindex with automatic activation —
-  // arrow keys move focus AND switch mode (the tabs eagerly render their
-  // associated view). Wraparound on Arrow{Left,Right}; Home/End jump to ends.
+  // WAI-ARIA tabs: horizontal roving tabindex with MANUAL activation (APG).
+  // Arrow{Left,Right}/Home/End move DOM focus only (they update `rovingMode`,
+  // not `mode`), so arrow-keying across the tablist never mounts intermediate
+  // views. Enter/Space activates the focused tab (commits it to `mode`).
+  // Wraparound on Arrow{Left,Right}; Home/End jump to ends.
   function handleTablistKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     const count = JOURNAL_MODES.length
-    const currentIndex = JOURNAL_MODES.indexOf(mode as JournalMode)
+    const currentIndex = JOURNAL_MODES.indexOf(rovingMode)
+    // Activate the focused tab on Enter/Space.
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+      e.preventDefault()
+      setMode(rovingMode)
+      return
+    }
     let nextIndex: number
     switch (e.key) {
       case 'ArrowRight': {
@@ -104,7 +139,8 @@ export function JournalControls(): React.ReactElement {
     }
     e.preventDefault()
     const target = JOURNAL_MODES[nextIndex] as JournalMode
-    setMode(target)
+    // Move focus only — do NOT switch mode (manual activation).
+    setRovingMode(target)
     tabRefs.current[target]?.focus()
   }
 
@@ -186,9 +222,17 @@ export function JournalControls(): React.ReactElement {
               variant={mode === m ? 'secondary' : 'ghost'}
               size="xs"
               role="tab"
+              id={journalTabId(m)}
               aria-selected={mode === m}
+              // Only the SELECTED tab points at a panel: JournalPage mounts the
+              // panel for the active mode only, so referencing an unmounted
+              // panel from inactive tabs would dangle (axe aria-valid-attr-value).
+              {...(mode === m ? { 'aria-controls': journalPanelId(m) } : {})}
               aria-label={ariaLabels[m]}
-              tabIndex={mode === m ? 0 : -1}
+              // Roving tabindex: the focused tab (or the active tab when focus
+              // is elsewhere) is the single tab stop; arrows move focus among
+              // the rest. Manual activation — focus ≠ selection.
+              tabIndex={rovingMode === m ? 0 : -1}
               onClick={() => setMode(m)}
             >
               {/* PEND: compact labels under ~480px so the four tabs don't

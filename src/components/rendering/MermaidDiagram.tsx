@@ -12,14 +12,21 @@ import { useTranslation } from 'react-i18next'
 
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
+import { useTheme } from '@/hooks/useTheme'
 
 /**
  * (Re)configure mermaid for the current app theme. Called inside the render
  * effect (not at module load) so theme switches take effect on the next
- * diagram render instead of staying frozen to whatever `.dark` was when the
+ * diagram render instead of staying frozen to whatever the theme was when the
  * module first loaded (#758 item 1).
+ *
+ * The `isDark` argument comes from the app's canonical theme source
+ * (`useTheme`, backed by the module-level preference store) rather than a
+ * one-off `document.documentElement` read, so the render effect can list it as
+ * a dependency and re-run on a light/dark toggle even when the diagram source
+ * text is unchanged (#2259).
  */
-function initializeMermaid(): void {
+function initializeMermaid(isDark: boolean): void {
   mermaid.initialize({
     startOnLoad: false,
     // SECURITY: pin the sanitizing render mode explicitly. `'strict'` is mermaid's
@@ -28,10 +35,7 @@ function initializeMermaid(): void {
     // make the XSS protection a hard, visible invariant rather than an implicit
     // default that a future config tweak could silently regress.
     securityLevel: 'strict',
-    theme:
-      typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
-        ? 'dark'
-        : 'default',
+    theme: isDark ? 'dark' : 'default',
   })
 }
 
@@ -41,6 +45,11 @@ export interface MermaidDiagramProps {
 
 export function MermaidDiagram({ code }: MermaidDiagramProps): React.ReactElement {
   const { t } = useTranslation()
+  // Subscribe to the app's canonical theme source so a light/dark toggle
+  // re-runs the render effect below (#2259). `useTheme` also keeps the
+  // documentElement theme classes in sync, so `isDark` is the single source
+  // of truth for the mermaid theme.
+  const { isDark } = useTheme()
   const [svg, setSvg] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -54,12 +63,11 @@ export function MermaidDiagram({ code }: MermaidDiagramProps): React.ReactElemen
     setSvg(null)
     setError(null)
 
-    // Re-read the theme before each render. Mermaid bakes the theme in at
-    // render time, but this effect only re-runs when the source `code`
-    // changes (deps are [code, renderId]) — NOT on a light/dark toggle. So an
-    // already-rendered diagram keeps its old theme until its source text next
-    // changes; the theme is only re-applied on that next render.
-    initializeMermaid()
+    // Re-apply the theme before each render. Mermaid bakes the theme in at
+    // render time; because `isDark` is an effect dependency, a light/dark
+    // toggle now re-runs this effect and re-renders the diagram with the new
+    // theme even when the source `code` is unchanged (#2259).
+    initializeMermaid(isDark)
 
     mermaid
       .render(renderId, code)
@@ -79,7 +87,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps): React.ReactElemen
     return () => {
       cancelledRef.current = true
     }
-  }, [code, renderId])
+  }, [code, renderId, isDark])
 
   if (loading) {
     return (

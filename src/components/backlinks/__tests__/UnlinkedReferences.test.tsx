@@ -303,6 +303,46 @@ describe('UnlinkedReferences', () => {
     expect(await screen.findByText('Source Page (1)')).toBeInTheDocument()
   })
 
+  // #2263 — roving keyboard focus exposed to AT: container aria-activedescendant
+  // + row aria-current track arrow movement; row ids stable + unique.
+  it('exposes roving focus via aria-activedescendant + aria-current (#2263)', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [
+        makeGroup('P1', 'Source Page', [
+          { id: 'B1', content: 'mention one' },
+          { id: 'B2', content: 'mention two' },
+        ]),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: 2,
+      filtered_count: 2,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+
+    const row1 = (await screen.findByText('mention one')).closest('li') as HTMLElement
+    const row2 = screen.getByText('mention two').closest('li') as HTMLElement
+    const container = row1.closest('[role="group"]') as HTMLElement
+
+    expect(row1).toHaveAttribute('id', 'unlinked-ref-row-B1')
+    expect(row2).toHaveAttribute('id', 'unlinked-ref-row-B2')
+    expect(container).toHaveAttribute('aria-activedescendant', 'unlinked-ref-row-B1')
+    expect(row1).toHaveAttribute('aria-current', 'true')
+    expect(row2).not.toHaveAttribute('aria-current')
+
+    container.focus()
+    await user.keyboard('{ArrowDown}')
+
+    expect(container).toHaveAttribute('aria-activedescendant', 'unlinked-ref-row-B2')
+    expect(row2).toHaveAttribute('aria-current', 'true')
+    expect(row1).not.toHaveAttribute('aria-current')
+  })
+
   // 4. Renders groups with page titles and block counts
   it('renders groups with page titles', async () => {
     const user = userEvent.setup()
