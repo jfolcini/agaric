@@ -169,64 +169,16 @@ async fn apply_tag_to_block_in_tx(
     tag_id: &str,
     payload: OpPayload,
 ) -> Result<Option<op_log::OpRecord>, AppError> {
-    // Phase 2 (Path A) — tags are space-scoped; a tag may not be
-    // applied across spaces.
-    //
-    // A tag with no space yet (an orphan — e.g. one created
-    // mid-session via `handleCreateTag`, which creates the tag block
-    // without a space property) is ADOPTED into the source block's space
-    // here instead of being rejected. This is the eager equivalent of the
-    // boot-time `migrate_orphan_tags_to_space` and mirrors its op-emit +
-    // inline-materialise shape, so a freshly created tag can be applied in
-    // a non-default space immediately rather than failing with a
-    // `tags.addFailed` toast until the next launch.
-    {
-        let src_space =
-            crate::space::resolve_block_space(&mut ***tx, &BlockId::from_trusted(block_id)).await?;
-        let tag_space =
-            crate::space::resolve_block_space(&mut ***tx, &BlockId::from_trusted(tag_id)).await?;
-        if src_space != tag_space {
-            match (&src_space, &tag_space) {
-                // Orphan tag + spaced source block — adopt the tag into the
-                // source's space rather than reject.
-                (Some(space_id), None) => {
-                    let space_ref = space_id.as_str().to_owned();
-                    let set_space = OpPayload::SetProperty(SetPropertyPayload {
-                        block_id: BlockId::from_trusted(tag_id),
-                        key: "space".to_owned(),
-                        value_text: None,
-                        value_num: None,
-                        value_date: None,
-                        value_ref: Some(BlockId::from(space_ref.clone())),
-                        value_bool: None,
-                    });
-                    op_log::append_local_op_in_tx(tx, device_id, set_space, crate::db::now_ms())
-                        .await?;
-                    // #533 Phase 2: materialise the adopted space into the
-                    // `blocks.space_id` column (the sole source of truth) —
-                    // NOT a block_properties row (those are gone). A tag is
-                    // top-level so the `OR page_id` arm is a no-op; the `id`
-                    // arm sets the tag's own space. Mirrors the boot-time
-                    // twin `migrate_orphan_tags_to_space`.
-                    sqlx::query!(
-                        "UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?",
-                        space_ref,
-                        tag_id,
-                        tag_id,
-                    )
-                    .execute(&mut ***tx)
-                    .await?;
-                }
-                // Genuine cross-space (both spaced but differ) or a spaced
-                // tag on an unspaced source block — reject.
-                _ => {
-                    return Err(AppError::Validation(format!(
-                        "cross-space tag: block '{block_id}' (space {src_space:?}) cannot use tag '{tag_id}' (space {tag_space:?})",
-                    )));
-                }
-            }
-        }
-    }
+    // Resolve both spaces inline (the single-row path is O(1) blocks, so the
+    // two JOIN queries are cheap here) and delegate to the shared resolved
+    // core. The bulk path (`add_tags_by_ids_inner`) instead pre-resolves the
+    // tag space ONCE and every source-block space in ONE batched query, then
+    // calls `apply_tag_to_block_resolved` directly, so the loop does O(1)
+    // space queries instead of ~2N (#2191).
+    let src_space =
+        crate::space::resolve_block_space(&mut ***tx, &BlockId::from_trusted(block_id)).await?;
+    let mut tag_space =
+        crate::space::resolve_block_space(&mut ***tx, &BlockId::from_trusted(tag_id)).await?;
 
     // Check for existing association (TOCTOU-safe). A duplicate is reported
     // to the caller as `Ok(None)` — NO op is appended — so the single-row
@@ -238,7 +190,116 @@ async fn apply_tag_to_block_in_tx(
     )
     .fetch_optional(&mut ***tx)
     .await?;
-    if dup.is_some() {
+    let already_tagged = dup.is_some();
+
+    apply_tag_to_block_resolved(
+        tx,
+        device_id,
+        block_id,
+        tag_id,
+        payload,
+        src_space.as_ref(),
+        &mut tag_space,
+        already_tagged,
+    )
+    .await
+}
+
+/// Shared core of the tag-apply per-block logic with the source-block space,
+/// the tag's space, and the duplicate status ALREADY resolved by the caller.
+///
+/// Split out of [`apply_tag_to_block_in_tx`] (#2191) so the bulk path can
+/// pre-resolve the loop-invariant tag space ONCE and every source-block space
+/// in ONE batched query, then drive N blocks through here with O(1) space
+/// queries per block instead of the former ~2N `resolve_block_space` JOINs
+/// under the IMMEDIATE writer lock.
+///
+/// `tag_space` is taken by `&mut` because the orphan-adoption branch MUTATES
+/// the tag's space (adopting it into the first spaced source block's space).
+/// That mutation is sticky across a batch: once adopted, a later source block
+/// in a DIFFERENT space is a genuine cross-space pairing and is rejected —
+/// exactly as the former per-iteration re-resolution behaved. The caller MUST
+/// thread the same `&mut tag_space` through every block in the batch so this
+/// ordering-dependent adoption is preserved byte-for-byte.
+///
+/// `already_tagged` subsumes the former inline per-block `block_tags` dup
+/// SELECT: when `true` the association exists, so we return `Ok(None)` WITHOUT
+/// appending any op (the bulk path pre-fetches the whole dup set in one query).
+///
+/// Performs, in order:
+/// 1. Phase 2 cross-space guard with orphan adoption.
+/// 2. Duplicate short-circuit (`already_tagged` → `Ok(None)`).
+/// 3. Appends the supplied `AddTag` `payload` to the op_log.
+/// 4. `block_tags` insert + inherited-tag fan-out via `apply_add_tag_via_loro`.
+#[allow(clippy::too_many_arguments)]
+async fn apply_tag_to_block_resolved(
+    tx: &mut CommandTx,
+    device_id: &str,
+    block_id: &str,
+    tag_id: &str,
+    payload: OpPayload,
+    src_space: Option<&crate::space::SpaceId>,
+    tag_space: &mut Option<crate::space::SpaceId>,
+    already_tagged: bool,
+) -> Result<Option<op_log::OpRecord>, AppError> {
+    // Phase 2 (Path A) — tags are space-scoped; a tag may not be
+    // applied across spaces.
+    //
+    // A tag with no space yet (an orphan — e.g. one created
+    // mid-session via `handleCreateTag`, which creates the tag block
+    // without a space property) is ADOPTED into the source block's space
+    // here instead of being rejected. This is the eager equivalent of the
+    // boot-time `migrate_orphan_tags_to_space` and mirrors its op-emit +
+    // inline-materialise shape, so a freshly created tag can be applied in
+    // a non-default space immediately rather than failing with a
+    // `tags.addFailed` toast until the next launch.
+    if src_space != tag_space.as_ref() {
+        match (src_space, tag_space.as_ref()) {
+            // Orphan tag + spaced source block — adopt the tag into the
+            // source's space rather than reject.
+            (Some(space_id), None) => {
+                let space_ref = space_id.as_str().to_owned();
+                let set_space = OpPayload::SetProperty(SetPropertyPayload {
+                    block_id: BlockId::from_trusted(tag_id),
+                    key: "space".to_owned(),
+                    value_text: None,
+                    value_num: None,
+                    value_date: None,
+                    value_ref: Some(BlockId::from(space_ref.clone())),
+                    value_bool: None,
+                });
+                op_log::append_local_op_in_tx(tx, device_id, set_space, crate::db::now_ms())
+                    .await?;
+                // #533 Phase 2: materialise the adopted space into the
+                // `blocks.space_id` column (the sole source of truth) —
+                // NOT a block_properties row (those are gone). A tag is
+                // top-level so the `OR page_id` arm is a no-op; the `id`
+                // arm sets the tag's own space. Mirrors the boot-time
+                // twin `migrate_orphan_tags_to_space`.
+                sqlx::query!(
+                    "UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?",
+                    space_ref,
+                    tag_id,
+                    tag_id,
+                )
+                .execute(&mut ***tx)
+                .await?;
+                // Reflect the adoption in the caller's tag-space handle so a
+                // later block in the SAME batch sees the tag as now-spaced
+                // (sticky adoption — see the doc comment).
+                *tag_space = Some(space_id.clone());
+            }
+            // Genuine cross-space (both spaced but differ) or a spaced
+            // tag on an unspaced source block — reject.
+            _ => {
+                return Err(AppError::Validation(format!(
+                    "cross-space tag: block '{block_id}' (space {src_space:?}) cannot use tag '{tag_id}' (space {tag_space:?})",
+                )));
+            }
+        }
+    }
+
+    if already_tagged {
         return Ok(None);
     }
 
@@ -715,6 +776,48 @@ pub async fn add_tags_by_ids_inner(
     .into_iter()
     .collect();
 
+    // #2191: resolve the loop-invariant tag space ONCE (single `tag_id`, so
+    // its space cannot vary block-to-block) and every source-block space in
+    // ONE batched query, instead of the former ~2N `resolve_block_space` JOINs
+    // (one per block, one per tag, every iteration) under the IMMEDIATE writer
+    // lock. The batched map mirrors `resolve_block_space`'s orphan semantics:
+    // a block absent from the map has no space (an orphan) → `None`.
+    let mut tag_space =
+        crate::space::resolve_block_space(&mut **tx, &BlockId::from_trusted(tag_id_str)).await?;
+
+    // Only the live, non-self blocks actually reach the per-block core, so
+    // pre-resolve spaces + dup status for exactly that set (skips wasted work
+    // on missing / self / already-tagged targets and keeps the maps small).
+    let candidate_ids: Vec<&str> = block_ids
+        .iter()
+        .filter(|b| *b != &tag_id && alive.contains(b.as_str()))
+        .map(BlockId::as_str)
+        .collect();
+
+    let block_spaces = crate::spaces::cross_space_validation::resolve_block_spaces_batch(
+        &mut tx,
+        &candidate_ids,
+    )
+    .await?;
+
+    // #2191: pre-fetch the WHOLE dup set for this tag in ONE query, replacing
+    // the former per-block `block_tags` dup SELECT inside the loop. A block in
+    // this set already carries the tag → skip (no op, not counted), preserving
+    // the lenient-batch + idempotence contract byte-for-byte. This set is also
+    // GROWN as the loop tags blocks so a block id repeated within the SAME
+    // input list is de-duplicated exactly as the former per-iteration re-SELECT
+    // did (the first occurrence tags, later ones skip).
+    let mut already_tagged: std::collections::HashSet<String> = sqlx::query_scalar!(
+        r#"SELECT block_id FROM block_tags
+           WHERE tag_id = ? AND block_id IN (SELECT value FROM json_each(?))"#,
+        tag_id_str,
+        block_ids_json
+    )
+    .fetch_all(&mut **tx)
+    .await?
+    .into_iter()
+    .collect();
+
     let mut tagged: i64 = 0;
     for block_id in &block_ids {
         // Mirror — a block cannot tag itself. Skip rather than abort:
@@ -735,14 +838,30 @@ pub async fn add_tags_by_ids_inner(
             tag_id: tag_id.clone(),
         });
 
-        // Shared per-block logic: cross-space/orphan resolution, dup-check,
-        // op append, block_tags insert, inheritance propagation. `None` means
-        // the tag was already applied — silently skip (lenient batch).
-        if let Some(op_record) =
-            apply_tag_to_block_in_tx(&mut tx, device_id, block_id_str, tag_id_str, payload).await?
+        // Shared per-block core with spaces + dup status ALREADY resolved:
+        // cross-space/orphan resolution (sticky adoption threaded through
+        // `&mut tag_space`), op append, block_tags insert, inheritance
+        // propagation. O(1) space queries per block. `None` means the tag was
+        // already applied — silently skip (lenient batch).
+        let src_space = block_spaces.get(block_id_str);
+        if let Some(op_record) = apply_tag_to_block_resolved(
+            &mut tx,
+            device_id,
+            block_id_str,
+            tag_id_str,
+            payload,
+            src_space,
+            &mut tag_space,
+            already_tagged.contains(block_id_str),
+        )
+        .await?
         {
             tx.enqueue_background(op_record);
             tagged += 1;
+            // Mark as tagged so a repeated id later in THIS input list is
+            // skipped rather than double-appended (matches the old
+            // per-iteration dup re-SELECT).
+            already_tagged.insert(block_id_str.to_owned());
         }
     }
 

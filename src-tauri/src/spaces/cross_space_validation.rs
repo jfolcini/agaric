@@ -57,7 +57,7 @@ use std::collections::HashMap;
 /// exactly (invariant #9): the input block must be live for its
 /// `page_id` to flow through the COALESCE, and the block that *holds*
 /// the `space` property must be live too.
-async fn resolve_block_spaces_batch(
+pub(crate) async fn resolve_block_spaces_batch(
     conn: &mut sqlx::SqliteConnection,
     ids: &[&str],
 ) -> Result<HashMap<String, SpaceId>, AppError> {

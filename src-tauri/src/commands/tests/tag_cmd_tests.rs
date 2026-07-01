@@ -1059,3 +1059,140 @@ async fn add_tags_by_ids_rejects_bad_tag() {
         .unwrap();
     assert_eq!(count, 0, "aborted batch must write no block_tags rows");
 }
+
+// ======================================================================
+// #2191 — batched space resolution + dup lookup (no behavior change)
+// ======================================================================
+
+/// #2191 happy path: ONE tag applied across blocks living in DIFFERENT spaces
+/// (the tag is space-B, its blocks are all space-B; a separate space-A block
+/// is present too) writes exactly the expected `block_tags` edges. Verifies
+/// the batched space pre-resolution (`resolve_block_spaces_batch`) drives the
+/// same per-block decisions the former per-iteration JOINs did.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tags_by_ids_batched_spaces_writes_same_edges() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    // Tag lives in space B.
+    insert_block(&pool, "P91_TAG", "tag", "urgent", None, None).await;
+    assign_to_space(&pool, "P91_TAG", TEST_SPACE_B_ID).await;
+
+    // Two source blocks in space B (same space as the tag -> tag-able).
+    insert_block(&pool, "P91_B1", "content", "b1", None, Some(1)).await;
+    assign_to_space(&pool, "P91_B1", TEST_SPACE_B_ID).await;
+    insert_block(&pool, "P91_B2", "content", "b2", None, Some(2)).await;
+    assign_to_space(&pool, "P91_B2", TEST_SPACE_B_ID).await;
+
+    let tagged = add_tags_by_ids_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec!["P91_B1".into(), "P91_B2".into()],
+        "P91_TAG".into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(tagged, 2, "both same-space blocks must be tagged");
+
+    for id in ["P91_B1", "P91_B2"] {
+        let row = sqlx::query!(
+            r#"SELECT 1 as "v: i32" FROM block_tags WHERE block_id = ? AND tag_id = ?"#,
+            id,
+            "P91_TAG"
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        assert!(row.is_some(), "block_tags edge for {id} must exist");
+    }
+}
+
+/// #2191 idempotence: re-running the SAME batch (all blocks already tagged)
+/// tags nothing and appends no new ops — the pre-fetched batched dup set
+/// subsumes the former per-block dup SELECT.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tags_by_ids_reapply_is_idempotent() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    insert_block(&pool, "P91I_TAG", "tag", "urgent", None, None).await;
+    insert_block(&pool, "P91I_B1", "content", "b1", None, Some(1)).await;
+    insert_block(&pool, "P91I_B2", "content", "b2", None, Some(2)).await;
+
+    let ids: Vec<BlockId> = vec!["P91I_B1".into(), "P91I_B2".into()];
+
+    let first = add_tags_by_ids_inner(&pool, DEV, &mat, ids.clone(), "P91I_TAG".into())
+        .await
+        .unwrap();
+    assert_eq!(first, 2, "first apply tags both");
+    settle(&mat).await;
+
+    let pre_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let second = add_tags_by_ids_inner(&pool, DEV, &mat, ids.clone(), "P91I_TAG".into())
+        .await
+        .unwrap();
+    assert_eq!(second, 0, "re-apply must tag nothing (all already tagged)");
+
+    let post_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(post_max, pre_max, "idempotent re-apply appends no new ops");
+
+    // Exactly two edges total — no duplicate rows.
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_tags WHERE tag_id = ?")
+        .bind("P91I_TAG")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 2, "no duplicate block_tags rows after re-apply");
+}
+
+/// #2191: a genuine cross-space pairing in a bulk batch STILL aborts the whole
+/// tx (the batched resolution must not weaken cross-space validation). The
+/// tag is space-B; a space-A block in the batch is a hard cross-space error.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tags_by_ids_rejects_cross_space_in_batch() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    // Tag already belongs to space B.
+    insert_block(&pool, "P91X_TAG", "tag", "space-b-tag", None, None).await;
+    assign_to_space(&pool, "P91X_TAG", TEST_SPACE_B_ID).await;
+
+    // Source block belongs to space A -> genuine cross-space.
+    insert_block(&pool, "P91X_A", "content", "in space A", None, Some(1)).await;
+    assign_to_space(&pool, "P91X_A", TEST_SPACE_ID).await;
+
+    let result =
+        add_tags_by_ids_inner(&pool, DEV, &mat, vec!["P91X_A".into()], "P91X_TAG".into()).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "cross-space pairing in a batch must still be rejected, got {result:?}"
+    );
+
+    // The aborted tx wrote no edge.
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_tags WHERE tag_id = ?")
+        .bind("P91X_TAG")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0, "aborted cross-space batch must write no edges");
+}
