@@ -51,7 +51,9 @@ pub(in crate::fts) use row::content_select_expr;
 pub(in crate::fts) use post_filter::fts_fetch_post_filtered_page;
 
 // Partitioned scan (used by `toggle_filter` + the `fts` facade).
-pub(crate) use partitioned::{FtsPartitionedScan, search_fts_partitioned};
+pub(crate) use partitioned::{
+    FtsPartitionedScan, PALETTE_CONTENT_PREVIEW_CAP, search_fts_partitioned,
+};
 
 // Test-only SQL-prefix accessor (used by `fts/tests.rs`).
 #[cfg(test)]

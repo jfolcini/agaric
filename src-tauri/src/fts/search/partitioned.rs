@@ -25,6 +25,32 @@ use super::sanitizer::sanitize_fts_query;
 ///
 /// The same row may appear in both partitions (a page-typed row is in
 /// `pages` AND in `blocks`); the palette merges by `page_id`.
+/// P4 (#346 / #2200 Tier-2) — DB-side cap on the `content` prefix the
+/// palette partition scans ship per row. The palette renders the
+/// highlighted match from `snippet()`; `content` is only the plain-text
+/// fallback rendered when a row has no snippet (see
+/// `src/components/palette/SearchModeGroups.tsx`), and that fallback is
+/// displayed with a single-line CSS `truncate` clip. Full block bodies
+/// (up to ~200 rows per keystroke across both partitions) are therefore
+/// never needed on the wire — a bounded prefix is more than the UI can
+/// ever show.
+///
+/// 512 codepoints mirrors the MCP `search` tool's `SEARCH_SNIPPET_CAP`
+/// (a deliberately generous, char-boundary-safe cap) so the two content
+/// truncations stay consistent. `substr` counts codepoints on a TEXT
+/// column, so the cut never splits a multi-byte character.
+///
+/// This cap is applied ONLY on the display-only (all-toggles-off) palette
+/// path, where `content` is a snippet fallback. The case-sensitive /
+/// whole-word toggle path runs a literal regex against `content` in a
+/// post-filter and would silently DROP a row whose match first appears
+/// after codepoint 512 (the truncated content no longer contains the
+/// term); that caller passes `snippet_len: None` (full content) so the
+/// post-filter sees the whole body and the emitted match offsets stay
+/// valid against the shipped content. The cap is therefore threaded as a
+/// per-caller argument to [`search_fts_partitioned`], not hardcoded.
+pub(crate) const PALETTE_CONTENT_PREVIEW_CAP: usize = 512;
+
 pub(crate) struct FtsPartitionedScan {
     /// Page-only partition (`block_type = 'page'`) in rank order,
     /// capped at the caller's `page_limit`.
@@ -88,6 +114,13 @@ pub(crate) async fn search_fts_partitioned(
     exclude_page_globs: &[String],
     metadata: &MetadataPredicates,
     with_snippet: bool,
+    // P4 (#346 / #2200) — DB-side `content` prefix cap. `Some(n)` truncates
+    // each row's `content` to the first `n` codepoints via `substr` at the
+    // DB; `None` ships full content. The all-toggles-off (display-only) caller
+    // passes `Some(PALETTE_CONTENT_PREVIEW_CAP)`; the case-sensitive /
+    // whole-word post-filter caller passes `None` so its literal regex matches
+    // against full content and cannot drop a row whose match is beyond the cap.
+    snippet_len: Option<usize>,
     cancel: Option<CancellationToken>,
 ) -> Result<FtsPartitionedScan, AppError> {
     // Guard: empty/whitespace queries would cause an FTS5 syntax error.
@@ -144,9 +177,12 @@ pub(crate) async fn search_fts_partitioned(
         Some("page"), // page-only pre-filter at SQL
         metadata,
         with_snippet,
-        // P4 (#346) — the partitioned (palette) path always returns full
-        // content; only the MCP cursor path opts into DB-side truncation.
-        None,
+        // P4 (#346 / #2200) — caller-controlled `content` cap. The
+        // display-only path passes `Some(cap)` (the highlight comes from
+        // `snippet()`; `content` is only the clipped no-snippet fallback);
+        // the post-filter path passes `None` (full content for regex
+        // matching). Ranking/order/row-count and `snippet()` are untouched.
+        snippet_len,
         // Clone the cancel token so both partition scans
         // observe the same signal. `CancellationToken: Clone` is a
         // cheap watch::Receiver refcount bump.
@@ -167,8 +203,11 @@ pub(crate) async fn search_fts_partitioned(
         None, // unrestricted
         metadata,
         with_snippet,
-        // P4 (#346) — see the pages partition above; full content here too.
-        None,
+        // P4 (#346 / #2200) — same caller-controlled cap as the pages
+        // partition above; the blocks partition ships far more rows, so it
+        // benefits most from not shipping full bodies per keystroke when the
+        // caller opts into the display-only cap.
+        snippet_len,
         cancel,
     );
     let (pages_rows, blocks_rows) = tokio::try_join!(pages_future, blocks_future)?;

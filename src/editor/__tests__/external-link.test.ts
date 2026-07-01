@@ -21,6 +21,12 @@ vi.mock('@/lib/tauri', () => ({
   fetchLinkMetadata: (...args: unknown[]) => mockFetchLinkMetadata(...args),
 }))
 
+const mockOpenUrl = vi.fn().mockResolvedValue(true)
+
+vi.mock('@/lib/open-url', () => ({
+  openUrl: (...args: unknown[]) => mockOpenUrl(...args),
+}))
+
 vi.mock('@/lib/logger', () => ({
   logger: {
     warn: vi.fn(),
@@ -347,5 +353,99 @@ describe('ExternalLink mark exit after setLink', () => {
     const lastChild = paragraph.child(paragraph.childCount - 1)
     const hasLink = lastChild.marks.some((m) => m.type.name === 'link')
     expect(hasLink).toBe(false)
+  })
+})
+
+// -- #2209: Ctrl/Cmd+Click scheme guard ---------------------------------------
+// Ctrl/Cmd+Click opens an external link via `openUrl`. A stored link mark can
+// carry a disallowed scheme (markdown import / peer sync bypass input-time
+// validation), so `handleClick` re-checks `isAllowedUrl` before handing the href
+// to the OS shell — mirroring the static render sink (marks/text.tsx).
+describe('ExternalLink Ctrl/Cmd+Click scheme guard (#2209)', () => {
+  let editor: Editor
+
+  afterEach(() => {
+    editor?.destroy()
+    mockOpenUrl.mockClear()
+  })
+
+  /**
+   * Find the `handleClick` prop of OUR `externalLinkPaste` plugin specifically.
+   * The base Link extension registers its own (no-op when openOnClick:false)
+   * plugin earlier in the list, so pick by key rather than "first with a
+   * handleClick".
+   */
+  function findHandleClick(ed: Editor) {
+    for (const plugin of ed.view.state.plugins) {
+      const key = (plugin as unknown as { key?: string }).key ?? ''
+      if (key.includes('externalLinkPaste') && plugin.props.handleClick) {
+        return plugin.props.handleClick
+      }
+    }
+    return undefined
+  }
+
+  /** Simulate a click on an `a.external-link` anchor with the given modifier. */
+  function simulateClick(
+    ed: Editor,
+    href: string,
+    mods: { ctrlKey?: boolean; metaKey?: boolean } = { ctrlKey: true },
+  ): boolean {
+    const anchor = document.createElement('a')
+    anchor.className = 'external-link'
+    anchor.setAttribute('href', href)
+    const event = {
+      ctrlKey: mods.ctrlKey ?? false,
+      metaKey: mods.metaKey ?? false,
+      target: anchor,
+      preventDefault: vi.fn(),
+    } as unknown as MouseEvent
+    const handleClick = findHandleClick(ed) as
+      | ((view: unknown, pos: number, ev: unknown) => boolean | void)
+      | undefined
+    expect(handleClick).toBeDefined()
+    return handleClick?.(ed.view, 0, event) ?? false
+  }
+
+  it('opens an allowed https link on Ctrl+Click', () => {
+    editor = createEditor()
+    const handled = simulateClick(editor, 'https://example.com')
+    expect(handled).toBe(true)
+    expect(mockOpenUrl).toHaveBeenCalledWith('https://example.com')
+  })
+
+  it('opens an allowed https link on Cmd/Meta+Click', () => {
+    editor = createEditor()
+    const handled = simulateClick(editor, 'https://example.com', { metaKey: true })
+    expect(handled).toBe(true)
+    expect(mockOpenUrl).toHaveBeenCalledWith('https://example.com')
+  })
+
+  it('does NOT open a javascript: link (blocked scheme)', () => {
+    editor = createEditor()
+    const handled = simulateClick(editor, 'javascript:alert(1)')
+    expect(handled).toBe(false)
+    expect(mockOpenUrl).not.toHaveBeenCalled()
+  })
+
+  it('does NOT open a file: link (blocked scheme)', () => {
+    editor = createEditor()
+    const handled = simulateClick(editor, 'file:///etc/passwd')
+    expect(handled).toBe(false)
+    expect(mockOpenUrl).not.toHaveBeenCalled()
+  })
+
+  it('does NOT open a data: link (blocked scheme)', () => {
+    editor = createEditor()
+    const handled = simulateClick(editor, 'data:text/html,<script>alert(1)</script>')
+    expect(handled).toBe(false)
+    expect(mockOpenUrl).not.toHaveBeenCalled()
+  })
+
+  it('ignores a plain click (no modifier) and does not open', () => {
+    editor = createEditor()
+    const handled = simulateClick(editor, 'https://example.com', {})
+    expect(handled).toBe(false)
+    expect(mockOpenUrl).not.toHaveBeenCalled()
   })
 })

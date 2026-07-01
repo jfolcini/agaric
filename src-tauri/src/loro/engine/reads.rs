@@ -36,6 +36,33 @@ impl LoroEngine {
             position,
         }))
     }
+    /// Lean, content-only companion to [`Self::read_block`] for the edit
+    /// hot path (#2200).
+    ///
+    /// Returns exactly the same string as `read_block(block_id)?.content`,
+    /// with the same `Ok(None)`-for-absent contract, but does ONLY the work
+    /// needed to reach `content`: `node_for` → `get_meta` → `read_text`.
+    /// It deliberately skips the two extras `read_block` performs to build a
+    /// full [`BlockSnapshot`] but which the keystroke edit path never reads:
+    ///   * the `block_type` scalar read,
+    ///   * `parent_block_id_of` — a SECOND `get_meta` (the parent's), and
+    ///   * `child_rank_position` — an O(K) scan of the sibling list.
+    ///
+    /// The `content` derivation is byte-identical: it fetches the same node's
+    /// same meta map and calls the same `read_text(FIELD_CONTENT)` with the
+    /// same error-context prefix, so an existing block yields the same bytes
+    /// and a missing/malformed block yields the same `Ok(None)` / `Err`.
+    pub fn read_block_content(&self, block_id: &str) -> Result<Option<String>, AppError> {
+        let Some(node) = self.node_for(block_id) else {
+            return Ok(None);
+        };
+        let block_map = self.tree().get_meta(node).map_err(|e| {
+            AppError::Validation(format!("loro: read_block {block_id}: get_meta: {e}"))
+        })?;
+        let content = read_text(&block_map, FIELD_CONTENT)
+            .map_err(|e| ctx_err(&e, &format!("block {block_id}: content")))?;
+        Ok(Some(content))
+    }
     /// Bulk variant of [`Self::read_block`] for projecting MANY blocks at once
     /// (sync-pull reprojection, #1621). Returns one entry per input id, in the
     /// SAME order, with the SAME `Ok(None)`-for-absent semantics as
@@ -529,5 +556,81 @@ mod read_blocks_bulk_tests {
         assert!(bulk[0].is_none());
         assert_eq!(bulk[1], e.read_block("X").unwrap());
         assert!(bulk[2].is_none());
+    }
+
+    /// #2200: the lean `read_block_content` must return exactly the same string
+    /// as `read_block(...).content` for an existing block — across several
+    /// blocks in different tree positions (root, nested child, grandchild),
+    /// including empty and multibyte-unicode content — so the edit hot path
+    /// gets byte-identical content while skipping the parent `get_meta` +
+    /// sibling-rank scan.
+    #[test]
+    fn read_block_content_matches_read_block_content_field() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block_at("A", "parent", "hello", None, 0)
+            .unwrap();
+        // A nested child + grandchild so the block-under-test is NOT at the
+        // root — this is where the full `read_block` would do a parent
+        // `get_meta` and an O(K) sibling scan that the lean reader omits.
+        e.apply_create_block_at("A1", "child", "", Some("A"), 0)
+            .unwrap();
+        e.apply_create_block_at("A2", "child", "café — 日本語", Some("A"), 1)
+            .unwrap();
+        e.apply_create_block_at("G", "grandchild", "deep", Some("A1"), 0)
+            .unwrap();
+
+        for id in ["A", "A1", "A2", "G"] {
+            let full = e.read_block(id).unwrap().expect("block present").content;
+            let lean = e.read_block_content(id).unwrap().expect("content present");
+            assert_eq!(lean, full, "content mismatch for {id}");
+        }
+    }
+
+    /// #2200: for a missing block, `read_block_content` must behave like
+    /// `read_block` — both yield `Ok(None)` (the edit path turns that into the
+    /// "block not found" Validation error), so absence handling is unchanged.
+    #[test]
+    fn read_block_content_missing_block_yields_none_like_read_block() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block_at("X", "leaf", "x", None, 0).unwrap();
+
+        assert!(e.read_block("nope").unwrap().is_none());
+        assert!(e.read_block_content("nope").unwrap().is_none());
+
+        // Present block still resolves through the lean reader.
+        assert_eq!(e.read_block_content("X").unwrap().as_deref(), Some("x"),);
+        assert_eq!(
+            e.read_block_content("X").unwrap(),
+            e.read_block("X").unwrap().map(|b| b.content),
+        );
+    }
+
+    /// #2200: an edit still applies correctly via `apply_edit_via_diff_splice`
+    /// now that it reads content through the lean `read_block_content`. After
+    /// the edit, `read_block(...).content` reflects the new text and the full
+    /// snapshot (parent / position) is untouched.
+    #[test]
+    fn edit_via_diff_splice_applies_with_lean_content_read() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block_at("P", "parent", "p", None, 0)
+            .unwrap();
+        e.apply_create_block_at("B", "child", "hello world", Some("P"), 0)
+            .unwrap();
+
+        e.apply_edit_via_diff_splice("B", "hello brave world")
+            .unwrap();
+
+        let snap = e.read_block("B").unwrap().expect("block present");
+        assert_eq!(snap.content, "hello brave world");
+        assert_eq!(
+            e.read_block_content("B").unwrap().as_deref(),
+            Some("hello brave world")
+        );
+        // Structure is unchanged by a content edit.
+        assert_eq!(snap.parent_id.as_deref(), Some("P"));
+        assert_eq!(snap.position, 1);
+
+        // Editing a missing block still errors (same as before the change).
+        assert!(e.apply_edit_via_diff_splice("missing", "x").is_err());
     }
 }

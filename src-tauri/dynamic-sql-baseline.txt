@@ -62,7 +62,7 @@
 1 src-tauri/src/soft_delete/restore.rs
 2 src-tauri/src/spaces/bootstrap.rs
 1 src-tauri/src/spaces/cross_space_validation.rs
-8 src-tauri/src/sync_files.rs
+9 src-tauri/src/sync_files.rs
 2 src-tauri/src/sync_protocol/loro_sync.rs
 1 src-tauri/src/sync_protocol/operations.rs
 13 src-tauri/src/tag_inheritance/incremental.rs

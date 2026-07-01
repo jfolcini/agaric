@@ -117,6 +117,27 @@ export function QueryControlsBar({
   const debounced = useDebouncedCallback(onFulltextChange, 300)
   const hasFulltext = fulltext.trim() !== ''
 
+  // #2216 — the `Relevance` sort source is only valid with a full-text term
+  // (the engine rejects `Relevance` without `fulltext`) and its SelectItem is
+  // gated on `hasFulltext`. When the user empties the full-text input, any
+  // existing `{type:'Relevance'}` sort key would otherwise leave the Select
+  // blank (its option is gone) AND send an engine-rejected request. Reconcile
+  // the committed sort array down to the same safe default the "add sort key"
+  // action uses (`Column`/`created`) so the control stays in-vocabulary and the
+  // query stays valid. Deriving the reconciliation here (over inline render
+  // side-effects) mirrors the existing `fulltextDraft` sync-effect pattern.
+  useEffect(() => {
+    if (hasFulltext) return
+    if (!sort.some((key) => key.source.type === 'Relevance')) return
+    onSortChange(
+      sort.map((key) =>
+        key.source.type === 'Relevance'
+          ? { ...key, source: { type: 'Column', name: 'created' } }
+          : key,
+      ),
+    )
+  }, [hasFulltext, sort, onSortChange])
+
   const handleFulltext = (value: string): void => {
     setFulltextDraft(value)
     debounced.schedule(value)

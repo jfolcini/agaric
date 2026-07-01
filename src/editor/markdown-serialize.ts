@@ -19,6 +19,7 @@
 
 import { isAutolinkableUrl, scanBareUrl, underscoreRunFlank, WORD_CHAR_RE } from './markdown-common'
 import type {
+  BlockLevelNode,
   BlockquoteNode,
   BulletListNode,
   CodeBlockNode,
@@ -706,28 +707,52 @@ function indentLines(text: string, indent: string): string {
 }
 
 /**
- * Serialize one list item: its leading paragraph(s) followed by any nested
- * `bulletList`/`orderedList` children, each indented one level. The item's
- * marker (e.g. `- ` or `3. `) is supplied by the caller and prefixed to the
- * first line; nested lines are indented one level so they round-trip back into
- * the same nested structure (#1513).
+ * Serialize a single block-level child of a list item. The TipTap `ListItem`
+ * schema is `paragraph block*`, so a list item can hold a `codeBlock`,
+ * `heading`, `blockquote`, `table`, `math_block` or `horizontalRule` in addition
+ * to the leading paragraph and nested lists (#2213). This mirrors the exhaustive
+ * child dispatch in `serializeBlockquote` so none of those block kinds are
+ * silently dropped (which previously lost code fences and `#` heading prefixes
+ * when a code block / heading was toggled inside a list item).
+ */
+function serializeListItemChild(
+  child: BlockLevelNode,
+  onUnknownNode?: (type: string) => void,
+): string {
+  if (child.type === 'paragraph') return serializeParagraph(child, onUnknownNode)
+  if (child.type === 'heading') return serializeHeading(child, onUnknownNode)
+  if (child.type === 'codeBlock') return serializeCodeBlock(child)
+  if (child.type === 'blockquote') return serializeBlockquote(child, onUnknownNode)
+  if (child.type === 'table') return serializeTable(child, onUnknownNode)
+  if (child.type === 'orderedList') return serializeOrderedList(child, onUnknownNode)
+  if (child.type === 'bulletList') return serializeBulletList(child, onUnknownNode)
+  if (child.type === 'horizontalRule') return serializeHorizontalRule(child)
+  if (child.type === 'math_block') return serializeMathBlock(child)
+  return ''
+}
+
+/**
+ * Serialize one list item: its leading paragraph followed by any further
+ * block-level children (nested lists, code blocks, headings, blockquotes, …).
+ * The item's marker (e.g. `- ` or `3. `) is supplied by the caller and prefixed
+ * to the first line; every subsequent block is indented one level so the parser
+ * reads it back as nested content belonging to this item (round-trips via
+ * `collectListItem`'s indent-preserving rule; #1513, #2213).
  */
 function serializeListItem(
   item: ListItemNode,
   marker: string,
   onUnknownNode?: (type: string) => void,
 ): string {
-  const lines: string[] = []
-  for (const child of item.content ?? []) {
-    if (child.type === 'orderedList') {
-      lines.push(indentLines(serializeOrderedList(child, onUnknownNode), LIST_NEST_INDENT))
-    } else if (child.type === 'bulletList') {
-      lines.push(indentLines(serializeBulletList(child, onUnknownNode), LIST_NEST_INDENT))
-    } else {
-      lines.push(serializeParagraph(child, onUnknownNode))
-    }
-  }
-  return `${marker}${lines.join('\n')}`
+  const children = item.content ?? []
+  const parts = children.map((child, idx) => {
+    const serialized = serializeListItemChild(child, onUnknownNode)
+    // The first child sits on the marker line (no indent); every later block is
+    // indented one level so it round-trips back into this item as nested content
+    // rather than leaking out as a sibling block.
+    return idx === 0 ? serialized : indentLines(serialized, LIST_NEST_INDENT)
+  })
+  return `${marker}${parts.join('\n')}`
 }
 
 function serializeOrderedList(

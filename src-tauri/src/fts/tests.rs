@@ -4961,6 +4961,186 @@ fn pt_block_id(index: u32) -> String {
     format!("01HQPARTGEN{index:015}")
 }
 
+// ── #2200 (Tier-2): DB-side content-prefix cap on the palette scan ────
+
+/// The preview-length cap the display-only palette path applies to
+/// `content` at the DB. Bound to the real constant so the two never drift.
+const EXPECTED_PALETTE_CONTENT_CAP: usize = crate::fts::search::PALETTE_CONTENT_PREVIEW_CAP;
+
+#[tokio::test]
+async fn partitioned_content_is_capped_to_preview_prefix_snippet_and_order_unchanged() {
+    let (pool, _dir) = test_pool().await;
+
+    // A body far longer than the cap, with the keyword up front so the
+    // `snippet()` highlight window still lands inside the shipped prefix.
+    let long_body = format!("palettecap needle {}", "x".repeat(2000));
+    let full_len = long_body.chars().count();
+    assert!(
+        full_len > EXPECTED_PALETTE_CONTENT_CAP,
+        "fixture must exceed the cap to prove truncation"
+    );
+
+    // Two content blocks matching the keyword, plus a matching page, so we
+    // can also assert row count + rank order are untouched by the cap.
+    insert_block(&pool, BLOCK_A, "content", &long_body, None, Some(0)).await;
+    insert_block(&pool, BLOCK_B, "content", &long_body, None, Some(1)).await;
+    insert_block(&pool, PAGE_ULID, "page", "palettecap page", None, Some(2)).await;
+    crate::fts::rebuild_fts_index(&pool).await.unwrap();
+
+    let scan = crate::fts::search::search_fts_partitioned(
+        &pool,
+        "palettecap",
+        10,
+        10,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+        true, // with_snippet — highlight must survive the content cap
+        Some(EXPECTED_PALETTE_CONTENT_CAP), // display-only path opts into the cap
+        None,
+    )
+    .await
+    .unwrap();
+
+    // Row count unchanged: both content blocks + the page appear in `blocks`;
+    // the page also appears in `pages`.
+    assert_eq!(
+        scan.blocks.len(),
+        3,
+        "blocks partition row count must be unchanged by the content cap"
+    );
+    assert_eq!(scan.pages.len(), 1, "pages partition unchanged");
+
+    // Every capped content string is exactly the 512-codepoint PREFIX of the
+    // original body (never longer, never a different substring).
+    let expected_prefix: String = long_body
+        .chars()
+        .take(EXPECTED_PALETTE_CONTENT_CAP)
+        .collect();
+    let mut saw_capped_content = false;
+    for row in scan.blocks.iter().chain(scan.pages.iter()) {
+        if let Some(content) = row.content.as_deref() {
+            assert!(
+                content.chars().count() <= EXPECTED_PALETTE_CONTENT_CAP,
+                "content must be capped to <= {EXPECTED_PALETTE_CONTENT_CAP} codepoints, got {}",
+                content.chars().count()
+            );
+            if row.id.as_str() == BLOCK_A || row.id.as_str() == BLOCK_B {
+                assert_eq!(
+                    content, expected_prefix,
+                    "capped content must equal the {EXPECTED_PALETTE_CONTENT_CAP}-codepoint prefix"
+                );
+                saw_capped_content = true;
+            }
+        }
+    }
+    assert!(
+        saw_capped_content,
+        "the long-body blocks must have surfaced with capped content"
+    );
+
+    // The snippet() highlight is UNCHANGED — paired PUA sentinels wrapping
+    // the match still ship even though the full body does not.
+    let content_hit = scan
+        .blocks
+        .iter()
+        .find(|r| r.id.as_str() == BLOCK_A)
+        .expect("BLOCK_A must be in the blocks partition");
+    let snippet = content_hit
+        .snippet
+        .as_deref()
+        .expect("snippet() highlight must be present for a content match");
+    let opens = snippet.matches(crate::fts::SNIPPET_HL_OPEN).count();
+    let closes = snippet.matches(crate::fts::SNIPPET_HL_CLOSE).count();
+    assert!(opens >= 1, "snippet must still carry a highlight opener");
+    assert_eq!(opens, closes, "highlight sentinels must stay paired");
+
+    // Order unchanged: `position 0` (BLOCK_A) then `position 1` (BLOCK_B)
+    // among the two equally-ranked content rows (rank tiebreak is by id, and
+    // BLOCK_A < BLOCK_B). The cap does not touch ORDER BY.
+    let content_ids: Vec<&str> = scan
+        .blocks
+        .iter()
+        .filter(|r| r.block_type == "content")
+        .map(|r| r.id.as_str())
+        .collect();
+    assert_eq!(
+        content_ids,
+        vec![BLOCK_A, BLOCK_B],
+        "content-row order must be unchanged by the DB-side content cap"
+    );
+}
+
+/// #2200 (Tier-2) regression — the display-only content cap MUST NOT leak
+/// onto the case-sensitive / whole-word toggle path, whose post-filter runs
+/// a literal regex against `content` and drops non-matching rows.
+///
+/// A block whose match term first appears AFTER the 512-codepoint preview
+/// cap is FTS-matched (the trigram index is position-independent) but would
+/// be silently DROPPED if the post-filter saw only a `substr(content,1,512)`
+/// prefix (the term isn't in the prefix → regex no-match → row dropped).
+/// The toggle path therefore scans with `snippet_len: None` (full content);
+/// this test fails (row missing) if that regresses back to the capped call.
+#[tokio::test]
+async fn toggle_on_post_filter_keeps_match_beyond_preview_cap() {
+    let (pool, _dir) = test_pool().await;
+
+    // The exact-case term sits at codepoint 600 — well past the 512 cap — so
+    // a truncated prefix would not contain it. `a`-filler carries no
+    // uppercase `NeedleCase`, so the case-sensitive regex can only match the
+    // trailing term.
+    let padding = EXPECTED_PALETTE_CONTENT_CAP + 88; // 600
+    let body = format!("{}NeedleCase", "a".repeat(padding));
+    assert!(
+        body.chars().count() > EXPECTED_PALETTE_CONTENT_CAP,
+        "fixture must exceed the cap"
+    );
+    insert_block(&pool, BLOCK_A, "content", &body, None, Some(0)).await;
+    crate::fts::rebuild_fts_index(&pool).await.unwrap();
+
+    let scan = search_with_toggles_partitioned(
+        &pool,
+        "NeedleCase",
+        10,
+        10,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        SearchToggles {
+            case_sensitive: true,
+            whole_word: false,
+            is_regex: false,
+        },
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let hit = scan
+        .blocks
+        .iter()
+        .find(|r| r.id.as_str() == BLOCK_A)
+        .expect("case-sensitive match beyond the preview cap must NOT be dropped");
+    // Full content is shipped on the post-filter path (no display cap), so the
+    // matched term survives on the wire and the emitted UTF-16 offsets stay
+    // valid against `content`.
+    let content = hit.content.as_deref().expect("row must carry content");
+    assert!(
+        content.contains("NeedleCase"),
+        "shipped content must still contain the matched term (full body, not the 512 prefix)"
+    );
+    assert!(
+        !hit.match_offsets.is_empty(),
+        "post-filter must attach the match offsets for the beyond-cap hit"
+    );
+}
+
 /// Seed `n_pages` page blocks and `n_blocks` content blocks, all
 /// matching the FTS keyword `partitioned`. Returns when the FTS
 /// index is up to date.

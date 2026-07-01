@@ -99,11 +99,35 @@ pub(crate) async fn handle_foreground_task(
             // O(N) pass. Threaded as `Some(&mut chunk)` into every `apply_op_tx`
             // and flushed below (inside the same tx, before commit) so the
             // deferred writes stay atomic with the block mutations.
-            let mut chunk = ChunkAccumulator::default();
+            //
+            // CORRECTNESS GATE — the dense-position reprojection deferral is
+            // ONLY safe when the ENTIRE chunk is `CreateBlock` ops. The
+            // accumulator snapshots each touched parent's sibling order at
+            // create-time and replays it once at flush; Move/Restore/Delete
+            // still reproject INLINE (loro_apply.rs), so a later same-parent
+            // op in a mixed batch would be clobbered by the stale snapshot
+            // replay (e.g. Create(a→P),Create(b→P) snapshots [a,b], then
+            // Move(b before a) reprojects inline to b=1,a=2, but the flush
+            // replays stale [a,b] → a=1,b=2 — WRONG). So we defer ONLY for an
+            // all-create batch; a mixed batch passes `None` to every op so ALL
+            // ops — creates included — reproject inline exactly as before this
+            // optimization (the known-correct path). The common import path is
+            // all-`CreateBlock`, so it keeps the perf win. (The accumulator's
+            // reproject key is additionally space-qualified so an all-create
+            // batch spanning spaces cannot collide on the top-level `None`
+            // key — see `ChunkAccumulator`.)
+            let all_create = records
+                .iter()
+                .all(|r| r.op_type == OpType::CreateBlock.as_str());
+            let mut chunk = if all_create {
+                Some(ChunkAccumulator::default())
+            } else {
+                None
+            };
             // `records` is `&Arc<Vec<OpRecord>>`; `.iter()` derefs
             // through `Arc -> Vec` to yield `&OpRecord` without copying.
             for record in records.iter() {
-                let effects = match apply_op_tx(&mut tx, record, Some(&mut chunk)).await {
+                let effects = match apply_op_tx(&mut tx, record, chunk.as_mut()).await {
                     Ok(eff) => eff,
                     Err(e) => {
                         tracing::warn!(
@@ -125,8 +149,12 @@ pub(crate) async fn handle_foreground_task(
             // INSIDE this tx so the deferred writes commit atomically with the
             // block mutations (and roll back together with them on the error
             // paths above, which return before reaching here). A `?` here rolls
-            // the whole batch back, same as an in-loop failure.
-            chunk.flush(&mut tx).await?;
+            // the whole batch back, same as an in-loop failure. `None` on the
+            // mixed-batch path (deferral gated off) — nothing was accumulated,
+            // every op already reprojected/recomputed inline, so skip the flush.
+            if let Some(chunk) = chunk {
+                chunk.flush(&mut tx).await?;
+            }
             // C-2b: advance the cursor to the highest seq in the batch
             // inside the same tx so `apply + cursor` are atomic. Empty
             // batches skip the update entirely (no seq to record).

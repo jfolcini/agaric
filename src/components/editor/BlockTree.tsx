@@ -53,6 +53,7 @@ import { useBlockKeyboard } from '@/editor/use-block-keyboard'
 import { useEditorEventDispatch } from '@/editor/use-editor-event-dispatch'
 import { type RovingEditorHandle, useRovingEditor } from '@/editor/use-roving-editor'
 import { BatchAttachmentsProvider } from '@/hooks/useBatchAttachments'
+import { BatchPropertiesProvider } from '@/hooks/useBatchProperties'
 import { BlockActionsProvider } from '@/hooks/useBlockActions'
 import { useBlockCollapse } from '@/hooks/useBlockCollapse'
 import { useBlockDatePicker } from '@/hooks/useBlockDatePicker'
@@ -63,6 +64,7 @@ import { useBlockMultiSelect } from '@/hooks/useBlockMultiSelect'
 import { useBlockNavigateToLink } from '@/hooks/useBlockNavigateToLink'
 import { useBlockProperties } from '@/hooks/useBlockProperties'
 import { useBlockPropertiesBatch } from '@/hooks/useBlockPropertiesBatch'
+import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useBlockResolve } from '@/hooks/useBlockResolve'
 import { BlockResolversProvider } from '@/hooks/useBlockResolvers'
 import {
@@ -86,6 +88,7 @@ import { deleteDraft, editBlock, setProperty } from '@/lib/tauri'
 import { getDragDescendants } from '@/lib/tree-utils'
 import { useBlockStore } from '@/stores/blocks'
 import { usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
+import { useSpaceStore } from '@/stores/space'
 
 export { processCheckboxSyntax } from '@/lib/block-utils'
 
@@ -919,6 +922,19 @@ export function BlockTree({
   // up front on a large page.
   const windowedBlockIds = useMemo(() => windowedBlocks.map((b) => b.id), [windowedBlocks])
 
+  // ── Batch block properties (#2270) ──────────────────────────────────
+  // Single `getBatchProperties` IPC published to every StaticBlock descendant
+  // so an image block reads image_width/alignment/caption from this shared
+  // page-wide batch instead of firing its own per-block `getBatchProperties`
+  // (N+1 on gallery / journal week/month views). Mirrors the
+  // BatchAttachmentsProvider mount above (windowed to the viewport). The
+  // invalidation key mirrors AgendaResults: bump the provider's refetch on
+  // every `block:properties-changed` event AND on space switch, so an edit to
+  // an image property re-syncs the rendered width/alignment/caption.
+  const { invalidationKey: propertyInvalidationKey } = useBlockPropertyEvents()
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  const batchPropertiesInvalidationKey = `${propertyInvalidationKey}|${currentSpaceId ?? ''}`
+
   if (loading) {
     return (
       <div
@@ -941,129 +957,134 @@ export function BlockTree({
 
   return (
     <BatchAttachmentsProvider blockIds={windowedBlockIds}>
-      <BlockZoomBar
-        breadcrumbs={zoomBreadcrumb}
-        onNavigate={handleZoomIn}
-        onZoomToRoot={zoomToRoot}
-      />
-      {/* #1258 — the backend caps a page at PAGE_SUBTREE_MAX_BLOCKS and used
+      <BatchPropertiesProvider
+        blockIds={windowedBlockIds}
+        invalidationKey={batchPropertiesInvalidationKey}
+      >
+        <BlockZoomBar
+          breadcrumbs={zoomBreadcrumb}
+          onNavigate={handleZoomIn}
+          onZoomToRoot={zoomToRoot}
+        />
+        {/* #1258 — the backend caps a page at PAGE_SUBTREE_MAX_BLOCKS and used
           to drop the excess silently. A non-blocking notice (matches the
           SearchPanel capped-notice pattern) tells the user the page is only
           partially displayed. */}
-      {truncatedTotal != null && (
-        <div
-          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level notice card (border/padding/rounded); <output> is inline-level and would break the boxed layout
-          role="status"
-          data-testid="page-truncated-notice"
-          className="mb-2 rounded-lg border border-alert-warning-border bg-alert-warning p-3 text-sm text-alert-warning-foreground"
+        {truncatedTotal != null && (
+          <div
+            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level notice card (border/padding/rounded); <output> is inline-level and would break the boxed layout
+            role="status"
+            data-testid="page-truncated-notice"
+            className="mb-2 rounded-lg border border-alert-warning-border bg-alert-warning p-3 text-sm text-alert-warning-foreground"
+          >
+            {t('blockTree.truncatedNotice', { shown: blocks.length, total: truncatedTotal })}
+          </div>
+        )}
+        <BlockBatchActionMenu
+          selectedBlockIds={selectedBlockIds}
+          batchInProgress={batchInProgress}
+          batchDeleteConfirm={batchDeleteConfirm}
+          onBatchSetTodo={handleBatchSetTodo}
+          onBatchSetPriority={handleBatchSetPriority}
+          onBatchDelete={handleBatchDelete}
+          onSetBatchDeleteConfirm={setBatchDeleteConfirm}
+          onClearSelection={clearSelected}
+        />
+        <DndContext
+          sensors={dnd.sensors}
+          collisionDetection={closestCenter}
+          measuring={measuring}
+          // #752 — disable dnd-kit's built-in edge auto-scroll: `useBlockDnD`
+          // already runs the custom `useAutoScrollOnDrag` RAF loop against the
+          // #main-content container. Running both is additive (jank), and the
+          // built-in one ignores `prefers-reduced-motion`, defeating the custom
+          // loop's reduced-motion opt-out.
+          autoScroll={false}
+          onDragStart={dnd.handleDragStart}
+          onDragMove={dnd.handleDragMove}
+          onDragOver={dnd.handleDragOver}
+          onDragEnd={dnd.handleDragEnd}
+          onDragCancel={dnd.handleDragCancel}
         >
-          {t('blockTree.truncatedNotice', { shown: blocks.length, total: truncatedTotal })}
-        </div>
-      )}
-      <BlockBatchActionMenu
-        selectedBlockIds={selectedBlockIds}
-        batchInProgress={batchInProgress}
-        batchDeleteConfirm={batchDeleteConfirm}
-        onBatchSetTodo={handleBatchSetTodo}
-        onBatchSetPriority={handleBatchSetPriority}
-        onBatchDelete={handleBatchDelete}
-        onSetBatchDeleteConfirm={setBatchDeleteConfirm}
-        onClearSelection={clearSelected}
-      />
-      <DndContext
-        sensors={dnd.sensors}
-        collisionDetection={closestCenter}
-        measuring={measuring}
-        // #752 — disable dnd-kit's built-in edge auto-scroll: `useBlockDnD`
-        // already runs the custom `useAutoScrollOnDrag` RAF loop against the
-        // #main-content container. Running both is additive (jank), and the
-        // built-in one ignores `prefers-reduced-motion`, defeating the custom
-        // loop's reduced-motion opt-out.
-        autoScroll={false}
-        onDragStart={dnd.handleDragStart}
-        onDragMove={dnd.handleDragMove}
-        onDragOver={dnd.handleDragOver}
-        onDragEnd={dnd.handleDragEnd}
-        onDragCancel={dnd.handleDragCancel}
-      >
-        <BlockActionsProvider value={blockActions}>
-          <BlockResolversProvider value={blockResolvers}>
-            <BlockListRenderer
-              visibleItems={dnd.visibleItems}
-              blocks={blocks}
-              loading={loading}
-              rootParentId={rootParentId}
-              focusedBlockId={focusedBlockId}
-              selectedBlockIds={selectedBlockIds}
-              projected={dnd.projected}
-              activeId={dnd.activeId}
-              overId={dnd.overId}
-              dropAfter={dnd.dropAfter}
-              viewport={viewport}
-              rovingEditor={rovingEditor}
-              onContainerPointerDown={handleContainerPointerDown}
-              hasChildrenSet={hasChildrenSet}
-              collapsedIds={collapsedIds}
-              blockProperties={blockProperties}
-            />
-          </BlockResolversProvider>
-        </BlockActionsProvider>
-        <BlockDndOverlay
-          activeBlock={activeBlock}
-          projected={dnd.projected}
-          activeId={dnd.activeId}
-          count={draggingCount}
+          <BlockActionsProvider value={blockActions}>
+            <BlockResolversProvider value={blockResolvers}>
+              <BlockListRenderer
+                visibleItems={dnd.visibleItems}
+                blocks={blocks}
+                loading={loading}
+                rootParentId={rootParentId}
+                focusedBlockId={focusedBlockId}
+                selectedBlockIds={selectedBlockIds}
+                projected={dnd.projected}
+                activeId={dnd.activeId}
+                overId={dnd.overId}
+                dropAfter={dnd.dropAfter}
+                viewport={viewport}
+                rovingEditor={rovingEditor}
+                onContainerPointerDown={handleContainerPointerDown}
+                hasChildrenSet={hasChildrenSet}
+                collapsedIds={collapsedIds}
+                blockProperties={blockProperties}
+              />
+            </BlockResolversProvider>
+          </BlockActionsProvider>
+          <BlockDndOverlay
+            activeBlock={activeBlock}
+            projected={dnd.projected}
+            activeId={dnd.activeId}
+            count={draggingCount}
+          />
+        </DndContext>
+
+        {/* Floating date picker for /DATE slash command */}
+        {datePickerOpen && (
+          <BlockDatePicker
+            onSelect={(day) => day && handleDatePick(day)}
+            onClose={() => setDatePickerOpen(false)}
+          />
+        )}
+
+        {/* Floating template picker for /TEMPLATE slash command */}
+        {templatePickerOpen && (
+          <TemplatePicker
+            templatePages={templatePages}
+            onSelect={handleTemplateSelect}
+            onClose={() => setTemplatePickerOpen(false)}
+          />
+        )}
+
+        {/* Visual query builder for the /query slash command (#215) */}
+        <QueryBuilderModal
+          open={queryBuilderOpen}
+          onOpenChange={setQueryBuilderOpen}
+          onSave={handleQuerySave}
         />
-      </DndContext>
 
-      {/* Floating date picker for /DATE slash command */}
-      {datePickerOpen && (
-        <BlockDatePicker
-          onSelect={(day) => day && handleDatePick(day)}
-          onClose={() => setDatePickerOpen(false)}
+        {/* Browse-grid emoji picker for the /emoji slash command (#286) */}
+        <EmojiPickerDialog
+          open={emojiPickerOpen}
+          onOpenChange={setEmojiPickerOpen}
+          onSelect={handleEmojiSelect}
         />
-      )}
 
-      {/* Floating template picker for /TEMPLATE slash command */}
-      {templatePickerOpen && (
-        <TemplatePicker
-          templatePages={templatePages}
-          onSelect={handleTemplateSelect}
-          onClose={() => setTemplatePickerOpen(false)}
+        {/* History side-sheet for per-block history */}
+        <BlockHistorySheet
+          blockId={historyBlockId}
+          open={!!historyBlockId}
+          onOpenChange={(open) => {
+            if (!open) setHistoryBlockId(null)
+          }}
         />
-      )}
 
-      {/* Visual query builder for the /query slash command (#215) */}
-      <QueryBuilderModal
-        open={queryBuilderOpen}
-        onOpenChange={setQueryBuilderOpen}
-        onSave={handleQuerySave}
-      />
-
-      {/* Browse-grid emoji picker for the /emoji slash command (#286) */}
-      <EmojiPickerDialog
-        open={emojiPickerOpen}
-        onOpenChange={setEmojiPickerOpen}
-        onSelect={handleEmojiSelect}
-      />
-
-      {/* History side-sheet for per-block history */}
-      <BlockHistorySheet
-        blockId={historyBlockId}
-        open={!!historyBlockId}
-        onOpenChange={(open) => {
-          if (!open) setHistoryBlockId(null)
-        }}
-      />
-
-      {/* Property drawer for per-block properties */}
-      <BlockPropertyDrawerSheet
-        blockId={propertyDrawerBlockId}
-        open={!!propertyDrawerBlockId}
-        onOpenChange={(open) => {
-          if (!open) setPropertyDrawerBlockId(null)
-        }}
-      />
+        {/* Property drawer for per-block properties */}
+        <BlockPropertyDrawerSheet
+          blockId={propertyDrawerBlockId}
+          open={!!propertyDrawerBlockId}
+          onOpenChange={(open) => {
+            if (!open) setPropertyDrawerBlockId(null)
+          }}
+        />
+      </BatchPropertiesProvider>
     </BatchAttachmentsProvider>
   )
 }

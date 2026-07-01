@@ -20,7 +20,7 @@ import { axe } from 'vitest-axe'
 import { StaticBlock } from '@/components/editor/StaticBlock'
 import { clearRichContentParseCache } from '@/components/RichContentRenderer'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import type { AttachmentRow } from '@/lib/tauri'
+import type { AttachmentRow, PropertyRow } from '@/lib/tauri'
 
 vi.mock('@/lib/open-url', () => ({ openUrl: vi.fn() }))
 
@@ -52,6 +52,14 @@ vi.mock('@/hooks/useBatchAttachments', () => ({
   useBatchAttachments: vi.fn(),
 }))
 
+// #2270 — StaticBlock reads image_width/alignment/caption from the page-wide
+// BatchPropertiesProvider when present. Default mock returns `null` (no
+// provider) so existing tests exercise the per-block getBatchProperties
+// fallback; the #2270 suite below injects a fake provider value.
+vi.mock('@/hooks/useBatchProperties', () => ({
+  useBatchProperties: vi.fn(() => null),
+}))
+
 vi.mock('@/editor/markdown-serializer', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@/editor/markdown-serializer')>()
   return { ...mod, parse: vi.fn(mod.parse) }
@@ -76,6 +84,35 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
 // Lazy-import after mocks are hoisted so we get the mocked version.
 const { useBatchAttachments } = await import('@/hooks/useBatchAttachments')
 const mockedUseBatchAttachments = vi.mocked(useBatchAttachments)
+
+const { useBatchProperties } = await import('@/hooks/useBatchProperties')
+const mockedUseBatchProperties = vi.mocked(useBatchProperties)
+
+/**
+ * Convenience: build a fake `BatchPropertiesProvider` context value that maps
+ * the test-only block id `'B1'` to the supplied PropertyRow list. Passing
+ * `undefined` rows models "block absent from the batch"; `loading: true`
+ * models an in-flight (re)fetch. All other ids resolve to undefined.
+ */
+function mockBatchProperties(rows: PropertyRow[] | undefined, options: { loading?: boolean } = {}) {
+  mockedUseBatchProperties.mockReturnValue({
+    get: (id: string) => (id === 'B1' ? rows : undefined),
+    loading: options.loading ?? false,
+    invalidate: vi.fn(),
+  })
+}
+
+/** Build a single PropertyRow with a text value (image props are all text). */
+function textProp(key: string, value: string): PropertyRow {
+  return {
+    key,
+    value_text: value,
+    value_num: null,
+    value_date: null,
+    value_ref: null,
+    value_bool: null,
+  }
+}
 
 /**
  * Convenience: build a mock return for `useBatchAttachments` that maps
@@ -164,6 +201,9 @@ describe('StaticBlock', () => {
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock/static-block')
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
     mockBatchAttachments([])
+    // Default: no BatchPropertiesProvider → StaticBlock uses the per-block
+    // getBatchProperties fallback (the #2270 suite overrides this).
+    mockedUseBatchProperties.mockReturnValue(null)
     delete (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__']
   })
 
@@ -1206,6 +1246,119 @@ describe('StaticBlock', () => {
       // Toolbar visible — run axe
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  // -- BatchPropertiesProvider integration (#2270) ----------------------------
+  //
+  // When a page-wide BatchPropertiesProvider is mounted (BlockTree), StaticBlock
+  // reads image_width/alignment/caption from the shared batch instead of firing
+  // its own single-block `getBatchProperties([blockId])` IPC (the N+1 the issue
+  // eliminates). Outside a provider it falls back to that per-block call. The
+  // provider refetches on the block:properties-changed event, so an edit still
+  // re-syncs the rendered width/alignment/caption.
+
+  describe('BatchPropertiesProvider integration (#2270)', () => {
+    function makeImageAttachment(overrides: Partial<AttachmentRow> = {}): AttachmentRow {
+      return {
+        id: 'att-img-1',
+        block_id: 'B1',
+        filename: 'photo.png',
+        mime_type: 'image/png',
+        size_bytes: 1024,
+        fs_path: '/path/to/photo.png',
+        created_at: 1704067200000,
+        ...overrides,
+      }
+    }
+
+    it('reads image props from the provider and fires NO single-block getBatchProperties IPC', async () => {
+      ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
+      mockBatchAttachments([makeImageAttachment()])
+      // Provider carries width + caption for this block.
+      mockBatchProperties([textProp('image_width', '50'), textProp('image_caption', 'Sunset')])
+
+      const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
+
+      await vi.waitFor(() => {
+        const wrapper = container.querySelector('[data-testid="image-resize-wrapper"]')
+        expect(wrapper).not.toBeNull()
+        expect((wrapper as HTMLElement).style.maxWidth).toBe('50%')
+      })
+      // Caption doubles as the image alt text (#212 item 3) — proves the caption
+      // prop propagated from the provider value.
+      const img = await screen.findByRole('img')
+      expect(img.getAttribute('alt')).toBe('Sunset')
+
+      // Regression pin (#2270): the per-block batch IPC must NOT fire when the
+      // provider supplies the properties.
+      expect(mockedGetBatchProperties).not.toHaveBeenCalled()
+    })
+
+    it('falls back to the per-block getBatchProperties IPC when no provider is present', async () => {
+      ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
+      // No provider (default beforeEach: useBatchProperties → null).
+      mockBatchAttachments([makeImageAttachment()])
+      mockedGetBatchProperties.mockResolvedValueOnce({ B1: [textProp('image_width', '25')] })
+
+      const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
+
+      await vi.waitFor(() => {
+        const wrapper = container.querySelector('[data-testid="image-resize-wrapper"]')
+        expect(wrapper).not.toBeNull()
+        expect((wrapper as HTMLElement).style.maxWidth).toBe('25%')
+      })
+      // Fallback path fires exactly the single-block batched IPC.
+      expect(mockedGetBatchProperties).toHaveBeenCalledWith(['B1'])
+    })
+
+    it('does not clobber state from the provider while the batch is (re)fetching', async () => {
+      ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
+      mockBatchAttachments([makeImageAttachment()])
+      // Provider is loading and has no rows yet → StaticBlock keeps defaults and
+      // does NOT fall through to the per-block IPC (a provider IS present).
+      mockBatchProperties(undefined, { loading: true })
+
+      const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
+
+      await vi.waitFor(() => {
+        const wrapper = container.querySelector('[data-testid="image-resize-wrapper"]')
+        expect(wrapper).not.toBeNull()
+        expect((wrapper as HTMLElement).style.maxWidth).toBe('100%')
+      })
+      expect(mockedGetBatchProperties).not.toHaveBeenCalled()
+    })
+
+    it('re-syncs width and caption when the provider batch refetches after a property edit', async () => {
+      ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
+      mockBatchAttachments([makeImageAttachment()])
+      // Initial batch: width 25, no caption.
+      mockBatchProperties([textProp('image_width', '25')])
+
+      const { container, rerender } = render(
+        <StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />,
+      )
+
+      await vi.waitFor(() => {
+        const wrapper = container.querySelector('[data-testid="image-resize-wrapper"]')
+        expect((wrapper as HTMLElement).style.maxWidth).toBe('25%')
+      })
+      expect((await screen.findByRole('img')).getAttribute('alt')).toBe('photo.png')
+
+      // Simulate the block:properties-changed refetch: the provider returns a
+      // NEW context value (fresh identity) carrying the edited width + a caption
+      // that arrived later.
+      mockBatchProperties([textProp('image_width', '75'), textProp('image_caption', 'Golden hour')])
+      rerender(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
+
+      await vi.waitFor(() => {
+        const wrapper = container.querySelector('[data-testid="image-resize-wrapper"]')
+        expect((wrapper as HTMLElement).style.maxWidth).toBe('75%')
+      })
+      // A caption arriving later still propagates as an updated prop (alt text).
+      expect((await screen.findByRole('img')).getAttribute('alt')).toBe('Golden hour')
+      // Still no per-block IPC — everything came through the provider.
+      expect(mockedGetBatchProperties).not.toHaveBeenCalled()
     })
   })
 

@@ -748,6 +748,162 @@ describe('AttachmentRenderer', () => {
     expect((images as { caption?: string }[])[0]?.caption).toBe('A caption')
   })
 
+  // ---- #2214: caption input must not clobber a stored caption with '' ----
+
+  describe('caption race (#2214)', () => {
+    it('populates the field when a caption resolves after the image mounts', async () => {
+      // Image bytes win the race: the input mounts with the not-yet-loaded
+      // (empty) caption.
+      const { rerender } = render(
+        <AttachmentRenderer {...baseProps} imageCaption="" attachments={[makeAttachment()]} />,
+      )
+      await screen.findByRole('img')
+      const caption = screen.getByTestId('image-caption-input') as HTMLInputElement
+      expect(caption.value).toBe('')
+
+      // Caption fetch resolves late → the parent passes it down as a prop.
+      rerender(
+        <AttachmentRenderer
+          {...baseProps}
+          imageCaption="Resolved late"
+          attachments={[makeAttachment()]}
+        />,
+      )
+      // The unedited, unfocused field re-seeds to the arrived caption.
+      expect(caption.value).toBe('Resolved late')
+    })
+
+    it('never persists an empty overwrite from an unedited field focused during the fetch', async () => {
+      const onImageCaptionChange = vi.fn()
+      const { rerender } = render(
+        <AttachmentRenderer
+          {...baseProps}
+          imageCaption=""
+          onImageCaptionChange={onImageCaptionChange}
+          attachments={[makeAttachment()]}
+        />,
+      )
+      await screen.findByRole('img')
+      const caption = screen.getByTestId('image-caption-input') as HTMLInputElement
+
+      // User focuses the (still empty) field before the caption arrives.
+      fireEvent.focus(caption)
+      // Caption resolves late while focused → must NOT overwrite the field.
+      rerender(
+        <AttachmentRenderer
+          {...baseProps}
+          imageCaption="Real stored caption"
+          onImageCaptionChange={onImageCaptionChange}
+          attachments={[makeAttachment()]}
+        />,
+      )
+      expect(caption.value).toBe('')
+
+      // Blurring without ever editing must not persist '' over the real caption.
+      fireEvent.blur(caption)
+      expect(mockedSetProperty).not.toHaveBeenCalled()
+      expect(onImageCaptionChange).not.toHaveBeenCalled()
+    })
+
+    it('does not let a late fetch clobber an edit in progress, and persists the edit on blur', async () => {
+      const onImageCaptionChange = vi.fn()
+      const { rerender } = render(
+        <AttachmentRenderer
+          {...baseProps}
+          imageCaption=""
+          onImageCaptionChange={onImageCaptionChange}
+          attachments={[makeAttachment()]}
+        />,
+      )
+      await screen.findByRole('img')
+      const caption = screen.getByTestId('image-caption-input') as HTMLInputElement
+
+      // User starts typing before the caption fetch lands.
+      fireEvent.change(caption, { target: { value: 'My edit' } })
+      expect(caption.value).toBe('My edit')
+
+      // Late caption arrives → must not overwrite the in-progress edit.
+      rerender(
+        <AttachmentRenderer
+          {...baseProps}
+          imageCaption="Late fetch caption"
+          onImageCaptionChange={onImageCaptionChange}
+          attachments={[makeAttachment()]}
+        />,
+      )
+      expect(caption.value).toBe('My edit')
+
+      // Blur commits the user's edit.
+      fireEvent.blur(caption)
+      expect(onImageCaptionChange).toHaveBeenCalledWith('My edit')
+      expect(mockedSetProperty).toHaveBeenCalledWith({
+        blockId: 'B1',
+        key: 'image_caption',
+        valueText: 'My edit',
+      })
+    })
+
+    it('still persists a deliberate clear (typing then deleting to empty counts as dirty)', async () => {
+      const onImageCaptionChange = vi.fn()
+      render(
+        <AttachmentRenderer
+          {...baseProps}
+          imageCaption="Old caption"
+          onImageCaptionChange={onImageCaptionChange}
+          attachments={[makeAttachment()]}
+        />,
+      )
+      await screen.findByRole('img')
+      const caption = screen.getByTestId('image-caption-input') as HTMLInputElement
+      expect(caption.value).toBe('Old caption')
+
+      // Deleting all text is an edit — the dirty flag must distinguish this
+      // deliberate clear from the never-touched '' of the #2214 race.
+      fireEvent.change(caption, { target: { value: '' } })
+      fireEvent.blur(caption)
+
+      expect(onImageCaptionChange).toHaveBeenCalledWith('')
+      expect(mockedSetProperty).toHaveBeenCalledWith({
+        blockId: 'B1',
+        key: 'image_caption',
+        valueText: '',
+      })
+    })
+
+    it('skips the persist when an edit lands back on the original caption', async () => {
+      const onImageCaptionChange = vi.fn()
+      const { rerender } = render(
+        <AttachmentRenderer
+          {...baseProps}
+          imageCaption="kept"
+          onImageCaptionChange={onImageCaptionChange}
+          attachments={[makeAttachment()]}
+        />,
+      )
+      await screen.findByRole('img')
+      const caption = screen.getByTestId('image-caption-input') as HTMLInputElement
+
+      // Edit away and back to the committed value — dirty, but a no-op commit.
+      fireEvent.change(caption, { target: { value: 'kept?' } })
+      fireEvent.change(caption, { target: { value: 'kept' } })
+      fireEvent.blur(caption)
+      expect(mockedSetProperty).not.toHaveBeenCalled()
+      expect(onImageCaptionChange).not.toHaveBeenCalled()
+
+      // The no-op blur must also reset the dirty flag so later external
+      // updates (e.g. sync) re-seed the idle field again.
+      rerender(
+        <AttachmentRenderer
+          {...baseProps}
+          imageCaption="external update"
+          onImageCaptionChange={onImageCaptionChange}
+          attachments={[makeAttachment()]}
+        />,
+      )
+      expect(caption.value).toBe('external update')
+    })
+  })
+
   // ---- #212 item 4: alignment ----
 
   it('defaults the image row to center alignment', async () => {

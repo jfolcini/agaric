@@ -1427,4 +1427,33 @@ describe('RichContentRenderer', () => {
       expect(container.textContent).toBe('Title body paragraph')
     })
   })
+
+  // -- Parse cache (#2272) ----------------------------------------------------
+  //
+  // `renderRichContent` memoizes the pure `parse(markdown)` step on the markdown
+  // string alone (module-level LRU). The render pass consumes resolve callbacks
+  // / `resolveVersion` separately, so a resolveVersion bump (batch link-resolve,
+  // space switch) that re-runs the SAME content must NOT re-tokenize.
+  describe('parse cache (#2272)', () => {
+    it('parses identical content only once across re-renders (resolveVersion bump does not re-parse)', () => {
+      const md = 'Some **content** with a [[link]] and #tag'
+      // Same content, different resolve callbacks/options each time — this is
+      // exactly what a resolveVersion bump does to a visible StaticBlock.
+      renderRichContent(md, { resolveBlockTitle: () => 'v1' })
+      renderRichContent(md, { resolveBlockTitle: () => 'v2' })
+      renderRichContent(md, { interactive: true, resolveBlockTitle: () => 'v3' })
+      expect(mockedParse).toHaveBeenCalledTimes(1)
+    })
+
+    it('re-parses when the markdown content actually changes (cache miss)', () => {
+      renderRichContent('first content', {})
+      renderRichContent('second content', {})
+      expect(mockedParse).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not invoke the tokenizer for empty content', () => {
+      renderRichContent('', {})
+      expect(mockedParse).not.toHaveBeenCalled()
+    })
+  })
 })

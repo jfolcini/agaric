@@ -183,15 +183,17 @@ export interface TableNode {
 }
 
 /**
- * A list item holds a leading paragraph and may hold one or more nested lists
- * (the structure `Tab`/`sinkListItem` produces: the sunk items become a
- * `bulletList`/`orderedList` sibling of the item's paragraph). The serializer
- * and parser preserve this nesting so indented lists round-trip without loss
- * (#1513).
+ * A list item holds a leading paragraph followed by any block-level content —
+ * the TipTap `ListItem` schema is `paragraph block*`, so beyond nested
+ * `bulletList`/`orderedList` children (the structure `Tab`/`sinkListItem`
+ * produces) an item can also carry a `codeBlock`, `heading`, `blockquote`,
+ * `table`, `math_block` or `horizontalRule` (toggle a code block with the caret
+ * in an item, or paste HTML). The serializer and parser preserve this nesting
+ * so indented list content round-trips without loss (#1513, #2213).
  */
 export interface ListItemNode {
   readonly type: 'listItem'
-  readonly content?: readonly (ParagraphNode | OrderedListNode | BulletListNode)[]
+  readonly content?: readonly BlockLevelNode[]
 }
 
 export interface OrderedListNode {

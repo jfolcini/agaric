@@ -22,6 +22,7 @@ import { tipTapShortcutMap } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { openUrl } from '@/lib/open-url'
 import { fetchLinkMetadata } from '@/lib/tauri'
+import { isAllowedUrl } from '@/lib/url-validation'
 
 /**
  * Validate that `text` is an absolute HTTP(S) URL.
@@ -77,6 +78,17 @@ export const ExternalLink = Link.extend({
             ) as HTMLAnchorElement | null
             const href = anchor?.getAttribute('href')
             if (!href) return false
+            // #2209 — re-check the scheme denylist before handing the href to the
+            // OS shell. Input-time validation (`validate` / the link editor) is
+            // bypassed by markdown import / peer sync, so a stored
+            // `javascript:`/`file:`/`data:` link mark could otherwise reach
+            // `openUrl` on Ctrl/Cmd+Click. Mirror the static render sink
+            // (RichContentRenderer/marks/text.tsx): a blocked scheme is not
+            // opened — return false so the click just places the caret.
+            if (!isAllowedUrl(href)) {
+              logger.warn('ExternalLink', 'blocked disallowed URL scheme on click', { href })
+              return false
+            }
             event.preventDefault()
             void openUrl(href).catch((err: unknown) => {
               logger.warn('ExternalLink', 'openUrl failed', { href }, err)
