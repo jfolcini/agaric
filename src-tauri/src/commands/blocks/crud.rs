@@ -14,6 +14,16 @@ use super::super::*;
 use crate::domain::block_ops::{create_block_in_tx, set_property_in_tx};
 use crate::space::SpaceScope;
 
+/// #2268: minimum number of rows a single-root cascade UPDATE must touch before
+/// the depth-saturation probe (`cascade_depth_saturated`, a full
+/// `WITH RECURSIVE ... MAX(depth)` re-walk) is worth running. The cap that the
+/// probe detects is `>= 99` levels; a cascade cannot reach depth `d` without
+/// touching the `d + 1`-node chain down to it, so a subtree that could trip the
+/// `>= 99` warn must have flipped at least 99 rows. Gating the probe on this
+/// bound keeps the common (shallow) delete/restore path free of the extra walk
+/// while still catching a genuinely pathological tree.
+const SATURATION_PROBE_MIN_ROWS: u64 = 99;
+
 /// Look up the most-recent `edit_block`/`create_block` op for the given
 /// `block_id`, scoped to the supplied connection (typically a live
 /// transaction). Returns the originating `(device_id, seq)` pair if any,
@@ -462,7 +472,20 @@ pub async fn delete_block_inner(
     // an operator has a breadcrumb if a pathological tree silently
     // truncated the soft-delete. The cap itself is preserved (invariant
     // #9); we only ADD detection + surfacing here.
-    if crate::block_descendants::cascade_depth_saturated(&mut **tx, &block_id).await? {
+    //
+    // #2268 (perf): the saturation probe is a full `WITH RECURSIVE ...
+    // MAX(depth)` re-walk of the subtree the cascade UPDATE above just walked,
+    // in the user-blocking write tx, purely to warn in the ~never-hit
+    // >=99-level case. Gate it behind a cheap threshold so the common case does
+    // ZERO extra walks: the active-CTE cascade can only reach depth `d` by
+    // newly soft-deleting the whole `d+1`-node chain to it (its recursive arm
+    // requires every ancestor to be `deleted_at IS NULL`, so it cannot skip a
+    // level), hence a >=99-level truncation implies `rows_affected >= 99`.
+    // Below the threshold the probe cannot fire; only a pathologically large
+    // delete pays for the authoritative `cascade_depth_saturated` check.
+    if result.rows_affected() >= SATURATION_PROBE_MIN_ROWS
+        && crate::block_descendants::cascade_depth_saturated(&mut **tx, &block_id).await?
+    {
         tracing::warn!(
             block_id = %block_id,
             op = "delete_block",
@@ -1072,7 +1095,29 @@ pub async fn restore_block_inner(
     // an operator has a breadcrumb if a pathological tree silently
     // truncated the restore. The cap itself is preserved (invariant
     // #9); we only ADD detection + surfacing here.
-    if crate::block_descendants::cascade_depth_saturated(&mut **tx, &block_id).await? {
+    //
+    // #2268 (perf): mirror the delete path — gate the full `MAX(depth)`
+    // saturation re-walk behind a cheap `rows_affected` threshold so the common
+    // case does ZERO extra walks. Soundness for restore: `next_delete_ms()`
+    // gives every delete op a UNIQUE `deleted_at`, and a single-root delete
+    // stamps a region contiguous downward from its root, capped at depth 100 —
+    // so a restore rooted AT that root can only be depth-truncated if the
+    // cohort itself reaches depth >= 99, which flips >= 100 rows; a restore
+    // rooted DEEPER inside a cohort can never be truncated (all cohort nodes
+    // sit within depth 100 of the cohort root, hence closer to the sub-root).
+    //
+    // KNOWN residual (accepted): `delete_blocks_by_ids_inner` stamps ONE
+    // `deleted_at` across MULTIPLE roots. If a second batch root sits > 100
+    // levels below this restore root, beyond a previously-deleted (other-
+    // timestamp) gap, its cohort rows are unreachable by the depth-capped
+    // restore walk while fewer than 99 rows flip here — the truncation warn
+    // (pre-#2268 behavior) is then skipped. That needs an already-pathological
+    // > 100-deep tree plus interleaved deletes spanning the gap, and the warn
+    // is a best-effort operator breadcrumb, not a correctness gate — the
+    // deeper cohort remains restorable via its own batch root.
+    if result.rows_affected() >= SATURATION_PROBE_MIN_ROWS
+        && crate::block_descendants::cascade_depth_saturated(&mut **tx, &block_id).await?
+    {
         tracing::warn!(
             block_id = %block_id,
             op = "restore_block",
@@ -2448,4 +2493,192 @@ fn spawn_purged_attachment_cleanup(
     tokio::task::spawn_blocking(move || {
         remove_purged_attachment_files(&app_data_dir, &fs_paths);
     });
+}
+
+#[cfg(test)]
+mod saturation_probe_tests {
+    //! #2268: the depth-saturation probe on the single-block delete/restore and
+    //! batch-delete paths is now gated behind a cheap `rows_affected` threshold
+    //! so the common (shallow) case does ZERO extra `MAX(depth)` walks. These
+    //! tests assert the gate still SURFACES the `>=99`-level warn on a genuinely
+    //! pathological chain, and stays SILENT (probe skipped) on a shallow tree.
+    use super::*;
+    use crate::db::init_pool;
+    use tempfile::TempDir;
+
+    async fn test_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+        (pool, dir)
+    }
+
+    /// Insert a linear parent→child chain of `n` content blocks directly into
+    /// `blocks` (bypassing the command layer, like the integration-test
+    /// `insert_block` helper). Returns the root id. Node `i` sits at cascade
+    /// depth `i`, so `n = 101` yields a subtree whose `MAX(depth) = 100 >= 99`.
+    async fn insert_chain(pool: &SqlitePool, prefix: &str, n: usize) -> String {
+        let root = format!("{prefix}000");
+        for i in 0..n {
+            let id = format!("{prefix}{i:03}");
+            let parent = if i == 0 {
+                None
+            } else {
+                Some(format!("{prefix}{:03}", i - 1))
+            };
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+                 VALUES (?, 'content', ?, ?, ?, ?)",
+            )
+            .bind(&id)
+            .bind(format!("node {i}"))
+            .bind(parent.as_deref())
+            .bind(i64::try_from(i).unwrap() + 1)
+            .bind(&root)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        root
+    }
+
+    /// Thread-safe buffered writer for in-process log capture (mirrors the
+    /// helper in `materializer/tests/agenda_fts_misc.rs`; per tests/AGENTS.md
+    /// "Test helper duplication is intentional"). Paired with a current-thread
+    /// runtime (`#[tokio::test]`) so `set_default`'s thread-local guard covers
+    /// every `.await` point — a multi-thread runtime could migrate the task off
+    /// the thread that installed the subscriber and miss the warn.
+    #[derive(Clone, Default)]
+    struct WarnBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for WarnBuf {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for WarnBuf {
+        type Writer = WarnBuf;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+    fn capture() -> (WarnBuf, tracing::subscriber::DefaultGuard) {
+        use tracing_subscriber::layer::SubscriberExt;
+        let buf = WarnBuf::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new("warn"))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(buf.clone())
+                    .with_ansi(false),
+            );
+        let guard = tracing::subscriber::set_default(subscriber);
+        (buf, guard)
+    }
+    fn logged(buf: &WarnBuf) -> String {
+        String::from_utf8_lossy(&buf.0.lock().unwrap()).into_owned()
+    }
+
+    const DEV: &str = "sat-probe-device";
+
+    #[tokio::test]
+    async fn delete_block_inner_still_warns_on_saturated_chain_2268() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        // 101 nodes → deepest at depth 100; cascade flips all 101 rows, so the
+        // probe (gated on `rows_affected >= 99`) runs and reports saturation.
+        let root = insert_chain(&pool, "DELSAT", 101).await;
+
+        let (buf, guard) = capture();
+        let resp = delete_block_inner(&pool, DEV, &mat, BlockId::from_trusted(&root))
+            .await
+            .unwrap();
+        drop(guard);
+        assert_eq!(
+            resp.descendants_affected, 101,
+            "the whole 101-node chain must be soft-deleted (root + descendants)"
+        );
+        let out = logged(&buf);
+        assert!(
+            out.contains("cascade-depth cap reached") && out.contains("op=\"delete_block\""),
+            "a >=99-level delete must still emit the saturation warn, got: {out:?}"
+        );
+        mat.shutdown();
+    }
+
+    #[tokio::test]
+    async fn delete_block_inner_skips_probe_no_warn_on_shallow_tree_2268() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        // 5 nodes → rows_affected (5) < 99, so the probe is skipped entirely
+        // and no warn is emitted (the common-case zero-extra-walk path).
+        let root = insert_chain(&pool, "DELSHAL", 5).await;
+
+        let (buf, guard) = capture();
+        delete_block_inner(&pool, DEV, &mat, BlockId::from_trusted(&root))
+            .await
+            .unwrap();
+        drop(guard);
+        assert!(
+            !logged(&buf).contains("cascade-depth cap reached"),
+            "a shallow delete must NOT trip the saturation warn (probe skipped)"
+        );
+        mat.shutdown();
+    }
+
+    #[tokio::test]
+    async fn restore_block_inner_still_warns_on_saturated_chain_2268() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let root = insert_chain(&pool, "RESSAT", 101).await;
+
+        // Delete the whole chain first (single shared `deleted_at`).
+        delete_block_inner(&pool, DEV, &mat, BlockId::from_trusted(&root))
+            .await
+            .unwrap();
+        let deleted_at: i64 = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(&root)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        let (buf, guard) = capture();
+        let resp = restore_block_inner(&pool, DEV, &mat, BlockId::from_trusted(&root), deleted_at)
+            .await
+            .unwrap();
+        drop(guard);
+        assert_eq!(
+            resp.restored_count, 101,
+            "the whole 101-node chain must be restored"
+        );
+        let out = logged(&buf);
+        assert!(
+            out.contains("cascade-depth cap reached") && out.contains("op=\"restore_block\""),
+            "a >=99-level restore must still emit the saturation warn, got: {out:?}"
+        );
+        mat.shutdown();
+    }
+
+    #[tokio::test]
+    async fn batch_delete_still_warns_on_saturated_chain_2268() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let root = insert_chain(&pool, "BATSAT", 101).await;
+
+        let (buf, guard) = capture();
+        let n = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![BlockId::from_trusted(&root)])
+            .await
+            .unwrap();
+        drop(guard);
+        assert_eq!(n, 101, "the batch cascade must soft-delete all 101 nodes");
+        let out = logged(&buf);
+        assert!(
+            out.contains("cascade-depth cap reached")
+                && out.contains("op=\"delete_blocks_by_ids\""),
+            "a >=99-level batch delete must still emit the saturation warn, got: {out:?}"
+        );
+        mat.shutdown();
+    }
 }
