@@ -24,10 +24,11 @@ import { renderRichContent } from '@/components/RichContentRenderer'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useBatchAttachments } from '@/hooks/useBatchAttachments'
+import { useBatchProperties } from '@/hooks/useBatchProperties'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { logger } from '@/lib/logger'
 import { openUrl } from '@/lib/open-url'
-import { getBatchProperties } from '@/lib/tauri'
+import { getBatchProperties, type PropertyRow } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
 
@@ -154,26 +155,56 @@ function StaticBlockInner({
   const hasImageAttachments =
     !attachmentsLoading && attachments.some((a) => a.mime_type.startsWith('image/'))
 
-  // Load stored image_width / image_alignment / image_caption properties when
-  // Image attachments are present. single-key PK lookups
-  // instead of fetching the whole property vocabulary just to read a few rows.
+  // #2270 — image_width / image_alignment / image_caption come from the
+  // page-wide `BatchPropertiesProvider` mounted at the BlockTree level
+  // (mirrors the `useBatchAttachments` path above), so a gallery /
+  // journal week/month view no longer fires one `getBatchProperties([blockId])`
+  // IPC per image block — the page-wide batch already carries these rows.
+  //
+  // Freshness: the provider refetches whenever the `block:properties-changed`
+  // event fires (its `invalidationKey`) or the space switches, so an edit to
+  // width/alignment/caption re-syncs here with the same freshness as the old
+  // per-block mount fetch — a caption that arrives later still propagates as a
+  // fresh `imageCaption` prop update to AttachmentRenderer (#2214).
+  //
+  // Outside a provider (unit tests, isolated renders — StaticBlock's only
+  // production mount is under BlockTree, which mounts the provider), fall back
+  // to the single-block batched IPC (#543: one call for all three properties).
+  const batchProperties = useBatchProperties()
   useEffect(() => {
     if (!hasImageAttachments) return
+
+    const applyImageProps = (rows: readonly PropertyRow[]): void => {
+      const byKey = new Map(rows.map((r) => [r.key, r]))
+      const width = byKey.get('image_width')?.value_text
+      if (width) setImageWidth(width)
+      const align = byKey.get('image_alignment')?.value_text
+      if (align === 'left' || align === 'center' || align === 'right') {
+        setImageAlignment(align)
+      }
+      const caption = byKey.get('image_caption')?.value_text
+      if (caption != null) setImageCaption(caption)
+    }
+
+    // Provider path: read from the shared page-wide batch. Skip while the
+    // batch is (re)fetching so a mid-refetch render can't clobber an
+    // optimistic width/alignment/caption edit with stale rows; the effect
+    // re-runs (the context value identity changes) once fresh data lands.
+    if (batchProperties) {
+      if (batchProperties.loading) return
+      const rows = batchProperties.get(blockId)
+      if (rows == null) return
+      applyImageProps(rows)
+      return
+    }
+
+    // Fallback path (no provider): one batched IPC for all three image
+    // properties instead of three single-key getProperty round-trips.
     let cancelled = false
-    // #543: one batched IPC for all three image properties instead of three
-    // separate single-key getProperty round-trips on every image-block mount.
     getBatchProperties([blockId])
       .then((byBlock) => {
         if (cancelled) return
-        const byKey = new Map((byBlock[blockId] ?? []).map((r) => [r.key, r]))
-        const width = byKey.get('image_width')?.value_text
-        if (width) setImageWidth(width)
-        const align = byKey.get('image_alignment')?.value_text
-        if (align === 'left' || align === 'center' || align === 'right') {
-          setImageAlignment(align)
-        }
-        const caption = byKey.get('image_caption')?.value_text
-        if (caption != null) setImageCaption(caption)
+        applyImageProps(byBlock[blockId] ?? [])
       })
       .catch((err) => {
         logger.warn('StaticBlock', 'image property batch fetch failed', undefined, err)
@@ -181,7 +212,7 @@ function StaticBlockInner({
     return () => {
       cancelled = true
     }
-  }, [blockId, hasImageAttachments])
+  }, [blockId, hasImageAttachments, batchProperties])
 
   const hasAttachments = !attachmentsLoading && attachments.length > 0
 

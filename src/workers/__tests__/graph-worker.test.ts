@@ -144,9 +144,13 @@ describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)'
 
   // Import the worker module exactly ONCE so only a single `message` listener
   // is attached to `self` (re-importing under resetModules would accumulate
-  // listeners and double-dispatch every message).
+  // listeners and double-dispatch every message). Captured here (not a static
+  // top-level import) so the `vi.mock('d3-force')` factory's hoisted spies are
+  // initialized before the worker module evaluates — #2273 reads its exported
+  // pure `shouldEmitTick`/`TICK_THROTTLE_MS` off this handle.
+  let workerModule: typeof import('../graph-worker')
   beforeAll(async () => {
-    await import('../graph-worker')
+    workerModule = await import('../graph-worker')
   })
 
   beforeEach(() => {
@@ -324,6 +328,89 @@ describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)'
     expect(forceSimulation).not.toHaveBeenCalled()
     // No error posted back.
     expect(posted.some((m) => m.type === 'error')).toBe(false)
+  })
+
+  // -------------------------------------------------------------------------
+  // #2273 — tick emission is throttled to ~one per animation-frame interval so
+  // the worker doesn't structured-transfer a fresh buffer on every one of the
+  // ~300 convergence ticks (the main thread coalesces to one rAF/frame anyway,
+  // discarding most posts). The `done`/settle post ALWAYS fires, bypassing the
+  // throttle, so the converged layout is sent exactly.
+  // -------------------------------------------------------------------------
+
+  it('shouldEmitTick emits only after the min interval has elapsed (pure)', () => {
+    const { shouldEmitTick, TICK_THROTTLE_MS } = workerModule
+    // The session-reset sentinel (-Infinity) always emits (first tick of a run).
+    expect(shouldEmitTick(0, Number.NEGATIVE_INFINITY, TICK_THROTTLE_MS)).toBe(true)
+    // Exactly one interval elapsed → emit; just under → skip.
+    expect(shouldEmitTick(TICK_THROTTLE_MS, 0, TICK_THROTTLE_MS)).toBe(true)
+    expect(shouldEmitTick(TICK_THROTTLE_MS - 1, 0, TICK_THROTTLE_MS)).toBe(false)
+    expect(shouldEmitTick(32, 16, TICK_THROTTLE_MS)).toBe(true)
+    expect(shouldEmitTick(31, 16, TICK_THROTTLE_MS)).toBe(false)
+  })
+
+  it('throttles multiple synchronous ticks to one post, but always posts the final `done`', () => {
+    const nowSpy = vi.spyOn(performance, 'now')
+    // First tick after `start` always posts: the session resets lastTickEmit to
+    // -Infinity, so it is not throttled regardless of the clock.
+    nowSpy.mockReturnValue(1000)
+    send({ type: 'start', nodes: [{ id: 'a', label: 'A' }], edges: [], width: 800, height: 600 })
+    const sim = lastSim as unknown as FakeSim
+    Object.assign(sim.nodeList[0] as object, { x: 1, y: 1 })
+
+    posted.length = 0
+    const tick = sim.handlers.get('tick')
+    expect(tick).toBeTypeOf('function')
+
+    // t=1000: first tick posts.
+    tick?.()
+    // t=1005, t=1010: within one throttle interval of the last emit → skipped.
+    nowSpy.mockReturnValue(1005)
+    tick?.()
+    nowSpy.mockReturnValue(1010)
+    tick?.()
+    expect(posted.filter((m) => m.type === 'tick')).toHaveLength(1)
+
+    // t=1020: >= 16ms since the last emit → posts again.
+    nowSpy.mockReturnValue(1020)
+    tick?.()
+    expect(posted.filter((m) => m.type === 'tick')).toHaveLength(2)
+
+    // `end` fires 1ms later (well inside the throttle window) — the final
+    // settled layout must STILL post so convergence is exact.
+    nowSpy.mockReturnValue(1021)
+    sim.handlers.get('end')?.()
+    expect(posted.filter((m) => m.type === 'done')).toHaveLength(1)
+
+    nowSpy.mockRestore()
+  })
+
+  it('resets the throttle on `update` so the first drift tick posts immediately', () => {
+    const nowSpy = vi.spyOn(performance, 'now')
+    nowSpy.mockReturnValue(2000)
+    send({ type: 'start', nodes: [{ id: 'a', label: 'A' }], edges: [], width: 800, height: 600 })
+    const sim = lastSim as unknown as FakeSim
+    const tick = sim.handlers.get('tick')
+
+    tick?.() // first post at t=2000
+    nowSpy.mockReturnValue(2005)
+    tick?.() // throttled (within the interval)
+
+    posted.length = 0
+    // A filter toggle arrives at t=2005 — still inside the throttle window of
+    // the last emit. `update` must reset the gate so the next tick posts.
+    send({
+      type: 'update',
+      nodes: [
+        { id: 'a', label: 'A' },
+        { id: 'c', label: 'C' },
+      ],
+      edges: [],
+    })
+    tick?.() // still t=2005, but the reset lets it through
+    expect(posted.filter((m) => m.type === 'tick')).toHaveLength(1)
+
+    nowSpy.mockRestore()
   })
 
   // -------------------------------------------------------------------------

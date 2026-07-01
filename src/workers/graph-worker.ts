@@ -43,7 +43,35 @@ interface SimEdge extends SimulationLinkDatum<SimNode> {
 let simulation: Simulation<SimNode, SimEdge> | null = null
 let simNodes: SimNode[] = []
 
+/**
+ * Timestamp (`performance.now()`, ms) of the last emitted `tick` post. #2273:
+ * tick emission is throttled to at most one per ~animation-frame interval so
+ * the worker doesn't structured-transfer ~300 buffers per convergence when the
+ * main thread already coalesces to a single rAF per frame (most posts would be
+ * discarded). Reset to `-Infinity` on every (re)start/update so the first tick
+ * of a fresh session posts immediately.
+ */
+let lastTickEmit = Number.NEGATIVE_INFINITY
+
 // ── Helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Minimum interval (ms) between emitted `tick` posts — roughly one animation
+ * frame at 60Hz. Workers lack a reliable `requestAnimationFrame`, so we gate
+ * tick emission on a timestamp delta instead (#2273). The `done`/settle post
+ * bypasses this so the converged layout is always sent exactly.
+ */
+export const TICK_THROTTLE_MS = 16
+
+/**
+ * Pure throttle decision for tick emission (#2273): emit only when at least
+ * `minIntervalMs` has elapsed since the last emit. Exported so the throttle
+ * gate can be unit-tested with explicit timestamps independent of the wall
+ * clock. `-Infinity` as `lastEmit` (the session-reset sentinel) always emits.
+ */
+export function shouldEmitTick(now: number, lastEmit: number, minIntervalMs: number): boolean {
+  return now - lastEmit >= minIntervalMs
+}
 
 /**
  * Pack the current `simNodes` positions into a fresh `Float32Array`
@@ -112,6 +140,9 @@ self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => 
 
         const { nodes, edges, width, height } = msg
 
+        // #2273: fresh session → the first tick posts immediately (not throttled).
+        lastTickEmit = Number.NEGATIVE_INFINITY
+
         simNodes = nodes.map((n) => Object.assign({}, n))
         const simEdges: SimEdge[] = edges.map((e) => Object.assign({}, e))
 
@@ -129,10 +160,20 @@ self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => 
           .force('y', forceY(height / 2).strength(0.05))
 
         simulation.on('tick', () => {
+          // #2273: throttle tick emission to ~one per animation-frame interval.
+          // Workers have no reliable rAF, so gate on a `performance.now()` delta.
+          // The main thread already coalesces to one rAF/frame, so posting (and
+          // structured-transferring a fresh buffer) on every one of the ~300
+          // convergence ticks is wasted work — most posts are discarded there.
+          const now = performance.now()
+          if (!shouldEmitTick(now, lastTickEmit, TICK_THROTTLE_MS)) return
+          lastTickEmit = now
           postPositions('tick')
         })
 
         simulation.on('end', () => {
+          // #2273: the final settled layout ALWAYS posts, bypassing the throttle,
+          // so convergence is exact even when the preceding tick was throttled.
           postPositions('done')
         })
 
@@ -151,6 +192,9 @@ self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => 
         // positions and d3 seeds them on the next tick. Nodes removed by the
         // filter simply drop out of the rebuilt array.
         if (!simulation) break
+
+        // #2273: new topology → let its first drift tick post immediately.
+        lastTickEmit = Number.NEGATIVE_INFINITY
 
         simNodes = msg.nodes.map((n) => assignUpdateNode(n))
 

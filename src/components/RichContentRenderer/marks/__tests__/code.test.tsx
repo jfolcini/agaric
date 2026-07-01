@@ -1,18 +1,21 @@
 /**
- * Tests for the code-block renderer's highlight size cap (#747 item 3).
+ * Tests for the code-block renderer:
+ *  - highlight size cap (#747 item 3): above `HIGHLIGHT_MAX_LENGTH` we render
+ *    plain text instead of running the O(grammars × length) highlighter.
+ *  - deferred highlighting + output cache (#2271): first paint is plain and
+ *    upgrades post-commit; a cache hit paints highlighted synchronously.
  *
- * `highlightAuto` scans the full source across every registered grammar with
- * backtracking regexes — O(grammars × length) work on the render thread — so a
- * pasted multi-hundred-KB log stalls the render. We cap highlighting at
- * `HIGHLIGHT_MAX_LENGTH` (30 KB) and fall back to plain text above it.
+ * Because highlighting is now deferred off the critical path, an uncached block
+ * has NO `hljs-` spans on first paint — assertions that expect highlighting must
+ * `waitFor` the post-effect upgrade.
  */
 
-import { render } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { render, waitFor } from '@testing-library/react'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import type { CodeBlockNode } from '../../../../editor/types'
-import { HIGHLIGHT_MAX_LENGTH, renderCodeBlock } from '../code'
+import { clearHighlightCache, HIGHLIGHT_MAX_LENGTH, renderCodeBlock } from '../code'
 
 function codeBlock(text: string, language: string | null = null): CodeBlockNode {
   return {
@@ -22,26 +25,32 @@ function codeBlock(text: string, language: string | null = null): CodeBlockNode 
   }
 }
 
+const hljsSpans = (container: HTMLElement) => container.querySelectorAll('span[class*="hljs-"]')
+
+beforeEach(() => {
+  // Flush the module-level highlight cache so a prior test's cached tree does
+  // not paint highlighted synchronously and mask the deferred-upgrade path.
+  clearHighlightCache()
+})
+
 describe('renderCodeBlock — highlight size cap (#747 item 3)', () => {
-  it('highlights small code blocks (hljs spans present below the cap)', () => {
+  it('highlights small code blocks (hljs spans appear after the deferred upgrade)', async () => {
     const block = codeBlock('const x: number = 1', 'typescript')
     const { container } = render(<>{renderCodeBlock(block, 'k')}</>)
 
-    const spans = container.querySelectorAll('span[class*="hljs-"]')
-    expect(spans.length).toBeGreaterThan(0)
+    await waitFor(() => expect(hljsSpans(container).length).toBeGreaterThan(0))
     // Source text is preserved.
     expect(container.querySelector('code')?.textContent).toContain('const x')
   })
 
-  it('highlights small code blocks via highlightAuto when no language is set', () => {
+  it('highlights small code blocks via highlightAuto when no language is set', async () => {
     const block = codeBlock('def greet():\n    return "hi"\n', null)
     const { container } = render(<>{renderCodeBlock(block, 'k')}</>)
 
-    const spans = container.querySelectorAll('span[class*="hljs-"]')
-    expect(spans.length).toBeGreaterThan(0)
+    await waitFor(() => expect(hljsSpans(container).length).toBeGreaterThan(0))
   })
 
-  it('falls back to PLAIN TEXT above the cap — no highlight spans (auto path)', () => {
+  it('falls back to PLAIN TEXT above the cap — no highlight spans (auto path)', async () => {
     // A >cap input that WOULD otherwise produce highlight spans if processed.
     const huge = 'const value = 42;\n'.repeat(Math.ceil(HIGHLIGHT_MAX_LENGTH / 18) + 100)
     expect(huge.length).toBeGreaterThan(HIGHLIGHT_MAX_LENGTH)
@@ -49,24 +58,28 @@ describe('renderCodeBlock — highlight size cap (#747 item 3)', () => {
     const block = codeBlock(huge, null)
     const { container } = render(<>{renderCodeBlock(block, 'k')}</>)
 
-    // No highlighting applied — code rendered as plain text.
-    expect(container.querySelectorAll('span[class*="hljs-"]')).toHaveLength(0)
-    // ...but the full source is still rendered (readable, just uncolored).
-    expect(container.querySelector('code')?.textContent).toContain('const value = 42;')
+    // No highlighting applied — plain on first paint AND after the effect flush
+    // (computeHighlight short-circuits over the cap and caches "plain").
+    await waitFor(() => {
+      expect(container.querySelector('code')?.textContent).toContain('const value = 42;')
+    })
+    expect(hljsSpans(container)).toHaveLength(0)
   })
 
-  it('falls back to plain text above the cap on the explicit-language path too', () => {
+  it('falls back to plain text above the cap on the explicit-language path too', async () => {
     const huge = 'fn main() {}\n'.repeat(Math.ceil(HIGHLIGHT_MAX_LENGTH / 13) + 100)
     expect(huge.length).toBeGreaterThan(HIGHLIGHT_MAX_LENGTH)
 
     const block = codeBlock(huge, 'rust')
     const { container } = render(<>{renderCodeBlock(block, 'k')}</>)
 
-    expect(container.querySelectorAll('span[class*="hljs-"]')).toHaveLength(0)
-    expect(container.querySelector('code')?.textContent).toContain('fn main()')
+    await waitFor(() => {
+      expect(container.querySelector('code')?.textContent).toContain('fn main()')
+    })
+    expect(hljsSpans(container)).toHaveLength(0)
   })
 
-  it('still highlights a block right at the cap boundary', () => {
+  it('still highlights a block right at the cap boundary', async () => {
     // Exactly the cap length (not over) → highlighting still runs.
     const filler = '// x\n'
     const base = 'const x = 1;\n'
@@ -76,12 +89,13 @@ describe('renderCodeBlock — highlight size cap (#747 item 3)', () => {
 
     const block = codeBlock(body, 'typescript')
     const { container } = render(<>{renderCodeBlock(block, 'k')}</>)
-    expect(container.querySelectorAll('span[class*="hljs-"]').length).toBeGreaterThan(0)
+    await waitFor(() => expect(hljsSpans(container).length).toBeGreaterThan(0))
   })
 
-  it('has no axe violations (small highlighted block)', async () => {
+  it('has no axe violations (highlighted block after upgrade)', async () => {
     const block = codeBlock('const x = 1', 'typescript')
     const { container } = render(<>{renderCodeBlock(block, 'k')}</>)
+    await waitFor(() => expect(hljsSpans(container).length).toBeGreaterThan(0))
     expect(await axe(container)).toHaveNoViolations()
   })
 
@@ -90,5 +104,108 @@ describe('renderCodeBlock — highlight size cap (#747 item 3)', () => {
     const block = codeBlock(huge, null)
     const { container } = render(<>{renderCodeBlock(block, 'k')}</>)
     expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
+describe('renderCodeBlock — deferred highlighting + output cache (#2271)', () => {
+  it('renders plain text on first paint, then upgrades to highlighted post-commit', async () => {
+    const block = codeBlock('const x: number = 1', 'typescript')
+    const { container } = render(<>{renderCodeBlock(block, 'k')}</>)
+
+    // First paint: no highlight spans yet (highlighting deferred off the
+    // critical path), but the source text is already visible.
+    expect(hljsSpans(container)).toHaveLength(0)
+    expect(container.querySelector('code')?.textContent).toContain('const x')
+
+    // Post-commit upgrade.
+    await waitFor(() => expect(hljsSpans(container).length).toBeGreaterThan(0))
+  })
+
+  it('paints highlighted SYNCHRONOUSLY on a cache hit (no flicker on re-render)', async () => {
+    const block = codeBlock('const y: number = 2', 'typescript')
+
+    // Prime the cache: render once and let the deferred highlight populate it.
+    const first = render(<>{renderCodeBlock(block, 'k')}</>)
+    await waitFor(() => expect(hljsSpans(first.container).length).toBeGreaterThan(0))
+    first.unmount()
+
+    // A fresh render of identical (language, code) must be highlighted on the
+    // FIRST synchronous paint — no waitFor.
+    const second = render(<>{renderCodeBlock(block, 'k2')}</>)
+    expect(hljsSpans(second.container).length).toBeGreaterThan(0)
+  })
+
+  it('auto-detection path also upgrades and caches', async () => {
+    const block = codeBlock('def greet():\n    return "hi"\n', null)
+
+    const first = render(<>{renderCodeBlock(block, 'k')}</>)
+    expect(hljsSpans(first.container)).toHaveLength(0) // deferred
+    await waitFor(() => expect(hljsSpans(first.container).length).toBeGreaterThan(0))
+    first.unmount()
+
+    const second = render(<>{renderCodeBlock(block, 'k2')}</>)
+    expect(hljsSpans(second.container).length).toBeGreaterThan(0) // cache hit, sync
+  })
+
+  it('re-renders with NEW code when the same component instance receives different props', async () => {
+    // React keys for code blocks are positional (`b-${bIdx}`), so the same
+    // HighlightedCode instance can be reused for DIFFERENT code — an edited
+    // block, or a sibling deletion shifting the next code block into the slot.
+    // The committed output must always match the current `code` prop, never a
+    // previously-highlighted tree (review fix for #2271).
+    const first = codeBlock('const first = 1', 'typescript')
+    const second = codeBlock('let second = 2', 'typescript')
+
+    const { container, rerender } = render(<>{renderCodeBlock(first, 'k')}</>)
+    await waitFor(() => expect(hljsSpans(container).length).toBeGreaterThan(0))
+    expect(container.querySelector('code')?.textContent).toContain('const first')
+
+    // Same positional key, different code → instance reused with new props.
+    rerender(<>{renderCodeBlock(second, 'k')}</>)
+
+    // Synchronously after commit the OLD code must be gone and the new code
+    // visible (plain or highlighted — content correctness is the invariant).
+    expect(container.querySelector('code')?.textContent).toContain('let second')
+    expect(container.querySelector('code')?.textContent).not.toContain('const first')
+
+    // And the deferred upgrade highlights the NEW code.
+    await waitFor(() => {
+      expect(hljsSpans(container).length).toBeGreaterThan(0)
+      expect(container.querySelector('code')?.textContent).toContain('let second')
+    })
+  })
+
+  it('a literal language "auto" does not poison the auto-detect cache entry', async () => {
+    const code = 'def greet():\n    return "hi"\n'
+
+    // language="auto" is not a registered grammar → highlighter throws →
+    // cached as "known plain" under the explicit-language namespace.
+    const bogus = render(<>{renderCodeBlock(codeBlock(code, 'auto'), 'k')}</>)
+    await waitFor(() => {
+      expect(bogus.container.querySelector('code')?.textContent).toContain('def greet')
+    })
+    expect(hljsSpans(bogus.container)).toHaveLength(0)
+    bogus.unmount()
+
+    // The auto-DETECT path for the same code must still highlight — its cache
+    // key lives in a separate namespace from the bogus explicit language.
+    const auto = render(<>{renderCodeBlock(codeBlock(code, null), 'k2')}</>)
+    await waitFor(() => expect(hljsSpans(auto.container).length).toBeGreaterThan(0))
+  })
+
+  it('oversized block stays plain synchronously on a cache hit too', async () => {
+    const huge = 'const value = 42;\n'.repeat(Math.ceil(HIGHLIGHT_MAX_LENGTH / 18) + 100)
+    const block = codeBlock(huge, 'typescript')
+
+    // Prime: the over-cap block is cached as "known plain".
+    const first = render(<>{renderCodeBlock(block, 'k')}</>)
+    // Let the deferred effect run and record the "plain" cache entry.
+    await waitFor(() => {
+      expect(first.container.querySelector('code')?.textContent).toContain('const value = 42;')
+    })
+    first.unmount()
+
+    const second = render(<>{renderCodeBlock(block, 'k2')}</>)
+    expect(hljsSpans(second.container)).toHaveLength(0)
   })
 })
