@@ -14,13 +14,19 @@ name: Scheduled deep checks
 #                    diagnostics bins + an app-lib test); the per-PR fmt/clippy
 #                    hooks also omit --all/--workspace, skipping the diagnostics
 #                    member entirely. This lane fails on that drift weekly.
-#   bench-compile  — #639: compile all criterion benches (clippy already
-#                    `--all-targets`-lints them per-PR), then #978: SMOKE-RUN
-#                    every bench once (`--test`) so a drifted seed/fixture
-#                    fails CI instead of rotting silently (previously only
-#                    interactive_slo ran; the rest were compile-only). Also
-#                    RUNS the interactive_slo SLO gate + the `#[ignore]`d
-#                    20k-row perf gates, which nothing else exercises.
+#   bench-smoke    — #639/#978: SHARDED across N runners. Each shard compiles
+#                    ONLY its slice of the criterion benches (single cohesive
+#                    `cargo bench --no-run --bench …` invocation) then SMOKE-RUNS
+#                    that slice once (`--test`) so a drifted seed/fixture fails
+#                    CI instead of rotting silently. Sharding keeps the combined
+#                    compile+smoke wall-clock under budget (the old single-runner
+#                    `bench-compile` job blew the 90 min cap mid-smoke — #2122).
+#   bench-slo      — #639: RUNS the interactive_slo SLO gate + the `#[ignore]`d
+#                    20k-row perf gates, which nothing else exercises. Split out
+#                    of the smoke shards so a smoke timeout can never skip the
+#                    SLO gate again. `workflow_dispatch` can flip
+#                    `slo_include_problem` to also measure the problem-tier
+#                    probes (list_page_links / list_projected_agenda, #2178).
 #   mutants        — #649: cargo-mutants scoped to the invariant core
 #                    (op, op_log, reverse, loro/engine). Non-blocking; the
 #                    survivor list is the deliverable to triage into tests.
@@ -43,6 +49,11 @@ on:
         description: 'Per-target fuzz time budget (seconds)'
         required: false
         default: '120'
+      slo_include_problem:
+        description: 'Also run the interactive_slo problem-tier probes (list_page_links / list_projected_agenda @ 100K, #2178) — off by default so the scheduled gate tracks only in-budget commands'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -125,20 +136,30 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
   # ---------------------------------------------------------------------------
-  # bench-compile (#639) — compile every bench target and run the gates that
-  # are otherwise never executed by automation: the #978 seed/fixture
-  # smoke-run (`--test` once per bench — validates fixtures, not perf), the
-  # interactive_slo SLO bench (it `panic!`s on a per-command budget breach —
-  # already pass/fail) and the `#[ignore]`d 20k-row perf gates.
+  # bench-smoke (#639/#978) — SHARDED compile + seed/fixture smoke-run.
+  #
+  # A single `bench-compile` job used to compile all 29 benches (~36 min) then
+  # smoke-run them (~53 min) on ONE runner; the combined walk blew the 90 min
+  # cap and got cancelled mid-smoke (#2122), which ALSO skipped the
+  # interactive_slo SLO gate that ran as a later step in the same job. This job
+  # shards the compile+smoke across N runners: each shard compiles ONLY its
+  # slice of the benches and smoke-runs exactly that slice, so no single runner
+  # carries the whole suite. The SLO gate + ignored perf gates moved to the
+  # separate `bench-slo` job below, immune to a smoke timeout.
   # ---------------------------------------------------------------------------
-  bench-compile:
+  bench-smoke:
     runs-on: ubuntu-24.04
-    # 45 → 90: the #978 smoke phase RUNS every bench once. `--test` is a cold
-    # single shot (no warmup), which inflates the heavy 100K-seed benches
-    # (e.g. cache_bench's rebuild_* probes) 10×+ per AGENTS.md, so the suite
-    # walk needs materially more wall-clock than the compile + interactive_slo
-    # run alone.
-    timeout-minutes: 90
+    # Per-shard budget: ~1/N of the benches compile + smoke, well under 90.
+    timeout-minutes: 45
+    strategy:
+      # Don't cancel sibling shards when one bench's seed drifts — we want every
+      # shard's verdict in a single run, not a fail-fast that hides the rest.
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    env:
+      SHARD_INDEX: ${{ matrix.shard }}
+      SHARD_TOTAL: 4
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -170,10 +191,16 @@ jobs:
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri
-          # Own cache key — the bench/test profile tree matches neither the
-          # lint nor the llvm-cov instrumented tree (issue #813 rationale).
+          # ONE shared bench cache across all shards (own key — the bench/test
+          # profile tree matches neither the lint nor the llvm-cov instrumented
+          # tree, issue #813). The expensive, shard-invariant cost is the agaric
+          # lib + deps + cargo-registry downloads; caching it once and having
+          # every shard RESTORE it is the real win. Only shard 0 SAVES (on main)
+          # so the four shards never race to write the same key — the per-shard
+          # bench objects that differ are cheap to recompile on top of the warm
+          # lib.
           shared-key: rust-bench
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' && matrix.shard == 0 }}
 
       - name: Install Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
@@ -186,51 +213,65 @@ jobs:
 
       - name: Prepare externalBin placeholder (FEAT-4f)
         # Tauri's build.rs validates externalBin paths on every cargo
-        # invocation, including `cargo bench` / nextest below.
+        # invocation, including the `cargo bench` build below.
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
-      - name: Compile all bench targets (no-run)
+      - name: Compile this shard's bench slice (no-run)
         working-directory: src-tauri
-        # `--no-run` compiles every `[[bench]]` (all 26) without executing
-        # them — the cheap half of #639. `--all-targets` clippy already
-        # guards this per-PR; this is the belt-and-braces compile under the
-        # bench profile (criterion harness linked in).
-        run: cargo bench --no-run
+        shell: bash
+        # Deterministic sharding: list every `[[bench]]` (minus interactive_slo,
+        # which the bench-slo job warm-runs), sort for a stable order, and keep
+        # the names where `index % SHARD_TOTAL == SHARD_INDEX`. A bench newly
+        # added to Cargo.toml automatically lands in some shard — no matrix edit
+        # needed, so the #978 coverage guarantee can't silently regress.
+        #
+        # The slice compiles in a SINGLE `cargo bench --no-run --bench a
+        # --bench b …` invocation. That is still ONE cohesive build: the cargo
+        # #6313 libagaric_lib link race only bites SEPARATE per-bench cargo
+        # invocations (see benches/AGENTS.md), so the prebuilt-binary approach
+        # the smoke step relies on stays race-free.
+        run: |
+          set -euo pipefail
+          mapfile -t all < <(grep -A1 '^\[\[bench\]\]' Cargo.toml \
+            | sed -n 's/^name = "\(.*\)"/\1/p' \
+            | grep -vx interactive_slo | sort)
+          mine=()
+          for i in "${!all[@]}"; do
+            if (( i % SHARD_TOTAL == SHARD_INDEX )); then mine+=("${all[i]}"); fi
+          done
+          if (( ${#mine[@]} == 0 )); then
+            echo "shard $SHARD_INDEX/$SHARD_TOTAL has no benches — nothing to do"
+            : > "$RUNNER_TEMP/shard-benches.txt"
+            exit 0
+          fi
+          echo "shard $SHARD_INDEX/$SHARD_TOTAL benches: ${mine[*]}"
+          # Persist the slice so the smoke step runs exactly what we compiled.
+          printf '%s\n' "${mine[@]}" > "$RUNNER_TEMP/shard-benches.txt"
+          args=(); for b in "${mine[@]}"; do args+=(--bench "$b"); done
+          cargo bench --no-run "${args[@]}"
 
-      - name: Smoke-run every bench once (--test) — #978 seed/fixture guard
+      - name: Smoke-run this shard's benches (--test) — #978 seed/fixture guard
         working-directory: src-tauri
         # WHAT THIS VALIDATES: that every bench's SEED/FIXTURE is still valid
-        # against the live schema — NOT performance. Criterion's `--test`
-        # runs each benchmark function exactly ONCE (a cold single shot, no
-        # measurement, no timing budget), so a bench whose hand-seeded raw-SQL
-        # fixture has drifted from the schema (a migration renamed/retyped a
-        # column, a CHECK now forbids a value, …) PANICS here and fails the
-        # job. Before #978 only `interactive_slo` actually ran; the other 28
-        # benches were compile-only (`--no-run`), so a broken seed was
-        # false-green and could rot silently (the #1233 whole-suite drift
-        # class). This loop closes that gap by *running* them all.
+        # against the live schema — NOT performance. Criterion's `--test` runs
+        # each benchmark function exactly ONCE (a cold single shot, no timing
+        # budget), so a bench whose hand-seeded raw-SQL fixture drifted from the
+        # schema PANICS here and fails the shard. We run the PREBUILT binaries
+        # from the `--no-run` build above (no per-bench recompile → race-free),
+        # discovering them dynamically (no hardcoded hashes): each `[[bench]]`
+        # becomes a `target/release/deps/<name>-<hash>` executable; we pick the
+        # newest non-metadata file (`.d`/`.so`/`.dwp` filtered out).
         #
-        # HOW (cargo #6313 — see benches/AGENTS.md): we do NOT `cargo bench
-        # --bench <name>` per bench — agaric's multi-crate-type [lib] races to
-        # write libagaric_lib.* and a per-bench recompile intermittently links
-        # the wrong `sqlx` (E0308 `Pool<Sqlite>`). Instead we run the PREBUILT
-        # binaries from the single cohesive `--no-run` build above, discovering
-        # them dynamically (no hardcoded hashes): each `[[bench]]` becomes a
-        # `target/release/deps/<name>-<hash>` executable. We pick the newest
-        # non-metadata file (`.d`/`.so`/`.dwp` filtered out) per AGENTS.md.
-        #
-        # `interactive_slo` is SKIPPED here on purpose: it gets a full WARM
-        # run in the next step (its `assert_under_budget` would false-fail on
-        # cold `--test` timings — AGENTS.md "--test timings are COLD"). The
-        # smoke gate asserts seeds are valid, not that they meet a budget.
+        # Concurrency 3 (`wait -n` gate) within the shard cuts wall-clock while
+        # keeping peak memory sane on the 100K-seed benches. Each bench is
+        # backgrounded with output BUFFERED to a per-bench `.log` and its verdict
+        # to a per-bench `.status`; after the barrier we replay logs in order
+        # (folding intact) and reduce. A MISSING `.status` (subshell killed
+        # mid-run, e.g. OOM) is a FAILURE, never a silent pass.
         shell: bash
         run: |
           set -uo pipefail
           fail=0
-          # Newest executable for a bench: glob its candidates (a real binary
-          # has no extension; drop dep-info/shared-obj/split-debug), then pick
-          # the most recent by mtime. A glob + loop (not `ls | grep`) avoids
-          # the SC2010 lint and is robust to odd filenames.
           newest_bench_bin() {
             local name="$1" newest="" f
             for f in "target/release/deps/${name}-"*; do
@@ -242,29 +283,12 @@ jobs:
             done
             printf '%s' "$newest"
           }
-          # Bench target names from Cargo.toml's [[bench]] stanzas, minus
-          # interactive_slo (warm-gated separately below).
-          benches=$(grep -A1 '^\[\[bench\]\]' Cargo.toml \
-            | sed -n 's/^name = "\(.*\)"/\1/p' \
-            | grep -vx interactive_slo)
-          # #2122: run the smoke checks IN PARALLEL with bounded concurrency.
-          # Each bench is a PREBUILT binary (built once by `--no-run` above), so
-          # concurrent execution is safe — there is NO per-bench recompile, so
-          # the cargo #6313 link race the prebuilt-binary approach avoids is
-          # unaffected by running the binaries at once. The SEQUENTIAL walk was
-          # the job's bottleneck: the cold 100K-seed benches summed to >57 min
-          # and blew the 90 min budget (compile is only ~31 min). Cap at 3
-          # concurrent (`wait -n` gate) to cut wall-clock ~3× while keeping peak
-          # memory sane on the 100K-seed benches.
-          #
-          # Each bench is backgrounded with its stdout/stderr BUFFERED to a
-          # per-bench `.log` and its verdict written to a per-bench `.status`
-          # (a backgrounded subshell can't mutate the parent's `fail`). After
-          # the barrier we replay the logs in bench order, each wrapped in its
-          # own `::group::` — so log folding stays intact even though execution
-          # interleaved — and reduce the verdicts. A MISSING `.status` (the
-          # subshell was killed mid-run before writing it, e.g. an OOM on a
-          # 100K-seed bench) is treated as a FAILURE, never a silent pass.
+          # The exact slice this shard compiled (written by the step above).
+          mapfile -t benches < "$RUNNER_TEMP/shard-benches.txt"
+          if (( ${#benches[@]} == 0 )); then
+            echo "no benches for this shard — skipping smoke"
+            exit 0
+          fi
           status_dir="$(mktemp -d)"
           smoke_one() {
             local name="$1" bin
@@ -284,11 +308,9 @@ jobs:
             fi
           }
           jobs=$(( $(nproc) < 3 ? $(nproc) : 3 ))
-          echo "smoke-running $(grep -c . <<< "$benches") benches at concurrency $jobs"
+          echo "smoke-running ${#benches[@]} benches at concurrency $jobs"
           running=0
-          for name in $benches; do
-            # Per-call redirect captures this bench's output; the inner
-            # `echo … > *.status` redirects override it for the verdict file.
+          for name in "${benches[@]}"; do
             smoke_one "$name" > "$status_dir/$name.log" 2>&1 &
             running=$((running + 1))
             if (( running >= jobs )); then
@@ -297,8 +319,7 @@ jobs:
             fi
           done
           wait
-          # Replay buffered logs in bench order (folding intact) + reduce.
-          for name in $benches; do
+          for name in "${benches[@]}"; do
             echo "::group::smoke $name"
             [ -f "$status_dir/$name.log" ] && cat "$status_dir/$name.log"
             echo "::endgroup::"
@@ -311,22 +332,94 @@ jobs:
           done
           exit "$fail"
 
+  # ---------------------------------------------------------------------------
+  # bench-slo (#639) — the interactive_slo SLO gate + the `#[ignore]`d 20k-row
+  # perf gates, split out of the smoke shards so a smoke timeout can never skip
+  # them (the old single-job layout ran the SLO gate AFTER the whole smoke walk,
+  # so the #2122 mid-smoke cancellation took the gate down with it). A
+  # `workflow_dispatch` can also flip `slo_include_problem` to measure the
+  # problem-tier probes (#2178).
+  # ---------------------------------------------------------------------------
+  bench-slo:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            pkg-config \
+            mold
+
+      - name: Enable mold linker (CI-only .cargo/config.toml)
+        run: |
+          mkdir -p .cargo
+          cp .cargo/config.toml.example .cargo/config.toml
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: 1.95.0
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: src-tauri
+          # Own bench-profile cache (separate key from the smoke shards so this
+          # job's single writer never races them). Caches the agaric lib + deps
+          # + cargo registry + the interactive_slo bench + the nextest perf-gate
+          # test binaries, so week-over-week this job restores warm.
+          shared-key: rust-bench-slo
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Prepare externalBin placeholder (FEAT-4f)
+        # Tauri's build.rs validates externalBin paths on every cargo
+        # invocation, including `cargo bench` / nextest below.
+        run: node scripts/prepare-external-bins.mjs --placeholder-only
+
       - name: Run interactive_slo SLO gate (#639)
         working-directory: src-tauri
         # The bench self-`panic!`s if any command's mean latency exceeds its
-        # ARCHITECTURE.md §25 budget, so a non-zero exit IS the gate. The
-        # already-breaching `list_page_links` / `list_projected_agenda`
-        # probes stay env-gated out (SLO_INCLUDE_PROBLEM unset) so the gate
-        # tracks the commands currently within budget; flip the env to
-        # surface the known-slow ones.
+        # ARCHITECTURE.md §25 budget, so a non-zero exit IS the gate.
         #
-        # #978: tee stdout so the SLO summary step below can capture the
-        # per-command observed-mean-vs-budget lines for over-time tracking.
-        # `pipefail` (set by the shell) preserves the bench's exit code
-        # through the pipe so a budget breach still fails the run.
+        # By default the already-breaching `list_page_links` /
+        # `list_projected_agenda` problem-tier probes stay gated OUT
+        # (SLO_INCLUDE_PROBLEM unset) so the scheduled gate tracks only the
+        # commands currently within budget. A `workflow_dispatch` with
+        # `slo_include_problem=true` exports SLO_INCLUDE_PROBLEM=1 to MEASURE
+        # those probes @ 100K (#2178). We export it ONLY when asked, because the
+        # bench treats ANY value (even an empty string) as "on".
+        #
+        # #978: tee stdout so the SLO summary step can capture the per-command
+        # observed-mean-vs-budget lines. `pipefail` preserves the bench's exit
+        # code through the pipe so a budget breach still fails the run.
         shell: bash
+        env:
+          SLO_INCLUDE_PROBLEM_INPUT: ${{ github.event.inputs.slo_include_problem || 'false' }}
         run: |
           set -o pipefail
+          if [ "$SLO_INCLUDE_PROBLEM_INPUT" = "true" ]; then
+            echo "SLO_INCLUDE_PROBLEM=1 — problem-tier probes ENABLED via dispatch (#2178)"
+            export SLO_INCLUDE_PROBLEM=1
+          fi
           cargo bench --bench interactive_slo 2>&1 | tee interactive_slo.log
 
       - name: SLO summary + threshold flagging (#978)
