@@ -46,6 +46,22 @@ class FakeWorker {
   }
 }
 
+// #2194: positions ship as a packed Float32Array ([x0,y0,x1,y1,…]) in node
+// order + a `count`. Helper to build a tick/done message from {id,x,y}[] in
+// the SAME order the main thread expects (ctx.simNodes order → makeCtx uses
+// ['a','b']).
+function packed(
+  type: 'tick' | 'done',
+  positions: Array<{ x: number; y: number }>,
+): WorkerOutboundMessage {
+  const buf = new Float32Array(positions.length * 2)
+  positions.forEach((p, i) => {
+    buf[i * 2] = p.x
+    buf[i * 2 + 1] = p.y
+  })
+  return { type, positions: buf, count: positions.length } as WorkerOutboundMessage
+}
+
 let lastWorker: FakeWorker | null = null
 
 // ── Manual rAF queue ─────────────────────────────────────────────────
@@ -135,27 +151,24 @@ describe('runWorkerSimulation — rAF tick coalescing (#747 item 2)', () => {
     const worker = lastWorker as unknown as FakeWorker
 
     // Three ticks arrive before the frame fires.
-    worker.emit({
-      type: 'tick',
-      positions: [
-        { id: 'a', x: 1, y: 1 },
-        { id: 'b', x: 2, y: 2 },
-      ],
-    })
-    worker.emit({
-      type: 'tick',
-      positions: [
-        { id: 'a', x: 3, y: 3 },
-        { id: 'b', x: 4, y: 4 },
-      ],
-    })
-    worker.emit({
-      type: 'tick',
-      positions: [
-        { id: 'a', x: 5, y: 5 },
-        { id: 'b', x: 6, y: 6 },
-      ],
-    })
+    worker.emit(
+      packed('tick', [
+        { x: 1, y: 1 },
+        { x: 2, y: 2 },
+      ]),
+    )
+    worker.emit(
+      packed('tick', [
+        { x: 3, y: 3 },
+        { x: 4, y: 4 },
+      ]),
+    )
+    worker.emit(
+      packed('tick', [
+        { x: 5, y: 5 },
+        { x: 6, y: 6 },
+      ]),
+    )
 
     // No DOM application yet — all batched into one pending frame.
     expect(applyPositions).not.toHaveBeenCalled()
@@ -175,12 +188,12 @@ describe('runWorkerSimulation — rAF tick coalescing (#747 item 2)', () => {
     const handle = runWorkerSimulation({ ...ctx, onWorkerFailed: () => {} })
     const worker = lastWorker as unknown as FakeWorker
 
-    worker.emit({ type: 'tick', positions: [{ id: 'a', x: 1, y: 1 }] })
-    worker.emit({ type: 'tick', positions: [{ id: 'a', x: 2, y: 2 }] })
+    worker.emit(packed('tick', [{ x: 1, y: 1 }]))
+    worker.emit(packed('tick', [{ x: 2, y: 2 }]))
     flushFrame()
     expect(applyPositions).toHaveBeenCalledTimes(1)
 
-    worker.emit({ type: 'tick', positions: [{ id: 'a', x: 3, y: 3 }] })
+    worker.emit(packed('tick', [{ x: 3, y: 3 }]))
     flushFrame()
     expect(applyPositions).toHaveBeenCalledTimes(2)
 
@@ -193,21 +206,19 @@ describe('runWorkerSimulation — rAF tick coalescing (#747 item 2)', () => {
     const worker = lastWorker as unknown as FakeWorker
 
     // A tick schedules a frame...
-    worker.emit({
-      type: 'tick',
-      positions: [
-        { id: 'a', x: 9, y: 9 },
-        { id: 'b', x: 9, y: 9 },
-      ],
-    })
+    worker.emit(
+      packed('tick', [
+        { x: 9, y: 9 },
+        { x: 9, y: 9 },
+      ]),
+    )
     // ...then `done` arrives before the frame fires.
-    worker.emit({
-      type: 'done',
-      positions: [
-        { id: 'a', x: 100, y: 200 },
-        { id: 'b', x: 300, y: 400 },
-      ],
-    })
+    worker.emit(
+      packed('done', [
+        { x: 100, y: 200 },
+        { x: 300, y: 400 },
+      ]),
+    )
 
     // `done` applied synchronously with the settled positions.
     expect(applyPositions).toHaveBeenCalledTimes(1)
@@ -228,7 +239,7 @@ describe('runWorkerSimulation — rAF tick coalescing (#747 item 2)', () => {
     const handle = runWorkerSimulation({ ...ctx, onWorkerFailed: () => {} })
     const worker = lastWorker as unknown as FakeWorker
 
-    worker.emit({ type: 'tick', positions: [{ id: 'a', x: 1, y: 1 }] })
+    worker.emit(packed('tick', [{ x: 1, y: 1 }]))
     handle.cleanup()
     flushFrame()
 
@@ -250,6 +261,64 @@ describe('runWorkerSimulation — rAF tick coalescing (#747 item 2)', () => {
     expect(resize).toEqual({ type: 'resize', width: 1000, height: 400 })
     // Did NOT re-post `start` on resize (no second start message).
     expect(worker.posted.filter((m) => m.type === 'start')).toHaveLength(1)
+
+    handle.cleanup()
+  })
+
+  it('onUpdate posts an `update` message (not terminate + respawn) and re-points the tick order (#2194)', () => {
+    const { ctx } = makeCtx()
+    const handle = runWorkerSimulation({ ...ctx, onWorkerFailed: () => {} })
+    const worker = lastWorker as unknown as FakeWorker
+    expect(worker.posted[0]?.type).toBe('start')
+
+    // A filter toggle: drop 'b', keep 'a' (with a carried position), add 'c'.
+    const svg2 = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement
+    const nodeA = makeNode('a', 'A')
+    nodeA.x = 111
+    nodeA.y = 222
+    const nextNodes: GraphNode[] = [nodeA, makeNode('c', 'C')]
+    const nextEdges: GraphEdge[] = [{ source: 'a', target: 'c', ref_count: 2 }]
+    const rendered2 = renderGraphElements(svg2, nextNodes, nextEdges, () => {})
+    const applyPositions2 = vi.fn()
+    const nextCtx: SimulationCtx = {
+      simNodes: rendered2.simNodes,
+      simEdges: rendered2.simEdges,
+      nodeById: rendered2.nodeById,
+      node: rendered2.node,
+      applyPositions: applyPositions2,
+      width: 800,
+      height: 600,
+      prefersReducedMotion: false,
+    }
+
+    handle.onUpdate(nextCtx)
+
+    // The worker was NOT terminated (in-place update, not respawn).
+    expect(worker.terminated).toBe(false)
+    // Exactly one `start` still (no respawn), and one `update` posted carrying
+    // the carried position for the persisting node.
+    expect(worker.posted.filter((m) => m.type === 'start')).toHaveLength(1)
+    const update = worker.posted.find((m) => m.type === 'update') as
+      | { type: 'update'; nodes: Array<{ id: string; x?: number; y?: number }>; edges: unknown[] }
+      | undefined
+    expect(update?.nodes.map((n) => n.id)).toEqual(['a', 'c'])
+    expect(update?.nodes[0]).toMatchObject({ id: 'a', x: 111, y: 222 })
+    // Brand-new node 'c' carries no position.
+    expect(update?.nodes[1]?.x).toBeUndefined()
+    expect(update?.edges).toEqual([{ source: 'a', target: 'c', ref_count: 2 }])
+
+    // A subsequent tick is unpacked against the NEW node ordering [a, c] and
+    // applied via the NEW applyPositions.
+    worker.emit(
+      packed('tick', [
+        { x: 10, y: 20 },
+        { x: 30, y: 40 },
+      ]),
+    )
+    flushFrame()
+    expect(applyPositions2).toHaveBeenCalledTimes(1)
+    expect(nextCtx.nodeById.get('a')?.x).toBe(10)
+    expect(nextCtx.nodeById.get('c')?.y).toBe(40)
 
     handle.cleanup()
   })

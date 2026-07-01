@@ -287,6 +287,14 @@ interface PersistentSimState {
   prefersReducedMotion: boolean
   handledNodes: GraphNode[]
   handledEdges: GraphEdge[]
+  /**
+   * Whether `handle` is a LIVE simulation (worker/main-thread) vs a torn-down
+   * no-op placeholder. The empty-filter branch cleans the sim up and installs
+   * a no-op handle; a later non-empty filter must then RESPAWN (cold start)
+   * rather than post an `update` to a dead handle (#2194). While a live sim is
+   * present, filter toggles post an in-place `update` instead of respawning.
+   */
+  simActive: boolean
 }
 
 export function useGraphSimulation({
@@ -387,6 +395,7 @@ export function useGraphSimulation({
       prefersReducedMotion,
       handledNodes: nodesRef.current,
       handledEdges: edgesRef.current,
+      simActive: true,
     }
 
     return () => {
@@ -403,10 +412,12 @@ export function useGraphSimulation({
   // ── Patch effect ─────────────────────────────────────────────────
   // Runs on filter changes (any `nodes`/`edges` identity flip without
   // a simulation-kind change). Patches the persistent `g` selection
-  // via d3's data-join keyed by node id, then re-runs the simulation
-  // against the new ctx. The same `g` element survives so zoom +
-  // ResizeObserver stay attached and the SVG does not repaint from
-  // scratch — only the diffed nodes/edges enter/exit.
+  // via d3's data-join keyed by node id, then swaps the LIVE
+  // simulation's node/edge set in place via `handle.onUpdate` (#2194)
+  // instead of tearing it down and respawning. The same `g` element
+  // survives so zoom + ResizeObserver stay attached and the SVG does
+  // not repaint from scratch — only the diffed nodes/edges enter/exit,
+  // and the running layout drifts to the new topology.
   //
   // Also handles the "nodes arrived late" case: when the setup effect
   // ran with empty `nodes` (returning early before building anything),
@@ -434,7 +445,8 @@ export function useGraphSimulation({
       if (state && (state.handledNodes.length > 0 || state.handledEdges.length > 0)) {
         patchGraphSelections(state.rendered.g, [], [], navigateToPageRef.current)
         state.handle.cleanup()
-        state.handle = { cleanup: () => {}, onResize: () => {} }
+        state.handle = { cleanup: () => {}, onResize: () => {}, onUpdate: () => {} }
+        state.simActive = false
         state.rendered = {
           ...state.rendered,
           simNodes: [],
@@ -486,18 +498,6 @@ export function useGraphSimulation({
       navigateToPageRef.current,
     )
 
-    // Dispose the previous simulation handle BUT not the zoom or
-    // ResizeObserver — those stay attached to the persistent `g`/svg.
-    // The runners (runWorkerSimulation / runMainThreadSimulation)
-    // take a full SimulationCtx, so the new simulation gets a fresh
-    // ctx pointing at the patched selections. The worker IS
-    // re-spawned on each filter change because graph-sim-helpers
-    // doesn't expose an "update data" message on the worker protocol
-    // — that's an opportunity for a future tier, but the SVG/zoom/
-    // observer preservation already eliminates the user-visible
-    // flicker.
-    state.handle.cleanup()
-
     const applyPositions = createApplyPositions(link, node)
     const width = svg.clientWidth || DEFAULT_WIDTH
     const height = svg.clientHeight || DEFAULT_HEIGHT
@@ -513,8 +513,21 @@ export function useGraphSimulation({
       prefersReducedMotion: state.prefersReducedMotion,
     }
 
-    const useWorker = typeof Worker !== 'undefined' && !workerFailed
-    const handle = useWorker ? runWorker(ctx) : runMainThread(ctx)
+    // #2194: if a simulation is already LIVE, swap its node/edge set in place
+    // via `onUpdate` — the worker keeps running and its layout DRIFTS to the
+    // new topology (carried x/y/vx/vy preserve persisting nodes) instead of
+    // being terminated and respawned (which stripped positions to {id,label}
+    // and re-scattered + re-converged ~300 ticks on every filter click). The
+    // handle stays the same; only the ctx it points at is refreshed. The
+    // genuine cold-start path (setup ran with empty nodes, or the empty-filter
+    // branch tore the sim down) still respawns via runWorker/runMainThread.
+    if (state.simActive) {
+      state.handle.onUpdate(ctx)
+    } else {
+      const useWorker = typeof Worker !== 'undefined' && !workerFailed
+      state.handle = useWorker ? runWorker(ctx) : runMainThread(ctx)
+      state.simActive = true
+    }
 
     // Update persistent state in place. The `g` selection itself is
     // unchanged, but the rendered link/node selections + simNodes
@@ -529,14 +542,14 @@ export function useGraphSimulation({
       width,
       height,
     }
-    state.handle = handle
     state.handledNodes = nodes
     state.handledEdges = edges
 
     // No cleanup return — disposal of `state.handle` happens in the
-    // setup effect's cleanup (on unmount or simulation-kind change)
-    // and in the next patch (which calls `state.handle.cleanup()`
-    // above).
+    // setup effect's cleanup (on unmount or simulation-kind change).
+    // Filter toggles now post an in-place `update` (#2194) rather than
+    // tearing the handle down, so the live worker/sim persists across
+    // toggles; only a cold-start branch spawns a fresh handle.
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- workerFailed/runWorker/runMainThread are consumed via closure but intentionally NOT listed: when they flip, the setup effect re-fires and rebuilds everything, so the patch effect must not also fire on those changes.
   }, [nodes, edges, svgRef])
 

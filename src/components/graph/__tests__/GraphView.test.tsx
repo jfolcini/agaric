@@ -225,17 +225,20 @@ class MockWorker {
   postMessage(data: any) {
     this.postMessageCalls.push(data)
 
-    // When receiving 'start', immediately respond with 'done' + positions
+    // When receiving 'start', immediately respond with 'done' + positions.
+    // #2194: positions ship as a packed Float32Array ([x0,y0,x1,y1,…]) in the
+    // posted node order; the main thread maps index→id from its own ordering.
     if (data.type === 'start') {
-      const positions = data.nodes.map((n: { id: string }) => ({
-        id: n.id,
-        x: 100,
-        y: 100,
-      }))
+      const count = data.nodes.length
+      const positions = new Float32Array(count * 2)
+      for (let i = 0; i < count; i++) {
+        positions[i * 2] = 100
+        positions[i * 2 + 1] = 100
+      }
       // Deliver asynchronously (like a real worker)
       queueMicrotask(() => {
         if (!this.terminated) {
-          this.emit('message', { data: { type: 'done', positions } })
+          this.emit('message', { data: { type: 'done', positions, count } })
         }
       })
     }

@@ -80,10 +80,17 @@ export interface SimulationCtx {
  * `onResize` re-anchors the simulation's centering forces to the new
  * canvas dimensions. Called from the `ResizeObserver` on `svgRef.current`
  * So the graph stays centered when the view container resizes.
+ * `onUpdate` swaps the node/edge set on the LIVE simulation in place
+ * (#2194) — used on filter toggles so the layout drifts instead of the
+ * whole simulation being torn down and respawned. The worker path posts an
+ * `update` message; the main-thread path re-seeds the existing sim's
+ * `nodes()`/link force. `ctx` carries the fresh (position-preserving)
+ * simNodes/simEdges/nodeById + refreshed selections for the new topology.
  */
 export interface SimulationHandle {
   cleanup: () => void
   onResize: (width: number, height: number) => void
+  onUpdate: (ctx: SimulationCtx) => void
 }
 
 // ── SVG / d3 setup ───────────────────────────────────────────────────
@@ -412,21 +419,55 @@ export { zoomIdentity }
 // ── Position application ─────────────────────────────────────────────
 
 /**
- * Update simNodes from worker-reported positions and materialise edge
- * endpoints so `applyPositions` can read `(source as GraphNode).x`.
- * Kept small so cognitive complexity stays well under threshold.
+ * Update simNodes from a worker-reported packed `Float32Array` (#2194):
+ * `[x0,y0,x1,y1,…]` in `order`'s index order (which mirrors the worker's
+ * `simNodes`). Reading by index avoids per-node id lookups on the hot tick
+ * path. `count` guards against a length mismatch (e.g. a tick that raced a
+ * pending `update` posted with the previous node count).
  */
-function updateNodePositions(
-  nodeById: ReadonlyMap<string, GraphNode>,
-  positions: ReadonlyArray<NodePosition>,
+function applyPackedPositions(
+  order: ReadonlyArray<GraphNode>,
+  positions: Float32Array,
+  count: number,
 ): void {
-  for (const pos of positions) {
-    const n = nodeById.get(pos.id)
-    if (n) {
-      n.x = pos.x
-      n.y = pos.y
+  const n = Math.min(count, order.length)
+  for (let i = 0; i < n; i++) {
+    const node = order[i]
+    if (node) {
+      node.x = positions[i * 2] ?? 0
+      node.y = positions[i * 2 + 1] ?? 0
     }
   }
+}
+
+/**
+ * Pure round-trippable position (un)packing (#2194) — exported for unit
+ * tests. `packPositions` mirrors the worker's packing; `unpackPositions`
+ * reads a packed buffer back into an `{id,x,y}[]` given the fixed id order.
+ */
+export function packPositions(nodes: ReadonlyArray<{ x?: number; y?: number }>): Float32Array {
+  const buf = new Float32Array(nodes.length * 2)
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i]
+    buf[i * 2] = node?.x ?? 0
+    buf[i * 2 + 1] = node?.y ?? 0
+  }
+  return buf
+}
+
+export function unpackPositions(
+  positions: Float32Array,
+  ids: ReadonlyArray<string>,
+): NodePosition[] {
+  const out: NodePosition[] = []
+  const n = Math.min(ids.length, Math.floor(positions.length / 2))
+  for (let i = 0; i < n; i++) {
+    const id = ids[i]
+    if (id !== undefined) {
+      out.push({ id, x: positions[i * 2] ?? 0, y: positions[i * 2 + 1] ?? 0 })
+    }
+  }
+  return out
 }
 
 function resolveEdgeEndpoints(
@@ -474,6 +515,33 @@ function postWorkerStart(worker: Worker, ctx: SimulationCtx): void {
     })),
     width: ctx.width,
     height: ctx.height,
+  })
+}
+
+/**
+ * Post an `update` message (#2194) that swaps the worker simulation's
+ * node/edge set in place. Carries each node's last-known `x`/`y`/`vx`/`vy`
+ * (when present) so persisting nodes drift instead of re-scattering; a
+ * brand-new node with undefined coords is sent without position fields so the
+ * worker leaves d3 to seed it. Node order matches `ctx.simNodes`, which the
+ * main thread also uses as the tick index→id mapping.
+ */
+function postWorkerUpdate(worker: Worker, ctx: SimulationCtx): void {
+  worker.postMessage({
+    type: 'update',
+    nodes: ctx.simNodes.map((n) => ({
+      id: n.id,
+      label: n.label,
+      ...(n.x !== undefined ? { x: n.x } : {}),
+      ...(n.y !== undefined ? { y: n.y } : {}),
+      ...(n.vx !== undefined ? { vx: n.vx } : {}),
+      ...(n.vy !== undefined ? { vy: n.vy } : {}),
+    })),
+    edges: ctx.simEdges.map((e) => ({
+      source: typeof e.source === 'string' ? e.source : (e.source as GraphNode).id,
+      target: typeof e.target === 'string' ? e.target : (e.target as GraphNode).id,
+      ref_count: e.ref_count,
+    })),
   })
 }
 
@@ -555,9 +623,23 @@ export function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
   }
 
   const worker = instantiateWorker((err) => reportFailure('construction', err))
-  if (!worker) return { cleanup: noop, onResize: noop }
+  if (!worker) return { cleanup: noop, onResize: noop, onUpdate: noop }
 
   let tickCount = 0
+
+  // Mutable ctx: `onUpdate` (#2194) swaps the live node/edge set in place
+  // rather than tearing the worker down and respawning. The tick handler,
+  // edge resolution, and DOM application all read from `live` so a post-update
+  // tick lands on the CURRENT selections/ordering. `order` fixes the
+  // index→id mapping for the packed `Float32Array` tick: it mirrors the
+  // worker's `simNodes` order (the same order posted on `start`/`update`).
+  const live = {
+    order: ctx.simNodes,
+    simEdges: ctx.simEdges,
+    nodeById: ctx.nodeById,
+    applyPositions: ctx.applyPositions,
+    node: ctx.node,
+  }
 
   // #747 item 2: coalesce per-tick DOM application to one rAF per frame.
   // The worker posts a full position array on EVERY tick (~300 ticks);
@@ -566,20 +648,28 @@ export function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
   // animation frame, so multiple ticks landing within a frame collapse to a
   // single `applyPositions` (DOM write). The `done` message still flushes
   // synchronously so the final settled layout is always exact.
-  let pendingPositions: ReadonlyArray<NodePosition> | null = null
+  //
+  // #2194: positions arrive as a packed `Float32Array` transferable; we keep
+  // the latest {buffer,count} and unpack by index into `live.order`.
+  let pendingPositions: { positions: Float32Array; count: number } | null = null
   let rafId: number | null = null
+
+  const applyTick = (positions: Float32Array, count: number): void => {
+    applyPackedPositions(live.order, positions, count)
+    resolveEdgeEndpoints(live.simEdges, live.nodeById)
+    live.applyPositions()
+  }
 
   const flushPending = (): void => {
     rafId = null
     if (failed || pendingPositions === null) return
-    updateNodePositions(ctx.nodeById, pendingPositions)
+    const { positions, count } = pendingPositions
     pendingPositions = null
-    resolveEdgeEndpoints(ctx.simEdges, ctx.nodeById)
-    ctx.applyPositions()
+    applyTick(positions, count)
   }
 
-  const scheduleFlush = (positions: ReadonlyArray<NodePosition>): void => {
-    pendingPositions = positions
+  const scheduleFlush = (positions: Float32Array, count: number): void => {
+    pendingPositions = { positions, count }
     if (rafId !== null) return
     rafId = requestAnimationFrame(flushPending)
   }
@@ -589,7 +679,7 @@ export function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
     const msg = evt.data
     if (msg.type === 'tick') {
       tickCount++
-      scheduleFlush(msg.positions)
+      scheduleFlush(msg.positions, msg.count)
       if (ctx.prefersReducedMotion && tickCount >= REDUCED_MOTION_TICK_LIMIT) {
         worker.postMessage({ type: 'stop' })
       }
@@ -601,9 +691,7 @@ export function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
         rafId = null
       }
       pendingPositions = null
-      updateNodePositions(ctx.nodeById, msg.positions)
-      resolveEdgeEndpoints(ctx.simEdges, ctx.nodeById)
-      ctx.applyPositions()
+      applyTick(msg.positions, msg.count)
     } else if (msg.type === 'error') {
       // Structured error from the worker dispatcher's try/catch (or
       // the worker's global error/unhandledrejection handlers). Route through
@@ -653,6 +741,29 @@ export function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
       current.height = height
       worker.postMessage({ type: 'resize', width, height })
     },
+    onUpdate: (nextCtx) => {
+      if (failed) return
+      // #2194: swap the node/edge set on the LIVE worker simulation in place.
+      // A pending tick was packed for the PREVIOUS node ordering — drop it so
+      // it can't land on the new `live.order` (the next tick from the worker
+      // will be packed for the new order).
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId)
+        rafId = null
+      }
+      pendingPositions = null
+
+      postWorkerUpdate(worker, nextCtx)
+
+      // Re-point the tick pipeline at the new selections/ordering and re-bind
+      // drag to the refreshed node selection (its data + closures changed).
+      live.order = nextCtx.simNodes
+      live.simEdges = nextCtx.simEdges
+      live.nodeById = nextCtx.nodeById
+      live.applyPositions = nextCtx.applyPositions
+      live.node = nextCtx.node
+      nextCtx.node.call(createWorkerDrag(worker))
+    },
   }
 }
 
@@ -693,9 +804,28 @@ function buildMainThreadSim(ctx: SimulationCtx): Simulation<GraphNode, GraphEdge
     .force('y', forceY(ctx.height / 2).strength(0.05))
 }
 
+/**
+ * Swap the node/edge set on a live main-thread simulation IN PLACE (#2194).
+ * Mirrors the worker `update` handler: re-bind `sim.nodes(...)` and the link
+ * force's `links(...)` (which re-resolves string source/target ids against
+ * the new node array via the `.id` accessor), then nudge alpha so the
+ * existing layout drifts rather than re-scattering. Persisting nodes keep
+ * their carried x/y/vx/vy; brand-new nodes are seeded by d3.
+ */
+function applyMainThreadUpdate(sim: Simulation<GraphNode, GraphEdge>, next: SimulationCtx): void {
+  sim.nodes(next.simNodes)
+  const linkForce = sim.force('link') as ReturnType<typeof forceLink<GraphNode, GraphEdge>> | null
+  if (linkForce && typeof linkForce.links === 'function') linkForce.links(next.simEdges)
+  sim.alpha(0.3).restart()
+}
+
 export function runMainThreadSimulation(ctx: SimulationCtx): SimulationHandle {
   const sim = buildMainThreadSim(ctx)
   ctx.node.call(createMainThreadDrag(sim))
+
+  // Mutable `applyPositions` so the tick closure + `onUpdate` (#2194) read the
+  // CURRENT patched selections after a filter toggle.
+  const live = { applyPositions: ctx.applyPositions }
 
   const current = { width: ctx.width, height: ctx.height }
   const applyResizeForces = (width: number, height: number): void => {
@@ -707,7 +837,7 @@ export function runMainThreadSimulation(ctx: SimulationCtx): SimulationHandle {
   if (ctx.prefersReducedMotion) {
     sim.alphaDecay(1)
     sim.tick(REDUCED_MOTION_TICK_LIMIT)
-    ctx.applyPositions()
+    live.applyPositions()
     sim.stop()
     return {
       cleanup: () => {
@@ -720,14 +850,25 @@ export function runMainThreadSimulation(ctx: SimulationCtx): SimulationHandle {
         applyResizeForces(width, height)
         sim.alpha(0.3)
         sim.tick(REDUCED_MOTION_TICK_LIMIT)
-        ctx.applyPositions()
+        live.applyPositions()
+        sim.stop()
+      },
+      onUpdate: (next) => {
+        live.applyPositions = next.applyPositions
+        next.node.call(createMainThreadDrag(sim))
+        // Reduced-motion: run the sim synchronously to a settled layout and
+        // apply once, matching the mount-time behaviour above.
+        sim.alphaDecay(1)
+        applyMainThreadUpdate(sim, next)
+        sim.tick(REDUCED_MOTION_TICK_LIMIT)
+        live.applyPositions()
         sim.stop()
       },
     }
   }
 
   sim.on('tick', () => {
-    ctx.applyPositions()
+    live.applyPositions()
   })
   return {
     cleanup: () => {
@@ -739,6 +880,11 @@ export function runMainThreadSimulation(ctx: SimulationCtx): SimulationHandle {
       current.height = height
       applyResizeForces(width, height)
       sim.alpha(0.3).restart()
+    },
+    onUpdate: (next) => {
+      live.applyPositions = next.applyPositions
+      next.node.call(createMainThreadDrag(sim))
+      applyMainThreadUpdate(sim, next)
     },
   }
 }
