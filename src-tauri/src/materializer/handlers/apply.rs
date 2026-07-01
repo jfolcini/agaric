@@ -515,14 +515,39 @@ pub(super) async fn advance_apply_cursor(
 /// The single-op path (`apply_op`) and every LOCAL command path pass `None`,
 /// so their "chunk of one" flushes inline exactly as before — behaviour is
 /// unchanged off the batch path.
+///
+/// ## Deferral is gated to ALL-`CreateBlock` chunks
+///
+/// The reprojection deferral is ONLY safe when the entire chunk is
+/// `CreateBlock` ops. The accumulator snapshots each touched parent's sibling
+/// order at create-time and replays it once at flush; a later same-parent
+/// op in the same batch that reprojects INLINE (Move/Restore/Delete still do)
+/// would be clobbered by the stale snapshot replay. The `BatchApplyOps` arm in
+/// `task_handlers.rs` therefore constructs the accumulator (`Some`) ONLY when
+/// every record in the batch is a `CreateBlock`; a mixed-op batch passes `None`
+/// so EVERY op — creates included — reprojects inline exactly as it did before
+/// this optimization (the known-correct behaviour). This makes the
+/// stale-snapshot clobbering impossible: deferral runs only when there are no
+/// moves/deletes/restores to invalidate a snapshot. The common markdown/import
+/// path is all-create, so it keeps the deferral perf win.
 #[derive(Default)]
 pub(crate) struct ChunkAccumulator {
     /// Latest authoritative sibling ordering per touched parent group. Keyed
-    /// by the parent's `Option<block_id>` (`None` = top-level group). The
-    /// value is the full ordered child-id list read from the engine after the
-    /// most recent insert into that group during the chunk — reprojecting it
-    /// once at flush produces the final dense ranks.
-    reproject_groups: std::collections::HashMap<Option<String>, Vec<String>>,
+    /// by `(space_id, Option<block_id>)` where the second element is the
+    /// parent's block id (`None` = that space's top-level group). The value is
+    /// the full ordered child-id list read from the engine after the most
+    /// recent insert into that group during the chunk — reprojecting it once at
+    /// flush produces the final dense ranks.
+    ///
+    /// The key is SPACE-QUALIFIED (not a bare `Option<block_id>`): a single
+    /// all-create chunk MAY span spaces (space is resolved per-op, and the
+    /// batch arm only enforces single-DEVICE, not single-space). Non-`None`
+    /// parent ids are globally-unique ULIDs so they never collide across
+    /// spaces, but the `None` (top-level) key is NOT — a batch creating
+    /// top-level blocks in two spaces would otherwise have one space's ordering
+    /// overwrite the other's under last-writer-wins. Prefixing the space id
+    /// makes the `None`-key collision impossible.
+    reproject_groups: std::collections::HashMap<(String, Option<String>), Vec<String>>,
     /// Distinct pages whose `pages_cache` counts must be recomputed once at
     /// end-of-chunk.
     affected_pages: std::collections::HashSet<String>,
@@ -530,12 +555,18 @@ pub(crate) struct ChunkAccumulator {
 
 impl ChunkAccumulator {
     /// Record (or overwrite) the authoritative sibling ordering for a parent
-    /// group touched by a create in this chunk. Overwrite is intentional: the
-    /// most recent list is the most complete (it includes every prior insert
-    /// into the group), so the last writer wins and the flush reprojects the
-    /// final order once.
-    pub(super) fn record_reproject(&mut self, parent: Option<String>, ordered: Vec<String>) {
-        self.reproject_groups.insert(parent, ordered);
+    /// group touched by a create in this chunk. Keyed by `(space_id, parent)`
+    /// so top-level (`None` parent) groups in different spaces never collide.
+    /// Overwrite is intentional: the most recent list is the most complete (it
+    /// includes every prior insert into the group), so the last writer wins and
+    /// the flush reprojects the final order once.
+    pub(super) fn record_reproject(
+        &mut self,
+        space_id: String,
+        parent: Option<String>,
+        ordered: Vec<String>,
+    ) {
+        self.reproject_groups.insert((space_id, parent), ordered);
     }
 
     /// Add many affected page ids at once.
