@@ -566,20 +566,21 @@ async fn dispatch_background_or_warn_logs_seq_and_device_id_on_serde_error() {
 // Enqueue_full_cache_rebuild helper
 // ---------------------------------------------------------------------------
 
-/// The canonical fan-out list must contain the eight block-referencing
-/// cache rebuild variants in a fixed order. Adding a 9th cache means
+/// The canonical fan-out list must contain the nine block-referencing
+/// cache rebuild variants in a fixed order. Adding a 10th cache means
 /// extending this array; the dispatch arms pick it up automatically.
 /// Any drift between the delete/restore/purge arms and this constant is
 /// a regression.
 #[test]
-fn full_cache_rebuild_tasks_has_eight_entries_in_canonical_order() {
+fn full_cache_rebuild_tasks_has_nine_entries_in_canonical_order() {
     let tasks = &super::super::dispatch::FULL_CACHE_REBUILD_TASKS;
     // Extended the array with `RebuildBlockTagRefsCache` (7th);
-    // SQL-review §H-2 added `RebuildPageLinkCache` (8th).
+    // SQL-review §H-2 added `RebuildPageLinkCache` (8th); #2042 added
+    // `RebuildPagesCacheCounts` (at index 2, right after `RebuildPagesCache`).
     assert_eq!(
         tasks.len(),
-        8,
-        "FULL_CACHE_REBUILD_TASKS must contain exactly the 8 block-referencing caches"
+        9,
+        "FULL_CACHE_REBUILD_TASKS must contain exactly the 9 block-referencing caches"
     );
     assert!(
         matches!(tasks[0], MaterializeTask::RebuildTagsCache),
@@ -592,34 +593,39 @@ fn full_cache_rebuild_tasks_has_eight_entries_in_canonical_order() {
         tasks[1]
     );
     assert!(
-        matches!(tasks[2], MaterializeTask::RebuildAgendaCache),
-        "tasks[2] must be RebuildAgendaCache, got {:?}",
+        matches!(tasks[2], MaterializeTask::RebuildPagesCacheCounts),
+        "tasks[2] must be RebuildPagesCacheCounts (#2042), got {:?}",
         tasks[2]
     );
     assert!(
-        matches!(tasks[3], MaterializeTask::RebuildProjectedAgendaCache),
-        "tasks[3] must be RebuildProjectedAgendaCache, got {:?}",
+        matches!(tasks[3], MaterializeTask::RebuildAgendaCache),
+        "tasks[3] must be RebuildAgendaCache, got {:?}",
         tasks[3]
     );
     assert!(
-        matches!(tasks[4], MaterializeTask::RebuildTagInheritanceCache),
-        "tasks[4] must be RebuildTagInheritanceCache, got {:?}",
+        matches!(tasks[4], MaterializeTask::RebuildProjectedAgendaCache),
+        "tasks[4] must be RebuildProjectedAgendaCache, got {:?}",
         tasks[4]
     );
     assert!(
-        matches!(tasks[5], MaterializeTask::RebuildPageIds),
-        "tasks[5] must be RebuildPageIds, got {:?}",
+        matches!(tasks[5], MaterializeTask::RebuildTagInheritanceCache),
+        "tasks[5] must be RebuildTagInheritanceCache, got {:?}",
         tasks[5]
     );
     assert!(
-        matches!(tasks[6], MaterializeTask::RebuildBlockTagRefsCache),
-        "tasks[6] must be RebuildBlockTagRefsCache, got {:?}",
+        matches!(tasks[6], MaterializeTask::RebuildPageIds),
+        "tasks[6] must be RebuildPageIds, got {:?}",
         tasks[6]
     );
     assert!(
-        matches!(tasks[7], MaterializeTask::RebuildPageLinkCache),
-        "tasks[7] must be RebuildPageLinkCache, got {:?}",
+        matches!(tasks[7], MaterializeTask::RebuildBlockTagRefsCache),
+        "tasks[7] must be RebuildBlockTagRefsCache, got {:?}",
         tasks[7]
+    );
+    assert!(
+        matches!(tasks[8], MaterializeTask::RebuildPageLinkCache),
+        "tasks[8] must be RebuildPageLinkCache, got {:?}",
+        tasks[8]
     );
 }
 
@@ -643,11 +649,11 @@ async fn enqueue_full_cache_rebuild_dispatches_all_six_tasks() {
         .expect("flush_background must succeed after enqueuing the rebuild fan-out");
     let after = mat.metrics().bg_processed.load(AtomicOrdering::Relaxed);
 
-    // 8 rebuild tasks + 1 flush Barrier (post-SQL-review §H-2).
+    // 9 rebuild tasks + 1 flush Barrier (#2042 added RebuildPagesCacheCounts).
     assert_eq!(
         after - before,
-        9,
-        "enqueue_full_cache_rebuild must dispatch exactly the 8 FULL_CACHE_REBUILD_TASKS entries (before={before}, after={after}, expected 8 + 1 flush barrier)"
+        10,
+        "enqueue_full_cache_rebuild must dispatch exactly the 9 FULL_CACHE_REBUILD_TASKS entries (before={before}, after={after}, expected 9 + 1 flush barrier)"
     );
 }
 
@@ -674,12 +680,12 @@ async fn dispatch_delete_block_enqueues_full_cache_rebuild_plus_fts_removal() {
     mat.flush_background().await.unwrap();
     let after_bg = mat.metrics().bg_processed.load(AtomicOrdering::Relaxed);
 
-    // 8 rebuild tasks + 1 RemoveFtsBlock + 1 flush Barrier = 10
-    // (post-SQL-review §H-2).
+    // 9 rebuild tasks + 1 RemoveFtsBlock + 1 flush Barrier = 11
+    // (#2042 added RebuildPagesCacheCounts to the fan-out).
     assert_eq!(
         after_bg - before_bg,
-        10,
-        "delete_block must enqueue 8 cache rebuilds + 1 RemoveFtsBlock (+ 1 flush barrier)"
+        11,
+        "delete_block must enqueue 9 cache rebuilds + 1 RemoveFtsBlock (+ 1 flush barrier)"
     );
 }
 
@@ -707,12 +713,12 @@ async fn dispatch_restore_block_enqueues_full_cache_rebuild_plus_fts_update() {
     mat.flush_background().await.unwrap();
     let after_bg = mat.metrics().bg_processed.load(AtomicOrdering::Relaxed);
 
-    // 8 rebuild tasks + 1 UpdateFtsBlock + 1 flush Barrier = 10
-    // (post-SQL-review §H-2).
+    // 9 rebuild tasks + 1 UpdateFtsBlock + 1 flush Barrier = 11
+    // (#2042 added RebuildPagesCacheCounts to the fan-out).
     assert_eq!(
         after_bg - before_bg,
-        10,
-        "restore_block must enqueue 8 cache rebuilds + 1 UpdateFtsBlock (+ 1 flush barrier)"
+        11,
+        "restore_block must enqueue 9 cache rebuilds + 1 UpdateFtsBlock (+ 1 flush barrier)"
     );
 }
 
@@ -738,12 +744,12 @@ async fn dispatch_purge_block_enqueues_full_cache_rebuild_plus_fts_removal() {
     mat.flush_background().await.unwrap();
     let after_bg = mat.metrics().bg_processed.load(AtomicOrdering::Relaxed);
 
-    // 8 rebuild tasks + 1 RemoveFtsBlock + 1 flush Barrier = 10
-    // (post-SQL-review §H-2).
+    // 9 rebuild tasks + 1 RemoveFtsBlock + 1 flush Barrier = 11
+    // (#2042 added RebuildPagesCacheCounts to the fan-out).
     assert_eq!(
         after_bg - before_bg,
-        10,
-        "purge_block must enqueue 8 cache rebuilds + 1 RemoveFtsBlock (+ 1 flush barrier)"
+        11,
+        "purge_block must enqueue 9 cache rebuilds + 1 RemoveFtsBlock (+ 1 flush barrier)"
     );
 }
 
