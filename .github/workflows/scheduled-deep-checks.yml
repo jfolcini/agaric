@@ -149,8 +149,13 @@ jobs:
   # ---------------------------------------------------------------------------
   bench-smoke:
     runs-on: ubuntu-24.04
-    # Per-shard budget: ~1/N of the benches compile + smoke, well under 90.
-    timeout-minutes: 45
+    # Per-shard budget. The heavy 100K-seed benches cluster in the odd shards
+    # (deterministic `index % 4` split): shards 0/2 smoke in ~1 min, but shard 1
+    # (7 benches incl. the heavy cache/pagination seeds) has been observed to
+    # need compile (~21 min) + smoke (~25+ min) — over the old 45-min cap, which
+    # cancelled the shard mid-smoke (a false red, not a real bench failure). 70
+    # gives headroom while staying well under the 90-min GitHub job ceiling.
+    timeout-minutes: 70
     strategy:
       # Don't cancel sibling shards when one bench's seed drifts — we want every
       # shard's verdict in a single run, not a fail-fast that hides the rest.
@@ -500,9 +505,18 @@ jobs:
       - name: Run the #[ignore]d perf gates (#639)
         working-directory: src-tauri
         # The 20k-row perf gates are `#[ignore]`d so the per-PR suite doesn't
-        # pay for 20k-row seeding. `--run-ignored=only` runs exactly those;
-        # they assert wall-clock budgets and fail on regression.
-        run: cargo nextest run --run-ignored=only --no-fail-fast
+        # pay for 20k-row seeding; they assert wall-clock budgets and fail on
+        # regression. BUT `--run-ignored=only` runs EVERY `#[ignore]`d test, not
+        # just the perf gates — so it also sweeps in intentionally-failing
+        # documented oracles kept `#[ignore]`d AND failing on purpose as
+        # greppable design-divergence markers (see `src/reverse/tests.rs`'s
+        # `create_block_apply_then_reverse_round_trip_i_lifecycle_3`: reverse of
+        # a create is a soft-delete, so a strict identity round-trip cannot hold
+        # — a deliberate design choice, not a bug). Those must NOT red this gate,
+        # so exclude them via `-E`. Add any future such failing oracle here too.
+        run: >-
+          cargo nextest run --run-ignored=only --no-fail-fast
+          -E 'not test(create_block_apply_then_reverse_round_trip_i_lifecycle_3)'
 
   # ---------------------------------------------------------------------------
   # mutants (#649) — cargo-mutants scoped (via mutants.toml `examine_globs`)
