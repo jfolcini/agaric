@@ -469,6 +469,11 @@ pub(crate) async fn search_with_toggles_partitioned(
             exclude_page_globs,
             metadata,
             true,
+            // P4 (#346 / #2200) — display-only path: `content` is only the
+            // no-snippet fallback (highlight comes from `snippet()`), so cap
+            // it to the preview prefix. No post-filter runs on this path, so
+            // truncation cannot drop a row.
+            Some(super::search::PALETTE_CONTENT_PREVIEW_CAP),
             cancel,
         )
         .await;
@@ -494,6 +499,16 @@ pub(crate) async fn search_with_toggles_partitioned(
 
     // Snippets are clobbered to `None` by the post-filter,
     // so omit the SQL `snippet()` call (skips the per-row tokenizer walk).
+    //
+    // P4 (#346 / #2200) — pass `None` (FULL content), NOT the display cap.
+    // `apply_post_filter` below runs a literal regex against `row.content`
+    // and DROPS rows with no match; a DB-side `substr(content, 1, 512)`
+    // truncation would hide any match that first appears after codepoint 512
+    // and silently drop that row (a search-correctness regression). Full
+    // content also keeps the emitted UTF-16 match offsets valid against the
+    // shipped `content`. The blocks partition here ships only post-filter
+    // survivors (≤ the caller's small palette limit), so the wire cost of
+    // full content on this less-common toggle path is bounded.
     let mut scan = super::search::search_fts_partitioned(
         pool,
         query,
@@ -506,6 +521,7 @@ pub(crate) async fn search_with_toggles_partitioned(
         exclude_page_globs,
         metadata,
         false,
+        None,
         cancel,
     )
     .await?;
