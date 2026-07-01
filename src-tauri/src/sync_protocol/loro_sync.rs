@@ -55,6 +55,35 @@ use crate::space::SpaceId;
 use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
 use loro::VersionVector;
 
+/// #2188 — run a CPU-bound CRDT encode/decode closure so it does not stall the
+/// async reactor while holding the process-global registry mutex.
+///
+/// On a **multi-thread** tokio runtime (production: tauri's default async
+/// runtime + the daemon's `tokio::spawn`) this delegates to
+/// [`tokio::task::block_in_place`], which tells the runtime this worker is about
+/// to block so a sibling worker can take over the reactor for the duration. The
+/// closure still runs inline on THIS thread, so the registry `MutexGuard`
+/// (`!Send`) it acquires and holds across the encode is fine, and — critically —
+/// `block_in_place` does NOT release that lock: atomicity vs concurrent mutation
+/// is exactly as before, we merely stop pinning the reactor.
+///
+/// `block_in_place` PANICS on a **current-thread** runtime, which the sync
+/// integration tests (`#[tokio::test]`) and the `agaric-mcp` binary use. On that
+/// flavor there is no sibling worker to hand the reactor to anyway, so we simply
+/// run the closure inline — identical behaviour to the pre-#2188 code. This
+/// keeps the optimisation where it helps (production is always multi-thread)
+/// without introducing a panic on the current-thread paths.
+#[inline]
+fn cpu_block_in_place<T>(f: impl FnOnce() -> T) -> T {
+    use tokio::runtime::{Handle, RuntimeFlavor};
+    match Handle::try_current().map(|h| h.runtime_flavor()) {
+        Ok(RuntimeFlavor::MultiThread) => tokio::task::block_in_place(f),
+        // Current-thread runtime (tests / agaric-mcp) or no runtime at all:
+        // `block_in_place` would panic, so run the closure inline.
+        _ => f(),
+    }
+}
+
 /// Outcome of [`apply_remote`].  Discriminates between a successful
 /// engine import and a `from_vv`-unreachable snapshot-fallback signal.
 ///
@@ -256,12 +285,24 @@ pub async fn prepare_outgoing(
         return Ok(None);
     }
 
-    let mut guard = registry.for_space(space_id, device_id)?;
-    let engine = guard.engine_mut();
     match peer_vv {
         None => {
             // Initial sync — full snapshot.
-            let bytes = engine.export_snapshot()?;
+            //
+            // #2188: the CRDT snapshot encode is CPU-bound and runs while
+            // holding the process-global registry mutex. Wrapping the guard
+            // acquisition + encode in `cpu_block_in_place` lets the multi-thread
+            // reactor drive other tasks for the duration instead of stalling
+            // the async worker. This does NOT release the registry lock — the
+            // guard is still held across the encode, preserving atomicity vs
+            // concurrent mutation exactly as before. The guard is `!Send`, but
+            // the closure runs inline on this same worker thread, so a `!Send`
+            // guard inside it is fine. See `cpu_block_in_place` for the
+            // current-thread-runtime fallback.
+            let bytes = cpu_block_in_place(|| {
+                let mut guard = registry.for_space(space_id, device_id)?;
+                guard.engine_mut().export_snapshot()
+            })?;
             Ok(Some(LoroSyncMessage::Snapshot {
                 protocol_version: LORO_SYNC_PROTOCOL_VERSION,
                 space_id: space_id.clone(),
@@ -270,7 +311,15 @@ pub async fn prepare_outgoing(
         }
         Some(vv) => {
             // Incremental — export only ops since `vv`.
-            let bytes = engine.export_update_since(vv)?;
+            //
+            // #2188: see the `None` arm — the incremental encode is likewise
+            // CPU-bound under the registry lock, so it runs inside
+            // `cpu_block_in_place` to unblock the reactor without releasing the
+            // lock.
+            let bytes = cpu_block_in_place(|| {
+                let mut guard = registry.for_space(space_id, device_id)?;
+                guard.engine_mut().export_update_since(vv)
+            })?;
             Ok(Some(LoroSyncMessage::Update {
                 protocol_version: LORO_SYNC_PROTOCOL_VERSION,
                 space_id: space_id.clone(),
@@ -625,10 +674,20 @@ pub(crate) async fn import_and_project(
         Vec<crate::ulid::BlockId>,
         crate::loro::engine::TagScope,
     ) = {
-        let mut guard = registry.for_space(space_id, device_id)?;
-        guard
-            .engine_mut()
-            .import_with_changed_purged_tagscope(bytes)?
+        // #2188: the CRDT import (decode + diff resolution) is CPU-bound and
+        // runs while holding the process-global registry mutex.
+        // `cpu_block_in_place` lets the multi-thread reactor drive other tasks
+        // for the duration without releasing the lock (the guard is held across
+        // the decode, so atomicity vs concurrent mutation is unchanged). The
+        // `!Send` guard is fine inside the closure — it runs inline on this same
+        // worker thread. See `cpu_block_in_place` for the current-thread-runtime
+        // fallback.
+        cpu_block_in_place(|| {
+            let mut guard = registry.for_space(space_id, device_id)?;
+            guard
+                .engine_mut()
+                .import_with_changed_purged_tagscope(bytes)
+        })?
     };
 
     // Phase 2 — project each changed block to SQL in a single tx.
@@ -1056,6 +1115,128 @@ mod tests {
             .expect("read")
             .expect("BLOCK_A must be present after import");
         assert_eq!(snap.content, "from-A");
+    }
+
+    /// #2188 — the `block_in_place` wrap around the CPU-bound CRDT
+    /// export (`prepare_outgoing`) and import (`apply_remote`) must:
+    ///   1. NOT panic on a genuine multi-thread tokio runtime, and
+    ///   2. preserve behaviour — the exported bytes import into an
+    ///      equivalent doc (full-snapshot AND incremental-update round
+    ///      trips), converging both the engine and SQL projection.
+    ///
+    /// `block_in_place` PANICS on a current-thread runtime; production
+    /// sync always runs on tauri's multi-thread async runtime / the
+    /// daemon's `tokio::spawn`, so this test pins the multi-thread flavor
+    /// to exercise the real path. A regression that ran these calls on a
+    /// current-thread runtime would panic here.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn export_import_round_trips_through_block_in_place_2188() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // Sender A: seed three blocks, capture vv, then add two more so
+        // we can exercise BOTH the snapshot and the incremental-update
+        // export paths (each wrapped in `block_in_place`).
+        let registry_a = LoroEngineRegistry::new();
+        let vv_after_first_batch = {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            let e = g.engine_mut();
+            e.apply_create_block(BLOCK_A, "content", "first", None, 0)
+                .expect("create A");
+            e.apply_create_block(BLOCK_B, "content", "second", None, 1)
+                .expect("create B");
+            e.apply_create_block(BLOCK_C, "content", "third", None, 2)
+                .expect("create C");
+            let vv = e.version_vector();
+            e.apply_create_block(BLOCK_D, "content", "fourth", None, 3)
+                .expect("create D");
+            e.apply_create_block(BLOCK_E, "content", "fifth", None, 4)
+                .expect("create E");
+            vv
+        };
+
+        // --- Full snapshot export (block_in_place) → apply on fresh B ---
+        let snapshot_msg = prepare_outgoing_for_pool(&pool, &registry_a, &space, "device-A", None)
+            .await
+            .expect("prepare snapshot")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
+
+        let registry_b = LoroEngineRegistry::new();
+        let outcome = apply_remote(&pool, &registry_b, "device-B", snapshot_msg)
+            .await
+            .expect("apply snapshot");
+        assert!(
+            matches!(outcome, ApplyOutcome::Imported { space_id: ref s, .. } if s == &space),
+            "snapshot apply must report Imported, got {outcome:?}"
+        );
+
+        // B's engine converged to A's full state via the block_in_place import.
+        {
+            let mut g = registry_b.for_space(&space, "device-B").expect("for_space");
+            let e = g.engine_mut();
+            for id in [BLOCK_A, BLOCK_B, BLOCK_C, BLOCK_D, BLOCK_E] {
+                assert!(
+                    e.read_block(id).expect("read").is_some(),
+                    "block {id} must be present in B after snapshot import"
+                );
+            }
+        }
+        assert_eq!(
+            registry_b.loro_vv(&space).expect("b vv"),
+            registry_a.loro_vv(&space).expect("a vv"),
+            "B's version vector must match A's after snapshot round-trip"
+        );
+
+        // --- Incremental update export (block_in_place) → apply on B ---
+        // B now shares A's exact causal lineage (it imported A's snapshot),
+        // so an incremental update A produces after adding MORE ops imports
+        // cleanly (no `(peer,counter)` fork). This exercises the
+        // `export_update_since` + `import_with_changed_purged_tagscope`
+        // block_in_place paths on a genuinely reachable delta.
+        let _ = vv_after_first_batch; // captured above for documentation only
+        let vv_before_delta = registry_b.loro_vv(&space).expect("b vv pre-delta");
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            g.engine_mut()
+                .apply_create_block("01HZ00000000000000000000F6", "content", "sixth", None, 5)
+                .expect("create F");
+        }
+
+        let update_msg = prepare_outgoing_for_pool(
+            &pool,
+            &registry_a,
+            &space,
+            "device-A",
+            Some(&vv_before_delta),
+        )
+        .await
+        .expect("prepare update")
+        .expect("#1257 freshness gate must not refuse a consistent engine");
+
+        let outcome = apply_remote(&pool, &registry_b, "device-B", update_msg)
+            .await
+            .expect("apply update");
+        assert!(
+            matches!(outcome, ApplyOutcome::Imported { space_id: ref s, .. } if s == &space),
+            "incremental update apply must report Imported, got {outcome:?}"
+        );
+
+        // The delta carried the new block; B now holds it.
+        {
+            let mut g = registry_b.for_space(&space, "device-B").expect("for_space");
+            assert!(
+                g.engine_mut()
+                    .read_block("01HZ00000000000000000000F6")
+                    .expect("read F")
+                    .is_some(),
+                "delta must have added the sixth block"
+            );
+        }
+        assert_eq!(
+            registry_b.loro_vv(&space).expect("b vv post-delta"),
+            registry_a.loro_vv(&space).expect("a vv"),
+            "B must converge to A's vv after the incremental round-trip"
+        );
     }
 
     /// `apply_remote` writes the projected `blocks` row to SQL.
