@@ -460,3 +460,38 @@ fn dedup_hash() {
         "dedup should collapse by task type and block_id together"
     );
 }
+
+/// #2042 ordering guard. In a mixed page+content multi-root lifecycle batch
+/// the content root's lifecycle set carries `RebuildPagesCacheCounts` but NOT
+/// `RebuildPagesCache` (a content block can't change a page row), and may be
+/// enqueued BEFORE a page root's set (which carries both). Under the plain
+/// keep-first rule the count recompute would land ahead of the page-row
+/// rebuild, recomputing a restored page's counts before its `pages_cache` row
+/// is re-inserted and leaving it at 0. `dedup_tasks` must therefore emit the
+/// single `RebuildPagesCacheCounts` AFTER `RebuildPagesCache`.
+#[test]
+fn dedup_emits_pages_cache_counts_after_pages_cache_in_mixed_batch() {
+    use std::mem::discriminant;
+    let counts = discriminant(&MaterializeTask::RebuildPagesCacheCounts);
+    let cache = discriminant(&MaterializeTask::RebuildPagesCache);
+    // Content root first (Counts, no Cache), then a page root (Cache + Counts).
+    let out = dedup_tasks(vec![
+        MaterializeTask::RebuildTagsCache,
+        MaterializeTask::RebuildPagesCacheCounts, // content set — would dedup first
+        MaterializeTask::RebuildPageLinkCache,
+        MaterializeTask::RebuildPagesCache,       // page set
+        MaterializeTask::RebuildPagesCacheCounts, // page set
+    ]);
+    assert_eq!(
+        out.iter().filter(|t| discriminant(*t) == counts).count(),
+        1,
+        "RebuildPagesCacheCounts must collapse to exactly one; got {out:?}",
+    );
+    let counts_idx = out.iter().position(|t| discriminant(t) == counts).unwrap();
+    let cache_idx = out.iter().position(|t| discriminant(t) == cache).unwrap();
+    assert!(
+        counts_idx > cache_idx,
+        "RebuildPagesCacheCounts (idx {counts_idx}) must run AFTER RebuildPagesCache \
+         (idx {cache_idx}) so a restored page's row exists before its counts recompute; got {out:?}",
+    );
+}

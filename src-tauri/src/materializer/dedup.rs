@@ -24,6 +24,9 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
     let mut seen_fr: FxHashSet<u64> = FxHashSet::default();
     let mut seen_frr: FxHashSet<u64> = FxHashSet::default();
     let mut seen_tu: FxHashSet<u64> = FxHashSet::default();
+    // #2042: RebuildPagesCacheCounts is held aside and emitted exactly once at
+    // the END of the batch (see the arm + tail below).
+    let mut saw_pages_cache_counts = false;
     let mut result = Vec::with_capacity(tasks.len());
     for task in tasks {
         match &task {
@@ -67,12 +70,31 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
             | MaterializeTask::Barrier(_) => {
                 result.push(task);
             }
+            // #2042: RebuildPagesCacheCounts (an UPDATE of *existing* pages_cache
+            // rows) depends on RebuildPagesCache, which re-inserts a restored
+            // page's ROW, and on RebuildPageIds. In a mixed page+content
+            // multi-root lifecycle batch the content set's RebuildPagesCacheCounts
+            // (the content set has no RebuildPagesCache) would otherwise dedup
+            // AHEAD of the page set's RebuildPagesCache under the keep-first rule,
+            // recomputing a restored page's counts before its row exists and
+            // leaving it at 0 until the next lifecycle op. Collapse duplicates and
+            // emit it once at the END of the batch so it always runs after every
+            // row / page_id rebuild. This is safe w.r.t. `flush`/`settle`: the
+            // consumer signals Barriers only after the whole batch drains
+            // (`consumer::run_background`), so a trailing position still completes
+            // before the flush barrier fires.
+            MaterializeTask::RebuildPagesCacheCounts => {
+                saw_pages_cache_counts = true;
+            }
             _ => {
                 if seen_d.insert(mem::discriminant(&task)) {
                     result.push(task);
                 }
             }
         }
+    }
+    if saw_pages_cache_counts {
+        result.push(MaterializeTask::RebuildPagesCacheCounts);
     }
     result
 }

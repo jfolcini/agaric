@@ -1042,6 +1042,12 @@ async fn apply_op_restore_fans_ancestor_chain_out_to_engine_no_reproject_redelet
     );
 
     // (c) pages_cache child_block_count counts both restored blocks again.
+    // #2042: RestoreBlock defers the page-wide count recompute to the background
+    // `RebuildPagesCacheCounts` task (no longer synchronous in the apply tx), so
+    // drive that recompute here before asserting the settled count.
+    crate::cache::rebuild_pages_cache_counts(&pool)
+        .await
+        .expect("rebuild pages_cache counts");
     let child_count: i64 =
         sqlx::query_scalar("SELECT child_block_count FROM pages_cache WHERE page_id = ?")
             .bind(PAGE_ID)
