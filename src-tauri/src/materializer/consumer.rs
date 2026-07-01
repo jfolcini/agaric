@@ -411,7 +411,7 @@ pub(super) async fn record_failure_with_retry(
 ) -> bool {
     use super::retry_queue::record_failure;
     for attempt in 1..=PERSIST_RETRY_ATTEMPTS {
-        match record_failure(pool, task, last_error).await {
+        match record_failure(pool, task, last_error, metrics).await {
             Ok(()) => {
                 if attempt > 1 {
                     tracing::info!(attempt, "#851: record_failure succeeded on retry");
@@ -539,7 +539,7 @@ pub(super) async fn process_single_foreground_task(
         // Cleared only after commit — never before — so a crash mid-run
         // leaves the row for the next sweep instead of silently dropping
         // the retry.
-        if let Err(e) = super::retry_queue::clear_on_success(pool, &task).await {
+        if let Err(e) = super::retry_queue::clear_on_success(pool, &task, metrics).await {
             tracing::warn!(
                 error = %e,
                 "issue #378: failed to clear retry-queue row after durable fg success; \
@@ -738,7 +738,8 @@ pub(super) async fn run_background(
                 // on crash. Non-retryable tasks short-circuit inside
                 // `clear_on_success` via `RetryKind::from_task`.
                 if succeeded
-                    && let Err(e) = super::retry_queue::clear_on_success(&pool, &task).await
+                    && let Err(e) =
+                        super::retry_queue::clear_on_success(&pool, &task, &metrics).await
                 {
                     tracing::warn!(
                         error = %e,

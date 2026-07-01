@@ -392,6 +392,7 @@ pub(crate) async fn record_failure(
     pool: &SqlitePool,
     task: &MaterializeTask,
     last_error: &str,
+    metrics: &super::metrics::QueueMetrics,
 ) -> Result<(), AppError> {
     let Some((kind, block_id)) = RetryKind::from_task(task) else {
         return Ok(());
@@ -440,6 +441,16 @@ pub(crate) async fn record_failure(
     )
     .fetch_one(pool)
     .await?;
+
+    // #2187: bump the pending-retry gauge ONLY on the INSERT (fresh-row)
+    // branch. The UPSERT's `RETURNING attempts` disambiguates the two
+    // branches: a first-failure INSERT lands `attempts == 1`, while the
+    // `DO UPDATE` branch increments an existing row so it always returns
+    // `attempts >= 2`. A DO UPDATE did not add a row, so the gauge must
+    // not move for it.
+    if row.attempts == 1 {
+        metrics.note_retry_row_inserted();
+    }
 
     tracing::warn!(
         block_id = %block_id,
@@ -574,14 +585,18 @@ pub(crate) async fn clear_entry(
     pool: &SqlitePool,
     block_id: &str,
     task_kind: &str,
+    metrics: &super::metrics::QueueMetrics,
 ) -> Result<(), AppError> {
-    sqlx::query!(
+    let result = sqlx::query!(
         "DELETE FROM materializer_retry_queue WHERE block_id = ? AND task_kind = ?",
         block_id,
         task_kind,
     )
     .execute(pool)
     .await?;
+    // #2187: floor the pending-retry gauge by however many rows the DELETE
+    // actually removed (0 or 1 for this keyed delete).
+    metrics.note_retry_rows_deleted(result.rows_affected());
     Ok(())
 }
 
@@ -601,11 +616,23 @@ pub(crate) async fn clear_entry(
 pub(crate) async fn clear_on_success(
     pool: &SqlitePool,
     task: &MaterializeTask,
+    metrics: &super::metrics::QueueMetrics,
 ) -> Result<(), AppError> {
     let Some((kind, block_id)) = RetryKind::from_task(task) else {
         return Ok(());
     };
-    clear_entry(pool, &block_id, kind.task_kind_str().as_ref()).await
+    // #2187: fast-path skip. The overwhelming majority of tasks never fail,
+    // so the retry queue is almost always empty and this per-success DELETE
+    // is pure waste. Consult the pending-retry gauge and skip the DELETE
+    // entirely when it says there is nothing to clear. The gauge is only
+    // ever read to SKIP work, so its bias is safe: a stale-high value costs
+    // one idempotent (0-row) DELETE, and a stale-low value self-heals
+    // because the periodic sweeper re-clears any leftover row on its next
+    // pass (see the gauge's field docs in metrics.rs).
+    if !metrics.has_pending_retry_rows() {
+        return Ok(());
+    }
+    clear_entry(pool, &block_id, kind.task_kind_str().as_ref(), metrics).await
 }
 
 /// Issue #378: lease a due row by pushing its `next_attempt_at` forward
@@ -732,7 +759,13 @@ pub async fn sweep_once(
                     .metrics()
                     .retry_queue_giveup_total
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                clear_entry(write_pool, &row.block_id, &row.task_kind).await?;
+                clear_entry(
+                    write_pool,
+                    &row.block_id,
+                    &row.task_kind,
+                    materializer.metrics(),
+                )
+                .await?;
                 continue;
             }
             tracing::warn!(
@@ -781,7 +814,13 @@ pub async fn sweep_once(
                         .metrics()
                         .retry_queue_giveup_total
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    clear_entry(write_pool, &row.block_id, &row.task_kind).await?;
+                    clear_entry(
+                        write_pool,
+                        &row.block_id,
+                        &row.task_kind,
+                        materializer.metrics(),
+                    )
+                    .await?;
                 }
                 Ok(ApplyOpSweepDisposition::SupersededByPurge) => {
                     // #621: a later purge_block targets the same block. The
@@ -797,7 +836,13 @@ pub async fn sweep_once(
                          supersedes it — re-applying would resurrect a purged \
                          block (#621)"
                     );
-                    clear_entry(write_pool, &row.block_id, &row.task_kind).await?;
+                    clear_entry(
+                        write_pool,
+                        &row.block_id,
+                        &row.task_kind,
+                        materializer.metrics(),
+                    )
+                    .await?;
                 }
                 Ok(ApplyOpSweepDisposition::SupersededByEdit) => {
                     // #850: a later edit_block on the same block already won
@@ -813,7 +858,13 @@ pub async fn sweep_once(
                          supersedes it — re-applying would regress newer \
                          content (#850)"
                     );
-                    clear_entry(write_pool, &row.block_id, &row.task_kind).await?;
+                    clear_entry(
+                        write_pool,
+                        &row.block_id,
+                        &row.task_kind,
+                        materializer.metrics(),
+                    )
+                    .await?;
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -835,7 +886,13 @@ pub async fn sweep_once(
                 task_kind = %row.task_kind,
                 "dropping retry row for unknown task_kind"
             );
-            clear_entry(write_pool, &row.block_id, &row.task_kind).await?;
+            clear_entry(
+                write_pool,
+                &row.block_id,
+                &row.task_kind,
+                materializer.metrics(),
+            )
+            .await?;
             continue;
         };
         match materializer.try_enqueue_background(task) {
@@ -1037,6 +1094,16 @@ pub fn spawn_sweeper(
     // Fire-and-forget: the sweeper runs for the app's lifetime. We intentionally
     // discard the JoinHandle — the task stops when `shutdown_flag` flips.
     let _handle = spawn_fn(async move {
+        // #2187: seed the pending-retry gauge from an authoritative COUNT(*)
+        // BEFORE the first sweep. Rows left by a previous session were never
+        // routed through `record_failure` this run, so the incremental gauge
+        // starts at 0 and would let the consumer's `clear_on_success`
+        // fast-path incorrectly skip clearing them. Seeding recovers the true
+        // count; a query error leaves the gauge at 0, which merely re-adds the
+        // (already accepted) per-success DELETE cost until the next boot.
+        if let Ok(c) = pending_count(&read_pool).await {
+            materializer.metrics().seed_pending_retry_rows(c);
+        }
         // First pass at boot to drain entries left by a previous session.
         if let Err(e) = sweep_once(&read_pool, &write_pool, &materializer).await {
             tracing::warn!(error = %e, "boot-time retry queue sweep failed");
@@ -1061,6 +1128,14 @@ mod tests {
     use super::*;
     use crate::db::init_pool;
     use tempfile::TempDir;
+
+    /// #2187: a fresh, isolated `QueueMetrics` for unit tests that call the
+    /// metrics-threaded retry-queue fns directly (`record_failure`,
+    /// `clear_entry`, `clear_on_success`). Each call gets its own instance so
+    /// the pending-retry gauge starts at 0 and is not shared across tests.
+    fn test_metrics() -> super::super::metrics::QueueMetrics {
+        super::super::metrics::QueueMetrics::default()
+    }
 
     async fn test_pool() -> (SqlitePool, TempDir) {
         let dir = TempDir::new().unwrap();
@@ -1224,7 +1299,9 @@ mod tests {
         let task = MaterializeTask::UpdateFtsBlock {
             block_id: "BLK_R1".into(),
         };
-        record_failure(&pool, &task, "boom").await.unwrap();
+        record_failure(&pool, &task, "boom", &test_metrics())
+            .await
+            .unwrap();
 
         let row = sqlx::query!(
             "SELECT attempts, last_error FROM materializer_retry_queue \
@@ -1245,9 +1322,16 @@ mod tests {
         let task = MaterializeTask::UpdateFtsBlock {
             block_id: "BLK_R2".into(),
         };
-        record_failure(&pool, &task, "err1").await.unwrap();
-        record_failure(&pool, &task, "err2").await.unwrap();
-        record_failure(&pool, &task, "err3").await.unwrap();
+        let metrics = test_metrics();
+        record_failure(&pool, &task, "err1", &metrics)
+            .await
+            .unwrap();
+        record_failure(&pool, &task, "err2", &metrics)
+            .await
+            .unwrap();
+        record_failure(&pool, &task, "err3", &metrics)
+            .await
+            .unwrap();
 
         let row = sqlx::query!(
             "SELECT attempts, last_error FROM materializer_retry_queue \
@@ -1280,9 +1364,12 @@ mod tests {
             block_id: "BLK_R3".into(),
         };
 
+        let metrics = test_metrics();
         for expected_attempts in 1..=4_i64 {
             let before = crate::db::now_ms();
-            record_failure(&pool, &task, "boom").await.unwrap();
+            record_failure(&pool, &task, "boom", &metrics)
+                .await
+                .unwrap();
             let after = crate::db::now_ms();
 
             let row = sqlx::query!(
@@ -1322,9 +1409,14 @@ mod tests {
         // RebuildFtsIndex is non-retryable (no in-memory retry path; handled
         // By FTS optimize logic). Distinct global cache rebuilds
         // which ARE retryable under the GLOBAL_TASK_SENTINEL.
-        record_failure(&pool, &MaterializeTask::RebuildFtsIndex, "boom")
-            .await
-            .unwrap();
+        record_failure(
+            &pool,
+            &MaterializeTask::RebuildFtsIndex,
+            "boom",
+            &test_metrics(),
+        )
+        .await
+        .unwrap();
 
         let n = pending_count(&pool).await.unwrap();
         assert_eq!(
@@ -1356,7 +1448,7 @@ mod tests {
         assert_eq!(rows[0].block_id, "BLK_FD");
         assert_eq!(rows[0].task_kind, "UpdateFtsBlock");
 
-        clear_entry(&pool, "BLK_FD", "UpdateFtsBlock")
+        clear_entry(&pool, "BLK_FD", "UpdateFtsBlock", &test_metrics())
             .await
             .unwrap();
         let n = pending_count(&pool).await.unwrap();
@@ -1434,12 +1526,15 @@ mod tests {
         // Fire two failures back-to-back from independent tasks. The
         // SQL-side increment guarantees the second call observes the
         // first's INSERT/UPDATE atomically.
+        let metrics = std::sync::Arc::new(test_metrics());
         let p1 = pool.clone();
         let t1 = task.clone();
-        let h1 = tokio::spawn(async move { record_failure(&p1, &t1, "err-A").await });
+        let m1 = metrics.clone();
+        let h1 = tokio::spawn(async move { record_failure(&p1, &t1, "err-A", &m1).await });
         let p2 = pool.clone();
         let t2 = task.clone();
-        let h2 = tokio::spawn(async move { record_failure(&p2, &t2, "err-B").await });
+        let m2 = metrics.clone();
+        let h2 = tokio::spawn(async move { record_failure(&p2, &t2, "err-B", &m2).await });
         h1.await.unwrap().unwrap();
         h2.await.unwrap().unwrap();
 
@@ -1466,7 +1561,8 @@ mod tests {
             block_id: "BLK_EX".into(),
         };
 
-        record_failure(&pool, &task, "e1").await.unwrap();
+        let metrics = test_metrics();
+        record_failure(&pool, &task, "e1", &metrics).await.unwrap();
         let first = sqlx::query_scalar!(
             "SELECT next_attempt_at FROM materializer_retry_queue \
              WHERE block_id = ? AND task_kind = ?",
@@ -1477,7 +1573,7 @@ mod tests {
         .await
         .unwrap();
 
-        record_failure(&pool, &task, "e2").await.unwrap();
+        record_failure(&pool, &task, "e2", &metrics).await.unwrap();
         let second = sqlx::query_scalar!(
             "SELECT next_attempt_at FROM materializer_retry_queue \
              WHERE block_id = ? AND task_kind = ?",
@@ -1527,6 +1623,14 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+
+        // #2187: the row was planted via raw SQL, bypassing `record_failure`,
+        // so the incremental pending-retry gauge is still 0. Seed it from the
+        // real COUNT (mirroring the production boot seed in `spawn_sweeper`)
+        // or the consumer's `clear_on_success` fast-path would correctly SKIP
+        // the DELETE and the row would never clear.
+        let seeded = pending_count(&pool).await.unwrap();
+        mat.metrics().seed_pending_retry_rows(seeded);
 
         let n = sweep_once(&pool, &pool, &mat).await.unwrap();
         assert_eq!(n, 1, "one due row must be re-enqueued");
@@ -1629,7 +1733,9 @@ mod tests {
         }
 
         // First failure creates the row (attempts == 1).
-        record_failure(&pool, &task, "fail-1").await.unwrap();
+        record_failure(&pool, &task, "fail-1", mat.metrics())
+            .await
+            .unwrap();
         let (attempts0, created0) = read_row(&pool)
             .await
             .expect("row exists after first failure");
@@ -1660,7 +1766,9 @@ mod tests {
             );
 
             // The re-run fails again → consumer's record_failure path.
-            record_failure(&pool, &task, "fail-loop").await.unwrap();
+            record_failure(&pool, &task, "fail-loop", mat.metrics())
+                .await
+                .unwrap();
             expected_attempts += 1;
             let (acc_attempts, acc_created) = read_row(&pool)
                 .await
@@ -1716,26 +1824,124 @@ mod tests {
             block_id: "BLK_378_SUCCESS".into(),
         };
 
-        // Fail once — row created.
-        record_failure(&pool, &task, "transient").await.unwrap();
+        // #2187: a shared gauge so the failure's INSERT bump is visible to
+        // the subsequent `clear_on_success` fast-path check (mirrors the
+        // production single-`QueueMetrics` instance).
+        let metrics = test_metrics();
+
+        // Fail once — row created, gauge → 1.
+        record_failure(&pool, &task, "transient", &metrics)
+            .await
+            .unwrap();
         assert_eq!(
             pending_count(&pool).await.unwrap(),
             1,
             "failure must create a retry row"
         );
+        assert!(
+            metrics.has_pending_retry_rows(),
+            "#2187: recording a failure must set the pending-retry gauge"
+        );
 
-        // Re-run succeeds durably → consumer clears the row.
-        clear_on_success(&pool, &task).await.unwrap();
+        // Re-run succeeds durably → consumer clears the row, gauge → 0.
+        clear_on_success(&pool, &task, &metrics).await.unwrap();
         assert_eq!(
             pending_count(&pool).await.unwrap(),
             0,
             "confirmed durable success must clear the retry row"
         );
+        assert!(
+            !metrics.has_pending_retry_rows(),
+            "#2187: clearing the last row must reset the pending-retry gauge to 0"
+        );
 
         // Idempotent: clearing again (or clearing a task that never had a
         // row) is a harmless no-op.
-        clear_on_success(&pool, &task).await.unwrap();
+        clear_on_success(&pool, &task, &metrics).await.unwrap();
         assert_eq!(pending_count(&pool).await.unwrap(), 0);
+    }
+
+    /// #2187: the pending-retry gauge gates the per-success DELETE.
+    ///   1. With no pending rows, `clear_on_success` issues NO DELETE and
+    ///      the gauge stays 0 (the common fast-path skip). We prove the
+    ///      DELETE never fires by planting an unrelated row via raw SQL
+    ///      (which does NOT bump the gauge) and asserting `clear_on_success`
+    ///      leaves it untouched.
+    ///   2. A recorded failure bumps the gauge to 1; a subsequent
+    ///      `clear_on_success` for that task clears the row and decrements
+    ///      the gauge back to 0.
+    #[tokio::test]
+    async fn clear_on_success_skips_delete_when_gauge_empty_2187() {
+        let (pool, _dir) = test_pool().await;
+        let metrics = test_metrics();
+        let task = MaterializeTask::UpdateFtsBlock {
+            block_id: "BLK_2187".into(),
+        };
+
+        // --- Part 1: gauge empty ⇒ clear_on_success skips the DELETE. ---
+        // Plant a row for THIS task via raw SQL so the gauge stays 0 (the
+        // insert bypassed `record_failure`). If `clear_on_success` honoured
+        // its fast-path skip, this row must survive the call.
+        let now = crate::db::now_ms();
+        sqlx::query!(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, next_attempt_at) \
+             VALUES (?, ?, ?, ?)",
+            "BLK_2187",
+            "UpdateFtsBlock",
+            1_i64,
+            now,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(
+            !metrics.has_pending_retry_rows(),
+            "raw INSERT must not move the incremental gauge"
+        );
+
+        clear_on_success(&pool, &task, &metrics).await.unwrap();
+        assert_eq!(
+            pending_count(&pool).await.unwrap(),
+            1,
+            "#2187: with an empty gauge, clear_on_success must issue NO DELETE — \
+             the raw-planted row must survive"
+        );
+        assert_eq!(
+            metrics
+                .pending_retry_rows
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "#2187: the skipped DELETE must not touch the gauge"
+        );
+
+        // --- Part 2: recorded failure bumps gauge; success clears + floors. ---
+        let (pool2, _dir2) = test_pool().await;
+        let metrics2 = test_metrics();
+        record_failure(&pool2, &task, "boom", &metrics2)
+            .await
+            .unwrap();
+        assert_eq!(
+            metrics2
+                .pending_retry_rows
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "#2187: a recorded failure must increment the gauge to 1"
+        );
+
+        clear_on_success(&pool2, &task, &metrics2).await.unwrap();
+        assert_eq!(
+            pending_count(&pool2).await.unwrap(),
+            0,
+            "#2187: with a non-empty gauge, clear_on_success must delete the row"
+        );
+        assert_eq!(
+            metrics2
+                .pending_retry_rows
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "#2187: clearing the row must decrement the gauge back to 0"
+        );
     }
 
     /// Issue #378 — `clear_on_success` no-ops for non-retryable tasks
@@ -1744,7 +1950,7 @@ mod tests {
     async fn clear_on_success_ignores_non_retryable_378() {
         let (pool, _dir) = test_pool().await;
         // RebuildFtsIndex is non-retryable; from_task returns None.
-        clear_on_success(&pool, &MaterializeTask::RebuildFtsIndex)
+        clear_on_success(&pool, &MaterializeTask::RebuildFtsIndex, &test_metrics())
             .await
             .unwrap();
         assert_eq!(pending_count(&pool).await.unwrap(), 0);
@@ -2423,7 +2629,9 @@ mod tests {
             }
 
             let (pool, _dir) = test_pool().await;
-            record_failure(&pool, &task, "boom-global").await.unwrap();
+            record_failure(&pool, &task, "boom-global", &test_metrics())
+                .await
+                .unwrap();
 
             // Row landed under the expected block_id with the right kind.
             let row = sqlx::query!(
@@ -2517,7 +2725,8 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let task = MaterializeTask::RebuildTagsCache;
 
-        record_failure(&pool, &task, "e1").await.unwrap();
+        let metrics = test_metrics();
+        record_failure(&pool, &task, "e1", &metrics).await.unwrap();
         let first_attempts: i64 = sqlx::query_scalar!(
             "SELECT attempts FROM materializer_retry_queue \
              WHERE block_id = ? AND task_kind = ?",
@@ -2537,7 +2746,7 @@ mod tests {
         .await
         .unwrap();
 
-        record_failure(&pool, &task, "e2").await.unwrap();
+        record_failure(&pool, &task, "e2", &metrics).await.unwrap();
         let second_attempts: i64 = sqlx::query_scalar!(
             "SELECT attempts FROM materializer_retry_queue \
              WHERE block_id = ? AND task_kind = ?",
@@ -2575,9 +2784,10 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let task = MaterializeTask::RebuildAgendaCache;
 
-        record_failure(&pool, &task, "e1").await.unwrap();
-        record_failure(&pool, &task, "e2").await.unwrap();
-        record_failure(&pool, &task, "e3").await.unwrap();
+        let metrics = test_metrics();
+        record_failure(&pool, &task, "e1", &metrics).await.unwrap();
+        record_failure(&pool, &task, "e2", &metrics).await.unwrap();
+        record_failure(&pool, &task, "e3", &metrics).await.unwrap();
 
         // Exactly one row, attempts == 3 (PK enforces dedup).
         let n = pending_count(&pool).await.unwrap();
@@ -2609,10 +2819,18 @@ mod tests {
         let block_task = MaterializeTask::UpdateFtsBlock {
             block_id: "BLK_PB".into(),
         };
-        record_failure(&pool, &block_task, "blk-err").await.unwrap();
-        record_failure(&pool, &MaterializeTask::RebuildTagsCache, "global-err")
+        let metrics = test_metrics();
+        record_failure(&pool, &block_task, "blk-err", &metrics)
             .await
             .unwrap();
+        record_failure(
+            &pool,
+            &MaterializeTask::RebuildTagsCache,
+            "global-err",
+            &metrics,
+        )
+        .await
+        .unwrap();
 
         let n = pending_count(&pool).await.unwrap();
         assert_eq!(

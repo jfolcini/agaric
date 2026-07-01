@@ -717,7 +717,13 @@ impl Materializer {
                     let metrics_for_spawn = self.metrics.clone();
                     Self::spawn_task(&self.tasks, async move {
                         use super::retry_queue::record_failure;
-                        match record_failure(&pool, &task_for_spawn, "background queue full").await
+                        match record_failure(
+                            &pool,
+                            &task_for_spawn,
+                            "background queue full",
+                            &metrics_for_spawn,
+                        )
+                        .await
                         {
                             Ok(()) => {}
                             Err(e1) => {
@@ -729,9 +735,13 @@ impl Materializer {
                                     "record_failure first attempt failed; retrying after 100ms"
                                 );
                                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                                if let Err(e2) =
-                                    record_failure(&pool, &task_for_spawn, "background queue full")
-                                        .await
+                                if let Err(e2) = record_failure(
+                                    &pool,
+                                    &task_for_spawn,
+                                    "background queue full",
+                                    &metrics_for_spawn,
+                                )
+                                .await
                                 {
                                     metrics_for_spawn
                                         .retry_queue_persist_errors
