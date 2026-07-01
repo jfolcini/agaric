@@ -179,14 +179,17 @@ impl LoroEngine {
         block_id: &str,
         new_content: &str,
     ) -> Result<(), AppError> {
-        let current = self
-            .read_block(block_id)?
-            .ok_or_else(|| {
-                AppError::Validation(format!(
-                    "loro: apply_edit_via_diff_splice: block {block_id} not found"
-                ))
-            })?
-            .content;
+        // Content-only read (#2200): the diff-splice only needs the block's
+        // current `content` string, so use the lean `read_block_content`
+        // reader that skips the full-`read_block` extras (parent `get_meta`
+        // + O(K) sibling-rank scan) on this keystroke hot path. The returned
+        // bytes and the `Ok(None)`-for-missing behaviour are identical to
+        // `read_block(block_id)?.content`.
+        let current = self.read_block_content(block_id)?.ok_or_else(|| {
+            AppError::Validation(format!(
+                "loro: apply_edit_via_diff_splice: block {block_id} not found"
+            ))
+        })?;
 
         // Common prefix + suffix in Unicode scalars.  Scan both strings
         // with `char_indices()` in lockstep — no `Vec<char>` collection —
