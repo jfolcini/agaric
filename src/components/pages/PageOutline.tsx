@@ -66,7 +66,12 @@ export function PageOutline() {
   const headings = extractHeadings(blocks)
 
   const handleClick = (blockId: string) => {
-    document.getElementById(blockId)?.scrollIntoView({ behavior: 'smooth' })
+    // Blocks render `data-block-id={blockId}`; the editable element's own `id`
+    // is `editor-${blockId}`, so `getElementById(blockId)` never matched and the
+    // click was a silent no-op (#2211). Match PageEditor's link-navigation scroll.
+    document
+      .querySelector(`[data-block-id="${CSS.escape(blockId)}"]`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }
 
   return (

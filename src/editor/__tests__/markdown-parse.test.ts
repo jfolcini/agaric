@@ -364,3 +364,32 @@ describe('parse — list-item hard breaks (#1885)', () => {
     }
   })
 })
+
+// -- #2209: disallowed link schemes are stripped at parse time ----------------
+// A markdown link mark whose href carries a blocked scheme (javascript:, file:,
+// data:, …) must never enter stored content — markdown import / peer sync bypass
+// the input-time `validate` guard. `consumeExternalLink` drops the link mark and
+// keeps the visible display text, so hostile URLs never reach `openUrl`.
+describe('parse — disallowed link scheme normalization (#2209)', () => {
+  it('strips a javascript: link mark, keeping the display text', () => {
+    expect(parse('[click](javascript:alert(1))')).toEqual(doc(paragraph(text('click'))))
+  })
+
+  it('strips a file: link mark, keeping the display text', () => {
+    expect(parse('[secret](file:///etc/passwd)')).toEqual(doc(paragraph(text('secret'))))
+  })
+
+  it('strips a data: link mark, keeping the display text', () => {
+    expect(parse('[x](data:text/html,hi)')).toEqual(doc(paragraph(text('x'))))
+  })
+
+  it('preserves the display formatting while dropping a blocked link', () => {
+    expect(parse('[**bold**](javascript:x)')).toEqual(doc(paragraph(bold('bold'))))
+  })
+
+  it('keeps an allowed https: link mark intact', () => {
+    expect(parse('[ok](https://example.com)')).toEqual(
+      doc(paragraph(text('ok', [{ type: 'link', attrs: { href: 'https://example.com' } }]))),
+    )
+  })
+})

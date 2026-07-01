@@ -173,24 +173,29 @@ describe('PageOutline', () => {
     expect(items[2]).toHaveStyle({ paddingLeft: '24px' })
   })
 
-  it('clicking a heading calls scrollIntoView', async () => {
+  it('clicking a heading scrolls the block into view via data-block-id (#2211)', async () => {
     const user = userEvent.setup()
     const mockScrollIntoView = vi.fn()
 
-    // Create a fake DOM element with the block ID
-    const fakeEl = document.createElement('div')
-    fakeEl.id = 'b1'
-    fakeEl.scrollIntoView = mockScrollIntoView
-    document.body.append(fakeEl)
+    // The real block DOM carries `data-block-id={blockId}`; the element's own
+    // `id` is `editor-${blockId}`. A prior version resolved via
+    // `getElementById(blockId)`, so the click silently scrolled nowhere. Render
+    // a realistic element (id !== blockId, data-block-id === blockId) so the
+    // regression is actually defended.
+    const realEl = document.createElement('div')
+    realEl.id = 'editor-b1'
+    realEl.setAttribute('data-block-id', 'b1')
+    realEl.scrollIntoView = mockScrollIntoView
+    document.body.append(realEl)
 
     renderOutline([makeBlock({ id: 'b1', content: '# Click me' })])
 
     await user.click(screen.getByRole('button', { name: 'Open outline' }))
     await user.click(screen.getByText('Click me'))
 
-    expect(mockScrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth' })
+    expect(mockScrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' })
 
-    document.body.removeChild(fakeEl)
+    document.body.removeChild(realEl)
   })
 
   it('heading buttons have ring-inset focus rings so they are not clipped by the inner ScrollArea', async () => {

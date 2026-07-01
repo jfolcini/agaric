@@ -17,6 +17,7 @@
  */
 
 import { logger } from '../../lib/logger'
+import { isAllowedUrl } from '../../lib/url-validation'
 import { scanBareUrl, underscoreRunFlank, WORD_CHAR_RE } from '../markdown-common'
 import type {
   BlockLevelNode,
@@ -80,6 +81,36 @@ function consumeExternalLink(
 ): InlineNode[] {
   s.pos = match.endPos
   const href = unescapeUrl(match.url)
+
+  // #2209 — a disallowed scheme (`javascript:`/`file:`/`data:`/…) must never
+  // enter stored content as a live link mark: markdown import and peer sync are
+  // untrusted sinks that bypass the input-time `validate` guard. Drop the link
+  // mark at parse time and keep the visible display text as plain (outer-marked)
+  // inline nodes so the hostile URL is gone from the document, not merely
+  // suppressed at the render sink (RichContentRenderer/marks/text.tsx).
+  if (!isAllowedUrl(href)) {
+    const text = match.displayText.length === 0 ? href : match.displayText
+    const inner = parse(text, depth + 1)
+    const innerNodes = inner.content?.[0]?.content as readonly InlineNode[] | undefined
+    if (!innerNodes || innerNodes.length === 0) {
+      return [
+        outerMarks.length > 0
+          ? { type: 'text', text, marks: [...outerMarks] }
+          : { type: 'text', text },
+      ]
+    }
+    return innerNodes.map((node: InlineNode): InlineNode => {
+      if (node.type !== 'text') return node
+      // Strip any link mark the inner parse produced (a bare URL in the display
+      // text autolinks) — a blocked outer link leaves no live link behind.
+      const existing = (node.marks ?? []).filter((m) => m.type !== 'link') as PMMark[]
+      const marks = [...outerMarks, ...existing]
+      return marks.length > 0
+        ? { type: 'text', text: node.text, marks }
+        : { type: 'text', text: node.text }
+    })
+  }
+
   const linkMark: PMMark = { type: 'link' as const, attrs: { href } }
 
   if (match.displayText.length === 0) {
@@ -494,8 +525,12 @@ export function parseBulletList(
 /**
  * Build a list item from its marker text and any nested (dedented) lines. The
  * leading paragraph is always present; nested lines are recursively parsed and
- * any resulting `bulletList`/`orderedList` blocks are appended so that
- * `Tab`/`sinkListItem` nesting round-trips without loss (#1513).
+ * ALL resulting block children are appended. Beyond `bulletList`/`orderedList`
+ * (the `Tab`/`sinkListItem` nesting, #1513) a list item can hold a `codeBlock`,
+ * `heading`, `blockquote`, `table`, `math_block` or `horizontalRule` — the
+ * TipTap `ListItem` schema is `paragraph block*`. Keeping every nested block
+ * (instead of only lists) is what makes an indented code fence / heading inside
+ * an item round-trip through serialize→parse instead of being dropped (#2213).
  */
 function buildListItem(itemTextLines: string[], nested: string[], depth: number): ListItemNode {
   const inlineContent = parseHardBreakLines(itemTextLines, depth)
@@ -508,13 +543,7 @@ function buildListItem(itemTextLines: string[], nested: string[], depth: number)
   }
   const nestedDoc = parse(nested.join('\n'), depth + 1)
   const nestedBlocks = nestedDoc.content ?? []
-  const content: (ParagraphNode | OrderedListNode | BulletListNode)[] = [paragraph]
-  for (const block of nestedBlocks) {
-    if (block.type === 'bulletList' || block.type === 'orderedList') {
-      content.push(block)
-    }
-  }
-  return { type: 'listItem', content }
+  return { type: 'listItem', content: [paragraph, ...nestedBlocks] }
 }
 
 /**

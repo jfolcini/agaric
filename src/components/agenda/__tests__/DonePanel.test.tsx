@@ -736,4 +736,70 @@ describe('DonePanel', () => {
     // Pre- build would have post-filtered some out.
     expect(await screen.findByText(t('donePanel.header', { count: 3 }))).toBeInTheDocument()
   })
+
+  // 21. A late-resolving load-more must NOT graft the previous day's cursor
+  // page onto the new day's list once the date prop has changed (#2210). The
+  // generation guard drops the stale response.
+  it('drops a stale load-more response after the date prop changes (#2210)', async () => {
+    const user = userEvent.setup()
+
+    const stalePage = {
+      items: [makeBlock({ id: 'STALE', content: 'stale prev-day block' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+
+    // Controllable deferred so the day-A load-more stays pending until we
+    // explicitly resolve it — after the date has already switched to day B.
+    let resolveLoadMore: (value: typeof stalePage) => void = () => {}
+    const loadMorePromise = new Promise<typeof stalePage>((resolve) => {
+      resolveLoadMore = resolve
+    })
+
+    mockedQueryByProperty.mockImplementation(async (params) => {
+      if (params.cursor) {
+        // Day-A load-more: resolves late, under the deferred above.
+        return loadMorePromise
+      }
+      if (params.valueDate === '2025-06-16') {
+        // Fresh mount load for day B.
+        return {
+          items: [makeBlock({ id: 'NEWDAY', content: 'new-day block' })],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }
+      }
+      // Initial mount load for day A — advertises a second page.
+      return {
+        items: [makeBlock({ id: 'DAYA', content: 'day-A block' })],
+        next_cursor: 'cursor_dayA_p2',
+        has_more: true,
+        total_count: null,
+      }
+    })
+
+    const { rerender } = render(<DonePanel date="2025-06-15" />)
+
+    // Kick off the load-more; its response stays pending on the deferred.
+    const loadMoreBtn = await screen.findByRole('button', {
+      name: /load more completed items/i,
+    })
+    await user.click(loadMoreBtn)
+
+    // Switch to day B before the load-more resolves → new generation.
+    rerender(<DonePanel date="2025-06-16" />)
+    expect(await screen.findByText('new-day block')).toBeInTheDocument()
+
+    // Now resolve the stale day-A load-more page.
+    resolveLoadMore(stalePage)
+
+    // The stale prev-day page must be dropped, not grafted onto day B's list.
+    await waitFor(() => {
+      expect(screen.queryByText('stale prev-day block')).not.toBeInTheDocument()
+    })
+    // Day B's content stays intact.
+    expect(screen.getByText('new-day block')).toBeInTheDocument()
+  })
 })

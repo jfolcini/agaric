@@ -192,7 +192,7 @@ function PageEditorInner({
       {isDateFormattedPage(title) && (
         <>
           <div id="journal-due-panel">
-            <DuePanel date={title} onNavigateToPage={onNavigateToPage} />
+            <DuePanel date={title} onNavigateToPage={onNavigateToPage} excludePageId={pageId} />
           </div>
           <div id="journal-done-panel">
             <DonePanel date={title} onNavigateToPage={onNavigateToPage} excludePageId={pageId} />

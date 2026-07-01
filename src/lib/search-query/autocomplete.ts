@@ -236,6 +236,29 @@ function isInsideQuote(input: string, caret: number): boolean {
 }
 
 /**
+ * Column at which the whitespace/quote-delimited token containing `caret`
+ * ends (#2215).
+ *
+ * `detectAutocompleteAnchor` derives the active token by scanning *back* to the
+ * previous whitespace, but the caret may sit mid-token. To replace the whole
+ * token (not just the head up to the caret), we must also know where the token
+ * *ends*. We reuse the tokenizer's own segmentation so the scan is quote-aware:
+ * a quoted value with internal spaces (e.g. `path:"a b/*"`) is a single token
+ * and its trailing tail is consumed rather than stranded past the first space.
+ *
+ * Returns `caret` unchanged when the caret is already at a token boundary (or on
+ * whitespace) — i.e. there is nothing after the caret to absorb, preserving the
+ * caret-at-end behaviour.
+ */
+function tokenEndForCaret(input: string, caret: number): number {
+  for (const tok of tokenize(input)) {
+    const [start, end] = tok.span
+    if (caret >= start && caret < end) return end
+  }
+  return caret
+}
+
+/**
  * Replace the active autocomplete slice with `replacement`.
  *
  * Returns `{nextValue, nextCaret}` — the new input string and the
@@ -261,7 +284,10 @@ export function applyAutocompleteReplacement(
   const value = isPath ? quoteValueIfNeeded(replacement) : replacement
   const c = Math.max(0, Math.min(caret, input.length))
   const before = input.slice(0, anchor.anchor)
-  const after = input.slice(c)
+  // #2215 — extend the replaced region forward from the caret to the end of the
+  // token so a mid-token apply (`tag:#urgent` with the caret after `#ur`)
+  // replaces the whole token instead of leaving its tail (`… gent`) behind.
+  const after = input.slice(tokenEndForCaret(input, c))
   const insert = value + (after.startsWith(' ') ? '' : ' ')
   return {
     nextValue: before + insert + after,

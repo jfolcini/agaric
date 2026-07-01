@@ -65,6 +65,14 @@ export function DonePanel({
   const [totalCount, setTotalCount] = useState(0)
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
 
+  // Generation counter guarding async responses (#2210). Bumped by the mount
+  // effect whenever the fetch identity (date + space + invalidationKey +
+  // excludePageId) changes. The load-more path captures the generation at call
+  // time and drops its response if the generation has advanced before it
+  // resolves — otherwise a late load-more could graft the previous day's cursor
+  // page onto the new day's list and desync hasMore/nextCursor/totalCount.
+  const generationRef = useRef(0)
+
   // Fetch blocks completed on the given date.
   //
   // `excludeParentId` and `contentNonEmpty` are
@@ -75,6 +83,10 @@ export function DonePanel({
   // partial pages.
   const fetchBlocks = useCallback(
     async (cursor?: string) => {
+      // Snapshot the generation this request belongs to; if the mount effect
+      // bumps it (date/space/invalidationKey/excludePageId changed) before we
+      // resolve, this response is stale and must be dropped (#2210).
+      const gen = generationRef.current
       setLoading(true)
       try {
         const resp = await queryByProperty({
@@ -86,6 +98,7 @@ export function DonePanel({
           ...(excludePageId !== undefined && { excludeParentId: excludePageId }),
           contentNonEmpty: true,
         })
+        if (generationRef.current !== gen) return
         const newBlocks = cursor ? [...blocks, ...resp.items] : resp.items
         setBlocks(newBlocks)
         setNextCursor(resp.next_cursor)
@@ -96,12 +109,14 @@ export function DonePanel({
         const uniqueParentIds = collectUniqueParentIds(newBlocks)
         if (uniqueParentIds.length > 0) {
           const resolved = await batchResolve(uniqueParentIds)
+          if (generationRef.current !== gen) return
           setPageTitles((prev) => mergeResolvedTitles(prev, resolved, t('donePanel.untitled')))
         }
       } catch (err) {
+        if (generationRef.current !== gen) return
         logger.error('DonePanel', 'Failed to load done items', undefined, err)
       } finally {
-        setLoading(false)
+        if (generationRef.current === gen) setLoading(false)
       }
     },
     [date, blocks, totalCount, t, excludePageId, currentSpaceId],
@@ -115,6 +130,10 @@ export function DonePanel({
     setPageTitles(new Map())
     setCollapsed(false)
     setLoadError(false)
+
+    // Advance the generation so any in-flight load-more from the previous
+    // date/space/filter is dropped when it resolves (#2210).
+    generationRef.current += 1
 
     let cancelled = false
     const doFetch = async () => {
