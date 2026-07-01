@@ -150,7 +150,7 @@ async fn create_via_loro(
         .await
         .expect("append create");
     let mut tx = pool.begin().await.expect("begin create");
-    super::apply_op_tx(&mut tx, &record)
+    super::apply_op_tx(&mut tx, &record, None)
         .await
         .expect("apply create");
     tx.commit().await.expect("commit create");
@@ -226,7 +226,7 @@ async fn run_engine_arm() -> (
         .await
         .expect("append add");
     let mut tx = pool.begin().await.expect("begin add");
-    super::apply_op_tx(&mut tx, &record)
+    super::apply_op_tx(&mut tx, &record, None)
         .await
         .expect("apply add");
     tx.commit().await.expect("commit add");
@@ -243,7 +243,7 @@ async fn run_engine_arm() -> (
         .await
         .expect("append remove");
     let mut tx = pool.begin().await.expect("begin remove");
-    super::apply_op_tx(&mut tx, &record)
+    super::apply_op_tx(&mut tx, &record, None)
         .await
         .expect("apply remove");
     tx.commit().await.expect("commit remove");

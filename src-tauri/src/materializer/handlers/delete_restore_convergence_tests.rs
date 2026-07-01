@@ -177,7 +177,7 @@ async fn create_via_loro(
         .await
         .expect("append create");
     let mut tx = pool.begin().await.expect("begin create");
-    super::apply_op_tx(&mut tx, &record)
+    super::apply_op_tx(&mut tx, &record, None)
         .await
         .expect("apply create");
     tx.commit().await.expect("commit create");
@@ -270,7 +270,7 @@ async fn run_engine_arm() -> (Vec<DeleteShapeRow>, Vec<i64>, Vec<DeleteShapeRow>
         .await
         .expect("append delete");
     let mut tx = pool.begin().await.expect("begin delete");
-    super::apply_op_tx(&mut tx, &delete_record)
+    super::apply_op_tx(&mut tx, &delete_record, None)
         .await
         .expect("apply delete");
     tx.commit().await.expect("commit delete");
@@ -300,7 +300,7 @@ async fn run_engine_arm() -> (Vec<DeleteShapeRow>, Vec<i64>, Vec<DeleteShapeRow>
         .await
         .expect("append restore");
     let mut tx = pool.begin().await.expect("begin restore");
-    super::apply_op_tx(&mut tx, &restore_record)
+    super::apply_op_tx(&mut tx, &restore_record, None)
         .await
         .expect("apply restore");
     tx.commit().await.expect("commit restore");
@@ -542,7 +542,7 @@ async fn run_orphan_engine_arm() -> Vec<DeleteShapeRow> {
         .await
         .expect("append delete child");
     let mut tx = pool.begin().await.expect("begin delete child");
-    super::apply_op_tx(&mut tx, &del_child_record)
+    super::apply_op_tx(&mut tx, &del_child_record, None)
         .await
         .expect("apply delete child");
     tx.commit().await.expect("commit delete child");
@@ -557,7 +557,7 @@ async fn run_orphan_engine_arm() -> Vec<DeleteShapeRow> {
         .await
         .expect("append delete parent");
     let mut tx = pool.begin().await.expect("begin delete parent");
-    super::apply_op_tx(&mut tx, &del_parent_record)
+    super::apply_op_tx(&mut tx, &del_parent_record, None)
         .await
         .expect("apply delete parent");
     tx.commit().await.expect("commit delete parent");
@@ -582,7 +582,7 @@ async fn run_orphan_engine_arm() -> Vec<DeleteShapeRow> {
         .await
         .expect("append restore child");
     let mut tx = pool.begin().await.expect("begin restore child");
-    super::apply_op_tx(&mut tx, &restore_record)
+    super::apply_op_tx(&mut tx, &restore_record, None)
         .await
         .expect("apply restore child");
     tx.commit().await.expect("commit restore child");

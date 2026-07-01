@@ -240,7 +240,7 @@ impl ChainDriver {
             .expect("append op");
 
         let mut tx = pool.begin().await.expect("begin apply");
-        apply_op_tx(&mut tx, &record).await.expect("apply op");
+        apply_op_tx(&mut tx, &record, None).await.expect("apply op");
         tx.commit().await.expect("commit apply");
 
         if let Some((id, parent)) = created {

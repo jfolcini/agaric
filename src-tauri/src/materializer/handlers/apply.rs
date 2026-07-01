@@ -47,7 +47,10 @@ pub(super) async fn apply_op(pool: &SqlitePool, record: &Arc<OpRecord>) -> Resul
     // a `warn!` if slow) instead of mid-tx `busy_timeout` stalls
     // under SQLite's default DEFERRED isolation.
     let mut tx = crate::db::begin_immediate_logged(pool, "materializer_apply_op").await?;
-    let effects = apply_op_tx(&mut tx, record).await?;
+    // #2200: single-op apply is a "chunk of one" — pass `None` so the derived
+    // maintenance passes (dense reproject, count recompute) run inline, exactly
+    // as before this refactor. Only the batch import path opts into deferral.
+    let effects = apply_op_tx(&mut tx, record, None).await?;
     // #412 / #667 — SINGLE-DEVICE-CURSOR ASSUMPTION (single-op mirror of
     // the `BatchApplyOps` arm's guard in `task_handlers.rs`).
     //
@@ -480,6 +483,85 @@ pub(super) async fn advance_apply_cursor(
     Ok(())
 }
 
+/// #2200 Tier-2 import scaling: per-CHUNK accumulator that turns two
+/// per-block O(N) passes into a single end-of-chunk O(N) pass.
+///
+/// A "chunk" is one `BatchApplyOps` transaction (the import path threads an
+/// N-block CreateBlock batch through `apply_op_tx` in a loop). Two derived
+/// maintenance steps were previously run once PER block, giving O(N²) total
+/// work for an N-sibling / N-page import:
+///
+/// 1. **Dense-position reprojection** (`reproject_dense_positions`): each
+///    imported block re-ranked its WHOLE sibling group. Instead we record the
+///    latest authoritative sibling ordering per touched parent and reproject
+///    each parent ONCE at end-of-chunk. Correct because
+///    `LoroEngine::children_ordered_block_ids` returns the full post-insert
+///    ordering on every call, so the LAST create touching a given parent
+///    carries the complete final order — reprojecting that once yields exactly
+///    the ranks the per-block reprojection would have converged on (#400: the
+///    ordering key is insertion-stable, so deferring never reorders).
+///
+/// 2. **`pages_cache` count recompute** (`recompute_pages_cache_counts_for_pages`):
+///    each CreateBlock ran a full descendant `COUNT(*)` for its page. Instead
+///    we accumulate the distinct affected page ids and recompute their counts
+///    ONCE at end-of-chunk. The per-op affected-page RESOLUTION (which has
+///    side effects: `pages_cache` row seeding for page-creates, in-tx
+///    `reindex_block_links`) still runs per op; only the terminal count
+///    recompute is deferred. Final counts equal the per-block behaviour
+///    because the recompute is a pure function of committed `blocks` /
+///    `block_links` state, which is identical at end-of-chunk regardless of
+///    how many times we recomputed en route.
+///
+/// The single-op path (`apply_op`) and every LOCAL command path pass `None`,
+/// so their "chunk of one" flushes inline exactly as before — behaviour is
+/// unchanged off the batch path.
+#[derive(Default)]
+pub(crate) struct ChunkAccumulator {
+    /// Latest authoritative sibling ordering per touched parent group. Keyed
+    /// by the parent's `Option<block_id>` (`None` = top-level group). The
+    /// value is the full ordered child-id list read from the engine after the
+    /// most recent insert into that group during the chunk — reprojecting it
+    /// once at flush produces the final dense ranks.
+    reproject_groups: std::collections::HashMap<Option<String>, Vec<String>>,
+    /// Distinct pages whose `pages_cache` counts must be recomputed once at
+    /// end-of-chunk.
+    affected_pages: std::collections::HashSet<String>,
+}
+
+impl ChunkAccumulator {
+    /// Record (or overwrite) the authoritative sibling ordering for a parent
+    /// group touched by a create in this chunk. Overwrite is intentional: the
+    /// most recent list is the most complete (it includes every prior insert
+    /// into the group), so the last writer wins and the flush reprojects the
+    /// final order once.
+    pub(super) fn record_reproject(&mut self, parent: Option<String>, ordered: Vec<String>) {
+        self.reproject_groups.insert(parent, ordered);
+    }
+
+    /// Add many affected page ids at once.
+    pub(super) fn extend_affected_pages(&mut self, page_ids: impl IntoIterator<Item = String>) {
+        self.affected_pages.extend(page_ids);
+    }
+
+    /// End-of-chunk flush: reproject each touched sibling group ONCE, then
+    /// recompute the distinct affected pages' counts ONCE. Idempotent and
+    /// order-independent — the reproject writes final ranks and the count
+    /// recompute is a pure function of committed state, so running the flush
+    /// covers every parent/page touched regardless of interleaving. MUST run
+    /// inside the chunk's transaction so the deferred writes commit atomically
+    /// with the block mutations.
+    pub(super) async fn flush(self, conn: &mut sqlx::SqliteConnection) -> Result<(), AppError> {
+        for ordered in self.reproject_groups.values() {
+            crate::loro::projection::reproject_dense_positions(conn, ordered).await?;
+        }
+        if !self.affected_pages.is_empty() {
+            let pages: Vec<String> = self.affected_pages.into_iter().collect();
+            recompute_pages_cache_counts_for_pages(conn, &pages).await?;
+        }
+        Ok(())
+    }
+}
+
 /// Side-effects an `apply_op_tx` call may produce that the caller needs
 /// to fan out AFTER the SQL transaction commits. The SQL UPDATE for a
 /// `RestoreBlock` walks the descendant CTE and clears `deleted_at` for
@@ -556,10 +638,19 @@ pub(super) struct ApplyEffects {
 /// caller is responsible for running.  Today the only populated field
 /// is `restored_cohort` (see the struct docs); every other op type
 /// returns the default-empty effects.
-#[tracing::instrument(skip(conn, record), fields(seq = record.seq), err)]
+/// `chunk`: when `Some`, the caller is applying a multi-op chunk (the
+/// `BatchApplyOps` import path) and wants the two derived maintenance passes
+/// (dense-position reprojection, `pages_cache` count recompute) DEFERRED to a
+/// single end-of-chunk flush (`ChunkAccumulator::flush`) instead of running
+/// once per op — turning the per-block O(N) passes into one per-chunk O(N)
+/// pass (#2200). When `None` (single-op `apply_op`, every LOCAL command path)
+/// both passes run inline exactly as before, so the "chunk of one" flushes
+/// once with an identical result.
+#[tracing::instrument(skip(conn, record, chunk), fields(seq = record.seq), err)]
 pub(super) async fn apply_op_tx(
     conn: &mut sqlx::SqliteConnection,
     record: &OpRecord,
+    chunk: Option<&mut ChunkAccumulator>,
 ) -> Result<ApplyEffects, AppError> {
     use std::str::FromStr;
     let op_type = OpType::from_str(&record.op_type).map_err(|e| {
@@ -570,6 +661,11 @@ pub(super) async fn apply_op_tx(
     // Each arm assigns exactly the variant matching its op type; op types
     // that can't affect the cache counts leave this at `None`.
     let mut pre_state = PreOpState::None;
+    // #2200: re-borrow the optional chunk accumulator so it can be handed to
+    // BOTH the CreateBlock reprojection-deferral below AND the terminal
+    // count-maintenance hook. `Option<&mut _>` is not `Copy`; `as_deref_mut`
+    // reborrows without moving so the accumulator survives to the flush point.
+    let mut chunk = chunk;
     match op_type {
         OpType::CreateBlock => {
             // The engine path is the only path; the SQL-only
@@ -586,7 +682,10 @@ pub(super) async fn apply_op_tx(
                 block_type: p.block_type.clone(),
                 content: p.content.clone(),
             };
-            apply_create_block_via_loro(conn, &record.device_id, &p).await?;
+            // #2200 Item 1: when in a chunk, DEFER the dense-position
+            // reprojection to end-of-chunk (record the touched parent group in
+            // the accumulator); off the chunk path (`None`) reproject inline.
+            apply_create_block_via_loro(conn, &record.device_id, &p, chunk.as_deref_mut()).await?;
         }
         OpType::EditBlock => {
             let p: EditBlockPayload = serde_json::from_str(&record.payload)?;
@@ -723,7 +822,15 @@ pub(super) async fn apply_op_tx(
     // the count UPDATEs commit atomically with the block mutations. The
     // hook is a no-op for op types that cannot affect the counts (see
     // `maintain_pages_cache_counts_after_op`).
-    maintain_pages_cache_counts_after_op(conn, &pre_state).await?;
+    //
+    // #2200 Item 2: when in a chunk, the hook records the affected page ids in
+    // the accumulator and DEFERS the terminal `recompute_pages_cache_counts_for_pages`
+    // to the end-of-chunk flush (one pass over the distinct affected pages),
+    // instead of running the full descendant `COUNT(*)` recompute per op. Off
+    // the chunk path it recomputes inline, unchanged. Per-op affected-page
+    // RESOLUTION (with its side effects — page-create `pages_cache` seeding,
+    // in-tx `reindex_block_links`) always runs here regardless.
+    maintain_pages_cache_counts_after_op(conn, &pre_state, chunk).await?;
     tracing::debug!(op_type = %record.op_type, seq = record.seq, "applied op to materialized tables");
     Ok(effects)
 }

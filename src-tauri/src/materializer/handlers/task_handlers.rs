@@ -89,10 +89,21 @@ pub(crate) async fn handle_foreground_task(
             // default for non-RestoreBlock ops so the post-commit walk
             // just no-ops on those slots.
             let mut per_record_effects: Vec<ApplyEffects> = Vec::with_capacity(records.len());
+            // #2200 Tier-2 import scaling: a `BatchApplyOps` IS the chunk. The
+            // accumulator collects (a) the latest sibling ordering per touched
+            // parent group and (b) the distinct affected page ids across the
+            // whole batch, so the two derived maintenance passes
+            // (`reproject_dense_positions`, `recompute_pages_cache_counts_for_pages`)
+            // run ONCE per parent/page at end-of-chunk instead of once per block
+            // — collapsing the import's per-block O(N) passes into a per-chunk
+            // O(N) pass. Threaded as `Some(&mut chunk)` into every `apply_op_tx`
+            // and flushed below (inside the same tx, before commit) so the
+            // deferred writes stay atomic with the block mutations.
+            let mut chunk = ChunkAccumulator::default();
             // `records` is `&Arc<Vec<OpRecord>>`; `.iter()` derefs
             // through `Arc -> Vec` to yield `&OpRecord` without copying.
             for record in records.iter() {
-                let effects = match apply_op_tx(&mut tx, record).await {
+                let effects = match apply_op_tx(&mut tx, record, Some(&mut chunk)).await {
                     Ok(eff) => eff,
                     Err(e) => {
                         tracing::warn!(
@@ -109,6 +120,13 @@ pub(crate) async fn handle_foreground_task(
                 per_record_effects.push(effects);
                 max_seq = Some(max_seq.map_or(record.seq, |prev| prev.max(record.seq)));
             }
+            // #2200: end-of-chunk flush — reproject every touched sibling group
+            // ONCE and recompute every distinct affected page's counts ONCE,
+            // INSIDE this tx so the deferred writes commit atomically with the
+            // block mutations (and roll back together with them on the error
+            // paths above, which return before reaching here). A `?` here rolls
+            // the whole batch back, same as an in-loop failure.
+            chunk.flush(&mut tx).await?;
             // C-2b: advance the cursor to the highest seq in the batch
             // inside the same tx so `apply + cursor` are atomic. Empty
             // batches skip the update entirely (no seq to record).
