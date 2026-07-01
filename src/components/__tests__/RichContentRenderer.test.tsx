@@ -16,7 +16,11 @@ vi.mock('../../editor/markdown-serializer', async (importOriginal) => {
 const { parse } = await import('../../editor/markdown-serializer')
 const mockedParse = vi.mocked(parse)
 
-import { CALLOUT_CONFIG, renderRichContent } from '../RichContentRenderer'
+import {
+  CALLOUT_CONFIG,
+  clearRichContentParseCache,
+  renderRichContent,
+} from '../RichContentRenderer'
 import { TooltipProvider } from '../ui/tooltip'
 
 const BLOCK_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
@@ -26,6 +30,10 @@ const REF_BLOCK = '01NRZ3NDEKTSV4RRFFQ69G5FAV'
 describe('RichContentRenderer', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // Flush the module-level parse cache so a prior test's cached DocNode
+    // doesn't suppress the mocked `parse` (which several tests drive with
+    // `mockReturnValueOnce` / `mockImplementation`) — see #2193.
+    clearRichContentParseCache()
   })
 
   // -- Plain text / paragraphs ------------------------------------------------

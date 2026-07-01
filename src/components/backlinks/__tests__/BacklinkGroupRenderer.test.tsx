@@ -510,4 +510,99 @@ describe('BacklinkGroupRenderer', () => {
       expect(screen.getByText('valid')).toBeInTheDocument()
     })
   })
+
+  // #2193 — each backlink row is a memoized <BacklinkRow> that parses its
+  // content inside a useMemo keyed on content + resolve version. A parent
+  // re-render (e.g. LinkedReferences flipping roving focus) that passes fresh
+  // callback closures must NOT re-run renderRichContent for unchanged rows.
+  describe('memoization (#2193)', () => {
+    it('does not re-parse backlink content when parent re-renders with fresh callbacks', () => {
+      const mockFn = vi.mocked(renderRichContent)
+      const groups = [
+        makeGroup('P1', 'Page', [
+          makeBlock({ id: 'B1', content: 'alpha content' }),
+          makeBlock({ id: 'B2', content: 'beta content' }),
+        ]),
+      ]
+
+      const { rerender } = render(
+        <BacklinkGroupRenderer
+          groups={groups}
+          expandedGroups={{ P1: true }}
+          onToggleGroup={vi.fn()}
+          handleBlockClick={vi.fn()}
+          handleBlockKeyDown={vi.fn()}
+          {...defaultResolvers}
+        />,
+      )
+
+      expect(screen.getByText('alpha content')).toBeInTheDocument()
+      expect(screen.getByText('beta content')).toBeInTheDocument()
+      const callsAfterFirstRender = mockFn.mock.calls.length
+      expect(callsAfterFirstRender).toBe(2)
+
+      // Simulate a focus-navigation re-render: same content, brand-new
+      // callback identities (mirrors a parent closure churn per keystroke).
+      rerender(
+        <BacklinkGroupRenderer
+          groups={groups}
+          expandedGroups={{ P1: true }}
+          onToggleGroup={vi.fn()}
+          handleBlockClick={vi.fn()}
+          handleBlockKeyDown={vi.fn()}
+          {...defaultResolvers}
+        />,
+      )
+
+      // Output unchanged AND no additional renderRichContent (parse) calls.
+      expect(screen.getByText('alpha content')).toBeInTheDocument()
+      expect(screen.getByText('beta content')).toBeInTheDocument()
+      expect(mockFn.mock.calls.length).toBe(callsAfterFirstRender)
+    })
+
+    it('re-parses only the row whose content changed', () => {
+      const mockFn = vi.mocked(renderRichContent)
+      const groups = [
+        makeGroup('P1', 'Page', [
+          makeBlock({ id: 'B1', content: 'stable content' }),
+          makeBlock({ id: 'B2', content: 'old content' }),
+        ]),
+      ]
+
+      const { rerender } = render(
+        <BacklinkGroupRenderer
+          groups={groups}
+          expandedGroups={{ P1: true }}
+          onToggleGroup={vi.fn()}
+          handleBlockClick={vi.fn()}
+          handleBlockKeyDown={vi.fn()}
+          {...defaultResolvers}
+        />,
+      )
+
+      const callsAfterFirstRender = mockFn.mock.calls.length
+      expect(callsAfterFirstRender).toBe(2)
+
+      const nextGroups = [
+        makeGroup('P1', 'Page', [
+          makeBlock({ id: 'B1', content: 'stable content' }),
+          makeBlock({ id: 'B2', content: 'new content' }),
+        ]),
+      ]
+      rerender(
+        <BacklinkGroupRenderer
+          groups={nextGroups}
+          expandedGroups={{ P1: true }}
+          onToggleGroup={vi.fn()}
+          handleBlockClick={vi.fn()}
+          handleBlockKeyDown={vi.fn()}
+          {...defaultResolvers}
+        />,
+      )
+
+      expect(screen.getByText('new content')).toBeInTheDocument()
+      // Only the changed row re-parses (one additional call).
+      expect(mockFn.mock.calls.length).toBe(callsAfterFirstRender + 1)
+    })
+  })
 })

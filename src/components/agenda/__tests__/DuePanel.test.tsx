@@ -1314,6 +1314,72 @@ describe('DuePanel', () => {
         expect(screen.queryByText('Projected')).not.toBeInTheDocument()
       })
     })
+
+    // #2193 — projected-entry rich content lives in a memoized
+    // <ProjectedEntryContent> that parses inside a useMemo keyed on content +
+    // resolve version. Arrow-key roving focus (which flips `focusedIndex` on
+    // DuePanel every keypress) must not re-run renderRichContent for
+    // unchanged projected rows.
+    it('does not re-parse projected content on arrow-key focus navigation', async () => {
+      const { renderRichContent } = await import('@/components/RichContentRenderer')
+      const mockRender = vi.mocked(renderRichContent)
+
+      mockedListBlocks.mockResolvedValue({
+        items: [
+          makeBlock({
+            id: 'R1',
+            content: 'Real task one',
+            todo_state: 'TODO',
+            parent_id: 'PAGE_R1',
+            page_id: 'PAGE_R1',
+          }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+      mockedListProjectedAgenda.mockResolvedValue({
+        items: [
+          {
+            block: makeBlock({
+              id: 'PROJ_MEMO',
+              content: 'Projected memo target',
+              parent_id: 'PAGE_M',
+              page_id: 'PAGE_M',
+              todo_state: 'TODO',
+              due_date: '2026-04-13',
+            }),
+            projected_date: '2026-04-13',
+            source: 'due_date',
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+
+      const user = userEvent.setup()
+      render(<DuePanel date="2026-04-13" />)
+
+      await screen.findByText('Real task one')
+      await screen.findByText(/Projected memo target/)
+
+      // Count renderRichContent calls for the projected content specifically.
+      const projectedParseCount = () =>
+        mockRender.mock.calls.filter((c) => c[0] === 'Projected memo target').length
+      const before = projectedParseCount()
+      expect(before).toBe(1)
+
+      // Roving focus: flips focusedIndex on DuePanel, re-rendering it — the
+      // memoized projected row must not re-parse.
+      const navContainer = document.querySelector('.due-panel-content') as HTMLElement
+      navContainer.focus()
+      await user.keyboard('{ArrowDown}{ArrowUp}')
+
+      // Output unchanged AND no additional parse of the projected content.
+      expect(screen.getByText(/Projected memo target/)).toBeInTheDocument()
+      expect(projectedParseCount()).toBe(before)
+    })
   })
 
   // --- Overdue blocks (#641) ---

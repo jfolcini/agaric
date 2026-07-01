@@ -681,4 +681,56 @@ describe('CollapsibleGroupList', () => {
     expect(within(expandedBtn).getByTestId('chevron-down')).toBeInTheDocument()
     expect(within(collapsedBtn).getByTestId('chevron-right')).toBeInTheDocument()
   })
+
+  // #2193 — the component is wrapped in React.memo. A parent re-render with
+  // referentially-stable props must not re-run the group map / renderBlock.
+  describe('memoization (#2193)', () => {
+    it('does not re-render group rows when props are referentially stable', () => {
+      const renderBlock = vi.fn((block: { id: string; content: string }) => (
+        <li key={block.id} data-testid={`block-${block.id}`}>
+          {block.content}
+        </li>
+      ))
+      const groups = [makeGroup('P1', 'Alpha Page', [{ id: 'B1', content: 'block 1' }])]
+      const expandedGroups = { P1: true }
+      const onToggleGroup = vi.fn()
+
+      const props = {
+        groups,
+        expandedGroups,
+        onToggleGroup,
+        untitledLabel: 'Untitled',
+        renderBlock,
+      }
+
+      const { rerender } = render(<CollapsibleGroupList {...props} />)
+      expect(screen.getByText('block 1')).toBeInTheDocument()
+      const callsAfterFirstRender = renderBlock.mock.calls.length
+      expect(callsAfterFirstRender).toBeGreaterThan(0)
+
+      // Re-render with the identical (referentially-stable) props object.
+      rerender(<CollapsibleGroupList {...props} />)
+
+      // memo skips the re-render entirely — renderBlock isn't called again.
+      expect(screen.getByText('block 1')).toBeInTheDocument()
+      expect(renderBlock.mock.calls.length).toBe(callsAfterFirstRender)
+    })
+
+    it('has no a11y violations', async () => {
+      const groups = [makeGroup('P1', 'Alpha Page', [{ id: 'B1', content: 'accessible block' }])]
+
+      const { container } = render(
+        <CollapsibleGroupList
+          groups={groups}
+          expandedGroups={{ P1: true }}
+          onToggleGroup={vi.fn()}
+          untitledLabel="Untitled"
+          renderBlock={defaultRenderBlock}
+        />,
+      )
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
 })
