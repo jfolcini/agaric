@@ -155,33 +155,22 @@ impl LoroEngine {
         self.migrate_legacy_sibling_order_best_effort();
         Ok(())
     }
-    /// Import `bytes` into the doc and return every block_id present
-    /// in the post-import block-hierarchy LoroTree, in parent-before-child
-    /// pre-order so the caller's FK-ordered SQL projection succeeds.
+    /// Import `bytes` into the doc and return the block_ids whose
+    /// projected state it changed, in parent-before-child order so the
+    /// caller's FK-ordered SQL projection succeeds.
     ///
     /// Sync-pull projection driver. The receiver's caller passes each
     /// returned block_id to
     /// [`crate::loro::projection::project_block_full_to_sql`] so the
     /// SQL `blocks` row mirrors the engine's post-import state.
     ///
-    /// ## Why brute-force enumeration (not VersionRange-driven diff)
-    ///
-    /// Loro 1.12's [`loro::ImportStatus`] reports a
-    /// [`loro::VersionRange`] (`success`) — the (peer, counter-range)
-    /// span of accepted ops — but does NOT directly map to the set of
-    /// block_ids whose state changed.  Translating a counter-range
-    /// into changed-container-ids would require either
-    /// (a) walking the op-log changes in that range and decoding their
-    /// targets, or (b) subscribing to root-level diff events for the
-    /// duration of the import.  Both add complexity for the day-4
-    /// additive landing; the day-5 wiring or later can swap to a
-    /// targeted enumeration once a benchmark shows the brute-force
-    /// projection is on a hot path.
-    ///
-    /// The brute-force walk costs O(N_blocks) per sync-pull — same
-    /// asymptotic shape as `count_alive_blocks` / `list_children_walk`
-    /// — but sync-pull is a cold path bounded by the op-streaming
-    /// cadence, so the cost is amortised against network latency.
+    /// #2036/#2264: for recognised incremental delta shapes the set is
+    /// resolved from a scoped root-level diff subscription active for the
+    /// import's duration and is bounded by the delta, NOT the vault; a
+    /// snapshot import or an unrecognised diff shape falls back to the
+    /// historical full live-tree enumeration. See
+    /// [`Self::import_with_changed_purged_tagscope`] (the shared body)
+    /// for the resolution rules.
     ///
     /// ## Edge cases
     ///
@@ -362,6 +351,17 @@ impl LoroEngine {
         let changed = self.resolve_changed_blocks(&cap);
         let tag_scope = TagScope::Subtrees(self.resolve_tag_scope(&cap));
         Ok((changed, purged, tag_scope))
+    }
+
+    /// Full live-tree enumeration in parent-before-child pre-order, exposed
+    /// for the #535 recovery-replay projection fallback (#2264 review): when
+    /// a write-ahead inbox slot's bytes are re-imported into a doc that
+    /// ALREADY holds every op (`loro_doc_state` was persisted ahead of the
+    /// crashed SQL projection), the import diff is empty and says nothing
+    /// about SQL state — the caller reprojects this full set instead of
+    /// trusting the no-op.
+    pub fn live_blocks_preorder(&self) -> Vec<crate::ulid::BlockId> {
+        self.enumerate_live_preorder()
     }
 
     /// Brute-force enumeration of every live block_id in parent-before-child

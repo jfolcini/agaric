@@ -108,6 +108,14 @@ pub enum ApplyOutcome {
         space_id: SpaceId,
         /// Block ids the import changed (may be empty for a no-op import).
         changed_blocks: Vec<crate::ulid::BlockId>,
+        /// #2264: block ids the import hard-purged (`PurgeBlock`), disjoint
+        /// from `changed_blocks` (which enumerates live blocks only — #2128).
+        /// Surfaced so the orchestrator can distinguish a complete no-op
+        /// import (both sets empty → skip the derived-cache fan-out
+        /// entirely) from a purge-only import (aggregate caches like
+        /// `tags_cache.usage_count` / `pages_cache` counts still need a
+        /// refresh even though no live block changed).
+        purged_blocks: Vec<crate::ulid::BlockId>,
         /// #1071: the deduped set of owning *page* ids (page-root block ids)
         /// the changed blocks belong to. Resolved from the committed
         /// `parent_id`/`block_type` chain right after the projection tx (a
@@ -543,8 +551,16 @@ pub async fn apply_remote(
     .fetch_one(pool)
     .await?;
 
-    let changed_blocks =
-        import_and_project(pool, registry, device_id, &space_id, &bytes, inbox_id).await?;
+    let (changed_blocks, purged_blocks) = import_and_project(
+        pool,
+        registry,
+        device_id,
+        &space_id,
+        &bytes,
+        inbox_id,
+        InboundDeliveryKind::Live,
+    )
+    .await?;
 
     // #1071: resolve the owning page id of every changed block so the
     // orchestrator can thread a targeted-invalidation set out via
@@ -559,6 +575,7 @@ pub async fn apply_remote(
     Ok(ApplyOutcome::Imported {
         space_id,
         changed_blocks,
+        purged_blocks,
         changed_page_ids,
     })
 }
@@ -630,6 +647,21 @@ async fn resolve_changed_page_ids(
     Ok(page_ids)
 }
 
+/// How the payload handed to [`import_and_project`] reached us — decides
+/// whether a complete no-op import diff may be trusted as "SQL is already
+/// consistent" (#2264 review; see the fn's "no-op short-circuit" docs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InboundDeliveryKind {
+    /// A live sync-session delivery ([`apply_remote`]): the inbox slot was
+    /// inserted moments ago by us, so a no-op diff is trusted unless some
+    /// OTHER leftover slot for the space marks a prior failed projection.
+    Live,
+    /// A #535 boot-recovery replay of a surviving inbox slot
+    /// ([`replay_inbox_row`]): the slot's survival proves its projection
+    /// never committed — a no-op diff is NEVER trusted.
+    RecoveryReplay,
+}
+
 /// Import `bytes` into the per-space engine and project every changed
 /// block into the SQL `blocks` table (+ properties / tags / deleted_at),
 /// clearing the write-ahead inbox slot `inbox_id` atomically with the
@@ -646,6 +678,44 @@ async fn resolve_changed_page_ids(
 /// Idempotency contract: re-running this with the SAME bytes is safe —
 /// Loro import is idempotent and every SQL projection here is an upsert —
 /// which is exactly what makes boot replay (and a double replay) safe.
+///
+/// Returns `(changed_blocks, purged_blocks)` — the live blocks the import
+/// changed (projected in Passes A–C) and the blocks it hard-purged (Pass D).
+/// #2264: both are surfaced so callers can tell a complete no-op import
+/// apart from a purge-only one and skip downstream work accordingly.
+///
+/// ## #2264 — no-op short-circuit (and when it must NOT fire)
+///
+/// A redelivered / echoed payload that adds zero new ops (the engine's
+/// oplog-frontier check, #2036) produces empty changed + purged sets and an
+/// empty tag scope. An empty import diff proves the ENGINE already holds
+/// every op in `bytes` — it does NOT prove SQL ever projected them. The two
+/// facts diverge exactly when a prior delivery of these ops imported them
+/// into the engine but died before its projection tx committed: that failure
+/// always leaves ITS OWN write-ahead inbox slot behind (#535), and
+/// `loro_doc_state` may meanwhile have been persisted ahead of SQL (the
+/// periodic / exit `save_all_engines`). So the fast path — skip the whole
+/// Phase-2 projection tx, clear the slot with a single autocommit DELETE
+/// instead of a `BEGIN IMMEDIATE` writer-lock round-trip — is taken only
+/// when the caller-supplied [`InboundDeliveryKind`] lets us rule that out:
+///
+/// * [`InboundDeliveryKind::Live`]: trusted iff NO OTHER inbox slot exists
+///   for this space (ours was just inserted by [`apply_remote`]). A leftover
+///   slot marks a prior failed projection whose ops this redelivery may
+///   duplicate — SQL could be stale, so fall through to the full-projection
+///   fallback, which heals it immediately.
+/// * [`InboundDeliveryKind::RecoveryReplay`] (#535 boot path): NEVER trusted
+///   — the slot being replayed is itself the evidence that the projection
+///   for these bytes never committed (it is deleted only in-tx with a
+///   committed projection).
+///
+/// The untrusted fallback reprojects the WHOLE live tree with a global
+/// tag-inheritance rebuild — the pre-#2036 recovery behaviour (idempotent
+/// upserts), returned as the changed set so the caller's FTS / cache fan-out
+/// heals too. Known pre-existing gap (#2128, unchanged here): a purge whose
+/// Pass D never committed is invisible to a redundant re-import (the engine
+/// index already dropped the subtree, so the purged delta is empty); the
+/// stale purged rows are NOT swept by this additive fallback.
 pub(crate) async fn import_and_project(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
@@ -653,7 +723,8 @@ pub(crate) async fn import_and_project(
     space_id: &SpaceId,
     bytes: &[u8],
     inbox_id: i64,
-) -> Result<Vec<crate::ulid::BlockId>, AppError> {
+    delivery: InboundDeliveryKind,
+) -> Result<(Vec<crate::ulid::BlockId>, Vec<crate::ulid::BlockId>), AppError> {
     use crate::loro::projection::{
         project_block_full_to_sql, project_purge_blocks_to_sql,
         reproject_block_deleted_at_from_engine, reproject_block_properties_from_engine,
@@ -688,6 +759,60 @@ pub(crate) async fn import_and_project(
                 .engine_mut()
                 .import_with_changed_purged_tagscope(bytes)
         })?
+    };
+
+    // #2264: complete no-op import diff (a redelivered / echoed payload that
+    // added zero new ops — the engine's oplog-frontier short-circuit, #2036).
+    // The empty diff proves the ENGINE already had everything in `bytes`; it
+    // does NOT prove SQL projected it — see the "#2264 — no-op short-circuit"
+    // section of the fn docs for the trust rule applied here. The trusted
+    // fast path's only remaining obligation is clearing the write-ahead inbox
+    // slot (#535) with a single autocommit DELETE (no `BEGIN IMMEDIATE`
+    // writer lock); the DELETE is a no-op if the row is already gone,
+    // preserving the double-replay safety of the tx-coupled path below.
+    let noop_diff = changed_blocks.is_empty()
+        && purged_blocks.is_empty()
+        && matches!(&tag_scope, crate::loro::engine::TagScope::Subtrees(roots) if roots.is_empty());
+    let (changed_blocks, tag_scope) = if noop_diff {
+        let trusted = match delivery {
+            // The replayed slot itself proves the projection never committed.
+            InboundDeliveryKind::RecoveryReplay => false,
+            // Trusted iff no OTHER slot (a prior delivery's failed
+            // projection, whose ops this payload may duplicate) is pending
+            // for this space. Runtime query (not `query!`): one-off
+            // static-string probe on the rare no-op path.
+            InboundDeliveryKind::Live => {
+                // dynamic-sql: static-string COUNT probe guarding the no-op fast path
+                // (#2264 review); runtime form to keep the rare path off the macro cache.
+                let leftover: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM loro_sync_inbox WHERE space_id = ? AND id != ?",
+                )
+                .bind(space_id.as_str())
+                .bind(inbox_id)
+                .fetch_one(pool)
+                .await?;
+                leftover == 0
+            }
+        };
+        if trusted {
+            sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", inbox_id)
+                .execute(pool)
+                .await?;
+            return Ok((changed_blocks, purged_blocks));
+        }
+        // Untrusted no-op: SQL may be behind the engine (the crash window
+        // #535 exists to heal). Reproject the whole live tree + globally
+        // rebuild tag inheritance — the pre-#2036 recovery behaviour. The
+        // full set is returned as `changed_blocks` so the caller's FTS /
+        // derived-cache fan-out heals as well. (Purged-rows gap: see fn
+        // docs — pre-existing #2128 limitation, additive fallback only.)
+        let full = {
+            let mut guard = registry.for_space(space_id, device_id)?;
+            guard.engine_mut().live_blocks_preorder()
+        };
+        (full, crate::loro::engine::TagScope::Global)
+    } else {
+        (changed_blocks, tag_scope)
     };
 
     // Phase 2 — project each changed block to SQL in a single tx.
@@ -732,13 +857,18 @@ pub(crate) async fn import_and_project(
     //
     // Load property_definitions ONCE for the whole pass (hoisted out of
     // the per-block loop to avoid an N+1 SELECT against a static table).
-    let value_types: std::collections::HashMap<String, String> =
+    // #2264: skipped when the import changed no live block (purge-only
+    // imports reach this tx solely for Pass D + the inbox DELETE).
+    let value_types: std::collections::HashMap<String, String> = if changed_blocks.is_empty() {
+        std::collections::HashMap::new()
+    } else {
         sqlx::query!("SELECT key, value_type FROM property_definitions")
             .fetch_all(&mut *tx)
             .await?
             .into_iter()
             .map(|r| (r.key, r.value_type))
-            .collect();
+            .collect()
+    };
     for (block_id, (snapshot_opt, props, _, _)) in changed_blocks.iter().zip(&block_states) {
         project_block_full_to_sql(&mut tx, space_id, block_id, snapshot_opt.as_ref()).await?;
         // Re-project the block's properties: mirrors remote
@@ -830,7 +960,7 @@ pub(crate) async fn import_and_project(
         }
     }
 
-    Ok(changed_blocks)
+    Ok((changed_blocks, purged_blocks))
 }
 
 /// Boot-recovery entry point: re-run [`import_and_project`] for a single
@@ -928,7 +1058,24 @@ pub(crate) async fn replay_inbox_row(
         return Ok(Vec::new());
     }
 
-    import_and_project(pool, registry, device_id, &space, bytes, inbox_id).await
+    // Boot recovery consumes only the changed set (its FTS reconciliation
+    // is its own pass); the purged delta is projected in-tx by Pass D.
+    // `RecoveryReplay` disables the #2264 no-op fast path: this slot's
+    // survival proves its projection never committed, even if the engine
+    // (rehydrated from a `loro_doc_state` persisted ahead of the crash)
+    // already holds every op in `bytes` — the full-projection fallback
+    // reconciles SQL instead of silently dropping the slot.
+    import_and_project(
+        pool,
+        registry,
+        device_id,
+        &space,
+        bytes,
+        inbox_id,
+        InboundDeliveryKind::RecoveryReplay,
+    )
+    .await
+    .map(|(changed, _purged)| changed)
 }
 
 // ---------------------------------------------------------------------------
@@ -3489,6 +3636,521 @@ mod tests {
         assert!(
             b_refused.is_none(),
             "space B must be refused: its engine-live B2 is in the shared soft-deleted set"
+        );
+    }
+
+    const TAG_X: &str = "01HZ0000000000000000000TX1";
+    const TAG_Y: &str = "01HZ0000000000000000000TY2";
+
+    /// Sync a full snapshot from a fresh sender registry into a fresh
+    /// receiver registry + pool. Returns the receiver registry.
+    async fn seed_receiver_via_snapshot(
+        pool: &SqlitePool,
+        registry_a: &LoroEngineRegistry,
+        space: &SpaceId,
+    ) -> LoroEngineRegistry {
+        let msg = prepare_outgoing_for_pool(pool, registry_a, space, "device-A", None)
+            .await
+            .expect("prepare snapshot")
+            .expect("freshness gate must not refuse");
+        let registry_b = LoroEngineRegistry::new();
+        let outcome = apply_remote(pool, &registry_b, "device-B", msg)
+            .await
+            .expect("apply snapshot");
+        assert!(
+            matches!(outcome, ApplyOutcome::Imported { .. }),
+            "snapshot apply must import, got {outcome:?}"
+        );
+        registry_b
+    }
+
+    /// Produce an incremental update from A covering everything past
+    /// B's current vv and apply it on B, returning the outcome.
+    async fn round_trip_update(
+        pool: &SqlitePool,
+        registry_a: &LoroEngineRegistry,
+        registry_b: &LoroEngineRegistry,
+        space: &SpaceId,
+    ) -> ApplyOutcome {
+        let b_vv = registry_b.loro_vv(space).expect("B vv");
+        let msg = prepare_outgoing_for_pool(pool, registry_a, space, "device-A", Some(&b_vv))
+            .await
+            .expect("prepare update")
+            .expect("freshness gate must not refuse");
+        apply_remote(pool, registry_b, "device-B", msg)
+            .await
+            .expect("apply update")
+    }
+
+    /// #2264 (a): an inbound delta that edited ONE block of a multi-block
+    /// vault reports a changed set bounded to exactly that block — not the
+    /// whole vault — so the per-block SQL projection, page-id resolution and
+    /// FTS reindex all scale with the delta.
+    #[tokio::test]
+    async fn inbound_small_delta_changed_set_bounded_to_touched_block_2264() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        let registry_a = LoroEngineRegistry::new();
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            let e = g.engine_mut();
+            for (i, id) in [BLOCK_A, BLOCK_B, BLOCK_C, BLOCK_D, BLOCK_E]
+                .iter()
+                .enumerate()
+            {
+                let pos = i64::try_from(i).expect("seed index fits i64");
+                e.apply_create_block(id, "content", "seed", None, pos)
+                    .expect("create");
+            }
+        }
+        let registry_b = seed_receiver_via_snapshot(&pool, &registry_a, &space).await;
+
+        // Remote one-block content edit.
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            g.engine_mut()
+                .apply_edit_content(BLOCK_C, 0, 0, "x")
+                .expect("edit C");
+        }
+        let outcome = round_trip_update(&pool, &registry_a, &registry_b, &space).await;
+        match outcome {
+            ApplyOutcome::Imported {
+                changed_blocks,
+                purged_blocks,
+                ..
+            } => {
+                let changed: Vec<&str> = changed_blocks
+                    .iter()
+                    .map(crate::ulid::BlockId::as_str)
+                    .collect();
+                assert_eq!(
+                    changed,
+                    vec![BLOCK_C],
+                    "a one-block content delta must report exactly that block \
+                     as changed, not the whole vault (#2264)"
+                );
+                assert!(purged_blocks.is_empty(), "content edit purges nothing");
+            }
+            other => panic!("expected Imported, got {other:?}"),
+        }
+        // And the projection converged that block in SQL.
+        let content: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(BLOCK_C)
+            .fetch_one(&pool)
+            .await
+            .expect("read C");
+        assert_eq!(content, "xseed", "the edited block's row converged");
+    }
+
+    /// #2264: a redelivered (already-imported) update is a complete no-op —
+    /// empty changed / purged / page-id sets — and still clears its
+    /// write-ahead inbox slot via the short-circuit path.
+    #[tokio::test]
+    async fn redelivered_update_is_complete_noop_2264() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        let registry_a = LoroEngineRegistry::new();
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            g.engine_mut()
+                .apply_create_block(BLOCK_A, "content", "seed", None, 0)
+                .expect("create");
+        }
+        let registry_b = seed_receiver_via_snapshot(&pool, &registry_a, &space).await;
+
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            g.engine_mut()
+                .apply_edit_content(BLOCK_A, 0, 0, "y")
+                .expect("edit A");
+        }
+        // Build ONE update message and deliver it twice.
+        let b_vv = registry_b.loro_vv(&space).expect("B vv");
+        let msg = prepare_outgoing_for_pool(&pool, &registry_a, &space, "device-A", Some(&b_vv))
+            .await
+            .expect("prepare update")
+            .expect("freshness gate must not refuse");
+        let first = apply_remote(&pool, &registry_b, "device-B", msg.clone())
+            .await
+            .expect("first apply");
+        assert!(
+            matches!(&first, ApplyOutcome::Imported { changed_blocks, .. } if !changed_blocks.is_empty()),
+            "first delivery imports the edit, got {first:?}"
+        );
+
+        let second = apply_remote(&pool, &registry_b, "device-B", msg)
+            .await
+            .expect("second apply");
+        match second {
+            ApplyOutcome::Imported {
+                changed_blocks,
+                purged_blocks,
+                changed_page_ids,
+                ..
+            } => {
+                assert!(changed_blocks.is_empty(), "redelivery changes nothing");
+                assert!(purged_blocks.is_empty(), "redelivery purges nothing");
+                assert!(changed_page_ids.is_empty(), "no page invalidation on no-op");
+            }
+            other => panic!("expected Imported, got {other:?}"),
+        }
+        // The no-op short-circuit still cleared the write-ahead inbox slot.
+        let inbox_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+            .fetch_one(&pool)
+            .await
+            .expect("count inbox");
+        assert_eq!(inbox_rows, 0, "no-op path must clear its inbox slot (#535)");
+    }
+
+    /// #2265 (b): a content-only inbound delta triggers NO tag-inheritance
+    /// rebuild work — neither the global `rebuild_all` nor a scoped subtree
+    /// recompute. Observable via a deliberately-wrong sentinel row in
+    /// `block_tag_inherited`: ANY recompute covering the touched subtree
+    /// would sweep it; a content-only delta must leave it in place.
+    #[tokio::test]
+    async fn content_only_inbound_delta_skips_tag_inheritance_rebuild_2265() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        let registry_a = LoroEngineRegistry::new();
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            let e = g.engine_mut();
+            e.apply_create_block(TAG_X, "tag", "tag-x", None, 0)
+                .expect("create tag x");
+            e.apply_create_block(TAG_Y, "tag", "tag-y", None, 1)
+                .expect("create tag y");
+            e.apply_create_block(BLOCK_A, "content", "parent", None, 2)
+                .expect("create AA");
+            e.apply_create_block(BLOCK_B, "content", "child", Some(BLOCK_A), 0)
+                .expect("create BB");
+            e.apply_add_tag(BLOCK_A, TAG_X).expect("tag AA");
+        }
+        let registry_b = seed_receiver_via_snapshot(&pool, &registry_a, &space).await;
+
+        // Snapshot projection computed the genuine inherited row.
+        let inherited: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM block_tag_inherited \
+             WHERE block_id = ? AND tag_id = ? AND inherited_from = ?",
+        )
+        .bind(BLOCK_B)
+        .bind(TAG_X)
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("count inherited");
+        assert_eq!(
+            inherited, 1,
+            "child inherits the parent's tag after snapshot"
+        );
+
+        // Sentinel: a row NO recompute would produce (BB does not inherit
+        // TAG_Y from anywhere). A global rebuild_all — or a subtree
+        // recompute covering AA/BB — would delete it.
+        sqlx::query(
+            "INSERT INTO block_tag_inherited (block_id, tag_id, inherited_from) \
+             VALUES (?, ?, ?)",
+        )
+        .bind(BLOCK_B)
+        .bind(TAG_Y)
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .expect("insert sentinel");
+
+        // Content-only remote edit on the tagged parent.
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            g.engine_mut()
+                .apply_edit_content(BLOCK_A, 0, 0, "z")
+                .expect("edit AA");
+        }
+        let outcome = round_trip_update(&pool, &registry_a, &registry_b, &space).await;
+        match outcome {
+            ApplyOutcome::Imported { changed_blocks, .. } => {
+                let changed: Vec<&str> = changed_blocks
+                    .iter()
+                    .map(crate::ulid::BlockId::as_str)
+                    .collect();
+                assert_eq!(changed, vec![BLOCK_A], "content edit changes only AA");
+            }
+            other => panic!("expected Imported, got {other:?}"),
+        }
+
+        let sentinel: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM block_tag_inherited \
+             WHERE block_id = ? AND tag_id = ?",
+        )
+        .bind(BLOCK_B)
+        .bind(TAG_Y)
+        .fetch_one(&pool)
+        .await
+        .expect("count sentinel");
+        assert_eq!(
+            sentinel, 1,
+            "a content-only inbound delta must trigger NO tag-inheritance \
+             recompute (the sentinel row would have been swept) — #2265"
+        );
+    }
+
+    /// #2265 (c): an inbound MOVE recomputes inherited tags for the moved
+    /// block's WHOLE subtree — descendants included, even though they are
+    /// not in the changed set — because a move changes the ancestor chain
+    /// for every node under it, with or without tag ops in the delta.
+    #[tokio::test]
+    async fn inbound_move_delta_recomputes_descendant_inherited_tags_2265() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        let registry_a = LoroEngineRegistry::new();
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            let e = g.engine_mut();
+            e.apply_create_block(TAG_X, "tag", "tag-x", None, 0)
+                .expect("create tag x");
+            e.apply_create_block(TAG_Y, "tag", "tag-y", None, 1)
+                .expect("create tag y");
+            // AA (tagged X) → BB → DD;  CC (tagged Y) is the move target.
+            e.apply_create_block(BLOCK_A, "content", "old parent", None, 2)
+                .expect("create AA");
+            e.apply_create_block(BLOCK_C, "content", "new parent", None, 3)
+                .expect("create CC");
+            e.apply_create_block(BLOCK_B, "content", "moved", Some(BLOCK_A), 0)
+                .expect("create BB");
+            e.apply_create_block(BLOCK_D, "content", "descendant", Some(BLOCK_B), 0)
+                .expect("create DD");
+            e.apply_add_tag(BLOCK_A, TAG_X).expect("tag AA");
+            e.apply_add_tag(BLOCK_C, TAG_Y).expect("tag CC");
+        }
+        let registry_b = seed_receiver_via_snapshot(&pool, &registry_a, &space).await;
+
+        let inherited_pairs = |pool: &SqlitePool, block: &'static str| {
+            let pool = pool.clone();
+            async move {
+                let rows: Vec<(String, String)> = sqlx::query_as(
+                    "SELECT tag_id, inherited_from FROM block_tag_inherited \
+                     WHERE block_id = ? ORDER BY tag_id",
+                )
+                .bind(block)
+                .fetch_all(&pool)
+                .await
+                .expect("fetch inherited");
+                rows
+            }
+        };
+
+        assert_eq!(
+            inherited_pairs(&pool, BLOCK_D).await,
+            vec![(TAG_X.to_string(), BLOCK_A.to_string())],
+            "pre-move: DD inherits X from AA"
+        );
+
+        // Remote structural move: BB (with DD under it) from AA to CC.
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            g.engine_mut()
+                .apply_move_block(BLOCK_B, Some(BLOCK_C), 0)
+                .expect("move BB under CC");
+        }
+        let outcome = round_trip_update(&pool, &registry_a, &registry_b, &space).await;
+        match outcome {
+            ApplyOutcome::Imported { changed_blocks, .. } => {
+                let changed: Vec<&str> = changed_blocks
+                    .iter()
+                    .map(crate::ulid::BlockId::as_str)
+                    .collect();
+                assert_eq!(
+                    changed,
+                    vec![BLOCK_B],
+                    "move delta changed set is bounded to the moved block + \
+                     affected sibling groups (here: just BB) — NOT the subtree"
+                );
+                assert!(
+                    !changed.contains(&BLOCK_D),
+                    "descendant DD must not need to be in the changed set"
+                );
+            }
+            other => panic!("expected Imported, got {other:?}"),
+        }
+
+        // The scoped subtree recompute covered the whole moved subtree.
+        assert_eq!(
+            inherited_pairs(&pool, BLOCK_B).await,
+            vec![(TAG_Y.to_string(), BLOCK_C.to_string())],
+            "post-move: BB inherits Y from CC (X swept)"
+        );
+        assert_eq!(
+            inherited_pairs(&pool, BLOCK_D).await,
+            vec![(TAG_Y.to_string(), BLOCK_C.to_string())],
+            "post-move: descendant DD re-inherits through the new ancestor \
+             chain even though it was not in the changed set (#2265)"
+        );
+        // And the moved block's row converged.
+        let parent: Option<String> =
+            sqlx::query_scalar("SELECT parent_id FROM blocks WHERE id = ?")
+                .bind(BLOCK_B)
+                .fetch_one(&pool)
+                .await
+                .expect("read BB parent");
+        assert_eq!(parent.as_deref(), Some(BLOCK_C), "BB reparented in SQL");
+    }
+
+    /// #535/#2264 review: a boot-replay of a surviving inbox slot whose ops
+    /// the engine ALREADY holds (`loro_doc_state` was persisted ahead of the
+    /// crashed SQL projection — exactly the window the write-ahead inbox
+    /// exists to heal) must STILL project to SQL and clear the slot in-tx.
+    /// Trusting the no-op import diff here would drop the slot and leave SQL
+    /// permanently diverged from the engine.
+    #[tokio::test]
+    async fn replay_projects_slot_even_when_engine_already_has_ops_2264() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // Device A mints a block; its snapshot is the slot's payload.
+        let registry_a = LoroEngineRegistry::new();
+        let bytes = {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            let e = g.engine_mut();
+            e.apply_create_block(BLOCK_A, "content", "recovered", None, 0)
+                .expect("create");
+            e.export_snapshot().expect("export")
+        };
+
+        // Receiver: the ENGINE already imported the bytes (as after a crash
+        // where `save_all_engines` persisted the doc ahead of SQL), but the
+        // SQL projection never committed — the write-ahead slot survives.
+        let registry_b = LoroEngineRegistry::new();
+        {
+            let mut g = registry_b.for_space(&space, "device-B").expect("for_space");
+            g.engine_mut()
+                .import(&bytes)
+                .expect("pre-import into engine");
+        }
+        let inbox_id: i64 = sqlx::query_scalar(
+            "INSERT INTO loro_sync_inbox (space_id, bytes, created_at) \
+             VALUES (?, ?, ?) RETURNING id",
+        )
+        .bind(space.as_str())
+        .bind(&bytes)
+        .bind(crate::db::now_ms())
+        .fetch_one(&pool)
+        .await
+        .expect("seed surviving slot");
+
+        let changed = replay_inbox_row(
+            &pool,
+            &registry_b,
+            "device-B",
+            space.as_str(),
+            &bytes,
+            inbox_id,
+        )
+        .await
+        .expect("replay");
+        assert!(
+            changed.iter().any(|b| b.as_str() == BLOCK_A),
+            "replay must distrust the no-op import diff and fall back to the \
+             full live-tree projection (#2264 review)"
+        );
+
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .expect("count block");
+        assert_eq!(n, 1, "the slot's block must be projected to SQL");
+
+        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+            .fetch_one(&pool)
+            .await
+            .expect("count inbox");
+        assert_eq!(remaining, 0, "slot cleared atomically with the projection");
+    }
+
+    /// #2264 review: a LIVE no-op redelivery is fast-pathed only when no
+    /// OTHER slot is pending for the space. Here a leftover slot (a prior
+    /// delivery whose projection failed after the engine import) marks SQL
+    /// as possibly stale: the redelivery must fall back to the full
+    /// projection — healing SQL immediately — and leave the leftover slot
+    /// for boot replay.
+    #[tokio::test]
+    async fn live_noop_redelivery_with_leftover_slot_forces_full_projection_2264() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        let registry_a = LoroEngineRegistry::new();
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            g.engine_mut()
+                .apply_create_block(BLOCK_A, "content", "seed", None, 0)
+                .expect("create");
+        }
+        let registry_b = seed_receiver_via_snapshot(&pool, &registry_a, &space).await;
+
+        // Remote edit; build ONE update message for it.
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            g.engine_mut()
+                .apply_edit_content(BLOCK_A, 0, 0, "y")
+                .expect("edit A");
+        }
+        let b_vv = registry_b.loro_vv(&space).expect("B vv");
+        let msg = prepare_outgoing_for_pool(&pool, &registry_a, &space, "device-A", Some(&b_vv))
+            .await
+            .expect("prepare update")
+            .expect("freshness gate must not refuse");
+        let LoroSyncMessage::Update { ref bytes, .. } = msg else {
+            panic!("expected an Update message");
+        };
+
+        // Simulate delivery 1 dying AFTER the engine import but BEFORE its
+        // projection tx: import into B's ENGINE only + leave its slot behind.
+        {
+            let mut g = registry_b.for_space(&space, "device-B").expect("for_space");
+            g.engine_mut().import(bytes).expect("engine-only import");
+        }
+        sqlx::query("INSERT INTO loro_sync_inbox (space_id, bytes, created_at) VALUES (?, ?, ?)")
+            .bind(space.as_str())
+            .bind(&bytes[..])
+            .bind(crate::db::now_ms())
+            .execute(&pool)
+            .await
+            .expect("seed leftover slot");
+
+        // Redelivery: the import diff is a no-op, but the leftover slot must
+        // veto the fast path and force the healing full projection.
+        let outcome = apply_remote(&pool, &registry_b, "device-B", msg.clone())
+            .await
+            .expect("redelivery apply");
+        match outcome {
+            ApplyOutcome::Imported { changed_blocks, .. } => {
+                assert!(
+                    changed_blocks.iter().any(|b| b.as_str() == BLOCK_A),
+                    "leftover slot must force the full-projection fallback"
+                );
+            }
+            other => panic!("expected Imported, got {other:?}"),
+        }
+
+        // SQL healed: the edit that delivery 1 failed to project is now there.
+        let content: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .expect("read A");
+        assert_eq!(content, "yseed", "the failed delivery's edit converged");
+
+        // Our own slot was cleared in-tx; the leftover stays for boot replay.
+        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+            .fetch_one(&pool)
+            .await
+            .expect("count inbox");
+        assert_eq!(
+            remaining, 1,
+            "redelivery clears its own slot in-tx and leaves the leftover \
+             slot for boot replay"
         );
     }
 }
