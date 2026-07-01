@@ -248,6 +248,40 @@ describe('preload', () => {
     expect(versionAfter).toBe(versionBefore + 1)
   })
 
+  // Perf (#2267) — preload's merge must mutate the existing cache Map in
+  // place (`cache.set` per fetched entry) rather than spreading it into a
+  // fresh Map on every sync:complete. Consumers re-render off `version`,
+  // not the Map reference, so the Map object should stay the same across
+  // preload while still bumping version, merging fetched data in, and
+  // preserving pre-existing entries that preload didn't touch.
+  it('mutates the cache Map in place (same reference) rather than cloning it', async () => {
+    useResolveStore.getState().set('PRE_EXISTING', 'Pre-existing Page', false)
+    const cacheBefore = useResolveStore.getState().cache
+    const versionBefore = useResolveStore.getState().version
+
+    const mockPages = [{ id: 'PAGE_1', content: 'Page One', deleted_at: null }]
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return { items: mockPages, next_cursor: null, has_more: false }
+      if (cmd === 'list_all_tags_in_space') return []
+      return null
+    })
+
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+
+    const state = useResolveStore.getState()
+    expect(state.cache).toBe(cacheBefore)
+    expect(state.version).toBe(versionBefore + 1)
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'PAGE_1'))).toEqual({
+      title: 'Page One',
+      deleted: false,
+    })
+    // Pre-existing entry (not returned by this fetch) survives the merge.
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'PRE_EXISTING'))).toEqual({
+      title: 'Pre-existing Page',
+      deleted: false,
+    })
+  })
+
   it('fetched data overwrites concurrent set() calls on preload', async () => {
     // Simulate a set() call that lands before preload finishes
     useResolveStore.getState().set('NEW_PAGE', 'Created During Preload', false)
@@ -543,6 +577,27 @@ describe('set', () => {
     expect(entry).toEqual({ title: 'Updated Title', deleted: true })
   })
 
+  // Perf (#2267) — set() must mutate the cache Map in place (write the
+  // changed key + evict) rather than cloning the whole Map on every write.
+  // Consumers re-render off `version`, not the Map reference, so a real
+  // (non-no-op) write should keep the SAME Map object while still bumping
+  // version and remaining readable.
+  it('mutates the cache Map in place (same reference) on a real write, bumping version', () => {
+    useResolveStore.getState().set('ID_1', 'First Title', false)
+    const cacheBefore = useResolveStore.getState().cache
+    const versionBefore = useResolveStore.getState().version
+
+    useResolveStore.getState().set('ID_1', 'Second Title', true)
+
+    const state = useResolveStore.getState()
+    expect(state.cache).toBe(cacheBefore)
+    expect(state.version).toBe(versionBefore + 1)
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'ID_1'))).toEqual({
+      title: 'Second Title',
+      deleted: true,
+    })
+  })
+
   // #1073 — `set` fires on tag rename/delete (TagList) and trash restore
   // (TrashView); an idempotent restore/rename re-writes the identical
   // `{ title, deleted }`. Mirror batchSet's #753 no-op guard: a no-change
@@ -638,6 +693,33 @@ describe('batchSet', () => {
     expect(cache.get(keyFor(TEST_SPACE_ID, 'A'))).toEqual({ title: 'Alpha', deleted: false })
     expect(cache.get(keyFor(TEST_SPACE_ID, 'B'))).toEqual({ title: 'Beta', deleted: false })
     expect(cache.get(keyFor(TEST_SPACE_ID, 'C'))).toEqual({ title: 'Charlie', deleted: true })
+  })
+
+  // Perf (#2267) — batchSet() must mutate the cache Map in place (write
+  // only the changed subset + evict) rather than cloning the whole Map.
+  // A real (non-no-op) batch write should keep the SAME Map object while
+  // still bumping version and remaining readable.
+  it('mutates the cache Map in place (same reference) on a real batch write, bumping version', () => {
+    useResolveStore.getState().batchSet([{ id: 'A', title: 'Alpha', deleted: false }])
+    const cacheBefore = useResolveStore.getState().cache
+    const versionBefore = useResolveStore.getState().version
+
+    useResolveStore.getState().batchSet([
+      { id: 'A', title: 'Alpha Renamed', deleted: false },
+      { id: 'D', title: 'Delta', deleted: false },
+    ])
+
+    const state = useResolveStore.getState()
+    expect(state.cache).toBe(cacheBefore)
+    expect(state.version).toBe(versionBefore + 1)
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'A'))).toEqual({
+      title: 'Alpha Renamed',
+      deleted: false,
+    })
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'D'))).toEqual({
+      title: 'Delta',
+      deleted: false,
+    })
   })
 
   it('is no-op for empty array', () => {
@@ -1013,5 +1095,84 @@ describe('cache eviction', () => {
     const state = useResolveStore.getState()
     expect(state.cache.has(keyFor(TEST_SPACE_ID, 'id-0'))).toBe(true)
     expect(state.cache.has(keyFor(TEST_SPACE_ID, 'id-1'))).toBe(false)
+  })
+
+  // Perf (#2200/#2267) — LRU touch bookkeeping on read is skipped while the
+  // cache is under MAX_CACHE_SIZE, since eviction order only matters once
+  // eviction can actually happen. Below capacity, repeated reads must NOT
+  // reorder the Map's insertion order (the delete+re-set is a no-op).
+  it('resolveTitle skips LRU touch bookkeeping while the cache is under capacity (#2200)', () => {
+    const cache = new Map<string, { title: string; deleted: boolean }>()
+    for (let i = 0; i < 100; i++) {
+      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), { title: `T${i}`, deleted: false })
+    }
+    useResolveStore.setState({ cache })
+    expect(useResolveStore.getState().cache.size).toBeLessThan(10_000)
+
+    const keysBefore = Array.from(useResolveStore.getState().cache.keys())
+
+    // Read the oldest entry repeatedly — well under capacity, so touch
+    // bookkeeping must be skipped and iteration order left untouched.
+    for (let i = 0; i < 5; i++) {
+      expect(useResolveStore.getState().resolveTitle('id-0')).toBe('T0')
+    }
+
+    const keysAfter = Array.from(useResolveStore.getState().cache.keys())
+    expect(keysAfter).toEqual(keysBefore)
+    expect(keysAfter[0]).toBe(keyFor(TEST_SPACE_ID, 'id-0'))
+  })
+
+  // Same gating, resolveStatus read path.
+  it('resolveStatus skips LRU touch bookkeeping while the cache is under capacity (#2200)', () => {
+    const cache = new Map<string, { title: string; deleted: boolean }>()
+    for (let i = 0; i < 100; i++) {
+      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), { title: `T${i}`, deleted: false })
+    }
+    useResolveStore.setState({ cache })
+
+    const keysBefore = Array.from(useResolveStore.getState().cache.keys())
+    useResolveStore.getState().resolveStatus('id-0')
+    const keysAfter = Array.from(useResolveStore.getState().cache.keys())
+
+    expect(keysAfter).toEqual(keysBefore)
+  })
+
+  // Combined scenario requested by #2267: fill under capacity (touch
+  // no-ops), then flood past MAX_CACHE_SIZE. The size bound must still
+  // hold, and only entries touched AFTER the cache reached capacity get
+  // LRU protection — touches recorded while under capacity are not
+  // retroactively honored (documented trade-off, not a correctness bug:
+  // nothing could have been evicted yet at the time of those reads).
+  it('enforces the MAX_CACHE_SIZE bound after flooding past capacity from a partially-filled cache', () => {
+    const cache = new Map<string, { title: string; deleted: boolean }>()
+    for (let i = 0; i < 9_999; i++) {
+      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), { title: `T${i}`, deleted: false })
+    }
+    useResolveStore.setState({ cache })
+
+    // Under capacity (9,999 < 10,000) — this read is a no-op for LRU order.
+    useResolveStore.getState().resolveTitle('id-0')
+
+    // Crosses capacity: 9,999 + 1 = 10,000 (at capacity, no eviction yet).
+    useResolveStore.getState().set('at-capacity', 'At Capacity', false)
+    expect(useResolveStore.getState().cache.size).toBe(10_000)
+
+    // Now AT capacity — this read DOES perform LRU bookkeeping and moves
+    // id-1 (not id-0, which was never touched post-capacity) to the tail.
+    useResolveStore.getState().resolveTitle('id-1')
+
+    // One more write pushes past capacity, triggering eviction of the
+    // genuinely coldest entry.
+    useResolveStore.getState().set('over-capacity', 'Over Capacity', false)
+
+    const state = useResolveStore.getState()
+    expect(state.cache.size).toBe(10_000)
+    // id-1 was touched at capacity, so it survives.
+    expect(state.cache.has(keyFor(TEST_SPACE_ID, 'id-1'))).toBe(true)
+    // id-0's under-capacity read did not protect it — it's evicted as the
+    // coldest (front-of-Map) entry.
+    expect(state.cache.has(keyFor(TEST_SPACE_ID, 'id-0'))).toBe(false)
+    expect(state.cache.has(keyFor(TEST_SPACE_ID, 'at-capacity'))).toBe(true)
+    expect(state.cache.has(keyFor(TEST_SPACE_ID, 'over-capacity'))).toBe(true)
   })
 })

@@ -209,11 +209,20 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       }
 
       // Merge: fetched data always wins over stale cache entries.
-      set((state) => ({
-        cache: new Map([...state.cache, ...fetchedPages, ...fetchedTags]),
-        version: state.version + 1,
-        _preloaded: true,
-      }))
+      // Perf (#2267) — mutate the existing cache Map in place instead of
+      // spreading it into a fresh Map every sync:complete. `Map.set` on an
+      // already-present key updates the value WITHOUT moving its iteration
+      // position, and appends brand-new keys at the tail — byte-identical
+      // ordering to `new Map([...state.cache, ...fetchedPages, ...fetchedTags])`,
+      // just O(fetched) instead of O(cacheSize). All consumers re-render off
+      // `version`, not the Map reference (see consumer audit in resolve.ts
+      // history / #2267), so reusing the same Map object is safe.
+      set((state) => {
+        const cache = state.cache
+        for (const [k, v] of fetchedPages) cache.set(k, v)
+        for (const [k, v] of fetchedTags) cache.set(k, v)
+        return { cache, version: state.version + 1, _preloaded: true }
+      })
     } catch (err) {
       logger.warn('ResolveStore', 'preload failed, using fallback', {}, err)
     }
@@ -279,8 +288,12 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       // version-subscribed block row for zero gain. Skip when unchanged.
       const cached = get().cache.get(compositeKey)
       if (cached && cached.title === title && cached.deleted === deleted) return
+      // Perf (#2267) — mutate the cache Map in place (write the one changed
+      // key + evict) instead of cloning the whole (<=10k entry) Map on every
+      // write. Every consumer re-renders off `version`, not the Map
+      // reference, so reusing the same object is safe (see consumer audit).
       set((state) => {
-        const cache = new Map(state.cache)
+        const cache = state.cache
         touch(cache, compositeKey, { title, deleted })
         evictLeastRecentlyUsed(cache, MAX_CACHE_SIZE)
         return { cache, version: state.version + 1 }
@@ -301,8 +314,12 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
         return !cached || cached.title !== e.title || cached.deleted !== e.deleted
       })
       if (changed.length === 0) return
+      // Perf (#2267) — mutate the cache Map in place (write only the
+      // changed subset + evict) instead of cloning the whole Map. Every
+      // consumer re-renders off `version`, not the Map reference (see
+      // consumer audit), so reusing the same object is safe.
       set((state) => {
-        const cache = new Map(state.cache)
+        const cache = state.cache
         for (const e of changed) {
           touch(cache, keyFor(spaceId, e.id), {
             title: e.title,
@@ -321,7 +338,13 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       if (cached) {
         // LRU: refresh recency in place (no clone, no version bump → no
         // re-render) so a frequently-read entry survives eviction.
-        touch(cache, key, cached)
+        // Perf (#2200/#2267) — only bother once the cache is AT capacity:
+        // eviction order is irrelevant while `size < MAX_CACHE_SIZE`
+        // (nothing can be evicted yet), so skip the delete+re-set on every
+        // hot read below that threshold. Once at capacity, every read
+        // resumes touching so recency stays accurate for the next write's
+        // eviction pass.
+        if (cache.size >= MAX_CACHE_SIZE) touch(cache, key, cached)
         return cached.title
       }
       return `[[${id.slice(0, 8)}...]]`
@@ -332,7 +355,8 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       const key = keyFor(activeSpaceId(), id)
       const cached = cache.get(key)
       if (cached) {
-        touch(cache, key, cached)
+        // See resolveTitle above — LRU touch only matters at capacity.
+        if (cache.size >= MAX_CACHE_SIZE) touch(cache, key, cached)
         return cached.deleted ? 'deleted' : 'active'
       }
       return 'active'
