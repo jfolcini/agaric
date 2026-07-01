@@ -844,6 +844,30 @@ pub async fn sweep_once(
                     )
                     .await?;
                 }
+                Ok(ApplyOpSweepDisposition::SupersededByAncestorPurge) => {
+                    // #2212: a later purge_block targeted an ANCESTOR of this
+                    // block. The purge cascade physically deleted this block's
+                    // subtree with no per-descendant op_log row, so the
+                    // same-block purge gate could not see it. Re-applying this
+                    // persisted create/edit would resurrect an orphan under a
+                    // user-destroyed subtree (or fail the parent_id FK on every
+                    // sweep forever). The purge makes this op's effect moot —
+                    // retire the row.
+                    tracing::info!(
+                        block_id = %row.block_id,
+                        task_kind = %row.task_kind,
+                        "retiring persisted ApplyOp row: a later purge_block on \
+                         an ANCESTOR supersedes it — re-applying would resurrect \
+                         an orphan under a purged subtree (#2212)"
+                    );
+                    clear_entry(
+                        write_pool,
+                        &row.block_id,
+                        &row.task_kind,
+                        materializer.metrics(),
+                    )
+                    .await?;
+                }
                 Ok(ApplyOpSweepDisposition::SupersededByEdit) => {
                     // #850: a later edit_block on the same block already won
                     // under strict LWW. Re-applying this stale edit now
@@ -944,6 +968,18 @@ enum ApplyOpSweepDisposition {
     /// `INSERT OR IGNORE` with no tombstone/purge check, and the engine
     /// recreates the node).
     SupersededByPurge,
+    /// #2212: a later `purge_block` op targets an ANCESTOR of this block. A
+    /// purge writes a single op_log row for the subtree ROOT; the descendant
+    /// removal is a SQL cascade with NO per-descendant op_log rows, so the
+    /// same-block [`Self::SupersededByPurge`] gate can never see it. Re-applying
+    /// a persisted create/edit for a child of a purged subtree would resurrect
+    /// an orphan under user-destroyed data (or fail the `parent_id` FK on every
+    /// sweep forever). Ancestry is reconstructed from the append-only op_log —
+    /// per hop: the latest `move_block`'s `new_parent_id` (strict LWW) if the
+    /// block was ever moved, else the `create_block` `parent_id` — because the
+    /// live `blocks` chain is already gone at sweep time and a create-only
+    /// walk would mis-handle moved blocks in both directions.
+    SupersededByAncestorPurge,
     /// #850: a later `edit_block` op targets the same block; re-applying this
     /// (stale) op out of order would regress the block's content.
     /// `apply_edit_block_via_loro` splices `to_text` and projects the
@@ -956,10 +992,12 @@ enum ApplyOpSweepDisposition {
 ///
 /// Steps:
 ///   1. Load the `OpRecord` from `op_log` by `(device_id, seq)`.
-///   2. #621/#850: gate on op-log supersession — if a later `purge_block`
-///      targets the same block, do NOT re-apply (out-of-order resurrection);
-///      and if the swept op is an `edit_block` with a later `edit_block` on
-///      the same block, do NOT re-apply (out-of-order content regression).
+///   2. #621/#850/#2212: gate on op-log supersession — if a later `purge_block`
+///      targets the same block OR any ANCESTOR of it (#2212: purge cascades
+///      leave no per-descendant op_log row), do NOT re-apply (out-of-order
+///      resurrection); and if the swept op is an `edit_block` with a later
+///      `edit_block` on the same block, do NOT re-apply (out-of-order content
+///      regression).
 ///   3. Wrap in `Arc` and submit via [`crate::materializer::Materializer::enqueue_foreground`].
 ///
 /// A missing op_log row and a purge-/edit-superseded op are reported as
@@ -1017,6 +1055,100 @@ async fn try_reenqueue_apply_op(
         .await?;
         if superseded != 0 {
             return Ok(ApplyOpSweepDisposition::SupersededByPurge);
+        }
+
+        // #2212: ancestor-purge cascade gate. `purge_block` writes a SINGLE
+        // op_log row targeting the subtree ROOT; descendant removal is a SQL
+        // cascade with NO per-descendant op_log rows. So the same-block purge
+        // gate above (`p.block_id = record.block_id`) MISSES the case where an
+        // ANCESTOR of this block was purged — this block was physically deleted
+        // by that cascade with no op targeting it directly. Re-applying a
+        // persisted create/edit for such a child would resurrect an orphan
+        // under a user-destroyed subtree (`INSERT OR IGNORE`, no purge check),
+        // or fail the `parent_id` FK on every sweep forever.
+        //
+        // The ancestor chain is ALREADY gone from `blocks` at sweep time (that
+        // is the whole point of a purge), so we cannot walk the live `blocks`
+        // parent_id chain. Instead we reconstruct the lineage from the
+        // append-only op_log. A block's EFFECTIVE parent is NOT necessarily its
+        // create-op `parent_id`: a later `move_block` reparents it (payload
+        // `new_parent_id`), so a create-only walk would (a) MISS the real
+        // ancestor chain of a block moved INTO a later-purged subtree
+        // (wrong re-apply → orphan resurrection) and — worse — (b) wrongly
+        // retire the record for a block moved OUT of a later-purged subtree
+        // (its create parent was purged but the block lives elsewhere and the
+        // op SHOULD re-apply). Per hop the effective parent is therefore:
+        // the `new_parent_id` of the LATEST `move_block` op for that block
+        // (strict LWW order `created_at, device_id, seq` — same total order as
+        // the purge predicate below), else the create op's `parent_id`. The
+        // CASE/EXISTS split (not COALESCE) is load-bearing: a move to ROOT
+        // carries `new_parent_id = null`, which must TERMINATE the chain, not
+        // fall back to the stale create parent. We retire the record iff a
+        // LATER `purge_block` (the SAME strict LWW predicate as the same-block
+        // gate) targets ANY enumerated ancestor.
+        //
+        // Why this cannot retire a record that should legitimately re-apply:
+        // the ancestor set is derived ONLY from THIS block's own effective
+        // (move-aware) lineage, so an UNRELATED later purge of a different
+        // subtree is never matched (its target is not in the set), and a
+        // create whose parent still exists (no ancestor purged) yields an
+        // empty EXISTS. The `depth < 100` bound (AGENTS.md invariant #9) +
+        // `UNION` dedup guard a corrupted / cyclic parent_id chain (each
+        // recursive step emits exactly one row, so the walk is <= 101 rows).
+        // If this block's create op was compacted away (and it has no move
+        // op), the seed's effective parent is NULL and we conservatively do
+        // NOT retire.
+        // dynamic-sql: recursive ancestry CTE + parameterized EXISTS; all values bound, no interpolation.
+        let superseded_by_ancestor_purge: i64 = sqlx::query_scalar(
+            "WITH RECURSIVE ancestors(id, depth) AS ( \
+                 SELECT CASE WHEN EXISTS( \
+                             SELECT 1 FROM op_log m \
+                              WHERE m.op_type = 'move_block' AND m.block_id = ?1) \
+                        THEN (SELECT json_extract(m.payload, '$.new_parent_id') \
+                                FROM op_log m \
+                               WHERE m.op_type = 'move_block' AND m.block_id = ?1 \
+                               ORDER BY m.created_at DESC, m.device_id DESC, m.seq DESC \
+                               LIMIT 1) \
+                        ELSE (SELECT json_extract(c.payload, '$.parent_id') \
+                                FROM op_log c \
+                               WHERE c.op_type = 'create_block' AND c.block_id = ?1 \
+                               LIMIT 1) \
+                        END, 0 \
+                 UNION \
+                 SELECT CASE WHEN EXISTS( \
+                             SELECT 1 FROM op_log m \
+                              WHERE m.op_type = 'move_block' AND m.block_id = a.id) \
+                        THEN (SELECT json_extract(m.payload, '$.new_parent_id') \
+                                FROM op_log m \
+                               WHERE m.op_type = 'move_block' AND m.block_id = a.id \
+                               ORDER BY m.created_at DESC, m.device_id DESC, m.seq DESC \
+                               LIMIT 1) \
+                        ELSE (SELECT json_extract(c.payload, '$.parent_id') \
+                                FROM op_log c \
+                               WHERE c.op_type = 'create_block' AND c.block_id = a.id \
+                               LIMIT 1) \
+                        END, a.depth + 1 \
+                   FROM ancestors a \
+                  WHERE a.id IS NOT NULL AND a.depth < 100 \
+             ) \
+             SELECT EXISTS( \
+                 SELECT 1 FROM op_log p \
+                 JOIN ancestors anc ON p.block_id = anc.id \
+                 WHERE p.op_type = 'purge_block' \
+                   AND (p.created_at > ?2 \
+                        OR (p.created_at = ?2 \
+                            AND (p.device_id > ?3 \
+                                 OR (p.device_id = ?3 AND p.seq > ?4)))) \
+             )",
+        )
+        .bind(block_id)
+        .bind(record.created_at)
+        .bind(&record.device_id)
+        .bind(record.seq)
+        .fetch_one(read_pool)
+        .await?;
+        if superseded_by_ancestor_purge != 0 {
+            return Ok(ApplyOpSweepDisposition::SupersededByAncestorPurge);
         }
 
         // #850: the second half of #621's own fix suggestion (the purge half
@@ -2521,6 +2653,561 @@ mod tests {
         assert_eq!(
             n, 1,
             "a lone edit (no later edit) must be re-enqueued — the gate is strict (#850)"
+        );
+        mat.shutdown();
+    }
+
+    /// #2212 (a): a persisted child `edit_block` swept AFTER an ANCESTOR was
+    /// purged must be RETIRED, not re-applied. A `purge_block` writes a single
+    /// op_log row for the subtree root only (the descendant removal is a SQL
+    /// cascade with no per-descendant op_log rows), so the same-block purge
+    /// gate cannot see it — the ancestor-lineage gate must. Re-applying would
+    /// resurrect an orphan under a user-destroyed subtree.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_retires_apply_op_superseded_by_ancestor_purge_2212() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let t0 = crate::db::now_ms() - 60_000;
+        // create ANCESTOR (root, parent_id null).
+        insert_sweep_op(
+            &pool,
+            "dev-2212a",
+            1,
+            "create_block",
+            r#"{"block_id":"ANCESTOR2212A","block_type":"content","content":"a","parent_id":null,"position":1}"#,
+            "ANCESTOR2212A",
+            t0,
+        )
+        .await;
+        // create CHILD under the ancestor.
+        insert_sweep_op(
+            &pool,
+            "dev-2212a",
+            2,
+            "create_block",
+            r#"{"block_id":"CHILD2212A","block_type":"content","content":"c","parent_id":"ANCESTOR2212A","position":1}"#,
+            "CHILD2212A",
+            t0,
+        )
+        .await;
+        // seq 3: the failed-then-persisted edit of the CHILD (the swept op).
+        insert_sweep_op(
+            &pool,
+            "dev-2212a",
+            3,
+            "edit_block",
+            r#"{"block_id":"CHILD2212A","to_text":"edited child"}"#,
+            "CHILD2212A",
+            t0,
+        )
+        .await;
+        // seq 4: LATER purge of the ANCESTOR — its cascade physically removed
+        // the child with NO op_log row targeting the child.
+        insert_sweep_op(
+            &pool,
+            "dev-2212a",
+            4,
+            "purge_block",
+            r#"{"block_id":"ANCESTOR2212A"}"#,
+            "ANCESTOR2212A",
+            t0 + 2000,
+        )
+        .await;
+
+        let past = crate::db::now_ms() - 5 * 60_000;
+        let recent = crate::db::now_ms();
+        sqlx::query!(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, created_at, next_attempt_at) \
+             VALUES (?, ?, ?, ?, ?)",
+            "__APPLY_OP__",
+            "ApplyOp:3:dev-2212a",
+            1_i64,
+            recent,
+            past,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 0,
+            "an ancestor-purge-superseded ApplyOp must NOT be re-enqueued (#2212)"
+        );
+        let remaining = pending_count(&pool).await.unwrap();
+        assert_eq!(
+            remaining, 0,
+            "the ancestor-purge-superseded row must be retired (#2212)"
+        );
+        mat.shutdown();
+    }
+
+    /// #2212 (b): an UNRELATED later purge of a DIFFERENT subtree must NOT
+    /// retire the record — the ancestry gate matches only purges of THIS
+    /// block's own create-op lineage, so a create/edit whose real ancestors
+    /// are untouched still re-applies.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_reenqueues_apply_op_when_unrelated_subtree_purged_2212() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let t0 = crate::db::now_ms() - 60_000;
+        // The block's real lineage: ANCESTOR -> CHILD (never purged).
+        insert_sweep_op(
+            &pool,
+            "dev-2212b",
+            1,
+            "create_block",
+            r#"{"block_id":"ANCESTOR2212B","block_type":"content","content":"a","parent_id":null,"position":1}"#,
+            "ANCESTOR2212B",
+            t0,
+        )
+        .await;
+        insert_sweep_op(
+            &pool,
+            "dev-2212b",
+            2,
+            "create_block",
+            r#"{"block_id":"CHILD2212B","block_type":"content","content":"c","parent_id":"ANCESTOR2212B","position":1}"#,
+            "CHILD2212B",
+            t0,
+        )
+        .await;
+        // seq 3: the failed-then-persisted edit of the CHILD (the swept op).
+        insert_sweep_op(
+            &pool,
+            "dev-2212b",
+            3,
+            "edit_block",
+            r#"{"block_id":"CHILD2212B","to_text":"edited child"}"#,
+            "CHILD2212B",
+            t0,
+        )
+        .await;
+        // seq 4/5: an UNRELATED root and its LATER purge — NOT an ancestor of
+        // CHILD2212B.
+        insert_sweep_op(
+            &pool,
+            "dev-2212b",
+            4,
+            "create_block",
+            r#"{"block_id":"UNRELATED2212B","block_type":"content","content":"u","parent_id":null,"position":2}"#,
+            "UNRELATED2212B",
+            t0,
+        )
+        .await;
+        insert_sweep_op(
+            &pool,
+            "dev-2212b",
+            5,
+            "purge_block",
+            r#"{"block_id":"UNRELATED2212B"}"#,
+            "UNRELATED2212B",
+            t0 + 2000,
+        )
+        .await;
+
+        let past = crate::db::now_ms() - 5 * 60_000;
+        let recent = crate::db::now_ms();
+        sqlx::query!(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, created_at, next_attempt_at) \
+             VALUES (?, ?, ?, ?, ?)",
+            "__APPLY_OP__",
+            "ApplyOp:3:dev-2212b",
+            1_i64,
+            recent,
+            past,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 1,
+            "a record whose real lineage is untouched must re-enqueue despite \
+             an unrelated later purge (#2212)"
+        );
+        mat.shutdown();
+    }
+
+    /// #2212 (c): the pre-existing SAME-block purge supersession still fires
+    /// with the ancestor gate in place — a lineage-carrying create whose OWN
+    /// block is later purged is retired via the same-block gate (returned
+    /// early, before the ancestor gate is even reached).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_retires_apply_op_same_block_purge_still_works_2212() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let t0 = crate::db::now_ms() - 60_000;
+        // Ancestor create present (so the ancestry walk has data), but the
+        // purge below targets the CHILD itself, not the ancestor.
+        insert_sweep_op(
+            &pool,
+            "dev-2212c",
+            1,
+            "create_block",
+            r#"{"block_id":"ANCESTOR2212C","block_type":"content","content":"a","parent_id":null,"position":1}"#,
+            "ANCESTOR2212C",
+            t0,
+        )
+        .await;
+        // seq 2: the failed-then-persisted create of the CHILD (the swept op).
+        insert_sweep_op(
+            &pool,
+            "dev-2212c",
+            2,
+            "create_block",
+            r#"{"block_id":"CHILD2212C","block_type":"content","content":"c","parent_id":"ANCESTOR2212C","position":1}"#,
+            "CHILD2212C",
+            t0,
+        )
+        .await;
+        // seq 3: LATER purge of the CHILD ITSELF (same-block supersession).
+        insert_sweep_op(
+            &pool,
+            "dev-2212c",
+            3,
+            "purge_block",
+            r#"{"block_id":"CHILD2212C"}"#,
+            "CHILD2212C",
+            t0 + 2000,
+        )
+        .await;
+
+        let past = crate::db::now_ms() - 5 * 60_000;
+        let recent = crate::db::now_ms();
+        sqlx::query!(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, created_at, next_attempt_at) \
+             VALUES (?, ?, ?, ?, ?)",
+            "__APPLY_OP__",
+            "ApplyOp:2:dev-2212c",
+            1_i64,
+            recent,
+            past,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 0,
+            "same-block purge supersession must still retire the row (#2212 regression guard)"
+        );
+        let remaining = pending_count(&pool).await.unwrap();
+        assert_eq!(
+            remaining, 0,
+            "the same-block-purge-superseded row must be retired (#2212)"
+        );
+        mat.shutdown();
+    }
+
+    /// #2212 (d): a block MOVED INTO a subtree whose root is later purged must
+    /// be retired. Its create op's `parent_id` points at the ORIGINAL parent
+    /// (never purged); only the latest `move_block`'s `new_parent_id` reaches
+    /// the actually-purged ancestor. A create-op-only lineage walk misses this
+    /// and re-applies — resurrecting an orphan under user-destroyed data.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_retires_apply_op_when_block_moved_into_purged_subtree_2212() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let t0 = crate::db::now_ms() - 60_000;
+        // Two roots: the block is created under OLD, then moved under NEW.
+        insert_sweep_op(
+            &pool,
+            "dev-2212d",
+            1,
+            "create_block",
+            r#"{"block_id":"OLDPARENT2212D","block_type":"content","content":"o","parent_id":null,"position":1}"#,
+            "OLDPARENT2212D",
+            t0,
+        )
+        .await;
+        insert_sweep_op(
+            &pool,
+            "dev-2212d",
+            2,
+            "create_block",
+            r#"{"block_id":"NEWPARENT2212D","block_type":"content","content":"n","parent_id":null,"position":2}"#,
+            "NEWPARENT2212D",
+            t0,
+        )
+        .await;
+        insert_sweep_op(
+            &pool,
+            "dev-2212d",
+            3,
+            "create_block",
+            r#"{"block_id":"CHILD2212D","block_type":"content","content":"c","parent_id":"OLDPARENT2212D","position":1}"#,
+            "CHILD2212D",
+            t0,
+        )
+        .await;
+        // seq 4: the failed-then-persisted edit of the CHILD (the swept op).
+        insert_sweep_op(
+            &pool,
+            "dev-2212d",
+            4,
+            "edit_block",
+            r#"{"block_id":"CHILD2212D","to_text":"edited child"}"#,
+            "CHILD2212D",
+            t0,
+        )
+        .await;
+        // seq 5: CHILD moved OLDPARENT → NEWPARENT.
+        insert_sweep_op(
+            &pool,
+            "dev-2212d",
+            5,
+            "move_block",
+            r#"{"block_id":"CHILD2212D","new_parent_id":"NEWPARENT2212D","new_position":1}"#,
+            "CHILD2212D",
+            t0 + 1000,
+        )
+        .await;
+        // seq 6: LATER purge of NEWPARENT — the block's EFFECTIVE (post-move)
+        // ancestor. Its cascade physically removed the child.
+        insert_sweep_op(
+            &pool,
+            "dev-2212d",
+            6,
+            "purge_block",
+            r#"{"block_id":"NEWPARENT2212D"}"#,
+            "NEWPARENT2212D",
+            t0 + 2000,
+        )
+        .await;
+
+        let past = crate::db::now_ms() - 5 * 60_000;
+        let recent = crate::db::now_ms();
+        sqlx::query!(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, created_at, next_attempt_at) \
+             VALUES (?, ?, ?, ?, ?)",
+            "__APPLY_OP__",
+            "ApplyOp:4:dev-2212d",
+            1_i64,
+            recent,
+            past,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 0,
+            "a record whose block was MOVED INTO a later-purged subtree must \
+             NOT be re-enqueued (#2212 move-aware lineage)"
+        );
+        let remaining = pending_count(&pool).await.unwrap();
+        assert_eq!(
+            remaining, 0,
+            "the moved-into-purged-subtree row must be retired (#2212)"
+        );
+        mat.shutdown();
+    }
+
+    /// #2212 (e): a block MOVED OUT of a subtree whose root is later purged
+    /// must RE-APPLY. Its create op's `parent_id` points at the purged parent,
+    /// but the block lives elsewhere (post-move) — a create-op-only lineage
+    /// walk would WRONGLY RETIRE this legitimate record (silent data loss,
+    /// strictly worse than a wrong re-apply).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_reenqueues_apply_op_when_block_moved_out_of_purged_subtree_2212() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let t0 = crate::db::now_ms() - 60_000;
+        insert_sweep_op(
+            &pool,
+            "dev-2212e",
+            1,
+            "create_block",
+            r#"{"block_id":"OLDPARENT2212E","block_type":"content","content":"o","parent_id":null,"position":1}"#,
+            "OLDPARENT2212E",
+            t0,
+        )
+        .await;
+        insert_sweep_op(
+            &pool,
+            "dev-2212e",
+            2,
+            "create_block",
+            r#"{"block_id":"NEWPARENT2212E","block_type":"content","content":"n","parent_id":null,"position":2}"#,
+            "NEWPARENT2212E",
+            t0,
+        )
+        .await;
+        insert_sweep_op(
+            &pool,
+            "dev-2212e",
+            3,
+            "create_block",
+            r#"{"block_id":"CHILD2212E","block_type":"content","content":"c","parent_id":"OLDPARENT2212E","position":1}"#,
+            "CHILD2212E",
+            t0,
+        )
+        .await;
+        // seq 4: the failed-then-persisted edit of the CHILD (the swept op).
+        insert_sweep_op(
+            &pool,
+            "dev-2212e",
+            4,
+            "edit_block",
+            r#"{"block_id":"CHILD2212E","to_text":"edited child"}"#,
+            "CHILD2212E",
+            t0,
+        )
+        .await;
+        // seq 5: CHILD moved OUT: OLDPARENT → NEWPARENT.
+        insert_sweep_op(
+            &pool,
+            "dev-2212e",
+            5,
+            "move_block",
+            r#"{"block_id":"CHILD2212E","new_parent_id":"NEWPARENT2212E","new_position":1}"#,
+            "CHILD2212E",
+            t0 + 1000,
+        )
+        .await;
+        // seq 6: LATER purge of the ORIGINAL parent — no longer an ancestor.
+        insert_sweep_op(
+            &pool,
+            "dev-2212e",
+            6,
+            "purge_block",
+            r#"{"block_id":"OLDPARENT2212E"}"#,
+            "OLDPARENT2212E",
+            t0 + 2000,
+        )
+        .await;
+
+        let past = crate::db::now_ms() - 5 * 60_000;
+        let recent = crate::db::now_ms();
+        sqlx::query!(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, created_at, next_attempt_at) \
+             VALUES (?, ?, ?, ?, ?)",
+            "__APPLY_OP__",
+            "ApplyOp:4:dev-2212e",
+            1_i64,
+            recent,
+            past,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 1,
+            "a record whose block was MOVED OUT of the later-purged subtree \
+             must re-enqueue — retiring it would silently drop a legitimate \
+             edit (#2212 move-aware lineage)"
+        );
+        mat.shutdown();
+    }
+
+    /// #2212 (f): a block moved to ROOT (`new_parent_id = null`) whose ORIGINAL
+    /// parent is later purged must RE-APPLY. Guards the COALESCE footgun: a
+    /// null `new_parent_id` must terminate the ancestry chain, NOT fall back to
+    /// the stale create-op parent (which would wrongly retire the record).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_reenqueues_apply_op_when_block_moved_to_root_2212() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let t0 = crate::db::now_ms() - 60_000;
+        insert_sweep_op(
+            &pool,
+            "dev-2212f",
+            1,
+            "create_block",
+            r#"{"block_id":"OLDPARENT2212F","block_type":"content","content":"o","parent_id":null,"position":1}"#,
+            "OLDPARENT2212F",
+            t0,
+        )
+        .await;
+        insert_sweep_op(
+            &pool,
+            "dev-2212f",
+            2,
+            "create_block",
+            r#"{"block_id":"CHILD2212F","block_type":"content","content":"c","parent_id":"OLDPARENT2212F","position":1}"#,
+            "CHILD2212F",
+            t0,
+        )
+        .await;
+        // seq 3: the failed-then-persisted edit of the CHILD (the swept op).
+        insert_sweep_op(
+            &pool,
+            "dev-2212f",
+            3,
+            "edit_block",
+            r#"{"block_id":"CHILD2212F","to_text":"edited child"}"#,
+            "CHILD2212F",
+            t0,
+        )
+        .await;
+        // seq 4: CHILD promoted to ROOT (new_parent_id null).
+        insert_sweep_op(
+            &pool,
+            "dev-2212f",
+            4,
+            "move_block",
+            r#"{"block_id":"CHILD2212F","new_parent_id":null,"new_position":1}"#,
+            "CHILD2212F",
+            t0 + 1000,
+        )
+        .await;
+        // seq 5: LATER purge of the ORIGINAL parent — no longer an ancestor.
+        insert_sweep_op(
+            &pool,
+            "dev-2212f",
+            5,
+            "purge_block",
+            r#"{"block_id":"OLDPARENT2212F"}"#,
+            "OLDPARENT2212F",
+            t0 + 2000,
+        )
+        .await;
+
+        let past = crate::db::now_ms() - 5 * 60_000;
+        let recent = crate::db::now_ms();
+        sqlx::query!(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, created_at, next_attempt_at) \
+             VALUES (?, ?, ?, ?, ?)",
+            "__APPLY_OP__",
+            "ApplyOp:3:dev-2212f",
+            1_i64,
+            recent,
+            past,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 1,
+            "a record whose block was moved to ROOT must re-enqueue — a null \
+             new_parent_id terminates the chain, it does not fall back to the \
+             stale create parent (#2212 move-aware lineage)"
         );
         mat.shutdown();
     }
