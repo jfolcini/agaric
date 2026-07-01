@@ -447,7 +447,7 @@ async fn get_attachment_receive_meta(
 /// - A requested id with no matching row contributes nothing (the loop's
 ///   `Ok(None)` arm).
 /// - Duplicate ids in `attachment_ids` are counted once per occurrence: the
-///   list is fanned out via `json_each` and JOINed to `attachments`, so each
+///   list is fanned out via `json_each` and joined to `attachments`, so each
 ///   list element that matches yields its own summand — identical to the
 ///   loop, which called the lookup once per element.
 ///
