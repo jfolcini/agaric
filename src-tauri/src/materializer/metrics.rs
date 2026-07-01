@@ -1,5 +1,5 @@
 use serde::Serialize;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug)]
 pub struct QueueMetrics {
@@ -133,6 +133,62 @@ pub struct QueueMetrics {
     /// detect stalled consumers. 0 means the materializer has not yet
     /// processed any batch.
     pub last_materialize_ms: AtomicU64,
+    /// #2187: approximate count of rows currently sitting in
+    /// `materializer_retry_queue`. Used purely as a fast-path gate so the
+    /// per-success `clear_on_success` DELETE can be SKIPPED when there is
+    /// provably nothing to clear (the common case — most tasks never fail).
+    ///
+    /// Correctness bias: this gauge is only ever consulted to SKIP work, so
+    /// bounded inaccuracy is safe by construction. A stale-HIGH value costs
+    /// at most one idempotent (0-row) DELETE. A stale-LOW value self-heals:
+    /// the periodic sweeper re-clears any leftover rows on its next pass and
+    /// `note_retry_rows_deleted` re-floors the gauge. It is seeded from a
+    /// real `COUNT(*)` at sweeper boot and thereafter maintained
+    /// incrementally by `note_retry_row_inserted` / `note_retry_rows_deleted`.
+    pub pending_retry_rows: AtomicU64,
+}
+
+impl QueueMetrics {
+    /// #2187: seed the pending-retry gauge from an authoritative `COUNT(*)`
+    /// (e.g. at sweeper boot). Negative counts are clamped to 0.
+    pub fn seed_pending_retry_rows(&self, count: i64) {
+        let value = u64::try_from(count).unwrap_or(0);
+        self.pending_retry_rows.store(value, Ordering::Relaxed);
+    }
+
+    /// #2187: record that a fresh retry-queue row was INSERTed (not an
+    /// UPSERT bump of an existing row).
+    pub fn note_retry_row_inserted(&self) {
+        self.pending_retry_rows.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// #2187: record that `deleted` retry-queue rows were removed. Floors at
+    /// 0 (a stale-low gauge must never wrap around under u64), and is a
+    /// no-op when `deleted == 0`.
+    pub fn note_retry_rows_deleted(&self, deleted: u64) {
+        if deleted == 0 {
+            return;
+        }
+        let mut current = self.pending_retry_rows.load(Ordering::Relaxed);
+        loop {
+            let next = current.saturating_sub(deleted);
+            match self.pending_retry_rows.compare_exchange_weak(
+                current,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    /// #2187: true when the gauge believes at least one retry-queue row may
+    /// exist. Only consulted to SKIP work — see field docs for the bias.
+    pub fn has_pending_retry_rows(&self) -> bool {
+        self.pending_retry_rows.load(Ordering::Relaxed) > 0
+    }
 }
 
 impl Default for QueueMetrics {
@@ -170,6 +226,7 @@ impl Default for QueueMetrics {
             retry_queue_persist_errors: AtomicU64::new(0),
             retry_queue_giveup_total: AtomicU64::new(0),
             last_materialize_ms: AtomicU64::new(0),
+            pending_retry_rows: AtomicU64::new(0),
         }
     }
 }

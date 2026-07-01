@@ -207,6 +207,7 @@ async fn get_status_reports_bg_dropped_counter() {
             block_id: "BLK_RS".into(),
         },
         "simulated",
+        mat.metrics(),
     )
     .await
     .unwrap();

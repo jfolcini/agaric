@@ -271,6 +271,14 @@ async fn test_global_task_re_enqueued_after_backoff() {
     .await
     .unwrap();
 
+    // #2187: the row was planted via raw SQL, bypassing `record_failure`, so
+    // the incremental pending-retry gauge is still 0. Seed it from the real
+    // COUNT (mirrors the production boot seed in `spawn_sweeper`) or the
+    // consumer's `clear_on_success` fast-path would correctly SKIP the DELETE
+    // and the row would never clear.
+    let seeded = retry_queue::pending_count(&pool).await.unwrap();
+    mat.metrics().seed_pending_retry_rows(seeded);
+
     let n = retry_queue::sweep_once(&pool, &pool, &mat).await.unwrap();
     assert_eq!(
         n, 1,
