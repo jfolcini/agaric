@@ -19,6 +19,23 @@ import { renderOrderedListBlock } from './orderedList'
 import { renderTableBlock } from './table'
 
 /**
+ * Compile-time exhaustiveness guard for the block-type dispatch switches
+ * ({@link renderBlock} / {@link renderBlockInline}), keyed on the same
+ * `BlockLevelNode` taxonomy the serializer's dispatch table enumerates (#2219).
+ *
+ * Reached only from a `default` arm where `block` has narrowed to `never` — so
+ * adding a new `BlockLevelNode` type makes the arm a type error (the value is
+ * no longer assignable to `never`) until every renderer handles it, instead of
+ * the new kind silently falling through to the old default. At runtime it
+ * returns the caller's graceful fallback (`null` / `[]`) for a node whose type
+ * is outside the compiled taxonomy (defensive; unreachable for well-typed
+ * input).
+ */
+function exhaustiveBlockFallback<T>(_block: never, fallback: T): T {
+  return fallback
+}
+
+/**
  * Render a bulletList node as an unordered list. Mirrors
  * `renderOrderedListBlock`, flattening each list item's paragraphs into the
  * `<li>`. Without this, a bulletList would fall through `renderBlock`'s
@@ -111,7 +128,7 @@ export function renderBlock(
       return block.content ? renderInlineContent(block.content, key, ctx) : null
     }
     default: {
-      return null
+      return exhaustiveBlockFallback(block, null)
     }
   }
 }
@@ -219,7 +236,7 @@ export function renderBlockInline(
       return []
     }
     default: {
-      return []
+      return exhaustiveBlockFallback(block, [])
     }
   }
 }

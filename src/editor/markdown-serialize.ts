@@ -601,21 +601,10 @@ function serializeBlockquote(node: BlockquoteNode, onUnknownNode?: (type: string
     }
     return '> '
   }
-  // Recursively serialize each child block, then prefix every line with "> "
-  const inner = node.content
-    .map((child) => {
-      if (child.type === 'paragraph') return serializeParagraph(child, onUnknownNode)
-      if (child.type === 'heading') return serializeHeading(child, onUnknownNode)
-      if (child.type === 'codeBlock') return serializeCodeBlock(child)
-      if (child.type === 'blockquote') return serializeBlockquote(child, onUnknownNode)
-      if (child.type === 'table') return serializeTable(child, onUnknownNode)
-      if (child.type === 'orderedList') return serializeOrderedList(child, onUnknownNode)
-      if (child.type === 'bulletList') return serializeBulletList(child, onUnknownNode)
-      if (child.type === 'horizontalRule') return serializeHorizontalRule(child)
-      if (child.type === 'math_block') return serializeMathBlock(child)
-      return ''
-    })
-    .join('\n')
+  // Recursively serialize each child block (via the shared block dispatch so
+  // the grammar is enumerated in one place, #2219), then prefix every line
+  // with "> ".
+  const inner = node.content.map((child) => serializeBlockNode(child, onUnknownNode)).join('\n')
   const lines = inner.split('\n')
   // Prepend [!TYPE] prefix to the first line when calloutType is set
   if (node.attrs?.calloutType) {
@@ -707,37 +696,20 @@ function indentLines(text: string, indent: string): string {
 }
 
 /**
- * Serialize a single block-level child of a list item. The TipTap `ListItem`
- * schema is `paragraph block*`, so a list item can hold a `codeBlock`,
- * `heading`, `blockquote`, `table`, `math_block` or `horizontalRule` in addition
- * to the leading paragraph and nested lists (#2213). This mirrors the exhaustive
- * child dispatch in `serializeBlockquote` so none of those block kinds are
- * silently dropped (which previously lost code fences and `#` heading prefixes
- * when a code block / heading was toggled inside a list item).
- */
-function serializeListItemChild(
-  child: BlockLevelNode,
-  onUnknownNode?: (type: string) => void,
-): string {
-  if (child.type === 'paragraph') return serializeParagraph(child, onUnknownNode)
-  if (child.type === 'heading') return serializeHeading(child, onUnknownNode)
-  if (child.type === 'codeBlock') return serializeCodeBlock(child)
-  if (child.type === 'blockquote') return serializeBlockquote(child, onUnknownNode)
-  if (child.type === 'table') return serializeTable(child, onUnknownNode)
-  if (child.type === 'orderedList') return serializeOrderedList(child, onUnknownNode)
-  if (child.type === 'bulletList') return serializeBulletList(child, onUnknownNode)
-  if (child.type === 'horizontalRule') return serializeHorizontalRule(child)
-  if (child.type === 'math_block') return serializeMathBlock(child)
-  return ''
-}
-
-/**
  * Serialize one list item: its leading paragraph followed by any further
  * block-level children (nested lists, code blocks, headings, blockquotes, …).
  * The item's marker (e.g. `- ` or `3. `) is supplied by the caller and prefixed
  * to the first line; every subsequent block is indented one level so the parser
  * reads it back as nested content belonging to this item (round-trips via
  * `collectListItem`'s indent-preserving rule; #1513, #2213).
+ *
+ * The TipTap `ListItem` schema is `paragraph block*`, so a list item can hold a
+ * `codeBlock`, `heading`, `blockquote`, `table`, `math_block` or
+ * `horizontalRule` in addition to the leading paragraph and nested lists
+ * (#2213). Each child is routed through the shared {@link serializeBlockNode}
+ * dispatch so none of those block kinds are silently dropped (which previously
+ * lost code fences and `#` heading prefixes when a code block / heading was
+ * toggled inside a list item).
  */
 function serializeListItem(
   item: ListItemNode,
@@ -746,7 +718,7 @@ function serializeListItem(
 ): string {
   const children = item.content ?? []
   const parts = children.map((child, idx) => {
-    const serialized = serializeListItemChild(child, onUnknownNode)
+    const serialized = serializeBlockNode(child, onUnknownNode)
     // The first child sits on the marker line (no indent); every later block is
     // indented one level so it round-trips back into this item as nested content
     // rather than leaking out as a sibling block.
@@ -778,22 +750,61 @@ function serializeHorizontalRule(_node: HorizontalRuleNode): string {
   return '---'
 }
 
+// -- Shared block dispatch (#2219) --------------------------------------------
+
+/**
+ * The single authoritative block-node → serializer table. Every block-level
+ * call site — the top-level {@link serialize}, {@link serializeBlockquote}'s
+ * child loop, and each list item ({@link serializeListItem}) — routes through
+ * {@link serializeBlockNode}, which reads this table, so the locked block
+ * grammar is enumerated in exactly one place instead of the four parallel
+ * hand-maintained switches that previously had to stay in lockstep.
+ *
+ * The mapped type keyed by `BlockLevelNode['type']` is exhaustive at compile
+ * time: adding a new block node type to the `BlockLevelNode` union turns this
+ * object literal into a `tsgo` error (missing property) until a handler is
+ * supplied — so a new block kind can no longer compile while being silently
+ * dropped by a switch that forgot it.
+ */
+type BlockSerializerTable = {
+  [K in BlockLevelNode['type']]: (
+    node: Extract<BlockLevelNode, { type: K }>,
+    onUnknownNode?: (type: string) => void,
+  ) => string
+}
+
+const BLOCK_SERIALIZERS: BlockSerializerTable = {
+  paragraph: serializeParagraph,
+  heading: serializeHeading,
+  codeBlock: serializeCodeBlock,
+  blockquote: serializeBlockquote,
+  table: serializeTable,
+  orderedList: serializeOrderedList,
+  bulletList: serializeBulletList,
+  horizontalRule: serializeHorizontalRule,
+  math_block: serializeMathBlock,
+}
+
+/**
+ * Serialize one block-level node through the shared {@link BLOCK_SERIALIZERS}
+ * table. A node whose runtime `type` falls outside the compiled taxonomy is
+ * reported via `onUnknownNode` and dropped (empty string) — the same fallback
+ * the top-level `serialize` always used, now applied uniformly at every block
+ * call site (previously blockquote and list-item children dropped an unknown
+ * type silently; #2219).
+ */
+function serializeBlockNode(node: BlockLevelNode, onUnknownNode?: (type: string) => void): string {
+  const handler = BLOCK_SERIALIZERS[node.type] as
+    | ((n: BlockLevelNode, cb?: (type: string) => void) => string)
+    | undefined
+  if (!handler) {
+    onUnknownNode?.((node as { type: string }).type)
+    return ''
+  }
+  return handler(node, onUnknownNode)
+}
+
 export function serialize(doc: DocNode, onUnknownNode?: (type: string) => void): string {
   if (!doc.content || doc.content.length === 0) return ''
-  return doc.content
-    .map((node) => {
-      if (node.type === 'paragraph') return serializeParagraph(node, onUnknownNode)
-      if (node.type === 'heading') return serializeHeading(node, onUnknownNode)
-      if (node.type === 'codeBlock') return serializeCodeBlock(node)
-      if (node.type === 'blockquote') return serializeBlockquote(node, onUnknownNode)
-      if (node.type === 'table') return serializeTable(node, onUnknownNode)
-      if (node.type === 'orderedList') return serializeOrderedList(node, onUnknownNode)
-      if (node.type === 'bulletList') return serializeBulletList(node, onUnknownNode)
-      if (node.type === 'horizontalRule') return serializeHorizontalRule(node)
-      if (node.type === 'math_block') return serializeMathBlock(node)
-      const unknownType = (node as { type: string }).type
-      onUnknownNode?.(unknownType)
-      return ''
-    })
-    .join('\n')
+  return doc.content.map((node) => serializeBlockNode(node, onUnknownNode)).join('\n')
 }

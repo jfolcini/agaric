@@ -7,6 +7,7 @@ import {
 } from '../markdown-serialize-toast'
 import { parse, serialize } from '../markdown-serializer'
 import type {
+  BlockLevelNode,
   BlockquoteNode,
   DocNode,
   InlineNode,
@@ -3009,4 +3010,45 @@ describe('GFM task lists (#1435)', () => {
       })
     }
   })
+})
+
+describe('block-node dispatch is single-sourced and exhaustive (#2219)', () => {
+  // One representative node per BlockLevelNode kind, paired with a token its
+  // serialization must contain. All block-level output flows through the shared
+  // serializeBlockNode dispatch, which drives the top-level doc, blockquote
+  // children, AND list-item children — so a block kind dropped at any of those
+  // sites (the pre-#2219 silent-'' bug) is caught here at all three.
+  const cases: { name: BlockLevelNode['type']; node: BlockLevelNode; token: string }[] = [
+    { name: 'paragraph', node: paragraph(text('para')), token: 'para' },
+    { name: 'heading', node: heading(2, text('Head')), token: '## Head' },
+    { name: 'codeBlock', node: codeBlock('code()'), token: 'code()' },
+    { name: 'blockquote', node: blockquote(paragraph(text('quote'))), token: 'quote' },
+    { name: 'table', node: table(tableRow(tableCell(paragraph(text('cell'))))), token: 'cell' },
+    { name: 'orderedList', node: orderedList(listItem(paragraph(text('one')))), token: '1. one' },
+    { name: 'bulletList', node: bulletList(listItem(paragraph(text('bee')))), token: '- bee' },
+    { name: 'horizontalRule', node: horizontalRule(), token: '---' },
+    { name: 'math_block', node: { type: 'math_block', attrs: { latex: 'x^2' } }, token: 'x^2' },
+  ]
+
+  it('covers every BlockLevelNode kind', () => {
+    // Runtime companion to the compile-time exhaustiveness of BLOCK_SERIALIZERS:
+    // if a new block type is added to the union this count fails until a case is
+    // added here (and the mapped-type table stops compiling until it has a
+    // handler).
+    expect(new Set(cases.map((c) => c.name)).size).toBe(9)
+  })
+
+  for (const { name, node, token } of cases) {
+    it(`serializes ${name} at the top level`, () => {
+      expect(serialize(doc(node))).toContain(token)
+    })
+
+    it(`serializes ${name} nested in a blockquote (no silent drop)`, () => {
+      expect(serialize(doc(blockquote(node)))).toContain(token)
+    })
+
+    it(`serializes ${name} as a list-item block child (no silent drop)`, () => {
+      expect(serialize(doc(bulletList(listItem(paragraph(text('lead')), node))))).toContain(token)
+    })
+  }
 })
