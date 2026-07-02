@@ -619,6 +619,7 @@ async fn resolve_changed_page_ids(
         // (or depth/orphan cuts it off). `WHERE a.cur_type != 'page'` stops
         // the recursion as soon as the page root is reached, so a page block
         // seeded directly resolves to itself at depth 0.
+        // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
         let sql = format!(
             "WITH RECURSIVE ancestors(seed_id, cur_id, cur_type, depth) AS ( \
                  SELECT b.id, b.id, b.block_type, 0 FROM blocks b \

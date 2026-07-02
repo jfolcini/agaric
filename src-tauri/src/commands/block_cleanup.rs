@@ -336,6 +336,7 @@ pub async fn rederive_page_and_space_ids(
     };
 
     // 3. Cascade page_id to non-page active descendants.
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
     sqlx::query!(
         "WITH RECURSIVE descendants(id, depth) AS ( \
              SELECT b.id, 0 FROM blocks b \
@@ -357,6 +358,7 @@ pub async fn rederive_page_and_space_ids(
     //    whole subtree (root + non-page active descendants), synchronously —
     //    space-scoped lists are read right after commit. Non-page rows derive
     //    space_id from their owning page; pages keep their own.
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
     sqlx::query!(
         "WITH RECURSIVE descendants(id, depth) AS ( \
              SELECT b.id, 0 FROM blocks b \

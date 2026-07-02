@@ -695,6 +695,7 @@ pub async fn restore_page_to_op_inner(
     } else {
         // Recursive CTE with `depth < 100` to bound the walk against
         // runaway recursion on corrupted data (invariant #9).
+        // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
         sqlx::query!(
             "WITH RECURSIVE page_blocks(id, depth) AS ( \
                SELECT id, 0 FROM blocks WHERE id = ?1 \
@@ -846,6 +847,7 @@ pub async fn undo_page_op_inner(
     // not apply to this "fetch Nth row" semantics.
     // I-CommandsCRUD-1 — the AGENTS.md "Backend Patterns"
     // carve-out for this pattern is deferred (locked AGENTS.md self-rule).
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
     let target = sqlx::query_as!(
         HistoryEntry,
         "WITH RECURSIVE page_blocks(id, depth) AS ( \
@@ -1083,6 +1085,7 @@ pub async fn find_undo_group_inner(
     // `undo_page_op_inner`, bounding worst-case recursion against a
     // pathological burst of same-device ops.
     let seed_rn: i64 = depth + 1; // depth=0 → rn=1 (newest)
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
     let count: Option<i64> = sqlx::query_scalar!(
         "WITH RECURSIVE page_blocks(id, depth) AS ( \
              SELECT id, 0 FROM blocks WHERE id = ?1 \

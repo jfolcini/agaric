@@ -717,6 +717,7 @@ pub async fn delete_blocks_by_ids_inner(
     // ran in its own tx; a single CTE that already unions every
     // root's subtree subsumes the same set without the JS pre-walk.
     let live_roots_json = serde_json::to_string(&live_roots)?;
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
     let result = sqlx::query(
         "WITH RECURSIVE descendants(id, depth) AS ( \
              SELECT id, 0 FROM blocks \
@@ -750,6 +751,7 @@ pub async fn delete_blocks_by_ids_inner(
     // equals the max over the per-root walks, and `>= 99` flags saturation for
     // the batch exactly as the loop's per-root check did (any single saturated
     // root drives the batch max to >= 99). One walk covers every root.
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
     let saturation_max_depth: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(
         "WITH RECURSIVE descendants(id, depth) AS ( \
              SELECT id, 0 FROM blocks \
@@ -1453,6 +1455,7 @@ pub async fn restore_all_deleted_inner(
     sqlx::query!("UPDATE blocks SET page_id = id WHERE block_type = 'page'")
         .execute(&mut **tx)
         .await?;
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
     sqlx::query!(
         "WITH RECURSIVE page_of(id, page_id, depth) AS ( \
              SELECT id, id, 0 FROM blocks WHERE block_type = 'page' \
@@ -1734,6 +1737,7 @@ pub async fn restore_blocks_by_ids_inner(
     // exactly matching the single-row cohort guard, but per-root. Seeds are
     // pre-filtered to soft-deleted roots (`b.deleted_at IS NOT NULL`);
     // `depth < 100` bounds runaway recursion (invariant #9).
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
     let result = sqlx::query!(
         "WITH RECURSIVE cohort(id, root_deleted_at, depth) AS ( \
              SELECT b.id, b.deleted_at, 0 FROM blocks b \
@@ -1850,6 +1854,7 @@ pub async fn purge_blocks_by_ids_inner(
     // invariant #9). `depth < 100` still bounds runaway recursion. Kept
     // inline as a `&str` so each `sqlx::query(...)` call can `concat!`
     // against per-table tail clauses without macro expansion gymnastics.
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
     let cte = "WITH RECURSIVE descendants(id, depth) AS ( \
              SELECT id, 0 FROM blocks \
              WHERE id IN (SELECT value FROM json_each(?1)) \

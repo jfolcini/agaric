@@ -1,5 +1,11 @@
 //! Recursive-CTE macros for `tag_inheritance`.
 //!
+//! depth<100: every recursive arm below bounds the walk with `depth < 100`;
+//! the cap value is named [`crate::block_descendants::DESCENDANT_DEPTH_CAP`]
+//! and spelled here as the inline literal `100` (macro strings can't
+//! interpolate a const). See that constant for the rationale and its
+//! relationship to the `MAX_BLOCK_DEPTH` product invariant.
+//!
 //! `tag_inheritance` walks the block tree to maintain the
 //! `block_tag_inherited` cache (P-4). It needs four flavours of recursive
 //! walk that are similar enough to share macros, but different enough that

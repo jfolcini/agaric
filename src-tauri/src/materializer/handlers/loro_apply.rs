@@ -499,6 +499,7 @@ pub(super) async fn topmost_live_ancestor(
     // topmost. All ancestors are live by this point (the chain was restored).
     // dynamic-sql: recursive variable-depth ancestor walk; not expressible as
     // a compile-checked `query!` macro.
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
     let top = sqlx::query_scalar::<_, String>(
         "WITH RECURSIVE live_anc(id, parent_id, depth) AS ( \
              SELECT b.id, b.parent_id, 0 FROM blocks b \

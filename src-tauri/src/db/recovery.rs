@@ -438,6 +438,7 @@ async fn recover_blocks_from_op_log(
                 // differs; the era-switched TEXT/INTEGER stamp above cannot be
                 // expressed through it, so unifying would mis-stamp the
                 // pre-0080 (TEXT) era.
+                // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
                 let query = sqlx::query(
                     "UPDATE blocks SET deleted_at = ?1 \
                      WHERE deleted_at IS NULL \
@@ -496,6 +497,7 @@ async fn recover_blocks_from_op_log(
                 let deleted_at_ref = payload
                     .get("deleted_at_ref")
                     .and_then(serde_json::Value::as_i64);
+                // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
                 const RESTORE_CASCADE_PREFIX: &str = "UPDATE blocks SET deleted_at = NULL \
                      WHERE id IN ( \
                          WITH RECURSIVE descendants(id, depth) AS ( \
@@ -552,6 +554,7 @@ async fn recover_blocks_from_op_log(
                 // top-level blocks (`parent_id = NULL`), resurrecting
                 // user-destroyed data. Cascade with the same depth-bounded
                 // recursive CTE shape as the delete arm.
+                // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
                 sqlx::query(
                     "DELETE FROM blocks \
                      WHERE id IN ( \

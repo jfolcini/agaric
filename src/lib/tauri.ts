@@ -50,6 +50,7 @@ export type {
   QueryResultRow,
   RecoveryStatus,
   RestoreResponse,
+  RestoreToOpResult,
   SearchBlockRow,
   SearchFilter,
   SortColumn,
@@ -108,6 +109,7 @@ import type {
   PurgeResponse,
   RecoveryStatus,
   RestoreResponse,
+  RestoreToOpResult,
   SearchBlockRow,
   SpaceRow,
   SpaceScope,
@@ -1357,7 +1359,7 @@ export async function listPageLinks(
 /** Revert a batch of operations (by device_id + seq pairs). */
 export async function revertOps(params: {
   ops: Array<{ device_id: string; seq: number }>
-}): Promise<unknown> {
+}): Promise<UndoResult[]> {
   return unwrap(await commands.revertOps(params.ops))
 }
 
@@ -1366,11 +1368,7 @@ export async function restorePageToOp(params: {
   pageId: string
   targetDeviceId: string
   targetSeq: number
-}): Promise<{
-  ops_reverted: number
-  non_reversible_skipped: number
-  results: unknown[]
-}> {
+}): Promise<RestoreToOpResult> {
   return unwrap(
     await commands.restorePageToOp(params.pageId, params.targetDeviceId, params.targetSeq),
   )

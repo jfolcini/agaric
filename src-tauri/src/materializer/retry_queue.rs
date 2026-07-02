@@ -1098,6 +1098,7 @@ async fn try_reenqueue_apply_op(
         // If this block's create op was compacted away (and it has no move
         // op), the seed's effective parent is NULL and we conservatively do
         // NOT retire.
+        // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
         // dynamic-sql: recursive ancestry CTE + parameterized EXISTS; all values bound, no interpolation.
         let superseded_by_ancestor_purge: i64 = sqlx::query_scalar(
             "WITH RECURSIVE ancestors(id, depth) AS ( \

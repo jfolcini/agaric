@@ -29,6 +29,7 @@ import { SectionGroupHeader } from '@/components/ui/section-group-header'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useKeyboardNavigableList } from '@/hooks/useKeyboardNavigableList'
+import { usePaginatedQuery } from '@/hooks/usePaginatedQuery'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
@@ -50,46 +51,26 @@ export function DonePanel({
   const { t } = useTranslation()
   const { invalidationKey } = useBlockPropertyEvents()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
-  const [blocks, setBlocks] = useState<BlockRow[]>([])
-  const [loading, setLoading] = useState(false)
-  // Distinguishes a *failed* load from a legitimately empty panel: when the
-  // initial fetch rejects we surface an explicit error + retry affordance
-  // rather than rendering `null` (which is indistinguishable from "no done
-  // items today").
-  const [loadError, setLoadError] = useState(false)
-  // Bumped by the retry affordance to re-run the mount load effect.
-  const [reloadKey, setReloadKey] = useState(0)
   const [collapsed, setCollapsed] = useState(false)
-  const [nextCursor, setNextCursor] = useState<string | null>(null)
-  const [hasMore, setHasMore] = useState(false)
-  const [totalCount, setTotalCount] = useState(0)
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
 
-  // Generation counter guarding async responses (#2210). Bumped by the mount
-  // effect whenever the fetch identity (date + space + invalidationKey +
-  // excludePageId) changes. The load-more path captures the generation at call
-  // time and drops its response if the generation has advanced before it
-  // resolves — otherwise a late load-more could graft the previous day's cursor
-  // page onto the new day's list and desync hasMore/nextCursor/totalCount.
-  const generationRef = useRef(0)
-
-  // Fetch blocks completed on the given date.
+  // Fetch blocks completed on the given date through the shared paginated-query
+  // hook. `excludeParentId` and `contentNonEmpty` are passed straight to the
+  // backend so cursor pagination, `has_more`, and the header count reflect the
+  // visible (post-filter) set rather than the raw page (B-74) — the FE no longer
+  // post-filters cursor pages.
   //
-  // `excludeParentId` and `contentNonEmpty` are
-  // passed straight to the backend so cursor pagination, `total_count`,
-  // and `t('donePanel.loadMore')` reflect the visible (post-filter) set instead of
-  // the raw page. Previously the FE post-filtered each cursor page
-  // (B-74) which silently broke the cursor accounting on
-  // partial pages.
-  const fetchBlocks = useCallback(
+  // #2210 — the hook's request-id guard replaces the former hand-rolled
+  // generation counter: when the fetch identity (date / space / invalidationKey
+  // / excludePageId) changes, `queryFn`'s identity changes, the hook bumps its
+  // request id and aborts the in-flight request, so a late load-more response is
+  // dropped instead of being grafted onto the new day's list. `invalidationKey`
+  // is a fetch input (a block-property change must refetch), threaded through the
+  // dep array so the hook re-runs page 1 when it bumps.
+  const queryFn = useCallback(
     async (cursor?: string) => {
-      // Snapshot the generation this request belongs to; if the mount effect
-      // bumps it (date/space/invalidationKey/excludePageId changed) before we
-      // resolve, this response is stale and must be dropped (#2210).
-      const gen = generationRef.current
-      setLoading(true)
       try {
-        const resp = await queryByProperty({
+        return await queryByProperty({
           key: 'completed_at',
           valueDate: date,
           ...(cursor != null && { cursor }),
@@ -98,95 +79,53 @@ export function DonePanel({
           ...(excludePageId !== undefined && { excludeParentId: excludePageId }),
           contentNonEmpty: true,
         })
-        if (generationRef.current !== gen) return
-        const newBlocks = cursor ? [...blocks, ...resp.items] : resp.items
-        setBlocks(newBlocks)
-        setNextCursor(resp.next_cursor)
-        setHasMore(resp.has_more)
-        setTotalCount(cursor ? totalCount + resp.items.length : resp.items.length)
-
-        // Resolve parent page titles
-        const uniqueParentIds = collectUniqueParentIds(newBlocks)
-        if (uniqueParentIds.length > 0) {
-          const resolved = await batchResolve(uniqueParentIds)
-          if (generationRef.current !== gen) return
-          setPageTitles((prev) => mergeResolvedTitles(prev, resolved, t('donePanel.untitled')))
-        }
       } catch (err) {
-        if (generationRef.current !== gen) return
         logger.error('DonePanel', 'Failed to load done items', undefined, err)
-      } finally {
-        if (generationRef.current === gen) setLoading(false)
+        throw err
       }
     },
-    [date, blocks, totalCount, t, excludePageId, currentSpaceId],
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- invalidationKey is not read in the body but IS a fetch input: bumping it must change queryFn's identity so usePaginatedQuery invalidates in-flight requests and re-runs page 1 (#2210)
+    [date, currentSpaceId, excludePageId, invalidationKey],
   )
 
+  const { items: blocks, loading, hasMore, error, loadMore, reload } = usePaginatedQuery(queryFn)
+
+  // Resolve parent-page titles for the loaded blocks. Kept SEPARATE from the
+  // item fetch so a title-resolve failure surfaces blocks with an "Untitled"
+  // group header rather than failing the whole panel (the batchResolve rejection
+  // must not propagate into the paginated-query error state). Titles are MERGED
+  // (never rebuilt) so a later partial/failed resolve can't drop a title already
+  // resolved for a still-visible page from an earlier cursor page.
   useEffect(() => {
-    setBlocks([])
-    setNextCursor(null)
-    setHasMore(false)
-    setTotalCount(0)
-    setPageTitles(new Map())
-    setCollapsed(false)
-    setLoadError(false)
-
-    // Advance the generation so any in-flight load-more from the previous
-    // date/space/filter is dropped when it resolves (#2210).
-    generationRef.current += 1
-
+    const uniqueParentIds = collectUniqueParentIds(blocks)
+    if (uniqueParentIds.length === 0) return
     let cancelled = false
-    const doFetch = async () => {
-      setLoading(true)
-      try {
-        const resp = await queryByProperty({
-          key: 'completed_at',
-          valueDate: date,
-          limit: PAGINATION_LIMIT,
-          spaceId: currentSpaceId,
-          // Push excludeParentId (B-74) and
-          // ContentNonEmpty into SQL so totalCount/hasMore
-          // reflect the visible set rather than the raw page.
-          ...(excludePageId !== undefined && { excludeParentId: excludePageId }),
-          contentNonEmpty: true,
-        })
+    batchResolve(uniqueParentIds)
+      .then((resolved) => {
         if (cancelled) return
-        setBlocks(resp.items)
-        setNextCursor(resp.next_cursor)
-        setHasMore(resp.has_more)
-        setTotalCount(resp.items.length)
-
-        // Resolve parent page titles
-        const uniqueParentIds = collectUniqueParentIds(resp.items)
-        if (uniqueParentIds.length > 0) {
-          const resolved = await batchResolve(uniqueParentIds)
-          if (cancelled) return
-          setPageTitles(mergeResolvedTitles(new Map(), resolved, t('donePanel.untitled')))
-        }
-      } catch (err) {
-        if (!cancelled) {
-          logger.error('DonePanel', 'Failed to load done items', undefined, err)
-          setLoadError(true)
-        }
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-    doFetch()
+        setPageTitles((prev) => mergeResolvedTitles(prev, resolved, t('donePanel.untitled')))
+      })
+      .catch((err) => {
+        // Non-critical: breadcrumbs / group headers fall back to "Untitled".
+        logger.error('DonePanel', 'Failed to resolve page titles', undefined, err)
+      })
     return () => {
       cancelled = true
     }
-  }, [date, t, invalidationKey, excludePageId, currentSpaceId, reloadKey])
+  }, [blocks, t])
+
+  // Re-expand the panel when the fetch identity changes (new day / space /
+  // filter / block-property invalidation), matching the pre-refactor mount reset.
+  useEffect(() => {
+    setCollapsed(false)
+  }, [date, invalidationKey, excludePageId, currentSpaceId])
 
   const retryLoad = useCallback(() => {
-    setReloadKey((k) => k + 1)
-  }, [])
+    reload()
+  }, [reload])
 
-  const loadMore = useCallback(() => {
-    if (nextCursor) {
-      fetchBlocks(nextCursor)
-    }
-  }, [nextCursor, fetchBlocks])
+  // Accumulated visible count = number of loaded blocks (cursor pages append).
+  const totalCount = blocks.length
 
   const toggleCollapsed = useCallback(() => {
     setCollapsed((prev) => !prev)
@@ -299,7 +238,7 @@ export function DonePanel({
   // the empty `null` below — otherwise a thrown load is indistinguishable from
   // "no completed items today". Only surfaced when there's nothing to show
   // (an error on a load-more keeps the already-rendered items visible).
-  if (loadError && blocks.length === 0) {
+  if (error != null && blocks.length === 0) {
     return (
       <section className="done-panel" aria-label={t('donePanel.completedItems')}>
         <div

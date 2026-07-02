@@ -8,19 +8,11 @@
  */
 
 import { drag } from 'd3-drag'
-import {
-  forceCenter,
-  forceCollide,
-  forceLink,
-  forceManyBody,
-  forceSimulation,
-  forceX,
-  forceY,
-  type Simulation,
-} from 'd3-force'
+import { forceLink, forceSimulation, type Simulation } from 'd3-force'
 import { type Selection, select } from 'd3-selection'
 import { type ZoomBehavior, zoom, zoomIdentity } from 'd3-zoom'
 
+import { applyGraphForces, applyResizeForces, RESIZE_ALPHA } from '@/lib/graph-forces'
 import type { GraphEdge, GraphNode } from '@/lib/graph-types'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
@@ -790,18 +782,11 @@ function createMainThreadDrag(
 }
 
 function buildMainThreadSim(ctx: SimulationCtx): Simulation<GraphNode, GraphEdge> {
-  return forceSimulation(ctx.simNodes)
-    .force(
-      'link',
-      forceLink<GraphNode, GraphEdge>(ctx.simEdges)
-        .id((d) => d.id)
-        .distance(60),
-    )
-    .force('charge', forceManyBody().strength(-100))
-    .force('center', forceCenter(ctx.width / 2, ctx.height / 2))
-    .force('collide', forceCollide(20))
-    .force('x', forceX(ctx.width / 2).strength(0.05))
-    .force('y', forceY(ctx.height / 2).strength(0.05))
+  return applyGraphForces(forceSimulation<GraphNode, GraphEdge>(ctx.simNodes), {
+    edges: ctx.simEdges,
+    width: ctx.width,
+    height: ctx.height,
+  })
 }
 
 /**
@@ -828,11 +813,6 @@ export function runMainThreadSimulation(ctx: SimulationCtx): SimulationHandle {
   const live = { applyPositions: ctx.applyPositions }
 
   const current = { width: ctx.width, height: ctx.height }
-  const applyResizeForces = (width: number, height: number): void => {
-    sim.force('center', forceCenter(width / 2, height / 2))
-    sim.force('x', forceX(width / 2).strength(0.05))
-    sim.force('y', forceY(height / 2).strength(0.05))
-  }
 
   if (ctx.prefersReducedMotion) {
     sim.alphaDecay(1)
@@ -847,8 +827,8 @@ export function runMainThreadSimulation(ctx: SimulationCtx): SimulationHandle {
         if (width === current.width && height === current.height) return
         current.width = width
         current.height = height
-        applyResizeForces(width, height)
-        sim.alpha(0.3)
+        applyResizeForces(sim, { width, height })
+        sim.alpha(RESIZE_ALPHA)
         sim.tick(REDUCED_MOTION_TICK_LIMIT)
         live.applyPositions()
         sim.stop()
@@ -878,8 +858,8 @@ export function runMainThreadSimulation(ctx: SimulationCtx): SimulationHandle {
       if (width === current.width && height === current.height) return
       current.width = width
       current.height = height
-      applyResizeForces(width, height)
-      sim.alpha(0.3).restart()
+      applyResizeForces(sim, { width, height })
+      sim.alpha(RESIZE_ALPHA).restart()
     },
     onUpdate: (next) => {
       live.applyPositions = next.applyPositions

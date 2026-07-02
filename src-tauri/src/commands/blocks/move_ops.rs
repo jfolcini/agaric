@@ -177,6 +177,8 @@ async fn move_block_in_tx(
         // trip.  Splitting into two queries (one per CTE) would require two
         // separate SQL round trips and is not worth the overhead.  The inline
         // form is intentional: this is acceptable per the LOW finding.
+        // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants (both the path
+        // and descendants recursive arms carry the cap)
         let depths = sqlx::query!(
             r#"WITH RECURSIVE
                path(id, depth) AS (
@@ -325,6 +327,7 @@ async fn move_block_in_tx(
             affected.insert(p);
         }
         // New owning page + outbound target pages of the moved subtree.
+        // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
         let rows = sqlx::query_scalar::<_, String>(
             "WITH RECURSIVE subtree(id, depth) AS ( \
                  SELECT id, 0 FROM blocks WHERE id = ?1 \

@@ -302,12 +302,47 @@ describe('UnfinishedTasks', () => {
     // Expand
     await user.click(header)
 
-    expect(localStorage.getItem('unfinishedTasks.collapsed')).toBe('false')
+    // #2227 — the collapsed toggle now persists under the `agaric:`-prefixed key.
+    expect(localStorage.getItem('agaric:unfinishedTasks.collapsed')).toBe('false')
 
     // Collapse
     await user.click(header)
 
-    expect(localStorage.getItem('unfinishedTasks.collapsed')).toBe('true')
+    expect(localStorage.getItem('agaric:unfinishedTasks.collapsed')).toBe('true')
+  })
+
+  it('migrates the legacy unprefixed collapsed key (#2227): legacy "true" stays collapsed and is copied to the prefixed key', async () => {
+    // A pre-#2227 user has only the legacy key.
+    localStorage.setItem('unfinishedTasks.collapsed', 'true')
+    mockInvokeForBlocks([makeYesterdayBlock()])
+
+    render(<UnfinishedTasks />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+    })
+
+    // Saved preference honoured: still collapsed.
+    expect(screen.getByRole('button', { expanded: false })).toBeInTheDocument()
+    expect(screen.queryByTestId('unfinished-group-yesterday')).not.toBeInTheDocument()
+    // And migrated: the mount write-through copies it to the prefixed key.
+    expect(localStorage.getItem('agaric:unfinishedTasks.collapsed')).toBe('true')
+  })
+
+  it('prefers the prefixed collapsed key over the legacy one when both exist', async () => {
+    // Post-migration state: the prefixed key ("expanded") must win even though
+    // a stale legacy key ("collapsed") is still on disk.
+    localStorage.setItem('agaric:unfinishedTasks.collapsed', 'false')
+    localStorage.setItem('unfinishedTasks.collapsed', 'true')
+    mockInvokeForBlocks([makeYesterdayBlock()])
+
+    render(<UnfinishedTasks />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+    })
+
+    expect(screen.getByTestId('unfinished-group-yesterday')).toBeInTheDocument()
   })
 
   it('shows count badge with total number of tasks', async () => {
