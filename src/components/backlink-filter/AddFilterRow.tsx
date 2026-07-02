@@ -25,7 +25,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { backlinkFilterToCanonical, canonicalToBacklinkFilter } from '@/lib/filters/model'
 import { notify } from '@/lib/notify'
 
 import type { BacklinkFilter } from '../../lib/tauri'
@@ -193,23 +192,6 @@ function buildFilterForCategory(
   }
 }
 
-/**
- * Project a freshly-built `BacklinkFilter` through the canonical filter model
- * (Issue #1646): every backlink leaf round-trips `BacklinkFilter → FilterPredicate
- * → BacklinkFilter` losslessly, so the surface now derives its emitted wire shape
- * FROM the canonical model rather than emitting an ad-hoc shape directly. The
- * round-trip is byte-identical for every category the builder emits (the parity
- * tests prove it), so this is a representation change only — the IPC contract is
- * unchanged. If a future leaf ever fails to round-trip (canonical returns `null`,
- * e.g. a compound `And/Or/Not` wrapper the flat builder never emits), we fall back
- * to the original filter so behaviour is never silently dropped.
- */
-function projectThroughCanonical(filter: BacklinkFilter): BacklinkFilter {
-  const canonical = backlinkFilterToCanonical(filter)
-  if (canonical === null) return filter
-  return canonicalToBacklinkFilter(canonical) ?? filter
-}
-
 // ---------------------------------------------------------------------------
 // Add-filter row (inline form)
 // ---------------------------------------------------------------------------
@@ -258,7 +240,7 @@ export function AddFilterRow({
     }
     const result = buildFilterForCategory(category, state, t)
     if ('filter' in result) {
-      onApply(projectThroughCanonical(result.filter))
+      onApply(result.filter)
     } else {
       notify.error(result.error)
     }

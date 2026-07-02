@@ -26,7 +26,6 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { usePriorityLevels } from '@/hooks/usePriorityLevels'
 import type { DatePredicate, PropertyPredicate } from '@/lib/bindings'
-import { projectPageFilterThroughCanonical } from '@/lib/filters/pageBrowserAdapter'
 import type { FilterExpr, FilterPrimitive } from '@/lib/tauri'
 
 import {
@@ -158,21 +157,13 @@ export function AddFilterPopover({
     triggerRef.current?.focus()
   }, [reset])
 
-  // #1646 (surface 2) — the Pages browser now projects its internal filter
-  // representation THROUGH the canonical `FilterPredicate` model before it
-  // crosses the IPC boundary, so all four filter surfaces share one source of
-  // truth. The UI and the gestures are unchanged: each category still builds a
-  // `FilterPrimitive`, but `emit` round-trips it
-  // (`FilterPrimitive` → canonical → `FilterPrimitive`) so the emitted wire
-  // value provably equals the canonical projection. The round-trip is lossless
-  // for every Pages category (proven by the parity table in
-  // `pageBrowserAdapter.test.ts`), so the emitted backend filter stays
-  // BYTE-IDENTICAL to the pre-migration path. The deferred `HasParentMatching`
-  // (recursive `FilterExpr`) has no flat canonical category yet, so the adapter
-  // passes it through untouched (see the helper's docstring).
+  // Each category builds a `FilterPrimitive` leaf and emits it directly to the
+  // backend query. (#2258 removed a no-op round-trip through the canonical
+  // `FilterPredicate` model here: it was the identity for every category the
+  // popover builds, so it carried no runtime payoff.)
   const emit = useCallback(
     (filter: FilterPrimitive) => {
-      onAddFilter(projectPageFilterThroughCanonical(filter))
+      onAddFilter(filter)
       close()
     },
     [onAddFilter, close],

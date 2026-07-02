@@ -11,7 +11,6 @@
  * shape is accepted by `searchBlocks` as `Partial<…>` extension fields
  * (each entry is `T | undefined`).
  */
-import { canonicalToSearchProjection, searchProjectionToCanonical } from '@/lib/filters/model'
 import type { AstFilterProjection } from '@/lib/search-query'
 
 /**
@@ -49,17 +48,16 @@ export interface SearchFilterParams {
 }
 
 export function astFilterParams(
-  rawProjection: AstFilterProjection,
+  projection: AstFilterProjection,
   tagIds: string[],
 ): SearchFilterParams {
-  // Issue #1646, step 1 — the search surface now projects from the canonical
-  // filter model. We round-trip the AST projection through `FilterPredicate[]`
-  // and back before emitting the IPC bundle, so the search representation is
-  // unified with the other surfaces while the emitted `SearchFilterParams`
-  // stays byte-identical (the round-trip is the identity on the projection;
-  // proven by the parity tests). The query-string UI is unchanged — this is a
-  // pure internal-representation convergence at the IPC boundary.
-  const projection = canonicalToSearchProjection(searchProjectionToCanonical(rawProjection))
+  // Issue #2258 — the search surface emits its IPC bundle directly from the
+  // parsed `AstFilterProjection`. It previously round-tripped the projection
+  // through the canonical `FilterPredicate` model and back, but that round-trip
+  // was provably the identity for every projection the parser produces (deep
+  // review #2258), so it carried no runtime payoff and was removed. The
+  // `astFilterParams canonical-adapter parity` suite still pins the emitted
+  // byte shape against the direct mapping.
   // #717 — `useTagResolution` yields exactly one settled entry per input
   // name, so fewer ids than names means at least one name is definitively
   // unresolved (callers hold the search while resolution is pending).
