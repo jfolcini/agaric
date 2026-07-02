@@ -726,12 +726,16 @@ export async function blurEditors(page: Page) {
  * editing block (e.g. caller already blurred the editor, or tests that
  * don't use a TipTap editor at all).
  */
-export async function saveBlock(page: Page) {
+export async function saveBlock(page: Page, via: 'Enter' | 'Escape' = 'Enter') {
   const editingBlock = page
     .locator('[data-testid="sortable-block"]:has([data-testid="block-editor"])')
     .first()
   const blockId = await editingBlock.getAttribute('data-block-id').catch(() => null)
-  await page.keyboard.press('Enter')
+  // #2276: Enter inside a listItem now splits the item (a pasted multi-item
+  // list must be able to gain items) instead of flushing the block. Specs
+  // that end with the caret inside a list commit via Escape — the universal
+  // exit gesture for container nodes (code blocks, tables, lists).
+  await page.keyboard.press(via)
   if (blockId) {
     await expect(
       page.locator(
