@@ -15,6 +15,7 @@ import { BlockListItem } from '@/components/editor/BlockListItem'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
+import { usePaginatedQuery } from '@/hooks/usePaginatedQuery'
 
 import { useBlockNavigation } from '../../hooks/useBlockNavigation'
 import { useToday } from '../../hooks/useToday'
@@ -183,8 +184,6 @@ export function UnfinishedTasks({
     collapsedDefault,
     { source: 'UnfinishedTasks' },
   )
-  const [blocks, setBlocks] = useState<BlockRow[]>([])
-  const [loading, setLoading] = useState(true)
   const [groupCollapsed, setGroupCollapsed] = useLocalStoragePreference<Record<string, boolean>>(
     GROUP_STORAGE_KEY,
     {},
@@ -194,69 +193,64 @@ export function UnfinishedTasks({
 
   const todayStr = useToday()
 
+  // #2256 — the cursor-drain that used to be a hand-rolled bounded loop now
+  // runs through the shared `usePaginatedQuery` hook in `drain` mode, giving
+  // this panel the same canonical stale-guard as HistoryView / DonePanel. The
+  // hook follows the `next_cursor` chain to the end (bounded by
+  // MAX_UNFINISHED_PAGES so a non-advancing backend cursor can't spin forever,
+  // #757), accumulating every page into one `blocks` list. When
+  // `todayStr` / `currentSpaceId` change, `queryFn`'s identity changes, so the
+  // hook bumps its request id and aborts the in-flight drain — a slow rejection
+  // from a superseded run can no longer clobber the newer run's data (#826).
+  const queryFn = useCallback(
+    async (cursor?: string) => {
+      try {
+        return await listUnfinishedTasks({
+          beforeDate: todayStr,
+          todoStates: ['TODO', 'DOING'],
+          ...(cursor != null && { cursor }),
+          limit: paginationLimit(200),
+          spaceId: currentSpaceId,
+        })
+      } catch (err) {
+        logger.warn('UnfinishedTasks', 'fetchUnfinished failed', undefined, err)
+        throw err
+      }
+    },
+    [todayStr, currentSpaceId],
+  )
+  const { items: blocks, loading } = usePaginatedQuery<BlockRow>(queryFn, {
+    drain: true,
+    maxPages: MAX_UNFINISHED_PAGES,
+  })
+
   const { handleBlockClick, handleBlockKeyDown } = useBlockNavigation({
     onNavigateToPage,
     pageTitles,
     untitledLabel: t('unfinished.untitled'),
   })
 
-  // Fetch unfinished tasks on mount
+  // Resolve page titles for breadcrumbs once the drained blocks are in. Kept
+  // SEPARATE from the item fetch (mirrors DonePanel) so a title-resolve failure
+  // surfaces blocks with an "Untitled" breadcrumb rather than failing the
+  // section. `resolvePageTitles` swallows its own errors and returns an empty
+  // map on failure, so the fallback is automatic. Titles are REPLACED (not
+  // merged) to match the pre-migration behaviour: each drain commits the full
+  // block set at once, so the title map is rebuilt wholesale per load.
   useEffect(() => {
-    let stale = false
-
-    async function fetchUnfinished() {
-      setLoading(true)
-      try {
-        // Query unfinished tasks directly from the backend. #757 — the
-        // response is cursor-paginated and capped at 200 rows per page;
-        // ignoring `has_more`/`next_cursor` silently undercounted the
-        // badge and the "Older" group. Drain the cursor chain so the
-        // section reflects the full set.
-        const items: BlockRow[] = []
-        let cursor: string | undefined
-        for (let page = 0; page < MAX_UNFINISHED_PAGES; page++) {
-          const resp = await listUnfinishedTasks({
-            beforeDate: todayStr,
-            todoStates: ['TODO', 'DOING'],
-            ...(cursor != null && { cursor }),
-            limit: paginationLimit(200),
-            spaceId: currentSpaceId,
-          })
-
-          if (stale) return
-
-          items.push(...resp.items)
-          if (!resp.has_more || resp.next_cursor == null) break
-          cursor = resp.next_cursor
-        }
-
-        setBlocks(items)
-
-        // Resolve page titles for breadcrumbs (non-critical on failure)
-        const parentIds = [...new Set(items.map((b) => b.page_id).filter(Boolean))] as string[]
-        if (parentIds.length > 0) {
-          const titles = await resolvePageTitles(parentIds)
-          if (!stale) {
-            setPageTitles(titles)
-          }
-        }
-      } catch (err) {
-        logger.warn('UnfinishedTasks', 'fetchUnfinished failed', undefined, err)
-        // #826 — mirror the #757 stale-guard contract: a slow/post-unmount
-        // rejection must not clobber newer successfully-loaded data (or call
-        // setState after unmount). Only reset blocks if this run still owns
-        // the effect.
-        if (!stale) setBlocks([])
-      } finally {
-        if (!stale) setLoading(false)
-      }
+    const parentIds = [...new Set(blocks.map((b) => b.page_id).filter(Boolean))] as string[]
+    if (parentIds.length === 0) {
+      setPageTitles(new Map())
+      return
     }
-
-    fetchUnfinished()
+    let cancelled = false
+    resolvePageTitles(parentIds).then((titles) => {
+      if (!cancelled) setPageTitles(titles)
+    })
     return () => {
-      stale = true
+      cancelled = true
     }
-  }, [todayStr, currentSpaceId])
+  }, [blocks])
 
   const groups = useMemo(() => groupByAge(blocks, todayStr), [blocks, todayStr])
 

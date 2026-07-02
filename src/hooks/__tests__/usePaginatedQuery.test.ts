@@ -548,4 +548,115 @@ describe('usePaginatedQuery', () => {
     expect(result.current.items).toEqual(['a', 'b'])
     expect(result.current.capped).toBe(true)
   })
+
+  // ── Drain-to-completion mode (#2256) ────────────────────────────
+
+  describe('drain mode', () => {
+    it('follows the cursor chain to the end, accumulating every page in one list', async () => {
+      const queryFn = vi
+        .fn()
+        .mockResolvedValueOnce(makePage(['a', 'b'], true, 'c1'))
+        .mockResolvedValueOnce(makePage(['c', 'd'], true, 'c2'))
+        .mockResolvedValueOnce(makePage(['e'], false))
+      const { result } = renderHook(() => usePaginatedQuery(queryFn, { drain: true }))
+
+      await waitFor(() => expect(result.current.loading).toBe(false))
+      // All three pages accumulated in a single list.
+      expect(result.current.items).toEqual(['a', 'b', 'c', 'd', 'e'])
+      // Drain leaves nothing more to load.
+      expect(result.current.hasMore).toBe(false)
+      // Followed the cursor chain: undefined → c1 → c2.
+      expect(queryFn).toHaveBeenCalledTimes(3)
+      expect(queryFn).toHaveBeenNthCalledWith(1, undefined, expect.any(AbortSignal))
+      expect(queryFn).toHaveBeenNthCalledWith(2, 'c1', expect.any(AbortSignal))
+      expect(queryFn).toHaveBeenNthCalledWith(3, 'c2', expect.any(AbortSignal))
+    })
+
+    it('loadMore is a no-op after a drain (nothing left to load)', async () => {
+      const queryFn = vi
+        .fn()
+        .mockResolvedValueOnce(makePage(['a'], true, 'c1'))
+        .mockResolvedValueOnce(makePage(['b'], false))
+      const { result } = renderHook(() => usePaginatedQuery(queryFn, { drain: true }))
+
+      await waitFor(() => expect(result.current.loading).toBe(false))
+      expect(result.current.items).toEqual(['a', 'b'])
+
+      await act(async () => result.current.loadMore())
+      // No extra fetch: the drain already exhausted the chain.
+      expect(queryFn).toHaveBeenCalledTimes(2)
+    })
+
+    it('stops at maxPages when the backend never reports the end (runaway guard)', async () => {
+      // Non-advancing backend bug: always claims more with a fresh cursor.
+      let page = 0
+      const queryFn = vi.fn(() => {
+        page += 1
+        return Promise.resolve(makePage([`p${page}`], true, `c${page}`))
+      })
+      const { result } = renderHook(() => usePaginatedQuery(queryFn, { drain: true, maxPages: 3 }))
+
+      await waitFor(() => expect(result.current.loading).toBe(false))
+      // Bounded at maxPages instead of spinning forever.
+      expect(queryFn).toHaveBeenCalledTimes(3)
+      expect(result.current.items).toEqual(['p1', 'p2', 'p3'])
+      expect(result.current.hasMore).toBe(false)
+    })
+
+    it('exposes the last page’s total_count after a drain', async () => {
+      const queryFn = vi
+        .fn()
+        .mockResolvedValueOnce({ items: ['a'], next_cursor: 'c1', has_more: true, total_count: 9 })
+        .mockResolvedValueOnce({ items: ['b'], next_cursor: null, has_more: false, total_count: 9 })
+      const { result } = renderHook(() => usePaginatedQuery(queryFn, { drain: true }))
+
+      await waitFor(() => expect(result.current.loading).toBe(false))
+      expect(result.current.totalCount).toBe(9)
+    })
+
+    it('drops a stale drain tail when queryFn changes mid-drain (stale-guard)', async () => {
+      // First drain: page 1 resolves, page 2 stays pending until we release it.
+      let resolveSecondPage!: (v: PaginatedResponse<string>) => void
+      const firstQueryFn = vi
+        .fn()
+        .mockResolvedValueOnce(makePage(['old-1'], true, 'c1'))
+        .mockImplementationOnce(
+          () =>
+            new Promise<PaginatedResponse<string>>((r) => {
+              resolveSecondPage = r
+            }),
+        )
+      const secondQueryFn = vi.fn().mockResolvedValue(makePage(['new'], false))
+
+      const { result, rerender } = renderHook(
+        ({ qf }: { qf: (cursor?: string) => Promise<PaginatedResponse<string>> }) =>
+          usePaginatedQuery(qf, { drain: true }),
+        { initialProps: { qf: firstQueryFn } },
+      )
+
+      // First drain is mid-chain (page 2 pending).
+      await waitFor(() => expect(firstQueryFn).toHaveBeenCalledTimes(2))
+
+      // Deps change → new queryFn takes over and completes.
+      rerender({ qf: secondQueryFn })
+      await waitFor(() => expect(result.current.items).toEqual(['new']))
+
+      // The stale drain's late page-2 resolves — it must NOT be grafted on.
+      await act(async () => resolveSecondPage(makePage(['old-2'], false)))
+      expect(result.current.items).toEqual(['new'])
+    })
+
+    it('sets error state and preserves items when a drain page rejects', async () => {
+      const queryFn = vi
+        .fn()
+        .mockResolvedValueOnce(makePage(['a'], true, 'c1'))
+        .mockRejectedValueOnce(new Error('drain boom'))
+      const { result } = renderHook(() => usePaginatedQuery(queryFn, { drain: true }))
+
+      await waitFor(() => expect(result.current.loading).toBe(false))
+      // A mid-drain failure surfaces error state; the partial list is not committed.
+      expect(result.current.error).toBe('drain boom')
+      expect(result.current.items).toEqual([])
+    })
+  })
 })
