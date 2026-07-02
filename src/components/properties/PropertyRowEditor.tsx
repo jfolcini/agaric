@@ -23,7 +23,7 @@ import { Button } from '@/components/ui/button'
 import { LOCKED_PROPERTY_OPTIONS } from '@/lib/property-save-utils'
 import { formatPropertyName } from '@/lib/property-utils'
 
-import type { PropertyDefinition, PropertyRow } from '../lib/tauri'
+import type { PropertyDefinition, PropertyRow } from '../../lib/tauri'
 import { BooleanEditor } from './PropertyRowEditor/BooleanEditor'
 import { DateEditor } from './PropertyRowEditor/DateEditor'
 import { NumberEditor } from './PropertyRowEditor/NumberEditor'

@@ -1,10 +1,14 @@
 /**
- * PropertyRow — a single editable property row (badge + value input + optional
+ * PropertyField — a single editable property row (badge + value input + optional
  * remove button).
+ *
+ * Named for its role (an editable field for one property) to disambiguate from
+ * the generated wire type `PropertyRow` (lib/tauri) and the typed dispatcher
+ * `PropertyRowEditor` (see #2257).
  *
  * Extracted from `BlockPropertyDrawer` (#761) into its own leaf component so
  * that both `BlockPropertyDrawer` and `BuiltinDateFields` can import it without
- * forming an import cycle (previously `BuiltinDateFields` imported `PropertyRow`
+ * forming an import cycle (previously `BuiltinDateFields` imported this field
  * back from `BlockPropertyDrawer`, which imported `BuiltinDateFields`).
  *
  * Behaviour is unchanged from the original in-file definition.
@@ -21,7 +25,7 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useDateInput } from '@/hooks/useDateInput'
 
-export interface PropertyRowProps {
+export interface PropertyFieldProps {
   /**
    * The raw property key (e.g. `repeat`, `status`). Used to surface
    * key-specific affordances such as the `repeat` syntax help popover
@@ -48,7 +52,7 @@ export interface PropertyRowProps {
   removeAriaLabel?: string
 }
 
-export function PropertyRow({
+export function PropertyField({
   propKey,
   icon: Icon,
   label,
@@ -59,7 +63,7 @@ export function PropertyRow({
   onSave,
   onRemove,
   removeAriaLabel,
-}: PropertyRowProps): React.ReactElement {
+}: PropertyFieldProps): React.ReactElement {
   const { t } = useTranslation()
   const isDate = inputType === 'date'
   const isRepeat = propKey === 'repeat'

@@ -126,6 +126,6 @@ The full inventory lives in [`docs/UI-MAP.md`](../UI-MAP.md). The architecture-r
 
 - `src/components/ui/` — shadcn-style primitives. Anything new should reuse from here first.
 - `src/components/` — domain components.
-- `src/components/<Feature>/` — per-feature sub-component directories (FormattingToolbar, PropertyRowEditor, SpaceManageDialog, …).
+- `src/components/<Feature>/` — per-feature sub-component directories (FormattingToolbar, SpaceManageDialog, properties/PropertyRowEditor, …).
 
 The decomposition pattern (a "god component" with a `biome-ignore` for cognitive complexity → orchestrator + per-concern children + a containing hook) is documented in `docs/UX.md § UI primitives`.

@@ -15,8 +15,8 @@ import { useTranslation } from 'react-i18next'
 
 import { AddPropertyPopover } from '@/components/properties/AddPropertyPopover'
 import { BuiltinDateFields } from '@/components/properties/BuiltinDateFields'
-import { PropertyRow } from '@/components/properties/PropertyRow'
-import { PropertyRowEditor } from '@/components/PropertyRowEditor'
+import { PropertyField } from '@/components/properties/PropertyField'
+import { PropertyRowEditor } from '@/components/properties/PropertyRowEditor'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
@@ -35,7 +35,7 @@ import { notify } from '@/lib/notify'
 import { buildInitParams, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
-import type { PropertyDefinition, PropertyRow as PropertyRowData } from '@/lib/tauri'
+import type { PropertyDefinition, PropertyRow } from '@/lib/tauri'
 import { type PageBlockState, usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
 
 export interface BlockPropertyDrawerProps {
@@ -51,7 +51,7 @@ export function BlockPropertyDrawer({
 }: BlockPropertyDrawerProps): React.ReactElement {
   const { t } = useTranslation()
   const [loading, setLoading] = useState(true)
-  const [properties, setProperties] = useState<PropertyRowData[]>([])
+  const [properties, setProperties] = useState<PropertyRow[]>([])
   const [definitions, setDefinitions] = useState<PropertyDefinition[]>([])
   const { setDueDate: setDueDateCmd, setScheduledDate: setScheduledDateCmd } = useBlockReschedule()
   const { getProperties, listPropertyDefs, setProperty } = useBlockPropertyIpc()
@@ -287,7 +287,7 @@ export function BlockPropertyDrawer({
                 const Icon = BUILTIN_PROPERTY_ICONS[prop.key]
                 const label = Icon ? formatPropertyName(prop.key) : prop.key
                 return (
-                  <PropertyRow
+                  <PropertyField
                     key={prop.key}
                     propKey={prop.key}
                     icon={Icon}
