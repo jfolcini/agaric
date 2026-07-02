@@ -2,7 +2,7 @@
  * Tests for the chip-row projection of the parsed AST.
  */
 
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -73,6 +73,122 @@ describe('FilterChipRow', () => {
     render(<FilterChipRow filters={filters} onRemove={vi.fn()} onClearAll={vi.fn()} />)
     const pill = screen.getByText('path:[unclosed').closest('[data-slot="filter-pill"]')
     expect(pill).toHaveAttribute('title', 'InvalidGlob: unbalanced bracket')
+  })
+
+  // #2262 — invalid chips carry aria-invalid (activating the live
+  // `aria-invalid:border-destructive` Badge variant), surface the error in the
+  // accessible name, and summarize errors in a shared role="alert" region.
+  it('sets aria-invalid on the invalid pill only', () => {
+    const filters: FilterToken[] = [
+      { kind: 'tag', value: 'urgent', span: [0, 11] },
+      {
+        kind: 'invalid',
+        source: 'path:[unclosed',
+        error: 'InvalidGlob: unbalanced bracket',
+        span: [12, 26],
+      },
+    ]
+    render(<FilterChipRow filters={filters} onRemove={vi.fn()} onClearAll={vi.fn()} />)
+    const invalidPill = screen.getByText('path:[unclosed').closest('[data-slot="filter-pill"]')
+    const validPill = screen.getByText('tag:#urgent').closest('[data-slot="filter-pill"]')
+    expect(invalidPill).toHaveAttribute('aria-invalid', 'true')
+    expect(validPill).not.toHaveAttribute('aria-invalid')
+  })
+
+  it('includes the parser error in the invalid chip accessible name', () => {
+    const filters: FilterToken[] = [
+      {
+        kind: 'invalid',
+        source: 'path:[unclosed',
+        error: 'InvalidGlob: unbalanced bracket',
+        span: [0, 14],
+      },
+    ]
+    render(<FilterChipRow filters={filters} onRemove={vi.fn()} onClearAll={vi.fn()} />)
+    // The group label carries the label AND the error text.
+    expect(
+      screen.getByRole('group', {
+        name: /Invalid filter: path:\[unclosed — InvalidGlob: unbalanced bracket/,
+      }),
+    ).toBeInTheDocument()
+  })
+
+  it('surfaces invalid-filter errors in a shared role="alert" region', async () => {
+    const filters: FilterToken[] = [
+      { kind: 'tag', value: 'ok', span: [0, 7] },
+      {
+        kind: 'invalid',
+        source: 'path:[unclosed',
+        error: 'InvalidGlob: unbalanced bracket',
+        span: [8, 22],
+      },
+    ]
+    render(<FilterChipRow filters={filters} onRemove={vi.fn()} onClearAll={vi.fn()} />)
+    // The alert content is debounced (INVALID_ALERT_SETTLE_MS) so transient
+    // mid-typing invalid states don't spam the live region — findByRole waits
+    // out the settle window.
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('path:[unclosed: InvalidGlob: unbalanced bracket')
+  })
+
+  // The chip row projects the LIVE query AST — a token is transiently invalid
+  // on every keystroke while the user is mid-token (`due:2`, `due:20`, …). The
+  // shared role="alert" region must NOT announce each transient state: it only
+  // reflects an invalid set that has been stable for the settle window, and it
+  // clears immediately once every token is valid.
+  it('debounces the alert region across transient invalid states while typing', () => {
+    vi.useFakeTimers()
+    try {
+      const onRemove = vi.fn()
+      const onClearAll = vi.fn()
+      const { rerender } = render(
+        <FilterChipRow
+          filters={[{ kind: 'invalid', source: 'due:2', error: 'bad date', span: [0, 5] }]}
+          onRemove={onRemove}
+          onClearAll={onClearAll}
+        />,
+      )
+      // Not announced synchronously.
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      act(() => {
+        vi.advanceTimersByTime(150)
+      })
+      // "Keystroke": the invalid token changes before the settle window
+      // elapses — the timer resets, still nothing announced.
+      rerender(
+        <FilterChipRow
+          filters={[{ kind: 'invalid', source: 'due:20', error: 'bad date', span: [0, 6] }]}
+          onRemove={onRemove}
+          onClearAll={onClearAll}
+        />,
+      )
+      act(() => {
+        vi.advanceTimersByTime(150)
+      })
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      // Quiet period elapses — the settled error is announced.
+      act(() => {
+        vi.advanceTimersByTime(200)
+      })
+      expect(screen.getByRole('alert')).toHaveTextContent('due:20: bad date')
+      // The token becomes valid — the alert clears immediately, no timer.
+      rerender(
+        <FilterChipRow
+          filters={[{ kind: 'tag', value: 'ok', span: [0, 7] }]}
+          onRemove={onRemove}
+          onClearAll={onClearAll}
+        />,
+      )
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('renders no alert region when all filters are valid', () => {
+    const filters: FilterToken[] = [{ kind: 'tag', value: 'urgent', span: [0, 11] }]
+    render(<FilterChipRow filters={filters} onRemove={vi.fn()} onClearAll={vi.fn()} />)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   // New token kinds render via tokenSource(), no special branch.

@@ -48,6 +48,19 @@ export interface BacklinkGroupRendererProps {
    * at a glance. Optional to keep this component reusable.
    */
   linkType?: 'linked' | 'unlinked'
+  /**
+   * Block id of the row that currently holds the roving keyboard focus, or
+   * `null`. Drives `aria-current` on the matching row so the roving position
+   * is exposed to assistive tech (the container hosts `aria-activedescendant`
+   * pointing at that row's `domId`). #2263.
+   */
+  focusedBlockId?: string | null
+  /**
+   * Maps a block id to the stable, unique DOM id used for
+   * `aria-activedescendant` / row `id`. Required whenever `focusedBlockId`
+   * is used so the container's active-descendant reference resolves.
+   */
+  rowDomId?: (blockId: string) => string
 }
 
 interface BacklinkRowProps {
@@ -59,6 +72,10 @@ interface BacklinkRowProps {
   resolveBlockStatus: (id: string) => 'active' | 'deleted'
   resolveTagName: (id: string) => string
   emptyLabel: string
+  /** Stable, unique DOM id for the row (aria-activedescendant target). */
+  domId?: string | undefined
+  /** Whether this row holds the roving keyboard focus (drives aria-current). */
+  isFocused?: boolean
 }
 
 /**
@@ -83,6 +100,8 @@ function BacklinkRowInner({
   resolveBlockStatus,
   resolveTagName,
   emptyLabel,
+  domId,
+  isFocused,
 }: BacklinkRowProps): React.ReactElement {
   const onBlockClickRef = useRef(onBlockClick)
   onBlockClickRef.current = onBlockClick
@@ -116,6 +135,11 @@ function BacklinkRowInner({
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- keyboard-navigable reference row; click/keydown drive roving focus and block activation, the row is the interactive unit
     <li
+      id={domId}
+      data-backlink-item={block.id}
+      // Roving focus is exposed to AT via the container's aria-activedescendant
+      // (pointing at this row's `id`) plus aria-current here. #2263.
+      aria-current={isFocused ? true : undefined}
       className="linked-reference-item flex flex-wrap items-center gap-3 border-b py-1.5 px-2 last:border-b-0 cursor-pointer hover:bg-muted/50"
       // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- li needs tabIndex for keyboard navigation
       tabIndex={0}
@@ -147,6 +171,8 @@ export function BacklinkGroupRenderer({
   resolveBlockStatus,
   resolveTagName,
   linkType,
+  focusedBlockId,
+  rowDomId,
 }: BacklinkGroupRendererProps): React.ReactElement {
   const { t } = useTranslation()
   const onTagClick = useTagClickHandler()
@@ -186,6 +212,8 @@ export function BacklinkGroupRenderer({
             resolveBlockStatus={resolveBlockStatus}
             resolveTagName={resolveTagName}
             emptyLabel={t('references.empty')}
+            domId={rowDomId ? rowDomId(block.id) : undefined}
+            isFocused={focusedBlockId != null && block.id === focusedBlockId}
           />
         )}
       />

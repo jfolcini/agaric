@@ -42,6 +42,11 @@ import { useSpaceStore } from '@/stores/space'
 const UNLINKED_FOCUS_CLASSES = 'ring-2 ring-inset ring-ring/50 bg-accent/30'
 const UNLINKED_FOCUS_CLASSES_ARR = UNLINKED_FOCUS_CLASSES.split(' ')
 
+/** Stable, unique DOM id for an unlinked-reference row (aria-activedescendant target). */
+function unlinkedRowDomId(blockId: string): string {
+  return `unlinked-ref-row-${blockId}`
+}
+
 export interface UnlinkedReferencesProps {
   pageId: string
   pageTitle: string
@@ -437,6 +442,14 @@ export function UnlinkedReferences({
                   tabIndex={0}
                   onKeyDown={handleContainerKeyDown}
                   aria-label={t('unlinkedRefs.listLabel')}
+                  // #2263 — expose the roving keyboard position to AT. Rows here
+                  // contain interactive controls (block button + "Link it"), so
+                  // the listbox/option model is out (nested-interactive); use
+                  // the APG composite alternative: aria-activedescendant on the
+                  // focusable container + aria-current on the active row.
+                  aria-activedescendant={
+                    focusedBlockId ? unlinkedRowDomId(focusedBlockId) : undefined
+                  }
                   className="unlinked-references-list focus-ring-visible"
                 >
                   <CollapsibleGroupList
@@ -456,7 +469,11 @@ export function UnlinkedReferences({
                     renderBlock={(block, _group) => (
                       <li
                         key={block.id}
+                        id={unlinkedRowDomId(block.id)}
                         data-backlink-item={block.id}
+                        // #2263 — roving position exposed to AT (container hosts
+                        // aria-activedescendant → this row's id).
+                        aria-current={block.id === focusedBlockId ? true : undefined}
                         className={cn(
                           'unlinked-reference-item flex items-center gap-3 border-b py-1.5 px-2 last:border-b-0',
                           block.id === focusedBlockId && UNLINKED_FOCUS_CLASSES,

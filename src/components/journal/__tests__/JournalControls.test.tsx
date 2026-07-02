@@ -197,18 +197,28 @@ describe('JournalControls', () => {
   })
 
   it('has no a11y violations', async () => {
-    const { container } = render(<JournalControls />)
+    // The active tab's aria-controls references the mode panel that JournalPage
+    // renders in a separate subtree (App header vs. main). Provide a matching
+    // panel stub so the cross-tree reference resolves under axe.
+    const { container } = render(
+      <>
+        <JournalControls />
+        <div role="tabpanel" id="journal-panel-daily" aria-labelledby="journal-tab-daily" />
+      </>,
+    )
     await waitFor(async () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
   })
 
-  // #205: roving keyboard navigation across the role="tablist" mode switcher.
-  // WAI-ARIA tabs with automatic activation: arrow keys move focus AND switch
-  // mode. Tabs are ordered daily, weekly, monthly, agenda.
-  describe('roving keyboard navigation (tablist)', () => {
-    it('ArrowRight moves to the next tab, switches mode, and moves focus', async () => {
+  // #2261: roving keyboard navigation across the role="tablist" mode switcher.
+  // WAI-ARIA tabs with MANUAL activation (APG): arrow keys / Home / End move
+  // DOM focus ONLY (no mode change → no eager view mount / IPC), and
+  // Enter/Space activates the focused tab. Tabs are ordered daily, weekly,
+  // monthly, stream, agenda.
+  describe('roving keyboard navigation (tablist, manual activation)', () => {
+    it('ArrowRight moves focus to the next tab WITHOUT switching mode', async () => {
       const user = userEvent.setup()
       render(<JournalControls />)
 
@@ -216,15 +226,57 @@ describe('JournalControls', () => {
       dailyTab.focus()
       await user.keyboard('{ArrowRight}')
 
+      // Mode unchanged — focus moved only.
+      expect(useJournalStore.getState().mode).toBe('daily')
+      const weeklyTab = screen.getByRole('tab', { name: /weekly view/i })
+      expect(weeklyTab).toHaveFocus()
+      // Roving tabindex follows focus; selection (aria-selected) stays on daily.
+      expect(weeklyTab).toHaveAttribute('tabindex', '0')
+      expect(dailyTab).toHaveAttribute('tabindex', '-1')
+      expect(dailyTab).toHaveAttribute('aria-selected', 'true')
+      expect(weeklyTab).toHaveAttribute('aria-selected', 'false')
+    })
+
+    it('Enter activates the focused (roving) tab', async () => {
+      const user = userEvent.setup()
+      render(<JournalControls />)
+
+      const dailyTab = screen.getByRole('tab', { name: /daily view/i })
+      dailyTab.focus()
+      await user.keyboard('{ArrowRight}')
+      expect(useJournalStore.getState().mode).toBe('daily')
+
+      await user.keyboard('{Enter}')
+
       expect(useJournalStore.getState().mode).toBe('weekly')
       const weeklyTab = screen.getByRole('tab', { name: /weekly view/i })
       expect(weeklyTab).toHaveAttribute('aria-selected', 'true')
-      expect(weeklyTab).toHaveFocus()
-      expect(weeklyTab).toHaveAttribute('tabindex', '0')
-      expect(dailyTab).toHaveAttribute('tabindex', '-1')
     })
 
-    it('ArrowLeft moves to the previous tab and switches mode', async () => {
+    it('Space activates the focused (roving) tab', async () => {
+      const user = userEvent.setup()
+      render(<JournalControls />)
+
+      const dailyTab = screen.getByRole('tab', { name: /daily view/i })
+      dailyTab.focus()
+      await user.keyboard('{ArrowRight}{ArrowRight}')
+      expect(useJournalStore.getState().mode).toBe('daily')
+
+      await user.keyboard('[Space]')
+
+      expect(useJournalStore.getState().mode).toBe('monthly')
+    })
+
+    it('clicking a tab activates it immediately', async () => {
+      const user = userEvent.setup()
+      render(<JournalControls />)
+
+      await user.click(screen.getByRole('tab', { name: /monthly view/i }))
+
+      expect(useJournalStore.getState().mode).toBe('monthly')
+    })
+
+    it('ArrowLeft moves focus to the previous tab without switching mode', async () => {
       const user = userEvent.setup()
       useJournalStore.setState({ mode: 'monthly', currentDate: new Date(2025, 5, 15) })
       render(<JournalControls />)
@@ -233,11 +285,11 @@ describe('JournalControls', () => {
       monthlyTab.focus()
       await user.keyboard('{ArrowLeft}')
 
-      expect(useJournalStore.getState().mode).toBe('weekly')
+      expect(useJournalStore.getState().mode).toBe('monthly')
       expect(screen.getByRole('tab', { name: /weekly view/i })).toHaveFocus()
     })
 
-    it('ArrowLeft from the first tab wraps to the last', async () => {
+    it('ArrowLeft from the first tab wraps focus to the last', async () => {
       const user = userEvent.setup()
       render(<JournalControls />)
 
@@ -245,11 +297,11 @@ describe('JournalControls', () => {
       dailyTab.focus()
       await user.keyboard('{ArrowLeft}')
 
-      expect(useJournalStore.getState().mode).toBe('agenda')
+      expect(useJournalStore.getState().mode).toBe('daily')
       expect(screen.getByRole('tab', { name: /agenda view/i })).toHaveFocus()
     })
 
-    it('ArrowRight from the last tab wraps to the first', async () => {
+    it('ArrowRight from the last tab wraps focus to the first', async () => {
       const user = userEvent.setup()
       useJournalStore.setState({ mode: 'agenda', currentDate: new Date(2025, 5, 15) })
       render(<JournalControls />)
@@ -258,11 +310,11 @@ describe('JournalControls', () => {
       agendaTab.focus()
       await user.keyboard('{ArrowRight}')
 
-      expect(useJournalStore.getState().mode).toBe('daily')
+      expect(useJournalStore.getState().mode).toBe('agenda')
       expect(screen.getByRole('tab', { name: /daily view/i })).toHaveFocus()
     })
 
-    it('Home jumps to the first tab and End to the last', async () => {
+    it('Home moves focus to the first tab and End to the last (no mode change)', async () => {
       const user = userEvent.setup()
       useJournalStore.setState({ mode: 'weekly', currentDate: new Date(2025, 5, 15) })
       render(<JournalControls />)
@@ -271,13 +323,20 @@ describe('JournalControls', () => {
       weeklyTab.focus()
       await user.keyboard('{End}')
 
-      expect(useJournalStore.getState().mode).toBe('agenda')
+      expect(useJournalStore.getState().mode).toBe('weekly')
       expect(screen.getByRole('tab', { name: /agenda view/i })).toHaveFocus()
 
       await user.keyboard('{Home}')
 
-      expect(useJournalStore.getState().mode).toBe('daily')
+      expect(useJournalStore.getState().mode).toBe('weekly')
       expect(screen.getByRole('tab', { name: /daily view/i })).toHaveFocus()
+    })
+
+    it('tabs reference their panel via aria-controls', () => {
+      render(<JournalControls />)
+      const dailyTab = screen.getByRole('tab', { name: /daily view/i })
+      expect(dailyTab).toHaveAttribute('aria-controls', 'journal-panel-daily')
+      expect(dailyTab).toHaveAttribute('id', 'journal-tab-daily')
     })
   })
 })

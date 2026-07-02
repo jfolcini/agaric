@@ -34,6 +34,11 @@ import { useSpaceStore } from '@/stores/space'
 
 const BACKLINK_FOCUS_CLASSES = ['ring-2', 'ring-inset', 'ring-ring/50', 'bg-accent/30'] as const
 
+/** Stable, unique DOM id for a linked-reference row (aria-activedescendant target). */
+function linkedRowDomId(blockId: string): string {
+  return `linked-ref-row-${blockId}`
+}
+
 export interface LinkedReferencesProps {
   pageId: string
   onNavigateToPage?: NavigateToPageFn | undefined
@@ -388,6 +393,12 @@ export function LinkedReferences({
                 tabIndex={0}
                 onKeyDown={handleContainerKeyDown}
                 aria-label={t('linkedRefs.listLabel')}
+                // #2263 — expose the roving keyboard position to AT. The
+                // grouped, collapsible structure (interleaved group-header
+                // buttons) rules out the listbox/option model, so we use the
+                // APG composite alternative: aria-activedescendant on the
+                // focusable container + aria-current on the active row.
+                aria-activedescendant={focusedBlockId ? linkedRowDomId(focusedBlockId) : undefined}
                 className="linked-references-list outline-none"
               >
                 <BacklinkGroupRenderer
@@ -401,6 +412,8 @@ export function LinkedReferences({
                   resolveBlockStatus={resolveBlockStatus}
                   resolveTagName={resolveTagName}
                   linkType="linked"
+                  focusedBlockId={focusedBlockId}
+                  rowDomId={linkedRowDomId}
                 />
               </div>
 

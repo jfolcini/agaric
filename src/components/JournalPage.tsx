@@ -37,6 +37,7 @@ import { useSpaceStore } from '../stores/space'
 import { useInPageFindStore } from '../stores/useInPageFindStore'
 import { AgendaView } from './journal/AgendaView'
 import { DailyView } from './journal/DailyView'
+import { journalPanelId, journalTabId } from './journal/JournalControls'
 import { MonthlyView } from './journal/MonthlyView'
 import { StreamView } from './journal/StreamView'
 import { WeeklyView } from './journal/WeeklyView'
@@ -210,32 +211,40 @@ export function JournalPage({
         })}
       />
 
-      {/* Loading indicator on initial fetch */}
-      {loading && (
-        <LoadingSkeleton count={3} height="h-10" loading data-testid="loading-skeleton" />
-      )}
-
-      {/* View content */}
-      {!loading && mode === 'daily' && (
-        <DailyView
-          entry={makeDayEntry(currentDate)}
-          onNavigateToPage={onNavigateToPage}
-          onAddBlock={handleAddBlock}
-        />
-      )}
-      {!loading && mode === 'weekly' && (
-        <WeeklyView
-          makeDayEntry={makeDayEntry}
-          onNavigateToPage={onNavigateToPage}
-          onAddBlock={handleAddBlock}
-        />
-      )}
-      {!loading && mode === 'monthly' && <MonthlyView makeDayEntry={makeDayEntry} />}
-      {/* #1415 — the continuous stream owns its OWN windowed date list +
-          page map (it grows past `currentDate`'s month range), so it does
-          not consume JournalPage's `makeDayEntry`/`handleAddBlock`. */}
-      {!loading && mode === 'stream' && <StreamView onNavigateToPage={onNavigateToPage} />}
-      {!loading && mode === 'agenda' && <AgendaView onNavigateToPage={onNavigateToPage} />}
+      {/* View content — the tabpanel for the active mode tab. `id` +
+          `aria-labelledby` complete the WAI-ARIA tab↔panel relationship with
+          the mode tabs rendered by `JournalControls` (App header). The panel
+          wrapper stays mounted during the initial fetch (it hosts the loading
+          skeleton) so the selected tab's `aria-controls` reference never
+          dangles mid-load (axe aria-valid-attr-value). No `tabIndex` on the
+          panel itself: it always contains focusable content, so a panel tab
+          stop would be a redundant/confusing extra stop. */}
+      <div role="tabpanel" id={journalPanelId(mode)} aria-labelledby={journalTabId(mode)}>
+        {/* Loading indicator on initial fetch */}
+        {loading && (
+          <LoadingSkeleton count={3} height="h-10" loading data-testid="loading-skeleton" />
+        )}
+        {!loading && mode === 'daily' && (
+          <DailyView
+            entry={makeDayEntry(currentDate)}
+            onNavigateToPage={onNavigateToPage}
+            onAddBlock={handleAddBlock}
+          />
+        )}
+        {!loading && mode === 'weekly' && (
+          <WeeklyView
+            makeDayEntry={makeDayEntry}
+            onNavigateToPage={onNavigateToPage}
+            onAddBlock={handleAddBlock}
+          />
+        )}
+        {!loading && mode === 'monthly' && <MonthlyView makeDayEntry={makeDayEntry} />}
+        {/* #1415 — the continuous stream owns its OWN windowed date list +
+            page map (it grows past `currentDate`'s month range), so it does
+            not consume JournalPage's `makeDayEntry`/`handleAddBlock`. */}
+        {!loading && mode === 'stream' && <StreamView onNavigateToPage={onNavigateToPage} />}
+        {!loading && mode === 'agenda' && <AgendaView onNavigateToPage={onNavigateToPage} />}
+      </div>
 
       {/* Link preview tooltip — covers all external links in journal */}
       <LinkPreviewTooltip container={journalContainerEl} />
