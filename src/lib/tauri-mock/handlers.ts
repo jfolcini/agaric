@@ -11,7 +11,7 @@
  * diffed against the real backend's command surface in `src/lib/bindings.ts`.
  */
 
-import type { AppError } from '../bindings'
+import type { AppError, PageResponse, commands } from '../bindings'
 import { matchesSearchFolded } from '../fold-for-search'
 import { logger } from '../logger'
 import { asciiLowercase, pageGlobFilterMatches } from '../search-query/glob-validate'
@@ -116,8 +116,12 @@ const clipboardWriteText: Handler = (args) => {
   return null
 }
 const clipboardReadText: Handler = () => mockClipboardText
-const returnEmptyArray: Handler = () => []
-const returnEmptyPage: Handler = () => ({
+// Not annotated `: Handler` — the precise inferred return types (an array /
+// a full page envelope) must flow through so the `satisfies TypedHandlers`
+// contract on HANDLERS can verify them for array- and page-returning commands
+// (#2241). Both remain assignable to `Handler` where used for other commands.
+const returnEmptyArray = (): unknown[] => []
+const returnEmptyPage = () => ({
   items: [],
   next_cursor: null,
   has_more: false,
@@ -938,7 +942,98 @@ function fbqInSpace(b: Record<string, unknown>, spaceId: string | null): boolean
   return ownerSpace === spaceId
 }
 
-export const HANDLERS: Record<string, Handler> = {
+// ─── Compile-time contract linkage to the generated bindings (#2241) ─────────
+//
+// `commands` in `bindings.ts` is the auto-generated tauri-specta surface: each
+// key is a camelCase wrapper whose body calls `__TAURI_INVOKE("snake_name", …)`
+// and resolves `Promise<{status:'ok';data:T} | {status:'error';error}>`. The raw
+// value the mock must return for that command is therefore `T` (the ok-branch
+// `data`). The types below derive, purely at compile time, the exact snake_case
+// key set the mock must implement plus a structural return contract per command,
+// so `HANDLERS` is type-checked against the REAL command surface by tsgo — not
+// just the name-only regex parity script (which it complements, not replaces:
+// the script still guards the KNOWN_UNMOCKED allowlist + generated-code drift).
+//
+// What this catches that the untyped `Record<string, Handler>` did not:
+//   (a) a handler whose return is the wrong top-level SHAPE — e.g. a bare array
+//       where the command returns a `PageResponse` envelope (or vice-versa), the
+//       exact drift class that renders fine in unit tests but breaks E2E;
+//   (b) a handler keyed on a command that no longer exists in `bindings.ts`
+//       (excess key → type error);
+//   (c) a generated command with no handler (missing key → type error; the mock
+//       is contractually exhaustive — KNOWN_UNMOCKED is empty).
+//
+// NOT enforced (deliberate, tracked as follow-up): full field-level parity of
+// row payloads and the argument side. Handlers build rows as
+// `Record<string, unknown>` (see `makeBlock`) and read `args` as `unknown`;
+// tightening either would require rewriting every handler body. The return
+// contract widens object/primitive leaves to `unknown` so today's handlers stay
+// green while the higher-value structural (envelope/array) drift is locked down.
+
+/** camelCase → snake_case, matching tauri-specta's IPC invoke-name convention. */
+type SnakeCase<S extends string> = S extends `${infer H}${infer T}`
+  ? H extends Uppercase<H>
+    ? // Uppercase letters → `_<lower>`; non-letters (a digit equals its own
+      // upper- AND lower-case) are kept verbatim. No command name has a digit
+      // or consecutive-capital acronym today, so this reproduces every name.
+      H extends Lowercase<H>
+      ? `${H}${SnakeCase<T>}`
+      : `_${Lowercase<H>}${SnakeCase<T>}`
+    : `${H}${SnakeCase<T>}`
+  : S
+
+/**
+ * The ok-branch payload `T` a command's IPC call resolves to. The wrapper
+ * resolves the union `{status:'ok';data:T} | {status:'error';error}`, so
+ * `Extract` selects the ok member before reading `data` (a bare `extends` on
+ * the whole union fails — the union is not assignable to the ok-only shape —
+ * and would collapse every command to `never`).
+ */
+type CommandData<K extends keyof typeof commands> =
+  Extract<Awaited<ReturnType<(typeof commands)[K]>>, { status: 'ok' }> extends { data: infer D }
+    ? D
+    : never
+
+/**
+ * Structural return contract enforced on a handler for command data `T`.
+ * Preserves the top-level container shape (the drift that silently breaks E2E)
+ * while widening contents to `unknown`:
+ *   - `PageResponse<…>` → the paginated envelope with loosened `items`;
+ *   - array command      → must return an array;
+ *   - anything else       → unconstrained (`unknown`) — object/primitive
+ *                           field-level parity is out of scope (follow-up).
+ * `[T]` tuple-wraps to prevent distribution over union return types.
+ */
+type ReturnContract<T> = [T] extends [PageResponse<unknown>]
+  ? { items: unknown[]; next_cursor: string | null; has_more: boolean; total_count: number | null }
+  : [T] extends [readonly unknown[]]
+    ? unknown[]
+    : unknown
+
+/**
+ * The exact handler map the mock must implement: one entry per generated
+ * command, keyed by its snake_case IPC name, each a handler whose return is
+ * checked against {@link ReturnContract}. Applied to `HANDLERS` via `satisfies`
+ * so tsgo fails on excess (a), missing (c), or wrong-shape (b) handlers.
+ */
+type TypedHandlers = {
+  [K in keyof typeof commands as SnakeCase<K & string>]: (
+    args: unknown,
+  ) => ReturnContract<CommandData<K>> | Promise<ReturnContract<CommandData<K>>>
+}
+
+// `HANDLERS_TYPED` is the FRESH object literal, checked against the generated
+// command surface by the trailing `satisfies TypedHandlers`. It is deliberately
+// NOT annotated: an outer `: Record<string, Handler>` annotation would strip the
+// literal's "freshness", degrading `satisfies` to a plain assignability check
+// that silently ignores excess keys and — via the index signature — masks
+// missing ones (only the per-value wrong-shape check would survive). Keeping it
+// fresh is what lets tsgo report excess (b) and missing (c) handlers, not just
+// wrong-shape (a). The string-indexable `HANDLERS` view is re-exported below;
+// the internal `HANDLERS['…']` sibling lookups reference that annotated view (a
+// forward reference resolved at call time), so this literal has no circular
+// self-reference that would undermine the freshness check.
+const HANDLERS_TYPED = {
   // #2110 M3b — OpenTelemetry frontend-span ingest. Off by default; the frontend
   // tracer only invokes it when observability is enabled, which the default e2e
   // runs never are, so the mock is a no-op that accepts the batch and returns
@@ -996,7 +1091,7 @@ export const HANDLERS: Record<string, Handler> = {
     }
     // Sort by position for consistent ordering (matches real backend)
     items.sort((x, y) => ((x['position'] as number) ?? 0) - ((y['position'] as number) ?? 0))
-    return { items, next_cursor: null, has_more: false }
+    return { items, next_cursor: null, has_more: false, total_count: null }
   },
 
   // Paginate soft-deleted blocks, space-scoped. Mirrors backend
@@ -1004,7 +1099,7 @@ export const HANDLERS: Record<string, Handler> = {
   list_trash: () => {
     const items = [...blocks.values()].filter((b) => b['deleted_at'])
     items.sort((x, y) => String(y['deleted_at'] ?? '').localeCompare(String(x['deleted_at'] ?? '')))
-    return { items, next_cursor: null, has_more: false }
+    return { items, next_cursor: null, has_more: false, total_count: null }
   },
 
   // Indexed lookup for a single date-formatted journal page in
@@ -1373,7 +1468,7 @@ export const HANDLERS: Record<string, Handler> = {
       }
       return true
     })
-    return { items, next_cursor: null, has_more: false }
+    return { items, next_cursor: null, has_more: false, total_count: null }
   },
 
   create_block: (args) => {
@@ -2142,7 +2237,7 @@ export const HANDLERS: Record<string, Handler> = {
       }
       return false
     })
-    return { items: backlinkItems, next_cursor: null, has_more: false }
+    return { items: backlinkItems, next_cursor: null, has_more: false, total_count: null }
   },
 
   get_block_history: (_args) =>
@@ -2191,7 +2286,7 @@ export const HANDLERS: Record<string, Handler> = {
         payload: o.payload,
         created_at: o.created_at,
       }))
-    return { items, next_cursor: null, has_more: false }
+    return { items, next_cursor: null, has_more: false, total_count: null }
   },
 
   // Mirror `find_undo_group_inner` semantics so
@@ -2279,7 +2374,7 @@ export const HANDLERS: Record<string, Handler> = {
   search_blocks: (args) => {
     const a = args as Record<string, unknown>
     const query = (a['query'] as string) ?? ''
-    if (!query) return { items: [], next_cursor: null, has_more: false }
+    if (!query) return { items: [], next_cursor: null, has_more: false, total_count: null }
     // Unicode-aware fold so the mock parity-matches the real
     // backend's FTS5 / `COLLATE NOCASE` behaviour for Turkish / German
     // / accented inputs.  Tests that assert Unicode matching against
@@ -2289,7 +2384,7 @@ export const HANDLERS: Record<string, Handler> = {
         !(b['deleted_at'] as string | null) &&
         matchesSearchFolded((b['content'] as string) ?? '', query),
     )
-    return { items, next_cursor: null, has_more: false }
+    return { items, next_cursor: null, has_more: false, total_count: null }
   },
 
   search_blocks_partitioned: (args) => {
@@ -2386,6 +2481,7 @@ export const HANDLERS: Record<string, Handler> = {
       items: items.slice(0, limit),
       next_cursor: null,
       has_more: items.length > limit,
+      total_count: null,
     })
   },
 
@@ -2484,7 +2580,7 @@ export const HANDLERS: Record<string, Handler> = {
       }
       return false
     })
-    return { items, next_cursor: null, has_more: false }
+    return { items, next_cursor: null, has_more: false, total_count: null }
   },
 
   query_by_tags: (args) => {
@@ -2535,7 +2631,7 @@ export const HANDLERS: Record<string, Handler> = {
       // Default: AND — block must have ALL specified tags
       return allTagIds.every((tid) => tags.has(tid))
     })
-    return { items, next_cursor: null, has_more: false }
+    return { items, next_cursor: null, has_more: false, total_count: null }
   },
 
   // #1472 — nested boolean tag expression `(A AND B) OR (NOT C)` over IPC.
@@ -2604,7 +2700,7 @@ export const HANDLERS: Record<string, Handler> = {
       }
       return matches(b['id'] as string, expr)
     })
-    return { items, next_cursor: null, has_more: false }
+    return { items, next_cursor: null, has_more: false, total_count: null }
   },
 
   // AND-intersected property + tag query that the
@@ -2630,7 +2726,7 @@ export const HANDLERS: Record<string, Handler> = {
       return fbqTagFilterMatches(b, tagFilters)
     })
     items.sort((x, y) => (x['id'] as string).localeCompare(y['id'] as string))
-    return { items, next_cursor: null, has_more: false }
+    return { items, next_cursor: null, has_more: false, total_count: null }
   },
 
   list_tags_by_prefix: (args) => {
@@ -3519,6 +3615,7 @@ export const HANDLERS: Record<string, Handler> = {
     items: [...propertyDefs.values()],
     next_cursor: null,
     has_more: false,
+    total_count: null,
   }),
 
   // Single-key PK lookup. Returns the entry or null.
@@ -4309,7 +4406,16 @@ export const HANDLERS: Record<string, Handler> = {
     })
     return row
   },
-}
+} satisfies TypedHandlers
+
+/**
+ * Public, string-indexable view of the mocked command surface. `dispatch()` and
+ * the internal sibling lookups (`HANDLERS['find_undo_group']`, …) index this by
+ * a runtime `string`, which the precise literal type of `HANDLERS_TYPED` would
+ * reject; the `Record<string, Handler>` annotation restores that access without
+ * weakening the `satisfies` contract enforced on the literal above.
+ */
+export const HANDLERS: Record<string, Handler> = HANDLERS_TYPED
 
 // ---------------------------------------------------------------------------
 // Plugin commands (`plugin:<name>|<command>`) — #760
