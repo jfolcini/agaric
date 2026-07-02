@@ -8,7 +8,7 @@
  * shape, sampling, and the exporter's defensive caps.
  */
 
-import { type Span, SpanStatusCode } from '@opentelemetry/api'
+import { type Span, SpanStatusCode, trace } from '@opentelemetry/api'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { FrontendSpan } from '../../bindings'
@@ -401,5 +401,32 @@ describe('exporter: coalescing timer + no-sink drain', () => {
     })
     await exporter.flush()
     expect(batches).toEqual([])
+  })
+})
+
+describe('initFrontendObservability — failed init is retryable (#2275)', () => {
+  afterEach(async () => {
+    vi.restoreAllMocks()
+    await _resetFrontendObservabilityForTest()
+  })
+
+  it('leaves initialized=false when setup throws, so a later call retries', async () => {
+    installFakeInternals()
+    // Force the FIRST init to throw after the awaited dynamic imports, at the
+    // provider-registration step. If `initialized` were flipped up-front (the
+    // pre-#2275 bug), this failed init would pin the module as "done" and the
+    // retry below would early-return without re-running setup.
+    const spy = vi.spyOn(trace, 'setGlobalTracerProvider').mockImplementationOnce(() => {
+      throw new Error('boom')
+    })
+
+    await expect(initFrontendObservability({ enabled: true })).rejects.toThrow('boom')
+
+    // Retry: init must NOT early-return — it re-runs setup and reaches
+    // setGlobalTracerProvider a second time (this call falls through to the
+    // real implementation since only the first was stubbed).
+    await initFrontendObservability({ enabled: true })
+
+    expect(spy).toHaveBeenCalledTimes(2)
   })
 })

@@ -27,6 +27,7 @@ import {
 } from '@/components/ui/select'
 import { DATE_BUCKET_VALUES } from '@/hooks/useAutocompleteSources'
 import type { DateOp, FilterToken, NamedDateRange } from '@/lib/search-query'
+import { isIsoDate } from '@/lib/search-query/is-iso-date'
 
 const DATE_OPS: readonly DateOp[] = ['<', '<=', '=', '>=', '>'] as const
 
@@ -35,15 +36,23 @@ export interface DateFilterFormProps {
   kind: 'due' | 'scheduled'
   onAddFilter: (token: FilterToken) => void
   onBack: () => void
+  /**
+   * Initial builder shape — defaults to the named-bucket picker. Overridable
+   * so a caller (and unit tests) can open directly into comparison mode; the
+   * shape `<Select>` is controlled, which jsdom cannot drive, so exercising the
+   * op-mode ISO validation otherwise has no entry point.
+   */
+  initialShape?: 'bucket' | 'op'
 }
 
 export function DateFilterForm({
   kind,
   onAddFilter,
   onBack,
+  initialShape = 'bucket',
 }: DateFilterFormProps): React.ReactElement {
   const { t } = useTranslation()
-  const [shape, setShape] = useState<'bucket' | 'op'>('bucket')
+  const [shape, setShape] = useState<'bucket' | 'op'>(initialShape)
   const [bucket, setBucket] = useState<NamedDateRange>(DATE_BUCKET_VALUES[0])
   const [op, setOp] = useState<DateOp>('=')
   const [date, setDate] = useState('')
@@ -57,7 +66,14 @@ export function DateFilterForm({
   const categoryLabel =
     kind === 'due' ? t('search.filterCategory.due') : t('search.filterCategory.scheduled')
 
-  const canSubmit = shape === 'bucket' || date.trim() !== ''
+  // #2275 — op-mode must apply the SAME calendar-aware ISO check the parser
+  // uses. Gating only on non-empty let a malformed date (a `type=date` input
+  // that degrades to a text field, or a programmatically-set value) emit a
+  // `due:`/`scheduled:` token the parser would reject as invalid.
+  const trimmedDate = date.trim()
+  const opDateValid = isIsoDate(trimmedDate)
+  const opDateInvalid = shape === 'op' && trimmedDate !== '' && !opDateValid
+  const canSubmit = shape === 'bucket' || (trimmedDate !== '' && opDateValid)
 
   function submit() {
     if (shape === 'bucket') {
@@ -71,7 +87,9 @@ export function DateFilterForm({
       return
     }
     const trimmed = date.trim()
-    if (!trimmed) return
+    // Guard the emit path too (not just the disabled button): never hand the
+    // builder a date the parser would consider invalid.
+    if (!isIsoDate(trimmed)) return
     const token: FilterToken = {
       kind,
       value: { kind: 'op', op, date: trimmed },
@@ -119,31 +137,44 @@ export function DateFilterForm({
             </SelectContent>
           </Select>
         ) : (
-          <div className="flex gap-2">
-            <Select value={op} onValueChange={(v) => setOp(v as DateOp)}>
-              <SelectTrigger
-                size="sm"
-                className="w-20"
-                aria-label={t('search.filterHelper.dateOpLabel')}
+          <>
+            <div className="flex gap-2">
+              <Select value={op} onValueChange={(v) => setOp(v as DateOp)}>
+                <SelectTrigger
+                  size="sm"
+                  className="w-20"
+                  aria-label={t('search.filterHelper.dateOpLabel')}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {DATE_OPS.map((o) => (
+                    <SelectItem key={o} value={o}>
+                      {o}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="flex-1"
+                aria-label={t('search.filterHelper.dateValueLabel')}
+              />
+            </div>
+            {opDateInvalid ? (
+              <p
+                role="alert"
+                data-testid="date-filter-error"
+                className="mt-1 text-xs text-destructive"
               >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {DATE_OPS.map((o) => (
-                  <SelectItem key={o} value={o}>
-                    {o}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="flex-1"
-              aria-label={t('search.filterHelper.dateValueLabel')}
-            />
-          </div>
+                {t('search.filterHelper.dateInvalid', {
+                  defaultValue: 'Enter a valid date (YYYY-MM-DD)',
+                })}
+              </p>
+            ) : null}
+          </>
         )}
       </div>
       <div className="mt-2 flex gap-2 justify-end">

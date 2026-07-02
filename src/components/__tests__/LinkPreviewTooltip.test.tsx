@@ -11,7 +11,7 @@
  *  - axe accessibility audit
  */
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -366,6 +366,56 @@ describe('LinkPreviewTooltip', () => {
 
       const { container } = render(<LinkPreviewTooltip container={makeContainer()} />)
       expect(await axe(container)).toHaveNoViolations()
+    })
+  })
+
+  describe('async placement cancellation (#2275)', () => {
+    it('ignores a stale computePosition resolution after the anchor changes', async () => {
+      // Capture every computePosition resolver so we can settle them out of
+      // order: the effect re-runs when anchorRect changes, leaving the first
+      // (now-superseded) promise in flight.
+      const resolvers: Array<(v: { x: number; y: number }) => void> = []
+      vi.mocked(computePosition).mockImplementation(
+        () => new Promise<{ x: number; y: number }>((r) => resolvers.push(r)) as never,
+      )
+
+      const rectA = new DOMRect(10, 10, 100, 20)
+      const rectB = new DOMRect(400, 400, 100, 20)
+
+      mockUseLinkPreview.mockReturnValue({
+        url: 'https://example.com',
+        metadata: SAMPLE_METADATA,
+        anchorRect: rectA,
+        isLoading: false,
+      })
+      const { rerender } = render(<LinkPreviewTooltip container={makeContainer()} />)
+
+      // Hover jumps to an adjacent link → anchorRect changes → the effect
+      // re-runs (cancelling the first placement) and starts a second one.
+      mockUseLinkPreview.mockReturnValue({
+        url: 'https://example.com',
+        metadata: SAMPLE_METADATA,
+        anchorRect: rectB,
+        isLoading: false,
+      })
+      rerender(<LinkPreviewTooltip container={makeContainer()} />)
+
+      expect(resolvers.length).toBeGreaterThanOrEqual(2)
+
+      // The CURRENT (last) placement settles first.
+      await act(async () => {
+        resolvers.at(-1)?.({ x: 200, y: 200 })
+      })
+      const tooltip = screen.getByTestId('link-preview-tooltip')
+      await waitFor(() => expect(tooltip.style.left).toBe('200px'))
+
+      // A STALE placement settles late — the cancellation guard must drop it
+      // (without the guard this would clobber the position to 999px).
+      await act(async () => {
+        resolvers[0]?.({ x: 999, y: 999 })
+      })
+      expect(tooltip.style.left).toBe('200px')
+      expect(tooltip.style.top).toBe('200px')
     })
   })
 })

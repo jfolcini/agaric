@@ -661,24 +661,44 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
         }
       }
 
-      // #727 — commit the identity refs ONLY after the abort gate above has
-      // passed. They were previously written at the top of mount(), before the
-      // Guarded dispatch; when that dispatch threw and we returned, the
-      // refs already pointed at the NEW block while the document still held the
-      // OLD block's content. The next blur/flush serializes the old doc and
-      // attributes it to the new block's id (use-block-flush trusts
-      // `handle.activeBlockId`), silently overwriting it. Writing them here means
-      // an aborted mount leaves the prior block's identity intact.
-      activeBlockIdRef.current = blockId
-      originalMarkdownRef.current = markdown
-
       // B-77 fix layer 3: Remove any orphaned popup DOM elements that
       // survived a broken onExit() lifecycle (e.g. outside-click handler
       // before B-77 fix, or any future edge case).
       cleanupOrphanedPopups()
 
-      const doc = parse(markdown)
-      replaceDocSilently(editor, doc as unknown as Record<string, unknown>)
+      // #2275 — parse + replace the document BEFORE committing the identity
+      // refs, guarded. `replaceDocSilently` → `editor.schema.nodeFromJSON`
+      // throws on schema-invalid JSON; if it does after the refs were already
+      // advanced, the editor still holds the OLD block's document while the
+      // refs name the NEW block, so the next blur/flush serializes the old
+      // content under the new id (silent overwrite). Committing the refs only
+      // after a successful replace keeps the prior block's identity intact on
+      // failure — the same invariant the #727 suggestion-exit abort gate above
+      // protects.
+      try {
+        const doc = parse(markdown)
+        replaceDocSilently(editor, doc as unknown as Record<string, unknown>)
+      } catch (err) {
+        logger.warn(
+          'editor',
+          'mount: parse/replaceDocSilently threw; aborting without advancing identity refs',
+          { blockId },
+          err,
+        )
+        return
+      }
+
+      // #727 — commit the identity refs ONLY after every abort gate (the
+      // suggestion-exit dispatch and the doc replace above) has passed. They
+      // were previously written at the top of mount(), before the guarded
+      // dispatch; when that dispatch threw and we returned, the refs already
+      // pointed at the NEW block while the document still held the OLD block's
+      // content. The next blur/flush serializes the old doc and attributes it
+      // to the new block's id (use-block-flush trusts `handle.activeBlockId`),
+      // silently overwriting it. Writing them here means an aborted mount
+      // leaves the prior block's identity intact.
+      activeBlockIdRef.current = blockId
+      originalMarkdownRef.current = markdown
       // Clear undo history so previous block's edits don't leak into this one.
       // We reset the History plugin's internal state directly via setMeta,
       // which avoids state.reconfigure() — reconfigure creates a new plugins

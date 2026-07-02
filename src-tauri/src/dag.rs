@@ -453,6 +453,23 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bo
         validate_set_property(&payload)?;
     }
 
+    // #2275 — run the parent-existence check, the #1572 divergence probe, and
+    // the INSERT inside ONE `BEGIN IMMEDIATE` transaction. Previously each ran
+    // as an independent autocommitted statement against `pool`, so a concurrent
+    // inserter could land a row between the divergence probe (which classifies
+    // "benign duplicate vs fork") and the `INSERT OR IGNORE`: the read that
+    // makes the decision and the write that acts on it were not atomic, so a
+    // divergent op could slip through the window and be silently ignored.
+    // `BEGIN IMMEDIATE` takes the write lock up front, serializing concurrent
+    // inserters so the probe → insert decision cannot be raced. A pure-CPU
+    // validation failure above returns before the lock is taken; any `Err`
+    // below drops `tx`, rolling the transaction back.
+    // TOCTOU fix (#2275 item 5): parent-check, divergence probe, and the op
+    // INSERT must be one atomic unit; sync-ingestion-only (no materializer
+    // dispatch), so a raw immediate tx is the correct scope.
+    // allow-raw-tx: atomic parent-check + insert for sync ingestion (#2275)
+    let mut tx = crate::db::begin_immediate_logged(pool, "insert_remote_op").await?;
+
     // Verify every `(device_id, seq)` entry in `parent_seqs` already
     // exists in `op_log` before landing this row.  Without the check, a
     // buggy peer or a corrupted stream can insert a row whose parent
@@ -489,7 +506,7 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bo
                  )",
             )
             .bind(parent_seqs_json)
-            .fetch_one(pool)
+            .fetch_one(&mut *tx)
             .await?;
             let expected: i64 =
                 i64::try_from(unique_parents.len()).expect("parent count fits in i64");
@@ -521,7 +538,7 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bo
         record.device_id,
         record.seq,
     )
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await?;
     if let Some(existing_hash) = existing_hash
         && existing_hash != record.hash
@@ -569,9 +586,10 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bo
         block_id,
         attachment_id,
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
 
+    tx.commit().await?;
     Ok(result.rows_affected() > 0)
 }
 

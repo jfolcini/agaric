@@ -11,12 +11,38 @@
  * (`to-search-filter.ts`) extend in lock-step.
  */
 
+import { TASK_STATES } from '../filter-dimension-metadata'
+import { getPriorityLevels } from '../priority-levels'
 import { validateGlob } from './glob-validate'
+import { isIsoDate } from './is-iso-date'
 import { registerTokenPrefix } from './registry'
 import type { DateOp, FilterToken, NamedDateRange } from './types'
 import { prefixed, ValidationCode } from './validation-codes'
 
 let registered = false
+
+/**
+ * #2276 — validate a `state:` / `priority:` value against the shared
+ * vocabulary. An out-of-vocabulary value (`state:BOGUS`, `priority:banana`)
+ * must surface as an `invalid` chip rather than a false-valid green one that
+ * projects a never-matching value to the IPC wire — mirroring how `due:` /
+ * `path:` reject unknown values. The `none` sentinel is accepted
+ * case-insensitively for parity with the `due:` parser (and the backend, which
+ * treats the `none` sentinel case-insensitively).
+ *
+ * Todo states are a fixed vocabulary (`TASK_STATES`); priority levels are
+ * user-configurable, so we read the live levels at parse time via
+ * `getPriorityLevels()`.
+ */
+function isKnownState(value: string): boolean {
+  if (value.toLowerCase() === 'none') return true
+  return TASK_STATES.includes(value)
+}
+
+function isKnownPriority(value: string): boolean {
+  if (value.toLowerCase() === 'none') return true
+  return getPriorityLevels().includes(value)
+}
 
 /**
  * #152 / #718 — strip one surrounding `"..."` pair from a filter value.
@@ -114,6 +140,9 @@ export function ensureRegistered(): void {
         span,
       }
     }
+    if (!isKnownState(value)) {
+      return { kind: 'invalid', source: `state:${value}`, error: `unknown state '${value}'`, span }
+    }
     return { kind: 'state', value, span }
   })
   registerTokenPrefix('not-state:', (value, span) => {
@@ -122,6 +151,14 @@ export function ensureRegistered(): void {
         kind: 'invalid',
         source: `not-state:${value}`,
         error: 'not-state: value required',
+        span,
+      }
+    }
+    if (!isKnownState(value)) {
+      return {
+        kind: 'invalid',
+        source: `not-state:${value}`,
+        error: `unknown state '${value}'`,
         span,
       }
     }
@@ -138,6 +175,14 @@ export function ensureRegistered(): void {
         span,
       }
     }
+    if (!isKnownPriority(value)) {
+      return {
+        kind: 'invalid',
+        source: `priority:${value}`,
+        error: `unknown priority '${value}'`,
+        span,
+      }
+    }
     return { kind: 'priority', value, span }
   })
   registerTokenPrefix('not-priority:', (value, span) => {
@@ -146,6 +191,14 @@ export function ensureRegistered(): void {
         kind: 'invalid',
         source: `not-priority:${value}`,
         error: 'not-priority: value required',
+        span,
+      }
+    }
+    if (!isKnownPriority(value)) {
+      return {
+        kind: 'invalid',
+        source: `not-priority:${value}`,
+        error: `unknown priority '${value}'`,
         span,
       }
     }
@@ -261,26 +314,6 @@ function parseDateToken(
     error: prefixed(ValidationCode.InvalidDateFilter, `unknown date '${value}'`),
     span,
   }
-}
-
-function isIsoDate(s: string): boolean {
-  if (s.length !== 10) return false
-  if (s[4] !== '-' || s[7] !== '-') return false
-  for (let i = 0; i < s.length; i++) {
-    if (i === 4 || i === 7) continue
-    const c = s.charCodeAt(i)
-    if (c < 0x30 || c > 0x39) return false
-  }
-  // Calendar-valid?
-  const parts = s.split('-')
-  const y = Number(parts[0])
-  const m = Number(parts[1])
-  const d = Number(parts[2])
-  if (m < 1 || m > 12) return false
-  if (d < 1 || d > 31) return false
-  // Use Date for calendar validation (UTC parsing avoids TZ skew).
-  const dt = new Date(Date.UTC(y, m - 1, d))
-  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d
 }
 
 /**

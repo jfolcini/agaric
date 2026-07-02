@@ -42,39 +42,50 @@ export async function initFrontendObservability(opts?: { enabled?: boolean }): P
   if (initialized) return
   const enabled = opts?.enabled ?? resolveEnabled()
   if (!enabled) return
-  initialized = true
 
-  const [
-    { FrontendTracerProvider, StackContextManager },
-    { installInvokePatch },
-    transport,
-    { commands },
-  ] = await Promise.all([
-    import('./tracer'),
-    import('./invoke'),
-    import('./transport'),
-    import('../bindings'),
-  ])
+  // #2275 — do NOT flip `initialized` until the whole pipeline is registered.
+  // A transient dynamic-import failure (chunk-load) or a throwing patch install
+  // must leave `initialized` false so a subsequent call can retry; flipping it
+  // up-front pinned a failed init as "done" and foreclosed recovery for the
+  // process lifetime.
+  try {
+    const [
+      { FrontendTracerProvider, StackContextManager },
+      { installInvokePatch },
+      transport,
+      { commands },
+    ] = await Promise.all([
+      import('./tracer'),
+      import('./invoke'),
+      import('./transport'),
+      import('../bindings'),
+    ])
 
-  context.setGlobalContextManager(new StackContextManager())
-  const provider = new FrontendTracerProvider()
-  trace.setGlobalTracerProvider(provider)
-  exporter = provider.exporter
+    context.setGlobalContextManager(new StackContextManager())
+    const provider = new FrontendTracerProvider()
+    trace.setGlobalTracerProvider(provider)
+    exporter = provider.exporter
 
-  // Wire the IPC sink — the generated command is the only egress (local file).
-  transport.setSpanSink((spans) => commands.ingestOtelSpans(spans))
-  installInvokePatch()
+    // Wire the IPC sink — the generated command is the only egress (local file).
+    transport.setSpanSink((spans) => commands.ingestOtelSpans(spans))
+    installInvokePatch()
 
-  // Flush trailing spans when the page is backgrounded/closed so an in-flight
-  // interaction's spans are not lost on exit.
-  if (typeof window !== 'undefined') {
-    const flush = () => {
-      void provider.exporter.flush()
+    // Flush trailing spans when the page is backgrounded/closed so an in-flight
+    // interaction's spans are not lost on exit.
+    if (typeof window !== 'undefined') {
+      const flush = () => {
+        void provider.exporter.flush()
+      }
+      window.addEventListener('pagehide', flush)
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') flush()
+      })
     }
-    window.addEventListener('pagehide', flush)
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') flush()
-    })
+
+    initialized = true
+  } catch (err) {
+    initialized = false
+    throw err
   }
 }
 

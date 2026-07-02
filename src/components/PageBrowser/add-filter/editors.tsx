@@ -8,7 +8,7 @@
 
 import { FileSearch } from 'lucide-react'
 import type React from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
@@ -599,10 +599,19 @@ export function LinkTargetEditor({
     }
   }, [currentSpaceId])
 
+  // #2276 — compute each row's display label once and filter on that SAME
+  // label. A content-less page whose title comes from the resolver used to be
+  // filtered out (the filter matched only `content`) even though the row
+  // displayed its resolved title — so typing that title made the row vanish.
+  const labelFor = useCallback(
+    (page: PageHeading) => page.content || resolveTitle(page.id) || t('block.untitled'),
+    [resolveTitle, t],
+  )
+
   const filtered = useMemo(() => {
     if (!search) return pages
-    return pages.filter((p) => matchesSearchFolded(p.content || '', search))
-  }, [pages, search])
+    return pages.filter((p) => matchesSearchFolded(labelFor(p), search))
+  }, [pages, search, labelFor])
 
   return (
     <div className="flex flex-col gap-2" data-testid="link-target-editor">
@@ -634,9 +643,11 @@ export function LinkTargetEditor({
               >
                 {/* `PageHeading.content` IS the page title; prefer it. Fall back
                     to the resolver (so a content-less row still shows something),
-                    then to "Untitled". The chip resolves the stored id→title via
-                    the SAME resolver after selection. */}
-                {page.content || resolveTitle(page.id) || t('block.untitled')}
+                    then to "Untitled". `labelFor` computes this same label that
+                    the search filter matches on, so display and filtering agree.
+                    The chip resolves the stored id→title via the SAME resolver
+                    after selection. */}
+                {labelFor(page)}
               </button>
             ))
           )}

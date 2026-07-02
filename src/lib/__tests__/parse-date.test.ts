@@ -139,6 +139,16 @@ describe('parseDate', () => {
     expect(parseDate('29/2')).toBe('2028-02-29')
   })
 
+  // #2276: leap-day guard must key off the CHOSEN year, not just the current
+  // year. When the current year IS a leap year but Feb 29 has already passed,
+  // the candidate rolls to next year (non-leap) — the scan must still fire and
+  // land on the next holding year. Regression: previously returned null.
+  it('parses no-year "2/29" to next leap year when current leap year already passed Feb 29', () => {
+    vi.setSystemTime(new Date(2028, 2, 15)) // Mar 15, 2028 — 2028 is a leap year, Feb 29 passed
+    // 2029/2030/2031 non-leap → next holding year is 2032.
+    expect(parseDate('2/29')).toBe('2032-02-29')
+  })
+
   // #1565: loop-termination guard. Feb 30/31 and Apr 31 pass the (day<=31)
   // plausibility gate but hold in NO year — the default-year scan must be
   // bounded and fall through to rejection rather than spin forever.

@@ -195,6 +195,26 @@ describe('RichContentRenderer', () => {
     expect(Object.keys(CALLOUT_CONFIG)).toEqual(['info', 'warning', 'tip', 'error', 'note'])
   })
 
+  // #2275 — the parser accepts any `[!\w+]` as a callout type, but only the
+  // five configured types have a `callout.<type>` i18n string. An unknown type
+  // must fall back to the `note` label — never render the raw `callout.<type>`
+  // key in the header.
+  it('unknown callout type falls back to the note label (no raw i18n key) (#2275)', () => {
+    const { container: unknownC } = render(renderRichContent('> [!frobnicate] mystery', {}))
+    const unknownLabel = unknownC.querySelector(
+      '[data-testid="callout-block"] div span',
+    )?.textContent
+    clearRichContentParseCache()
+    const { container: noteC } = render(renderRichContent('> [!NOTE] take note', {}))
+    const noteLabel = noteC.querySelector('[data-testid="callout-block"] div span')?.textContent
+
+    // The unknown callout renders and adopts the note header label...
+    expect(unknownLabel).toBeTruthy()
+    expect(unknownLabel).toBe(noteLabel)
+    // ...and never leaks the raw, untranslated callout type.
+    expect(unknownLabel).not.toContain('frobnicate')
+  })
+
   // -- Ordered lists ----------------------------------------------------------
 
   it('renders ordered list', () => {

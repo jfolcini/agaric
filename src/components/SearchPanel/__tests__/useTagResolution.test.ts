@@ -42,6 +42,7 @@ const NO_NAMES: string[] = []
 const WIP: string[] = ['wip']
 const TYPO: string[] = ['typo']
 const WIP_AND_TYPO: string[] = ['wip', 'typo']
+const CASE_VARIANTS: string[] = ['Foo', 'foo']
 
 function makeTag(overrides: Partial<TagCacheRow> = {}): TagCacheRow {
   return {
@@ -180,5 +181,23 @@ describe('useTagResolution', () => {
     await waitFor(() => {
       expect(result.current).toEqual({ tagIds: ['TAG_WIP'], pending: false, hasUnresolved: false })
     })
+  })
+
+  it('dedupes case-variant duplicate names to one lookup per cache key (#2275)', async () => {
+    // `tag:#Foo tag:#foo` yields ['Foo','foo']; both collapse to the lowercased
+    // cache key 'foo'. Before the fix each spelling fired its own prefix-lookup
+    // IPC. The dedupe keeps only the FIRST spelling, so 'foo' is never looked
+    // up — a discriminator robust to StrictMode's double-invoke.
+    mockedListTags.mockResolvedValue([])
+
+    renderHook(() => useTagResolution(CASE_VARIANTS, 'SPACE_A'))
+
+    await waitFor(() => {
+      expect(mockedListTags).toHaveBeenCalled()
+    })
+
+    const prefixes = mockedListTags.mock.calls.map((c) => c[0]?.prefix)
+    expect(prefixes).not.toContain('foo')
+    expect(prefixes.every((p) => p === 'Foo')).toBe(true)
   })
 })

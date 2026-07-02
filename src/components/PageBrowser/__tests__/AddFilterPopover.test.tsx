@@ -768,6 +768,37 @@ describe('AddFilterPopover', () => {
       expect(screen.getByText('Backlog')).toBeInTheDocument()
     })
 
+    // #2276 — a content-less page whose title comes from the resolver must stay
+    // visible when the user types that RESOLVED title. Previously the filter
+    // matched only `content` (empty here), hiding a row the picker still
+    // displayed by its resolved title.
+    it('filters on the resolved title for content-less pages', async () => {
+      // A page with no in-band content, resolvable to "Hidden Gem" via the cache.
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_all_pages_in_space')
+          return [
+            { id: 'PAGE_A', content: 'Roadmap' },
+            { id: 'PAGE_C', content: null },
+          ]
+        return null
+      })
+      useResolveStore.setState({
+        cache: new Map([[`${SPACE}::PAGE_C`, { title: 'Hidden Gem', deleted: false }]]),
+        version: 1,
+      })
+
+      const user = userEvent.setup()
+      render(<AddFilterPopover onAddFilter={vi.fn()} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Links to'))
+      await screen.findByText('Hidden Gem')
+      await user.type(screen.getByLabelText('Search pages'), 'gem')
+      // The resolved-title row survives the filter; the unrelated one is gone.
+      expect(screen.getByText('Hidden Gem')).toBeInTheDocument()
+      expect(screen.queryByText('Roadmap')).not.toBeInTheDocument()
+    })
+
     it('the linked-from picker emits a LinkedFrom primitive storing the ULID', async () => {
       const user = userEvent.setup()
       const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()

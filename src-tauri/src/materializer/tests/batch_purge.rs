@@ -351,3 +351,69 @@ async fn purge_handler_runs_cleanly_when_invoked_consecutively() {
         assert_eq!(after, 0, "purge {n} must clear its subtree");
     }
 }
+
+// ======================================================================
+// #2275: purge cascade must consume subtrees DEEPER than the
+// `descendants_cte_purge!()` depth-100 cap. The cap left depth-101+
+// descendants uncollected; deleting their depth-100 parents then left
+// dangling `parent_id` FKs that abort the COMMIT (deferred FK) opaquely.
+// The cascade now extends the descendant set to a fixpoint.
+// ======================================================================
+
+/// Build a linear parent→child chain of `depth` blocks under a page root,
+/// intentionally deeper than the 100-level cascade cap. Returns the total
+/// block count (root + chain).
+async fn seed_deep_chain(pool: &SqlitePool, root_id: &str, depth: usize) -> usize {
+    insert_block_direct(pool, root_id, "page", "deep-root").await;
+    let mut parent = root_id.to_owned();
+    for i in 0..depth {
+        let id = format!("{root_id}_D{i:04}");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', ?, ?, 0)",
+        )
+        .bind(&id)
+        .bind(format!("depth-{i}"))
+        .bind(&parent)
+        .execute(pool)
+        .await
+        .unwrap();
+        parent = id;
+    }
+    depth + 1
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_cascade_consumes_subtree_deeper_than_depth_cap() {
+    let (pool, _dir) = test_pool().await;
+
+    // 151 levels (root + 150) — well past the depth-100 cascade cap.
+    let total = seed_deep_chain(&pool, "PURGE_DEEP", 150).await;
+    assert_eq!(total, 151);
+
+    // Run the SQL cascade directly (the unit changed under #2275). Without the
+    // fix the depth-101+ tail is left uncollected: the delete of the collected
+    // rows leaves dangling `parent_id` FKs (aborting under enforcement) or
+    // orphans the tail — either way the assertion below fails.
+    let mut conn = pool.acquire().await.unwrap();
+    crate::materializer::purge_block_sql_cascade(
+        &mut conn,
+        &PurgeBlockPayload {
+            block_id: BlockId::test_id("PURGE_DEEP"),
+        },
+    )
+    .await
+    .expect("deep purge cascade must not abort on a subtree past the depth cap");
+    drop(conn);
+
+    // Every block in the chain, at every depth, is physically gone.
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id LIKE 'PURGE_DEEP%'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        remaining, 0,
+        "no descendant may survive the purge, at any depth"
+    );
+}

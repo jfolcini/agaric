@@ -217,6 +217,46 @@ async fn apply_op_purge() {
         "block should be physically removed after apply_op purge"
     );
 }
+
+// #2275: `apply_purge_block_via_loro` was the sole engine-routed apply helper
+// that did NOT record a SQL-only fallback on its two early-return arms, so a
+// purge that fell back was invisible to the #1057 instrumentation every sibling
+// (create/edit/delete/…) surfaces. This test drives a purge without
+// `install_for_test` (the EngineUninit fallback arm) and asserts the counter
+// moves. The counter is process-global + monotonic, so `>` is robust under
+// nextest parallelism.
+#[tokio::test]
+async fn apply_op_purge_records_sql_only_fallback() {
+    use crate::materializer::handlers::sql_only_fallback;
+    let before = sql_only_fallback::count();
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    insert_block_direct(&pool, "APPLY_PURGE_FALLBACK_1", "content", "to purge").await;
+    soft_delete_block_direct(&pool, "APPLY_PURGE_FALLBACK_1").await;
+    let r = make_op_record(
+        &pool,
+        OpPayload::PurgeBlock(PurgeBlockPayload {
+            block_id: BlockId::test_id("APPLY_PURGE_FALLBACK_1"),
+        }),
+    )
+    .await;
+    mat.dispatch_op(&r).await.unwrap();
+    mat.flush().await.unwrap();
+    // The block is still physically purged via the SQL-only fallback...
+    assert!(
+        sqlx::query("SELECT id FROM blocks WHERE id = 'APPLY_PURGE_FALLBACK_1'")
+            .fetch_optional(&pool)
+            .await
+            .unwrap()
+            .is_none(),
+        "block should be physically removed after the SQL-only purge fallback"
+    );
+    // ...and the fallback is now observed by the #1057 instrumentation.
+    assert!(
+        sql_only_fallback::count() > before,
+        "apply_op purge without install_for_test must record a SQL-only fallback"
+    );
+}
 #[tokio::test]
 async fn apply_op_move() {
     use sqlx::Row;

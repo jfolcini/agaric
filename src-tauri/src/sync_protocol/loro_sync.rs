@@ -946,24 +946,50 @@ pub(crate) async fn import_and_project(
     // were already removed by Pass D. Runs after the projection tx commits (the
     // subtree CTE reads the just-projected `blocks.parent_id`), mirroring the
     // previous global rebuild's placement.
-    match tag_scope {
-        crate::loro::engine::TagScope::Global => {
-            crate::tag_inheritance::rebuild_all(pool).await?;
-        }
-        crate::loro::engine::TagScope::Subtrees(roots) => {
-            if !roots.is_empty() {
-                let mut tag_tx =
-                    crate::db::begin_immediate_logged(pool, "tag_inheritance_subtrees").await?;
-                for root in &roots {
-                    crate::tag_inheritance::recompute_subtree_inheritance(
-                        &mut tag_tx,
-                        root.as_str(),
-                    )
-                    .await?;
+    //
+    // #2275 — the projection tx has ALREADY committed above (the #535 inbox
+    // slot is gone), so this derived-cache rebuild is best-effort: it must NOT
+    // turn a committed projection into an `Err`. If it fails, the committed
+    // block/tag state stands and the `block_tag_inherited` cache heals on the
+    // next FULL rebuild: any subsequent local tag/move op enqueues
+    // `MaterializeTask::RebuildTagInheritanceCache` (a full rebuild), a later
+    // Global-scope import rebuild does the same, and snapshot restore enqueues
+    // it too. Until one of those runs, inherited-tag reads (tag search) may see
+    // stale rows for the affected subtrees. Propagating the error here would be
+    // strictly worse: the caller would treat a committed import as unprojected
+    // while the inbox slot is already deleted (no retry possible), with the
+    // cache exactly as stale. Log loudly and continue instead.
+    let rebuild_result: Result<(), AppError> = async {
+        match tag_scope {
+            crate::loro::engine::TagScope::Global => {
+                crate::tag_inheritance::rebuild_all(pool).await?;
+            }
+            crate::loro::engine::TagScope::Subtrees(roots) => {
+                if !roots.is_empty() {
+                    let mut tag_tx =
+                        crate::db::begin_immediate_logged(pool, "tag_inheritance_subtrees").await?;
+                    for root in &roots {
+                        crate::tag_inheritance::recompute_subtree_inheritance(
+                            &mut tag_tx,
+                            root.as_str(),
+                        )
+                        .await?;
+                    }
+                    tag_tx.commit().await?;
                 }
-                tag_tx.commit().await?;
             }
         }
+        Ok(())
+    }
+    .await;
+    if let Err(err) = rebuild_result {
+        tracing::warn!(
+            error = %err,
+            "inherited-tags cache rebuild failed AFTER the projection committed; \
+             the committed state stands; inherited-tag reads may be stale until \
+             the next full RebuildTagInheritanceCache (local tag op, \
+             global-scope import, or snapshot restore) runs"
+        );
     }
 
     Ok((changed_blocks, purged_blocks))
@@ -4158,5 +4184,91 @@ mod tests {
             "redelivery clears its own slot in-tx and leaves the leftover \
              slot for boot replay"
         );
+    }
+
+    /// #2275 — the derived `block_tag_inherited` cache rebuild runs AFTER the
+    /// projection tx commits (and after the #535 inbox slot is deleted). A
+    /// failure there must NOT turn a committed import into an `Err`: the caller
+    /// would treat the committed projection as unprojected while the inbox slot
+    /// is already gone (no retry possible). We inject a rebuild failure with
+    /// triggers that abort any post-commit write to `block_tag_inherited`, then
+    /// assert the import still reports `Imported` and the blocks are persisted.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn post_commit_inherited_tags_rebuild_failure_is_non_fatal() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // A tag block + a tagged parent + a child that inherits the tag, so the
+        // post-commit rebuild has an inherited row to (attempt to) insert.
+        const TAG_T: &str = "01HZ0000000000000000000T01";
+        let registry = LoroEngineRegistry::new();
+        {
+            let mut g = registry.for_space(&space, "device-T").expect("for_space");
+            let e = g.engine_mut();
+            e.apply_create_block(TAG_T, "content", "mytag", None, 0)
+                .expect("tag block");
+            e.apply_create_block(BLOCK_A, "content", "parent", None, 1)
+                .expect("parent");
+            e.apply_create_block(BLOCK_B, "content", "child", Some(BLOCK_A), 0)
+                .expect("child");
+            e.apply_add_tag(BLOCK_A, TAG_T).expect("add tag to parent");
+        }
+        let msg = prepare_outgoing_for_pool(&pool, &registry, &space, "device-T", None)
+            .await
+            .expect("prepare_outgoing")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
+
+        // Inject the fault: any post-commit write to the derived cache aborts.
+        // The projection itself writes only `block_tags` (direct edges); the
+        // inherited cache is populated solely by the post-commit rebuild, so
+        // these fire only there.
+        for event in ["INSERT", "DELETE"] {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "CREATE TRIGGER fail_inh_{event} AFTER {event} ON block_tag_inherited \
+                 BEGIN SELECT RAISE(ABORT, 'injected rebuild failure'); END"
+            )))
+            .execute(&pool)
+            .await
+            .expect("install trigger");
+        }
+
+        let dest = LoroEngineRegistry::new();
+        let outcome = apply_remote(&pool, &dest, "device-T", msg)
+            .await
+            .expect("a post-commit inherited-tags rebuild failure must be non-fatal");
+        assert!(
+            matches!(outcome, ApplyOutcome::Imported { .. }),
+            "import must report Imported despite the rebuild failure, got {outcome:?}"
+        );
+
+        // The projection committed: parent and child are persisted...
+        let parent: Option<String> = sqlx::query_scalar("SELECT id FROM blocks WHERE id = ?")
+            .bind(BLOCK_A)
+            .fetch_optional(&pool)
+            .await
+            .expect("query parent");
+        assert!(
+            parent.is_some(),
+            "projection must have committed despite the rebuild failure"
+        );
+        let child: Option<String> = sqlx::query_scalar("SELECT id FROM blocks WHERE id = ?")
+            .bind(BLOCK_B)
+            .fetch_optional(&pool)
+            .await
+            .expect("query child");
+        assert!(child.is_some(), "child block must be persisted");
+
+        // ...including the direct tag edge (part of the committed projection),
+        // while the derived inherited cache stayed empty (its rebuild aborted;
+        // it heals on the next full RebuildTagInheritanceCache — local tag op,
+        // global-scope import, or snapshot restore).
+        let direct: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM block_tags WHERE block_id = ? AND tag_id = ?")
+                .bind(BLOCK_A)
+                .bind(TAG_T)
+                .fetch_one(&pool)
+                .await
+                .expect("count direct tag edges");
+        assert_eq!(direct, 1, "the direct tag edge must be committed");
     }
 }

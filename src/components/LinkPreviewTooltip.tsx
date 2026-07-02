@@ -47,14 +47,23 @@ export function LinkPreviewTooltip({
       getBoundingClientRect: () => anchorRect,
     }
 
+    // #2275 — guard the async placement against a stale resolution. Hovering
+    // quickly between adjacent links leaves two computePosition promises in
+    // flight; if an earlier one resolves last it would set a placement for the
+    // wrong anchor. The cleanup flips `cancelled`, so a superseded promise
+    // (settled after this effect re-ran) never calls setPosition.
+    let cancelled = false
+
     computePosition(virtualEl, tooltipRef.current, {
       placement: 'bottom-start',
       middleware: [flip(), shift({ padding: 8 })],
     })
       .then(({ x, y }) => {
+        if (cancelled) return
         setPosition({ x, y })
       })
       .catch((err) => {
+        if (cancelled) return
         logger.warn(
           'LinkPreviewTooltip',
           'computePosition failed, using fallback',
@@ -64,6 +73,10 @@ export function LinkPreviewTooltip({
         // Fallback: position directly below the link
         setPosition({ x: anchorRect.left, y: anchorRect.bottom + 4 })
       })
+
+    return () => {
+      cancelled = true
+    }
   }, [anchorRect])
 
   if (!url || !anchorRect) return null

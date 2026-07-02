@@ -252,6 +252,12 @@ export function groupResultsByPage(
       order.push(groupKey)
     } else if (isPageRow) {
       group.has_page_name_match = true
+      // The page row carries the page name in-band as its content. When a
+      // content row for this page was seen first, the group was seeded with
+      // `pageTitles.get(P) ?? null`, which is null until the async title map
+      // resolves. Adopt the in-band name now so the group header shows the real
+      // title instead of falling back to the untitled label.
+      if (group.page_title == null) group.page_title = row.content ?? null
     }
     group.blocks.push(row)
   }

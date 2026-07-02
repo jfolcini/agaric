@@ -63,6 +63,19 @@ async fn insert_op_log_row(pool: &SqlitePool, device_id: &str, seq: i64) {
     .unwrap();
 }
 
+/// Force a draft row's `updated_at` to an explicit epoch-ms value. Ordering /
+/// freshness tests use this so they don't depend on sub-millisecond wall-clock
+/// gaps between back-to-back `save_draft` calls (which can produce equal
+/// timestamps and make an `<=` / `>=` assertion pass trivially).
+async fn set_updated_at(pool: &SqlitePool, block_id: &str, updated_at: i64) {
+    sqlx::query("UPDATE block_drafts SET updated_at = ? WHERE block_id = ?")
+        .bind(updated_at)
+        .bind(block_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 // ── save_draft ──────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -202,21 +215,36 @@ async fn save_draft_handles_large_content() {
     );
 }
 
+// Renamed from `save_draft_updated_at_does_not_regress_on_resave`: `save_draft`
+// writes a fresh `now_ms()` on every save (no anti-regression logic), so the
+// observable contract is that a resave REFRESHES `updated_at` to the current
+// time. The old `>=` assertion was trivially true on an equal-millisecond
+// resave and never proved an actual advance.
 #[tokio::test]
-async fn save_draft_updated_at_does_not_regress_on_resave() {
+async fn save_draft_refreshes_updated_at_on_resave() {
     let (pool, _dir) = test_pool().await;
 
     save_draft(&pool, DEVICE, BLOCK_A, CONTENT_V1)
         .await
         .unwrap();
+    // Force the first save's timestamp far into the past so the resave's
+    // wall-clock `now_ms()` is unambiguously later — a STRICT advance.
+    set_updated_at(&pool, BLOCK_A, 1_000).await;
     let ts1 = get_draft(&pool, BLOCK_A).await.unwrap().unwrap().updated_at;
+    assert_eq!(
+        ts1, 1_000,
+        "precondition: first timestamp forced to the past"
+    );
 
     save_draft(&pool, DEVICE, BLOCK_A, CONTENT_V2)
         .await
         .unwrap();
     let ts2 = get_draft(&pool, BLOCK_A).await.unwrap().unwrap().updated_at;
 
-    assert!(ts2 >= ts1, "updated_at must not regress: got {ts2} < {ts1}");
+    assert!(
+        ts2 > ts1,
+        "resave must refresh updated_at to the current time: {ts2} > {ts1}"
+    );
 }
 
 // ── save_draft_if_changed ───────────────────────────────────────────
@@ -334,11 +362,27 @@ async fn get_all_drafts_ordered_by_updated_at_ascending() {
     save_draft(&pool, DEVICE, BLOCK_A, "first").await.unwrap();
     save_draft(&pool, DEVICE, BLOCK_B, "second").await.unwrap();
 
+    // Force DISTINCT, INVERTED timestamps: BLOCK_A (saved first) gets the LATER
+    // time and BLOCK_B the earlier one. If the query orders by updated_at ASC
+    // the result is BLOCK_B then BLOCK_A — the OPPOSITE of insertion order — so
+    // the assertion can't pass merely because rows came back as inserted, nor
+    // trivially on equal timestamps.
+    set_updated_at(&pool, BLOCK_A, 2_000).await;
+    set_updated_at(&pool, BLOCK_B, 1_000).await;
+
     let drafts = get_all_drafts(&pool).await.unwrap();
     assert_eq!(drafts.len(), 2, "should return both drafts");
+    assert_eq!(
+        drafts[0].block_id, BLOCK_B,
+        "earliest updated_at must come first"
+    );
+    assert_eq!(
+        drafts[1].block_id, BLOCK_A,
+        "latest updated_at must come last"
+    );
     assert!(
-        drafts[0].updated_at <= drafts[1].updated_at,
-        "must be ordered by updated_at ASC: {} <= {}",
+        drafts[0].updated_at < drafts[1].updated_at,
+        "must be STRICTLY ascending: {} < {}",
         drafts[0].updated_at,
         drafts[1].updated_at,
     );

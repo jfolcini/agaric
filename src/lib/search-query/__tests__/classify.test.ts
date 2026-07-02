@@ -258,6 +258,44 @@ describe('classify / parse', () => {
     expect(ast.filters[1]).toMatchObject({ kind: 'priority', value: 'none' })
   })
 
+  // #2276 — an out-of-vocabulary state/priority must be an invalid chip, not a
+  // false-valid green one that projects a never-matching value to the wire.
+  it('flags an out-of-vocabulary state: value as invalid', () => {
+    const tok = parse('state:BOGUS').filters[0]
+    expect(tok).toMatchObject({ kind: 'invalid', source: 'state:BOGUS' })
+    if (tok?.kind === 'invalid') {
+      expect(tok.error).toContain("unknown state 'BOGUS'")
+    } else {
+      throw new Error('expected invalid token')
+    }
+  })
+
+  it('flags an out-of-vocabulary priority: value as invalid', () => {
+    const tok = parse('priority:banana').filters[0]
+    expect(tok).toMatchObject({ kind: 'invalid', source: 'priority:banana' })
+    if (tok?.kind === 'invalid') {
+      expect(tok.error).toContain("unknown priority 'banana'")
+    } else {
+      throw new Error('expected invalid token')
+    }
+  })
+
+  it('flags an out-of-vocabulary not-state: / not-priority: value as invalid', () => {
+    expect(parse('not-state:NOPE').filters[0]).toMatchObject({
+      kind: 'invalid',
+      source: 'not-state:NOPE',
+    })
+    expect(parse('not-priority:zzz').filters[0]).toMatchObject({
+      kind: 'invalid',
+      source: 'not-priority:zzz',
+    })
+  })
+
+  it('accepts the none sentinel case-insensitively for state:/priority:', () => {
+    expect(parse('state:NONE').filters[0]).toMatchObject({ kind: 'state', value: 'NONE' })
+    expect(parse('priority:None').filters[0]).toMatchObject({ kind: 'priority', value: 'None' })
+  })
+
   it('recognises due: bucket keywords', () => {
     // Each keyword tested in isolation — multiple due: tokens in one
     // Query now shadow all but the last, so recognition is a

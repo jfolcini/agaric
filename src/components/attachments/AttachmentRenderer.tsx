@@ -83,7 +83,12 @@ function triggerDownload(bytes: Uint8Array, mimeType: string, filename: string):
   document.body.append(anchor)
   anchor.click()
   anchor.remove()
-  URL.revokeObjectURL(url)
+  // #2275 — defer the revoke to a later tick. On WebKitGTK (Linux Tauri) and
+  // WKWebView (macOS Tauri) the download can start asynchronously after
+  // `click()`, so revoking the object URL on the next synchronous line races
+  // the fetch and can abort the download. A 0ms timeout lets the browser pick
+  // up the URL before it is freed — the standard blob-download pattern.
+  setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 /**

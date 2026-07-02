@@ -357,6 +357,33 @@ describe('useUndoStore', () => {
       expect(pageState?.redoGroupSizes).toEqual([])
     })
 
+    it('partial redo keeps a residual group-size entry for the ops still pending (#2276)', async () => {
+      // Batch-undo a group of 3 → redoStack length 3, redoGroupSizes [3].
+      mockedUndoPageGroup.mockResolvedValueOnce(makeGroup(3, 3, 'dev1'))
+      await useUndoStore.getState().undo('page1')
+      expect(useUndoStore.getState().pages.get('page1')?.redoStack).toHaveLength(3)
+      expect(useUndoStore.getState().pages.get('page1')?.redoGroupSizes).toEqual([3])
+
+      // First op redoes; the second fails mid-group so the loop breaks. The
+      // failed op is rolled back onto the stack, so 2 group ops remain pending.
+      mockedRedoPageOp
+        .mockResolvedValueOnce(makeUndoResult({ isRedo: true }))
+        .mockRejectedValueOnce(new Error('redo failed'))
+
+      await useUndoStore.getState().redo('page1')
+
+      expect(mockedRedoPageOp).toHaveBeenCalledTimes(2)
+      const pageState = useUndoStore.getState().pages.get('page1')
+      // Only the one successful op left the stack; the other two remain.
+      expect(pageState?.redoStack).toHaveLength(2)
+      // The group-size entry is trimmed to the residual (2), NOT dropped whole
+      // — so the invariant sum(redoGroupSizes) <= redoStack.length holds and a
+      // later redo replays exactly the ops still pending.
+      expect(pageState?.redoGroupSizes).toEqual([2])
+      const summed = (pageState?.redoGroupSizes ?? []).reduce((s, n) => s + n, 0)
+      expect(summed).toBeLessThanOrEqual(pageState?.redoStack.length ?? 0)
+    })
+
     it('handles mixed group sizes correctly', async () => {
       // First batch undo of 2, then a single undo.
       mockedUndoPageGroup.mockResolvedValueOnce(makeGroup(4, 2, 'dev1'))
