@@ -18,7 +18,7 @@ import { notify } from '@/lib/notify'
 import { t } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import type { OpRef, UndoResult } from '../lib/tauri'
-import { findUndoGroup, redoPageOp, undoPageOp } from '../lib/tauri'
+import { redoPageOp, undoPageGroup } from '../lib/tauri'
 
 export type { OpRef, UndoResult }
 
@@ -52,7 +52,12 @@ export function isWithinUndoGroup(ts1: string, ts2: string): boolean {
 }
 
 interface PageUndoState {
-  /** Ops that have been undone, available for redo (most recent undo first). */
+  /**
+   * Redo targets, most recent undo first. Each entry is an undo's
+   * `new_op_ref` — the appended REVERSE op (`is_undo = 1`) that
+   * `redo_page_op` reverses to re-apply the original action. NOT the original
+   * forward op's ref: `redo_page_op` refuses to reverse a forward op (#659).
+   */
   redoStack: OpRef[]
   /** How many ops we've undone from the page's history. */
   undoDepth: number
@@ -69,9 +74,10 @@ interface UndoStore {
 
   /**
    * Undo the last undoable op (or group of ops) on the given page.
-   * After reversing the first op, checks history timestamps to
-   * automatically undo consecutive ops within UNDO_GROUP_WINDOW_MS
-   * by the same device. Returns the first UndoResult or null.
+   * #2190 — issues ONE `undoPageGroup` IPC that reverts the entire consecutive
+   * same-device, within-`UNDO_GROUP_WINDOW_MS` group in a single IMMEDIATE
+   * transaction, then reconciles local undo/redo state from the batch response.
+   * Returns the first (newest) UndoResult or null.
    */
   undo: (pageId: string) => Promise<UndoResult | null>
 
@@ -156,70 +162,6 @@ export const useUndoStore = create<UndoStore>((set, get) => {
   // ---------------------------------------------------------------------------
 
   /**
-   * Perform a single undo operation (one op at a time).
-   * Handles optimistic updates and rollback on error.
-   */
-  async function performSingleUndo(pageId: string): Promise<UndoResult | null> {
-    const currentDepth = (() => {
-      const state = get()
-      const pageState = getOrCreatePage(state.pages, pageId)
-      const depth = pageState.undoDepth
-
-      // Optimistic update: increment immediately. Read from the functional
-      // updater's `current` so the write derives from the live state rather
-      // than the snapshot captured above (consistent with the success/rollback
-      // paths below).
-      set((s) => ({
-        pages: setPageState(s.pages, pageId, (current) => {
-          const base = current ?? pageState
-          return {
-            ...base,
-            undoDepth: base.undoDepth + 1,
-          }
-        }),
-      }))
-
-      return depth
-    })()
-
-    try {
-      const result = await undoPageOp({
-        pageId,
-        undoDepth: currentDepth,
-      })
-
-      // On success: add to redo stack. If the page entry was cleared while the
-      // undo was in flight (e.g. clearPage during the await when the provider
-      // unmounts mid-undo), drop the result rather than re-seeding a fabricated
-      // entry — re-growing the pages Map after an explicit clear contradicts
-      // clearPage's intent and the #753 memory-growth fix.
-      set((state) => ({
-        pages: setPageState(state.pages, pageId, (current) =>
-          current
-            ? {
-                ...current,
-                redoStack: [result.reversed_op, ...current.redoStack].slice(0, MAX_REDO_STACK),
-              }
-            : current,
-        ),
-      }))
-
-      return result
-    } catch (err) {
-      logger.error('UndoStore', 'undo operation failed', { pageId }, err)
-      // On error: roll back the optimistic increment
-      set((state) => ({
-        pages: setPageState(state.pages, pageId, (current) =>
-          current && current.undoDepth > 0
-            ? { ...current, undoDepth: current.undoDepth - 1 }
-            : current,
-        ),
-      }))
-      return null
-    }
-  }
-
-  /**
    * Perform a single redo operation (one op at a time).
    * Handles optimistic updates and rollback on error.
    */
@@ -291,71 +233,88 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       }
       undoInProgress.add(pageId)
       try {
-        // Capture the initial undo depth before any undo calls
+        // Capture the current undo anchor — the newest-first offset the group
+        // seed sits at (0 = most recent undoable op).
         const initialDepth = getOrCreatePage(get().pages, pageId).undoDepth
 
-        // Ask the backend for the full group size
-        // BEFORE issuing any undos. Replaces the prior `listPageHistory`
-        // re-fetch with a growing window after each Ctrl+Z (one IPC per
-        // op, payload growing as the user holds undo) with a single
-        // recursive-CTE query that walks consecutive same-device,
-        // within-window ops in SQL.
-        let groupSize = 1
+        // #2190 — ONE IPC reverts the entire consecutive same-device,
+        // within-window undo group in a single IMMEDIATE transaction. This
+        // replaces the prior `findUndoGroup` + N × `undoPageOp` loop (one IPC /
+        // one page-subtree CTE walk / one writer-lock acquisition per op — 20
+        // IPCs when holding Ctrl+Z over a 20-op recurrence group) with a single
+        // command. The backend resolves the subtree + the group's op refs once
+        // and returns one `UndoResult` per reverted op, newest-first.
+        //
+        // Optimistically ensure a page entry exists BEFORE the await so a
+        // `clearPage` landing mid-flight is detectable on the success path
+        // below (`current` becomes undefined) — mirrors the pre-#2190
+        // optimistic marker and the #753 "don't re-seed after an explicit
+        // clear" fix.
+        set((s) => ({
+          pages: setPageState(
+            s.pages,
+            pageId,
+            (current) => current ?? { redoStack: [], undoDepth: 0, redoGroupSizes: [] },
+          ),
+        }))
+
+        let results: UndoResult[]
         try {
-          const backendGroupSize = await findUndoGroup({
+          results = await undoPageGroup({
             pageId,
             depth: initialDepth,
             windowMs: UNDO_GROUP_WINDOW_MS,
           })
-          // Backend returns 0 when the seed op doesn't exist — fall
-          // back to a single undo (groupSize stays at 1).
-          if (backendGroupSize >= 1) groupSize = backendGroupSize
         } catch (err) {
-          logger.error('UndoStore', 'find_undo_group failed', { pageId }, err)
-          // Group sizing failed — graceful fallback, just the single undo.
+          logger.error('UndoStore', 'undo_page_group failed', { pageId }, err)
           notify.warning(t('undo.batchUnavailable'))
+          return null
         }
 
-        // Perform `groupSize` single undos. Each one increments
-        // undoDepth, so the backend `undo_depth` parameter naturally
-        // walks newest-first through the same set of ops the
-        // `find_undo_group` recursive CTE walked.
-        let firstResult: UndoResult | null = null
-        let actualGroupSize = 0
-        for (let i = 0; i < groupSize; i++) {
-          const result = await performSingleUndo(pageId)
-          if (!result) break
-          if (i === 0) firstResult = result
-          actualGroupSize++
-        }
-        if (!firstResult) return null
+        // Empty group — the seed op doesn't exist (nothing left to undo).
+        if (results.length === 0) return null
 
-        // Record actual group size for redo (always, even for single ops).
+        // Reconcile state from the batch response exactly as the sequential
+        // loop did, one `set` instead of N:
+        //   * advance the undo anchor by the number of reverted ops so the next
+        //     Ctrl+Z seeds at the next-older group,
+        //   * push each op's `new_op_ref` — the appended REVERSE op (flagged
+        //     `is_undo = 1`) — onto the redo stack in response order. Redo
+        //     means "reverse the undo op", and `redo_page_op` REJECTS a
+        //     forward-op ref (#659), so the stack must carry the reverse ops'
+        //     refs, NOT `reversed_op` (the original forward op). Newest-first
+        //     ops are pushed first, so the OLDEST op's reverse ends up at the
+        //     front — the order `performSingleRedo` pops for a correct
+        //     oldest-first redo replay,
+        //   * record the group size for redo.
         //
-        // #1561 — guard against `redoGroupSizes` leading an empty/short
-        // `redoStack`. If `reanchorAfterRemoteOps` (or `onNewAction`) fired
-        // while this undo's await loop was in flight, it reset the live entry
-        // to pristine baseline (empty stacks). The reversed ops re-appended on
-        // each success path may number FEWER than `actualGroupSize` (reanchor
-        // wiped the earlier ones). Recording the loop's `actualGroupSize`
-        // verbatim would strand an orphan size entry that no backing redoStack
-        // entries support: `redo` bails on the empty/short stack before the pop
-        // guard reclaims it. Clamp the recorded size to what the stack can back
-        // (`redoStack.length - sum(existing redoGroupSizes)`) so the invariant
-        // `sum(redoGroupSizes) <= redoStack.length` always holds. A clamp to 0
-        // records nothing — there is no group left to redo.
+        // If `clearPage` cleared the entry mid-flight, `current` is undefined
+        // and we drop the result rather than re-seeding (#753).
+        //
+        // #1561 — clamp the recorded group size to what the redo stack can back
+        // (`redoStack.length - sum(existing redoGroupSizes)`) in case
+        // `reanchorAfterRemoteOps` / `onNewAction` reset the entry mid-flight,
+        // preserving the invariant `sum(redoGroupSizes) <= redoStack.length`.
         set((state) => ({
           pages: setPageState(state.pages, pageId, (current) => {
             if (!current) return current
+            let redoStack = current.redoStack
+            for (const result of results) {
+              redoStack = [result.new_op_ref, ...redoStack].slice(0, MAX_REDO_STACK)
+            }
+            const undoDepth = current.undoDepth + results.length
             const alreadyGrouped = current.redoGroupSizes.reduce((sum, n) => sum + n, 0)
-            const backing = current.redoStack.length - alreadyGrouped
-            const recordedSize = Math.min(actualGroupSize, Math.max(backing, 0))
-            if (recordedSize <= 0) return current
-            return { ...current, redoGroupSizes: [...current.redoGroupSizes, recordedSize] }
+            const backing = redoStack.length - alreadyGrouped
+            const recordedSize = Math.min(results.length, Math.max(backing, 0))
+            const redoGroupSizes =
+              recordedSize > 0 ? [...current.redoGroupSizes, recordedSize] : current.redoGroupSizes
+            return { ...current, redoStack, undoDepth, redoGroupSizes }
           }),
         }))
 
-        return firstResult
+        // Non-empty (guarded above); `?? null` satisfies
+        // noUncheckedIndexedAccess.
+        return results[0] ?? null
       } finally {
         undoInProgress.delete(pageId)
       }

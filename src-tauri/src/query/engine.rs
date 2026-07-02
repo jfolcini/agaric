@@ -1145,47 +1145,87 @@ fn date_bucket_format(unit: DateBucketUnit) -> &'static str {
 /// The returned `key_expr` is the RAW key SQL (callers wrap it in
 /// `COALESCE(<expr>, 'none')` so a NULL/absent key renders as the `"none"`
 /// bucket). It is built ENTIRELY from static column literals + literal
-/// `strftime` formats; the ONLY user-controlled input ([`GroupKey::Property`]'s
-/// `key`) is returned as a [`Bind`] and placed at the explicit `?{pos}`
-/// slot — never interpolated as an identifier. So grouping cannot inject SQL.
+/// `strftime` formats, so it is safe to repeat verbatim wherever the group
+/// key appears (SELECT / GROUP BY / PARTITION BY / IN). The
+/// `block_properties` lookup is materialised 1:1 in the JOIN clause (a PK
+/// seek), so it is evaluated ONCE per candidate row instead of re-run at
+/// every occurrence (#2269); the op_log MIN/MAX date buckets deliberately
+/// stay correlated scalar subqueries — see the comment on the
+/// `Created`/`LastEdited` arms for the measured reason.
 ///
-/// `pos` is the `?N` slot the property-key bind (if any) occupies; it is the
-/// SAME slot every time the expression appears in one statement (SELECT /
-/// GROUP BY / PARTITION BY), so a single bind feeds all occurrences.
-fn group_key_expr(key: &GroupKey, pos: usize) -> (String, &'static str, Option<Bind>) {
+/// The ONLY user-controlled input ([`GroupKey::Property`]'s `key`) is returned
+/// as a [`Bind`] placed at the explicit `?{pos}` slot IN THE JOIN's `ON` clause
+/// — never interpolated as an identifier — so grouping cannot inject SQL.
+/// `pos` is that `?N` slot; the bind appears once (in the JOIN) and is
+/// positional, so its number is independent of textual placement.
+fn group_key_expr(key: &GroupKey, pos: usize) -> (String, String, Option<Bind>) {
     match key {
         GroupKey::Tag => (
             "bt.tag_id".to_string(),
-            " JOIN block_tags bt ON bt.block_id = b.id",
+            " JOIN block_tags bt ON bt.block_id = b.id".to_string(),
             None,
         ),
-        GroupKey::Page => ("b.page_id".to_string(), "", None),
-        GroupKey::State => ("b.todo_state".to_string(), "", None),
-        GroupKey::BlockType => ("b.block_type".to_string(), "", None),
-        GroupKey::Priority => ("b.priority".to_string(), "", None),
+        GroupKey::Page => ("b.page_id".to_string(), String::new(), None),
+        GroupKey::State => ("b.todo_state".to_string(), String::new(), None),
+        GroupKey::BlockType => ("b.block_type".to_string(), String::new(), None),
+        GroupKey::Priority => ("b.priority".to_string(), String::new(), None),
         GroupKey::Property { key } => (
-            // Correlated single-value lookup; the key is a BOUND `?{pos}`.
-            format!(
-                "(SELECT value_text FROM block_properties WHERE block_id = b.id AND key = ?{pos})"
-            ),
-            "",
+            // Materialised 1:1 via a LEFT JOIN (`block_properties`'s PRIMARY KEY
+            // is `(block_id, key)`, so at most one row matches) so the property
+            // value is looked up ONCE per candidate row and reused wherever the
+            // group key appears (SELECT / GROUP BY / PARTITION BY / IN) instead
+            // of re-running a correlated subquery up to 3× per row (#2269).
+            // Identical to the former `(SELECT value_text FROM block_properties
+            // WHERE block_id = b.id AND key = ?{pos})` — `gp.value_text` is NULL
+            // when the key is absent, which `COALESCE(…, 'none')` renders as the
+            // `none` bucket. The key stays a BOUND `?{pos}` in the ON clause —
+            // never interpolated as an identifier, so grouping cannot inject SQL.
+            "gp.value_text".to_string(),
+            format!(" LEFT JOIN block_properties gp ON gp.block_id = b.id AND gp.key = ?{pos}"),
             Some(Bind::Text(key.clone())),
         ),
         GroupKey::DateBucket { source, unit } => {
             let fmt = date_bucket_format(*unit);
-            let expr = match source {
-                DateField::Due => format!("strftime('{fmt}', b.due_date)"),
-                DateField::Scheduled => format!("strftime('{fmt}', b.scheduled_date)"),
-                // op_log.created_at is epoch-ms; bucket the earliest (Created)
-                // / latest (LastEdited) op as a calendar date.
-                DateField::Created => format!(
-                    "strftime('{fmt}', (SELECT MIN(created_at) FROM op_log WHERE block_id = b.id) / 1000, 'unixepoch')"
+            let (expr, join) = match source {
+                DateField::Due => (format!("strftime('{fmt}', b.due_date)"), String::new()),
+                DateField::Scheduled => (
+                    format!("strftime('{fmt}', b.scheduled_date)"),
+                    String::new(),
                 ),
-                DateField::LastEdited => format!(
-                    "strftime('{fmt}', (SELECT MAX(created_at) FROM op_log WHERE block_id = b.id) / 1000, 'unixepoch')"
+                // op_log.created_at is epoch-ms; bucket the earliest (Created) /
+                // latest (LastEdited) op as a calendar date.
+                //
+                // DELIBERATELY a correlated scalar subquery, NOT a pre-aggregated
+                // `LEFT JOIN (SELECT block_id, MIN|MAX(created_at) … GROUP BY
+                // block_id)`. SQLite cannot push the join predicate into an
+                // aggregate subquery: it MATERIALIZEs the whole derived table (a
+                // full covering-index scan of op_log plus an automatic index)
+                // once per statement, regardless of how selective the WHERE is.
+                // Measured on a 500k-row op_log: 100-block candidate set — 0.3 ms
+                // correlated vs 100 ms materialised; 50k-block set — 72 ms vs
+                // 165 ms. The correlated form is a per-row
+                // `idx_op_log_block_created` seek (`EXPLAIN QUERY PLAN`: `SEARCH
+                // op_log USING COVERING INDEX … (block_id=?)`), so even repeated
+                // up to 3× per row (SELECT / PARTITION BY / IN in the member
+                // preview) it is orders of magnitude cheaper for the filtered
+                // candidate sets grouped queries run over (#2269 review).
+                // NULL when the block has no op → the `none` bucket.
+                DateField::Created => (
+                    format!(
+                        "strftime('{fmt}', (SELECT MIN(created_at) FROM op_log \
+                         WHERE block_id = b.id) / 1000, 'unixepoch')"
+                    ),
+                    String::new(),
+                ),
+                DateField::LastEdited => (
+                    format!(
+                        "strftime('{fmt}', (SELECT MAX(created_at) FROM op_log \
+                         WHERE block_id = b.id) / 1000, 'unixepoch')"
+                    ),
+                    String::new(),
                 ),
             };
-            (expr, "", None)
+            (expr, join, None)
         }
     }
 }
@@ -1234,12 +1274,22 @@ struct GroupBucketRow {
     aggregates: Vec<AggregateResult>,
 }
 
-/// One previewed member row: an [`EngineRow`] plus the rendered group key it
-/// belongs to (so members distribute back into their buckets).
+/// One previewed member row plus the rendered group key it belongs to (so
+/// members distribute back into their buckets).
+///
+/// A LEANER shape than the flat path's [`EngineRow`]: the grouped cursor keys
+/// on `(gcount, gkey)` and only ever reads each member's block + relevance
+/// score, so the preview projection omits `__last_edited` / `__title` (the two
+/// correlated sort-key subqueries [`EngineRow`] carries for the flat keyset).
+/// Not selecting them saves two correlated lookups per previewed row (#2269).
 #[derive(sqlx::FromRow)]
 struct GroupMemberRow {
     #[sqlx(flatten)]
-    inner: EngineRow,
+    block: ActiveBlockRow,
+    /// `fts.rank` (`bm25`) on the full-text path; `NULL` (→ `None`) on the
+    /// structural path. Becomes the member's [`QueryResultRow::score`].
+    #[sqlx(rename = "__rank")]
+    rank: Option<f64>,
     gkey: String,
 }
 
@@ -1464,8 +1514,6 @@ async fn run_grouped(
     let member_sql = format!(
         "SELECT * FROM ( \
            SELECT {cols}, \
-             COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), 0) AS __last_edited, \
-             (SELECT title FROM pages_cache WHERE page_id = b.id) AS __title, \
              {rank_select} AS __rank, \
              {gkey_expr} AS gkey, \
              ROW_NUMBER() OVER (PARTITION BY {gkey_expr} ORDER BY {preview_order}) AS __rn \
@@ -1506,8 +1554,8 @@ async fn run_grouped(
     let mut by_key: HashMap<String, Vec<QueryResultRow>> = HashMap::new();
     for m in member_rows {
         by_key.entry(m.gkey).or_default().push(QueryResultRow {
-            score: m.inner.rank,
-            block: m.inner.block,
+            score: m.rank,
+            block: m.block,
         });
     }
 

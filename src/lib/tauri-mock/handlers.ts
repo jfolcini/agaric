@@ -1947,6 +1947,66 @@ export const HANDLERS: Record<string, Handler> = {
     }
   },
 
+  // #2274 — batched multi-select drag reparent/reorder. Moves the ordered
+  // `blockIds` under `newParentId` at consecutive slots `newIndex, newIndex+1,
+  // …` inside one logical transaction, applying the SAME per-move steps as
+  // `move_block` in sequence (so block[k] parked at slot `newIndex+k` is visible
+  // to block[k+1]'s slot — #774 semantics). Returns one MoveResponse per moved
+  // root, in input order. Throws (rolling the whole batch back, mock-side) on an
+  // empty list or a missing block.
+  move_blocks_batch: (args) => {
+    const a = args as Record<string, unknown>
+    const blockIds = (a['blockIds'] as string[]) ?? []
+    const newParentId = (a['newParentId'] as string | null) ?? null
+    const startIndex = (a['newIndex'] as number) ?? 0
+    if (blockIds.length === 0) {
+      throw new Error('block_ids list cannot be empty')
+    }
+    const out: Array<{ block_id: string; new_parent_id: string | null; new_position: number }> = []
+    blockIds.forEach((blockId, k) => {
+      const b = blocks.get(blockId)
+      if (!b) throw new Error('not found')
+      const oldParentId = (b['parent_id'] as string | null) ?? null
+      const oldSiblings = [...blocks.values()]
+        .filter(
+          (s) => ((s['parent_id'] as string | null) ?? null) === oldParentId && !s['deleted_at'],
+        )
+        .toSorted((x, y) => {
+          const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+          const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+          if (px !== py) return px - py
+          return (x['id'] as string).localeCompare(y['id'] as string)
+        })
+      const oldPosition = oldSiblings.findIndex((s) => s['id'] === blockId) + 1
+      b['parent_id'] = newParentId
+      if (newParentId) {
+        const newParent = blocks.get(newParentId)
+        if (newParent) {
+          b['page_id'] =
+            newParent['block_type'] === 'page'
+              ? (newParent['id'] as string)
+              : (newParent['page_id'] as string | null)
+        }
+      } else {
+        b['page_id'] = null
+      }
+      refreshDescendantPageIds(blockId)
+      // Consecutive destination slots: block[k] → slot `startIndex + k`.
+      insertAtSlotAndRenumber(newParentId, blockId, startIndex + k)
+      if (oldParentId !== newParentId) renumberSiblings(oldParentId)
+      const newPosition = b['position'] as number
+      pushOp('move_block', {
+        block_id: blockId,
+        new_parent_id: newParentId,
+        new_position: newPosition,
+        old_parent_id: oldParentId,
+        old_position: oldPosition,
+      })
+      out.push({ block_id: blockId, new_parent_id: newParentId, new_position: newPosition })
+    })
+    return out
+  },
+
   // ---------------------------------------------------------------------------
   // Tag associations
   // ---------------------------------------------------------------------------
@@ -2145,6 +2205,30 @@ export const HANDLERS: Record<string, Handler> = {
     }
 
     return count
+  },
+
+  // #2190 — batched group-undo. Mirrors `undo_page_group_inner`: size the
+  // consecutive same-device, within-window group with the same walk as
+  // `find_undo_group`, then apply the per-op reverse newest-first, returning
+  // one UndoResult per reverted op. Reuses the sibling handlers so the reverse
+  // effects stay identical to the single-op path. Reverse ops carry an `undo_`
+  // prefix and are filtered out of the undoable set, so `depth + i` walks the
+  // same ops the group spans across the loop.
+  undo_page_group: (args) => {
+    const a = (args ?? {}) as Record<string, unknown>
+    const depth = (a['depth'] as number) ?? 0
+    const windowMs = (a['windowMs'] as number) ?? 0
+    const findGroup = HANDLERS['find_undo_group']
+    const undoOp = HANDLERS['undo_page_op']
+    if (!findGroup || !undoOp) {
+      throw new Error('undo_page_group mock: missing sibling handler')
+    }
+    const groupSize = findGroup({ pageId: a['pageId'], depth, windowMs }) as number
+    const results: unknown[] = []
+    for (let i = 0; i < groupSize; i++) {
+      results.push(undoOp({ pageId: a['pageId'], undoDepth: depth + i }))
+    }
+    return results
   },
 
   revert_ops: (args) => {
@@ -2766,10 +2850,22 @@ export const HANDLERS: Record<string, Handler> = {
     const a = args as Record<string, unknown>
     const undoSeq = a['undoSeq'] as number
 
-    // The frontend stores reversed_op (the original op's ref) in the redo
-    // stack, so undoSeq is the original op's seq. Find and re-apply it.
-    const originalOp: MockOpLogEntry | undefined = opLog.find((o) => o.seq === undoSeq)
-    if (!originalOp) throw new Error('op not found for redo')
+    // Mirrors `redo_page_op_inner`: the ref identifies the UNDO op that a
+    // previous undo appended (the FE stores each undo's `new_op_ref` on its
+    // redo stack), and redo re-applies the ORIGINAL op that undo reversed.
+    // A ref to a forward (non-undo) op is REJECTED, mirroring the backend's
+    // #659 provenance check (`op_log.is_undo`; the mock's equivalent marker
+    // is the `undo_` op_type prefix stamped by the undo handlers).
+    const undoOp: MockOpLogEntry | undefined = opLog.find((o) => o.seq === undoSeq)
+    if (!undoOp) throw new Error('op not found for redo')
+    if (!undoOp.op_type.startsWith('undo_')) {
+      throw new Error(
+        `redo target (${undoOp.device_id}, ${undoOp.seq}) is a '${undoOp.op_type}' op that was ` +
+          'not produced by undo — refusing to reverse a forward op via redo (#659)',
+      )
+    }
+    const originalOp = (JSON.parse(undoOp.payload) as { reversed: MockOpLogEntry }).reversed
+    if (!originalOp) throw new Error('undo op carries no reversed payload')
 
     const payload = JSON.parse(originalOp.payload) as Record<string, unknown>
 

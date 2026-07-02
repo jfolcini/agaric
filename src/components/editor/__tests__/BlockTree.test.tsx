@@ -4136,9 +4136,11 @@ describe('BlockTree handleMergeWithPrev', () => {
     // and does NOT abort, and the source B is then delete_block'd.
     let moved = false
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'move_block') {
+      if (cmd === 'move_blocks_batch') {
         moved = true
-        return {}
+        // #2274 — one batched IPC; the authoritative response lets the store
+        // reconcile surgically (no reload needed on this success path).
+        return [{ block_id: 'B1', new_parent_id: 'A', new_position: 1 }]
       }
       if (cmd === 'load_page_subtree') {
         return {
@@ -4171,8 +4173,8 @@ describe('BlockTree handleMergeWithPrev', () => {
     })
     // B1 moved under A (slot 0 — A had no children) BEFORE B was deleted.
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
-        blockId: 'B1',
+      expect(mockedInvoke).toHaveBeenCalledWith('move_blocks_batch', {
+        blockIds: ['B1'],
         newParentId: 'A',
         newIndex: 0,
       })
@@ -4191,13 +4193,14 @@ describe('BlockTree handleMergeWithPrev', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'B' })
 
-    // The move_block IPC fails. `moveBlocks` swallows the error and reloads;
-    // the reconciling load returns the tree with B1 STILL under B (the move
-    // never committed). The verifying wrapper must detect the child did not
-    // land under A and throw, so the merge aborts: the edit is reverted and
-    // the source block is NEVER delete_block'd (the subtree stays intact).
+    // The move_blocks_batch IPC fails. `moveBlocks` swallows the error and
+    // restores the pre-move snapshot (the whole batch rolled back backend-
+    // side), leaving B1 STILL under B. The verifying wrapper must detect the
+    // child did not land under A and throw, so the merge aborts: the edit is
+    // reverted and the source block is NEVER delete_block'd (the subtree
+    // stays intact).
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'move_block') throw new Error('test: move_block rejected')
+      if (cmd === 'move_blocks_batch') throw new Error('test: move_blocks_batch rejected')
       if (cmd === 'load_page_subtree') {
         return {
           blocks: [

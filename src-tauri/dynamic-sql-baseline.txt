@@ -23,7 +23,7 @@
 3 src-tauri/src/commands/blocks/move_ops.rs
 2 src-tauri/src/commands/blocks/queries.rs
 2 src-tauri/src/commands/drafts.rs
-4 src-tauri/src/commands/history.rs
+9 src-tauri/src/commands/history.rs
 2 src-tauri/src/commands/mod.rs
 1 src-tauri/src/commands/pages/listing.rs
 2 src-tauri/src/commands/pages/metadata.rs

@@ -825,16 +825,40 @@ describe('redo_page_op', () => {
     const undoResult = invoke('undo_page_op', {
       pageId: SEED_IDS.PAGE_GETTING_STARTED,
       undoDepth: 0,
-    }) as { reversed_op: { device_id: string; seq: number } }
+    }) as {
+      reversed_op: { device_id: string; seq: number }
+      new_op_ref: { device_id: string; seq: number }
+    }
 
+    // Redo targets the undo's `new_op_ref` (the appended reverse op) — the
+    // same contract as the real backend's `redo_page_op` (#659).
     const result = invoke('redo_page_op', {
-      undoDeviceId: undoResult.reversed_op.device_id,
-      undoSeq: undoResult.reversed_op.seq,
+      undoDeviceId: undoResult.new_op_ref.device_id,
+      undoSeq: undoResult.new_op_ref.seq,
     }) as Record<string, unknown>
     expect(result).toHaveProperty('reversed_op')
     expect(result).toHaveProperty('new_op_ref')
     expect(result).toHaveProperty('new_op_type')
     expect(result).toHaveProperty('is_redo', true)
+  })
+
+  it('rejects a forward (non-undo) op ref, mirroring the backend #659 check', () => {
+    invoke('create_block', {
+      blockType: 'content',
+      content: 'redo-forward-reject',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    })
+    const undoResult = invoke('undo_page_op', {
+      pageId: SEED_IDS.PAGE_GETTING_STARTED,
+      undoDepth: 0,
+    }) as { reversed_op: { device_id: string; seq: number } }
+
+    expect(() =>
+      invoke('redo_page_op', {
+        undoDeviceId: undoResult.reversed_op.device_id,
+        undoSeq: undoResult.reversed_op.seq,
+      }),
+    ).toThrow(/not produced by undo/)
   })
 })
 
@@ -1603,15 +1627,15 @@ describe('redo_page_op edge cases', () => {
     const undoResult = invoke('undo_page_op', {
       pageId: SEED_IDS.PAGE_GETTING_STARTED,
       undoDepth: 0,
-    }) as { reversed_op: { device_id: string; seq: number } }
+    }) as { new_op_ref: { device_id: string; seq: number } }
 
     const afterUndo = invoke('get_block', { blockId: createdId }) as Record<string, unknown>
     expect(afterUndo['deleted_at']).not.toBeNull()
 
-    // Redo → block is restored
+    // Redo → block is restored. The ref is the undo's `new_op_ref` (#659).
     invoke('redo_page_op', {
-      undoDeviceId: undoResult.reversed_op.device_id,
-      undoSeq: undoResult.reversed_op.seq,
+      undoDeviceId: undoResult.new_op_ref.device_id,
+      undoSeq: undoResult.new_op_ref.seq,
     })
 
     const afterRedo = invoke('get_block', { blockId: createdId }) as Record<string, unknown>

@@ -4966,3 +4966,492 @@ async fn undo_ops_are_flagged_is_undo_659() {
     assert_eq!(forward_flag, 0, "forward ops keep is_undo = 0 (#659)");
     mat.shutdown();
 }
+
+// ======================================================================
+// undo_page_group tests (#2190)
+//
+// The batched group-undo command resolves the page subtree + the group's
+// op refs ONCE and reverts them in a single IMMEDIATE transaction, replacing
+// the FE's `find_undo_group` + N × `undo_page_op` IPC loop. These tests pin:
+//   * a multi-op group reverts every op newest-first in one tx, appending the
+//     reverse ops to the op_log in application (newest-first) order,
+//   * a single-op group degenerates to one reverse,
+//   * an empty group (seed op doesn't exist) is a clean no-op, and
+//   * a non-reversible op anywhere in the group rolls the WHOLE tx back with
+//     no partial undo (no reverse ops leaked, live state untouched).
+//
+// The undo group is delimited by the SAME rule as `find_undo_group_inner`:
+// a consecutive run of same-`device_id`, within-`window_ms` ops in the page's
+// newest-first op stream. To make a group span exactly the ops we want, the
+// tests exploit the same-device boundary: an op by a DIFFERENT device breaks
+// the walk, so a block CREATED by one device and then EDITED by another yields
+// a group of just the edits (the cross-device create is excluded).
+// ======================================================================
+
+const OTHER_DEV: &str = "test-device-OTHER";
+
+/// Toggle the H-13 append-only bypass sentinel so a test can rewrite
+/// `op_log.created_at` to carve deterministic grouping windows.
+async fn set_op_log_mutation_bypass(pool: &SqlitePool, on: bool) {
+    let sql = if on {
+        "INSERT INTO _op_log_mutation_allowed (token) VALUES (1)"
+    } else {
+        "DELETE FROM _op_log_mutation_allowed"
+    };
+    sqlx::query(sql).execute(pool).await.unwrap();
+}
+
+/// A multi-op group is reverted newest-first in a single tx; the reverse ops
+/// land in the op_log in application order, all flagged `is_undo = 1`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_page_group_reverts_multi_op_group_newest_first() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Block created by OTHER_DEV (this create op breaks the same-device walk,
+    // so it is NOT part of the group) then edited twice by DEV.
+    let created = create_block_inner(
+        &pool,
+        OTHER_DEV,
+        &mat,
+        "content".into(),
+        "v0".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v1".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v2".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // Resolve the two DEV edit ops (v1 = lower seq, v2 = higher seq).
+    let edit_seqs: Vec<i64> = sqlx::query_scalar(
+        "SELECT seq FROM op_log WHERE device_id = ? AND op_type = 'edit_block' ORDER BY seq ASC",
+    )
+    .bind(DEV)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(edit_seqs.len(), 2, "expected exactly two DEV edit ops");
+    let (edit_v1_seq, edit_v2_seq) = (edit_seqs[0], edit_seqs[1]);
+
+    let ops_before = op_log::get_ops_since(&ReadPool(pool.clone()), OTHER_DEV, 0)
+        .await
+        .unwrap()
+        .len()
+        + op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+            .await
+            .unwrap()
+            .len();
+
+    // Batch-undo the group. A large window guarantees the two same-device
+    // edits group; the cross-device create bounds the group at 2.
+    let results = undo_page_group_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        0,
+        1_000_000,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Exactly the two edits, newest-first: v2 then v1.
+    assert_eq!(
+        results.len(),
+        2,
+        "group must span the two same-device edits"
+    );
+    assert_eq!(
+        results[0].reversed_op.seq, edit_v2_seq,
+        "newest-first: the first reversed op must be the newest edit (v2)"
+    );
+    assert_eq!(
+        results[1].reversed_op.seq, edit_v1_seq,
+        "the second reversed op must be the older edit (v1)"
+    );
+    assert!(
+        results.iter().all(|r| r.reversed_op_type == "edit_block"),
+        "both reversed ops are edit_block"
+    );
+
+    // Materialized content is back to the pre-group value.
+    let after = get_block_inner(&pool, created.id.clone()).await.unwrap();
+    assert_eq!(
+        after.content,
+        Some("v0".into()),
+        "reverting the whole group restores the pre-group content"
+    );
+
+    // Two reverse ops appended, in application (newest-first) order, both
+    // flagged is_undo = 1.
+    let ops_after = op_log::get_ops_since(&ReadPool(pool.clone()), OTHER_DEV, 0)
+        .await
+        .unwrap()
+        .len()
+        + op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+            .await
+            .unwrap()
+            .len();
+    assert_eq!(
+        ops_after,
+        ops_before + 2,
+        "the batch appends exactly one reverse op per reverted op"
+    );
+    assert!(
+        results[0].new_op_ref.seq < results[1].new_op_ref.seq,
+        "reverse ops are appended in application order (v2's reverse before v1's)"
+    );
+    for r in &results {
+        let is_undo: i64 =
+            sqlx::query_scalar("SELECT is_undo FROM op_log WHERE device_id = ? AND seq = ?")
+                .bind(&r.new_op_ref.device_id)
+                .bind(r.new_op_ref.seq)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(is_undo, 1, "#659: batch reverse ops must carry is_undo = 1");
+    }
+
+    mat.shutdown();
+}
+
+/// A single-op group degenerates to one reverse (the batch command is a
+/// drop-in for the old single `undo_page_op`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_page_group_single_op_group_degenerates() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Cross-device create bounds the group; a single DEV edit forms a group
+    // of exactly one.
+    let created = create_block_inner(
+        &pool,
+        OTHER_DEV,
+        &mat,
+        "content".into(),
+        "v0".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v1".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let results = undo_page_group_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        0,
+        1_000_000,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(results.len(), 1, "single-op group reverts exactly one op");
+    let after = get_block_inner(&pool, created.id.clone()).await.unwrap();
+    assert_eq!(
+        after.content,
+        Some("v0".into()),
+        "the single edit is reverted to v0"
+    );
+    mat.shutdown();
+}
+
+/// An empty group (seed depth past the page's undoable-op count) is a clean
+/// no-op: no reverse ops, live state untouched (the IMMEDIATE tx rolls back).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_page_group_empty_group_is_noop() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "only".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let count_before = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap()
+        .len();
+
+    // depth = 50 seeds well past the single available op → no group.
+    let results = undo_page_group_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        50,
+        1_000_000,
+    )
+    .await
+    .unwrap();
+
+    assert!(results.is_empty(), "no seed op → empty result");
+    let count_after = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap()
+        .len();
+    assert_eq!(
+        count_after, count_before,
+        "an empty group must not append any op (tx rolled back)"
+    );
+    let after = get_block_inner(&pool, created.id.clone()).await.unwrap();
+    assert_eq!(after.content, Some("only".into()), "live state untouched");
+    mat.shutdown();
+}
+
+/// A non-reversible op anywhere in the group aborts the WHOLE batch before any
+/// reverse is applied: no partial undo, no reverse ops leaked, live state
+/// untouched. The group is forced to include a `purge_block` op (statically
+/// non-reversible) by raw-inserting one on a still-live block so it stays in
+/// the page's op scope — a real purge would delete the block and drop the op
+/// out of scope.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_page_group_rolls_back_on_non_reversible() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "v0".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v1".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // Raw-insert a `purge_block` op for the STILL-LIVE block, newest in the
+    // stream (highest seq), same device + created_at as the edit so it groups.
+    let edit_ts: i64 = sqlx::query_scalar(
+        "SELECT created_at FROM op_log WHERE device_id = ? ORDER BY seq DESC LIMIT 1",
+    )
+    .bind(DEV)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let next_seq: i64 =
+        sqlx::query_scalar("SELECT COALESCE(MAX(seq), 0) + 1 FROM op_log WHERE device_id = ?")
+            .bind(DEV)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    sqlx::query(
+        "INSERT INTO op_log \
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, is_undo) \
+         VALUES (?, ?, NULL, ?, 'purge_block', '{}', ?, ?, 0)",
+    )
+    .bind(DEV)
+    .bind(next_seq)
+    .bind("test-hash-purge")
+    .bind(edit_ts)
+    .bind(created.id.as_str())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let count_before = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap()
+        .len();
+
+    // depth 0 seeds at the purge op (newest); the group also spans the edit +
+    // create. The non-reversible purge must abort the whole batch.
+    let result = undo_page_group_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        0,
+        1_000_000,
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::NonReversible { .. })),
+        "a non-reversible op in the group must abort the batch; got: {result:?}"
+    );
+
+    // Tx rolled back: no reverse ops appended, live content unchanged.
+    let count_after = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap()
+        .len();
+    assert_eq!(
+        count_after, count_before,
+        "aborted batch must not append any reverse op (whole tx rolled back)"
+    );
+    let after = get_block_inner(&pool, created.id.clone()).await.unwrap();
+    assert_eq!(
+        after.content,
+        Some("v1".into()),
+        "no partial undo: the edit stays applied"
+    );
+    mat.shutdown();
+}
+
+/// #2190 DIFFERENTIAL: the fused batch enumeration must select EXACTLY the op
+/// set the old `find_undo_group` + N × `undo_page_op(depth + i)` loop walked —
+/// same same-device rule, same chained (not seed-anchored) `window_ms` gap,
+/// same `is_undo = 0` exclusion, same depth seeding.
+///
+/// Fixture (newest-first undoable stream, all on one page, window = 1000 ms):
+///   [raw is_undo=1 op]            ← excluded from the stream entirely
+///   e4 (DEV, T+5100) ┐ group A (e4→e3 gap 100 ≤ 1000;
+///   e3 (DEV, T+5000) ┘           e3→e2 gap 4900 > 1000 breaks)
+///   e2 (DEV, T+100)  ┐ group B (e2→e1 gap 100)
+///   e1 (DEV, T)      ┘
+///   create (OTHER_DEV)            ← same-device boundary
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_page_group_enumeration_matches_find_undo_group_differential() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    const WINDOW: i64 = 1000;
+
+    let created = create_block_inner(
+        &pool,
+        OTHER_DEV,
+        &mat,
+        "content".into(),
+        "v0".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    for v in ["v1", "v2", "v3", "v4"] {
+        edit_block_inner(&pool, DEV, &mat, created.id.clone(), v.into())
+            .await
+            .unwrap();
+        settle(&mat).await;
+    }
+
+    // Rewrite the DEV edits' timestamps to carve the two windows.
+    let edit_seqs: Vec<i64> = sqlx::query_scalar(
+        "SELECT seq FROM op_log WHERE device_id = ? AND op_type = 'edit_block' ORDER BY seq ASC",
+    )
+    .bind(DEV)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(edit_seqs.len(), 4);
+    let base: i64 = 2_000_000_000_000;
+    set_op_log_mutation_bypass(&pool, true).await;
+    for (seq, ts) in edit_seqs
+        .iter()
+        .zip([base, base + 100, base + 5000, base + 5100])
+    {
+        sqlx::query("UPDATE op_log SET created_at = ? WHERE device_id = ? AND seq = ?")
+            .bind(ts)
+            .bind(DEV)
+            .bind(seq)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    // Ensure the OTHER_DEV create sits BELOW group B in the newest-first order.
+    sqlx::query("UPDATE op_log SET created_at = ? WHERE device_id = ?")
+        .bind(base - 100)
+        .bind(OTHER_DEV)
+        .execute(&pool)
+        .await
+        .unwrap();
+    set_op_log_mutation_bypass(&pool, false).await;
+    // A raw is_undo = 1 op newer than everything: must be INVISIBLE to both
+    // the sizing walk and the batch enumeration.
+    sqlx::query(
+        "INSERT INTO op_log \
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, is_undo) \
+         VALUES (?, ?, NULL, 'h-undo-noise', 'edit_block', '{}', ?, ?, 1)",
+    )
+    .bind(DEV)
+    .bind(edit_seqs[3] + 1)
+    .bind(base + 5200)
+    .bind(created.id.as_str())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let page_id = created.id.clone().into_string();
+
+    // ── depth 0: both sides must agree on group A = {e4, e3} ─────────────
+    let size_a = find_undo_group_inner(&pool, &page_id, 0, WINDOW)
+        .await
+        .unwrap();
+    let group_a = undo_page_group_inner(&pool, DEV, &mat, page_id.clone(), 0, WINDOW)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(size_a, 2, "window gap must bound group A at 2");
+    assert_eq!(
+        i32::try_from(group_a.len()).unwrap(),
+        size_a,
+        "batch enumeration must revert exactly the ops find_undo_group sized"
+    );
+    assert_eq!(
+        (group_a[0].reversed_op.seq, group_a[1].reversed_op.seq),
+        (edit_seqs[3], edit_seqs[2]),
+        "group A must be e4 then e3, newest-first"
+    );
+    let after_a = get_block_inner(&pool, created.id.clone()).await.unwrap();
+    assert_eq!(after_a.content, Some("v2".into()), "undoing e4,e3 → v2");
+
+    // ── depth 2 (FE anchor after a 2-op batch): group B = {e2, e1} ────────
+    // The undoable stream is UNCHANGED by the first batch (its reverses are
+    // is_undo = 1), so the same depth seeds the same ops on both sides.
+    let size_b = find_undo_group_inner(&pool, &page_id, 2, WINDOW)
+        .await
+        .unwrap();
+    let group_b = undo_page_group_inner(&pool, DEV, &mat, page_id.clone(), 2, WINDOW)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(size_b, 2, "group B spans e2,e1 down to the device boundary");
+    assert_eq!(i32::try_from(group_b.len()).unwrap(), size_b);
+    assert_eq!(
+        (group_b[0].reversed_op.seq, group_b[1].reversed_op.seq),
+        (edit_seqs[1], edit_seqs[0]),
+        "group B must be e2 then e1 — the cross-device create is excluded"
+    );
+    let after_b = get_block_inner(&pool, created.id.clone()).await.unwrap();
+    assert_eq!(
+        after_b.content,
+        Some("v0".into()),
+        "undoing all four edits restores the created content"
+    );
+    mat.shutdown();
+}

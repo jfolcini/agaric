@@ -7194,3 +7194,328 @@ fn attachments_dir_has_files(app_data_dir: &std::path::Path) -> bool {
     let dir = app_data_dir.join("attachments");
     std::fs::read_dir(&dir).is_ok_and(|mut entries| entries.next().is_some())
 }
+
+// ======================================================================
+// move_blocks_batch (#2274)
+// ======================================================================
+
+/// Snapshot the canonical layout `(id, parent_id, position)` for every block,
+/// ordered by id — used to assert two move strategies converge on the SAME
+/// blocks table.
+async fn snapshot_layout(pool: &SqlitePool) -> Vec<(String, Option<String>, Option<i64>)> {
+    sqlx::query_as::<_, (String, Option<String>, Option<i64>)>(
+        "SELECT id, parent_id, position FROM blocks ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// Ordered `move_block` op targets from the op_log (by per-device seq).
+async fn move_ops_in_order(pool: &SqlitePool) -> Vec<String> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT block_id FROM op_log \
+         WHERE op_type = 'move_block' AND device_id = ? AND block_id IS NOT NULL \
+         ORDER BY seq",
+    )
+    .bind(DEV)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// Seed a fixture: page P with roots A,B,C,D (positions 1..4) and an empty
+/// destination page Q. Shared by the equivalence test's two pools so their
+/// starting layouts (and ids) are byte-for-byte identical.
+async fn seed_batch_fixture(pool: &SqlitePool) {
+    insert_block(pool, "P", "page", "page", None, Some(1)).await;
+    insert_block(pool, "Q", "page", "dest", None, Some(2)).await;
+    insert_block(pool, "A", "content", "A", Some("P"), Some(1)).await;
+    insert_block(pool, "B", "content", "B", Some("P"), Some(2)).await;
+    insert_block(pool, "C", "content", "C", Some("P"), Some(3)).await;
+    insert_block(pool, "D", "content", "D", Some("P"), Some(4)).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_batch_reparents_k_blocks_positions_and_ops_in_order() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    seed_batch_fixture(&pool).await;
+
+    // Move A, B, C under Q starting at slot 0 → consecutive slots 0,1,2.
+    let resp = move_blocks_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec!["A".into(), "B".into(), "C".into()],
+        Some("Q".into()),
+        0,
+    )
+    .await
+    .unwrap();
+
+    // One MoveResponse per moved root, in input order.
+    assert_eq!(resp.len(), 3);
+    assert_eq!(resp[0].block_id, "A");
+    assert_eq!(resp[1].block_id, "B");
+    assert_eq!(resp[2].block_id, "C");
+    for r in &resp {
+        assert_eq!(r.new_parent_id, Some("Q".into()));
+    }
+
+    // All three now parented under Q at consecutive provisional ranks 1,2,3.
+    for (id, want_pos) in [("A", 1), ("B", 2), ("C", 3)] {
+        let row = sqlx::query!("SELECT parent_id, position FROM blocks WHERE id = ?", id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(row.parent_id, Some("Q".into()), "{id} should be under Q");
+        assert_eq!(row.position, Some(want_pos), "{id} provisional rank");
+    }
+    // D untouched under P.
+    let d = sqlx::query!("SELECT parent_id FROM blocks WHERE id = 'D'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(d.parent_id, Some("P".into()));
+
+    // Exactly K move_block ops, in the same order as the input.
+    assert_eq!(
+        move_ops_in_order(&pool).await,
+        vec!["A".to_string(), "B".to_string(), "C".to_string()],
+        "op_log should carry K MoveBlock ops in input order"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_batch_equivalent_to_sequential_singles() {
+    // Pool 1: K sequential single moves at slots start, start+1, start+2.
+    let (pool_seq, _d1) = test_pool().await;
+    let mat_seq = Materializer::new(pool_seq.clone());
+    seed_batch_fixture(&pool_seq).await;
+    move_block_inner(&pool_seq, DEV, &mat_seq, "A".into(), Some("Q".into()), 0)
+        .await
+        .unwrap();
+    move_block_inner(&pool_seq, DEV, &mat_seq, "B".into(), Some("Q".into()), 1)
+        .await
+        .unwrap();
+    move_block_inner(&pool_seq, DEV, &mat_seq, "C".into(), Some("Q".into()), 2)
+        .await
+        .unwrap();
+
+    // Pool 2: one batch move of the same run at the same start slot.
+    let (pool_batch, _d2) = test_pool().await;
+    let mat_batch = Materializer::new(pool_batch.clone());
+    seed_batch_fixture(&pool_batch).await;
+    move_blocks_batch_inner(
+        &pool_batch,
+        DEV,
+        &mat_batch,
+        vec!["A".into(), "B".into(), "C".into()],
+        Some("Q".into()),
+        0,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        snapshot_layout(&pool_seq).await,
+        snapshot_layout(&pool_batch).await,
+        "batch move must produce an identical blocks table to K sequential singles"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_batch_cycle_rolls_back_whole_tx() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    // A → A1 (A1 is A's child); B is an unrelated root.
+    insert_block(&pool, "CB_A", "page", "A", None, Some(1)).await;
+    insert_block(&pool, "CB_A1", "content", "A1", Some("CB_A"), Some(1)).await;
+    insert_block(&pool, "CB_B", "content", "B", None, Some(2)).await;
+
+    // Batch: move B (ok) then A under A1 (cycle — A1 is inside A's subtree).
+    let result = move_blocks_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec!["CB_B".into(), "CB_A".into()],
+        Some("CB_A1".into()),
+        0,
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "target inside a moved subtree must be a cycle, got {result:?}"
+    );
+
+    // Whole tx rolled back: NOTHING moved (B's earlier successful move undone too).
+    let b = sqlx::query!("SELECT parent_id FROM blocks WHERE id = 'CB_B'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        b.parent_id.is_none(),
+        "B must stay at root — batch rolled back"
+    );
+    let a = sqlx::query!("SELECT parent_id FROM blocks WHERE id = 'CB_A'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        a.parent_id.is_none(),
+        "A must stay at root — batch rolled back"
+    );
+    let ops = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM op_log WHERE op_type = 'move_block' AND device_id = ?",
+    )
+    .bind(DEV)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(ops, 0, "no move op should survive a rolled-back batch");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_batch_depth_cap_rolls_back() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Target chain: page → t1 → … → t10 (leaf at depth 10).
+    let target_depth = MAX_BLOCK_DEPTH / 2; // 10
+    insert_block(&pool, "DB_PAGE", "page", "root", None, Some(1)).await;
+    let mut target_parent = "DB_PAGE".to_string();
+    for i in 1..=target_depth {
+        let id = format!("DB_T{i:02}");
+        insert_block(&pool, &id, "content", "t", Some(&target_parent), Some(1)).await;
+        target_parent = id;
+    }
+    // Moved subtree m_root → … whose own depth overflows MAX_BLOCK_DEPTH when
+    // nested under the deep target leaf.
+    insert_block(&pool, "DB_MROOT", "content", "m", None, Some(99)).await;
+    let mut moved_parent = "DB_MROOT".to_string();
+    for i in 1..=(MAX_BLOCK_DEPTH / 2 + 1) {
+        let id = format!("DB_M{i:02}");
+        insert_block(&pool, &id, "content", "m", Some(&moved_parent), Some(1)).await;
+        moved_parent = id;
+    }
+
+    let result = move_blocks_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec!["DB_MROOT".into()],
+        Some(target_parent.clone().into()),
+        0,
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "over-deep batch move must be a Validation error, got {result:?}"
+    );
+    // Rolled back: MROOT still at root.
+    let m = sqlx::query!("SELECT parent_id FROM blocks WHERE id = 'DB_MROOT'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        m.parent_id.is_none(),
+        "MROOT must stay at root — batch rolled back"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_batch_empty_and_oversized_rejected() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let empty = move_blocks_batch_inner(&pool, DEV, &mat, vec![], None, 0).await;
+    assert!(
+        matches!(empty, Err(AppError::Validation(_))),
+        "empty list must be a Validation error, got {empty:?}"
+    );
+
+    let oversized: Vec<BlockId> = (0..1001).map(|i| format!("X{i:026}").into()).collect();
+    let big = move_blocks_batch_inner(&pool, DEV, &mat, oversized, None, 0).await;
+    assert!(
+        matches!(big, Err(AppError::Validation(_))),
+        "over-cap list must be a Validation error, got {big:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_batch_cross_page_rederives_descendant_page_ids() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Page A with a child → grandchild subtree; empty destination page B.
+    let page_a = create_block_inner(&pool, DEV, &mat, "page".into(), "A".into(), None, Some(1))
+        .await
+        .unwrap();
+    let child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "child".into(),
+        Some(page_a.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let grand = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "grand".into(),
+        Some(child.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let page_b = create_block_inner(&pool, DEV, &mat, "page".into(), "B".into(), None, Some(2))
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let child_id = child.id.clone().into_string();
+    let grand_id = grand.id.clone().into_string();
+
+    move_blocks_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![child.id.clone()],
+        Some(page_b.id.clone()),
+        0,
+    )
+    .await
+    .unwrap();
+
+    // Moved subtree (child + grandchild) now owned by page B — synchronous in-tx
+    // rederive, mirroring single move_block (#664).
+    let pb = page_b.id.clone().into_string();
+    let child_page: Option<String> =
+        sqlx::query_scalar::<_, Option<String>>("SELECT page_id FROM blocks WHERE id = ?")
+            .bind(&child_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let grand_page: Option<String> =
+        sqlx::query_scalar::<_, Option<String>>("SELECT page_id FROM blocks WHERE id = ?")
+            .bind(&grand_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        child_page,
+        Some(pb.clone()),
+        "child page_id must rederive to B"
+    );
+    assert_eq!(
+        grand_page,
+        Some(pb),
+        "grandchild page_id must rederive to B"
+    );
+}

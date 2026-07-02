@@ -65,6 +65,13 @@ export const commands = {
 	 */
 	moveBlock: (blockId: string, newParentId: string | null, newIndex: number) => typedError<MoveResponse, AppError>(__TAURI_INVOKE("move_block", { blockId, newParentId, newIndex })),
 	/**
+	 *  Tauri command: batched intra-page reorder/reparent (#2274). See
+	 *  [`move_blocks_batch_inner`]. `block_ids` are moved, in the given order, under
+	 *  `new_parent_id` (a real block id, or `None` for top-level) at consecutive
+	 *  slots starting at the 0-based `new_index`.
+	 */
+	moveBlocksBatch: (blockIds: string[], newParentId: string | null, newIndex: number) => typedError<MoveResponse[], AppError>(__TAURI_INVOKE("move_blocks_batch", { blockIds, newParentId, newIndex })),
+	/**
 	 *  Tauri command: list blocks with filtering and pagination. Delegates to [`list_blocks_inner`].
 	 * 
 	 *  The three agenda knobs (`date`, `date_range`, `source`) are bundled
@@ -328,6 +335,13 @@ export const commands = {
 	 *  Delegates to [`find_undo_group_inner`]..
 	 */
 	findUndoGroup: (pageId: string, depth: number, windowMs: number) => typedError<number, AppError>(__TAURI_INVOKE("find_undo_group", { pageId, depth, windowMs })),
+	/**
+	 *  Tauri command: undo an entire consecutive same-device, within-window undo
+	 *  group in a single IMMEDIATE transaction. Delegates to
+	 *  [`undo_page_group_inner`]. #2190 — replaces the FE's `find_undo_group` +
+	 *  N × `undo_page_op` IPC loop with one command.
+	 */
+	undoPageGroup: (pageId: string, depth: number, windowMs: number) => typedError<UndoResult[], AppError>(__TAURI_INVOKE("undo_page_group", { pageId, depth, windowMs })),
 	/**
 	 *  Tauri command: compute word-level diff for an edit_block history entry.
 	 *  Delegates to [`compute_edit_diff_inner`].

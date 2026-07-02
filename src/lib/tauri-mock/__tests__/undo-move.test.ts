@@ -137,13 +137,14 @@ describe('#958 — reorder/reparent undo reverts in place', () => {
     seedPage([A, B])
 
     dispatch('move_block', { blockId: A, newParentId: PAGE, newIndex: 1 })
-    dispatch('undo_page_op', { pageId: PAGE, undoDepth: 0 })
+    const undoResult = dispatch('undo_page_op', { pageId: PAGE, undoDepth: 0 }) as {
+      new_op_ref: { seq: number }
+    }
     expect(loadedRootOrder()).toEqual([A, B])
 
-    // The original move op's seq is the redo target (frontend stores it).
-    const moveOp = opLog.find((o) => o.op_type === 'move_block')
-    expect(moveOp).toBeDefined()
-    dispatch('redo_page_op', { pageId: PAGE, undoSeq: moveOp?.seq })
+    // The undo op's ref (`new_op_ref`) is the redo target — the frontend
+    // stores it on the redo stack, matching the backend's #659 contract.
+    dispatch('redo_page_op', { pageId: PAGE, undoSeq: undoResult.new_op_ref.seq })
 
     expect(loadedRootOrder()).toEqual([B, A])
     expect(rowOf(A)['position']).not.toBe(rowOf(B)['position'])

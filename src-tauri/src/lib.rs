@@ -106,6 +106,10 @@ macro_rules! agaric_commands {
             $crate::commands::blocks::crud::restore_blocks_by_ids,
             $crate::commands::blocks::crud::purge_blocks_by_ids,
             $crate::commands::blocks::move_ops::move_block,
+            // #2274 — batched multi-select drag reparent/reorder: collapses the
+            // per-root `move_block` IPC loop + full page reload into one
+            // IMMEDIATE tx (N MoveBlock ops) returning authoritative positions.
+            $crate::commands::blocks::move_ops::move_blocks_batch,
             $crate::commands::blocks::queries::list_blocks,
             $crate::commands::blocks::queries::list_trash,
             $crate::commands::blocks::queries::get_block,
@@ -176,6 +180,11 @@ macro_rules! agaric_commands {
             // after every Ctrl+Z with one recursive-CTE query that
             // walks consecutive same-device + within-window ops.
             $crate::commands::history::find_undo_group,
+            // #2190: batched group-undo — reverts an entire
+            // consecutive same-device, within-window undo group in one
+            // IMMEDIATE tx, replacing the FE's find_undo_group +
+            // N × undo_page_op IPC loop (one CTE walk / writer lock per op).
+            $crate::commands::history::undo_page_group,
             $crate::commands::history::compute_edit_diff,
             $crate::commands::history::compute_block_vs_current_diff,
             $crate::commands::queries::query_backlinks_filtered,

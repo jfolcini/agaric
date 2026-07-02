@@ -928,10 +928,10 @@ describe('PageHeader page-level undo/redo buttons', () => {
     expect(redoBtn).toBeInTheDocument()
   })
 
-  it('undo button calls undoPageOp', async () => {
+  it('undo button issues one undo_page_group IPC (#2190)', async () => {
     const user = userEvent.setup()
 
-    // Set up invoke mock so undo_page_op returns a valid UndoResult
+    // Set up invoke mock so undo_page_group returns a one-op group
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
@@ -939,13 +939,16 @@ describe('PageHeader page-level undo/redo buttons', () => {
       if (cmd === 'list_property_defs')
         return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
-      if (cmd === 'undo_page_op')
-        return {
-          reversed_op: { device_id: 'dev1', seq: 1 },
-          new_op_ref: { device_id: 'dev1', seq: 2 },
-          new_op_type: 'reverse',
-          is_redo: false,
-        }
+      if (cmd === 'undo_page_group')
+        return [
+          {
+            reversed_op: { device_id: 'dev1', seq: 1 },
+            reversed_op_type: 'edit_block',
+            new_op_ref: { device_id: 'dev1', seq: 2 },
+            new_op_type: 'reverse',
+            is_redo: false,
+          },
+        ]
       if (cmd === 'get_block')
         return {
           id: 'PAGE_1',
@@ -964,9 +967,10 @@ describe('PageHeader page-level undo/redo buttons', () => {
     await user.click(undoBtn)
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('undo_page_op', {
+      expect(mockedInvoke).toHaveBeenCalledWith('undo_page_group', {
         pageId: 'PAGE_1',
-        undoDepth: 0,
+        depth: 0,
+        windowMs: expect.any(Number),
       })
     })
   })
@@ -1305,7 +1309,7 @@ describe('PageHeader kebab menu reorganization (/H12)', () => {
 // ── Error path tests ──────────────────────────────────────────────────────
 
 describe('PageHeader error paths', () => {
-  it('undo_page_op rejection is handled gracefully (no crash, depth rolled back)', async () => {
+  it('undo_page_group rejection is handled gracefully (no crash, depth rolled back)', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return emptyPage
@@ -1314,7 +1318,7 @@ describe('PageHeader error paths', () => {
       if (cmd === 'list_property_defs')
         return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
-      if (cmd === 'undo_page_op') throw new Error('backend undo failed')
+      if (cmd === 'undo_page_group') throw new Error('backend undo failed')
       return null
     })
 
@@ -1323,9 +1327,10 @@ describe('PageHeader error paths', () => {
     await user.click(undoBtn)
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('undo_page_op', {
+      expect(mockedInvoke).toHaveBeenCalledWith('undo_page_group', {
         pageId: 'PAGE_1',
-        undoDepth: 0,
+        depth: 0,
+        windowMs: expect.any(Number),
       })
     })
 

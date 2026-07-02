@@ -87,11 +87,11 @@ pub use blocks::{
     delete_blocks_by_ids_inner, edit_block, edit_block_inner, first_child_for_blocks,
     first_child_for_blocks_inner, get_active_block_inner, get_block, get_block_inner, get_blocks,
     get_blocks_inner, list_blocks, list_blocks_inner, list_trash, list_trash_inner, move_block,
-    move_block_inner, move_blocks_to_space, move_blocks_to_space_inner, purge_all_deleted,
-    purge_all_deleted_inner, purge_block, purge_block_inner, purge_blocks_by_ids,
-    purge_blocks_by_ids_inner, restore_all_deleted, restore_all_deleted_inner, restore_block,
-    restore_block_inner, restore_blocks_by_ids, restore_blocks_by_ids_inner,
-    trash_descendant_counts, trash_descendant_counts_inner,
+    move_block_inner, move_blocks_batch, move_blocks_batch_inner, move_blocks_to_space,
+    move_blocks_to_space_inner, purge_all_deleted, purge_all_deleted_inner, purge_block,
+    purge_block_inner, purge_blocks_by_ids, purge_blocks_by_ids_inner, restore_all_deleted,
+    restore_all_deleted_inner, restore_block, restore_block_inner, restore_blocks_by_ids,
+    restore_blocks_by_ids_inner, trash_descendant_counts, trash_descendant_counts_inner,
 };
 pub use bug_report::{
     BugReport, LogFileEntry, collect_bug_report_metadata, collect_bug_report_metadata_inner,
@@ -109,8 +109,8 @@ pub use history::{
     apply_reverse_in_tx, compute_block_vs_current_diff, compute_block_vs_current_diff_inner,
     compute_edit_diff, compute_edit_diff_inner, find_undo_group, find_undo_group_inner,
     list_page_history, list_page_history_inner, redo_page_op, redo_page_op_inner,
-    restore_page_to_op, restore_page_to_op_inner, revert_ops, revert_ops_inner, undo_page_op,
-    undo_page_op_inner,
+    restore_page_to_op, restore_page_to_op_inner, revert_ops, revert_ops_inner, undo_page_group,
+    undo_page_group_inner, undo_page_op, undo_page_op_inner,
 };
 pub use journal::{
     get_journal_page_by_date, get_journal_page_by_date_inner, journal_for_date_inner,
@@ -216,7 +216,8 @@ pub use drafts::{
 pub use history::{
     __specta__fn__compute_block_vs_current_diff, __specta__fn__compute_edit_diff,
     __specta__fn__find_undo_group, __specta__fn__list_page_history, __specta__fn__redo_page_op,
-    __specta__fn__restore_page_to_op, __specta__fn__revert_ops, __specta__fn__undo_page_op,
+    __specta__fn__restore_page_to_op, __specta__fn__revert_ops, __specta__fn__undo_page_group,
+    __specta__fn__undo_page_op,
 };
 #[doc(hidden)]
 pub use journal::{
