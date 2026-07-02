@@ -39,8 +39,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-import { activeSpaceKey } from '../lib/active-space'
-import { createSpaceSubscriber } from '../lib/createSpaceSubscriber'
+import { createPerSpaceSlice } from './createPerSpaceSlice'
 import { LEGACY_SPACE_KEY } from './space'
 
 export type View =
@@ -195,6 +194,28 @@ export function selectCurrentViewForSpace(state: NavigationState, spaceId: strin
   return state.currentViewBySpace[spaceId] ?? state.currentView
 }
 
+/**
+ * Per-space primitive owning the `currentViewBySpace` map, the derived flat
+ * `currentView` mirror, and the space-change flush/pull reconcile. `setView`
+ * calls `applyActive` instead of hand-writing both fields; `attach` (below)
+ * wires the subscriber.
+ *
+ * The fresh-space default is direction-aware: the initial `__legacy__` → real
+ * hydration is NOT a user switch (the space store merely waking up), so it
+ * keeps the current view rather than flipping it; a genuine real→real switch
+ * to a never-visited space defaults to `page-editor`. `currentView` is always a
+ * safe seed (it is persisted), so `seedOnFirstFire` keeps its default (`true`).
+ */
+const navigationSlice = createPerSpaceSlice<NavigationState, View>({
+  readMirror: (state) => state.currentView,
+  writeMirror: (value) => ({ currentView: value }),
+  getSlice: (state, key) => state.currentViewBySpace[key],
+  setSlice: (state, key, value) => ({
+    currentViewBySpace: { ...state.currentViewBySpace, [key]: value },
+  }),
+  fallback: ({ prevKey, current }) => (prevKey === LEGACY_SPACE_KEY ? current : 'page-editor'),
+})
+
 export const useNavigationStore = create<NavigationStore>()(
   persist(
     (set, get) => ({
@@ -205,12 +226,7 @@ export const useNavigationStore = create<NavigationStore>()(
       pendingSettingsTab: null,
 
       setView: (view: View) => {
-        const state = get()
-        const key = activeSpaceKey()
-        set({
-          currentView: view,
-          currentViewBySpace: { ...state.currentViewBySpace, [key]: view },
-        })
+        set(navigationSlice.applyActive(get(), view))
       },
 
       setSelectedBlockId: (id: string | null) => {
@@ -268,64 +284,12 @@ export const useNavigationStore = create<NavigationStore>()(
 )
 
 /**
- * Subscribe once to `useSpaceStore` so the flat `currentView` field
- * swaps with the per-space slice whenever the user switches space
- * (mirrors the recent-pages and tabs stores' space-switch flushes).
- * Without this, switching from space-A to space-B would leave A's
- * last view active in B's UI.
- *
- * Subscription mechanics + diff detection live in
- * `createSpaceSubscriber`; this site only owns the navigation flush /
- * pull logic. On first fire (`prevKey === newKey`) we seed
- * `currentViewBySpace[newKey]` from the rehydrated flat `currentView`
- * if it's missing, so a returning user migrated from a v2 shape
- * (where view existed only in the flat field) lands on their last
- * view in the now-active space.
+ * Wire the flat `currentView` ↔ per-space-slice flush/pull so the active view
+ * swaps with the per-space slice whenever the user switches space (mirrors the
+ * recent-pages and tabs stores). The flush/pull/first-fire logic lives in the
+ * shared `createPerSpaceSlice` primitive (`navigationSlice`); the
+ * direction-aware fresh-space default (keep the current view on the initial
+ * `__legacy__` → real hydration, default to `page-editor` on a real switch)
+ * is expressed by its `fallback`.
  */
-createSpaceSubscriber((prevKey, newKey) => {
-  const navState = useNavigationStore.getState()
-  if (prevKey === newKey) {
-    if (navState.currentViewBySpace[newKey] === undefined) {
-      useNavigationStore.setState({
-        currentViewBySpace: {
-          ...navState.currentViewBySpace,
-          [newKey]: navState.currentView,
-        },
-      })
-    }
-    return
-  }
-  // The initial pre-hydration → first-real-space transition is NOT a
-  // user-initiated space switch — it's just the space store waking up.
-  // Treating it as a switch would flip `currentView` from the persisted /
-  // default `'journal'` to `'page-editor'` (fresh-space default), which
-  // is not what the user expects on first paint. Skip the flip for this
-  // exact transition; the real-space-to-real-space switches that follow
-  // still get the fresh-space default. (The seed `if (prevKey === newKey)`
-  // branch above runs first via `fireImmediately: true`, so the
-  // `currentViewBySpace[LEGACY_SPACE_KEY]` slot already records the
-  // persisted `currentView` before this branch runs.)
-  const flushedBySpace = {
-    ...navState.currentViewBySpace,
-    [prevKey]: navState.currentView,
-  }
-  if (prevKey === LEGACY_SPACE_KEY) {
-    // Initial hydration — keep the current view, just flush the slot
-    // mapping. If `currentViewBySpace[newKey]` happens to be recorded
-    // already (returning user), still honour that.
-    const persistedForNewSpace = navState.currentViewBySpace[newKey]
-    useNavigationStore.setState({
-      ...(persistedForNewSpace ? { currentView: persistedForNewSpace } : {}),
-      currentViewBySpace: flushedBySpace,
-    })
-    return
-  }
-  // Real user-initiated space switch — default new-space view to
-  // `page-editor` for fresh spaces. Existing spaces with a recorded view
-  // get their last view back.
-  const next = navState.currentViewBySpace[newKey] ?? 'page-editor'
-  useNavigationStore.setState({
-    currentView: next,
-    currentViewBySpace: flushedBySpace,
-  })
-})
+navigationSlice.attach(useNavigationStore)

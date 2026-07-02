@@ -24,10 +24,9 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-import { activeSpaceKey } from '../lib/active-space'
-import { createSpaceSubscriber } from '../lib/createSpaceSubscriber'
 import { isDateFormattedPage } from '../lib/date-utils'
 import { parseDate } from '../lib/parse-date'
+import { createPerSpaceSlice } from './createPerSpaceSlice'
 import { useJournalStore } from './journal'
 import { useNavigationStore } from './navigation'
 import { useRecentPagesStore } from './recent-pages'
@@ -173,23 +172,46 @@ function readActiveSlice(state: TabsState): { tabs: Tab[]; activeTabIndex: numbe
   return { tabs, activeTabIndex }
 }
 
+/** The per-space unit tabs partitions: a tab list plus its active-tab pointer. */
+interface TabSlice {
+  tabs: Tab[]
+  activeTabIndex: number
+}
+
+/**
+ * Per-space primitive owning the `tabsBySpace` / `activeTabIndexBySpace` maps,
+ * the derived flat `tabs` / `activeTabIndex` mirror, and the space-change
+ * flush/pull reconcile. The mirror spans TWO coupled fields, so the slice unit
+ * is the `{ tabs, activeTabIndex }` composite. `onSwitch` clears the navigation
+ * store's transient `selectedBlockId` so a highlight from the previous space's
+ * tab doesn't bleed in. Fresh spaces default to a single empty tab.
+ */
+const tabsSlice = createPerSpaceSlice<TabsState, TabSlice>({
+  readMirror: (state) => ({ tabs: state.tabs, activeTabIndex: state.activeTabIndex }),
+  writeMirror: (value) => ({ tabs: value.tabs, activeTabIndex: value.activeTabIndex }),
+  getSlice: (state, key) => {
+    const tabs = state.tabsBySpace[key]
+    if (tabs === undefined) return undefined
+    return { tabs, activeTabIndex: state.activeTabIndexBySpace[key] ?? 0 }
+  },
+  setSlice: (state, key, value) => ({
+    tabsBySpace: { ...state.tabsBySpace, [key]: value.tabs },
+    activeTabIndexBySpace: { ...state.activeTabIndexBySpace, [key]: value.activeTabIndex },
+  }),
+  fallback: () => ({ tabs: emptyTabList(), activeTabIndex: 0 }),
+  onSwitch: () => {
+    useNavigationStore.setState({ selectedBlockId: null })
+  },
+})
+
 /**
  * Compose the next state object that updates BOTH the per-space slice and
- * the flat current-view mirror. Used by every action so the two views
+ * the flat active-space mirror in one atomic update, via the shared
+ * `createPerSpaceSlice` primitive. Used by every action so the two views
  * never drift.
  */
-function spliceTabs(
-  state: TabsState,
-  tabs: Tab[],
-  activeTabIndex: number,
-): Pick<TabsState, 'tabs' | 'activeTabIndex' | 'tabsBySpace' | 'activeTabIndexBySpace'> {
-  const key = activeSpaceKey()
-  return {
-    tabs,
-    activeTabIndex,
-    tabsBySpace: { ...state.tabsBySpace, [key]: tabs },
-    activeTabIndexBySpace: { ...state.activeTabIndexBySpace, [key]: activeTabIndex },
-  }
+function spliceTabs(state: TabsState, tabs: Tab[], activeTabIndex: number): Partial<TabsState> {
+  return tabsSlice.applyActive(state, { tabs, activeTabIndex })
 }
 
 /**
@@ -617,59 +639,13 @@ export function resetTabIdCounter(): void {
 }
 
 /**
- * Subscribe once to `useSpaceStore` so the flat `tabs` / `activeTabIndex`
- * fields swap with the per-space slice whenever the user switches space.
- *
- *   - Flush the outgoing space's flat fields into `tabsBySpace[oldKey]`.
- *   - Pull `tabsBySpace[newKey]` (if any) into the flat fields, defaulting
- *     to a single empty tab when the new space has never been visited.
- *
- * This keeps reads (`selectTabsForSpace`, `selectPageStack`, every consumer
- * that reads the flat field) consistent with whichever space the user is
- * currently on, without forcing every consumer to thread the space id.
- *
- * Subscription mechanics + diff detection live in
- * `createSpaceSubscriber`; this site only owns the tabs-specific
- * flush / pull logic. On first fire (`prevKey === newKey`) we seed
- * `tabsBySpace[newKey]` from the rehydrated flat tabs if it's missing,
- * so a returning user who migrated from a pre-per-space shape (where
- * tabs only existed in the flat fields under the `__legacy__` key)
- * keeps their tabs accessible from the active space.
+ * Wire the flat `tabs` / `activeTabIndex` ↔ per-space-slice flush/pull so the
+ * active tab set swaps with the per-space slice whenever the user switches
+ * space. The flush/pull/first-fire logic lives in the shared
+ * `createPerSpaceSlice` primitive (`tabsSlice`): on switch it flushes the
+ * outgoing flat fields into `tabsBySpace[oldKey]` and pulls
+ * `tabsBySpace[newKey]` (or a single empty tab) into the flat fields; on first
+ * fire it seeds an absent slice from the rehydrated flat tabs so a returning
+ * user migrated from a pre-per-space shape keeps their tabs accessible.
  */
-createSpaceSubscriber((prevKey, newKey) => {
-  const tabsState = useTabsStore.getState()
-  if (prevKey === newKey) {
-    if (tabsState.tabsBySpace[newKey] === undefined) {
-      useTabsStore.setState({
-        tabsBySpace: {
-          ...tabsState.tabsBySpace,
-          [newKey]: tabsState.tabs,
-        },
-        activeTabIndexBySpace: {
-          ...tabsState.activeTabIndexBySpace,
-          [newKey]: tabsState.activeTabIndex,
-        },
-      })
-    }
-    return
-  }
-  const flushedTabsBySpace = {
-    ...tabsState.tabsBySpace,
-    [prevKey]: tabsState.tabs,
-  }
-  const flushedIndexBySpace = {
-    ...tabsState.activeTabIndexBySpace,
-    [prevKey]: tabsState.activeTabIndex,
-  }
-  const newTabs = tabsState.tabsBySpace[newKey] ?? emptyTabList()
-  const newIndex = tabsState.activeTabIndexBySpace[newKey] ?? 0
-  useTabsStore.setState({
-    tabs: newTabs,
-    activeTabIndex: newIndex,
-    tabsBySpace: flushedTabsBySpace,
-    activeTabIndexBySpace: flushedIndexBySpace,
-  })
-  // selectedBlockId belongs to navigation; clear it on space switch so a
-  // stale highlight from the previous space's tab doesn't bleed in.
-  useNavigationStore.setState({ selectedBlockId: null })
-})
+tabsSlice.attach(useTabsStore)
