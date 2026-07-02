@@ -56,13 +56,16 @@ use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSync
 use loro::VersionVector;
 
 /// #2188 — run a CPU-bound CRDT encode/decode closure so it does not stall the
-/// async reactor while holding the process-global registry mutex.
+/// async reactor while holding the per-space engine mutex (#2205 sharded the
+/// old process-global registry mutex: the long lock is now scoped to ONE
+/// space, so only same-space work waits behind the encode — but the reactor
+/// worker would still be pinned without this helper).
 ///
 /// On a **multi-thread** tokio runtime (production: tauri's default async
 /// runtime + the daemon's `tokio::spawn`) this delegates to
 /// [`tokio::task::block_in_place`], which tells the runtime this worker is about
 /// to block so a sibling worker can take over the reactor for the duration. The
-/// closure still runs inline on THIS thread, so the registry `MutexGuard`
+/// closure still runs inline on THIS thread, so the owned engine guard
 /// (`!Send`) it acquires and holds across the encode is fine, and — critically —
 /// `block_in_place` does NOT release that lock: atomicity vs concurrent mutation
 /// is exactly as before, we merely stop pinning the reactor.
@@ -298,15 +301,16 @@ pub async fn prepare_outgoing(
             // Initial sync — full snapshot.
             //
             // #2188: the CRDT snapshot encode is CPU-bound and runs while
-            // holding the process-global registry mutex. Wrapping the guard
+            // holding this space's engine mutex (#2205 — per-space, so other
+            // spaces' engine work proceeds concurrently). Wrapping the guard
             // acquisition + encode in `cpu_block_in_place` lets the multi-thread
             // reactor drive other tasks for the duration instead of stalling
-            // the async worker. This does NOT release the registry lock — the
-            // guard is still held across the encode, preserving atomicity vs
-            // concurrent mutation exactly as before. The guard is `!Send`, but
-            // the closure runs inline on this same worker thread, so a `!Send`
-            // guard inside it is fine. See `cpu_block_in_place` for the
-            // current-thread-runtime fallback.
+            // the async worker. This does NOT release the engine lock — the
+            // guard is still held across the encode, preserving same-space
+            // atomicity vs concurrent mutation exactly as before. The guard is
+            // `!Send`, but the closure runs inline on this same worker thread,
+            // so a `!Send` guard inside it is fine. See `cpu_block_in_place`
+            // for the current-thread-runtime fallback.
             let bytes = cpu_block_in_place(|| {
                 let mut guard = registry.for_space(space_id, device_id)?;
                 guard.engine_mut().export_snapshot()
@@ -321,7 +325,7 @@ pub async fn prepare_outgoing(
             // Incremental — export only ops since `vv`.
             //
             // #2188: see the `None` arm — the incremental encode is likewise
-            // CPU-bound under the registry lock, so it runs inside
+            // CPU-bound under the per-space engine lock, so it runs inside
             // `cpu_block_in_place` to unblock the reactor without releasing the
             // lock.
             let bytes = cpu_block_in_place(|| {
@@ -746,10 +750,11 @@ pub(crate) async fn import_and_project(
         crate::loro::engine::TagScope,
     ) = {
         // #2188: the CRDT import (decode + diff resolution) is CPU-bound and
-        // runs while holding the process-global registry mutex.
+        // runs while holding this space's engine mutex (#2205 — per-space).
         // `cpu_block_in_place` lets the multi-thread reactor drive other tasks
         // for the duration without releasing the lock (the guard is held across
-        // the decode, so atomicity vs concurrent mutation is unchanged). The
+        // the decode, so same-space atomicity vs concurrent mutation is
+        // unchanged). The
         // `!Send` guard is fine inside the closure — it runs inline on this same
         // worker thread. See `cpu_block_in_place` for the current-thread-runtime
         // fallback.

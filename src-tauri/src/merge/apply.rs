@@ -92,9 +92,10 @@ mod engine_apply_unit_tests {
         );
 
         // The engine for SPACE_A must hold BLOCK_1 with content "hello".
-        // Scope the guard so the registry mutex is released before
-        // `state.registry.len()` re-locks it (the registry uses a
-        // single coarse Mutex; `for_space` + `len` share it).
+        // (Since #2205 the registry is sharded — `for_space` holds only
+        // the per-space engine lock and `len` only the map lock — so the
+        // scoped guard is no longer required for `len` to proceed, but it
+        // keeps the critical section tight.)
         {
             let mut guard = state
                 .registry

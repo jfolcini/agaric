@@ -304,14 +304,16 @@ pub async fn reload_registry_from_db(
 ///
 /// Returns the number of spaces successfully snapshotted.
 pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) -> usize {
-    // Issue #153 — `snapshot_all_engines` collects an O(1) `LoroDoc`
-    // *handle* per space under the registry mutex, drops the lock, then
-    // runs each (comparatively slow) snapshot export with the lock
-    // released. The mutex therefore serialises every engine apply only
-    // for the O(spaces) handle-clone pass, not for the O(spaces x export)
-    // serialization. A `LoroDoc` clone is a reference clone (shared
-    // underlying doc), so this does NOT double peak memory — see
-    // `LoroEngineRegistry::snapshot_all_engines` for the full rationale.
+    // Issue #153 / #2205 — `snapshot_all_engines` collects the per-space
+    // engine `Arc`s under the registry's map lock, then per space takes
+    // that engine's own lock only for the O(1) `LoroDoc` *handle* clone,
+    // and runs each (comparatively slow) snapshot export with no lock
+    // held at all. Engine applies are therefore blocked only for the
+    // O(1) handle clone of their own space, never for the O(spaces x
+    // export) serialization. A `LoroDoc` clone is a reference clone
+    // (shared underlying doc), so this does NOT double peak memory — see
+    // `LoroEngineRegistry::snapshot_all_engines` for the full rationale
+    // and the (unchanged) cross-space consistency contract.
     // /C2: read the watermark BEFORE acquiring the engine lock,
     // so it is a safe lower bound for every engine exported in this pass —
     // the lock-time cursor can only be >= this value, and each engine
