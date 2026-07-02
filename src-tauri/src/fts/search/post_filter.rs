@@ -11,7 +11,7 @@ use crate::pagination::{Cursor, PageRequest, PageResponse};
 
 use super::super::metadata_filter::MetadataPredicates;
 use super::constants::{MAX_QUERY_LEN, MAX_SEARCH_RESULTS};
-use super::fetch::fts_fetch_rows;
+use super::fetch::{build_fts_fetch, execute_fts_fetch};
 use super::row::fts_row_to_block_row;
 use super::sanitizer::sanitize_fts_query;
 
@@ -155,33 +155,39 @@ where
     // never filled a page.
     let mut fts_exhausted = false;
 
+    // #2282 — assemble the invariant FTS query (MATCH + every structural filter
+    // + LIMIT + snippet projection) ONCE. The window loop below re-executes it
+    // per window, rebinding ONLY the advancing cursor — it no longer rebuilds
+    // the SQL string and recompiles the filters up to POST_FILTER_MAX_WINDOWS
+    // times. `with_snippet = false` (the toggle post-filter clears `row.snippet`
+    // and prefers offsets) and `snippet_len = None` (the `keep` predicate runs
+    // the toggle regex against full `content`, so no DB-side truncation).
+    let prepared = build_fts_fetch(
+        parent_id,
+        tag_ids,
+        space_id,
+        include_page_globs,
+        exclude_page_globs,
+        block_type_filter,
+        metadata,
+        false,
+        None,
+    );
+
     for _ in 0..POST_FILTER_MAX_WINDOWS {
         if survivors.len() >= target {
             break;
         }
-        let rows = fts_fetch_rows(
+        // #2282 — re-execute the prebuilt query, rebinding only the advancing
+        // cursor for this window (the SQL + filters were assembled once above).
+        let rows = execute_fts_fetch(
             pool,
+            &prepared,
             &sanitized,
             cursor_flag,
             cursor_rank,
             &cursor_id,
             POST_FILTER_WINDOW,
-            parent_id,
-            tag_ids,
-            space_id,
-            include_page_globs,
-            exclude_page_globs,
-            block_type_filter,
-            metadata,
-            // The toggle post-filter clears `row.snippet` anyway (it
-            // prefers offsets), so skip the per-row `snippet()` walk.
-            false,
-            // P4 (#346) — full content here: the caller's `keep` predicate
-            // runs the toggle regex against `content`, so truncating it at
-            // the DB would change which rows match / where offsets land.
-            // Any output truncation for this path happens after matching
-            // (see `search_with_toggles`).
-            None,
             None,
         )
         .await?;

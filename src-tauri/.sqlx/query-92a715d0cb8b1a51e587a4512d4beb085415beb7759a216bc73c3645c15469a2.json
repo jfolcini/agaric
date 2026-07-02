@@ -1,21 +1,21 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT COALESCE(MAX(seq), 0) as \"seq!: i64\" FROM op_log WHERE device_id = ?",
+  "query": "SELECT COALESCE(MIN(device_id) = MAX(device_id), 1) AS \"single!: bool\" FROM op_log",
   "describe": {
     "columns": [
       {
-        "name": "seq!: i64",
+        "name": "single!: bool",
         "ordinal": 0,
         "type_info": "Integer",
         "origin": "Expression"
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 0
     },
     "nullable": [
       false
     ]
   },
-  "hash": "b3c79a90fa915baf7a613fb7f9dddb62c5dc00cb5382f4980ab3e49f6d6a5cad"
+  "hash": "92a715d0cb8b1a51e587a4512d4beb085415beb7759a216bc73c3645c15469a2"
 }

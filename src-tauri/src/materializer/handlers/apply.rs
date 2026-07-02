@@ -76,27 +76,32 @@ pub(super) async fn apply_op(pool: &SqlitePool, record: &Arc<OpRecord>) -> Resul
     // per-device watermark cursor lands. Remove once that cursor ships.
     #[cfg(debug_assertions)]
     {
-        // Compile-checked `query_scalar!` macro (NOT the runtime fn form):
-        // it reuses the identical `COUNT(DISTINCT device_id)` query already
-        // cached for `recovery::replay`'s #412 release guard, so it needs no
-        // new `.sqlx` offline entry, is schema-validated at build time, and
-        // carries no #646 dynamic-SQL marker burden. This mirrors the batch
-        // arm's invariant for the single-op path: the batch arm asserts the
-        // in-batch records share one device; the single-op equivalent is
-        // that the op_log as a whole is single-device (the same property the
-        // replay guard enforces in all builds).
-        let distinct_devices: i64 =
-            sqlx::query_scalar!(r#"SELECT COUNT(DISTINCT device_id) AS "n!: i64" FROM op_log"#)
-                .fetch_one(&mut *tx)
-                .await?;
+        // #2282 — index-backed O(log N) single-device probe. The previous form
+        // ran `COUNT(DISTINCT device_id)`, a FULL op_log scan, on EVERY
+        // single-op apply — O(N) per op, i.e. O(N²) across a bulk apply pass.
+        // The op_log PK `(device_id, seq)` indexes `device_id`, so `MIN`/`MAX`
+        // are first/last index seeks: equal MIN and MAX ⇒ the whole log is one
+        // device (COALESCE handles the empty log — vacuously single-device).
+        // Compile-checked `query_scalar!` (not the runtime fn form) so it stays
+        // schema-validated at build time and carries no #646 dynamic-SQL marker
+        // burden. This keeps the same #412 single-device invariant genuinely
+        // enforced in dev/test — the batch arm asserts the in-batch records
+        // share one device; the single-op equivalent is that the op_log as a
+        // whole is single-device (the property the replay guard enforces in all
+        // builds). (Boot replay itself now batches via `BatchApplyOps`, so the
+        // old per-op O(N²) scan no longer fires on the replay hot path either.)
+        let single_device: bool = sqlx::query_scalar!(
+            r#"SELECT COALESCE(MIN(device_id) = MAX(device_id), 1) AS "single!: bool" FROM op_log"#
+        )
+        .fetch_one(&mut *tx)
+        .await?;
         debug_assert!(
-            distinct_devices <= 1,
+            single_device,
             "apply_op advances a single global apply cursor for device {:?} but \
-             op_log spans {} devices; the single global cursor cannot represent \
-             per-device watermarks — per-device cursor partitioning is required \
-             (backend audit #412)",
+             op_log spans multiple devices; the single global cursor cannot \
+             represent per-device watermarks — per-device cursor partitioning is \
+             required (backend audit #412)",
             record.device_id,
-            distinct_devices,
         );
     }
     // C-2b: advance the cursor in the same tx so `apply + cursor` are

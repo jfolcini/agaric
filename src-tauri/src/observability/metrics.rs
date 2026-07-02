@@ -13,10 +13,14 @@
 //! existing process-global materializer atomics on each collection cycle, plus
 //! the two **latency histograms** (`record_ipc_duration` /
 //! `record_op_apply_duration`). The histograms are looked up lazily from
-//! `opentelemetry::global::meter`, so their record helpers are unconditional +
-//! free at every call site: when no meter provider is registered (observability
-//! off — the default) the global default is a **no-op meter** and the calls
-//! compile to a couple of moves into a no-op instrument.
+//! `opentelemetry::global::meter`. `record_op_apply_duration` is unconditional:
+//! when no meter provider is registered (observability off — the default) the
+//! global default is a **no-op meter** and the call is a couple of moves into a
+//! no-op instrument. `record_ipc_duration` goes one step further and is gated on
+//! the process-global [`ipc_metrics_enabled`] flag, so its per-invoke `cmd`
+//! `KeyValue` allocation (and the matching command-name clone in the `lib.rs`
+//! invoke wrapper) are skipped entirely when off — the IPC hot path then pays
+//! only one relaxed atomic load rather than a record into the no-op meter.
 //!
 //! # PII discipline
 //!
@@ -26,6 +30,7 @@
 //! command *name* — a compile-time identifier, never user data. There is no
 //! content, query string, tag name, or property value anywhere in this module.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use opentelemetry::KeyValue;
@@ -177,14 +182,44 @@ fn histograms() -> &'static Histograms {
     })
 }
 
+/// Process-global "is the IPC-duration metric actually being recorded?" flag.
+///
+/// Set once by [`super::init`] (to `true`) only when the meter provider is
+/// installed — i.e. observability is on AND the metrics sink built. It stays
+/// `false` in the default (observability-off) build. Both the `lib.rs` invoke
+/// wrapper and [`record_ipc_duration`] consult it so the two per-invoke `String`
+/// allocations (the command-name clone in the wrapper + the `KeyValue` here) are
+/// skipped entirely when off — the hot path then costs one relaxed atomic load
+/// instead of a `record` into the global no-op meter plus two allocations.
+static IPC_METRICS_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Flip the IPC-metrics gate. Called by [`super::init`] once the meter provider
+/// is installed; there is no un-set path (an app boots observability once).
+pub(crate) fn set_ipc_metrics_enabled(enabled: bool) {
+    IPC_METRICS_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+/// Whether the IPC-duration metric is being recorded this run. The `lib.rs`
+/// invoke wrapper checks this BEFORE allocating the command name so an
+/// observability-off dispatch pays only this relaxed atomic load.
+#[must_use]
+pub fn ipc_metrics_enabled() -> bool {
+    IPC_METRICS_ENABLED.load(Ordering::Relaxed)
+}
+
 /// Record one IPC command dispatch duration (milliseconds), attributed by the
 /// command `cmd` (the opaque command *name* — a compile-time identifier, never
 /// user data).
 ///
-/// Unconditional + free when observability is off: the global meter is a no-op
-/// in that case, so this is a cheap call into a no-op instrument. Callers wrap
-/// the dispatch without a feature/enabled check.
+/// Gated on [`ipc_metrics_enabled`]: when observability is off (the default)
+/// this returns before the `KeyValue` allocation, so it is a single relaxed
+/// atomic load. Callers still wrap the dispatch without a feature check — the
+/// gate lives here (and in the `lib.rs` wrapper, which skips the command-name
+/// clone on the same flag).
 pub fn record_ipc_duration(ms: f64, cmd: &str) {
+    if !ipc_metrics_enabled() {
+        return;
+    }
     histograms()
         .ipc_duration
         .record(ms, &[KeyValue::new("cmd", cmd.to_owned())]);
@@ -287,5 +322,27 @@ mod tests {
             Some(7),
             "the callback must still collect after the instrument handle is dropped"
         );
+    }
+
+    /// The IPC-metrics gate defaults OFF (observability-off build) and flips on
+    /// via [`set_ipc_metrics_enabled`]. `record_ipc_duration` must be a safe
+    /// no-op in the off state (it returns before allocating the `cmd` KeyValue)
+    /// and must not panic once enabled — the on/off contract the `lib.rs` invoke
+    /// wrapper relies on to skip its per-invoke command-name allocation.
+    #[test]
+    fn ipc_metrics_gate_toggles_and_record_is_safe_both_ways() {
+        // Default: off. Recording is a cheap no-op (no meter needed).
+        set_ipc_metrics_enabled(false);
+        assert!(!ipc_metrics_enabled(), "gate defaults / resets to off");
+        record_ipc_duration(1.5, "some_command"); // must not panic when off
+
+        // Flip on: the getter reflects it and recording still doesn't panic even
+        // with only the global no-op meter installed.
+        set_ipc_metrics_enabled(true);
+        assert!(ipc_metrics_enabled(), "gate reads back on once set");
+        record_ipc_duration(2.5, "some_command");
+
+        // Leave the process-global flag off so other tests see the default.
+        set_ipc_metrics_enabled(false);
     }
 }

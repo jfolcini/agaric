@@ -297,6 +297,31 @@ describe('DateChip', () => {
     expect(screen.getByTestId('test-icon')).toBeInTheDocument()
   })
 
+  // #2282 — the compact date + translated label are computed once and reused
+  // for the title, the aria-label, and the visible text, so all three stay in
+  // lockstep (identical string, single formatCompactDate/t call).
+  it('reuses one computed label for title, aria-label, and text', () => {
+    render(
+      <DateChip
+        date="2099-06-15"
+        icon={(() => <svg />) as unknown as LucideIcon}
+        colorClass="bg-muted"
+        eventName="OPEN_DUE_DATE_PICKER"
+        i18nKey="block.dueDate"
+        chipClass="test-chip"
+      />,
+    )
+    const compact = formatCompactDate('2099-06-15')
+    const button = screen.getByRole('button')
+    // Visible text is the bare compact date.
+    expect(button).toHaveTextContent(compact)
+    // Title and aria-label are the SAME translated label (both contain the
+    // compact date the i18n template interpolates).
+    const title = button.getAttribute('title')
+    expect(title).toContain(compact)
+    expect(button.getAttribute('aria-label')).toBe(title)
+  })
+
   // #1251: DateChip routes its click through the typed `dispatchBlockEvent`
   // helper, so it emits the `BLOCK_EVENTS` constant for the given typed key —
   // not a hand-built literal. Assert producer ↔ constant for both pickers a

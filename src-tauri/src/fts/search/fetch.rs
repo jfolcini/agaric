@@ -73,15 +73,64 @@ pub(super) async fn fts_fetch_rows(
     snippet_len: Option<usize>,
     cancel: Option<CancellationToken>,
 ) -> Result<Vec<FtsSearchRow>, AppError> {
-    // Early-cancel before we even touch the read pool.
-    // The next-keystroke palette pattern fires fresh IPCs faster than
-    // SQLite can deliver a connection, so checking here catches the
-    // burst before we waste a pool slot.
-    if let Some(ref token) = cancel
-        && token.is_cancelled()
-    {
-        return Err(AppError::Cancelled);
-    }
+    // Single-shot path: assemble the query, then execute one window. A
+    // paginating caller (the post-filter loop) should instead call
+    // [`build_fts_fetch`] ONCE and [`execute_fts_fetch`] per window so the SQL
+    // assembly + filter compilation are not repeated up to ten times (#2282).
+    let prepared = build_fts_fetch(
+        parent_id,
+        tag_ids,
+        space_id,
+        include_page_globs,
+        exclude_page_globs,
+        block_type_filter,
+        metadata,
+        with_snippet,
+        snippet_len,
+    );
+    execute_fts_fetch(
+        pool,
+        &prepared,
+        sanitized,
+        cursor_flag,
+        cursor_rank,
+        cursor_id,
+        fetch_limit,
+        cancel,
+    )
+    .await
+}
+
+/// A pre-assembled FTS fetch: the invariant SQL text + the ordered structural
+/// filter binds. Built once by [`build_fts_fetch`] and executed (with a
+/// per-window cursor) by [`execute_fts_fetch`], so the post-filter pagination
+/// loop pays the SQL assembly + filter compilation ONCE rather than once per
+/// window (#2282).
+pub(super) struct PreparedFtsFetch {
+    sql: String,
+    filter: crate::fts::filter_builder::StructuralFilterBuilder,
+}
+
+/// Assemble the dynamic SQL text + structural-filter binds for an FTS fetch.
+///
+/// Everything assembled here is INVARIANT across pagination windows: the MATCH
+/// query (`?1`), the `LIMIT` (`?5`), the snippet projection, and every
+/// structural filter (parent / tags / space / globs / block-type / metadata).
+/// Only the composite cursor (`?2`/`?3`/`?4`), bound later in
+/// [`execute_fts_fetch`], advances between windows — so a paginating caller
+/// builds this once and re-executes per window (#2282).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn build_fts_fetch(
+    parent_id: Option<&str>,
+    tag_ids: Option<&[String]>,
+    space_id: Option<&str>,
+    include_page_globs: &[String],
+    exclude_page_globs: &[String],
+    block_type_filter: Option<&str>,
+    metadata: &MetadataPredicates,
+    with_snippet: bool,
+    snippet_len: Option<usize>,
+) -> PreparedFtsFetch {
     // Build dynamic SQL with optional filter clauses.
     // Base parameters: ?1=query, ?2=cursor_flag, ?3=cursor_rank, ?4=cursor_id, ?5=limit
     // Additional parameters are appended after ?5 for parent_id, tag_ids,
@@ -265,15 +314,46 @@ pub(super) async fn fts_fetch_rows(
     sql.push_str("\n         ORDER BY fts.rank, b.id");
     sql.push_str("\n         LIMIT ?5");
 
+    PreparedFtsFetch { sql, filter: fb }
+}
+
+/// Execute a pre-assembled FTS fetch (from [`build_fts_fetch`]) for ONE window.
+///
+/// Binds the invariant `?1` (MATCH query) and `?5` (`LIMIT`) plus the ADVANCING
+/// composite cursor (`?2`/`?3`/`?4`), replays the structural-filter binds, and
+/// runs the query with optional cancellation + slow-query logging. Split out
+/// from [`build_fts_fetch`] so the post-filter loop pays the SQL assembly +
+/// filter compilation once and only rebinds the cursor per window (#2282).
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn execute_fts_fetch(
+    pool: &SqlitePool,
+    prepared: &PreparedFtsFetch,
+    sanitized: &str,
+    cursor_flag: Option<i64>,
+    cursor_rank: f64,
+    cursor_id: &str,
+    fetch_limit: i64,
+    cancel: Option<CancellationToken>,
+) -> Result<Vec<FtsSearchRow>, AppError> {
+    // Early-cancel before we even touch the read pool.
+    // The next-keystroke palette pattern fires fresh IPCs faster than
+    // SQLite can deliver a connection, so checking here catches the
+    // burst before we waste a pool slot.
+    if let Some(ref token) = cancel
+        && token.is_cancelled()
+    {
+        return Err(AppError::Cancelled);
+    }
+
     // Build and bind the query dynamically. Base params `?1..?5` first,
     // then the builder replays its ordered dynamic binds.
-    let db_query = sqlx::query_as::<_, FtsSearchRow>(sqlx::AssertSqlSafe(sql.as_str()))
+    let db_query = sqlx::query_as::<_, FtsSearchRow>(sqlx::AssertSqlSafe(prepared.sql.as_str()))
         .bind(sanitized) // ?1
         .bind(cursor_flag) // ?2
         .bind(cursor_rank) // ?3
         .bind(cursor_id) // ?4
         .bind(fetch_limit); // ?5
-    let db_query = fb.apply(db_query);
+    let db_query = prepared.filter.apply(db_query);
 
     // Acquire a read-pool connection via the slow-acquire
     // logger so saturation under bursty typing surfaces in the log.
