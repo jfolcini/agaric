@@ -98,9 +98,11 @@ export function useTrashCount(): number {
   const queryFn = useCallback(
     () =>
       // `countTrash` pushes the count into SQL so the trash badge stays
-      // accurate regardless of trash size. `?? ''` is the pre-bootstrap
-      // no-match fallback (see `TrashView` / the `countTrash` wrapper).
-      countTrash(currentSpaceId ?? ''),
+      // accurate regardless of trash size. #2248 — trash is inherently
+      // space-scoped, so with no active space there is nothing to count:
+      // short-circuit to `0` locally instead of passing an empty-string
+      // sentinel to the backend (which would now reject a malformed scope).
+      currentSpaceId == null ? Promise.resolve(0) : countTrash(currentSpaceId),
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- re-poll when view or space changes (user may have restored items / switched spaces)
     [currentView, currentSpaceId],
   )

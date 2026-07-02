@@ -98,10 +98,12 @@ describe('TrashView', () => {
     render(<TrashView />)
 
     await waitFor(() => {
+      // #2248 — the IPC carries a canonical `SpaceScope`; the active space
+      // ULID is wrapped into `{ kind: 'active', space_id }` by `toSpaceScope`.
       expect(mockedInvoke).toHaveBeenCalledWith('list_trash', {
         cursor: null,
         limit: 50,
-        spaceId: 'SPACE_TEST',
+        scope: { kind: 'active', space_id: 'SPACE_TEST' },
       })
     })
   })
@@ -296,7 +298,7 @@ describe('TrashView', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_trash', {
         cursor: 'cursor_page2',
         limit: 50,
-        spaceId: 'SPACE_TEST',
+        scope: { kind: 'active', space_id: 'SPACE_TEST' },
       })
     })
 
