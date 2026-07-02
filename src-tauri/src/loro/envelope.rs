@@ -3,7 +3,7 @@
 //! Reserved for a future on-the-wire shape carrying both Loro
 //! exported batch bytes AND a small versioning preamble for
 //! `op_type='loro_batch'` rows. Today only the type, a roundtrip
-//! test, and a `From<&OpRecord>` conversion helper exist — no
+//! test, and a `TryFrom<&OpRecord>` conversion helper exist — no
 //! production call site writes a `LoroBatch` to `op_log.payload` yet.
 //!
 //! ## Why a JSON `Value` for `payload`
@@ -23,11 +23,12 @@
 //!
 //! Two version fields, both `u8`:
 //!
-//! * `loro_version` — the Loro library major version this payload
-//!   was produced against.  Currently `1` (matching `loro = "1.12"`
-//!   in `Cargo.toml`).  A reader that sees a `loro_version` it
-//!   cannot decode rejects the row at decode time rather than
-//!   silently importing garbage.
+//! * `loro_version` — despite the name, this is the envelope's binary
+//!   SHAPE version, not the external Loro library major (that pin is
+//!   `loro = "1.12"`).  Currently `2`: v1 carried no Loro-exported bytes,
+//!   v2 adds the `loro_bytes` field (see [`CURRENT_LORO_VERSION`]).  A
+//!   reader that sees a `loro_version` it cannot decode rejects the row at
+//!   decode time rather than silently importing garbage.
 //! * `payload_version` — agaric's own envelope schema version,
 //!   independent of the Loro library version.  Starts at `1`.  This
 //!   bumps when the *envelope's* fields change (e.g. adding a
@@ -43,10 +44,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::op_log::OpRecord;
 
-/// Current Loro library major version this binary is built against.
+/// Current envelope binary-shape version (a misnomer — NOT the external
+/// Loro library major, which is pinned separately at `loro = "1.12"`).
 ///
-/// Bumped in lockstep with the `loro = "..."` pin in `Cargo.toml`.
-/// Read by [`LoroBatch::from`] when wrapping a fresh `OpRecord`.
+/// Bumped when the envelope's on-wire byte shape changes. Read by
+/// [`LoroBatch::new`] / [`LoroBatch::with_loro_bytes`] (and thus by the
+/// `TryFrom<&OpRecord>` conversion) when wrapping a fresh `OpRecord`.
 ///
 /// ## Version history
 ///
@@ -79,8 +82,8 @@ pub const CURRENT_PAYLOAD_VERSION: u8 = 1;
 /// this as a fixed shape.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LoroBatch {
-    /// Loro library major version this payload was produced against.
-    /// See [`CURRENT_LORO_VERSION`].
+    /// Envelope binary-shape version (misnomer — not the external Loro
+    /// library major). See [`CURRENT_LORO_VERSION`].
     pub loro_version: u8,
 
     /// Agaric envelope schema version.  See [`CURRENT_PAYLOAD_VERSION`].

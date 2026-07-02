@@ -204,7 +204,7 @@ export function toRecentPage(ref: PageRef): RecentPage {
  *    was pinned in EITHER source, and keeps the newer `visitedAt`.
  *  - The merged slice is pin-first sorted and pin-exempt capped.
  *
- * The pre- unscoped `recent_pages` key (if present) is folded into the
+ * The legacy unscoped `recent_pages` key (if present) is folded into the
  * `__legacy__` slot. After a successful merge the raw keys are removed so a
  * later hydrate can't re-merge stale data; the persisted `rawKeysMerged`
  * guard is the belt-and-braces second line of defence.
@@ -400,7 +400,7 @@ function coerceRecentPagesBySpace(raw: unknown): Record<string, PageRef[]> {
  * as well closes that path. The coercion is idempotent, so the migrate→merge
  * double pass on version-mismatched blobs is harmless.
  *
- * V0 → v1: pre- stored only `recentPages`. When the blob has no
+ * V0 → v1: v0 stored only `recentPages`. When the blob has no
  * `recentPagesBySpace` map, the flat list is carried into the `__legacy__`
  * per-space slot so consumers that pass `currentSpaceId = null` still see the
  * user's history and the per-space map gains a non-empty seed.

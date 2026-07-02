@@ -362,9 +362,8 @@ export const useTabsStore = create<TabsStore>()(
         // a future change introduces an awaited tick between any two
         // `set()` calls in this action, that test will fail.
         //
-        // Conclusion: no transactional helper is needed — React 19
-        // already batches. Item #11 closed as "no fix needed; subscribers
-        // already batch" in `pending/design-system-perf-review-2026-05-09.md`.
+        // Conclusion: no transactional helper is needed — React 19 already
+        // batches synchronous `set()` calls, so subscribers re-render once.
 
         // Record every COMPLETED navigateToPage call as a
         // recent-visit (the store dedups by pageId, so repeated visits
@@ -633,7 +632,7 @@ export function resetTabIdCounter(): void {
  * `createSpaceSubscriber`; this site only owns the tabs-specific
  * flush / pull logic. On first fire (`prevKey === newKey`) we seed
  * `tabsBySpace[newKey]` from the rehydrated flat tabs if it's missing,
- * So a returning user who migrated from a pre- shape (where
+ * so a returning user who migrated from a pre-per-space shape (where
  * tabs only existed in the flat fields under the `__legacy__` key)
  * keeps their tabs accessible from the active space.
  */

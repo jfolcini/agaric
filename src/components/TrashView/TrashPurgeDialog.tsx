@@ -1,7 +1,7 @@
 /**
  * TrashPurgeDialog — confirms permanently deleting a single trashed
  * block (the per-row `t('trash.purgeButton')` flow). Sibling extracted
- * From TrashView.tsx for.
+ * from TrashView.tsx to keep the orchestrator thin.
  */
 
 import type React from 'react'

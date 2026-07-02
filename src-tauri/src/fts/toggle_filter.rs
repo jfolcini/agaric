@@ -61,7 +61,7 @@ use super::metadata_filter::MetadataPredicates;
 
 /// Bundle of the three search toggles.
 ///
-/// The all-false value reproduces the pre- FTS-only behaviour
+/// The all-false value reproduces the original FTS-only behaviour
 /// (zero overhead — `search_with_toggles` short-circuits before
 /// invoking the post-filter).
 #[derive(Debug, Clone, Copy, Default)]
@@ -223,12 +223,11 @@ pub async fn search_with_toggles(
         .await;
     }
 
-    // SQL-A3 / BE-A1 — `case_sensitive` and/or `whole_word`
-    // on. The previous shape called `search_fts` (which fixed
-    // `has_more` / `next_cursor` on a `limit + 1` candidate window) and
-    // THEN dropped non-matching rows, which under-filled the page and
-    // permanently lost survivors dropped inside the window (the next
-    // page's cursor pointed past them). Instead use
+    // `case_sensitive` and/or `whole_word` is on. Calling `search_fts`
+    // (which fixes `has_more` / `next_cursor` on a `limit + 1` candidate
+    // window) and THEN dropping non-matching rows would under-fill the
+    // page and permanently lose survivors dropped inside the window (the
+    // next page's cursor would point past them). Instead use
     // `fts_fetch_post_filtered_page`, which walks candidate windows,
     // applies the post-filter per row, and computes `has_more` /
     // `next_cursor` from the SURVIVOR set so the page is full up to
@@ -279,12 +278,11 @@ fn truncate_row_content(rows: &mut [SearchBlockRow], snippet_len: Option<usize>)
     }
 }
 
-/// Phase 1 / partitioned sibling of
-/// [`search_with_toggles`].
+/// Partitioned sibling of [`search_with_toggles`].
 ///
 /// Returns two pre-partitioned candidate sets (pages-only +
 /// unrestricted) via two parallel scans. Each partition's `has_more`
-/// Is derived from a `limit + 1` probe (Open Q3) so the
+/// is derived from a `limit + 1` probe so the
 /// frontend can paginate accurately without inferring from the global
 /// SQL ceiling.
 ///
@@ -301,8 +299,8 @@ fn truncate_row_content(rows: &mut [SearchBlockRow], snippet_len: Option<usize>)
 /// Returns a [`FtsPartitionedScan`] with per-partition `has_more`.
 ///
 /// `cancel` is an optional cancellation token threaded into
-/// The FTS path. BE-A4 — the regex-mode branch now honours
-/// the same token: it checks `is_cancelled()` up front (mirroring
+/// the FTS path. The regex-mode branch honours the same token:
+/// it checks `is_cancelled()` up front (mirroring
 /// `fts_fetch_rows`' early-cancel) and races the two parallel regex
 /// scans against `cancel.cancelled()` via a `biased` `tokio::select!`,
 /// returning [`AppError::Cancelled`] when the signal fires — the exact
@@ -363,7 +361,7 @@ pub(crate) async fn search_with_toggles_partitioned(
     }
 
     if toggles.is_regex {
-        // BE-A4 — early-cancel before launching the scans,
+        // Early-cancel before launching the scans,
         // mirroring `fts_fetch_rows`' up-front `is_cancelled()` check.
         // The palette's next-keystroke pattern fires fresh IPCs faster
         // than the scans can start, so bail before doing any work.
@@ -408,7 +406,7 @@ pub(crate) async fn search_with_toggles_partitioned(
             // P4 (#346) — partitioned (palette) path always returns full content.
             None,
         );
-        // BE-A4 — race the two parallel scans against the
+        // Race the two parallel scans against the
         // cancel signal so an in-flight regex burst bails the same way
         // the FTS path does (`fts_fetch_rows` uses the identical
         // `biased` `tokio::select!` shape). The `try_join!` is kept as a
@@ -419,7 +417,7 @@ pub(crate) async fn search_with_toggles_partitioned(
         // future is dropped, cancelling both underlying SQL statements
         // at their next yield point, and we return
         // [`AppError::Cancelled`] — the exact outcome the FTS path
-        // returns. When `cancel` is `None` we preserve the pre-BE-A4
+        // returns. When `cancel` is `None` we preserve the original
         // behaviour (plain `try_join!`).
         let join_future = async { tokio::try_join!(pages_future, blocks_future) };
         let (pages_resp, blocks_resp) = match cancel {
@@ -479,12 +477,12 @@ pub(crate) async fn search_with_toggles_partitioned(
         .await;
     }
 
-    // SQL-A3 / BE-A1 — `case_sensitive` and/or `whole_word`
-    // on. This path has NO cursor (the palette doesn't paginate), so it
-    // cannot fetch successive windows like the cursor path. The previous
-    // shape fetched only `limit + 1` candidates per partition and then
-    // dropped non-matching rows, which under-filled each partition AND
-    // derived `has_more` from the pre-filter count (so a partition could
+    // `case_sensitive` and/or `whole_word` is on. This path has NO
+    // cursor (the palette doesn't paginate), so it cannot fetch
+    // successive windows like the cursor path. Fetching only
+    // `limit + 1` candidates per partition and then dropping
+    // non-matching rows would under-fill each partition AND derive
+    // `has_more` from the pre-filter count (so a partition could
     // report `has_more = true` while rendering far fewer than `limit`
     // survivors). Instead OVER-FETCH up to the `MAX_SEARCH_RESULTS`
     // ceiling per partition BEFORE the post-filter, then truncate to the
@@ -609,7 +607,7 @@ fn apply_post_filter(rows: &mut Vec<SearchBlockRow>, re: &Regex) {
     rows.retain_mut(|row| post_filter_row(row, re));
 }
 
-/// SQL-A3 / BE-A1 — per-row post-filter predicate, extracted
+/// Per-row post-filter predicate, extracted
 /// from [`apply_post_filter`] so the filter-aware cursor pagination loop
 /// ([`super::search::fts_fetch_post_filtered_page`]) can apply the same
 /// logic one row at a time while tracking each survivor's rank.
@@ -777,7 +775,7 @@ async fn regex_mode_query(
         pattern.push_str(query);
         pattern.push_str(")(?-u:\\b)");
     } else {
-        // Phase 1.B7 — wrap the user pattern in a non-capturing
+        // Wrap the user pattern in a non-capturing
         // group so a leading inline flag in the user's input (e.g.
         // `(?i)foo|bar`) cannot rebind the case flag we just emitted
         // and bleed precedence across the top-level `|`. Symmetric with
@@ -817,11 +815,11 @@ async fn regex_mode_query(
              AND b.content IS NOT NULL",
     );
 
-    // M2 (#348) — `StructuralFilterBuilder` owns the dynamic fragment,
+    // (#348) `StructuralFilterBuilder` owns the dynamic fragment,
     // the running `?N` index, and the ordered binds atomically (no
     // separate hand-tracked bind pass to drift out of sync). This
     // builder has no fixed base params, so dynamic filters start at
-    // `?1`; the 13-space `AND ` prefix preserves the exact pre-M2 SQL.
+    // `?1`; the 13-space `AND ` prefix preserves the exact prior SQL.
     const PREFIX: &str = "\n             AND ";
     let mut fb = super::filter_builder::StructuralFilterBuilder::new(1);
 
@@ -905,7 +903,7 @@ async fn regex_mode_query(
         "\n           ORDER BY b.id DESC\n           LIMIT ?{cap_idx}"
     ));
 
-    // M2 (#348) — base query has no fixed params; the builder replays
+    // (#348) base query has no fixed params; the builder replays
     // every dynamic filter bind in declaration order, then the trailing
     // `LIMIT ?cap_idx` cap is bound last (its placeholder index was
     // reserved last via `fb.next_param()`).
@@ -1006,7 +1004,7 @@ struct RegexScanRow {
     content: Option<String>,
     parent_id: Option<crate::ulid::BlockId>,
     position: Option<i64>,
-    // #109 Phase 2 — blocks.deleted_at is INTEGER epoch-ms (migration 0080);
+    // blocks.deleted_at is INTEGER epoch-ms (migration 0080, #109);
     // the scan SQL filters `deleted_at IS NULL`, so always None here.
     deleted_at: Option<i64>,
     todo_state: Option<String>,
@@ -1025,9 +1023,9 @@ struct RegexScanRow {
 /// metadata predicate), the intent is "give me the blocks that match
 /// those filters", recency-ordered. This helper builds the SAME
 /// structural-filter SQL as [`regex_mode_query`] (deduped/UPPERCASE tag
-/// ids with the `COUNT(DISTINCT)` ALL-tags predicate, space_id,
-/// include/exclude page globs, [`append_metadata_sql`], optional
-/// `block_type`) but:
+/// ids AND-joined per tag via `add_tags_via_projection`, space_id,
+/// include/exclude page globs, metadata predicates via `add_metadata`,
+/// optional `block_type`) but:
 ///
 ///   * compiles NO regex and applies NO post-filter — every
 ///     structurally-matching row is returned;
@@ -1075,7 +1073,7 @@ async fn filter_only_scan(
            WHERE b.deleted_at IS NULL",
     );
 
-    // M2 (#348) — same `StructuralFilterBuilder` as `regex_mode_query`,
+    // (#348) same `StructuralFilterBuilder` as `regex_mode_query`,
     // with the extra `after_id` keyset predicate. No fixed base params;
     // dynamic filters start at `?1`, 13-space `AND ` prefix.
     const PREFIX: &str = "\n             AND ";
@@ -1128,7 +1126,7 @@ async fn filter_only_scan(
         "\n           ORDER BY b.id DESC\n           LIMIT ?{cap_idx}"
     ));
 
-    // M2 — builder replays every dynamic bind in declaration order, then
+    // The builder replays every dynamic bind in declaration order, then
     // the trailing `LIMIT ?cap_idx` (reserved last) is bound last.
     let db_query = sqlx::query_as::<_, RegexScanRow>(sqlx::AssertSqlSafe(sql.as_str()));
     let db_query = fb.apply(db_query);
@@ -1420,7 +1418,7 @@ mod unit_tests {
 
     #[test]
     fn byte_to_utf16_offsets_mid_emoji_match() {
-        // Phase 5.T1b — the existing test above covers a leading
+        // The existing test above covers a leading
         // emoji + trailing ASCII; this one matches the emoji itself
         // when it sits between ASCII runs. `🌟` = 4 bytes UTF-8 / 2
         // UTF-16 code units. `abc` = bytes 0-3 / units 0-3; `🌟` =

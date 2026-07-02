@@ -1,9 +1,9 @@
 // Shared content-shell class string for Dialog and AlertDialog primitives.
 //
-// PERF: hoisted from inline string in render — twMerge only re-parses caller className.
-// See pending/design-system-perf-review-2026-05-09.md Tier 3 item 16.
-// LAYOUT: `flex flex-col + overflow-hidden` make header/footer pinned while the
-// body owns the scrollable region. See pending/dialog-responsiveness-primitive-2026-05-13.md.
+// PERF: hoisted from an inline string in render — twMerge then only re-parses
+// the caller's `className` rather than this whole base on every render.
+// LAYOUT: `flex flex-col + overflow-hidden` pin header/footer while the
+// body owns the scrollable region.
 //
 // Single source of truth so modal and alert-modal chrome stay in lockstep
 // (previously two verbatim-duplicated local consts kept in sync by comment only).

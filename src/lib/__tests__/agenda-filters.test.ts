@@ -1275,7 +1275,6 @@ describe('executeAgendaFilters', () => {
 // minted by page 1. The previous implementation called `query_by_property`
 // with a `filtered_blocks_query` cursor — a silent namespace mismatch that
 // returned the right *shape* but the wrong *set* (no AND across filters).
-// See: pending/agenda-loadmore-cursor-namespace-2026-05-13.md (Option A).
 
 describe('loadMoreAgendaFilters', () => {
   it('routes through filtered_blocks_query with the saved cursor (NOT query_by_property)', async () => {

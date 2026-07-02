@@ -4,8 +4,7 @@
  * Replaces the recurring inline shape
  * `<div className="rounded-lg border bg-muted/30 p-4 text-center">` that
  * appeared 5+ times in `StatusPanel.tsx` for sync / conflict / queue /
- * journal / peer counters (see plan
- * `pending/design-system-maintainability-2026-05-09.md` § 2d).
+ * journal / peer counters, so the tile shape is defined once.
  *
  * Semantics:
  *  - The component renders as a `<div>` (default) but accepts an

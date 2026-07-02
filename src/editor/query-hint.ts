@@ -99,9 +99,12 @@ export function queryExprAtCaret(
 }
 
 /**
- * Longest item in `candidates` that `partial` is a strict, case-sensitive
- * prefix of (and shorter than). Returns the *remaining* suffix to append, or
- * `null` when nothing matches or `partial` already equals a candidate.
+ * First item in source order in `candidates` that `partial` is a strict,
+ * case-sensitive prefix of (i.e. the candidate is strictly longer and starts
+ * with `partial`). `candidates` is ordered shortest/most-common first, so the
+ * first such hit is the tightest extension (`t` → `tag`). Returns the
+ * *remaining* suffix to append, or `null` when nothing matches or `partial`
+ * already equals a candidate.
  */
 function bestPrefixCompletion(
   partial: string,

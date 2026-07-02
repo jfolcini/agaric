@@ -1,6 +1,6 @@
-//! M2 (#348) — `StructuralFilterBuilder`: atomic SQL-fragment +
-//! placeholder-index + ordered-bind construction for the three FTS
-//! structural-filter query builders.
+//! `StructuralFilterBuilder`: atomic SQL-fragment + placeholder-index +
+//! ordered-bind construction for the three FTS structural-filter query
+//! builders (#348).
 //!
 //! ## The drift hazard this removes
 //!
@@ -21,7 +21,7 @@
 //! `block_type`), but within a single call the fragment and its binds
 //! are atomic.
 //!
-//! The generated SQL is byte-identical to the pre-M2 hand-built strings
+//! The generated SQL is byte-identical to the hand-built strings it replaced
 //! (verified by the existing `fts` test suite); the indentation/`AND `
 //! glue prefix is passed in by each caller because it differs between
 //! the `search_fts` builder (11-space indent) and the toggle builders
@@ -95,12 +95,16 @@ fn infer_property_value(raw: &str) -> PropertyValue {
     }
 }
 
-/// #1320-C / #1280 B2 — `AND ` glue prefix for the projection-routed
-/// metadata clauses (`last-edited:`, and now `state:` / `due-date:` /
-/// `scheduled:`). Matches the 11-space indentation `append_metadata_sql`
-/// uses for its sibling metadata fragments, so the spliced clauses line up
-/// byte-for-byte with the legacy fragments in the generated SQL.
-const LAST_EDITED_PREFIX: &str = "\n           AND ";
+/// Shared `AND ` glue prefix for every projection-routed metadata clause
+/// spliced by [`StructuralFilterBuilder::add_metadata`] — `state:`,
+/// `priority:`, `due-date:`, `scheduled:`, `last-edited:`, and property
+/// predicates (#1320-C / #1280 B2). The 11-space indent matches the
+/// hand-built `AND` fragments of the `search_fts` fetch query (see
+/// `fts::search::fetch`'s `PREFIX`), preserving byte-for-byte the SQL the
+/// now-deleted legacy `append_metadata_sql` emitted there. The toggle
+/// builders glue their other fragments at 13 spaces; the mismatch is
+/// cosmetic (whitespace inside generated SQL only).
+const METADATA_AND_PREFIX: &str = "\n           AND ";
 
 /// One bound value, tagged with its SQLite affinity. Recorded in
 /// declaration order alongside the SQL fragment that references it, so
@@ -358,11 +362,11 @@ impl StructuralFilterBuilder {
     /// (`compile_has_property`, the SAME typed compiler every other surface
     /// — Pages browser, advanced query, backlinks — already uses).
     ///
-    /// This REPLACES the legacy untyped `append_property_match` four-column OR
+    /// Search property matching is TYPED: the user's value is parsed to the
+    /// single most-specific [`PropertyValue`] and only that one column is
+    /// compared — never an untyped four-column OR
     /// (`value_text`/`value_num`/`value_date`/`value_ref` matched
-    /// simultaneously with one user value bound four ways). Search property
-    /// matching is now TYPED: the user's value is parsed to the single
-    /// most-specific [`PropertyValue`] and only that one column is compared.
+    /// simultaneously with one value bound four ways).
     ///
     /// The [`SearchPropertyFilter`] → [`PropertyPredicate`] mapping:
     /// - empty value, include → `Exists` (key presence)
@@ -506,10 +510,8 @@ impl StructuralFilterBuilder {
         }
     }
 
-    /// #1320 page-name-glob filter routed through [`SearchProjection`].
-    /// (#1320 retired the former inline `add_page_globs` /
-    /// `append_page_glob_subselect` fragment; this is now the sole path.)
-    /// Preserves the LEGACY
+    /// Page-name-glob filter routed through [`SearchProjection`] — the
+    /// sole path for this filter (#1320). Preserves the LEGACY
     /// `LOWER(title) GLOB ?` dialect byte-for-byte at the result level
     /// (zero behaviour change — search users keep `GLOB` + brace +
     /// `[class]` semantics).
@@ -648,13 +650,13 @@ impl StructuralFilterBuilder {
         // return), so the generated SQL stays byte-identical to the legacy
         // no-clause cases.
         self.add_state_via_projection(
-            LAST_EDITED_PREFIX,
+            METADATA_AND_PREFIX,
             &metadata.state_values,
             metadata.state_is_null,
             false,
         );
         self.add_state_via_projection(
-            LAST_EDITED_PREFIX,
+            METADATA_AND_PREFIX,
             &metadata.excluded_state_values,
             metadata.excluded_state_not_null,
             true,
@@ -666,13 +668,13 @@ impl StructuralFilterBuilder {
         // splice is a no-op when its set is empty (mirrors the legacy helpers'
         // early return).
         self.add_priority_via_projection(
-            LAST_EDITED_PREFIX,
+            METADATA_AND_PREFIX,
             &metadata.priority_values,
             metadata.priority_is_null,
             false,
         );
         self.add_priority_via_projection(
-            LAST_EDITED_PREFIX,
+            METADATA_AND_PREFIX,
             &metadata.excluded_priority_values,
             metadata.excluded_priority_not_null,
             true,
@@ -685,24 +687,24 @@ impl StructuralFilterBuilder {
         // Each entry consumes its own `?N` placeholder slots via
         // `add_projection_clause`.
         for pf in &metadata.property_includes {
-            self.add_property_via_projection(LAST_EDITED_PREFIX, pf);
+            self.add_property_via_projection(METADATA_AND_PREFIX, pf);
         }
         for pf in &metadata.property_excludes {
-            self.add_excluded_property_via_projection(LAST_EDITED_PREFIX, pf);
+            self.add_excluded_property_via_projection(METADATA_AND_PREFIX, pf);
         }
 
         // due_date / scheduled_date predicates routed through the projection.
         if let Some(pred) = &metadata.due {
-            self.add_due_date_via_projection(LAST_EDITED_PREFIX, pred);
+            self.add_due_date_via_projection(METADATA_AND_PREFIX, pred);
         }
         if let Some(pred) = &metadata.scheduled {
-            self.add_scheduled_via_projection(LAST_EDITED_PREFIX, pred);
+            self.add_scheduled_via_projection(METADATA_AND_PREFIX, pred);
         }
 
         // #1320-C — the `last-edited:` window is also compiled through
         // `SearchProjection::compile_last_edited` (hardcoded `b.` alias).
         if let Some(spec) = &metadata.last_edited {
-            self.add_last_edited_via_projection(LAST_EDITED_PREFIX, spec);
+            self.add_last_edited_via_projection(METADATA_AND_PREFIX, spec);
         }
     }
 
@@ -895,25 +897,20 @@ mod tests {
         assert_eq!(fb.bind_count(), 0);
     }
 
-    /// #1320 Tag is now ROUTED through `SearchProjection` in
-    /// `fts_fetch_rows` (`add_tags_via_projection`), replacing the legacy
-    /// inline `COUNT(DISTINCT)` ALL-semantics fragment (`add_tags_all`).
+    /// Tag filtering is ROUTED through `SearchProjection` in
+    /// `fts_fetch_rows` (`add_tags_via_projection`, #1320); the projection
+    /// emits N per-tag `b.id IN (SELECT block_id FROM block_tags WHERE
+    /// tag_id = ?N)` sub-selects AND-joined under the same prefix, rather
+    /// than a single `COUNT(DISTINCT bt.tag_id) = N` sub-select. The two
+    /// shapes are RESULT-EQUIVALENT (a block in every per-tag set has all
+    /// N tags), proved at the DB level by the
+    /// `tags_via_projection_matches_legacy_*` equivalence tests below.
     ///
-    /// The two SQL SHAPES still differ — that divergence is real and
-    /// intentional: the legacy fragment is a single `COUNT(DISTINCT
-    /// bt.tag_id) = N` sub-select, while the routed path emits N per-tag
-    /// `b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?N)`
-    /// sub-selects AND-joined under the same prefix. They are
-    /// RESULT-EQUIVALENT (a block in every per-tag set has all N tags),
-    /// proved at the DB level by the `tags_via_projection_matches_legacy_*`
-    /// equivalence tests below.
-    ///
-    /// This test (formerly `projection_tag_diverges_from_legacy_kept_legacy`)
-    /// is repurposed to PIN the routed behaviour: it asserts the exact SQL
-    /// `add_tags_via_projection` now emits, that it AND-joins per tag with
-    /// correct placeholder renumbering, and documents (via the still-present
-    /// shape divergence assertion) that the SQL differs from the legacy
-    /// `COUNT(DISTINCT)` form even though the result set is identical.
+    /// This test PINs the routed behaviour: it asserts the exact SQL
+    /// `add_tags_via_projection` emits, that it AND-joins per tag with
+    /// correct placeholder renumbering, and (via the shape-divergence
+    /// assertion) that the SQL never regresses to a `COUNT(DISTINCT)`
+    /// form.
     #[test]
     fn tags_via_projection_routes_and_documents_shape_cutover() {
         // Routed path (the production cutover) — two tags, ALL-semantics.
@@ -940,24 +937,20 @@ mod tests {
             matches!(routed.binds.first(), Some(ScalarBind::Str(s)) if s == "01TAG0000000000000000000A")
         );
 
-        // #1320 the legacy `add_tags_allCOUNT(DISTINCT)` fragment
-        // has been retired, so there is no live legacy builder to diff
-        // against. We still document the shape divergence intent: the routed
-        // path uses per-tag `IN`-subselects, NOT the former single
-        // `COUNT(DISTINCT bt.tag_id) = N` form (the two are result-equivalent,
-        // proved by the `tags_via_projection_matches_*` DB equivalence tests).
+        // No live legacy builder exists to diff against (#1320), so pin the
+        // shape directly: the routed path uses per-tag `IN`-subselects, NOT
+        // a single `COUNT(DISTINCT bt.tag_id) = N` form (the two are
+        // result-equivalent, proved by the
+        // `tags_via_projection_matches_*` DB equivalence tests).
         assert!(
             !routed.sql().contains("COUNT(DISTINCT"),
             "routed Tag is per-tag IN-subselects, not the legacy COUNT(DISTINCT) form"
         );
     }
 
-    // ── #properties-typed-always — search property is now TYPED ──────────
+    // ── #properties-typed-always — search property is TYPED ──────────────
     //
-    // These REPLACE the former `projection_has_property_diverges_from_legacy_
-    // kept_legacy` test. The legacy `prop:KEY=VALUE` four-column OR
-    // (`value_text`/`value_num`/`value_date`/`value_ref` matched at once) has
-    // been DELETED. The search property filter now compiles to the SAME typed
+    // The search property filter compiles to the SAME typed
     // single-column SQL as `SearchProjection::compile_has_property` — the
     // shared compiler every other surface (Pages browser, advanced query,
     // backlinks) already uses. Each snapshot proves
@@ -1251,8 +1244,7 @@ mod tests {
     #[test]
     fn space_inner_is_indent_independent() {
         // Both builders must produce the SAME sub-select body — only the
-        // leading prefix differs. (The pre-M2 `\`-continuation source
-        // strings collapsed inter-line indent to a single space.)
+        // leading prefix differs.
         let mut a = StructuralFilterBuilder::new(2);
         a.add_space(FTS_PREFIX, Some("s"));
         let mut b = StructuralFilterBuilder::new(2);

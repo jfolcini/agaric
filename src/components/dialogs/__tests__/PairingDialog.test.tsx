@@ -735,7 +735,7 @@ describe('PairingDialog', () => {
   })
 
   it('dialog body renders the DialogBody primitive so a tall dialog scrolls instead of clipping', async () => {
-    // pending/dialog-responsiveness-primitive-2026-05-13: DialogBody owns the
+    // DialogBody owns the
     // scrollable region (flex-1 min-h-0 + ScrollArea); the frame stays
     // overflow-hidden via the DialogContent base so header/footer remain pinned.
     mockedInvoke.mockImplementation(async (cmd: string) => {

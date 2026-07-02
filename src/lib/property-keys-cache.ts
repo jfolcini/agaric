@@ -5,8 +5,8 @@
  * Originally lived inside `src/hooks/usePropertyKeysCache.ts` but the
  * cache state (Map, in-flight promises, subscriber set, lazy listener
  * init) is plain JavaScript — only the React `useSyncExternalStore`
- * Binding required hook scope. surfaced a non-React
- * caller (`searchPropertyKeys` in `src/lib/slash-commands.ts`) that
+ * binding required hook scope. Meanwhile a non-React
+ * caller (`searchPropertyKeys` in `src/lib/slash-commands.ts`)
  * fired a fresh `list_property_keys` IPC on every keystroke, so the
  * primitives (`fetchPropertyKeysOnce`, `getCachedPropertyKeys`,
  * `subscribeToPropertyKeysCache`, `invalidatePropertyKeysCache`,

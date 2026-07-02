@@ -1,9 +1,21 @@
 //! Tauri command handlers for the Agaric app.
 //!
-//! Each command writes to both the op_log AND the blocks table directly.
-//! The materializer is used only for background cache work (tags, pages,
-//! agenda, block_links) via `dispatch_background()`. This avoids race
-//! conditions and double-writes.
+//! Write contract (post-#1257): inside a single `CommandTx`, each forward
+//! mutating command appends its op to the op_log (`append_local_op_in_tx`)
+//! and then projects it by driving the SHARED `apply_*_via_loro`
+//! engine-apply — the very same engine apply + SQL projection the
+//! boot-replay / sync `ApplyOp` path uses — rather than hand-rolling its
+//! own table writes. Exceptions that still write tables directly: the
+//! undo/redo/revert family (appends the reverse op, then projects it via
+//! `apply_reverse_in_tx`'s dedicated reverse SQL — `apply_op_tx` has no
+//! reverse semantics) and derived-column fix-ups (`block_cleanup`, e.g.
+//! `rederive_page_and_space_ids` run in-tx after a move/restore apply). No
+//! command path advances the apply cursor: the cursor stays put on the
+//! local path so boot replay re-applies each op idempotently (the recovery
+//! safety net). Cursor-advancing apply is owned exclusively by the
+//! materializer (sync / boot replay via `dispatch_op`). After commit, the
+//! command enqueues background cache work (tags, pages, agenda,
+//! block_links) which the materializer fans out via `dispatch_background()`.
 //!
 //! All commands return `Result<T, AppError>` — `AppError` already implements
 //! `Serialize` for Tauri 2 command error propagation.

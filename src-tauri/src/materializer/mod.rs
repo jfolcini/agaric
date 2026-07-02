@@ -62,7 +62,7 @@ use handlers::{handle_background_task, handle_foreground_task};
 // materializer module via `handlers::cleanup_orphaned_attachments`.
 #[cfg(test)]
 pub(crate) use handlers::cleanup_orphaned_attachments;
-// #2110 M6 — re-export the two process-global materializer counter accessors
+// Re-export the two process-global materializer counter accessors
 // so the OTel metrics pipeline (`observability::metrics`) can surface them as
 // observable counters WITHOUT reaching into the private `handlers` module or
 // touching the underlying statics directly. Each is a thin getter over a
@@ -95,8 +95,8 @@ pub enum MaterializeTask {
     /// `(block_id, tag_id)` edge, so only the affected tag's `usage_count`
     /// can change — neither its name nor the set of cached tags can move.
     /// Recomputing just this one row (via
-    /// [`crate::cache::refresh_tag_usage_count`]) replaces the former full
-    /// O(vault) `RebuildTagsCache` enqueue on every tag click.
+    /// [`crate::cache::refresh_tag_usage_count`]) avoids a full O(vault)
+    /// `RebuildTagsCache` enqueue on every tag click.
     RefreshTagUsageCount {
         tag_id: Arc<str>,
     },
@@ -106,10 +106,9 @@ pub enum MaterializeTask {
     /// (after `RebuildPagesCache` re-inserts the page rows), where the
     /// wipe leaves both count columns at DEFAULT 0. Ordinary per-op page
     /// mutations maintain these counts in-tx (sync `ApplyOp` and the local
-    /// command paths) and therefore do NOT enqueue this task — that is the
-    /// whole point of #417 (the count UPDATE used to run unconditionally on
-    /// every `RebuildPagesCache`, i.e. O(pages) correlated subqueries on
-    /// every page edit).
+    /// command paths) and therefore do NOT enqueue this task — running the
+    /// count UPDATE unconditionally would cost O(pages) correlated
+    /// subqueries on every page edit (#417).
     RebuildPagesCacheCounts,
     RebuildAgendaCache,
     ReindexBlockLinks {
@@ -145,7 +144,7 @@ pub enum MaterializeTask {
     /// delete / restore / purge and from `apply_snapshot` / boot-time
     /// "table is empty" fallback.
     RebuildBlockTagRefsCache,
-    /// SQL-review §H-2: full-vault recompute of `page_link_cache`
+    /// Full-vault recompute of `page_link_cache`
     /// (the page-level roll-up of `block_links`). Fires on delete /
     /// restore / purge and from `apply_snapshot` / boot-time "table
     /// is empty" fallback. Per-content-edit invalidation rolls up
@@ -178,12 +177,9 @@ pub(super) struct TagOpHint {
     pub(super) tag_id: String,
 }
 
-// (2026-04): the former `BlockIdHint` type was used by
-// `dispatch::enqueue_background_tasks` to deserialise just `block_id`
-// from `record.payload` for the edit/delete/restore/purge arms. Those
-// sites now read from the cached `OpRecord::block_id` sidecar
-// (populated at append-time / sync ingress) so the type became
-// completely unused and was deleted along with the dispatch parse.
-// `CreateBlockHint` survives because the `create_block` arm also needs
-// `block_type` (tag vs. page vs. content); caching that on `OpRecord`
-// Would be a larger sidecar than `block_id`-only scope.
+// `dispatch::enqueue_background_tasks` reads `block_id` for the
+// edit/delete/restore/purge arms straight from the cached
+// `OpRecord::block_id` sidecar (populated at append-time / sync ingress)
+// rather than re-parsing `record.payload`. `CreateBlockHint` still exists
+// because the `create_block` arm also needs `block_type` (tag vs. page vs.
+// content), which the sidecar doesn't carry.

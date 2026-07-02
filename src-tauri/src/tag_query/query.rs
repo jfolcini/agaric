@@ -305,9 +305,8 @@ async fn exact_match_normalized(
 /// List all tags whose name starts with `prefix`, ordered by name.
 ///
 /// `limit` must be in `[1, MAX_TAGS_PREFIX]` when supplied; a value
-/// outside that range surfaces as `AppError::Validation`
-/// (limit-clamp-followup Phase 1).  `None` falls through to
-/// `MAX_TAGS_PREFIX` as the default cap.
+/// outside that range surfaces as `AppError::Validation`. `None` falls
+/// through to `MAX_TAGS_PREFIX` as the default cap.
 pub async fn list_tags_by_prefix(
     pool: &SqlitePool,
     prefix: &str,
@@ -389,7 +388,7 @@ pub async fn list_tags_by_prefix(
 /// clamp.
 ///
 /// Tags are space-scoped: each tag block (`block_type = 'tag'`) carries
-/// its own `blocks.space_id` column (Phase 2, #533 — the previous
+/// its own `blocks.space_id` column (#533 — the earlier
 /// `block_properties(key = 'space')` row was retired in migration 0087;
 /// see `spaces::cross_space_validation` and the `add_tag` cross-space
 /// guard at `commands/tags.rs:116`). The space filter therefore selects
@@ -429,8 +428,8 @@ pub async fn list_all_tags_in_space(
 /// that need every tag (admin / migration paths) should query
 /// `block_tags` directly.
 ///
-/// #347 (R5): the cap used to be silent. We over-fetch by one row and
-/// `warn!` on actual truncation so an anomalous block surfaces in logs.
+/// The cap is not silent: we over-fetch by one row and `warn!` on actual
+/// truncation so an anomalous block surfaces in logs (#347).
 const BLOCK_TAG_CAP: usize = 1000;
 
 pub async fn list_tags_for_block(
@@ -989,8 +988,8 @@ mod tests {
     /// Helper: assign a tag block to a space via the denormalized
     /// `blocks.space_id` column (mirrors what the materializer writes).
     async fn assign_tag_to_space(pool: &SqlitePool, tag_id: &str, space_id: &str) {
-        // Phase 2 (#533): space membership is keyed on `blocks.space_id`, the
-        // sole source of truth. Set the column so `list_all_tags_in_space`
+        // Space membership is keyed on `blocks.space_id`, the sole source of
+        // truth (#533). Set the column so `list_all_tags_in_space`
         // (which filters on `block_type = 'tag' AND space_id = ?`) sees the tag.
         sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
             .bind(space_id)
@@ -1438,7 +1437,7 @@ mod tests {
         crate::tag_inheritance::rebuild_all(pool).await.unwrap();
 
         // Space-scoped blocks: assign a couple of result blocks into `space`
-        // so the space filter is non-trivial. Phase 2 (#533) — the projection
+        // so the space filter is non-trivial. The projection
         // filters on `b.space_id` directly (the sole source of truth; the
         // `block_properties(key='space')` row is no longer read), so set the
         // column on the result blocks. Give DBLK_A and BOTH_BLK a page_id

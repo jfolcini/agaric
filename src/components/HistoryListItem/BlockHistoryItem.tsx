@@ -21,9 +21,8 @@
  *                                        DEFAULT mode (the panel exists to
  *                                        support the restore decision).
  *
- * Extracted from the monolithic `HistoryListItem.tsx` per the Phase 3b
- * design-system-maintainability plan (`pending/design-system-maintainability-2026-05-09.md`).
- * The orchestrator (`HistoryListItem.tsx`) keeps re-exporting
+ * Extracted from the once-monolithic `HistoryListItem.tsx` into a sibling
+ * file. The orchestrator (`HistoryListItem.tsx`) keeps re-exporting
  * `BlockHistoryItem`, `BlockHistoryItemProps` and `BlockHistoryDiffMode`
  * so external consumers see no surface change.
  */

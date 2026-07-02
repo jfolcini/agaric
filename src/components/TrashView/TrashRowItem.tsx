@@ -5,7 +5,7 @@
  * deletion timestamp + breadcrumb, and the inline restore/purge
  * action buttons. Stays pure-presentational: all state and handlers
  * are passed in from the orchestrator. Sibling extracted from
- * TrashView.tsx for.
+ * TrashView.tsx to keep the orchestrator thin.
  */
 
 import { RotateCcw } from 'lucide-react'

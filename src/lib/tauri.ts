@@ -718,14 +718,13 @@ export interface ResolvedBlock {
  *
  * The wrapper keeps `spaceId` optional at the TypeScript boundary so
  * legacy cross-space callers (TrashView breadcrumbs, SearchPanel
- * results, agenda panels, dependency chips) compile unchanged; in the
- * generated `bindings.ts` `space_id` is required, so leaving it
- * `undefined` passes JSON `null` to the backend, which rejects at
- * runtime. The intent is to migrate every call site to pass the
- * active `currentSpaceId` (or an explicit override for genuinely
- * cross-space surfaces like the trash) before the backend tightens
- * `Option<String>` → `String`. Mirrors the optional `spaceId` shape
- * used by `listBlocks` / `searchBlocks`.
+ * results, agenda panels, dependency chips) compile unchanged. Omitting
+ * it routes through `toSpaceScope(undefined)`, which yields
+ * `{ kind: 'global' }` — the backend then resolves across every space
+ * rather than rejecting. Pass the active `currentSpaceId` to scope
+ * resolution to one space; leave it undefined only on surfaces that
+ * genuinely want cross-space resolution (e.g. trash). Mirrors the
+ * optional `spaceId` shape used by `listBlocks` / `searchBlocks`.
  */
 export async function batchResolve(
   ids: string[],
@@ -852,7 +851,7 @@ export async function searchBlocks(
      * Restrict to a specific `blocks.block_type` (e.g. `'page'`).
      * The Cmd+K palette fires a page-only query in parallel with an
      * unrestricted blocks query so the FE only has to merge by `page_id`.
-     * `undefined` preserves the pre- "all block types" behaviour.
+     * `undefined` preserves the pre-existing "all block types" behaviour.
      * See `SearchFilter.block_type_filter`.
      */
     blockTypeFilter?: string | undefined
@@ -890,7 +889,7 @@ export async function searchBlocks(
    * swallowed silently by the caller. The underlying IPC is NOT
    * cancelled server-side (Tauri 2 limitation); this is a
    * stop-waiting primitive that lets a newer search drop the prior
-   * In-flight one. Omit for the pre- fire-and-forget shape.
+   * in-flight one. Omit for the pre-existing fire-and-forget shape.
    */
   signal?: AbortSignal,
 ): Promise<PageResponse<SearchBlockRow>> {

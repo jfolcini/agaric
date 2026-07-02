@@ -423,7 +423,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
     // (1) reserved-key + (2) dangling-value_ref + (3) exactly-one-value repair
     // for block_properties.
     let mut dropped_reserved_key = 0usize;
-    let mut nulled_value_ref = 0usize;
+    let mut dropped_dangling_value_ref = 0usize;
     let mut dropped_bad_value_count = 0usize;
     let repaired_block_properties: Vec<_> = data
         .tables
@@ -469,7 +469,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
             // whole row instead. Only value_ref rows are affected.
             match &bp.value_ref {
                 Some(target) if !known_block_ids.contains(target.as_str()) => {
-                    nulled_value_ref += 1;
+                    dropped_dangling_value_ref += 1;
                     false
                 }
                 _ => true,
@@ -484,9 +484,9 @@ pub async fn apply_snapshot<R: std::io::Read>(
              would otherwise abort the whole restore"
         );
     }
-    if nulled_value_ref > 0 {
+    if dropped_dangling_value_ref > 0 {
         tracing::warn!(
-            rows = nulled_value_ref,
+            rows = dropped_dangling_value_ref,
             "apply_snapshot: dropped block_properties rows whose value_ref \
              pointed at a block absent from the snapshot (#1567); the dangling \
              FK would otherwise abort the whole restore at COMMIT"
