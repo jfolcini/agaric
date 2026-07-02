@@ -122,7 +122,7 @@ pub(crate) async fn apply_create_block_via_loro(
         let siblings = engine.children_ordered_block_ids(parent)?;
         drop(guard);
         let snap = snap_opt.ok_or_else(|| {
-            AppError::Validation(format!(
+            AppError::validation(format!(
                 "apply_create_block_via_loro: engine read_block returned None \
                  immediately after apply_create_block for {}",
                 p.block_id.as_str()
@@ -197,7 +197,7 @@ pub(crate) async fn apply_edit_block_via_loro(
         let snap_opt = engine.read_block(p.block_id.as_str())?;
         drop(guard);
         snap_opt.ok_or_else(|| {
-            AppError::Validation(format!(
+            AppError::validation(format!(
                 "apply_edit_block_via_loro: engine read_block returned None for {} \
                  (the block must exist for an EditBlock op to make sense)",
                 p.block_id.as_str()
@@ -359,7 +359,7 @@ pub(crate) async fn apply_move_block_via_loro(
         }
         let snap_opt = engine.read_block(p.block_id.as_str())?;
         let snap = snap_opt.ok_or_else(|| {
-            AppError::Validation(format!(
+            AppError::validation(format!(
                 "apply_move_block_via_loro: engine read_block returned None for {} \
                  (a MoveBlock op presupposes the block exists)",
                 p.block_id.as_str()

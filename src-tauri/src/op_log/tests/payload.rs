@@ -205,7 +205,7 @@ async fn append_rejects_set_property_with_zero_values() {
     assert!(result.is_err(), "zero value fields should be rejected");
     let err = result.unwrap_err();
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "expected Validation error, got: {err:?}"
     );
 }

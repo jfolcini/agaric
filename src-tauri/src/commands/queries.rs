@@ -159,14 +159,14 @@ struct PreparedSearchFilter {
 /// BE-3 — marshal the shared filter fields once.
 ///
 /// Brace-expand and validate page-name globs in Rust so we
-///   surface `InvalidGlob:` typed errors at the IPC boundary.
+///   surface `InvalidGlob`-coded typed errors at the IPC boundary.
 /// Bundle the three toggle flags into a single value threaded
 ///   through the FTS / regex-mode pipelines. The default (all-off) value
 /// Reproduces the pre- FTS-only behaviour.
 /// Resolve state / priority / due / scheduled / property
 ///   metadata against today's date. Invalid dates / unknown bucket
 ///   keywords surface as `AppError::Validation` with the
-///   `InvalidDateFilter:` prefix the frontend keys on.
+///   structured `InvalidDateFilter` code the frontend keys on (#2251).
 fn prepare_search_filter(filter: &SearchFilter) -> Result<PreparedSearchFilter, AppError> {
     let include_globs = fts::glob_filter::prepare_globs(&filter.include_page_globs)?;
     let exclude_globs = fts::glob_filter::prepare_globs(&filter.exclude_page_globs)?;
@@ -236,7 +236,7 @@ pub async fn search_blocks_inner(
     // `search_blocks_partitioned_inner`.
     let max_results = fts::MAX_SEARCH_RESULTS;
     if page.limit > max_results {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "search limit must be in [1, {max_results}]; got {}",
             page.limit
         )));
@@ -314,7 +314,7 @@ pub async fn query_by_property_inner(
     exclude_todo_states: Option<Vec<String>>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     if key.trim().is_empty() {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "property key must not be empty".into(),
         ));
     }
@@ -393,7 +393,7 @@ pub async fn query_backlinks_filtered_inner(
     scope: &SpaceScope,
 ) -> Result<BacklinkQueryResponse, AppError> {
     if block_id.as_str().trim().is_empty() {
-        return Err(AppError::Validation("block_id must not be empty".into()));
+        return Err(AppError::validation("block_id must not be empty".into()));
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
     backlink::eval_backlink_query(
@@ -428,7 +428,7 @@ pub async fn list_backlinks_grouped_inner(
     scope: &SpaceScope,
 ) -> Result<GroupedBacklinkResponse, AppError> {
     if block_id.as_str().trim().is_empty() {
-        return Err(AppError::Validation("block_id must not be empty".into()));
+        return Err(AppError::validation("block_id must not be empty".into()));
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
     backlink::eval_backlink_query_grouped(
@@ -471,7 +471,7 @@ pub async fn list_unlinked_references_inner(
     scope: &SpaceScope,
 ) -> Result<GroupedBacklinkResponse, AppError> {
     if page_id.as_str().trim().is_empty() {
-        return Err(AppError::Validation("page_id must not be empty".into()));
+        return Err(AppError::validation("page_id must not be empty".into()));
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
     backlink::eval_unlinked_references(
@@ -724,7 +724,7 @@ pub async fn search_blocks_partitioned_inner(
     // unchanged — this returns the existing `AppError::Validation`.
     let max_results = u32::try_from(fts::MAX_SEARCH_RESULTS).unwrap_or(u32::MAX);
     if page_limit > max_results || block_limit > max_results {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "partitioned search limits must each be in [0, {max_results}]; \
              got page_limit={page_limit}, block_limit={block_limit}"
         )));
@@ -1108,7 +1108,7 @@ fn property_value_predicate_sql(
     let n_date = i32::from(pf.value_date.is_some());
     let n_range = i32::from(pf.value_date_range.is_some());
     if n_text + n_text_in + n_date + n_range > 1 {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "filtered_blocks_query: at most one of value_text, value_text_in, value_date, value_date_range may be supplied per filter".into(),
         ));
     }
@@ -1195,7 +1195,7 @@ pub async fn filtered_blocks_query_inner(
         .as_ref()
         .is_some_and(|t| !t.tag_ids.is_empty() || !t.prefixes.is_empty());
     if property_filters.is_empty() && !has_tag_filter && block_type.is_none() {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "filtered_blocks_query: at least one of property_filters / tag_filters / block_type must be supplied".into(),
         ));
     }
@@ -1236,7 +1236,7 @@ pub async fn filtered_blocks_query_inner(
     // structural conjunction of the EXISTS clauses.
     for pf in &property_filters {
         if pf.key.trim().is_empty() {
-            return Err(AppError::Validation(
+            return Err(AppError::validation(
                 "filtered_blocks_query: property filter key must not be empty".into(),
             ));
         }
@@ -1251,7 +1251,7 @@ pub async fn filtered_blocks_query_inner(
                 "due_date" => Some("due_date"),
                 "scheduled_date" => Some("scheduled_date"),
                 _ => {
-                    return Err(AppError::Validation(format!(
+                    return Err(AppError::validation(format!(
                         "filtered_blocks_query: reserved key '{}' has no column routing",
                         pf.key
                     )));
@@ -1271,7 +1271,7 @@ pub async fn filtered_blocks_query_inner(
             let n_date = i32::from(pf.value_date.is_some());
             let n_range = i32::from(pf.value_date_range.is_some());
             if n_text + n_text_in + n_date + n_range > 1 {
-                return Err(AppError::Validation(
+                return Err(AppError::validation(
                     "filtered_blocks_query: at most one of value_text, value_text_in, value_date, value_date_range may be supplied per filter".into(),
                 ));
             }

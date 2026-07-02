@@ -35,10 +35,10 @@ pub async fn list_trash(
     let (cursor_flag, cursor_del, cursor_id): (Option<i64>, i64, &str) = match page.after.as_ref() {
         Some(c) => {
             let del_str = c.deleted_at.as_deref().ok_or_else(|| {
-                AppError::Validation("cursor missing deleted_at for trash query".into())
+                AppError::validation("cursor missing deleted_at for trash query".into())
             })?;
             let del = del_str.parse::<i64>().map_err(|e| {
-                AppError::Validation(format!("cursor deleted_at not an integer: {e}"))
+                AppError::validation(format!("cursor deleted_at not an integer: {e}"))
             })?;
             (Some(1), del, &c.id)
         }

@@ -216,7 +216,7 @@ pub(crate) async fn handle_foreground_task(
                 ?task,
                 "unexpected task in foreground queue — misrouted dispatch"
             );
-            Err(AppError::Validation(format!(
+            Err(AppError::validation(format!(
                 "unexpected task in foreground queue: {task:?}"
             )))
         }
@@ -470,7 +470,7 @@ pub(crate) async fn handle_background_task(
                 seq = record.seq,
                 "unexpected ApplyOp in background queue — misrouted dispatch"
             );
-            Err(AppError::Validation(format!(
+            Err(AppError::validation(format!(
                 "unexpected ApplyOp in background queue: device_id={}, seq={}, op_type={}",
                 record.device_id, record.seq, record.op_type
             )))
@@ -484,7 +484,7 @@ pub(crate) async fn handle_background_task(
                     batch_size = records.len(),
                     "unexpected BatchApplyOps in background queue — misrouted dispatch"
                 );
-                Err(AppError::Validation(format!(
+                Err(AppError::validation(format!(
                     "unexpected BatchApplyOps in background queue: device_id={}, seq={}, batch_size={}",
                     first.device_id,
                     first.seq,
@@ -494,7 +494,7 @@ pub(crate) async fn handle_background_task(
                 tracing::error!(
                     "unexpected empty BatchApplyOps in background queue — misrouted dispatch"
                 );
-                Err(AppError::Validation(
+                Err(AppError::validation(
                     "unexpected empty BatchApplyOps in background queue".into(),
                 ))
             }

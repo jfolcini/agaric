@@ -124,11 +124,11 @@ where
     let server = adapter
         .serve(stream)
         .await
-        .map_err(|e| AppError::Validation(format!("rmcp serve handshake: {e}")))?;
+        .map_err(|e| AppError::validation(format!("rmcp serve handshake: {e}")))?;
     server
         .waiting()
         .await
-        .map_err(|e| AppError::Validation(format!("rmcp serve loop: {e}")))?;
+        .map_err(|e| AppError::validation(format!("rmcp serve loop: {e}")))?;
     Ok(())
 }
 

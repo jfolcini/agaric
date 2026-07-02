@@ -1335,15 +1335,48 @@ name: AggregateColumn } |
 key: string };
 
 /**
- *  Helper struct matching the `{ kind, message }` JSON shape that [`AppError`]
- *  serialises to.  Used solely so specta can derive the TypeScript type for
- *  `AppError` — the real serialisation is still handled by the manual
- *  `Serialize` impl below.
+ *  Helper struct matching the `{ kind, message, code? }` JSON shape that
+ *  [`AppError`] serialises to.  Used solely so specta can derive the
+ *  TypeScript type for `AppError` — the real serialisation is still handled
+ *  by the manual `Serialize` impl below (which the
+ *  `schema_matches_manual_serialize_shape` test pins against this schema).
  */
 export type AppError = {
-	kind: string,
+	kind: AppErrorKind,
 	message: string,
+	/**
+	 *  Structured validation sub-kind (#2251). Present only on
+	 *  `kind: "validation"` errors that carry one; omitted entirely (never
+	 *  `null`) otherwise, so every non-coded error keeps the exact legacy
+	 *  `{ kind, message }` two-field envelope.
+	 */
+	code?: ValidationCode | null,
 };
+
+/**
+ *  The stable machine-readable `kind` discriminant [`AppError`] puts on the
+ *  IPC wire (#2251).
+ * 
+ *  One unit variant per [`AppError`] variant, serialised (serde
+ *  `snake_case`) to the **exact** strings the old hand-written
+ *  `match`-of-`&str` in the manual `Serialize` impl emitted — the
+ *  `wire_kind_strings_pinned_for_every_variant` test below pins every
+ *  variant byte-for-byte against that legacy table, so this is a pure
+ *  type-level promotion with zero wire drift.
+ * 
+ *  Because this enum derives `specta::Type` and is referenced by
+ *  [`AppErrorSchema`], the generated `bindings.ts` now carries
+ *  `kind: AppErrorKind` as a string-literal union instead of the old open
+ *  `kind: string` — the frontend's error discrimination
+ *  (`isCancellation` / `isPoolBusy` / …) type-checks against it, and the
+ *  previous hand-maintained mirror union in `src/lib/app-error.ts` is gone.
+ */
+export type AppErrorKind = "database" | "not_found" | 
+/**
+ *  [`AppError::PoolTimedOut`] — wire string `"pool_busy"` (kept from the
+ *  original frontend contract; deliberately NOT `pool_timed_out`).
+ */
+"pool_busy" | "conflict" | "migration" | "io" | "json" | "ulid" | "invalid_operation" | "channel" | "internal" | "snapshot" | "validation" | "non_reversible" | "cancelled";
 
 export type AttachmentRow = {
 	id: BlockId,
@@ -1586,7 +1619,7 @@ export type DateField =
  *    against `chrono::Local::today()` (or the cell-injected clock in
  *    tests). Vocabulary: `overdue`, `today`, `yesterday`, `this-week`,
  *    `this-month`, `next-week`, `older`, `none`. Unknown keywords are
- *    rejected as `Validation("InvalidDateFilter: …")`.
+ *    rejected as an `InvalidDateFilter`-coded validation error (#2251).
  *  - [`DateFilter::Op`] — explicit comparison operator (`<`, `<=`, `=`,
  *    `>=`, `>`) followed by an ISO `YYYY-MM-DD` date. The frontend
  *    parser accepts the same shape (`due:>=2026-01-01`).
@@ -1607,7 +1640,7 @@ export type DateFilter =
 	op: DateOp,
 	/**
 	 *  ISO `YYYY-MM-DD`. Calendar-validated at the SQL composition
-	 *  boundary; invalid dates yield `Validation("InvalidDateFilter:
+	 *  boundary; invalid dates yield `Validation` errors coded `InvalidDateFilter
 	 *  …")`.
 	 */
 	date: string,
@@ -2930,7 +2963,7 @@ export type SearchFilter = {
 	 *  **bypassed entirely** (FTS5 cannot accept a regex) and the
 	 *  candidate set comes from a recency-ordered scan of
 	 *  structurally-filtered blocks. Compile failures surface as
-	 *  [`AppError::Validation`] with an `InvalidRegex:` prefix.
+	 *  [`AppError::Validation`] with the structured `InvalidRegex` code.
 	 */
 	isRegex?: boolean,
 	/**
@@ -3572,6 +3605,40 @@ export type UndoResult = {
 	/**  Whether this was a redo (true) or undo (false). */
 	is_redo: boolean,
 };
+
+/**
+ *  Structured sub-kind for [`AppError::Validation`] (#1061, #2251).
+ * 
+ *  Historically these codes were packed into the `message` as a
+ *  `"<Code>: <reason>"` prefix, hand-formatted at every Rust emit site and
+ *  regex-parsed back out on the frontend
+ *  (`src/lib/search-query/validation-codes.ts`), with only tests keeping the
+ *  two ends aligned. They are now a real optional `code` field on the wire
+ *  envelope (`{ kind: "validation", message, code }`); the frontend
+ *  discriminates on `err.code` against the specta-generated string-literal
+ *  union, and the `message` carries only the human-readable reason.
+ * 
+ *  Variant names serialise as-is (serde default, PascalCase) — the exact
+ *  strings the old prefixes used, pinned by
+ *  `validation_code_wire_strings_pinned` below.
+ */
+export type ValidationCode = 
+/**  Invalid page-name glob filter (`fts::glob_filter`). */
+"InvalidGlob" | 
+/**  Invalid user-supplied regex (`fts::toggle_filter::build_regex`). */
+"InvalidRegex" | 
+/**  Invalid / unparseable date-filter bound (metadata, pages, backlink). */
+"InvalidDateFilter" | 
+/**
+ *  Filter primitive not allowed / not supported on the queried surface
+ *  (Pages metadata listing, advanced-query engine).
+ */
+"InvalidFilter" | 
+/**
+ *  Stale pagination cursor (format/sort mismatch) — the client should
+ *  retry once without a cursor (see `usePageBrowserData`).
+ */
+"RequiresRefresh";
 
 /**
  *  A single referenced sibling file carried over IPC for an attachment-aware

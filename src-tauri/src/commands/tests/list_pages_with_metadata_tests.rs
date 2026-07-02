@@ -749,9 +749,10 @@ async fn cursor_from_different_sort_mode_returns_requires_refresh() {
     )
     .await
     .expect_err("cursor sort-mode mismatch must reject");
-    assert!(
-        format!("{err}").contains("RequiresRefresh"),
-        "validation must carry RequiresRefresh prefix; got: {err}"
+    assert_eq!(
+        err.validation_code(),
+        Some(crate::error::ValidationCode::RequiresRefresh),
+        "validation must carry the RequiresRefresh code; got: {err:?}"
     );
 
     // Same cursor against the same sort it was issued for — must succeed.
@@ -786,9 +787,10 @@ async fn legacy_cursor_without_discriminator_returns_requires_refresh() {
     )
     .await
     .expect_err("legacy cursor without discriminator must reject");
-    assert!(
-        format!("{err}").contains("RequiresRefresh"),
-        "validation must carry RequiresRefresh prefix; got: {err}"
+    assert_eq!(
+        err.validation_code(),
+        Some(crate::error::ValidationCode::RequiresRefresh),
+        "validation must carry the RequiresRefresh code; got: {err:?}"
     );
 }
 
@@ -1796,9 +1798,10 @@ async fn filter_search_only_primitive_rejected_via_allowed_keys_gate() {
     )
     .await
     .expect_err("Search-only primitive must be rejected on the Pages surface");
-    assert!(
-        format!("{err}").contains("InvalidFilter"),
-        "rejection must carry the InvalidFilter prefix; got: {err}"
+    assert_eq!(
+        err.validation_code(),
+        Some(crate::error::ValidationCode::InvalidFilter),
+        "rejection must carry the InvalidFilter code; got: {err:?}"
     );
 }
 
@@ -2369,12 +2372,13 @@ async fn all_search_only_primitives_rejected_on_pages_surface() {
         );
         let err = result.unwrap_err();
         assert!(
-            matches!(err, crate::error::AppError::Validation(_)),
+            matches!(err, crate::error::AppError::Validation { .. }),
             "`{label}` rejection must be AppError::Validation; got: {err:?}"
         );
-        assert!(
-            format!("{err}").contains("InvalidFilter"),
-            "`{label}` rejection must carry the InvalidFilter prefix; got: {err}"
+        assert_eq!(
+            err.validation_code(),
+            Some(crate::error::ValidationCode::InvalidFilter),
+            "`{label}` rejection must carry the InvalidFilter code; got: {err:?}"
         );
     }
 }
@@ -2620,12 +2624,13 @@ async fn last_edited_range_rejects_malformed_and_empty_dates() {
     .await
     .expect_err("malformed range date must be rejected");
     assert!(
-        matches!(bad, crate::error::AppError::Validation(_)),
+        matches!(bad, crate::error::AppError::Validation { .. }),
         "malformed date must be AppError::Validation; got: {bad:?}"
     );
-    assert!(
-        format!("{bad}").contains("InvalidDateFilter:"),
-        "rejection must carry the InvalidDateFilter prefix; got: {bad}"
+    assert_eq!(
+        bad.validation_code(),
+        Some(crate::error::ValidationCode::InvalidDateFilter),
+        "rejection must carry the InvalidDateFilter code; got: {bad:?}"
     );
 
     // An empty bound must also be rejected.
@@ -2645,9 +2650,10 @@ async fn last_edited_range_rejects_malformed_and_empty_dates() {
     )
     .await
     .expect_err("empty range start must be rejected");
-    assert!(
-        format!("{empty}").contains("InvalidDateFilter:"),
-        "empty start must carry the InvalidDateFilter prefix; got: {empty}"
+    assert_eq!(
+        empty.validation_code(),
+        Some(crate::error::ValidationCode::InvalidDateFilter),
+        "empty start must carry the InvalidDateFilter code; got: {empty:?}"
     );
 }
 
@@ -2964,9 +2970,10 @@ async fn every_sort_mode_cursor_round_trips_and_rejects_cross_mode() {
                     .expect_err(&format!(
                         "{sort:?} cursor replayed against {other:?} must reject, not succeed"
                     ));
-            assert!(
-                format!("{err}").contains("RequiresRefresh"),
-                "{sort:?}→{other:?} mismatch must carry RequiresRefresh; got: {err}"
+            assert_eq!(
+                err.validation_code(),
+                Some(crate::error::ValidationCode::RequiresRefresh),
+                "{sort:?}→{other:?} mismatch must carry the RequiresRefresh code; got: {err:?}"
             );
         }
     }
@@ -3115,7 +3122,7 @@ async fn pages_path_glob_invalid_glob_returns_validation_error() {
     .await
     .expect_err("an unbalanced-bracket glob must be rejected");
     assert!(
-        matches!(bad, crate::error::AppError::Validation(_)),
+        matches!(bad, crate::error::AppError::Validation { .. }),
         "invalid glob must be AppError::Validation; got: {bad:?}"
     );
 }

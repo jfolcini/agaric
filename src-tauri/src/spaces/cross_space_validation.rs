@@ -144,7 +144,7 @@ pub async fn validate_content_cross_space_refs(
         if let Some(target_space) = target_spaces.get(target_str)
             && *target_space != source_space
         {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "cross-space reference: block '{}' (space {}) references '{}' (space {})",
                 source_block_id.as_str(),
                 source_space.as_str(),
@@ -197,7 +197,7 @@ pub async fn validate_ref_property_cross_space(
     if let Some(target_space) = target_space
         && target_space != source_space
     {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "cross-space ref property: '{}' target '{}' (space {}) differs from source '{}' (space {})",
             property_key,
             target_str,

@@ -3516,7 +3516,7 @@ async fn apply_snapshot_rejects_traversal_attachment_fs_path() {
 
     // Error is the Validation variant from sync_files.
     match err {
-        AppError::Validation(_) => {}
+        AppError::Validation { .. } => {}
         other => panic!("expected Validation error, got {other:?}"),
     }
 

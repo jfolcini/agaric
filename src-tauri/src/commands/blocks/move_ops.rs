@@ -160,7 +160,7 @@ async fn move_block_in_tx(
         // path's own (a user-driven move must surface the error, whereas the
         // sync-replay fallback no-op-warns — see the helper docstring).
         if crate::block_descendants::move_would_cycle(&mut ***tx, &block_id, pid).await? {
-            return Err(AppError::Validation("cycle detected".into()));
+            return Err(AppError::validation("cycle detected".into()));
         }
 
         // Depth check: count ancestors of the target parent (its depth from
@@ -208,7 +208,7 @@ async fn move_block_in_tx(
         let subtree_depth = depths.subtree_depth;
 
         if parent_depth + 1 + subtree_depth > MAX_BLOCK_DEPTH {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "maximum nesting depth of {MAX_BLOCK_DEPTH} exceeded"
             )));
         }
@@ -437,7 +437,7 @@ pub async fn move_blocks_batch_inner(
     new_index: i64,
 ) -> Result<Vec<MoveResponse>, AppError> {
     if block_ids.is_empty() {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "block_ids list cannot be empty".into(),
         ));
     }

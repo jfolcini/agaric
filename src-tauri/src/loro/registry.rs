@@ -409,7 +409,7 @@ impl LoroEngineRegistry {
                 let doc: LoroDoc = shared.lock().doc_handle();
                 let bytes = doc
                     .export(ExportMode::Snapshot)
-                    .map_err(|e| AppError::Validation(format!("loro: export snapshot: {e}")));
+                    .map_err(|e| AppError::validation(format!("loro: export snapshot: {e}")));
                 (space_id, bytes)
             })
             .collect()

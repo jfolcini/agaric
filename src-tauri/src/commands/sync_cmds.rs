@@ -119,7 +119,7 @@ pub async fn set_peer_address_inner(
 /// a non-zero `u16`.
 fn validate_host_port(address: &str) -> Result<(), AppError> {
     let invalid = || {
-        AppError::Validation(format!(
+        AppError::validation(format!(
             "invalid address: {address}. Expected host:port \
              (host may be an IP literal or hostname, e.g. mDNS `*.local`)"
         ))
@@ -229,14 +229,14 @@ pub async fn confirm_pairing_inner(
         let guard = lock_pairing_state(pairing_state)?;
         let session = guard
             .as_ref()
-            .ok_or_else(|| AppError::Validation("pairing.no_active_session".into()))?;
+            .ok_or_else(|| AppError::validation("pairing.no_active_session".into()))?;
         // #1603: a session that already burned through
         // `MAX_PASSPHRASE_ATTEMPTS` is dead — refuse before comparing so a
         // late-arriving guess can't slip in on the exhausted slot. The slot
         // is cleared on the failure path below, so in steady state we only
         // reach here with attempts remaining; this guards the racy retry.
         if session.attempts_exhausted() {
-            return Err(AppError::Validation("pairing.attempts_exhausted".into()));
+            return Err(AppError::validation("pairing.attempts_exhausted".into()));
         }
         session.passphrase.clone()
     };
@@ -262,7 +262,7 @@ pub async fn confirm_pairing_inner(
             let exhausted = session.record_failed_attempt();
             if exhausted {
                 *guard = None;
-                return Err(AppError::Validation("pairing.attempts_exhausted".into()));
+                return Err(AppError::validation("pairing.attempts_exhausted".into()));
             }
         }
         return Err(verify_err);
@@ -533,7 +533,7 @@ mod tests_m35 {
 
     fn assert_rejects(addr: &str) {
         match validate_host_port(addr) {
-            Err(AppError::Validation(msg)) => {
+            Err(AppError::Validation { message: msg, .. }) => {
                 assert!(
                     msg.contains("host:port"),
                     "validation error for `{addr}` should mention host:port, got: {msg}"
@@ -587,7 +587,7 @@ mod tests_m35 {
         // not the old "Expected host:port" wording that misled callers into
         // thinking only IP literals were allowed.
         let err = validate_host_port("host:abc").expect_err("host:abc must fail");
-        let AppError::Validation(msg) = err else {
+        let AppError::Validation { message: msg, .. } = err else {
             panic!("expected Validation error, got: {err:?}");
         };
         assert!(

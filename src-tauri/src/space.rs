@@ -106,7 +106,7 @@ impl SpaceId {
     pub fn validate_shape(&self) -> Result<(), AppError> {
         ulid::Ulid::from_str(&self.0)
             .map(|_| ())
-            .map_err(|e| AppError::Validation(format!("malformed space id '{}': {}", self.0, e)))
+            .map_err(|e| AppError::validation(format!("malformed space id '{}': {}", self.0, e)))
     }
 
     /// Get the inner string reference.
@@ -496,7 +496,7 @@ mod tests {
         let err = id
             .validate_shape()
             .expect_err("malformed space id must reject");
-        assert!(matches!(err, AppError::Validation(_)));
+        assert!(matches!(err, AppError::Validation { .. }));
     }
 
     #[test]
@@ -516,7 +516,7 @@ mod tests {
         let err = scope
             .validate()
             .expect_err("malformed active scope must reject");
-        assert!(matches!(err, AppError::Validation(_)));
+        assert!(matches!(err, AppError::Validation { .. }));
     }
 
     #[test]

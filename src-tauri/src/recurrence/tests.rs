@@ -517,7 +517,7 @@ fn shift_date_rejects_malformed_intervals() {
 //   surfaced this as `Ok(None)`, which the compute caller treated as
 //   "no recurrence requested" and created a sibling with no due date.
 //
-// Both now return `Err(AppError::Validation(...))`. The boundary case
+// Both now return `Err(AppError::validation(...))`. The boundary case
 // (origin a few days back, well under the cap) confirms we did not
 // accidentally tighten the cap or break the success path.
 // `handle_recurrence_in_tx` propagation lives in the async section

@@ -226,8 +226,9 @@ export function ensureRegistered(): void {
  *   `>=2026-01-01`, `>2026-01-01`
  *
  * Validation is strict: an unknown bucket keyword or an unparseable
- * date yields an `invalid` chip with an `InvalidDateFilter:` error
- * the frontend keys on (mirrors `InvalidGlob:` / `InvalidRegex:`).
+ * date yields an `invalid` chip whose error text carries the shared
+ * `InvalidDateFilter: ` display label (mirrors `InvalidGlob` / `InvalidRegex`;
+ * display copy only since #2251 — IPC errors carry a structured code).
  */
 function parseDateToken(
   value: string,

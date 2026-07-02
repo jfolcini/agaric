@@ -814,7 +814,7 @@ fn validate_limit(tool: &str, limit: Option<i64>, cap: i64) -> Result<Option<i64
     if let Some(l) = limit
         && !(1..=cap).contains(&l)
     {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "{tool}: limit must be in [1, {cap}], got {l}"
         )));
     }
@@ -857,7 +857,7 @@ fn validate_search_term_budget(args: &SearchArgs) -> Result<(), AppError> {
                 + f.excluded_property_filters.len()
         });
     if total > SEARCH_FILTER_TERMS_CAP {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "{TOOL_SEARCH}: too many filter terms — tag_ids plus filter vectors total {total}, \
              max {SEARCH_FILTER_TERMS_CAP} (SQLite bind-parameter limit)"
         )));
@@ -880,14 +880,14 @@ fn validate_search_term_budget(args: &SearchArgs) -> Result<(), AppError> {
     let mut check = |dimension: &str, s: &str| -> Result<(), AppError> {
         let len = s.len();
         if len > SEARCH_TERM_BYTES_CAP {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "{TOOL_SEARCH}: {dimension} length {len} bytes exceeds maximum \
                  {SEARCH_TERM_BYTES_CAP} bytes per term"
             )));
         }
         aggregate += len;
         if aggregate > SEARCH_TERM_TOTAL_BYTES_CAP {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "{TOOL_SEARCH}: combined search-term length exceeds maximum \
                  {SEARCH_TERM_TOTAL_BYTES_CAP} bytes across all terms"
             )));
@@ -1104,7 +1104,7 @@ async fn handle_journal_for_date(
 ) -> Result<Value, AppError> {
     let args: JournalForDateArgs = parse_args(TOOL_JOURNAL_FOR_DATE, args)?;
     let date = chrono::NaiveDate::parse_from_str(&args.date, "%Y-%m-%d").map_err(|e| {
-        AppError::Validation(format!(
+        AppError::validation(format!(
             "tool `{TOOL_JOURNAL_FOR_DATE}`: `date` must be YYYY-MM-DD — {e}"
         ))
     })?;

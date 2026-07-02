@@ -4,7 +4,7 @@
  * Owns the IPC query lifecycle and everything derived from it:
  *
  *  - `queryFn` (identity-stable per (space, sort, filters) tuple) with
- *    the v2-cursor recovery wrapper and the `InvalidFilter:` toast path.
+ *    the v2-cursor recovery wrapper and the `InvalidFilter` toast path.
  *  - `usePaginatedQuery` wiring (pages / loading / hasMore / loadMore /
  *    reload / setPages / totalCount).
  * The locally-retained `displayTotalCount` (+ D20): adopts
@@ -25,7 +25,8 @@ import { PAGINATION_LIMIT } from '@/lib/constants'
 import { t as i18nT } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
 
-import { isAppError, type TypedAppError } from '../lib/app-error'
+import { isAppError, type TypedAppError, validationCode } from '../lib/app-error'
+import { ValidationCode } from '../lib/search-query/validation-codes'
 import type { BlockRow, FilterPrimitive, PageWithMetadataRow } from '../lib/tauri'
 import { listPagesWithMetadata } from '../lib/tauri'
 import { pageSortWireFor, type SortOption } from './usePageBrowserSort'
@@ -34,13 +35,13 @@ import { usePaginatedQuery } from './usePaginatedQuery'
 
 /**
  * Phase 3 — wrap a paginating IPC call so that a v2 cursor
- * rejection (`AppError::Validation` with the `RequiresRefresh:` prefix)
- * automatically retries once with no cursor. The cursor format bumped
- * from v1 → v2 alongside the new sort modes, so a session that started
- * before the new build emitted a stale cursor will round-trip safely
- * on the next page load. If the cursorless retry also fails, the
- * original error propagates and `usePaginatedQuery`'s `onError` toast
- * fires (existing behaviour).
+ * rejection (`AppError::Validation` carrying the structured
+ * `RequiresRefresh` code, #2251) automatically retries once with no
+ * cursor. The cursor format bumped from v1 → v2 alongside the new sort
+ * modes, so a session that started before the new build emitted a stale
+ * cursor will round-trip safely on the next page load. If the cursorless
+ * retry also fails, the original error propagates and
+ * `usePaginatedQuery`'s `onError` toast fires (existing behaviour).
  */
 async function withCursorRecovery<T>(
   call: (cursor?: string) => Promise<T>,
@@ -49,12 +50,7 @@ async function withCursorRecovery<T>(
   try {
     return await call(cursor)
   } catch (err) {
-    if (
-      cursor != null &&
-      isAppError(err) &&
-      err.kind === 'validation' &&
-      err.message.startsWith('RequiresRefresh:')
-    ) {
+    if (cursor != null && validationCode(err) === ValidationCode.RequiresRefresh) {
       return call(undefined)
     }
     throw err
@@ -63,18 +59,15 @@ async function withCursorRecovery<T>(
 
 /**
  * E18 — the backend can reject a malformed / disallowed compound filter
- * with `AppError::Validation("InvalidFilter: …")` (mirroring the existing
- * `RequiresRefresh:` / `InvalidDateFilter:` prefixes). Without explicit
- * recognition this falls through to the generic
+ * with an `InvalidFilter`-coded validation error (#2251 — a structured
+ * `code` field, formerly an `InvalidFilter:` message prefix). Without
+ * explicit recognition this falls through to the generic
  * `t('pageBrowser.loadFailed')` toast, which misleads the user into
  * thinking the list itself failed to load rather than that a filter chip
- * is invalid. Detect the prefix here.
+ * is invalid.
  */
-const INVALID_FILTER_PREFIX = 'InvalidFilter:'
 function isInvalidFilterError(err: unknown): err is TypedAppError {
-  return (
-    isAppError(err) && err.kind === 'validation' && err.message.startsWith(INVALID_FILTER_PREFIX)
-  )
+  return isAppError(err) && validationCode(err) === ValidationCode.InvalidFilter
 }
 
 interface UsePageBrowserDataParams {
@@ -143,8 +136,8 @@ export function usePageBrowserData({
           }),
         cursor,
       ).catch((err: unknown) => {
-        // E18 — a malformed/disallowed compound filter rejects with
-        // `InvalidFilter:`. Surface a specific toast (the offending
+        // E18 — a malformed/disallowed compound filter rejects with an
+        // `InvalidFilter`-coded error. Surface a specific toast (the offending
         // filter, not the list, is the problem) and re-throw a
         // cancellation-shaped error so `usePaginatedQuery` swallows it
         // silently instead of also firing the generic `loadFailed`

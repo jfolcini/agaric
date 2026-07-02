@@ -284,11 +284,12 @@ async fn brace_nesting_returns_validation_error() {
     )
     .await;
     let err = result.unwrap_err();
-    let msg = format!("{err:?}");
-    assert!(
-        msg.contains("InvalidGlob") && msg.contains("brace nesting"),
-        "got {msg}"
+    assert_eq!(
+        err.validation_code(),
+        Some(crate::error::ValidationCode::InvalidGlob),
+        "got {err:?}"
     );
+    assert!(format!("{err}").contains("brace nesting"), "got {err}");
 }
 
 #[tokio::test]
@@ -308,11 +309,12 @@ async fn unbalanced_bracket_returns_validation_error() {
     )
     .await;
     let err = result.unwrap_err();
-    let msg = format!("{err:?}");
-    assert!(
-        msg.contains("InvalidGlob") && msg.contains("unbalanced bracket"),
-        "got {msg}"
+    assert_eq!(
+        err.validation_code(),
+        Some(crate::error::ValidationCode::InvalidGlob),
+        "got {err:?}"
     );
+    assert!(format!("{err}").contains("unbalanced bracket"), "got {err}");
 }
 
 #[tokio::test]

@@ -750,7 +750,7 @@ async fn test_list_blocks_rejects_invalid_date() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "short date must return Validation error, got: {result:?}"
     );
 
@@ -770,7 +770,7 @@ async fn test_list_blocks_rejects_invalid_date() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "non-digit date must return Validation error, got: {result:?}"
     );
 
@@ -790,7 +790,7 @@ async fn test_list_blocks_rejects_invalid_date() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "month=13 must return Validation error, got: {result:?}"
     );
 
@@ -810,7 +810,7 @@ async fn test_list_blocks_rejects_invalid_date() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "day=00 must return Validation error, got: {result:?}"
     );
 
@@ -830,7 +830,7 @@ async fn test_list_blocks_rejects_invalid_date() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "day=32 must return Validation error, got: {result:?}"
     );
 
@@ -850,7 +850,7 @@ async fn test_list_blocks_rejects_invalid_date() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "'not-a-date' must return Validation error, got: {result:?}"
     );
 
@@ -870,7 +870,7 @@ async fn test_list_blocks_rejects_invalid_date() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "slash-separated date must return Validation error, got: {result:?}"
     );
 }

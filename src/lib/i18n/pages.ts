@@ -401,7 +401,7 @@ export const pages: Record<string, string> = {
   // message (a per-chip `.find()` would announce only the first removed).
   'pageBrowser.filter.announceCleared': 'Cleared all filters.',
   // The backend rejects a malformed/disallowed compound
-  // filter with `Validation("InvalidFilter: …")`; surface a specific
+  // filter with an `InvalidFilter`-coded validation error; surface a specific
   // toast instead of the generic "Failed to load pages".
   'pageBrowser.filter.invalidFilter': 'That filter is invalid and was not applied.',
   // Tightened so Orphan and "No inbound links" read as clearly

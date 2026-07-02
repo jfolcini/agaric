@@ -14,7 +14,7 @@
 //! - `whole_word` on — `cat` matches `cat ran` but not `category`.
 //! - `is_regex` on — `^TODO` matches blocks starting with `TODO`. FTS
 //!   MATCH is **not** called on this path.
-//! - Regex compile error → `AppError::Validation` with `InvalidRegex:`
+//! - Regex compile error → `AppError::Validation` coded `InvalidRegex`
 //!   prefix.
 //! - Empty query + `is_regex` true → no-op (returns empty without
 //!   firing the regex pipeline).
@@ -285,9 +285,10 @@ async fn regex_compile_error_surfaces_typed_validation() {
     .await
     .expect_err("invalid regex must surface AppError::Validation");
     match err {
-        AppError::Validation(msg) => assert!(
-            msg.starts_with("InvalidRegex:"),
-            "expected InvalidRegex prefix; got: {msg}"
+        AppError::Validation { code, .. } => assert_eq!(
+            code,
+            Some(crate::error::ValidationCode::InvalidRegex),
+            "expected InvalidRegex code"
         ),
         other => panic!("expected Validation, got {other:?}"),
     }

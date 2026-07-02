@@ -435,7 +435,7 @@ pub async fn verify_active_in_tx(
     let row = row.ok_or_else(|| AppError::NotFound(format!("block '{id_str}' does not exist")))?;
 
     if row.deleted_at.is_some() {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "block '{id_str}' has been soft-deleted"
         )));
     }

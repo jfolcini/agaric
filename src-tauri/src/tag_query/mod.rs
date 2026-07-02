@@ -70,7 +70,7 @@ impl TagExpr {
 
     fn check_depth(&self, depth: usize) -> Result<(), crate::error::AppError> {
         if depth > Self::MAX_DEPTH {
-            return Err(crate::error::AppError::Validation(format!(
+            return Err(crate::error::AppError::validation(format!(
                 "Tag query nesting depth exceeds {}",
                 Self::MAX_DEPTH
             )));

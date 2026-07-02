@@ -563,7 +563,7 @@ mod tests {
             last_run: None,
             predicate: dummy_predicate_true(),
             run: Box::new(|| {
-                Box::pin(async { Err(AppError::Validation("simulated job failure".into())) })
+                Box::pin(async { Err(AppError::validation("simulated job failure".into())) })
             }),
         };
         let mut jobs = vec![job];

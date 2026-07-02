@@ -132,7 +132,7 @@ async fn pages_path_glob_conformance_matching() {
     }
 }
 
-/// Every invalid pattern must make the query fail with an `InvalidGlob:`
+/// Every invalid pattern must make the query fail with an `InvalidGlob`-coded
 /// validation error (the contract the mock mirrors by dropping all rows).
 #[tokio::test]
 async fn pages_path_glob_conformance_rejects_invalid() {
@@ -149,10 +149,10 @@ async fn pages_path_glob_conformance_rejects_invalid() {
                     "invalid pattern `{}` ({}) must be rejected",
                     bad.pattern, bad.name
                 ));
-        let dbg = format!("{err:?}");
-        assert!(
-            dbg.contains("InvalidGlob"),
-            "invalid pattern `{}` ({}) must surface the InvalidGlob prefix; got {dbg}",
+        assert_eq!(
+            err.validation_code(),
+            Some(crate::error::ValidationCode::InvalidGlob),
+            "invalid pattern `{}` ({}) must carry the InvalidGlob code; got {err:?}",
             bad.pattern,
             bad.name
         );

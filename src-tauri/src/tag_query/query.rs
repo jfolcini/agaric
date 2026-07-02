@@ -316,7 +316,7 @@ pub async fn list_tags_by_prefix(
     let effective_limit = match limit {
         Some(l) if (1..=MAX_TAGS_PREFIX).contains(&l) => l,
         Some(l) => {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "list_tags_by_prefix limit must be in [1, {MAX_TAGS_PREFIX}]; got {l}. \
                  Tag listings are typeahead-style — clamp your input to a sensible \
                  upper bound."
@@ -559,7 +559,7 @@ mod tests {
             .validate_depth()
             .unwrap_err();
         assert!(
-            matches!(err, AppError::Validation(_)),
+            matches!(err, AppError::Validation { .. }),
             "over-limit TagExpr must be rejected with AppError::Validation, got {err:?}"
         );
         assert!(
@@ -576,7 +576,7 @@ mod tests {
         let page = PageRequest::new(None, Some(10)).unwrap();
         let result = eval_tag_query(&pool, &expr, &page, false, None, None).await;
         assert!(
-            matches!(result, Err(AppError::Validation(_))),
+            matches!(result, Err(AppError::Validation { .. })),
             "over-depth tag query must be rejected before resolution, got {result:?}"
         );
     }

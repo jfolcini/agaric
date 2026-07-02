@@ -536,7 +536,7 @@ async fn list_page_aliases_by_prefix_inner_rejects_out_of_range_limit_r1() {
     // Zero is below the [1, MAX] range.
     let zero = list_page_aliases_by_prefix_inner(&pool, "r1-", Some(0), &SpaceScope::Global).await;
     assert!(
-        matches!(zero, Err(crate::error::AppError::Validation(_))),
+        matches!(zero, Err(crate::error::AppError::Validation { .. })),
         "limit=0 must be rejected as Validation, got {zero:?}"
     );
 
@@ -544,7 +544,7 @@ async fn list_page_aliases_by_prefix_inner_rejects_out_of_range_limit_r1() {
     let huge =
         list_page_aliases_by_prefix_inner(&pool, "r1-", Some(10_000), &SpaceScope::Global).await;
     assert!(
-        matches!(huge, Err(crate::error::AppError::Validation(_))),
+        matches!(huge, Err(crate::error::AppError::Validation { .. })),
         "limit=10000 must be rejected as Validation, got {huge:?}"
     );
 
@@ -1726,7 +1726,7 @@ async fn export_page_markdown_inner_with_nonexistent_id_returns_not_found() {
 /// Pin the variant when the supplied id refers to a
 /// non-page block (e.g. a `content` row).  The production code's
 /// explicit `if page.block_type != "page"` branch returns
-/// `AppError::Validation("not a page".into())`; pinning the variant
+/// `AppError::validation("not a page".into())`; pinning the variant
 /// guards against a refactor that drops or reshapes that guard (for
 /// instance, a future signature that relaxes the page-only contract
 /// would surface as a passing `Ok(_)` here, not a silent regression).
@@ -1749,7 +1749,7 @@ async fn export_page_markdown_inner_with_non_page_block_returns_validation() {
     let result = export_page_markdown_inner(&pool, "01C0NTENTBKK00000000000001").await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "non-page block id must return AppError::Validation, got: {result:?}"
     );
 }
@@ -2828,7 +2828,7 @@ async fn import_markdown_rejects_invalid_space() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "unknown space_id must yield AppError::Validation, got {result:?}"
     );
 
@@ -4421,7 +4421,7 @@ async fn list_all_pages_in_space_tag_filter_or_mode() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_all_pages_in_space_rejects_oversized_tag_filter() {
     // #1325: a `tag_ids` array longer than MAX_FILTER_TAG_IDS must be
-    // rejected up-front with AppError::Validation("tag_ids.too_many")
+    // rejected up-front with AppError::validation("tag_ids.too_many")
     // BEFORE any SQL placeholder / bind is built — otherwise the dynamic
     // `IN (?, ?, …)` clause scales 1:1 with caller input and trips SQLite's
     // parameter limit (a cheap DoS). The empty space here means a DB-reaching
@@ -4436,8 +4436,8 @@ async fn list_all_pages_in_space_rejects_oversized_tag_filter() {
         .await
         .expect_err("oversized tag_ids filter must be rejected");
     assert!(
-        matches!(&err, AppError::Validation(msg) if msg == "tag_ids.too_many"),
-        "expected AppError::Validation(\"tag_ids.too_many\"), got {err:?}"
+        matches!(&err, AppError::Validation { message: msg, .. } if msg == "tag_ids.too_many"),
+        "expected AppError::validation(\"tag_ids.too_many\"), got {err:?}"
     );
 }
 
@@ -4692,7 +4692,7 @@ async fn load_page_subtree_rejects_foreign_space() {
         .await
         .expect_err("foreign-space request must error");
     match err {
-        AppError::Validation(msg) => assert!(
+        AppError::Validation { message: msg, .. } => assert!(
             msg.contains("not in current space"),
             "validation message should explain space mismatch; got: {msg}",
         ),

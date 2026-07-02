@@ -90,7 +90,7 @@ impl FilterExpr {
 
     fn check_depth(&self, depth: usize) -> Result<(), AppError> {
         if depth > Self::MAX_DEPTH {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "Filter nesting depth exceeds {}",
                 Self::MAX_DEPTH
             )));
@@ -341,7 +341,7 @@ mod tests {
             .validate_depth()
             .unwrap_err();
         match err {
-            AppError::Validation(msg) => {
+            AppError::Validation { message: msg, .. } => {
                 assert!(msg.contains("exceeds 50"), "unexpected message: {msg}");
             }
             other => panic!("expected AppError::Validation, got {other:?}"),

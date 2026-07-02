@@ -13,7 +13,7 @@ use tauri::State;
 
 use crate::db::ReadPool;
 use crate::error::AppError;
-use crate::error::validation_code::{INVALID_DATE_FILTER, prefixed};
+use crate::error::ValidationCode;
 use crate::filters::{FilterPrimitive, PagesProjection, Projection, WhereClause};
 use crate::pagination::{Cursor, PageRequest, PageResponse};
 use crate::ulid::{BlockId, PageId};
@@ -198,15 +198,16 @@ pub(crate) fn sort_discriminator(sort: PageSort) -> i64 {
 }
 
 /// Reject a cursor whose `position` slot doesn't match the requested
-/// sort. Returns `AppError::Validation` with the `RequiresRefresh:`
-/// prefix the frontend uses to render a "Sort changed — refresh to
-/// Continue" toast (acceptance criterion #3).
+/// sort. Returns `AppError::Validation` with the structured
+/// `ValidationCode::RequiresRefresh` code the frontend uses to retry once
+/// without a cursor (acceptance criterion #3).
 fn validate_pages_metadata_cursor(cursor: &Cursor, sort: PageSort) -> Result<(), AppError> {
     match cursor.position {
         Some(d) if d == sort_discriminator(sort) => Ok(()),
-        Some(_) | None => Err(AppError::Validation(format!(
-            "RequiresRefresh: cursor sort mismatch (expected {sort:?})"
-        ))),
+        Some(_) | None => Err(AppError::validation_coded(
+            ValidationCode::RequiresRefresh,
+            format!("cursor sort mismatch (expected {sort:?})"),
+        )),
     }
 }
 
@@ -511,7 +512,7 @@ impl SortKeyset {
 
 /// Validate a `LastEditedRange` date bound, matching the
 /// legacy Search date contract (`fts::metadata_filter::resolve_date_filter`,
-/// `InvalidDateFilter:` prefix the frontend keys on).
+/// structured `InvalidDateFilter` code the frontend keys on, #2251).
 ///
 /// Pages compares the bound string against `op_log.created_at` (full ISO
 /// timestamps), so we accept either a bare calendar date (`YYYY-MM-DD`) OR
@@ -521,10 +522,10 @@ impl SortKeyset {
 /// results (the bug D15 closes).
 fn validate_last_edited_date(label: &str, value: &str) -> Result<(), AppError> {
     if value.trim().is_empty() {
-        return Err(AppError::Validation(prefixed(
-            INVALID_DATE_FILTER,
-            &format!("{label} must not be empty"),
-        )));
+        return Err(AppError::validation_coded(
+            ValidationCode::InvalidDateFilter,
+            format!("{label} must not be empty"),
+        ));
     }
     // Accept a bare calendar date first, then a full RFC 3339 timestamp.
     if chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d").is_ok()
@@ -532,10 +533,10 @@ fn validate_last_edited_date(label: &str, value: &str) -> Result<(), AppError> {
     {
         return Ok(());
     }
-    Err(AppError::Validation(prefixed(
-        INVALID_DATE_FILTER,
-        &format!("{label} expected YYYY-MM-DD or RFC 3339, got '{value}'"),
-    )))
+    Err(AppError::validation_coded(
+        ValidationCode::InvalidDateFilter,
+        format!("{label} expected YYYY-MM-DD or RFC 3339, got '{value}'"),
+    ))
 }
 
 /// Phase 3 — compile the compound-filter primitives for the Pages
@@ -550,10 +551,10 @@ fn validate_last_edited_date(label: &str, value: &str) -> Result<(), AppError> {
 ///
 /// 1. **Allowed-keys gate** — reject any primitive whose token is not in
 ///    [`PagesProjection::allowed_keys`] with [`AppError::Validation`]
-///    (`InvalidFilter:` prefix). Defence-in-depth: the frontend never
+///    (`ValidationCode::InvalidFilter`). Defence-in-depth: the frontend never
 ///    sends Search-only primitives, but the backend must not trust that.
 /// 2. **Date validation** — `LastEdited::Range` bounds are
-///    validated against the legacy Search date contract (`InvalidDateFilter:`
+///    validated against the legacy Search date contract (`InvalidDateFilter`
 ///    prefix); empty or malformed dates are rejected here rather than
 ///    silently returning zero rows.
 /// 3. **Cost-order** — sort by [`FilterPrimitive::cost_hint`] (stable, so
@@ -581,15 +582,16 @@ fn compile_pages_filters(
     for prim in filters {
         let key = prim.allowed_key();
         if !allowed.contains(key) {
-            return Err(AppError::Validation(format!(
-                "InvalidFilter: `{key}` is not a valid filter on the Pages surface"
-            )));
+            return Err(AppError::validation_coded(
+                ValidationCode::InvalidFilter,
+                format!("`{key}` is not a valid filter on the Pages surface"),
+            ));
         }
     }
 
     // Validate `LastEdited::Range` date bounds before they
     // reach SQL. A malformed bound silently compare-fails every row
-    // (zero results); reject it loudly with the `InvalidDateFilter:` prefix.
+    // (zero results); reject it loudly with the `InvalidDateFilter` code.
     for prim in filters {
         if let FilterPrimitive::LastEdited {
             spec: crate::filters::LastEditedSpec::Range { start, end },
@@ -670,9 +672,10 @@ fn compile_pages_filters(
         // Explicit boolean flag on `WhereClause`, not a SQL
         // substring.
         if wc.is_unsupported() {
-            return Err(AppError::Validation(format!(
-                "InvalidFilter: filter shape is not supported on the Pages surface: {prim:?}"
-            )));
+            return Err(AppError::validation_coded(
+                ValidationCode::InvalidFilter,
+                format!("filter shape is not supported on the Pages surface: {prim:?}"),
+            ));
         }
         // Substitute each anonymous `?` left-to-right with `?{next_pos}`.
         let mut sql = String::with_capacity(wc.sql.len());
@@ -821,7 +824,7 @@ pub(crate) fn compose_list_pages_with_metadata_sql(
 /// a sort-mode discriminator in `position` (Review Round 1 — protects
 /// against cross-sort / cross-IPC cursor reuse). First-page requests
 /// pass `cursor = None`. A stale cursor (e.g. from `list_blocks`) is
-/// rejected with `AppError::Validation("RequiresRefresh: …")` so the
+/// rejected with a `ValidationCode::RequiresRefresh` validation error so the
 /// frontend can render a "Sort changed — refresh to continue" toast
 /// (acceptance criterion #3).
 ///
@@ -853,7 +856,7 @@ pub async fn list_pages_with_metadata_inner(
     if let Some(l) = limit
         && !(1..=MCP_PAGE_LIMIT_CAP).contains(&l)
     {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "list_pages_with_metadata limit must be in [1, {MCP_PAGE_LIMIT_CAP}]; got {l}"
         )));
     }

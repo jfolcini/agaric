@@ -27,7 +27,7 @@ use crate::filters::primitive::LastEditedSpec;
 ///   against `chrono::Local::today()` (or the cell-injected clock in
 ///   tests). Vocabulary: `overdue`, `today`, `yesterday`, `this-week`,
 ///   `this-month`, `next-week`, `older`, `none`. Unknown keywords are
-///   rejected as `Validation("InvalidDateFilter: …")`.
+///   rejected as an `InvalidDateFilter`-coded validation error (#2251).
 /// - [`DateFilter::Op`] — explicit comparison operator (`<`, `<=`, `=`,
 ///   `>=`, `>`) followed by an ISO `YYYY-MM-DD` date. The frontend
 ///   parser accepts the same shape (`due:>=2026-01-01`).
@@ -46,7 +46,7 @@ pub enum DateFilter {
         /// [`DateOp::Gte`] / [`DateOp::Gt`].
         op: DateOp,
         /// ISO `YYYY-MM-DD`. Calendar-validated at the SQL composition
-        /// boundary; invalid dates yield `Validation("InvalidDateFilter:
+        /// boundary; invalid dates yield `Validation` errors coded `InvalidDateFilter
         /// …")`.
         date: String,
     },
@@ -195,7 +195,7 @@ pub struct SearchFilter {
     /// **bypassed entirely** (FTS5 cannot accept a regex) and the
     /// candidate set comes from a recency-ordered scan of
     /// structurally-filtered blocks. Compile failures surface as
-    /// [`AppError::Validation`] with an `InvalidRegex:` prefix.
+    /// [`AppError::Validation`] with the structured `InvalidRegex` code.
     #[serde(default)]
     pub is_regex: bool,
     /// Restrict matches to a specific `blocks.block_type`

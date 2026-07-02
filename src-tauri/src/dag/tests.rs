@@ -625,7 +625,7 @@ async fn insert_remote_op_rejects_set_property_invalid_key() {
 
     let err = insert_remote_op(&pool, &record).await;
     assert!(
-        matches!(err, Err(AppError::Validation(_))),
+        matches!(err, Err(AppError::Validation { .. })),
         "invalid SetProperty key must be rejected, got: {err:?}"
     );
 
@@ -656,7 +656,7 @@ async fn insert_remote_op_rejects_set_property_empty_value() {
 
     let err = insert_remote_op(&pool, &record).await;
     assert!(
-        matches!(err, Err(AppError::Validation(_))),
+        matches!(err, Err(AppError::Validation { .. })),
         "empty-string SetProperty value must be rejected, got: {err:?}"
     );
     assert!(
@@ -685,7 +685,7 @@ async fn insert_remote_op_rejects_set_property_multiple_values() {
 
     let err = insert_remote_op(&pool, &record).await;
     assert!(
-        matches!(err, Err(AppError::Validation(_))),
+        matches!(err, Err(AppError::Validation { .. })),
         "multi-value SetProperty must be rejected, got: {err:?}"
     );
     assert!(

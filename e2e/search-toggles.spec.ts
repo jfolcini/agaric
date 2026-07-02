@@ -31,7 +31,10 @@ import {
 } from './helpers'
 
 interface MockErrorWindow extends Window {
-  __injectMockError?: (command: string, message: string) => void
+  __injectMockError?: (
+    command: string,
+    error: string | { kind: string; message: string; code?: string },
+  ) => void
   __clearMockErrors?: () => void
 }
 
@@ -138,18 +141,19 @@ test.describe('Search backend-error surface (E2E-2)', () => {
     clearConsoleErrors(page)
   })
 
-  // E2E-2 — an invalid regex surfaces inline. The raw `InvalidRegex:` IPC
-  // message now reaches the panel (SearchPanel no longer passes `onError`
-  // to usePaginatedQuery, which used to overwrite the raw message), so the
-  // `regexError` parser lights up `search-inline-error` and the body
-  // error-state is suppressed.
+  // E2E-2 / #2251 — an invalid regex surfaces inline. The injection is the
+  // structured `{ kind: 'validation', code: 'InvalidRegex' }` wire object a
+  // real backend rejection carries, so the panel's code-discriminated
+  // `regexError` lights up `search-inline-error` and the body error-state
+  // is suppressed.
   test('invalid regex shows the inline error (search-inline-error)', async ({ page }) => {
     await openSearchView(page)
     await page.evaluate(() => {
-      ;(window as unknown as MockErrorWindow).__injectMockError?.(
-        'search_blocks',
-        'InvalidRegex: unclosed group at position 0',
-      )
+      ;(window as unknown as MockErrorWindow).__injectMockError?.('search_blocks', {
+        kind: 'validation',
+        code: 'InvalidRegex',
+        message: 'unclosed group at position 0',
+      })
     })
 
     await page.getByTestId('search-toggle-regex').click()

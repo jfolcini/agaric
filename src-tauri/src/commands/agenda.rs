@@ -193,7 +193,7 @@ pub async fn list_projected_agenda_inner(
     let limit_i64 = match limit {
         Some(l) if (1..=500).contains(&l) => l,
         Some(l) => {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "list_projected_agenda limit must be in [1, 500]; got {l}. \
                  For larger result sets, use cursor pagination."
             )));
@@ -205,12 +205,12 @@ pub async fn list_projected_agenda_inner(
 
     // Parse date range boundaries
     let range_start = chrono::NaiveDate::parse_from_str(&start_date, "%Y-%m-%d")
-        .map_err(|_| AppError::Validation("invalid start_date".into()))?;
+        .map_err(|_| AppError::validation("invalid start_date".into()))?;
     let range_end = chrono::NaiveDate::parse_from_str(&end_date, "%Y-%m-%d")
-        .map_err(|_| AppError::Validation("invalid end_date".into()))?;
+        .map_err(|_| AppError::validation("invalid end_date".into()))?;
 
     if range_start > range_end {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "start_date must be <= end_date".into(),
         ));
     }

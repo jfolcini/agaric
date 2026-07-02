@@ -6002,7 +6002,7 @@ async fn partitioned_over_long_query_is_rejected() {
     .await
     .expect_err("over-long query must be rejected, not short-circuited");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "over-long query must surface AppError::Validation, got {err:?}"
     );
 }
@@ -6633,8 +6633,8 @@ async fn partitioned_regex_invalid_pattern_returns_validation_error() {
     // `is_regex=true` + invalid regex pattern `"*"` (Rust's regex crate
     // rejects unanchored `*` as a repetition operator with no
     // preceding atom). Per `toggle_filter.rs:331-343`, the compile
-    // failure is mapped onto `AppError::Validation("InvalidRegex:
-    // …")` — the partitioned IPC must propagate it verbatim.
+    // failure is mapped onto an `InvalidRegex`-coded `AppError::Validation`
+    // — the partitioned IPC must propagate it verbatim.
     let (pool, _dir) = test_pool().await;
     seed_partitioned_fixture(&pool, 1, 1).await;
 
@@ -6653,11 +6653,12 @@ async fn partitioned_regex_invalid_pattern_returns_validation_error() {
     .expect_err("invalid regex pattern must surface AppError::Validation");
 
     match err {
-        crate::error::AppError::Validation(msg) => assert!(
-            msg.starts_with("InvalidRegex:"),
-            "expected InvalidRegex: prefix; got: {msg}"
+        crate::error::AppError::Validation { code, .. } => assert_eq!(
+            code,
+            Some(crate::error::ValidationCode::InvalidRegex),
+            "expected InvalidRegex code"
         ),
-        other => panic!("expected AppError::Validation(InvalidRegex: …); got {other:?}"),
+        other => panic!("expected a coded InvalidRegex validation error; got {other:?}"),
     }
 }
 
@@ -7620,7 +7621,7 @@ async fn regex_over_long_raw_pattern_is_rejected() {
     .await
     .expect_err("over-long raw regex pattern must be rejected");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "over-long raw regex pattern must surface AppError::Validation, got {err:?}"
     );
 }
@@ -7820,7 +7821,7 @@ async fn fts_over_long_query_is_rejected() {
     .await
     .expect_err("over-long query must be rejected");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "over-long query must surface AppError::Validation, got {err:?}"
     );
 }
@@ -7929,7 +7930,7 @@ async fn partitioned_over_limit_is_rejected() {
     .await
     .expect_err("page_limit over the cap must be rejected");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "over-limit page_limit must surface AppError::Validation, got {err:?}"
     );
 
@@ -7945,7 +7946,7 @@ async fn partitioned_over_limit_is_rejected() {
     .await
     .expect_err("block_limit over the cap must be rejected");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "over-limit block_limit must surface AppError::Validation, got {err:?}"
     );
 }
@@ -7993,7 +7994,7 @@ async fn partitioned_invalid_regex_fails_fast_with_validation() {
     .await
     .expect_err("invalid regex must fail fast");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "invalid regex must surface AppError::Validation, got {err:?}"
     );
 }
@@ -8051,7 +8052,7 @@ async fn search_empty_property_key_is_rejected() {
     .await
     .expect_err("empty prop: key must be rejected");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "empty prop: key must surface AppError::Validation, got {err:?}"
     );
 }
@@ -8526,7 +8527,7 @@ async fn be_a10_sqla1_cursor_rejects_over_cap_limit() {
     .await
     .expect_err("limit > MAX_SEARCH_RESULTS must be rejected");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "over-cap limit must surface AppError::Validation, got {err:?}"
     );
 

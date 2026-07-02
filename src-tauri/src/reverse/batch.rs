@@ -159,7 +159,7 @@ pub async fn compute_reverse_batch(
     let mut parsed_types: Vec<OpType> = Vec::with_capacity(ops.len());
     for r in ops {
         let t = OpType::from_str(&r.op_type)
-            .map_err(|e| AppError::Validation(format!("unknown op_type in record: {e}")))?;
+            .map_err(|e| AppError::validation(format!("unknown op_type in record: {e}")))?;
         parsed_types.push(t);
     }
 

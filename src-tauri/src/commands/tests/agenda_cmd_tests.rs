@@ -306,7 +306,7 @@ async fn list_blocks_with_date_range_validates_format() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "invalid start date must be rejected: {result:?}"
     );
 
@@ -327,7 +327,7 @@ async fn list_blocks_with_date_range_validates_format() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "start > end must be rejected: {result:?}"
     );
 
@@ -348,7 +348,7 @@ async fn list_blocks_with_date_range_validates_format() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "only start without end must be rejected: {result:?}"
     );
 }
@@ -1251,7 +1251,7 @@ async fn projected_agenda_validates_date_range() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "should reject invalid date"
     );
 
@@ -1266,7 +1266,7 @@ async fn projected_agenda_validates_date_range() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "should reject start > end"
     );
 }

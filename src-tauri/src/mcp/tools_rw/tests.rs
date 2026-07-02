@@ -134,7 +134,7 @@ async fn append_block_rejects_unknown_field() {
         .await
         .expect_err("must reject unknown field");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "unknown-field must surface as Validation (→ -32602), got {err:?}",
     );
 }
@@ -186,7 +186,7 @@ async fn append_block_position_zero_rejected() {
         .await
         .expect_err("position 0 must be rejected");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "position 0 must surface as Validation (→ -32602), got {err:?}",
     );
 }
@@ -220,7 +220,7 @@ async fn append_block_negative_position_rejected() {
         .await
         .expect_err("negative position must be rejected");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "negative position must surface as Validation (→ -32602), got {err:?}",
     );
 }
@@ -327,7 +327,7 @@ async fn update_block_content_rejects_unknown_field() {
         )
         .await
         .expect_err("unknown field");
-    assert!(matches!(err, AppError::Validation(_)), "got {err:?}");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
 }
 
 // -------------------------------------------------------------------
@@ -428,7 +428,7 @@ async fn set_property_rejects_multiple_value_fields() {
         .await
         .expect_err("exactly one value must be set");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "double-value must surface as Validation, got {err:?}",
     );
 }
@@ -490,7 +490,7 @@ async fn set_property_error_message_slots_match_schema_697() {
         )
         .await
         .expect_err("zero values must error");
-    let AppError::Validation(msg) = err else {
+    let AppError::Validation { message: msg, .. } = err else {
         panic!("expected Validation");
     };
     assert!(
@@ -544,7 +544,7 @@ async fn set_property_value_bool_counts_toward_exactly_one_697() {
         )
         .await
         .expect_err("two slots must error");
-    assert!(matches!(err, AppError::Validation(_)), "got {err:?}");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
 }
 
 // -------------------------------------------------------------------
@@ -575,7 +575,7 @@ async fn set_property_rejects_oversized_value_text_699() {
         .await
         .expect_err("oversized value_text must be rejected (#699)");
     match err {
-        AppError::Validation(msg) => {
+        AppError::Validation { message: msg, .. } => {
             assert!(
                 msg.contains("value_text length"),
                 "message names the field: {msg}"
@@ -629,7 +629,7 @@ async fn set_property_rejects_zero_value_fields() {
         )
         .await
         .expect_err("zero values must error");
-    assert!(matches!(err, AppError::Validation(_)), "got {err:?}");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
 }
 
 // -------------------------------------------------------------------
@@ -782,7 +782,7 @@ async fn create_page_rejects_unknown_field() {
         )
         .await
         .expect_err("parent_id is not a valid field for create_page");
-    assert!(matches!(err, AppError::Validation(_)), "got {err:?}");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
 }
 
 // -------------------------------------------------------------------
@@ -804,7 +804,7 @@ async fn create_page_without_space_rejected() {
         .await
         .expect_err("missing space_id must be rejected");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "missing space_id must surface as Validation (→ -32602), got {err:?}",
     );
 }
@@ -1354,7 +1354,7 @@ async fn append_block_cross_space_rejected() {
         .await
         .expect_err("cross-space append must be denied");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "cross-space append must surface as Validation (→ -32602), got {err:?}",
     );
 }
@@ -1376,7 +1376,7 @@ async fn update_block_cross_space_rejected() {
         .await
         .expect_err("cross-space update must be denied");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "cross-space update must surface as Validation, got {err:?}",
     );
 }
@@ -1407,7 +1407,7 @@ async fn set_property_cross_space_rejected() {
         .await
         .expect_err("cross-space set_property must be denied");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "cross-space set_property must surface as Validation, got {err:?}",
     );
 }
@@ -1434,7 +1434,7 @@ async fn add_tag_cross_space_rejected() {
         .await
         .expect_err("cross-space add_tag must be denied");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "cross-space add_tag must surface as Validation, got {err:?}",
     );
 }
@@ -1456,7 +1456,7 @@ async fn delete_block_cross_space_rejected() {
         .await
         .expect_err("cross-space delete must be denied");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "cross-space delete must surface as Validation, got {err:?}",
     );
 }

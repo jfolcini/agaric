@@ -266,7 +266,7 @@ fn cursor_decode_rejects_unknown_version() {
         "validation error must mention 'version', got: {err_msg}"
     );
     assert!(
-        matches!(Cursor::decode(&encoded), Err(AppError::Validation(_))),
+        matches!(Cursor::decode(&encoded), Err(AppError::Validation { .. })),
         "must be an AppError::Validation"
     );
 }
@@ -2009,7 +2009,7 @@ async fn query_by_property_rejects_both_value_filters() {
     .await
     .expect_err("both value filters must be rejected");
     match err {
-        crate::error::AppError::Validation(msg) => {
+        crate::error::AppError::Validation { message: msg, .. } => {
             assert!(
                 msg.contains("value_text") && msg.contains("value_date"),
                 "validation message must name both inputs; got {msg:?}"
@@ -2036,7 +2036,7 @@ async fn query_by_property_rejects_both_value_filters() {
     )
     .await
     .expect_err("both value filters must be rejected on reserved-key path too");
-    assert!(matches!(err, crate::error::AppError::Validation(_)));
+    assert!(matches!(err, crate::error::AppError::Validation { .. }));
 }
 
 // ====================================================================
@@ -5005,7 +5005,7 @@ mod tests_p7 {
         .await
         .expect_err("foreign-space fetch must be rejected");
         assert!(
-            matches!(err, AppError::Validation(_)),
+            matches!(err, AppError::Validation { .. }),
             "foreign-space rejection must be Validation, got {err:?}"
         );
     }
@@ -5049,7 +5049,7 @@ mod tests_p7 {
         .await
         .expect_err("unscoped page must be rejected from any space");
         assert!(
-            matches!(err, AppError::Validation(_)),
+            matches!(err, AppError::Validation { .. }),
             "unscoped page must be Validation, got {err:?}"
         );
     }
@@ -5220,7 +5220,7 @@ mod tests_p7 {
                         .await
                         .expect_err("foreign-space get_page must reject");
                     assert!(
-                        matches!(err, AppError::Validation(_)),
+                        matches!(err, AppError::Validation { .. }),
                         "foreign-space get_page of {page_id} from {candidate_space} must be Validation, got {err:?}"
                     );
                 }

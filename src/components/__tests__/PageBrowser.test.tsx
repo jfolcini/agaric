@@ -3305,7 +3305,7 @@ describe('PageBrowser', () => {
     it('RequiresRefresh: cursor recovery retries once with no cursor', async () => {
       // First load: returns page 1 with a next_cursor so the auto-load
       // fires a second IPC. The first cursor-bearing call rejects with
-      // an AppError tagged `RequiresRefresh:` (v2 cursor mismatch); the
+      // an AppError carrying the structured `RequiresRefresh` code (v2 cursor mismatch); the
       // recovery wrapper retries once with `cursor: null`. The retry
       // resolves successfully.
       const cursoredCalls: Array<Record<string, unknown>> = []
@@ -3341,7 +3341,8 @@ describe('PageBrowser', () => {
           if (cursoredCallCount === 1) {
             return Promise.reject({
               kind: 'validation',
-              message: 'RequiresRefresh: cursor sort mismatch',
+              code: 'RequiresRefresh',
+              message: 'cursor sort mismatch',
             })
           }
           cursoredCalls.push(a)
@@ -4068,7 +4069,7 @@ describe('PageBrowser', () => {
     // ── T-F2 — withCursorRecovery: retry-also-fails propagates error ───
     it('T-F2: when the cursorless retry also fails, the original error surfaces (load-failed toast)', async () => {
       // Page 1 resolves with a next_cursor so auto-load fires a cursor
-      // page. The cursor-bearing call rejects with `RequiresRefresh:`, so
+      // page. The cursor-bearing call rejects with the `RequiresRefresh` code, so
       // `withCursorRecovery` retries once with no cursor — and THAT retry
       // also rejects. The error must propagate to `usePaginatedQuery`'s
       // onError, firing the load-failed toast.
@@ -4103,7 +4104,8 @@ describe('PageBrowser', () => {
           cursoredAttempts += 1
           return Promise.reject({
             kind: 'validation',
-            message: 'RequiresRefresh: cursor sort mismatch',
+            code: 'RequiresRefresh',
+            message: 'cursor sort mismatch',
           })
         }
         return Promise.resolve(undefined)
@@ -4412,8 +4414,8 @@ describe('PageBrowser', () => {
       )
     })
 
-    // ── E18 — InvalidFilter: prefix surfaces a specific toast ───────────
-    it('E18: an InvalidFilter: rejection shows a specific toast, not the generic load-failed one', async () => {
+    // ── E18 — InvalidFilter code surfaces a specific toast ──────────────
+    it('E18: an InvalidFilter-coded rejection shows a specific toast, not the generic load-failed one', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
@@ -4425,7 +4427,8 @@ describe('PageBrowser', () => {
           if (filters.length > 0) {
             return Promise.reject({
               kind: 'validation',
-              message: 'InvalidFilter: disallowed primitive for this surface',
+              code: 'InvalidFilter',
+              message: 'disallowed primitive for this surface',
             })
           }
           return Promise.resolve({

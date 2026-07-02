@@ -125,10 +125,10 @@ pub async fn list_page_history(
     ) = match page.after.as_ref() {
         Some(c) => {
             let created_at_str = c.deleted_at.as_deref().ok_or_else(|| {
-                AppError::Validation("cursor missing created_at for page history query".into())
+                AppError::validation("cursor missing created_at for page history query".into())
             })?;
             let created_at = created_at_str.parse::<i64>().map_err(|e| {
-                AppError::Validation(format!("cursor created_at not an integer: {e}"))
+                AppError::validation(format!("cursor created_at not an integer: {e}"))
             })?;
             (Some(1), created_at, c.seq.unwrap_or(0), &c.id)
         }

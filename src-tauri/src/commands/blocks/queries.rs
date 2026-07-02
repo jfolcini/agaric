@@ -75,14 +75,14 @@ pub async fn list_blocks_inner(
     .count();
 
     if filter_count > 1 {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "conflicting filters: only one of parent_id, block_type, tag_id, agenda_date, agenda_date_start+end may be set".to_string(),
         ));
     }
 
     // Validate: if only one of start/end is provided, reject
     if agenda_date_start.is_some() != agenda_date_end.is_some() {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "agenda_date_start and agenda_date_end must both be provided together".to_string(),
         ));
     }
@@ -95,7 +95,7 @@ pub async fn list_blocks_inner(
     if let Some(l) = limit
         && !(1..=100).contains(&l)
     {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "list_blocks limit must be in [1, 100]; got {l}. \
                  For larger result sets, use cursor pagination."
         )));
@@ -120,7 +120,7 @@ pub async fn list_blocks_inner(
         validate_date_format(start)?;
         validate_date_format(end)?;
         if start > end {
-            return Err(AppError::Validation(
+            return Err(AppError::validation(
                 "agenda_date_start must be <= agenda_date_end".to_string(),
             ));
         }
@@ -294,7 +294,7 @@ pub async fn batch_resolve_inner(
     scope: &SpaceScope,
 ) -> Result<Vec<ResolvedBlock>, AppError> {
     if ids.is_empty() {
-        return Err(AppError::Validation("ids list cannot be empty".into()));
+        return Err(AppError::validation("ids list cannot be empty".into()));
     }
     crate::commands::ensure_batch_within_cap("ids", ids.len())?;
 
@@ -422,7 +422,7 @@ pub async fn list_trash_inner(
     if let Some(l) = limit
         && !(1..=100).contains(&l)
     {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "list_trash limit must be in [1, 100]; got {l}. \
                  For larger result sets, use cursor pagination."
         )));
@@ -635,7 +635,7 @@ pub async fn get_blocks_inner(
     ids: Vec<BlockId>,
 ) -> Result<Vec<BlockRow>, AppError> {
     if ids.is_empty() {
-        return Err(AppError::Validation("ids list cannot be empty".into()));
+        return Err(AppError::validation("ids list cannot be empty".into()));
     }
     crate::commands::ensure_batch_within_cap("ids", ids.len())?;
     // #107: re-derive owned String form for the JSON membership probe below.

@@ -11,6 +11,10 @@
  *   - nested `{` → `InvalidGlob: brace nesting not supported`
  *   - escape characters (`\{`, `\}`, `\[`, `\]`) → `InvalidGlob: escapes not supported`
  *
+ * #2251 — the `InvalidGlob: ` label on these messages is chip **display
+ * copy** built from the shared `ValidationCode` constant; nothing parses it
+ * back out. Backend rejections carry the code as a structured field instead.
+ *
  * Empty values are surfaced separately by the caller (the prefix
  * parser) as the more user-friendly "path: value required".
  */
@@ -18,7 +22,7 @@
 import { prefixed, ValidationCode } from './validation-codes'
 
 export interface GlobValidationError {
-  /** `InvalidGlob: …` — the same prefix the backend emits. */
+  /** `InvalidGlob: …` — chip display copy labelled with the shared code. */
   message: string
 }
 
@@ -209,10 +213,11 @@ const UTF8 = new TextEncoder()
  * commas; each non-empty trimmed sub-entry is length-checked, validated
  * (`validateGlob`), brace-expanded, substring-wrapped, then ASCII-lowercased.
  *
- * Throws an {@link Error} whose message carries the shared `InvalidGlob:`
- * prefix on a malformed pattern — the same contract the backend surfaces as
- * `AppError::Validation`. An all-whitespace input yields `[]` (the caller
- * treats that as "no constraint").
+ * Throws an {@link Error} whose message carries the shared `InvalidGlob: `
+ * display label on a malformed pattern (the backend rejects the same inputs
+ * with an `InvalidGlob`-coded `AppError::Validation`, #2251). An
+ * all-whitespace input yields `[]` (the caller treats that as "no
+ * constraint").
  */
 export function prepareGlobs(entries: string[]): string[] {
   const out: string[] = []

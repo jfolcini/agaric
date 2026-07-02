@@ -165,7 +165,7 @@ impl LoroEngine {
         let mut out = Vec::with_capacity(children.len());
         for child in children {
             let meta = tree.get_meta(child).map_err(|e| {
-                AppError::Validation(format!("loro: children_ordered_block_ids: get_meta: {e}"))
+                AppError::validation(format!("loro: children_ordered_block_ids: get_meta: {e}"))
             })?;
             out.push(read_string(&meta, FIELD_BLOCK_ID)?);
         }
@@ -279,11 +279,11 @@ impl LoroEngine {
     ) -> Result<(), AppError> {
         meta.insert(FIELD_BLOCK_ID, LoroValue::from(block_id))
             .map_err(|e| {
-                AppError::Validation(format!("loro: node {block_id}: set block_id meta: {e}"))
+                AppError::validation(format!("loro: node {block_id}: set block_id meta: {e}"))
             })?;
         meta.insert(FIELD_BLOCK_TYPE, LoroValue::from(block_type))
             .map_err(|e| {
-                AppError::Validation(format!("loro: node {block_id}: set block_type: {e}"))
+                AppError::validation(format!("loro: node {block_id}: set block_type: {e}"))
             })?;
         Ok(())
     }
@@ -298,7 +298,7 @@ impl LoroEngine {
         position: i64,
     ) -> Result<(), AppError> {
         meta.insert(FIELD_POSITION, LoroValue::from(position))
-            .map_err(|e| AppError::Validation(format!("loro: node {block_id}: set position: {e}")))
+            .map_err(|e| AppError::validation(format!("loro: node {block_id}: set position: {e}")))
     }
     /// Collect the `block_id`s of a node and all its (live) descendants,
     /// via pre-order DFS over `tree.children`. Used by purge to prune the
@@ -382,7 +382,7 @@ impl LoroEngine {
         match self.tree().parent(node) {
             Some(TreeParentId::Node(parent_node)) => {
                 let parent_meta = self.tree().get_meta(parent_node).map_err(|e| {
-                    AppError::Validation(format!("loro: parent_block_id_of: get_meta: {e}"))
+                    AppError::validation(format!("loro: parent_block_id_of: get_meta: {e}"))
                 })?;
                 Ok(Some(read_string(&parent_meta, FIELD_BLOCK_ID)?))
             }
@@ -394,10 +394,10 @@ impl LoroEngine {
     /// boilerplate. Errors if the `block_id` is unknown to the index.
     pub(super) fn get_block_map(&self, block_id: &str, ctx: &str) -> Result<LoroMap, AppError> {
         let node = self.node_for(block_id).ok_or_else(|| {
-            AppError::Validation(format!("loro: {ctx}: block {block_id} not found"))
+            AppError::validation(format!("loro: {ctx}: block {block_id} not found"))
         })?;
         self.tree().get_meta(node).map_err(|e| {
-            AppError::Validation(format!("loro: {ctx}: block {block_id} get_meta: {e}"))
+            AppError::validation(format!("loro: {ctx}: block {block_id} get_meta: {e}"))
         })
     }
 }

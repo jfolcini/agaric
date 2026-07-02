@@ -83,7 +83,7 @@ Two invariants ride on this contract:
 1. **`SearchFilter` is the canonical extension struct.** New filter dimensions land as additional fields on this struct — never as new positional arguments on the Tauri command. The `tauri-specta` 10-argument ceiling is already close on the search surface; the struct keeps the command signature at five arguments (`pool`, `query`, `cursor`, `limit`, `filter`) regardless of how many filter dimensions exist. The `ExtraQueryFilters` struct in `src-tauri/src/commands/mod.rs` is the same pattern applied to `query_by_property`.
 2. **`SearchBlockRow.snippet` carries literal `<mark>` boundaries.** The frontend never feeds this string to `dangerouslySetInnerHTML`. Instead the renderer at `src/components/search/SearchResultBlockRow.tsx` splits the string on the literal marker pairs and emits alternating React text nodes and `<mark>` elements. React escapes any stray `<`, `&`, `script`, etc. as text content — so the snippet path has no XSS surface, even though the FTS5 sanitiser is the only thing between user content and the rendered DOM.
 
-Errors propagate through the existing `AppError` shape — `{ kind: string, message: string }` per `src-tauri/src/error.rs`. Typed validation errors (e.g., invalid glob patterns) use `AppError::Validation("InvalidGlob: …")` and rely on a stable message prefix the frontend parses. The shape is not a tagged union because the manual `Serialize` impl predates that pattern; do not retrofit it without a coordinated migration.
+Errors propagate through the existing `AppError` shape — `{ kind, message, code? }` per `src-tauri/src/error.rs`, where `kind` is the typed `AppErrorKind` string-literal union in `bindings.ts`. Typed validation errors (e.g., invalid glob patterns) are built with `AppError::validation_coded(ValidationCode::InvalidGlob, reason)`: since #2251 the sub-kind travels in a structured `code` field (`ValidationCode` union), and `message` carries the bare human reason — the frontend discriminates with `validationCode(err) === ValidationCode.InvalidGlob`, **not** by parsing a message prefix. Uncoded validation errors keep the exact legacy two-field `{ kind, message }` envelope (the `code` field is omitted, never `null`). The shape is not a `kind`-tagged union of payloads because the manual `Serialize` impl predates that pattern; do not retrofit it without a coordinated migration.
 
 ## Grouped-render layer
 
@@ -137,7 +137,7 @@ The round-trip invariant — `parse(serialize(parse(s))) === parse(s)` for any `
 Validation errors come in two flavours:
 
 - **Frontend-cheap**: glob shape checks (unbalanced brackets, nested braces, escape sequences) live in `glob-validate.ts` (`validateGlob`), which `register.ts`'s `path:` / `not-path:` parsers call; failures surface as `invalid` chips with `InvalidGlob:`-prefixed error strings. The chip renders red with the typed message as the tooltip.
-- **Backend authoritative**: `src-tauri/src/fts/glob_filter.rs` re-validates and brace-expands. Failures return `AppError::Validation("InvalidGlob: …")` so the frontend keys on the same prefix regardless of which side caught the error.
+- **Backend authoritative**: `src-tauri/src/fts/glob_filter.rs` re-validates and brace-expands. Failures return `AppError::validation_coded(ValidationCode::InvalidGlob, …)`; the frontend keys on the structured `code` (`ValidationCode.InvalidGlob`) regardless of which side caught the error. The `InvalidGlob:` label in the client-side chip copy (`glob-validate.ts`) is display text built via `prefixed()`, not a wire prefix.
 
 ### AST → SQL projection
 
@@ -210,7 +210,7 @@ The `state:`, `priority:`, `due:`, `scheduled:`, `prop:` token family adds six f
 
 `due:today` / `due:this-week` etc. are resolved against `chrono::Local::now().date_naive()` inside `fts::metadata_filter::prepare_metadata`. The SQL only ever sees concrete date bounds. Week starts on **Monday** (matches the agenda view's convention). Test-injected `today` is threaded through `prepare_metadata_with_today` so date-clock churn doesn't flake snapshot tests.
 
-Bucket vocabulary is locked at: `today`, `yesterday`, `overdue`, `this-week`, `this-month`, `next-week`, `older`, `none`. Unknown buckets or unparseable dates surface as `AppError::Validation("InvalidDateFilter: …")`; the frontend keys on the message prefix.
+Bucket vocabulary is locked at: `today`, `yesterday`, `overdue`, `this-week`, `this-month`, `next-week`, `older`, `none`. Unknown buckets or unparseable dates surface as `AppError::validation_coded(ValidationCode::InvalidDateFilter, …)`; the frontend keys on the structured `code` (`ValidationCode.InvalidDateFilter`).
 
 ### `state:none` / `priority:none` semantics
 
@@ -228,7 +228,7 @@ Property keys are case-sensitive (`block_properties` PK is `(block_id, key)` wit
 
 ## Path globs
 
-`path:` filters resolve against `pages_cache.title` with `LOWER(...)` for case-insensitive matching. SQLite native `GLOB` (no regex extension), with brace expansion + substring-wrap applied in Rust before binding. Validation failures surface through `AppError::Validation` with an `InvalidGlob:` message prefix — the frontend keys on the prefix string rather than a new error variant (avoids reshaping the `{kind, message}` wire shape at `error.rs`).
+`path:` filters resolve against `pages_cache.title` with `LOWER(...)` for case-insensitive matching. SQLite native `GLOB` (no regex extension), with brace expansion + substring-wrap applied in Rust before binding. Validation failures surface through `AppError::validation_coded(ValidationCode::InvalidGlob, …)` — the frontend keys on the structured `code` field (#2251 promoted the former `InvalidGlob:` message prefix to `code`; the `{ kind, message }` envelope gains only an optional `code`, omitted for uncoded errors).
 
 ### `↑` / `↓` precedence in the search input
 

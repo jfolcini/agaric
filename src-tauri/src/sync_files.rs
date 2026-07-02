@@ -141,14 +141,14 @@ pub fn check_attachment_fs_path_shape(fs_path: &str) -> Result<(), AppError> {
     use std::path::Component;
 
     if fs_path.is_empty() {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "attachment path must not be empty".into(),
         ));
     }
 
     let candidate = Path::new(fs_path);
     if candidate.is_absolute() {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "attachment path escapes app data dir".into(),
         ));
     }
@@ -163,7 +163,7 @@ pub fn check_attachment_fs_path_shape(fs_path: &str) -> Result<(), AppError> {
         match component {
             Component::Normal(_) | Component::CurDir => {}
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(AppError::Validation(
+                return Err(AppError::validation(
                     "attachment path escapes app data dir".into(),
                 ));
             }
@@ -987,7 +987,7 @@ pub async fn write_attachment_streaming(
             // `validate_attachment_fs_path` already rejects empty /
             // root-dir paths, so an attachment path always has a
             // file name. This arm is defensive only.
-            return Err(AppError::Validation(
+            return Err(AppError::validation(
                 "attachment path has no file name component".into(),
             ));
         }

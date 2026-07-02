@@ -21,10 +21,11 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { validationCode } from '@/lib/app-error'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { notify } from '@/lib/notify'
 import { astToFilterProjection, type SearchQueryAST } from '@/lib/search-query'
-import { parseValidationReason, ValidationCode } from '@/lib/search-query/validation-codes'
+import { ValidationCode } from '@/lib/search-query/validation-codes'
 
 import { useListKeyboardNavigation } from '../../hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '../../hooks/usePaginatedQuery'
@@ -169,6 +170,7 @@ export function useSearchResults({
     loadMore,
     reload,
     error,
+    errorDetail,
     capped,
     setItems,
   } = usePaginatedQuery(queryFn, {
@@ -181,30 +183,28 @@ export function useSearchResults({
       spaceIsReady &&
       !tagResolutionPending &&
       (debouncedAst.freeText.length > 0 || debouncedAst.filters.length > 0),
-    // E2E-2 — do NOT pass `onError`; SearchPanel parses the `InvalidRegex:`
-    // prefix off the raw IPC message via `regexError` below.
+    // E2E-2 — do NOT pass `onError`; SearchPanel discriminates the
+    // structured `InvalidRegex` validation code via `regexError` below.
   })
 
-  // Parse `AppError::Validation("InvalidRegex: …")` off the
-  // raw IPC error and surface it inline. Derived synchronously (not via an
+  // #2251 — discriminate the structured `InvalidRegex` validation code off
+  // the raw IPC error (`{ kind: 'validation', code: 'InvalidRegex' }`) and
+  // surface its human reason inline. Derived synchronously (not via an
   // effect) so the status region's generic-error suppression is single-commit.
   const regexError = useMemo<string | null>(() => {
     // The inline regex alert is regex-mode-only. In
     // case-sensitive / whole-word mode the backend builds a *literal* match
-    // regex internally; an oversized literal makes `build_regex` reject with an
-    // `InvalidRegex:`-prefixed error. Surfacing that as "invalid regex" to a
+    // regex internally; an oversized literal makes `build_regex` reject with
+    // an `InvalidRegex`-coded error. Surfacing that as "invalid regex" to a
     // user who never enabled regex is misleading — fall through to the generic
     // error state instead by short-circuiting here.
     if (!toggles.isRegex) return null
-    if (!error) return null
-    const msg = typeof error === 'string' ? error : ''
-    // #1061 — match on the shared `ValidationCode.InvalidRegex` constant
-    // (single source of truth in `validation-codes.ts`) instead of a raw
-    // `'InvalidRegex:'` literal.
-    const reason = parseValidationReason(msg, ValidationCode.InvalidRegex)
-    if (reason === null) return null
-    return t('search.invalidRegex', { message: reason })
-  }, [error, t, toggles.isRegex])
+    if (errorDetail == null) return null
+    if (validationCode(errorDetail) !== ValidationCode.InvalidRegex) return null
+    // Coded validation errors carry the bare human reason in `message`
+    // (no display decoration, no machine prefix — see error.rs #2251).
+    return t('search.invalidRegex', { message: errorDetail.message })
+  }, [errorDetail, t, toggles.isRegex])
 
   // Issue #153 — every page_id ever fed into `batchResolve` for
   // breadcrumb resolution, regardless of outcome. The breadcrumb

@@ -405,7 +405,7 @@ async fn quick_capture_block_oversize_content_returns_validation_error() {
     let oversize = "x".repeat(256 * 1024 + 1);
     let result = quick_capture_block_inner(&pool, DEV, &mat, oversize, &space).await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "oversize content must produce AppError::Validation, got {result:?}"
     );
 

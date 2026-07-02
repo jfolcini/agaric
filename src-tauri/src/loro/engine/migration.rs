@@ -80,7 +80,7 @@ impl LoroEngine {
             let mut legacy: Vec<(i64, String, TreeID)> = Vec::new();
             for (tree_idx, child) in children.iter().enumerate() {
                 let meta = tree.get_meta(*child).map_err(|e| {
-                    AppError::Validation(format!("loro: migrate sibling order: get_meta: {e}"))
+                    AppError::validation(format!("loro: migrate sibling order: get_meta: {e}"))
                 })?;
                 // `Err` (missing key or non-I64) ⇒ position-less, matching the
                 // old `unwrap_or` fallback minus the i64::MAX scrambling.
@@ -104,7 +104,7 @@ impl LoroEngine {
             }
             for (slot, node) in final_order.iter().enumerate() {
                 tree.mov_to(*node, parent, slot).map_err(|e| {
-                    AppError::Validation(format!("loro: migrate sibling order: mov_to: {e}"))
+                    AppError::validation(format!("loro: migrate sibling order: mov_to: {e}"))
                 })?;
             }
         }

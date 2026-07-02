@@ -44,7 +44,7 @@
 //!   seed — so only the "not the cycle" invariant is cross-arm here; the
 //!   *legitimate*-move `parent_id` convergence is the other test.)
 //! * The command path (`move_block_inner`) instead returns
-//!   `Err(AppError::Validation("cycle detected"))`. It and the fallback now
+//!   `Err(AppError::validation("cycle detected"))`. It and the fallback now
 //!   share ONE probe (`block_descendants::move_would_cycle`), so this test also
 //!   asserts the fallback's no-op-skip agrees with the command path's reject on
 //!   the SAME cycle input (the probe is the single source of truth).

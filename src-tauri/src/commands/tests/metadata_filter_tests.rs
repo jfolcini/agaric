@@ -773,10 +773,11 @@ async fn invalid_due_filter_surfaces_typed_error() {
     .await;
     let err = result.unwrap_err();
     match err {
-        crate::error::AppError::Validation(msg) => {
-            assert!(
-                msg.starts_with("InvalidDateFilter:"),
-                "expected InvalidDateFilter prefix, got: {msg}"
+        crate::error::AppError::Validation { code, .. } => {
+            assert_eq!(
+                code,
+                Some(crate::error::ValidationCode::InvalidDateFilter),
+                "expected InvalidDateFilter code"
             );
         }
         other => panic!("expected Validation, got {other:?}"),

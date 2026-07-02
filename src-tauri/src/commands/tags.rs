@@ -292,7 +292,7 @@ async fn apply_tag_to_block_resolved(
             // Genuine cross-space (both spaced but differ) or a spaced
             // tag on an unspaced source block — reject.
             _ => {
-                return Err(AppError::Validation(format!(
+                return Err(AppError::validation(format!(
                     "cross-space tag: block '{block_id}' (space {src_space:?}) cannot use tag '{tag_id}' (space {tag_space:?})",
                 )));
             }
@@ -475,7 +475,7 @@ pub async fn query_by_tags_inner(
     // #1325: bound the caller-supplied filter array before fanning each
     // element into a `TagExpr::Tag` leaf (each resolved via its own per-tag query).
     if tag_ids.len() > MAX_FILTER_TAG_IDS {
-        return Err(AppError::Validation("tag_ids.too_many".into()));
+        return Err(AppError::validation("tag_ids.too_many".into()));
     }
 
     let mut exprs = Vec::new();
@@ -724,7 +724,7 @@ pub async fn add_tags_by_ids_inner(
     tag_id: BlockId,
 ) -> Result<i64, AppError> {
     if block_ids.is_empty() {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "block_ids list cannot be empty".into(),
         ));
     }

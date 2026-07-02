@@ -950,7 +950,7 @@ async fn backlinks_filtered_empty_block_id_returns_error() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "empty block_id must return Validation error, got: {result:?}"
     );
 }
@@ -2097,7 +2097,7 @@ async fn grouped_backlinks_empty_block_id_returns_error() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "empty block_id must return Validation error, got {result:?}"
     );
 }

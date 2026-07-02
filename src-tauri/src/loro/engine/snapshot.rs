@@ -31,7 +31,7 @@ impl LoroEngine {
         self.stamp_format_version();
         self.doc
             .export(ExportMode::Snapshot)
-            .map_err(|e| AppError::Validation(format!("loro: export snapshot: {e}")))
+            .map_err(|e| AppError::validation(format!("loro: export snapshot: {e}")))
     }
     /// Stamp the current [`ENGINE_FORMAT_VERSION`] into [`ENGINE_META_ROOT`]
     /// under [`FIELD_FORMAT_VERSION`] (#1584).
@@ -94,13 +94,13 @@ impl LoroEngine {
             return Ok(());
         }
         if v < 0 {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "loro: import: engine `{FIELD_FORMAT_VERSION}` stamp is present but not a valid \
                  version integer (corrupt or unknown snapshot); refusing to trust these bytes.",
             )));
         }
         if v > supported {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "loro: import: engine format version {v} is newer than this build supports \
                  (max {supported}); upgrade to a build that understands this snapshot.",
             )));
@@ -126,7 +126,7 @@ impl LoroEngine {
         self.doc
             .import(bytes)
             .map(|_status| ())
-            .map_err(|e| AppError::Validation(format!("loro: import: {e}")))?;
+            .map_err(|e| AppError::validation(format!("loro: import: {e}")))?;
         self.reject_legacy_v1_snapshot()?;
         // #1584: positively gate the stamped engine format version before any
         // index work — a newer-than-supported (or corrupt) stamp is rejected up
@@ -296,7 +296,7 @@ impl LoroEngine {
         self.doc.commit();
         drop(subscription);
         import_result
-            .map_err(|e| AppError::Validation(format!("loro: import_with_changed_blocks: {e}")))?;
+            .map_err(|e| AppError::validation(format!("loro: import_with_changed_blocks: {e}")))?;
         self.reject_legacy_v1_snapshot()?;
         // #1584: same forward-version gate as `import` on the sync-pull path.
         self.reject_unknown_format_version()?;
@@ -519,7 +519,7 @@ impl LoroEngine {
     pub(super) fn reject_legacy_v1_snapshot(&self) -> Result<(), AppError> {
         let legacy: LoroMap = self.doc.get_map(LEGACY_BLOCKS_ROOT);
         if !legacy.is_empty() {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "loro: import: legacy v1 (flat-map) snapshot detected ({} block(s) under \
                  the deprecated `{}` root). The v1->v2 migration was removed in #332; open \
                  this data with a pre-#332 build first to migrate it forward.",
@@ -708,7 +708,7 @@ mod format_version_tests {
 
         let mut b = LoroEngine::new();
         match b.import(&bytes).unwrap_err() {
-            AppError::Validation(m) => assert!(
+            AppError::Validation { message: m, .. } => assert!(
                 m.contains("newer than this build supports"),
                 "expected a newer-version rejection, got: {m}",
             ),
@@ -729,7 +729,7 @@ mod format_version_tests {
 
         let mut b = LoroEngine::new();
         match b.import(&bytes).unwrap_err() {
-            AppError::Validation(m) => assert!(
+            AppError::Validation { message: m, .. } => assert!(
                 m.contains("not a valid version integer"),
                 "expected a corrupt-stamp rejection, got: {m}",
             ),

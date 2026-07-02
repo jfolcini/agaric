@@ -27,7 +27,7 @@ pub async fn compute_reverse(
     // I-Core-8: wrap to typed read-pool — caller is in write context
     let record = crate::op_log::get_op_by_seq(&ReadPool(pool.clone()), device_id, seq).await?;
     let op_type = OpType::from_str(&record.op_type)
-        .map_err(|e| AppError::Validation(format!("unknown op_type in record: {e}")))?;
+        .map_err(|e| AppError::validation(format!("unknown op_type in record: {e}")))?;
     match op_type {
         OpType::CreateBlock => block_ops::reverse_create_block(&record),
         OpType::DeleteBlock => block_ops::reverse_delete_block(&record),

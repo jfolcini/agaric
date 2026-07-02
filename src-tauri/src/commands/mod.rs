@@ -427,7 +427,7 @@ pub(crate) const MAX_BATCH_BLOCK_IDS: usize = 1000;
 /// only covers the upper-bound branch.
 pub(crate) fn ensure_batch_within_cap(subject: &str, len: usize) -> Result<(), AppError> {
     if len > MAX_BATCH_BLOCK_IDS {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "{subject} length {len} exceeds maximum {MAX_BATCH_BLOCK_IDS}"
         )));
     }
@@ -806,7 +806,7 @@ async fn delete_property_core(
     let row =
         row.ok_or_else(|| AppError::NotFound(format!("block '{block_id}' does not exist")))?;
     if row.deleted_at.is_some() {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "block '{block_id}' has been soft-deleted"
         )));
     }
@@ -1042,8 +1042,8 @@ mod sanitize_internal_error_tests {
         // Validation carries a frontend-renderable code and must reach the
         // UI verbatim — no correlation id, no collapsing.
         let original = "pairing.passphrase.mismatch";
-        match sanitize_internal_error(AppError::Validation(original.into())) {
-            AppError::Validation(msg) => assert_eq!(msg, original),
+        match sanitize_internal_error(AppError::validation(original.into())) {
+            AppError::Validation { message: msg, .. } => assert_eq!(msg, original),
             other => panic!("Validation must pass through unchanged, got {other:?}"),
         }
     }

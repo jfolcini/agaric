@@ -1,7 +1,7 @@
 /**
  * Tests for usePageBrowserData — the data-fetch orchestration extracted
  * from `PageBrowser` (#1263). Covers the v2-cursor recovery retry, the
- * `InvalidFilter:` suppressed toast, the retained `displayTotalCount`
+ * `InvalidFilter`-coded suppressed toast, the retained `displayTotalCount`
  * (adopt-first-page / ignore-cursor-null / reset-on-basis-change), and
  * the delete-decrement interceptor.
  */
@@ -63,12 +63,12 @@ afterEach(() => {
 })
 
 describe('usePageBrowserData', () => {
-  it('retries the IPC without a cursor on a RequiresRefresh: validation error', async () => {
+  it('retries the IPC without a cursor on a RequiresRefresh-coded validation error', async () => {
     // First page resolves; the cursor page rejects with RequiresRefresh,
     // then the cursorless retry resolves.
     mockedList
       .mockResolvedValueOnce(resp([page('A')], { cursor: 'CUR', hasMore: true, total: 2 }))
-      .mockRejectedValueOnce({ kind: 'validation', message: 'RequiresRefresh: v1 cursor' })
+      .mockRejectedValueOnce({ kind: 'validation', code: 'RequiresRefresh', message: 'v1 cursor' })
       .mockResolvedValueOnce(resp([page('B')], { hasMore: false }))
 
     const { result } = renderHook(() => usePageBrowserData(BASE))
@@ -87,7 +87,8 @@ describe('usePageBrowserData', () => {
   it('surfaces the invalid-filter toast and suppresses the generic loadFailed toast', async () => {
     mockedList.mockRejectedValueOnce({
       kind: 'validation',
-      message: 'InvalidFilter: bad chip',
+      code: 'InvalidFilter',
+      message: 'bad chip',
     })
 
     renderHook(() => usePageBrowserData(BASE))

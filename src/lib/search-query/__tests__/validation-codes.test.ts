@@ -1,67 +1,70 @@
 /**
- * #1061 — pin the shared validation sub-kind contract.
+ * #1061 / #2251 — pin the shared validation sub-kind contract.
  *
- * These tests assert that:
- *   1. the canonical code strings are spelled exactly as the Rust backend
- *      emits them (cross-language pin — a rename on either side breaks here),
- *   2. the TS re-emitters and the IPC-error parser all route through the
- *      shared `ValidationCode` constants rather than raw literals.
+ * Since #2251 the primary cross-language pin is **by construction**: the
+ * `ValidationCode` const object is `satisfies`-checked against the
+ * specta-generated string-literal union in `bindings.ts`, so a rename/typo
+ * on either side fails `tsgo -b` after bindings regeneration (the Rust
+ * `validation_code_wire_strings_pinned` test pins the same strings against
+ * the serde output). The runtime tests below cover what the type system
+ * cannot: that the const values round-trip as the union's own literals, and
+ * that the frontend-side validators still route their **display copy**
+ * through the shared constants rather than raw literals.
  */
 import { describe, expect, it } from 'vitest'
 
+import type { ValidationCode as GeneratedValidationCode } from '../../bindings'
 import { parse } from '../classify'
 import { validateGlob } from '../glob-validate'
-import { parseValidationReason, prefixed, prefixToken, ValidationCode } from '../validation-codes'
+import { prefixed, ValidationCode } from '../validation-codes'
 
-describe('ValidationCode (#1061 shared contract)', () => {
-  it('pins the exact code strings the Rust backend emits', () => {
-    // MUST match `src-tauri/src/error.rs::validation_code`. A drift here is a
-    // broken cross-language contract — the inline validation UX silently
-    // degrades to the generic-error toast.
-    expect(ValidationCode.InvalidGlob).toBe('InvalidGlob')
-    expect(ValidationCode.InvalidRegex).toBe('InvalidRegex')
-    expect(ValidationCode.InvalidDateFilter).toBe('InvalidDateFilter')
+describe('ValidationCode (#1061/#2251 shared contract)', () => {
+  it('pins the exact code strings the Rust backend serialises', () => {
+    // MUST match `src-tauri/src/error.rs::ValidationCode` (serde PascalCase
+    // variant names). The `satisfies` clause in validation-codes.ts already
+    // enforces this at compile time against the generated union; this runtime
+    // pin documents the wire strings and guards the vitest path, which does
+    // not gate on tsgo.
+    expect(ValidationCode).toEqual({
+      InvalidGlob: 'InvalidGlob',
+      InvalidRegex: 'InvalidRegex',
+      InvalidDateFilter: 'InvalidDateFilter',
+      InvalidFilter: 'InvalidFilter',
+      RequiresRefresh: 'RequiresRefresh',
+    })
   })
 
-  it('prefixed() / prefixToken() mirror the backend "<code>: <reason>" layout', () => {
-    expect(prefixed(ValidationCode.InvalidRegex, 'unclosed group')).toBe(
-      'InvalidRegex: unclosed group',
-    )
-    expect(prefixToken(ValidationCode.InvalidGlob)).toBe('InvalidGlob:')
-  })
-
-  it('parseValidationReason() extracts the reason and rejects mismatches', () => {
-    // Mirrors a raw IPC `message` carrying the prefix.
-    expect(
-      parseValidationReason('InvalidRegex: pattern too large', ValidationCode.InvalidRegex),
-    ).toBe('pattern too large')
-    // Wrong sub-kind → no match (the inline regex alert must NOT fire on a
-    // glob/date error).
-    expect(
-      parseValidationReason('InvalidGlob: unbalanced bracket', ValidationCode.InvalidRegex),
-    ).toBeNull()
-    // No prefix → no match.
-    expect(
-      parseValidationReason('something generic failed', ValidationCode.InvalidRegex),
-    ).toBeNull()
-  })
-})
-
-describe('TS re-emitters route through the shared constant (#1061)', () => {
-  it('validateGlob() emits messages prefixed with the shared InvalidGlob code', () => {
-    const expect_ = prefixToken(ValidationCode.InvalidGlob)
-    for (const bad of ['', '[abc', '{a,{b}}', '\\{']) {
-      const err = validateGlob(bad)
-      expect(err).not.toBeNull()
-      expect(err?.message.startsWith(expect_)).toBe(true)
+  it('const values are assignable to the generated union (roundtrip)', () => {
+    // Type-level roundtrip: every const value IS a member of the generated
+    // union, so a structured `err.code` off the wire compares directly
+    // against `ValidationCode.*` with no parsing.
+    const codes: GeneratedValidationCode[] = Object.values(ValidationCode)
+    for (const code of codes) {
+      expect(ValidationCode[code]).toBe(code)
     }
   })
 
-  it('date-token parsing emits InvalidDateFilter via the shared constant', () => {
+  it('prefixed() builds the "<code>: <reason>" display copy', () => {
+    expect(prefixed(ValidationCode.InvalidRegex, 'unclosed group')).toBe(
+      'InvalidRegex: unclosed group',
+    )
+  })
+})
+
+describe('frontend validators route display copy through the shared constant (#1061)', () => {
+  it('validateGlob() emits messages labelled with the shared InvalidGlob code', () => {
+    for (const bad of ['', '[abc', '{a,{b}}', '\\{']) {
+      const err = validateGlob(bad)
+      expect(err).not.toBeNull()
+      expect(err?.message.startsWith(`${ValidationCode.InvalidGlob}: `)).toBe(true)
+    }
+  })
+
+  it('date-token parsing labels invalid chips with InvalidDateFilter', () => {
     const tok = parse('due:tomorrowish').filters[0]
     expect(tok?.kind).toBe('invalid')
     if (tok && tok.kind === 'invalid') {
-      expect(tok.error.startsWith(prefixToken(ValidationCode.InvalidDateFilter))).toBe(true)
+      expect(tok.error.startsWith(`${ValidationCode.InvalidDateFilter}: `)).toBe(true)
     }
   })
 })

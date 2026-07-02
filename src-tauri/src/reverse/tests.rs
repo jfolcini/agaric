@@ -2105,7 +2105,7 @@ async fn revert_ops_rejects_batch_over_max_revert_ops_c5() {
         .await
         .expect_err("C5: a 1001-op batch must be rejected");
     assert!(
-        matches!(err, crate::error::AppError::Validation(_)),
+        matches!(err, crate::error::AppError::Validation { .. }),
         "over-cap batch must surface AppError::Validation, got {err:?}"
     );
 }

@@ -512,7 +512,7 @@ async fn revert_ops_in_tx(
     // and point-in-time restore (`restore_page_to_op_inner`), so the cap
     // is enforced once here rather than at every caller.
     if ops.len() > MAX_REVERT_OPS {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "cannot revert {} ops in a single batch (maximum is {MAX_REVERT_OPS})",
             ops.len()
         )));
@@ -768,7 +768,7 @@ pub async fn restore_page_to_op_inner(
     // guard. The bound matches the interactive `undo_depth` ceiling.
     // (Returning here drops `tx`, rolling the IMMEDIATE transaction back.)
     if candidate_ops.len() > MAX_REVERT_OPS {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "restore would revert {} ops, exceeding the maximum of {MAX_REVERT_OPS}; \
              restore to a more recent point",
             candidate_ops.len()
@@ -818,12 +818,12 @@ pub async fn undo_page_op_inner(
     undo_depth: i64,
 ) -> Result<UndoResult, AppError> {
     if undo_depth < 0 {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "undo_depth must be non-negative".into(),
         ));
     }
     if undo_depth > 1000 {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "undo_depth exceeds maximum of 1000".into(),
         ));
     }
@@ -967,7 +967,7 @@ pub async fn redo_page_op_inner(
     // undo ops backfill to 0 and are no longer redoable (the FE redo stack
     // is session-scoped, so no live ref can point at one).
     if undo_row.is_undo == 0 {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "redo target ({undo_device_id}, {undo_seq}) is a '{undo_op_type}' op that was not \
              produced by undo — refusing to reverse a forward op via redo (#659)"
         )));
@@ -1063,10 +1063,10 @@ pub async fn find_undo_group_inner(
     window_ms: i64,
 ) -> Result<i32, AppError> {
     if depth < 0 {
-        return Err(AppError::Validation("depth must be non-negative".into()));
+        return Err(AppError::validation("depth must be non-negative".into()));
     }
     if window_ms < 0 {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "window_ms must be non-negative".into(),
         ));
     }
@@ -1193,10 +1193,10 @@ pub async fn undo_page_group_inner(
     window_ms: i64,
 ) -> Result<Vec<UndoResult>, AppError> {
     if depth < 0 {
-        return Err(AppError::Validation("depth must be non-negative".into()));
+        return Err(AppError::validation("depth must be non-negative".into()));
     }
     if window_ms < 0 {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "window_ms must be non-negative".into(),
         ));
     }

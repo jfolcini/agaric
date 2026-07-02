@@ -70,7 +70,7 @@ pub(crate) fn prepare_notification(
 ) -> Result<(String, Option<String>), AppError> {
     let title = notification.title.trim();
     if title.is_empty() {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "notification title must not be empty".to_string(),
         ));
     }
@@ -275,13 +275,13 @@ mod tests {
     #[test]
     fn prepare_rejects_empty_title() {
         let err = prepare_notification(&n("", Some("body"))).unwrap_err();
-        assert!(matches!(err, AppError::Validation(_)), "got {err:?}");
+        assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
     }
 
     #[test]
     fn prepare_rejects_whitespace_only_title() {
         let err = prepare_notification(&n("   ", None)).unwrap_err();
-        assert!(matches!(err, AppError::Validation(_)), "got {err:?}");
+        assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
     }
 
     #[test]

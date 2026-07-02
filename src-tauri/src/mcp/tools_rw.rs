@@ -407,7 +407,7 @@ async fn handle_append_block(
     if let Some(p) = args.position
         && p < 1
     {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "tool `{TOOL_APPEND_BLOCK}`: position must be >= 1 (1-based), got {p}"
         )));
     }
@@ -465,7 +465,7 @@ async fn handle_set_property(
     if let Some(ref text) = args.value_text
         && text.len() > crate::commands::MAX_CONTENT_LENGTH
     {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "tool `{TOOL_SET_PROPERTY}`: value_text length {} exceeds maximum {}",
             text.len(),
             crate::commands::MAX_CONTENT_LENGTH,

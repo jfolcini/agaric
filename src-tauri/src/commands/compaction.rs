@@ -132,7 +132,7 @@ pub async fn compact_op_log_cmd_inner(
     // before any DB work. retention_days = 0 would otherwise set cutoff = now()
     // and purge the entire op log down to the snapshot frontier.
     if retention_days < MIN_RETENTION_DAYS {
-        return Err(AppError::Validation("retention_days.too_small".into()));
+        return Err(AppError::validation("retention_days.too_small".into()));
     }
 
     // SAFETY: (j). `retention_days` was just bounded above by

@@ -11,7 +11,7 @@
 
 import { type Dispatch, type SetStateAction, useCallback, useEffect, useRef, useState } from 'react'
 
-import { isCancellation } from '@/lib/app-error'
+import { isAppError, isCancellation, type TypedAppError } from '@/lib/app-error'
 import { notify } from '@/lib/notify'
 
 /** Minimum response shape for cursor-based pagination. */
@@ -45,6 +45,15 @@ export interface UsePaginatedQueryResult<T> {
   capped: boolean
   /** Error message from the last failed request, or null. Cleared on next success. */
   error: string | null
+  /**
+   * #2251 — the structured IPC `AppError` behind {@link error}, when the
+   * rejection was an AppError-shaped object (real Tauri rejections and the
+   * tauri-mock both are); `null` for non-IPC failures. Lets consumers
+   * discriminate on `kind` / validation `code` as data (e.g. the SearchPanel
+   * inline `InvalidRegex` alert) instead of regexing the message string.
+   * Cleared on next success alongside {@link error}.
+   */
+  errorDetail: TypedAppError | null
   /** Fetch the next page. No-op when already loading or no more pages. */
   loadMore: () => void
   /** Re-fetch from page 1. Does not clear items (stale-while-revalidate). */
@@ -72,6 +81,7 @@ export function usePaginatedQuery<T>(
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [errorDetail, setErrorDetail] = useState<TypedAppError | null>(null)
   const [capped, setCapped] = useState(false)
   const [totalCount, setTotalCount] = useState<number | undefined>(undefined)
   const requestIdRef = useRef(0)
@@ -130,6 +140,7 @@ export function usePaginatedQuery<T>(
         // gate "X of Y" rendering without a separate `!= null` step.
         setTotalCount(resp.total_count == null ? undefined : resp.total_count)
         setError(null)
+        setErrorDetail(null)
       } catch (err) {
         if (requestIdRef.current !== rid) return
         // Phase 2 — swallow cancellations silently.
@@ -137,8 +148,16 @@ export function usePaginatedQuery<T>(
         // and should not flash a toast / set error state. The stale-id
         // guard above already discards the (non-existent) result.
         if (isCancellation(err)) return
+        // #2251 — keep the structured AppError alongside the display string.
+        // Real IPC rejections are plain `{ kind, message }` objects (NOT
+        // `Error` instances), so the old `err instanceof Error` fallback
+        // collapsed them to 'Request failed'; read `.message` off the
+        // AppError shape too so the body error-state shows the real reason.
+        const detail = isAppError(err) ? err : null
+        setErrorDetail(detail)
         const msg =
-          optionsRef.current?.onError ?? (err instanceof Error ? err.message : 'Request failed')
+          optionsRef.current?.onError ??
+          (err instanceof Error ? err.message : (detail?.message ?? 'Request failed'))
         setError(msg)
         if (optionsRef.current?.onError) notify.error(optionsRef.current.onError)
       } finally {
@@ -202,5 +221,16 @@ export function usePaginatedQuery<T>(
     load()
   }, [load])
 
-  return { items, loading, hasMore, capped, error, loadMore, reload, setItems, totalCount }
+  return {
+    items,
+    loading,
+    hasMore,
+    capped,
+    error,
+    errorDetail,
+    loadMore,
+    reload,
+    setItems,
+    totalCount,
+  }
 }

@@ -271,7 +271,7 @@ async fn confirm_without_prior_start_returns_no_active_session() {
     .await;
 
     assert!(
-        matches!(&result, Err(AppError::Validation(msg)) if msg == "pairing.no_active_session"),
+        matches!(&result, Err(AppError::Validation { message: msg, .. }) if msg == "pairing.no_active_session"),
         "confirm without prior start must surface as Validation(\"pairing.no_active_session\"), got {result:?}"
     );
 

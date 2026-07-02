@@ -211,7 +211,7 @@ pub async fn create_page_in_space_inner(
     .fetch_optional(&mut **tx)
     .await?;
     if space_ok.is_none() {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "space_id '{space_id}' does not refer to a live space block (is_space = 'true')"
         )));
     }
@@ -240,7 +240,7 @@ pub async fn create_page_in_space_inner(
         match parent_space {
             Some(s) if s == space_id => {} // OK — same space
             Some(other) => {
-                return Err(AppError::Validation(format!(
+                return Err(AppError::validation(format!(
                     "parent_id '{parent}' belongs to space '{other}'; cannot create child in space '{space_id}'"
                 )));
             }
@@ -248,7 +248,7 @@ pub async fn create_page_in_space_inner(
                 // Parent has no `space_id` (NULL column or missing row) —
                 // refuse rather than allow a cross-space orphan or invent
                 // a default.
-                return Err(AppError::Validation(format!(
+                return Err(AppError::validation(format!(
                     "parent_id '{parent}' has no space membership; cannot create child in space '{space_id}'"
                 )));
             }
@@ -796,7 +796,7 @@ mod tests {
                 .await;
 
         assert!(
-            matches!(result, Err(AppError::Validation(_))),
+            matches!(result, Err(AppError::Validation { .. })),
             "nonexistent space_id must yield AppError::Validation, got {result:?}"
         );
         assert_eq!(
@@ -829,7 +829,7 @@ mod tests {
         .await;
 
         assert!(
-            matches!(result, Err(AppError::Validation(_))),
+            matches!(result, Err(AppError::Validation { .. })),
             "plain page (no is_space) must be rejected with Validation, got {result:?}"
         );
         assert_eq!(
@@ -868,7 +868,7 @@ mod tests {
         .await;
 
         assert!(
-            matches!(result, Err(AppError::Validation(_))),
+            matches!(result, Err(AppError::Validation { .. })),
             "soft-deleted space target must be rejected with Validation, got {result:?}"
         );
         assert_eq!(
@@ -970,7 +970,7 @@ mod tests {
         .await;
 
         assert!(
-            matches!(result, Err(AppError::Validation(_))),
+            matches!(result, Err(AppError::Validation { .. })),
             "cross-space parent must be rejected with Validation, got {result:?}"
         );
         assert_eq!(
@@ -1019,7 +1019,7 @@ mod tests {
         .await;
 
         assert!(
-            matches!(result, Err(AppError::Validation(_))),
+            matches!(result, Err(AppError::Validation { .. })),
             "parent without `space` property must be rejected with Validation, got {result:?}"
         );
         assert_eq!(

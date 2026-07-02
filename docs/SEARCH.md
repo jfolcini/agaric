@@ -232,7 +232,7 @@ Bare tokens without metacharacters (e.g. `path:Journal`) wrap automatically to `
 - `prop:status` (no `=`) → invalid chip with `prop: expected 'key=value'`.
 - `prop:=value` (empty key) → invalid chip with `prop: key cannot be empty`.
 
-Invalid chips render with destructive styling, an `aria-invalid` marker, and the typed error as the hover tooltip. The frontend keys on the `InvalidGlob:` prefix returned by the backend so the same message can also originate from a server-side rejection.
+Invalid chips render with destructive styling, an `aria-invalid` marker, and the typed error as the hover tooltip. When a rejection originates server-side, the frontend keys on the structured `code` field (`ValidationCode.InvalidGlob`, #2251) rather than a message prefix; the `InvalidGlob:` label seen in the chip tooltip is client-side display copy built by `glob-validate.ts`.
 
 ### `path:` is title-substring, not exact-page
 
@@ -265,7 +265,7 @@ The find-across-pages view uses the Rust [`regex`] crate. Key differences from J
 
 To bound worst-case compile time and matched-output size, the backend applies a
 set of caps: a pattern-length limit (over-long patterns reject up front with
-`AppError::Validation("InvalidRegex: …")`), the `RegexBuilder` size and
+`AppError::validation_coded(ValidationCode::InvalidRegex, …)`), the `RegexBuilder` size and
 DFA-size limits, a per-block match-offset cap (surplus matches are silently
 dropped), and a regex-mode pre-filter row count that bounds the SQL scan
 (most-recent-first ordering by `b.id DESC`, since ULID prefixes are time-sortable
@@ -275,7 +275,7 @@ the documented `pub const`s in `src-tauri/src/fts/toggle_filter.rs`
 `MAX_OFFSETS_PER_BLOCK`, `REGEX_PRE_FILTER_CAP`) — read them from the code rather
 than a number here, which would drift.
 
-Regex compile errors surface inline next to the input with a red border; the error message follows the `InvalidRegex:` prefix.
+Regex compile errors surface inline next to the input with a red border; the frontend discriminates them by the structured `code` (`ValidationCode.InvalidRegex`, #2251) and surfaces the bare `message` reason (no prefix).
 
 ### Regex mode and structural filters
 

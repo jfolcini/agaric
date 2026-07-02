@@ -135,7 +135,7 @@ pub(crate) async fn search_fts_partitioned(
 
     // Same up-front length cap as `search_fts`.
     if query.len() > MAX_QUERY_LEN {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "search query is too long ({} bytes); maximum is {MAX_QUERY_LEN} bytes",
             query.len()
         )));

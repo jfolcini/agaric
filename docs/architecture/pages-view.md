@@ -30,7 +30,7 @@ Every Pages-view list render walks the same five stages. The IPC is the only asy
 ┌──────────────────────────┐
 │  usePaginatedQuery       │  Generic hook (src/hooks/usePaginatedQuery.ts) — owns the
 │   ↳ rows[], hasMore,     │  cursor/limit state machine + request-id stale-guard. The
-│     loadMore, refetch    │  `RequiresRefresh:` recovery wrapper lives in the orchestrator
+│     loadMore, refetch    │  `RequiresRefresh` recovery wrapper lives in the orchestrator
 │                          │  (`PageBrowser.tsx:97-114` `withCursorRecovery`); see below.
 └────────────┬─────────────┘
              │
@@ -106,7 +106,7 @@ Contract — load-bearing for tests and for downstream consumers:
 
 `<DensityRow>` is **Pages-specific** and lives at `src/components/PageBrowser/DensityRow.tsx`. TrashView and HistoryView have different row shapes (`TrashRow.descendants_affected`, `HistoryEntry`'s op-log payload), so extracting prematurely couples three views to a single primitive that has to grow optional props for each one's metadata. If a second consumer needs this shape, propose an extraction PR first rather than importing across surfaces.
 
-## Cursor v1 → v2 (the `RequiresRefresh:` recovery contract)
+## Cursor v1 → v2 (the `RequiresRefresh` recovery contract)
 
 The legacy Pages view called `list_blocks(blockType='page')`, whose cursor encodes `(id ASC)` only. The new IPC needs keysets on a numeric / date column with `id` as the tiebreaker, plus a sort-mode discriminator so cursors don't survive a sort change.
 
@@ -117,9 +117,9 @@ The implementation **does not bump `CURRENT_CURSOR_VERSION`** (it stays at 1). I
 - `Cursor.seq` → primary-sort key for i64-count sorts.
 - `Cursor.id` → tiebreaker (always).
 
-A cursor whose `position` slot does not match the requested sort is rejected by `validate_pages_metadata_cursor` with `AppError::Validation("RequiresRefresh: cursor sort mismatch (expected …)")`. The frontend recognises the `RequiresRefresh:` prefix as a recovery signal: drop the cursor, refetch from page 1, and (if the user is mid-scroll) surface a "Sort changed — refresh to continue" toast.
+A cursor whose `position` slot does not match the requested sort is rejected by `validate_pages_metadata_cursor` with `AppError::validation_coded(ValidationCode::RequiresRefresh, "cursor sort mismatch (expected …)")`. The frontend recognises the structured `RequiresRefresh` code (#2251 promoted the former message prefix to a `code` field; `validationCode(err) === ValidationCode.RequiresRefresh` in `withCursorRecovery`) as a recovery signal: drop the cursor, refetch from page 1, and (if the user is mid-scroll) surface a "Sort changed — refresh to continue" toast.
 
-**This is the only `RequiresRefresh:` consumer today.** Any future paginator that introduces cross-cursor incompatibility (sort change, schema change, filter change that invalidates keysets) should use the same `AppError::Validation("RequiresRefresh: …")` shape so the frontend's recovery path stays single.
+**This is the only `RequiresRefresh` consumer today.** Any future paginator that introduces cross-cursor incompatibility (sort change, schema change, filter change that invalidates keysets) should use the same `AppError::validation_coded(ValidationCode::RequiresRefresh, …)` shape so the frontend's recovery path stays single.
 
 ## Metadata aggregation
 

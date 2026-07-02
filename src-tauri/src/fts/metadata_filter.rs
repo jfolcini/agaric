@@ -11,8 +11,8 @@
 //!
 //! - **Validation** happens here, at the boundary, so unparseable
 //!   dates / unknown bucket keywords surface as
-//!   [`AppError::Validation`] with an `InvalidDateFilter:` prefix the
-//!   frontend can key on (mirrors `InvalidGlob:` / `InvalidRegex:`).
+//!   [`AppError::Validation`] carrying the structured `InvalidDateFilter`
+//!   code the frontend keys on (mirrors `InvalidGlob` / `InvalidRegex`, #2251).
 //! - **SQL composition** stays in `search.rs` and `toggle_filter.rs`
 //!   because the dynamic placeholder index (`?N`) is local to each
 //!   query. This module hands the caller the resolved values; the
@@ -44,7 +44,7 @@ use crate::domain::search_types::{
     DateFilter, DateOp, NamedDateRange, SearchFilter, SearchPropertyFilter,
 };
 use crate::error::AppError;
-use crate::error::validation_code::{INVALID_DATE_FILTER, prefixed};
+use crate::error::ValidationCode;
 use crate::filters::primitive::LastEditedSpec;
 use chrono::{Datelike, Duration, NaiveDate, Weekday};
 
@@ -145,7 +145,7 @@ impl MetadataPredicates {
 ///
 /// # Errors
 ///
-/// Returns [`AppError::Validation`] with an `InvalidDateFilter:` prefix
+/// Returns [`AppError::Validation`] with the structured `InvalidDateFilter` code
 /// for any unparseable ISO date or unknown bucket keyword.
 pub fn prepare_metadata(filter: &SearchFilter) -> Result<MetadataPredicates, AppError> {
     let today = chrono::Local::now().date_naive();
@@ -216,7 +216,7 @@ pub fn prepare_metadata_with_today(
         .chain(filter.excluded_property_filters.iter())
     {
         if pf.key.trim().is_empty() {
-            return Err(AppError::Validation(
+            return Err(AppError::validation(
                 "property key must not be empty".into(),
             ));
         }
@@ -244,10 +244,10 @@ fn resolve_date_filter(df: &DateFilter, today: NaiveDate) -> Result<DatePredicat
         DateFilter::Named(range) => Ok(resolve_named_range(*range, today)),
         DateFilter::Op { op, date } => {
             let parsed = NaiveDate::parse_from_str(date, "%Y-%m-%d").map_err(|_| {
-                AppError::Validation(prefixed(
-                    INVALID_DATE_FILTER,
-                    &format!("expected YYYY-MM-DD, got '{date}'"),
-                ))
+                AppError::validation_coded(
+                    ValidationCode::InvalidDateFilter,
+                    format!("expected YYYY-MM-DD, got '{date}'"),
+                )
             })?;
             Ok(DatePredicate::Op {
                 op: *op,
@@ -525,10 +525,11 @@ mod tests {
         };
         let err = prepare_metadata_with_today(&f, fixed_today()).unwrap_err();
         match err {
-            AppError::Validation(msg) => {
-                assert!(
-                    msg.starts_with("InvalidDateFilter:"),
-                    "expected InvalidDateFilter prefix, got: {msg}"
+            AppError::Validation { code, .. } => {
+                assert_eq!(
+                    code,
+                    Some(ValidationCode::InvalidDateFilter),
+                    "expected InvalidDateFilter code"
                 );
             }
             other => panic!("expected Validation, got {other:?}"),
@@ -581,7 +582,7 @@ mod tests {
         assert!(
             matches!(
                 prepare_metadata_with_today(&f, fixed_today()),
-                Err(AppError::Validation(_))
+                Err(AppError::Validation { .. })
             ),
             "empty include prop key must be rejected"
         );
@@ -597,7 +598,7 @@ mod tests {
         assert!(
             matches!(
                 prepare_metadata_with_today(&f, fixed_today()),
-                Err(AppError::Validation(_))
+                Err(AppError::Validation { .. })
             ),
             "whitespace-only exclude prop key must be rejected"
         );

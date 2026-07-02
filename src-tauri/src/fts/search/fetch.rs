@@ -437,7 +437,7 @@ pub(super) async fn execute_fts_fetch(
             code_match && prefix_match
         });
         if is_fts5_parse_error {
-            AppError::Validation(format!(
+            AppError::validation(format!(
                 "Invalid search query: check for unmatched quotes or special characters. \
                      Details: {e}"
             ))
