@@ -69,6 +69,36 @@ use super::snapshot_transfer;
 use super::wire;
 
 // ---------------------------------------------------------------------------
+// SyncDaemonContext — owned bundle of daemon-wide startup state
+// ---------------------------------------------------------------------------
+
+/// Owned bundle of the daemon-wide startup state threaded through the
+/// `start` / dormant-waiter / [`daemon_loop`] chain.
+///
+/// This is the owned counterpart of [`SyncSessionContext`] (which holds
+/// borrowed references for the per-session hot path) plus the `lifecycle`
+/// hooks. Bundling these eight values keeps the startup call sites in
+/// lockstep — the previous 8-arg positional signature was suppressed by
+/// `#[allow(clippy::too_many_arguments)]` on five functions and carried the
+/// same drift risk the session layer already eliminated with
+/// `SyncSessionContext`.
+///
+/// `shutdown_notify` is deliberately *not* part of this bundle: it is minted
+/// per spawn (each `start*` entry point creates its own `Notify` and keeps a
+/// clone in the returned `SyncDaemon` handle), so it stays a separate
+/// positional argument on [`daemon_loop`].
+pub struct SyncDaemonContext {
+    pub pool: SqlitePool,
+    pub device_id: String,
+    pub materializer: Materializer,
+    pub scheduler: Arc<SyncScheduler>,
+    pub cert: SyncCert,
+    pub event_sink: Arc<dyn SyncEventSink>,
+    pub cancel: Arc<AtomicBool>,
+    pub lifecycle: LifecycleHooks,
+}
+
+// ---------------------------------------------------------------------------
 // daemon_loop — the core async select! loop
 // ---------------------------------------------------------------------------
 
@@ -83,18 +113,20 @@ use super::wire;
 /// re-run the loop body immediately without waiting out the remaining
 /// tick interval. Event-driven branches (mDNS, debounced change) are
 /// NOT gated — they only fire when there is real work to do.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn daemon_loop(
-    pool: SqlitePool,
-    device_id: String,
-    materializer: Materializer,
-    scheduler: Arc<SyncScheduler>,
-    cert: SyncCert,
-    event_sink: Arc<dyn SyncEventSink>,
+    ctx: SyncDaemonContext,
     shutdown_notify: Arc<Notify>,
-    cancel: Arc<AtomicBool>,
-    lifecycle: LifecycleHooks,
 ) -> Result<(), AppError> {
+    let SyncDaemonContext {
+        pool,
+        device_id,
+        materializer,
+        scheduler,
+        cert,
+        event_sink,
+        cancel,
+        lifecycle,
+    } = ctx;
     // Acquire WifiManager.MulticastLock on Android so the
     // `mdns-sd` crate's UDP multicast sockets receive packets. Held in
     // a local binding so `Drop` releases it on function exit (graceful

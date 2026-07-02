@@ -40,6 +40,41 @@ use crate::filters::primitive::{
     PropertyValue, SearchProjection,
 };
 
+/// Dedupe + canonical-UPPERCASE-normalise a caller's `tag_ids` before they are
+/// bound into an ALL-tags predicate. Shared by the three structural-filter
+/// builders (`fts::search::fts_fetch_rows`, `fts::toggle_filter::regex_mode_query`,
+/// and `fts::toggle_filter::filter_only_scan`) so the normalisation cannot drift
+/// between them.
+///
+/// The "ALL tags" clause compares `COUNT(DISTINCT bt.tag_id)` against the bound
+/// list length; a duplicate id (the same chip added twice, or two FE code paths
+/// appending the same id) would make the raw `len()` exceed the achievable
+/// distinct count, so the predicate could never be satisfied and the query
+/// silently returned zero rows. De-duplicating here makes the bound count match
+/// the `DISTINCT` semantics. Order is preserved so the placeholder/bind indices
+/// stay deterministic.
+///
+/// SQL-A6 — each id is normalised to its canonical UPPERCASE ULID form BEFORE
+/// entering the dedup set (and the normalised form is what gets bound).
+/// `block_tags.tag_id` stores the canonical uppercase Crockford-base32 ULID
+/// (`BlockId`/`ActiveBlockId` both normalise via `to_ascii_uppercase`), so a
+/// mixed-case duplicate would otherwise survive byte-exact dedup, inflate the
+/// bound count past the achievable `COUNT(DISTINCT)`, and silently zero out the
+/// ALL-tags predicate. Uppercasing collapses the duplicate AND aligns the bound
+/// `IN (...)` values with the stored canonical form.
+pub(crate) fn normalize_tag_ids(tag_ids: Option<&[String]>) -> Vec<String> {
+    match tag_ids {
+        Some(ids) if !ids.is_empty() => {
+            let mut seen = std::collections::HashSet::new();
+            ids.iter()
+                .map(|id| id.to_ascii_uppercase())
+                .filter(|id| seen.insert(id.clone()))
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// #1280 B2 — bridge the search-side resolved [`MetaDatePredicate`]
 /// (`IsNull` / `Range` / `Op{DateOp}`) onto the cross-surface
 /// [`DatePredicate`] the projection compiles. The resolver oracle treats the

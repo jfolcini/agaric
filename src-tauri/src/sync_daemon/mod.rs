@@ -62,7 +62,8 @@ pub(crate) use discovery::{format_peer_address, process_service_removed};
 // production code path imports through this module.
 #[allow(unused_imports)]
 pub(crate) use orchestrator::{
-    SyncSessionContext, run_sequential_sync_round, run_sync_session, try_sync_with_peer,
+    SyncDaemonContext, SyncSessionContext, run_sequential_sync_round, run_sync_session,
+    try_sync_with_peer,
 };
 // Same rationale as above: only the test sibling reaches into these.
 #[allow(unused_imports)]
@@ -166,7 +167,6 @@ impl SyncDaemon {
     ///
     /// On DB error the daemon falls back to active startup so a transient
     /// failure does not disable sync.
-    #[allow(clippy::too_many_arguments)]
     pub async fn start_if_peers_exist(
         pool: SqlitePool,
         device_id: String,
@@ -176,7 +176,7 @@ impl SyncDaemon {
         event_sink: Arc<dyn SyncEventSink>,
         cancel: Arc<AtomicBool>,
     ) -> Result<Self, AppError> {
-        Self::start_if_peers_exist_with_lifecycle(
+        Self::start_if_peers_exist_with_lifecycle(SyncDaemonContext {
             pool,
             device_id,
             materializer,
@@ -184,8 +184,8 @@ impl SyncDaemon {
             cert,
             event_sink,
             cancel,
-            LifecycleHooks::default(),
-        )
+            lifecycle: LifecycleHooks::default(),
+        })
         .await
     }
 
@@ -194,16 +194,8 @@ impl SyncDaemon {
     /// The `lifecycle` hooks are propagated into the full daemon loop so
     /// the periodic resync tick skips its body while the app is
     /// backgrounded and wakes immediately on foreground transitions.
-    #[allow(clippy::too_many_arguments)]
     pub async fn start_if_peers_exist_with_lifecycle(
-        pool: SqlitePool,
-        device_id: String,
-        materializer: Materializer,
-        scheduler: Arc<SyncScheduler>,
-        cert: SyncCert,
-        event_sink: Arc<dyn SyncEventSink>,
-        cancel: Arc<AtomicBool>,
-        lifecycle: LifecycleHooks,
+        ctx: SyncDaemonContext,
     ) -> Result<Self, AppError> {
         // A pending-pairing marker is only meaningful while the in-memory
         // `PairingSession` that armed it (in `start_pairing_armed_inner` /
@@ -221,27 +213,17 @@ impl SyncDaemon {
         // paired peer; an in-session pairing still wakes the dormant waiter
         // via `scheduler.notify_change()`. Best-effort: a failed clear must
         // not block startup.
-        if let Err(e) = peer_refs::clear_pending_pairing(&pool).await {
+        if let Err(e) = peer_refs::clear_pending_pairing(&ctx.pool).await {
             tracing::warn!(
                 error = %e,
                 "failed to clear stale pending-pairing marker at startup"
             );
         }
 
-        match Self::should_start_active(&pool).await {
+        match Self::should_start_active(&ctx.pool).await {
             Ok(true) => {
                 // Paired peers already exist — start the full daemon.
-                Self::start_with_lifecycle(
-                    pool,
-                    device_id,
-                    materializer,
-                    scheduler,
-                    cert,
-                    event_sink,
-                    cancel,
-                    lifecycle,
-                )
-                .await
+                Self::start_with_lifecycle(ctx).await
             }
             Ok(false) => {
                 // No paired peers — spawn a lightweight waiter. The mDNS
@@ -250,16 +232,7 @@ impl SyncDaemon {
                 tracing::info!(
                     "SyncDaemon starting in dormant mode (no paired peers, mDNS and TLS listener deferred)"
                 );
-                Self::spawn_dormant_waiter(
-                    pool,
-                    device_id,
-                    materializer,
-                    scheduler,
-                    cert,
-                    event_sink,
-                    cancel,
-                    lifecycle,
-                )
+                Self::spawn_dormant_waiter(ctx)
             }
             Err(e) => {
                 // Fail-open: a transient DB query error must not keep the
@@ -270,37 +243,19 @@ impl SyncDaemon {
                     error = %e,
                     "peer_refs query failed at daemon start; falling back to active startup"
                 );
-                Self::start_with_lifecycle(
-                    pool,
-                    device_id,
-                    materializer,
-                    scheduler,
-                    cert,
-                    event_sink,
-                    cancel,
-                    lifecycle,
-                )
-                .await
+                Self::start_with_lifecycle(ctx).await
             }
         }
     }
 
     /// Internal: spawn the dormant waiter task that polls for peers and
     /// transitions to the full `daemon_loop` when any arrive.
-    #[allow(clippy::too_many_arguments)]
-    fn spawn_dormant_waiter(
-        pool: SqlitePool,
-        device_id: String,
-        materializer: Materializer,
-        scheduler: Arc<SyncScheduler>,
-        cert: SyncCert,
-        event_sink: Arc<dyn SyncEventSink>,
-        cancel: Arc<AtomicBool>,
-        lifecycle: LifecycleHooks,
-    ) -> Result<Self, AppError> {
+    fn spawn_dormant_waiter(ctx: SyncDaemonContext) -> Result<Self, AppError> {
         let shutdown_notify = Arc::new(Notify::new());
         let shutdown_notify_task = shutdown_notify.clone();
-        let cancel_flag = cancel.clone();
+        // Clone the shared cancel flag for the returned handle; the owned
+        // `ctx` (carrying the same Arc) is moved into `daemon_loop` below.
+        let cancel = ctx.cancel.clone();
 
         let handle = tokio::spawn(async move {
             let mut poll = tokio::time::interval(Self::DORMANT_POLL_INTERVAL);
@@ -311,13 +266,13 @@ impl SyncDaemon {
             loop {
                 tokio::select! {
                     _ = poll.tick() => {
-                        if peers_appeared(&pool).await {
+                        if peers_appeared(&ctx.pool).await {
                             break;
                         }
                     }
-                    () = scheduler.wait_for_debounced_change() => {
+                    () = ctx.scheduler.wait_for_debounced_change() => {
                         // Likely a pair event; recheck immediately.
-                        if peers_appeared(&pool).await {
+                        if peers_appeared(&ctx.pool).await {
                             break;
                         }
                     }
@@ -332,19 +287,7 @@ impl SyncDaemon {
                 "SyncDaemon transitioning from dormant to active (paired peer detected)"
             );
 
-            if let Err(e) = orchestrator::daemon_loop(
-                pool,
-                device_id,
-                materializer,
-                scheduler,
-                cert,
-                event_sink,
-                shutdown_notify_task,
-                cancel_flag,
-                lifecycle,
-            )
-            .await
-            {
+            if let Err(e) = orchestrator::daemon_loop(ctx, shutdown_notify_task).await {
                 tracing::error!(error = %e, "SyncDaemon (post-dormant) exited with error");
             }
         });
@@ -373,7 +316,7 @@ impl SyncDaemon {
         event_sink: Arc<dyn SyncEventSink>,
         cancel: Arc<AtomicBool>,
     ) -> Result<Self, AppError> {
-        Self::start_with_lifecycle(
+        Self::start_with_lifecycle(SyncDaemonContext {
             pool,
             device_id,
             materializer,
@@ -381,8 +324,8 @@ impl SyncDaemon {
             cert,
             event_sink,
             cancel,
-            LifecycleHooks::default(),
-        )
+            lifecycle: LifecycleHooks::default(),
+        })
         .await
     }
 
@@ -391,35 +334,15 @@ impl SyncDaemon {
     /// The daemon's periodic resync tick short-circuits when
     /// `lifecycle.is_foreground` is `false`, and wakes immediately when
     /// `lifecycle.wake` is notified.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn start_with_lifecycle(
-        pool: SqlitePool,
-        device_id: String,
-        materializer: Materializer,
-        scheduler: Arc<SyncScheduler>,
-        cert: SyncCert,
-        event_sink: Arc<dyn SyncEventSink>,
-        cancel: Arc<AtomicBool>,
-        lifecycle: LifecycleHooks,
-    ) -> Result<Self, AppError> {
+    pub async fn start_with_lifecycle(ctx: SyncDaemonContext) -> Result<Self, AppError> {
         let shutdown_notify = Arc::new(Notify::new());
         let shutdown_notify_flag = shutdown_notify.clone();
-        let cancel_flag = cancel.clone();
+        // Clone the shared cancel flag for the returned handle; the owned
+        // `ctx` (carrying the same Arc) is moved into `daemon_loop` below.
+        let cancel = ctx.cancel.clone();
 
         let handle = tokio::spawn(async move {
-            if let Err(e) = orchestrator::daemon_loop(
-                pool,
-                device_id,
-                materializer,
-                scheduler,
-                cert,
-                event_sink,
-                shutdown_notify_flag,
-                cancel_flag,
-                lifecycle,
-            )
-            .await
-            {
+            if let Err(e) = orchestrator::daemon_loop(ctx, shutdown_notify_flag).await {
                 tracing::error!(error = %e, "SyncDaemon exited with error");
             }
         });

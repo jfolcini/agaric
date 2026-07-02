@@ -1579,14 +1579,16 @@ fn wire_sync_daemon(w: SyncDaemonWiring) {
     // tick short-circuits while the app is backgrounded.
     tauri::async_runtime::spawn(async move {
         match sync_daemon::SyncDaemon::start_if_peers_exist_with_lifecycle(
-            w.pool,
-            w.device_id,
-            w.materializer,
-            w.scheduler,
-            w.cert,
-            w.sink,
-            w.cancel_flag,
-            w.lifecycle,
+            sync_daemon::SyncDaemonContext {
+                pool: w.pool,
+                device_id: w.device_id,
+                materializer: w.materializer,
+                scheduler: w.scheduler,
+                cert: w.cert,
+                event_sink: w.sink,
+                cancel: w.cancel_flag,
+                lifecycle: w.lifecycle,
+            },
         )
         .await
         {
