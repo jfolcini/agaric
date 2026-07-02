@@ -34,6 +34,7 @@ use crate::domain::search_types::{DateOp, SearchPropertyFilter};
 // production builds.
 #[cfg(test)]
 use crate::domain::search_types::SearchFilter;
+use crate::filters::SqlFragment;
 use crate::filters::primitive::{
     Bind, DatePredicate, FilterPrimitive, LastEditedSpec, Projection, PropertyPredicate,
     PropertyValue, SearchProjection,
@@ -210,30 +211,16 @@ impl StructuralFilterBuilder {
     ///
     /// Pre-condition: the fragment's `?` count MUST equal its `binds.len()`
     /// (every primitive `SearchProjection` compiles satisfies this). The
-    /// renumber is a straight left-to-right substitution; the fragment must
-    /// not contain a literal `?` outside a placeholder (none of the routed
-    /// primitives do).
+    /// fragment is composed via a structured [`SqlFragment`] (#2255): the
+    /// placeholders are numbered in one arithmetic pass, and a `?`/bind-count
+    /// mismatch (e.g. a literal `?` in a string) is a HARD error active in
+    /// release too — the promotion of the former `debug_assert!`.
     fn add_projection_clause(&mut self, prefix: &str, sql: &str, binds: &[Bind]) {
-        // Renumber bare `?` → `?{next}` left-to-right.
-        let mut renumbered = String::with_capacity(sql.len() + binds.len() * 2);
-        for ch in sql.chars() {
-            if ch == '?' {
-                let i = self.next_param;
-                self.next_param += 1;
-                renumbered.push('?');
-                renumbered.push_str(&i.to_string());
-            } else {
-                renumbered.push(ch);
-            }
-        }
-        debug_assert_eq!(
-            renumbered.matches('?').count(),
-            binds.len(),
-            "projection fragment `?` count must equal bind count"
-        );
+        let fragment = SqlFragment::new(sql, binds.to_vec());
+        let rendered = fragment.render(&mut self.next_param);
         self.sql.push_str(prefix);
-        self.sql.push_str(&renumbered);
-        for b in binds {
+        self.sql.push_str(&rendered);
+        for b in fragment.binds() {
             self.binds.push(match b {
                 Bind::Text(s) => ScalarBind::Str(s.clone()),
                 Bind::Int(n) => ScalarBind::I64(*n),
@@ -1480,5 +1467,142 @@ mod tests {
         let p3 = sql.find("?3").unwrap();
         let p5 = sql.find("?5").unwrap();
         assert!(p1 < p3 && p3 < p5, "placeholders must be in source order");
+    }
+
+    // #2255 — assembly equivalence: the structured `SqlFragment` path (routed
+    // through every `add_*_via_projection` + `add_metadata` splice) must build
+    // a full multi-fragment FTS filter BYTE-IDENTICAL to the pre-refactor
+    // char-by-char renumber. Golden captured from `origin/main`.
+    #[test]
+    fn structured_assembly_is_byte_identical_to_legacy_renumber() {
+        use crate::domain::search_types::{DateOp, SearchPropertyFilter};
+        use crate::fts::metadata_filter::{DatePredicate, MetadataPredicates};
+        let metadata = MetadataPredicates {
+            state_values: vec!["TODO".into(), "DOING".into()],
+            state_is_null: true,
+            excluded_state_values: vec!["DONE".into()],
+            excluded_state_not_null: false,
+            priority_values: vec!["A".into()],
+            priority_is_null: false,
+            excluded_priority_values: vec!["C".into()],
+            excluded_priority_not_null: true,
+            property_includes: vec![
+                SearchPropertyFilter {
+                    key: "status".into(),
+                    value: "draft".into(),
+                },
+                SearchPropertyFilter {
+                    key: "score".into(),
+                    value: "1.5".into(),
+                },
+                SearchPropertyFilter {
+                    key: "deadline".into(),
+                    value: "2026-05-17".into(),
+                },
+                SearchPropertyFilter {
+                    key: "notes".into(),
+                    value: String::new(),
+                },
+            ],
+            property_excludes: vec![SearchPropertyFilter {
+                key: "archived".into(),
+                value: String::new(),
+            }],
+            due: Some(DatePredicate::Op {
+                op: DateOp::Lte,
+                date: "2026-06-01".into(),
+            }),
+            scheduled: Some(DatePredicate::Range {
+                from: "2026-01-01".into(),
+                to: "2026-12-31".into(),
+            }),
+            last_edited: Some(crate::filters::LastEditedSpec::Rolling { days: 7 }),
+        };
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_parent(FTS_PREFIX, Some("PARENT01"));
+        fb.add_tags_via_projection(FTS_PREFIX, &["TAGA".to_string(), "TAGB".to_string()]);
+        fb.add_space_via_projection(FTS_PREFIX, Some("01SPACE0001"));
+        fb.add_page_globs_via_projection(
+            FTS_PREFIX,
+            false,
+            &["*proj*".to_string(), "*docs*".to_string()],
+        );
+        fb.add_page_globs_via_projection(FTS_PREFIX, true, &["*trash*".to_string()]);
+        fb.add_block_type_via_projection(FTS_PREFIX, Some("page"));
+        fb.add_metadata(&metadata, "b");
+
+        // Byte-identical golden. Each fragment is spliced with `FTS_PREFIX`
+        // ("\n           AND "); the bodies + `?N` numbers below are the exact
+        // pre-refactor renumber output over this call sequence.
+        let bodies = [
+            "b.parent_id = ?6",
+            "b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?7)",
+            "b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?8)",
+            "b.space_id = ?9",
+            "(b.page_id IN (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?10) OR b.page_id IN (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?11))",
+            "b.page_id NOT IN (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?12)",
+            "b.block_type IN (?13)",
+            "(b.todo_state IN (?14, ?15) OR b.todo_state IS NULL)",
+            "(b.todo_state IS NULL OR b.todo_state NOT IN (?16))",
+            "(b.priority IN (?17))",
+            "(b.priority IS NOT NULL AND b.priority NOT IN (?18))",
+            "EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?19 AND value_text = ?20)",
+            "EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?21 AND value_num = ?22)",
+            "EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?23 AND value_date = ?24)",
+            "EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?25)",
+            "NOT EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?26)",
+            "(b.due_date IS NOT NULL AND b.due_date <= ?27)",
+            "(b.scheduled_date IS NOT NULL AND b.scheduled_date BETWEEN ?28 AND ?29)",
+            "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), 0) >= (CAST(strftime('%s', 'now', ?30) AS INTEGER) * 1000)",
+        ];
+        let expected: String = bodies.iter().map(|b| format!("{FTS_PREFIX}{b}")).collect();
+        assert_eq!(fb.sql(), expected, "assembled SQL must be byte-identical");
+        assert_eq!(fb.next_param(), 31, "next free slot after ?30");
+        assert_eq!(
+            fb.bind_count(),
+            25,
+            "25 binds appended in placeholder order"
+        );
+
+        let bind_vals: Vec<String> = fb
+            .binds
+            .iter()
+            .map(|b| match b {
+                ScalarBind::Str(s) => format!("S:{s}"),
+                ScalarBind::I64(n) => format!("I:{n}"),
+                ScalarBind::F64(n) => format!("F:{n}"),
+            })
+            .collect();
+        let expected_binds = [
+            "S:PARENT01",
+            "S:TAGA",
+            "S:TAGB",
+            "S:01SPACE0001",
+            "S:*proj*",
+            "S:*docs*",
+            "S:*trash*",
+            "S:page",
+            "S:TODO",
+            "S:DOING",
+            "S:DONE",
+            "S:A",
+            "S:C",
+            "S:status",
+            "S:draft",
+            "S:score",
+            "F:1.5",
+            "S:deadline",
+            "S:2026-05-17",
+            "S:notes",
+            "S:archived",
+            "S:2026-06-01",
+            "S:2026-01-01",
+            "S:2026-12-31",
+            "S:-7 days",
+        ];
+        assert_eq!(
+            bind_vals, expected_binds,
+            "bind values in placeholder order"
+        );
     }
 }

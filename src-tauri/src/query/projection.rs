@@ -123,8 +123,9 @@ impl Projection for QueryProjection {
     //
     // Bind ordering: every fragment below appends its `Bind` values in the
     // SAME left-to-right order the `?` placeholders appear in its SQL. The
-    // engine's `renumber` walks the final SQL char-by-char, assigning `?1,
-    // ?2, …` in textual order, so as long as each fragment keeps that
+    // engine's structured assembler ([`SqlFragment`](crate::filters::SqlFragment))
+    // numbers the placeholders `?1, ?2, …` in textual (bind) order in one
+    // arithmetic pass, so as long as each fragment keeps that
     // invariant the engine's positional binding lines up exactly — no
     // `?N`-index collision between the outer query and these subqueries.
     fn compile_links_to(&self, target: &str) -> WhereClause {
@@ -186,7 +187,7 @@ fn compile_parent_matching(matcher: &FilterExpr, level: usize) -> WhereClause {
     }
     // The only join term is `{parent}.id = {outer}.parent_id` — no bind. The
     // matcher's binds are the ONLY binds, appended in `inner`'s emission
-    // order; `renumber` assigns their `?N` slots in that same textual order.
+    // order; the assembler assigns their `?N` slots in that same textual order.
     WhereClause::new(
         format!(
             "EXISTS (SELECT 1 FROM blocks {parent} \
@@ -283,4 +284,90 @@ fn retarget_alias(sql: &str, alias: &str) -> String {
         i += 1;
     }
     out
+}
+
+// #2255 — assembly equivalence: the structured `SqlFragment` path must render
+// a multi-fragment advanced-query filter to BYTE-IDENTICAL SQL as the former
+// char-by-char `?`→`?N` renumber. The golden string below was captured from
+// `origin/main`'s renumber over the exact same tree.
+#[cfg(test)]
+mod assembly_equivalence {
+    use super::*;
+    use crate::filters::primitive::PropertyValue;
+    use crate::filters::{CompileExpr, SqlFragment};
+
+    fn leaf(p: FilterPrimitive) -> FilterExpr {
+        FilterExpr::leaf(p)
+    }
+
+    /// Byte-for-byte golden of `origin/main`'s renumber over the tree below,
+    /// starting at `?3` (the advanced-query filter's first free slot with no
+    /// full-text term: `?1` = space_id, filter binds start at `?2`… here the
+    /// harness starts numbering at 3 to mirror the full-text layout).
+    const GOLDEN_NUM: &str = "(b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?3)) AND (EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?4 AND value_num IS NOT NULL AND value_num > ?5)) AND (((b.todo_state IN (?6))) OR (NOT COALESCE((b.block_type IN (?7)), 0))) AND (COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), 0) >= (CAST(strftime('%s', 'now', ?8) AS INTEGER) * 1000)) AND (EXISTS (SELECT 1 FROM block_links l WHERE l.source_id = b.id AND l.target_id = ?9)) AND (EXISTS (SELECT 1 FROM blocks p1 WHERE p1.id = b.parent_id AND ((p1.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?10)) AND (EXISTS (SELECT 1 FROM blocks p2 WHERE p2.id = p1.parent_id AND ((p2.todo_state IS NULL OR p2.todo_state NOT IN (?11))))))))";
+
+    #[test]
+    fn structured_assembly_is_byte_identical_to_legacy_renumber() {
+        let expr = FilterExpr::And {
+            children: vec![
+                leaf(FilterPrimitive::Tag { tag: "TAGX".into() }),
+                leaf(FilterPrimitive::HasProperty {
+                    key: "score".into(),
+                    predicate: PropertyPredicate::Gt {
+                        value: PropertyValue::Num { value: 2.0 },
+                    },
+                }),
+                FilterExpr::Or {
+                    children: vec![
+                        leaf(FilterPrimitive::State {
+                            values: vec!["TODO".into()],
+                            is_null: false,
+                            exclude: false,
+                        }),
+                        FilterExpr::Not {
+                            child: Box::new(leaf(FilterPrimitive::BlockType {
+                                values: vec!["page".into()],
+                                exclude: false,
+                            })),
+                        },
+                    ],
+                },
+                leaf(FilterPrimitive::LastEdited {
+                    spec: LastEditedSpec::Rolling { days: 7 },
+                }),
+                leaf(FilterPrimitive::LinksTo {
+                    target: "BLK1".into(),
+                }),
+                leaf(FilterPrimitive::HasParentMatching {
+                    matcher: Box::new(FilterExpr::And {
+                        children: vec![
+                            leaf(FilterPrimitive::Tag { tag: "PTAG".into() }),
+                            leaf(FilterPrimitive::HasParentMatching {
+                                matcher: Box::new(leaf(FilterPrimitive::State {
+                                    values: vec!["DONE".into()],
+                                    is_null: false,
+                                    exclude: true,
+                                })),
+                            }),
+                        ],
+                    }),
+                }),
+            ],
+        };
+        let wc = QueryProjection.compile_expr(&expr);
+        assert!(!wc.is_unsupported());
+        let bind_count = wc.binds.len();
+        // The production assembly path (#2255): structured fragment, arithmetic
+        // renumber in one pass.
+        let fragment = SqlFragment::from_where_clause(wc);
+        let mut next = 3usize;
+        let rendered = fragment.render(&mut next);
+        assert_eq!(
+            rendered, GOLDEN_NUM,
+            "renumbered SQL must be byte-identical"
+        );
+        assert_eq!(bind_count, 9, "bind count unchanged");
+        assert_eq!(fragment.param_count(), 9, "fragment param count == binds");
+        assert_eq!(next, 12, "next free slot after 9 placeholders from ?3");
+    }
 }

@@ -35,7 +35,7 @@ use sqlx::SqlitePool;
 
 use crate::error::AppError;
 use crate::filters::primitive::Bind;
-use crate::filters::{CompileExpr, FilterExpr};
+use crate::filters::{CompileExpr, FilterExpr, SqlFragment};
 use crate::fts::sanitize_fts_query;
 use crate::pagination::ActiveBlockRow;
 
@@ -367,25 +367,6 @@ fn gate_leaf_keys(expr: &FilterExpr) -> Result<(), AppError> {
     }
 }
 
-/// Renumber the anonymous `?` placeholders in `sql` to explicit `?N`,
-/// starting at `next_pos`. Returns the rewritten SQL and the next free
-/// position. Mirrors `compile_pages_filters`'s renumbering so the space
-/// bind, filter binds, and keyset binds occupy unambiguous, non-colliding
-/// positional slots.
-fn renumber(sql: &str, next_pos: &mut usize) -> String {
-    let mut out = String::with_capacity(sql.len());
-    for ch in sql.chars() {
-        if ch == '?' {
-            out.push('?');
-            out.push_str(&next_pos.to_string());
-            *next_pos += 1;
-        } else {
-            out.push(ch);
-        }
-    }
-    out
-}
-
 /// Bind a single [`Bind`] onto a `query_as` chain.
 fn bind_as<'q, O>(
     q: sqlx::query::QueryAs<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments>,
@@ -636,11 +617,15 @@ pub async fn compile_and_run(
     // 4. Renumber the compiled `?` placeholders to explicit `?N`. With
     //    full-text, `?1` is the MATCH expr and `?2` is the space_id, so the
     //    filter's binds start at `?3`; without it `?1` is the space_id and
-    //    the filter binds start at `?2`.
+    //    the filter binds start at `?2`. The compiled fragment is composed via
+    //    a structured [`SqlFragment`] (#2255): its placeholders are numbered in
+    //    a single arithmetic pass and a `?`/bind-count drift is a release-active
+    //    hard error, replacing the former char-by-char `?`→`?N` scan.
     let space_pos = if has_fulltext { 2 } else { 1 };
     let mut next_pos = space_pos + 1; // first free slot after the space bind
-    let filter_sql = renumber(&where_clause.sql, &mut next_pos);
-    let filter_binds = where_clause.binds;
+    let filter_fragment = SqlFragment::from_where_clause(where_clause);
+    let filter_sql = filter_fragment.render(&mut next_pos);
+    let filter_binds = filter_fragment.into_binds();
 
     // FROM clause + structural predicate. On the full-text path the FROM
     // joins `fts_blocks` and the predicate is prefixed with the MATCH;
