@@ -696,56 +696,78 @@ pub async fn compile_and_run(
         ));
     }
 
-    // 5. total_count on the FIRST page only (no cursor). Same predicate +
-    //    binds as the fetch, minus the keyset / ORDER BY / LIMIT.
-    let total_count: Option<i64> = if cursor.is_none() {
-        let count_sql = format!("SELECT COUNT(*) FROM {from_clause} WHERE {predicate}");
-        // dynamic-sql: WHERE is the runtime-compiled FilterExpr tree + optional FTS5 MATCH (macro form cannot express it); all values are bound params.
-        let mut q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql.as_str()));
-        if let Some(m) = match_sanitized.as_ref() {
-            q = q.bind(m.clone()); // ?1 = MATCH
-        }
-        q = q.bind(&request.space_id); // ?space_pos
-        for b in &filter_binds {
-            q = bind_scalar(q, b);
-        }
-        // On the full-text path an FTS5 MATCH-syntax error must surface as
-        // Validation, not Database.
-        let count = if has_fulltext {
-            q.fetch_one(pool).await.map_err(map_fts_error)?
-        } else {
-            q.fetch_one(pool).await?
+    // 5 + 5b. FIRST page only (no cursor): the `total_count` and the GLOBAL
+    //     aggregates are two INDEPENDENT read-only scalar queries over the SAME
+    //     bound predicate (each un-limited, no keyset / ORDER BY / LIMIT).
+    //     Aggregates over the full match set are invariant across cursor pages,
+    //     so both reuse the same first-page (`cursor.is_none()`) guard. They
+    //     share no mutable state — each clones the binds it needs onto its own
+    //     statement — so they run CONCURRENTLY on two separate read-pool
+    //     connections via `tokio::try_join!` instead of two serial awaits.
+    //
+    //     POOL BUDGET (weighed per #2282 carve-out): the read pool is
+    //     `max_connections(4)` (`db/pool.rs::init_pools`) and is SHARED with the
+    //     search palette, backlinks, and the page browser — its own docs flag
+    //     saturation at 4 connections under bursty typing
+    //     (`SLOW_SEARCH_ACQUIRE_WARN_MS`). Four is not comfortably larger than
+    //     the small-pool threshold, so we parallelise ONLY the two cheap scalar
+    //     reads (count + aggregate) and keep the heavier row fetch below SERIAL.
+    //     This caps a single advanced query's first page at 2 concurrent read
+    //     connections, leaving 2 for the other surfaces sharing the pool.
+    //
+    //     The aggregate query is a SEPARATE statement with its OWN bind
+    //     numbering, so its property-key binds start in the slot right after the
+    //     space + filter binds; it resolves them against a LOCAL position
+    //     counter (a copy of `next_pos`), so the flat fetch's keyset numbering
+    //     (which mutates `next_pos` below) is untouched.
+    let (total_count, aggregates): (Option<i64>, Vec<AggregateResult>) = if cursor.is_none() {
+        // COUNT(*) over the same predicate + binds as the fetch.
+        let count_fut = async {
+            let count_sql = format!("SELECT COUNT(*) FROM {from_clause} WHERE {predicate}");
+            // dynamic-sql: WHERE is the runtime-compiled FilterExpr tree + optional FTS5 MATCH (macro form cannot express it); all values are bound params.
+            let mut q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql.as_str()));
+            if let Some(m) = match_sanitized.as_ref() {
+                q = q.bind(m.clone()); // ?1 = MATCH
+            }
+            q = q.bind(&request.space_id); // ?space_pos
+            for b in &filter_binds {
+                q = bind_scalar(q, b);
+            }
+            // On the full-text path an FTS5 MATCH-syntax error must surface as
+            // Validation, not Database.
+            let count = if has_fulltext {
+                q.fetch_one(pool).await.map_err(map_fts_error)?
+            } else {
+                q.fetch_one(pool).await?
+            };
+            Ok::<Option<i64>, AppError>(Some(count))
         };
-        Some(count)
-    } else {
-        None
-    };
 
-    // 5b. GLOBAL aggregates on the FIRST page only — over the SAME predicate +
-    //     binds as the count, un-limited. Aggregates over the full match set are
-    //     invariant across cursor pages, so they reuse the `total_count`
-    //     first-page guard. The aggregate query is a SEPARATE statement with its
-    //     OWN bind numbering, so its property-key binds start in the slot right
-    //     after the space + filter binds; resolve them against a LOCAL position
-    //     counter so the flat fetch's keyset numbering (which shares `next_pos`)
-    //     is untouched.
-    let aggregates: Vec<AggregateResult> = if cursor.is_none() && !request.aggregates.is_empty() {
-        let mut agg_pos = next_pos;
-        let (agg_terms, agg_binds) = resolve_aggregates(&request.aggregates, &mut agg_pos);
-        run_aggregate_query(
-            pool,
-            from_clause,
-            &predicate,
-            &request.space_id,
-            match_sanitized.as_deref(),
-            has_fulltext,
-            &filter_binds,
-            &agg_terms,
-            &agg_binds,
-        )
-        .await?
+        // GLOBAL aggregates over the same predicate + binds, un-limited.
+        let agg_fut = async {
+            if request.aggregates.is_empty() {
+                Ok::<Vec<AggregateResult>, AppError>(Vec::new())
+            } else {
+                let mut agg_pos = next_pos;
+                let (agg_terms, agg_binds) = resolve_aggregates(&request.aggregates, &mut agg_pos);
+                run_aggregate_query(
+                    pool,
+                    from_clause,
+                    &predicate,
+                    &request.space_id,
+                    match_sanitized.as_deref(),
+                    has_fulltext,
+                    &filter_binds,
+                    &agg_terms,
+                    &agg_binds,
+                )
+                .await
+            }
+        };
+
+        tokio::try_join!(count_fut, agg_fut)?
     } else {
-        Vec::new()
+        (None, Vec::new())
     };
 
     // 6. Keyset predicate (if resuming) + ORDER BY + LIMIT.
@@ -1550,8 +1572,11 @@ async fn run_grouped(
     // (the `buckets` page order is the `gcount DESC, gkey ASC` order). The
     // member query returns rows window-ordered within each partition, but the
     // overall row order across partitions is unspecified, so bucket by key.
-    use std::collections::HashMap;
-    let mut by_key: HashMap<String, Vec<QueryResultRow>> = HashMap::new();
+    // Trusted internal keys (group-key strings we produced) — use `FxHashMap`
+    // per the crate convention (cf. `backlink/grouped.rs`), avoiding the
+    // std SipHash cost we don't need for non-adversarial keys.
+    use rustc_hash::FxHashMap;
+    let mut by_key: FxHashMap<String, Vec<QueryResultRow>> = FxHashMap::default();
     for m in member_rows {
         by_key.entry(m.gkey).or_default().push(QueryResultRow {
             score: m.rank,

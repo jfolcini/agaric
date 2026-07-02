@@ -3,10 +3,15 @@
  *
  * Validates:
  *  - Month caption renders as clickable button when onMonthClick provided
- *  - Month caption button has hover-friendly styling (bg-accent)
  *  - Week numbers render as clickable buttons when onWeekNumberClick provided
  *  - Callbacks fire with correct arguments
  *  - a11y compliance
+ *
+ * #2246: dropped the pure Tailwind class-substring tests ("hover bg-accent
+ * styling" and "coarse pointer overrides") — jsdom applies neither `hover:`
+ * nor `[@media(pointer:coarse)]:` variants, so those assertions only
+ * re-stated the source className string. Touch-target sizing is a runtime
+ * concern verified by the e2e/visual layer, not by class-substring matching.
  */
 
 import { render, screen, waitFor } from '@testing-library/react'
@@ -23,14 +28,6 @@ describe('Calendar', () => {
     const btn = screen.getByRole('button', { name: /go to monthly view/i })
     expect(btn).toBeInTheDocument()
     expect(btn.tagName).toBe('BUTTON')
-  })
-
-  it('month caption button has hover bg-accent styling', () => {
-    render(<Calendar mode="single" defaultMonth={new Date(2026, 2, 1)} onMonthClick={vi.fn()} />)
-
-    const btn = screen.getByRole('button', { name: /go to monthly view/i })
-    expect(btn.className).toMatch(/hover:bg-accent/)
-    expect(btn.className).toMatch(/rounded-md/)
   })
 
   it('month caption is plain text when onMonthClick is not provided', () => {
@@ -91,36 +88,6 @@ describe('Calendar', () => {
     // First arg is the week number (a number), second is array of dates
     expect(typeof onWeekNumberClick.mock.calls[0]?.[0]).toBe('number')
     expect(Array.isArray(onWeekNumberClick.mock.calls[0]?.[1])).toBe(true)
-  })
-
-  it('includes coarse pointer overrides for touch-friendly sizing', () => {
-    const { container } = render(<Calendar mode="single" defaultMonth={new Date(2026, 2, 1)} />)
-
-    // Day cells should have coarse pointer height/width overrides
-    const dayCells = container.querySelectorAll('td')
-    expect(dayCells.length).toBeGreaterThan(0)
-    const dayCellClass = dayCells[0]?.className
-    expect(dayCellClass).toContain('[@media(pointer:coarse)]:h-11')
-    expect(dayCellClass).toContain('[@media(pointer:coarse)]:w-11')
-
-    // Day buttons should have coarse pointer size override
-    const dayButtons = container.querySelectorAll('td button')
-    expect(dayButtons.length).toBeGreaterThan(0)
-    expect(dayButtons[0]?.className).toContain('[@media(pointer:coarse)]:size-11')
-
-    // Nav buttons should have coarse pointer size override
-    const navButtons = Array.from(container.querySelectorAll('button')).filter(
-      (btn) => btn.querySelector('svg') && btn.className.includes('size-7'),
-    )
-    expect(navButtons.length).toBeGreaterThanOrEqual(2)
-    for (const btn of navButtons) {
-      expect(btn.className).toContain('[@media(pointer:coarse)]:size-10')
-    }
-
-    // Weekday headers should have coarse pointer width override
-    const weekdayHeaders = container.querySelectorAll('th')
-    expect(weekdayHeaders.length).toBeGreaterThan(0)
-    expect(weekdayHeaders[0]?.className).toContain('[@media(pointer:coarse)]:w-11')
   })
 
   it('has no a11y violations', async () => {

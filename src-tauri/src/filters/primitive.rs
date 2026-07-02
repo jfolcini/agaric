@@ -238,15 +238,13 @@ pub enum PropertyValue {
 /// | { type: "On", date } | { type: "Between", from, to }`.
 ///
 /// **`On` and the calendar-day rule:** `On YYYY-MM-DD` means "the whole
-/// calendar day". When the underlying column is *pure* `YYYY-MM-DD` (no
-/// time component) a lexical `= ?` already matches the whole day — that is
-/// the form [`BacklinkProjection::compile_due_date`] /
+/// calendar day". The Pages/Backlink `due_date`/`scheduled_date` columns
+/// store *pure* `YYYY-MM-DD` (no time component), so a lexical `= ?` already
+/// matches the whole day — that is the form
+/// [`BacklinkProjection::compile_due_date`] /
 /// [`compile_scheduled`](Projection::compile_scheduled) emit, byte-identical
 /// to the legacy backlink `DueDate{Eq}` leaf (the resolver oracle treats the
-/// column as DATE-exact). For a column that carries a *time* component the
-/// generic [`DatePredicate::to_lexical_sql`] expands `On` to the half-open
-/// day range `>= 'd' AND < 'd+1day'` so daytime values on the named day are
-/// included (mirroring `compile_last_edited`'s end-of-day handling).
+/// column as DATE-exact).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "type")]
 pub enum DatePredicate {
@@ -265,72 +263,6 @@ pub enum DatePredicate {
     On { date: String },
     /// Inclusive range `BETWEEN 'from' AND 'to'`.
     Between { from: String, to: String },
-}
-
-impl DatePredicate {
-    /// #1280 — compile this predicate against a TEXT-ISO `column` for a
-    /// surface whose column may carry a **time** component, expanding `On`
-    /// to the half-open calendar-day range `>= 'd' AND < 'd+1day'` so
-    /// daytime values on the named day are included. The non-`On` variants
-    /// guard `column IS NOT NULL` (except `IsNull` itself). Returns the SQL
-    /// fragment plus its ordered text binds.
-    ///
-    /// `compile_due_date`/`compile_scheduled` deliberately do NOT use this
-    /// helper — the backlink columns are treated as DATE-exact to stay
-    /// byte-identical with the resolver oracle. It exists for callers /
-    /// surfaces that need true calendar-day semantics, and is unit-tested
-    /// for the `On`-expands-to-day rule.
-    #[must_use]
-    pub fn to_lexical_sql(&self, column: &str) -> (String, Vec<Bind>) {
-        match self {
-            DatePredicate::IsNull => (format!("{column} IS NULL"), Vec::new()),
-            DatePredicate::Before { date } => (
-                format!("({column} IS NOT NULL AND {column} < ?)"),
-                vec![Bind::Text(date.clone())],
-            ),
-            DatePredicate::After { date } => (
-                format!("({column} IS NOT NULL AND {column} > ?)"),
-                vec![Bind::Text(date.clone())],
-            ),
-            DatePredicate::OnOrBefore { date } => (
-                format!("({column} IS NOT NULL AND {column} <= ?)"),
-                vec![Bind::Text(date.clone())],
-            ),
-            DatePredicate::OnOrAfter { date } => (
-                format!("({column} IS NOT NULL AND {column} >= ?)"),
-                vec![Bind::Text(date.clone())],
-            ),
-            DatePredicate::On { date } => {
-                // Expand the bare day to the half-open range
-                // `>= 'd' AND < 'd+1'` so a column value like
-                // `2026-03-01T14:00:00Z` on that day is INCLUDED.
-                let next = next_day_iso(date);
-                (
-                    format!("({column} IS NOT NULL AND {column} >= ? AND {column} < ?)"),
-                    vec![Bind::Text(date.clone()), Bind::Text(next)],
-                )
-            }
-            DatePredicate::Between { from, to } => (
-                format!("({column} IS NOT NULL AND {column} BETWEEN ? AND ?)"),
-                vec![Bind::Text(from.clone()), Bind::Text(to.clone())],
-            ),
-        }
-    }
-}
-
-/// #1280 — given a bare `YYYY-MM-DD` (or an ISO string whose date part is
-/// the first 10 chars), return the next calendar day as `YYYY-MM-DD`. Used
-/// by [`DatePredicate::to_lexical_sql`] to upper-bound an `On` day range.
-/// A malformed input falls back to the input unchanged (the resulting
-/// `>= d AND < d` range simply matches nothing — fail-closed).
-fn next_day_iso(date: &str) -> String {
-    let day = &date.get(..10).unwrap_or(date);
-    match chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d") {
-        Ok(d) => (d + chrono::Duration::days(1))
-            .format("%Y-%m-%d")
-            .to_string(),
-        Err(_) => date.to_string(),
-    }
 }
 
 /// `last-edited:` time-window spec.
@@ -855,9 +787,8 @@ fn in_or_null(column: &str, values: &[String], is_null: bool, exclude: bool) -> 
 /// legacy `fts::metadata_filter::append_date_predicate` oracle. Every
 /// comparison (`On`/`Before`/`After`/`OnOrBefore`/`OnOrAfter`/`Between`)
 /// guards `column IS NOT NULL` first; `On` is the legacy **exact** `= ?`
-/// (DateOp::Eq) — NOT the half-open day expansion of
-/// [`DatePredicate::to_lexical_sql`] (the Pages/FTS columns store pure
-/// `YYYY-MM-DD`, so an exact compare already matches the whole day). This is
+/// (DateOp::Eq) — the Pages/FTS columns store pure `YYYY-MM-DD`, so an exact
+/// compare already matches the whole day. This is
 /// the one shape that DEVIATES from `BacklinkProjection::compile_due_date`'s
 /// guard-less `b.col = ?`: the legacy FTS oracle guards `IS NOT NULL`, and
 /// matching that oracle is the contract for the Search-path B2 cutover.

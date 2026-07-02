@@ -117,9 +117,36 @@ impl ShouldSample for RuntimeSampler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use opentelemetry::trace::{SpanContext, SpanId, TraceFlags, TraceState};
+    use std::sync::Mutex;
+
+    /// Serialises the ratio-mutating tests. They all write the process-global
+    /// [`SAMPLING_RATIO_BITS`], so under plain `cargo test` — which runs a
+    /// module's tests as threads in ONE process — they race (one test's
+    /// `set_sampling_ratio` clobbers another's expectation mid-flight).
+    /// `cargo nextest` isolates each test in its own process and hides the
+    /// race, so it is invisible there. There is no `serial_test` dependency in
+    /// this crate, so the zero-dep fix (mirroring the module-local `static
+    /// Mutex` precedent in `lib.rs`) is this lock: every test that calls
+    /// `set_sampling_ratio` acquires it first. A poisoned lock (from a
+    /// panicking test) is recovered via `into_inner` rather than cascading
+    /// into spurious failures (root AGENTS.md pitfall #9).
+    static RATIO_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Build a `TraceId` whose LOW 8 bytes encode `low` (big-endian) and whose
+    /// HIGH 8 bytes are all `0xFF`. The ratio sampler consults only the low 8
+    /// bytes, so a non-zero high half proves those bytes are ignored.
+    fn tid_with_low(low: u64) -> TraceId {
+        let mut bytes = [0xFFu8; 16];
+        bytes[8..16].copy_from_slice(&low.to_be_bytes());
+        TraceId::from_bytes(bytes)
+    }
 
     #[test]
     fn ratio_clamps_and_round_trips() {
+        let _guard = RATIO_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         set_sampling_ratio(0.25);
         assert!((sampling_ratio() - 0.25).abs() < f64::EPSILON);
         set_sampling_ratio(2.0);
@@ -139,8 +166,69 @@ mod tests {
         assert_eq!(sample_root(0.0, tid), SamplingDecision::Drop);
     }
 
+    /// Table-driven check that `sample_root` reproduces stock
+    /// `TraceIdRatioBased` semantics at ratio 0.5. The expected decisions are
+    /// derived from the OTel spec / SDK algorithm, NOT by mirroring the code
+    /// under test:
+    ///
+    ///   1. `upper_bound = (ratio * 2^63) as u64`. At 0.5 → `2^62`
+    ///      (`0x4000_0000_0000_0000`).
+    ///   2. Read the LOW 8 bytes of the 16-byte trace id as a big-endian
+    ///      `u64` → `low`.
+    ///   3. `rnd = low >> 1` (drop the LSB → a 63-bit value: the spec uses the
+    ///      top 63 bits of trace-id randomness).
+    ///   4. Sample iff `rnd < upper_bound`.
+    ///
+    /// At ratio 0.5 this reduces to "sample iff `low < 2^63`", i.e. iff the top
+    /// bit of the low half is clear — matching the intuitive "half of trace
+    /// space" meaning. The two middle cases sit exactly on either side of the
+    /// `< upper_bound` boundary.
+    #[test]
+    fn sample_root_matches_trace_id_ratio_based_at_half() {
+        // Lock the upper-bound derivation independently of the implementation.
+        // Exact cast: 0.5 * 2^63 = 2^62 is a small power of two (same rationale
+        // as the production `sample_root` allow).
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let derived = (0.5_f64 * (1u64 << 63) as f64) as u64;
+        assert_eq!(derived, 1u64 << 62, "ratio 0.5 upper_bound must be 2^62");
+
+        let cases = [
+            // low, expected, rationale
+            (
+                0u64,
+                SamplingDecision::RecordAndSample,
+                "low=0 → rnd=0 < 2^62",
+            ),
+            (
+                u64::MAX,
+                SamplingDecision::Drop,
+                "low=MAX → rnd=2^63-1 >= 2^62",
+            ),
+            (
+                (1u64 << 63) - 1,
+                SamplingDecision::RecordAndSample,
+                "boundary: rnd=2^62-1 < 2^62 (largest sampled)",
+            ),
+            (
+                1u64 << 63,
+                SamplingDecision::Drop,
+                "boundary: rnd=2^62 NOT < 2^62 (smallest dropped)",
+            ),
+        ];
+        for (low, expected, why) in cases {
+            assert_eq!(
+                sample_root(0.5, tid_with_low(low)),
+                expected,
+                "ratio 0.5, low={low:#018x}: {why}"
+            );
+        }
+    }
+
     #[test]
     fn runtime_sampler_is_parent_based_for_roots() {
+        let _guard = RATIO_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         set_sampling_ratio(1.0);
         let result = RuntimeSampler.should_sample(
             None,
@@ -161,6 +249,65 @@ mod tests {
             &[],
         );
         assert_eq!(dropped.decision, SamplingDecision::Drop);
+        set_sampling_ratio(1.0);
+    }
+
+    /// A valid parent's sampled flag is inherited whole — roots consult the
+    /// ratio, children never do. Proven by forcing the ratio OPPOSITE to each
+    /// parent decision: a SAMPLED parent still yields `RecordAndSample` at
+    /// ratio 0.0 (which drops every root), and a DROPPED parent still yields
+    /// `Drop` at ratio 1.0 (which samples every root).
+    #[test]
+    fn parent_decision_is_inherited_regardless_of_ratio() {
+        let _guard = RATIO_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        set_sampling_ratio(0.0);
+        let sampled_parent = Context::new().with_remote_span_context(SpanContext::new(
+            TraceId::from_bytes([1; 16]),
+            SpanId::from_bytes([1; 8]),
+            TraceFlags::SAMPLED,
+            true,
+            TraceState::default(),
+        ));
+        let child = RuntimeSampler.should_sample(
+            Some(&sampled_parent),
+            TraceId::from_bytes([2; 16]),
+            "child",
+            &SpanKind::Internal,
+            &[],
+            &[],
+        );
+        assert_eq!(
+            child.decision,
+            SamplingDecision::RecordAndSample,
+            "sampled parent ⇒ child sampled even at ratio 0.0"
+        );
+
+        set_sampling_ratio(1.0);
+        let dropped_parent = Context::new().with_remote_span_context(SpanContext::new(
+            TraceId::from_bytes([3; 16]),
+            SpanId::from_bytes([3; 8]),
+            TraceFlags::NOT_SAMPLED,
+            true,
+            TraceState::default(),
+        ));
+        let child = RuntimeSampler.should_sample(
+            Some(&dropped_parent),
+            TraceId::from_bytes([4; 16]),
+            "child",
+            &SpanKind::Internal,
+            &[],
+            &[],
+        );
+        assert_eq!(
+            child.decision,
+            SamplingDecision::Drop,
+            "dropped parent ⇒ child dropped even at ratio 1.0"
+        );
+
+        // Restore the default so other tests see full tracing.
         set_sampling_ratio(1.0);
     }
 }

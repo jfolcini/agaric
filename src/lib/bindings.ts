@@ -1632,15 +1632,13 @@ export type DateOp = "lt" | "lte" | "eq" | "gte" | "gt";
  *  | { type: "On", date } | { type: "Between", from, to }`.
  * 
  *  **`On` and the calendar-day rule:** `On YYYY-MM-DD` means "the whole
- *  calendar day". When the underlying column is *pure* `YYYY-MM-DD` (no
- *  time component) a lexical `= ?` already matches the whole day — that is
- *  the form [`BacklinkProjection::compile_due_date`] /
+ *  calendar day". The Pages/Backlink `due_date`/`scheduled_date` columns
+ *  store *pure* `YYYY-MM-DD` (no time component), so a lexical `= ?` already
+ *  matches the whole day — that is the form
+ *  [`BacklinkProjection::compile_due_date`] /
  *  [`compile_scheduled`](Projection::compile_scheduled) emit, byte-identical
  *  to the legacy backlink `DueDate{Eq}` leaf (the resolver oracle treats the
- *  column as DATE-exact). For a column that carries a *time* component the
- *  generic [`DatePredicate::to_lexical_sql`] expands `On` to the half-open
- *  day range `>= 'd' AND < 'd+1day'` so daytime values on the named day are
- *  included (mirroring `compile_last_edited`'s end-of-day handling).
+ *  column as DATE-exact).
  */
 export type DatePredicate = 
 /**  The column is NULL (unset). */
