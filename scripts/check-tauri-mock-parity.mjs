@@ -72,12 +72,20 @@ if (expected.size === 0) {
 
 // ─── 2. Parse handlers.ts → set of mocked command names ─────────────
 //
-// Locate the `export const HANDLERS … = { … }` literal first, then
-// pick out top-level keys. This avoids false positives from object
+// Locate the `const HANDLERS_TYPED = { … } satisfies TypedHandlers` literal
+// first, then pick out top-level keys. This avoids false positives from object
 // literals INSIDE a handler body (e.g. the `block_type:` key inside
 // the row object that `create_block` returns). Top-level keys are
 // indented at exactly 2 spaces in this file's style.
-const handlersBlockMatch = handlersSrc.match(/export const HANDLERS:[^{]*=\s*\{([\s\S]*?)\n\}\s*\n/)
+//
+// (#2241) The literal was renamed from `export const HANDLERS` to
+// `const HANDLERS_TYPED = … satisfies TypedHandlers`; the trailing `satisfies`
+// now gives compile-time type linkage to `bindings.ts` (excess / missing /
+// wrong-shape → tsgo error), which this name-only script complements by also
+// guarding the KNOWN_UNMOCKED allowlist and generated-code parse drift.
+const handlersBlockMatch = handlersSrc.match(
+  /const HANDLERS_TYPED\s*=\s*\{([\s\S]*?)\n\}\s*satisfies\s+TypedHandlers/,
+)
 if (!handlersBlockMatch) {
   console.error(`ERROR: could not locate HANDLERS object literal in ${HANDLERS}`)
   process.exit(2)
