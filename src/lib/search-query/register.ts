@@ -15,7 +15,7 @@ import { TASK_STATES } from '../filter-dimension-metadata'
 import { getPriorityLevels } from '../priority-levels'
 import { validateGlob } from './glob-validate'
 import { isIsoDate } from './is-iso-date'
-import { registerTokenPrefix } from './registry'
+import { registerTokenPrefix, type ValueParser } from './registry'
 import type { DateOp, FilterToken, NamedDateRange } from './types'
 import { prefixed, ValidationCode } from './validation-codes'
 
@@ -42,6 +42,46 @@ function isKnownState(value: string): boolean {
 function isKnownPriority(value: string): boolean {
   if (value.toLowerCase() === 'none') return true
   return getPriorityLevels().includes(value)
+}
+
+/**
+ * Factory for the `state:` / `not-state:` / `priority:` / `not-priority:`
+ * recogniser family — four token prefixes that share one shape: reject an
+ * empty value, reject an out-of-vocabulary value, otherwise emit a
+ * `{ kind, value, span }` token. Single-sourced here so the empty-value
+ * contract and the `unknown <noun>` message can only be edited in one place
+ * (previously four near-identical 10-line blocks that drifted independently).
+ *
+ * `prefix` is the full token prefix including the trailing `:` (e.g.
+ * `state:`), so it reconstructs both the `source` (`${prefix}${value}`) and
+ * the `<prefix> value required` copy. `noun` is the display word in the
+ * unknown-value error (`state` / `priority`).
+ */
+function simpleValueRecogniser<K extends 'state' | 'notState' | 'priority' | 'notPriority'>(
+  prefix: string,
+  kind: K,
+  noun: string,
+  isKnown: (value: string) => boolean,
+): ValueParser {
+  return (value, span) => {
+    if (value.length === 0) {
+      return {
+        kind: 'invalid',
+        source: `${prefix}${value}`,
+        error: `${prefix} value required`,
+        span,
+      }
+    }
+    if (!isKnown(value)) {
+      return {
+        kind: 'invalid',
+        source: `${prefix}${value}`,
+        error: `unknown ${noun} '${value}'`,
+        span,
+      }
+    }
+    return { kind, value, span }
+  }
 }
 
 /**
@@ -130,80 +170,22 @@ export function ensureRegistered(): void {
     return { kind: 'pathExclude', value: glob, span }
   })
 
-  // State: / not-state:
-  registerTokenPrefix('state:', (value, span) => {
-    if (value.length === 0) {
-      return {
-        kind: 'invalid',
-        source: `state:${value}`,
-        error: 'state: value required',
-        span,
-      }
-    }
-    if (!isKnownState(value)) {
-      return { kind: 'invalid', source: `state:${value}`, error: `unknown state '${value}'`, span }
-    }
-    return { kind: 'state', value, span }
-  })
-  registerTokenPrefix('not-state:', (value, span) => {
-    if (value.length === 0) {
-      return {
-        kind: 'invalid',
-        source: `not-state:${value}`,
-        error: 'not-state: value required',
-        span,
-      }
-    }
-    if (!isKnownState(value)) {
-      return {
-        kind: 'invalid',
-        source: `not-state:${value}`,
-        error: `unknown state '${value}'`,
-        span,
-      }
-    }
-    return { kind: 'notState', value, span }
-  })
-
-  // Priority: / not-priority:
-  registerTokenPrefix('priority:', (value, span) => {
-    if (value.length === 0) {
-      return {
-        kind: 'invalid',
-        source: `priority:${value}`,
-        error: 'priority: value required',
-        span,
-      }
-    }
-    if (!isKnownPriority(value)) {
-      return {
-        kind: 'invalid',
-        source: `priority:${value}`,
-        error: `unknown priority '${value}'`,
-        span,
-      }
-    }
-    return { kind: 'priority', value, span }
-  })
-  registerTokenPrefix('not-priority:', (value, span) => {
-    if (value.length === 0) {
-      return {
-        kind: 'invalid',
-        source: `not-priority:${value}`,
-        error: 'not-priority: value required',
-        span,
-      }
-    }
-    if (!isKnownPriority(value)) {
-      return {
-        kind: 'invalid',
-        source: `not-priority:${value}`,
-        error: `unknown priority '${value}'`,
-        span,
-      }
-    }
-    return { kind: 'notPriority', value, span }
-  })
+  // State: / not-state: / priority: / not-priority: — one shared factory
+  // (see `simpleValueRecogniser`) so the empty-value contract and the
+  // `unknown <noun>` copy live in a single place.
+  registerTokenPrefix('state:', simpleValueRecogniser('state:', 'state', 'state', isKnownState))
+  registerTokenPrefix(
+    'not-state:',
+    simpleValueRecogniser('not-state:', 'notState', 'state', isKnownState),
+  )
+  registerTokenPrefix(
+    'priority:',
+    simpleValueRecogniser('priority:', 'priority', 'priority', isKnownPriority),
+  )
+  registerTokenPrefix(
+    'not-priority:',
+    simpleValueRecogniser('not-priority:', 'notPriority', 'priority', isKnownPriority),
+  )
 
   // Due: / scheduled: share the date-value parser.
   registerTokenPrefix('due:', (value, span) => parseDateToken(value, span, 'due'))
@@ -330,11 +312,15 @@ function parsePropToken(
   span: [number, number],
   kind: 'prop' | 'notProp',
 ): FilterToken {
+  // Display prefix for this token family — computed once instead of
+  // reconstructing `kind === 'prop' ? 'prop' : 'not-prop'` at every
+  // error site below.
+  const label = kind === 'prop' ? 'prop' : 'not-prop'
   if (value.length === 0) {
     return {
       kind: 'invalid',
-      source: `${kind === 'prop' ? 'prop' : 'not-prop'}:${value}`,
-      error: `${kind === 'prop' ? 'prop' : 'not-prop'}: key=value required`,
+      source: `${label}:${value}`,
+      error: `${label}: key=value required`,
       span,
     }
   }
@@ -342,8 +328,8 @@ function parsePropToken(
   if (eq < 0) {
     return {
       kind: 'invalid',
-      source: `${kind === 'prop' ? 'prop' : 'not-prop'}:${value}`,
-      error: `${kind === 'prop' ? 'prop' : 'not-prop'}: expected 'key=value'`,
+      source: `${label}:${value}`,
+      error: `${label}: expected 'key=value'`,
       span,
     }
   }
@@ -352,8 +338,8 @@ function parsePropToken(
   if (key.length === 0) {
     return {
       kind: 'invalid',
-      source: `${kind === 'prop' ? 'prop' : 'not-prop'}:${value}`,
-      error: `${kind === 'prop' ? 'prop' : 'not-prop'}: key cannot be empty`,
+      source: `${label}:${value}`,
+      error: `${label}: key cannot be empty`,
       span,
     }
   }

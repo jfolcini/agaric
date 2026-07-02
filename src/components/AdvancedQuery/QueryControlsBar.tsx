@@ -18,6 +18,7 @@
  * this component is a controlled view over that working set.
  */
 
+import { X } from 'lucide-react'
 import type React from 'react'
 import { useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -266,7 +267,7 @@ export function QueryControlsBar({
                   onClick={() => removeSortKey(index)}
                   aria-label={t('advancedQuery.sort.remove')}
                 >
-                  ✕
+                  <X className="h-3 w-3" aria-hidden="true" />
                 </Button>
               </li>
             )
@@ -285,11 +286,11 @@ export function QueryControlsBar({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={NONE}>{t('advancedQuery.group.none')}</SelectItem>
-            <SelectItem value="Tag">{t('advancedQuery.group.tag')}</SelectItem>
-            <SelectItem value="Page">{t('advancedQuery.group.page')}</SelectItem>
-            <SelectItem value="State">{t('advancedQuery.group.state')}</SelectItem>
-            <SelectItem value="BlockType">{t('advancedQuery.group.blockType')}</SelectItem>
-            <SelectItem value="Priority">{t('advancedQuery.group.priority')}</SelectItem>
+            {GROUP_KEYS.map((key) => (
+              <SelectItem key={key} value={key}>
+                {t(`advancedQuery.group.${key.charAt(0).toLowerCase()}${key.slice(1)}`)}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
@@ -346,7 +347,7 @@ export function QueryControlsBar({
                 onClick={() => removeAggregate(index)}
                 aria-label={t('advancedQuery.aggregate.remove')}
               >
-                ✕
+                <X className="h-3 w-3" aria-hidden="true" />
               </Button>
             </li>
           ))}
