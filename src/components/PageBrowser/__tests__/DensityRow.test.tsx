@@ -163,6 +163,16 @@ describe('DensityRow', () => {
     expect(onToggleStar).toHaveBeenCalledWith('page-7')
   })
 
+  // Item #2281 — the star toggle must carry the 44px `touch-target` hit-area on
+  // coarse pointers (matching its sibling delete button) and no longer be
+  // hard-sized to h-6 w-6 (24px), which was sub-WCAG on touch.
+  it('star toggle has the 44px touch-target hit-area (matches delete button)', () => {
+    render(<DensityRow {...baseProps()} />)
+    const star = screen.getByRole('button', { name: /star page/i })
+    expect(star.className).toContain('touch-target')
+    expect(star.className).not.toContain('h-6 w-6')
+  })
+
   it('starred=true reflects via the data-starred attribute', () => {
     const { container } = render(<DensityRow {...baseProps({ starred: true })} />)
     expect(container.querySelector('[data-page-item][data-starred="true"]')).not.toBeNull()

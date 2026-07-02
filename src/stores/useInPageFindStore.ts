@@ -27,6 +27,8 @@
 
 import { create } from 'zustand'
 
+import type { FindRegexError } from '@/lib/in-page-find/matcher'
+
 export interface InPageFindToggles {
   caseSensitive: boolean
   wholeWord: boolean
@@ -44,8 +46,8 @@ interface InPageFindState {
   totalMatches: number
   /** Index of the "current" match (zero-based), or -1 when none. */
   currentIndex: number
-  /** Inline error message when regex compilation fails. */
-  regexError: string | null
+  /** Discriminated regex failure (tooLong / tooSlow / invalid), or null. */
+  regexError: FindRegexError | null
   /** Count of >10 KB text nodes skipped during the last regex walk. */
   skippedLongNodes: number
   /** Page subtree to search. Registered by JournalPage / PageEditor. */
@@ -65,7 +67,7 @@ interface InPageFindState {
   setResult: (info: {
     totalMatches: number
     currentIndex: number
-    regexError: string | null
+    regexError: FindRegexError | null
     skippedLongNodes: number
   }) => void
   /** Move to the next match (wraps). */

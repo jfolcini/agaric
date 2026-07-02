@@ -24,6 +24,8 @@ export const properties: Record<string, string> = {
   'advancedQuery.noResults': 'No blocks match these filters',
   'advancedQuery.totalCount_one': '{{count}} matching block',
   'advancedQuery.totalCount_other': '{{count}} matching blocks',
+  // Polite live-region announcement while a query is (re)fetching.
+  'advancedQuery.searching': 'Searching…',
   // #1280 D2 — advanced-query controls (full-text / sort / group-by / aggregate).
   'advancedQuery.controlsLabel': 'Query controls',
   'advancedQuery.fulltext.label': 'Full-text search',
@@ -326,6 +328,17 @@ export const properties: Record<string, string> = {
   'filter.isEmpty': 'is empty',
   'filter.tagPrefix': 'tag prefix',
   'filter.default': 'filter',
+  // #2232 — dimension nouns + chip aria-labels routed through i18n so applied
+  // filter pills no longer render mixed-language under a non-English locale.
+  'filter.summary.type': 'type',
+  'filter.summary.status': 'status',
+  'filter.summary.priority': 'priority',
+  'filter.summary.hasTag': 'has tag',
+  'filter.summary.created': 'created',
+  'filter.summary.after': 'after',
+  'filter.summary.before': 'before',
+  'filter.remove': 'Remove filter {{summary}}',
+  'filter.group': 'Filter: {{summary}}',
   'group.collapseGroup': 'Collapse group',
   'group.expandGroup': 'Expand group',
   'list.rangeSelectHint': 'Tip: Shift+click to select a range',

@@ -20,11 +20,12 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { useBatchCounts } from '../../hooks/useBatchCounts'
-import { useWeekStart } from '../../hooks/useWeekStart'
-import type { DayEntry } from '../../lib/date-utils'
-import { formatDate } from '../../lib/date-utils'
-import { useJournalStore } from '../../stores/journal'
+import { useBatchCounts } from '@/hooks/useBatchCounts'
+import { useWeekStart } from '@/hooks/useWeekStart'
+import type { DayEntry } from '@/lib/date-utils'
+import { formatDate } from '@/lib/date-utils'
+import { useJournalStore } from '@/stores/journal'
+
 import { MonthlyDayCell } from './MonthlyDayCell'
 
 interface MonthlyViewProps {

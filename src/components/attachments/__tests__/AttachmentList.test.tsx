@@ -139,6 +139,28 @@ describe('AttachmentList', () => {
     )
   })
 
+  it('reflects the armed (pending-confirm) state on the delete control accessible name (#2281)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+
+    mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'armed.txt')])
+
+    renderWithProvider(<AttachmentList blockId="block-1" />)
+
+    expect(await screen.findByText('armed.txt')).toBeInTheDocument()
+
+    // At rest: normal delete label, not pressed.
+    const deleteBtn = screen.getByRole('button', { name: /delete attachment armed\.txt/i })
+    expect(deleteBtn).toHaveAttribute('aria-pressed', 'false')
+
+    // First click arms the confirm — the accessible name + aria-pressed reflect it.
+    await user.click(deleteBtn)
+    const armed = screen.getByRole('button', {
+      name: t('attachments.deleteArmed', { name: 'armed.txt' }),
+    })
+    expect(armed).toHaveAttribute('aria-pressed', 'true')
+  })
+
   it('rename button opens an input that calls rename_attachment IPC on Enter', async () => {
     const user = userEvent.setup()
 

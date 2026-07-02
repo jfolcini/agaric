@@ -13,16 +13,15 @@ import type React from 'react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { renderRichContent } from '@/components/RichContentRenderer'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import type { RichContentCallbacks } from '@/hooks/useRichContentCallbacks'
+import { formatRelativeTime } from '@/lib/format-relative-time'
+import type { BlockRow } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
-
-import type { RichContentCallbacks } from '../../hooks/useRichContentCallbacks'
-import { formatRelativeTime } from '../../lib/format-relative-time'
-import type { BlockRow } from '../../lib/tauri'
-import { useResolveStore } from '../../stores/resolve'
-import { renderRichContent } from '../RichContentRenderer'
+import { useResolveStore } from '@/stores/resolve'
 
 interface TrashRowItemProps {
   block: BlockRow

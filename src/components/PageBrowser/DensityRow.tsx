@@ -312,9 +312,9 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
       <div role="gridcell" className="flex flex-1 items-center gap-3 min-w-0">
         <Button
           variant="ghost"
-          size="icon"
+          size="icon-xs"
           aria-label={starred ? t('pageBrowser.unstarPage') : t('pageBrowser.starPage')}
-          className="star-toggle shrink-0 h-6 w-6 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 focus-visible:ring-inset transition-opacity text-muted-foreground hover:text-star data-[starred=true]:opacity-100 data-[starred=true]:text-star"
+          className="star-toggle shrink-0 touch-target opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 focus-visible:ring-inset transition-opacity text-muted-foreground hover:text-star data-[starred=true]:opacity-100 data-[starred=true]:text-star"
           data-starred={starred}
           onClick={(e) => {
             e.stopPropagation()

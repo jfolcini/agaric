@@ -775,11 +775,19 @@ export function BlockContextMenu({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      // WAI-ARIA menu pattern: Tab (and Shift+Tab) in an open menu dismisses
+      // it rather than moving focus through its roving-tabindex items. Route
+      // through the shared close-with-focus so focus returns to the trigger.
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        handleCloseWithFocus()
+        return
+      }
       if (navHandleKeyDown(e)) {
         e.preventDefault()
       }
     },
-    [navHandleKeyDown],
+    [navHandleKeyDown, handleCloseWithFocus],
   )
 
   // #999/#1003/#1109 — the per-render roving-focus counter; the extracted

@@ -161,6 +161,38 @@ describe('QuickCaptureDialog', () => {
     expect(closeCalls.length).toBe(0)
   })
 
+  // Item #2281 — the Capture button must render the app-wide in-flight
+  // <Spinner/> (not just go disabled) while the quick-capture IPC is pending.
+  it('shows an in-flight Spinner in the Capture button while the capture is pending', async () => {
+    const user = userEvent.setup()
+    let resolveCapture: (value: unknown) => void = () => {}
+    mockedInvoke.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveCapture = resolve
+        }),
+    )
+
+    render(<QuickCaptureDialog open onOpenChange={() => {}} />)
+    await user.type(screen.getByTestId('quick-capture-textarea'), 'pending capture')
+    await user.click(screen.getByTestId('quick-capture-save'))
+
+    const saveBtn = screen.getByTestId('quick-capture-save')
+    await waitFor(() => {
+      expect(saveBtn.querySelector('[data-slot="spinner"]')).not.toBeNull()
+    })
+
+    // Settle the pending promise so the component finishes cleanly.
+    resolveCapture({
+      id: 'BLK_PENDING',
+      block_type: 'content',
+      content: 'pending capture',
+      parent_id: 'PARENT',
+      position: 1,
+      deleted_at: null,
+    })
+  })
+
   it('whitespace-only content keeps the Capture button disabled', async () => {
     const user = userEvent.setup()
     render(<QuickCaptureDialog open onOpenChange={() => {}} />)

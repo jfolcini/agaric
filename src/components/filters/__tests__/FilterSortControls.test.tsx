@@ -145,6 +145,26 @@ describe('FilterSortControls', () => {
     expect(screen.getByText(t('backlink.ascSort'))).toBeInTheDocument()
   })
 
+  // #2232 — the direction token in the toggle aria-label must be routed through
+  // i18n (t('common.ascending'/'descending')) rather than hardcoded English.
+  it('interpolates the translated direction token into the toggle aria-label', () => {
+    const { rerender } = render(
+      <FilterSortControls {...defaultProps} sort={{ type: 'Created', dir: 'Asc' }} />,
+    )
+    expect(
+      screen.getByRole('button', {
+        name: t('backlink.toggleSortLabel', { direction: t('common.ascending') }),
+      }),
+    ).toBeInTheDocument()
+
+    rerender(<FilterSortControls {...defaultProps} sort={{ type: 'Created', dir: 'Desc' }} />)
+    expect(
+      screen.getByRole('button', {
+        name: t('backlink.toggleSortLabel', { direction: t('common.descending') }),
+      }),
+    ).toBeInTheDocument()
+  })
+
   it('reflects current sort value in the select when sort is Created', () => {
     render(<FilterSortControls {...defaultProps} sort={{ type: 'Created', dir: 'Desc' }} />)
 

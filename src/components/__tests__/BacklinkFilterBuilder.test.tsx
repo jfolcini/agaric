@@ -212,6 +212,45 @@ describe('BacklinkFilterBuilder', () => {
       ])
     })
 
+    // #2281 item 10 — the backlink Priority vocabulary is now the shared
+    // `usePriorityLevels()` set plus the `none` sentinel, matching the search
+    // `priority:` form (previously a fixed 1/2/3 shortlist). The configured
+    // default levels are 1/2/3, so the offered options are 1/2/3/none.
+    it('offers the shared priority vocabulary (levels plus `none`)', async () => {
+      const user = userEvent.setup()
+      renderBuilder()
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'priority')
+
+      const prioritySelect = screen.getByLabelText('Priority value') as HTMLSelectElement
+      const values = within(prioritySelect)
+        .getAllByRole('option')
+        .map((o) => (o as HTMLOptionElement).value)
+      expect(values).toEqual(['1', '2', '3', 'none'])
+    })
+
+    // #2281 item 10 — like Status, priority `none` is a SENTINEL ("no
+    // priority set") and must emit the "property absent" filter, not a
+    // literal `PropertyText Eq 'none'` string match.
+    it('emits PropertyIsEmpty for the priority `none` sentinel', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'priority')
+      await user.selectOptions(screen.getByLabelText('Priority value'), 'none')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(onFiltersChange).toHaveBeenCalledWith([
+        expect.objectContaining({ type: 'PropertyIsEmpty', key: 'priority' }),
+      ])
+      expect(onFiltersChange).not.toHaveBeenCalledWith([
+        expect.objectContaining({ type: 'PropertyText', value: 'none' }),
+      ])
+    })
+
     it('adds a Contains filter', async () => {
       const user = userEvent.setup()
       const onFiltersChange = vi.fn()

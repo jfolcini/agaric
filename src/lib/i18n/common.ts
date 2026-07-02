@@ -234,6 +234,11 @@ export const common: Record<string, string> = {
   'common.collapse': 'Collapse {{section}}',
   'common.empty': '(empty)',
   'common.untitled': 'Untitled',
+  // #2232 — direction tokens interpolated into translated sort aria-labels.
+  'common.ascending': 'ascending',
+  'common.descending': 'descending',
+  // #2232 — default label for the shared LoadingSkeleton busy region.
+  'common.loading': 'Loading',
   'accessibility.skipToMain': 'Skip to main content',
   'sidebar.label': 'Sidebar',
   'sidebar.mobileDescription': 'Displays the mobile sidebar.',

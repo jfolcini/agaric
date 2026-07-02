@@ -178,7 +178,15 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
                   </button>
                   <button
                     type="button"
-                    aria-label={t('attachments.delete', { name: attachment.filename })}
+                    // Armed state (first tap) is reflected on the accessible
+                    // name + aria-pressed so the double-tap confirm isn't
+                    // signalled by a transient toast alone.
+                    aria-label={
+                      pendingDeleteId === attachment.id
+                        ? t('attachments.deleteArmed', { name: attachment.filename })
+                        : t('attachments.delete', { name: attachment.filename })
+                    }
+                    aria-pressed={pendingDeleteId === attachment.id}
                     className={cn(
                       'shrink-0 rounded-sm p-1 transition-opacity focus-visible:opacity-100 focus-ring-visible active:scale-95 touch-target [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center',
                       pendingDeleteId === attachment.id

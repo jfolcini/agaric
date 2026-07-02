@@ -424,6 +424,31 @@ describe('UnlinkedReferences', () => {
     expect(mockedEditBlock).toHaveBeenCalledWith('B1', 'I mention [[PAGE1]] here')
   })
 
+  // 6b. "Link it" accessible name announces the mention content, not a ULID (#2281)
+  it('"Link it" aria-label carries the mention content excerpt', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'I mention My Page here' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    await screen.findByText('I mention My Page here')
+
+    // The accessible name is the content excerpt, not the block-id prefix.
+    const btn = screen.getByRole('button', {
+      name: t('backlinks.linkMention', { text: 'I mention My Page here' }),
+    })
+    expect(btn).toBeInTheDocument()
+    expect(btn.getAttribute('aria-label')).not.toMatch(/\bB1\b/)
+  })
+
   // 7. "Link it" removes block from list
   it('"Link it" removes block from list after successful edit', async () => {
     const user = userEvent.setup()
@@ -1437,7 +1462,7 @@ describe('UnlinkedReferences', () => {
     })
 
     const linkBtn = await screen.findByRole('button', {
-      name: /Link it: replace mention in block B_ALIAS/i,
+      name: /Link it: See ProjAlpha for more info/i,
     })
     await user.click(linkBtn)
 
@@ -1475,7 +1500,7 @@ describe('UnlinkedReferences', () => {
 
     await user.click(
       await screen.findByRole('button', {
-        name: /Link it: replace mention in block B_BOTH/i,
+        name: /Link it: See Project Alpha aka ProjAlpha/i,
       }),
     )
 
@@ -1518,7 +1543,7 @@ describe('UnlinkedReferences', () => {
     })
 
     const linkBtn = await screen.findByRole('button', {
-      name: /Link it: replace mention in block B_GHOST/i,
+      name: /Link it: No literal match for the title here/i,
     })
     await user.click(linkBtn)
 

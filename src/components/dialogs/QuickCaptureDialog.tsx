@@ -40,6 +40,8 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { DialogBody } from '@/components/ui/dialog'
+import { SheetBody } from '@/components/ui/sheet'
+import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { logger } from '@/lib/logger'
@@ -112,6 +114,10 @@ export function QuickCaptureDialog({
   const { Root, Content, Header, Title, Description, Footer } = parts
   // Sheet's Content takes a `side` prop; DialogContent does not.
   const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
+  // #2281 — match BugReportDialog: the mobile bottom-sheet path uses the
+  // Sheet body primitive so padding/scroll behaviour comes from the Sheet
+  // scaffolding rather than Dialog's.
+  const Body = parts.isMobile ? SheetBody : DialogBody
 
   return (
     <Root open={open} onOpenChange={onOpenChange}>
@@ -120,7 +126,7 @@ export function QuickCaptureDialog({
           <Title>{t('quickCapture.dialogTitle')}</Title>
           <Description>{t('settings.quickCapture.description')}</Description>
         </Header>
-        <DialogBody>
+        <Body>
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -145,7 +151,7 @@ export function QuickCaptureDialog({
               data-testid="quick-capture-textarea"
             />
           </form>
-        </DialogBody>
+        </Body>
         <Footer>
           <Button
             variant="outline"
@@ -162,6 +168,7 @@ export function QuickCaptureDialog({
             disabled={isEmpty || submitting}
             data-testid="quick-capture-save"
           >
+            {submitting && <Spinner />}
             {t('quickCapture.saveButton')}
           </Button>
         </Footer>

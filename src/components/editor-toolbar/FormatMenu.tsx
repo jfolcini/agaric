@@ -25,22 +25,13 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { getShortcutKeys } from '@/lib/keyboard-config'
-import { createMarkToggles, toolbarActiveClass } from '@/lib/toolbar-config'
+import {
+  createMarkToggles,
+  MARK_TOGGLE_SHORTCUT_IDS,
+  toolbarActiveClass,
+  withShortcutHint,
+} from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
-
-/** Mirror SelectionBubbleMenu/shared: rebindable chords surfaced in tooltips. */
-const FORMAT_MENU_SHORTCUT_IDS: Record<string, string> = {
-  'toolbar.code': 'inlineCode',
-  'toolbar.strikethrough': 'strikethrough',
-  'toolbar.highlight': 'highlight',
-}
-
-function tooltipFor(label: string, shortcutId: string | undefined): string {
-  if (!shortcutId) return label
-  const keys = getShortcutKeys(shortcutId)
-  return keys ? `${label} (${keys})` : label
-}
 
 interface FormatMenuProps {
   editor: Editor
@@ -64,7 +55,7 @@ export function FormatMenu({ editor }: FormatMenuProps): React.ReactElement {
   return (
     <div role="toolbar" aria-label={t('toolbar.format')} className="flex items-center gap-0.5">
       {markToggles.map((btn) => {
-        const tooltip = tooltipFor(t(btn.label), FORMAT_MENU_SHORTCUT_IDS[btn.label])
+        const tooltip = withShortcutHint(t(btn.label), MARK_TOGGLE_SHORTCUT_IDS[btn.label])
         const active = btn.activeKey ? (state[btn.activeKey as keyof typeof state] ?? false) : false
         return (
           <Tooltip key={btn.label} delayDuration={200}>

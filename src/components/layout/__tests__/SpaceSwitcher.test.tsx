@@ -421,9 +421,11 @@ describe('SpaceSwitcher', () => {
   // no-op (nothing else to switch to). A "Create another space…" hint
   // is rendered inside the dropdown — under the lone space row — so
   // the manage flow is discoverable without scanning past the row to
-  // the "Manage spaces…" sentinel. Clicking the hint opens the same
-  // `SpaceManageDialog` the MANAGE_SENTINEL route opens.
-  it('renders the create-another-space hint when there is only one space', async () => {
+  // the "Manage spaces…" sentinel. #2281 — it is now a real SelectItem
+  // (CREATE_SENTINEL) so it joins Radix Select's roving focus and is
+  // keyboard-reachable; selecting it opens the same `SpaceManageDialog`
+  // the MANAGE_SENTINEL route opens without switching space.
+  it('renders the create-another-space hint as an option when there is only one space', async () => {
     mockedListSpaces.mockResolvedValueOnce([PERSONAL])
 
     render(<SpaceSwitcher />)
@@ -432,9 +434,11 @@ describe('SpaceSwitcher', () => {
     })
     expect(useSpaceStore.getState().availableSpaces).toHaveLength(1)
 
-    const hint = screen.getByTestId('single-space-create-hint')
+    // Now a SelectItem → native <option> in the test mock, so it is
+    // exposed with the `option` role and joins the listbox roving focus.
+    const hint = screen.getByRole('option', { name: /Create another space/ })
     expect(hint).toBeInTheDocument()
-    expect(hint).toHaveTextContent('Create another space')
+    expect(hint).toHaveValue('__create__')
   })
 
   it('does NOT render the create-another-space hint when there is more than one space', async () => {
@@ -446,10 +450,10 @@ describe('SpaceSwitcher', () => {
     })
     expect(useSpaceStore.getState().availableSpaces).toHaveLength(2)
 
-    expect(screen.queryByTestId('single-space-create-hint')).not.toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: /Create another space/ })).not.toBeInTheDocument()
   })
 
-  it('opens the SpaceManageDialog when the create-another-space hint is clicked', async () => {
+  it('opens the SpaceManageDialog when the create-another-space hint is selected', async () => {
     const user = userEvent.setup()
     mockedListSpaces.mockResolvedValueOnce([PERSONAL])
 
@@ -461,12 +465,12 @@ describe('SpaceSwitcher', () => {
     // The dialog stub renders nothing when `open === false`.
     expect(screen.queryByTestId('space-manage-dialog-stub')).not.toBeInTheDocument()
 
-    await user.click(screen.getByTestId('single-space-create-hint'))
+    const select = screen.getByRole('combobox', { name: /Switch space/ })
+    await user.selectOptions(select, '__create__')
 
-    // Clicking the hint must NOT switch space (it is not a SelectItem,
-    // so currentSpaceId stays at the alphabetical fallback) — it must
-    // flip the manage dialog open via the same `setManageOpen(true)`
-    // path the MANAGE_SENTINEL short-circuit uses.
+    // Selecting the CREATE sentinel must NOT switch space (currentSpaceId
+    // stays at the alphabetical fallback) — it must flip the manage dialog
+    // open via the same `setManageOpen(true)` path MANAGE_SENTINEL uses.
     expect(useSpaceStore.getState().currentSpaceId).toBe(PERSONAL.id)
     expect(screen.getByTestId('space-manage-dialog-stub')).toBeInTheDocument()
   })

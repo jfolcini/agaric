@@ -105,6 +105,77 @@ describe('AdvancedQueryView', () => {
     expect(screen.getByTestId('advanced-query-total')).toHaveTextContent('1 matching block')
   })
 
+  // #2281 — refetch UX: announce loading via a polite live region and keep the
+  // prior results mounted (dimmed + aria-busy) instead of blanking to a spinner.
+  it('announces "Searching…" via a polite live region while a query is in flight', async () => {
+    let resolveFetch: () => void = () => {}
+    mockedInvoke.mockImplementation(async (cmd) => {
+      if (cmd === 'run_advanced_query') {
+        return new Promise<AdvancedQueryResponse>((resolve) => {
+          resolveFetch = () => resolve(makeResponse())
+        })
+      }
+      if (cmd === 'query_by_property') return { items: [], next_cursor: null, has_more: false }
+      return null
+    })
+    render(<AdvancedQueryView />)
+
+    // While the fetch is pending, the status region announces the search.
+    expect(await screen.findByTestId('advanced-query-status')).toHaveTextContent(
+      t('advancedQuery.searching'),
+    )
+
+    // Resolving the fetch clears the announcement.
+    resolveFetch()
+    await waitFor(() => expect(screen.getByTestId('advanced-query-status')).toHaveTextContent(''))
+  })
+
+  it('keeps prior results mounted with aria-busy during a refetch (no full-pane spinner)', async () => {
+    const user = userEvent.setup()
+    let call = 0
+    let resolveRefetch: () => void = () => {}
+    mockedInvoke.mockImplementation(async (cmd) => {
+      if (cmd === 'run_advanced_query') {
+        call += 1
+        if (call === 1) {
+          return makeResponse({
+            rows: [makeRow({ id: 'BLK_A', content: 'First match' })],
+            totalCount: 1,
+          })
+        }
+        return new Promise<AdvancedQueryResponse>((resolve) => {
+          resolveRefetch = () =>
+            resolve(
+              makeResponse({
+                rows: [makeRow({ id: 'BLK_B', content: 'Second match' })],
+                totalCount: 1,
+              }),
+            )
+        })
+      }
+      if (cmd === 'batch_resolve') return [{ id: 'PAGE001', title: 'Parent page' }]
+      if (cmd === 'query_by_property') return { items: [], next_cursor: null, has_more: false }
+      return null
+    })
+    render(<AdvancedQueryView />)
+    expect(await screen.findByText('First match')).toBeInTheDocument()
+
+    // Trigger a (debounced) refetch; the second fetch stays pending.
+    await user.type(screen.getByTestId('advanced-query-fulltext'), 'x')
+
+    // While refetching, the prior row is still on screen and its container is
+    // marked aria-busy — it is NOT replaced by a bare spinner.
+    await waitFor(() => {
+      expect(screen.getByText('First match')).toBeInTheDocument()
+      const results = screen.getByTestId('advanced-query-total').closest('[aria-busy]')
+      expect(results).toHaveAttribute('aria-busy', 'true')
+    })
+
+    // Completing the refetch swaps in the new results.
+    resolveRefetch()
+    expect(await screen.findByText('Second match')).toBeInTheDocument()
+  })
+
   /** Add a `tag: <value>` leaf into the root group via the Add-filter popover. */
   async function addTagLeaf(user: ReturnType<typeof userEvent.setup>, tag: string): Promise<void> {
     await user.click(screen.getByRole('button', { name: 'Add filter' }))

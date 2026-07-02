@@ -5,7 +5,7 @@
  *  1. Renders 7 DaySection components (Mon-Sun)
  *  2. Today's entry gets headingLevel="h2", others get "h3"
  *  3. All entries have compact and mode="weekly" props
- *  4. Passes agendaCounts, agendaCountsBySource, backlinkCounts from useBatchCounts
+ *  4. Passes agendaCountsBySource, backlinkCounts from useBatchCounts
  *  5. Forwards onNavigateToPage and onAddBlock callbacks
  *  6. Separators between day sections
  *  7. Has no a11y violations

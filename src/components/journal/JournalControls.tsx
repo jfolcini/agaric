@@ -239,7 +239,13 @@ export function JournalControls(): React.ReactElement {
                   crowd the calendar icon out of row 1 on phones. The
                   `aria-label` above keeps the full word for screen readers. */}
               <span className="hidden [@media(min-width:480px)]:inline">{tabLabels[m]}</span>
-              <span className="[@media(min-width:480px)]:hidden">{tabLabels[m]?.charAt(0)}</span>
+              {/* Below 480px only the initial glyph shows; a native `title`
+                  surfaces the full mode name on hover so a sighted user can
+                  disambiguate (e.g. 'S' = Stream). The `aria-label` above
+                  already covers screen readers. */}
+              <span className="[@media(min-width:480px)]:hidden" title={ariaLabels[m]}>
+                {tabLabels[m]?.charAt(0)}
+              </span>
             </Button>
           )
         })}

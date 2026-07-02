@@ -38,6 +38,7 @@
  *    announce "3 of 12 matches" updates without stealing focus.
  */
 
+import type { TFunction } from 'i18next'
 import { CaseSensitive, ChevronDown, ChevronUp, Regex, WholeWord, X } from 'lucide-react'
 import {
   type KeyboardEvent as ReactKeyboardEvent,
@@ -60,6 +61,7 @@ import {
   collectTextNodes,
   compileQuery,
   type FindMatch,
+  type FindRegexError,
   type FindResult,
   runWalker,
   type WalkerHandle,
@@ -89,6 +91,25 @@ function computeViewportOffset(): number {
   if (!vv) return 0
   if (vv.scale > 1) return 0
   return vv.height - window.innerHeight
+}
+
+/**
+ * Localised inline text for a regex failure. Switches exhaustively over the
+ * {@link FindRegexError} union so a newly-added error kind is a compile error
+ * here rather than silently falling through to the "invalid" branch.
+ */
+function regexErrorText(t: TFunction, error: FindRegexError): string {
+  switch (error.kind) {
+    case 'tooLong': {
+      return t('findInPage.regexTooLong')
+    }
+    case 'tooSlow': {
+      return t('findInPage.regexTooSlow')
+    }
+    case 'invalid': {
+      return t('findInPage.regexInvalid', { message: error.message })
+    }
+  }
 }
 
 export type InPageFindVariant = 'overlay' | 'embedded'
@@ -226,7 +247,7 @@ export function InPageFind({
       setResult({
         totalMatches: 0,
         currentIndex: -1,
-        regexError: compiled.message,
+        regexError: compiled.error,
         skippedLongNodes: 0,
       })
       return
@@ -272,7 +293,7 @@ export function InPageFind({
           // ReDoS guard tripped: the regex scan aborted on its time budget.
           // Surface it through the existing error channel so the toolbar
           // shows "pattern too slow" instead of a misleadingly low count.
-          regexError: final.timedOut ? 'findInPage.regexTooSlow' : null,
+          regexError: final.timedOut ? { kind: 'tooSlow' } : null,
           skippedLongNodes: final.skippedLongNodes,
         })
         paint(final.matches, startIndex)
@@ -538,11 +559,7 @@ export function InPageFind({
           data-testid="in-page-find-error"
           className="text-xs text-destructive"
         >
-          {regexError === 'findInPage.regexTooLong'
-            ? t('findInPage.regexTooLong')
-            : regexError === 'findInPage.regexTooSlow'
-              ? t('findInPage.regexTooSlow')
-              : t('findInPage.regexInvalid', { message: regexError })}
+          {regexErrorText(t, regexError)}
         </span>
       )}
       {skippedLongNodes > 0 && !regexError && (

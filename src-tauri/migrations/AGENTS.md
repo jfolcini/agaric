@@ -150,7 +150,7 @@ Re-generates the offline `.sqlx/` cache. Run after any migration that adds a new
 cd src-tauri && cargo nextest run -E 'test(/_(376|606|708)$/)'
 ```
 
-Runs the per-migration round-trip / data-preservation tests. These live in `db::tests` (`src-tauri/src/db/mod.rs`) — and a few siblings under `snapshot`/`spaces` — and follow the `_<issue>` suffix convention (`_376` = #376/PR #394 round-trip + cascade-preservation harness, `_606` = #606 satellite-preservation, `_708` = #708 spaces-registry). There is no module or test named `migration_tests`; the suffix-regex filter is what actually selects them. A new migration needs a corresponding test fixture that inserts representative data + reads it back (use a matching `_<issue>` suffix so this filter keeps catching it); lock the schema's external contract early.
+Runs the per-migration round-trip / data-preservation tests. These live in `db::tests` (`src-tauri/src/db/tests.rs`) — and a few siblings under `snapshot`/`spaces` — and follow the `_<issue>` suffix convention (`_376` = #376/PR #394 round-trip + cascade-preservation harness, `_606` = #606 satellite-preservation, `_708` = #708 spaces-registry). There is no module or test named `migration_tests`; the suffix-regex filter is what actually selects them. A new migration needs a corresponding test fixture that inserts representative data + reads it back (use a matching `_<issue>` suffix so this filter keeps catching it); lock the schema's external contract early.
 
 ## Cross-references
 

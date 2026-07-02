@@ -79,6 +79,14 @@ function buildStatusFilter(s: BuildState): BuildResult {
 }
 
 function buildPriorityFilter(s: BuildState): BuildResult {
+  // #2281 item 10 — the priority vocabulary is now the shared
+  // `usePriorityLevels()` set plus the `none` sentinel, matching the search
+  // `priority:` form. Like `buildStatusFilter` above, `none` means "no
+  // priority set" and must emit the "property absent" filter, not a literal
+  // string match against "none".
+  if (s.priorityValue === 'none') {
+    return { filter: { type: 'PropertyIsEmpty', key: 'priority' } }
+  }
   return { filter: { type: 'PropertyText', key: 'priority', op: 'Eq', value: s.priorityValue } }
 }
 

@@ -72,7 +72,7 @@ export function FilterSortControls({
         aria-label={
           sort
             ? t('backlink.toggleSortLabel', {
-                direction: sort.dir === 'Asc' ? 'ascending' : 'descending',
+                direction: sort.dir === 'Asc' ? t('common.ascending') : t('common.descending'),
               })
             : t('backlink.toggleSortDefault')
         }

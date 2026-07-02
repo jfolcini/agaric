@@ -573,11 +573,14 @@ describe('HistoryView', () => {
 
     render(<HistoryView />)
 
-    // Should render error banner and empty state, not crash
+    // Item #2281 — the error banner renders WITHOUT the empty-state card: the
+    // empty state is gated on !error, so a failed initial load shows only the
+    // retryable error (not a contradictory "no entries" card beside it).
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(t('history.loadFailed'))
-      expect(screen.getByText(t('history.noEntriesFound'))).toBeInTheDocument()
     })
+    expect(screen.queryByText(t('history.noEntriesFound'))).not.toBeInTheDocument()
+    expect(screen.queryByText(t('history.emptyCurrentSpace'))).not.toBeInTheDocument()
   })
 
   it('Ctrl+A selects all reversible items but not non-reversible', async () => {

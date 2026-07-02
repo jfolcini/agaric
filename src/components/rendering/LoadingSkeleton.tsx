@@ -12,6 +12,8 @@
  * so call sites no longer have to repeat that scaffolding by hand.
  */
 
+import { useTranslation } from 'react-i18next'
+
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 
@@ -65,9 +67,10 @@ export function LoadingSkeleton({
   ariaLabel,
   ...rest
 }: LoadingSkeletonProps) {
+  const { t } = useTranslation()
   const heightClass = height ?? VARIANT_HEIGHT[variant]
   const wrapperA11y = loading
-    ? { 'aria-busy': true as const, role: 'status', 'aria-label': ariaLabel ?? 'Loading' }
+    ? { 'aria-busy': true as const, role: 'status', 'aria-label': ariaLabel ?? t('common.loading') }
     : {}
   return (
     <div className={cn('space-y-2', className)} {...wrapperA11y} {...rest}>

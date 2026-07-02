@@ -44,42 +44,24 @@ pub(super) fn log_consumer_result(
     // produced an `error processing materializer task` line that
     // was swept up by `recent_errors_from_log_dir` /
     // bug-report log captures even when the retry succeeded.
+    // Local macro: expand the five-arm `Level` dispatch once so the
+    // task-error and panic cases don't each spell out ERROR/WARN/INFO/
+    // DEBUG/TRACE. `$err` is the bound error; `$msg` the static message.
+    macro_rules! log_at_level {
+        ($err:expr, $msg:literal) => {
+            match level {
+                tracing::Level::ERROR => tracing::error!(label, error = %$err, $msg),
+                tracing::Level::WARN => tracing::warn!(label, error = %$err, $msg),
+                tracing::Level::INFO => tracing::info!(label, error = %$err, $msg),
+                tracing::Level::DEBUG => tracing::debug!(label, error = %$err, $msg),
+                tracing::Level::TRACE => tracing::trace!(label, error = %$err, $msg),
+            }
+        };
+    }
     match result {
         Ok(Ok(())) => {}
-        Ok(Err(e)) => match level {
-            tracing::Level::ERROR => {
-                tracing::error!(label, error = %e, "error processing materializer task");
-            }
-            tracing::Level::WARN => {
-                tracing::warn!(label, error = %e, "error processing materializer task");
-            }
-            tracing::Level::INFO => {
-                tracing::info!(label, error = %e, "error processing materializer task");
-            }
-            tracing::Level::DEBUG => {
-                tracing::debug!(label, error = %e, "error processing materializer task");
-            }
-            tracing::Level::TRACE => {
-                tracing::trace!(label, error = %e, "error processing materializer task");
-            }
-        },
-        Err(e) => match level {
-            tracing::Level::ERROR => {
-                tracing::error!(label, error = %e, "materializer task panicked");
-            }
-            tracing::Level::WARN => {
-                tracing::warn!(label, error = %e, "materializer task panicked");
-            }
-            tracing::Level::INFO => {
-                tracing::info!(label, error = %e, "materializer task panicked");
-            }
-            tracing::Level::DEBUG => {
-                tracing::debug!(label, error = %e, "materializer task panicked");
-            }
-            tracing::Level::TRACE => {
-                tracing::trace!(label, error = %e, "materializer task panicked");
-            }
-        },
+        Ok(Err(e)) => log_at_level!(e, "error processing materializer task"),
+        Err(e) => log_at_level!(e, "materializer task panicked"),
     }
 }
 
