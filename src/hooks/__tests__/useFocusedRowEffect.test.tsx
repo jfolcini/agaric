@@ -10,7 +10,7 @@
 
 import { render } from '@testing-library/react'
 import type React from 'react'
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useFocusedRowEffect } from '../useFocusedRowEffect'
@@ -26,6 +26,12 @@ interface HarnessProps {
   setFocusedIndex: (idx: number) => void
   resetDeps: React.DependencyList
   rows?: string[]
+  /**
+   * Focus the container before the hook's effects run (the production
+   * condition during keyboard navigation). Defaults to true; at-rest tests
+   * pass false to pin that mounting alone never scrolls/paints the ring.
+   */
+  containerFocused?: boolean
 }
 
 function Harness({
@@ -35,8 +41,16 @@ function Harness({
   setFocusedIndex,
   resetDeps,
   rows = DEFAULT_ROWS,
+  containerFocused = true,
 }: HarnessProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+  // Focus synchronously during render-commit ordering: a layout-safe way to
+  // guarantee document.activeElement is inside the container BEFORE the
+  // hook's passive effect runs (mirrors the real tabIndex=0 container that
+  // the user focused before pressing arrows).
+  useEffect(() => {
+    if (containerFocused) containerRef.current?.focus()
+  }, [containerFocused])
   useFocusedRowEffect({
     containerRef,
     focusedRowId,
@@ -46,7 +60,15 @@ function Harness({
     resetDeps,
   })
   return (
-    <div ref={containerRef}>
+    // Mirror the production containers (role="group" + tabIndex=0 roving hosts).
+    <div
+      ref={containerRef}
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- test harness mirrors the real reference containers
+      role="group"
+      aria-label="rows"
+      // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- keyboard nav requires focusable container (mirrors production)
+      tabIndex={0}
+    >
       {rows.map((id) => (
         <div key={id} {...{ [rowAttr]: id }}>
           Row {id}
@@ -167,5 +189,25 @@ describe('useFocusedRowEffect', () => {
     // Element survives the unmount in jsdom because we held a reference;
     // cleanup callback should have stripped the classes.
     expect(rowA.classList.contains('ring-2')).toBe(false)
+  })
+
+  // #2293 regression: focusedIndex defaults to 0, so focusedRowId is non-null
+  // from the first render. Mounting a panel must NOT scroll the page or paint
+  // the focus ring while the user has never focused the list (this broke
+  // touch-drag e2e coordinates repo-wide when LinkedReferences regained its
+  // row attribute).
+  it('does NOT scroll or paint the ring at rest (focus outside the container)', () => {
+    const setFocusedIndex = vi.fn()
+    const { container } = render(
+      <Harness
+        focusedRowId="B"
+        setFocusedIndex={setFocusedIndex}
+        resetDeps={['a']}
+        containerFocused={false}
+      />,
+    )
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
+    const row = container.querySelector('[data-row-id="B"]') as HTMLElement
+    for (const cls of FOCUS_CLASSES) expect(row.classList.contains(cls)).toBe(false)
   })
 })

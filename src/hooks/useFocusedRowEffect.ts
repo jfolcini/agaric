@@ -69,6 +69,14 @@ export function useFocusedRowEffect({
     const container = containerRef.current
     if (!container || !focusedRowId) return undefined
 
+    // At-rest guard: focusedIndex defaults to 0, so focusedRowId is non-null
+    // from the very first render. Scrolling / painting the focus ring must
+    // only happen while the user is actually keyboard-navigating the list —
+    // i.e. focus is inside the container. Without this, merely mounting a
+    // panel scroll-hijacks the page to its first row (broke touch-drag e2e
+    // coordinates repo-wide when LinkedReferences regained data-backlink-item).
+    if (!container.contains(document.activeElement)) return undefined
+
     const el = container.querySelector(`[${rowAttr}="${focusedRowId}"]`) as HTMLElement | null
     if (!el) return undefined
 
