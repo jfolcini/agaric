@@ -881,6 +881,13 @@ describe('App', () => {
       // plain `number`) so it stays accurate regardless of trash size.
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'count_trash') return 1 as unknown as never
+        // Keep the active space alive through boot reconcile — otherwise
+        // useTrashCount short-circuits to 0 (no active space) and never
+        // dispatches count_trash (#2248 SpaceScope migration).
+        if (cmd === 'list_spaces')
+          return [
+            { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' },
+          ] as unknown as never
         return emptyPage
       })
 
