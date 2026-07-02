@@ -34,6 +34,9 @@ vi.mock('lucide-react', () => ({
   XIcon: (props: { className?: string }) => (
     <svg data-testid="x-icon" className={props.className} />
   ),
+  // The in-flight submit Spinner renders <Loader2/>; forward props so its
+  // `data-slot="spinner"` marker survives for the pending-state assertion.
+  Loader2: (props: Record<string, unknown>) => <svg data-testid="icon-loader2" {...props} />,
 }))
 
 import { WelcomeModal } from '@/components/pages/WelcomeModal'
@@ -330,6 +333,34 @@ describe('WelcomeModal', () => {
     // (or pick a different action) on next launch.
     expect(screen.getByText('Welcome to Agaric')).toBeInTheDocument()
     expect(localStorage.getItem('agaric-onboarding-done')).toBeNull()
+  })
+
+  // Item #2281 — the async submit button must render the app-wide in-flight
+  // <Spinner/> (not just go disabled) while the create-sample-pages IPC chain is
+  // pending, matching ConfirmDialog / TemplatesView.
+  it('shows an in-flight Spinner in the "Create sample pages" button while creation is pending', async () => {
+    const user = userEvent.setup()
+    let resolveFirstPage: (id: string) => void = () => {}
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'create_page_in_space') {
+        return new Promise<string>((resolve) => {
+          resolveFirstPage = resolve
+        })
+      }
+      return {}
+    })
+
+    render(<WelcomeModal />)
+    await user.click(screen.getByRole('button', { name: 'Create sample pages' }))
+
+    const sampleBtn = screen.getByRole('button', { name: 'Create sample pages' })
+    await waitFor(() => {
+      expect(sampleBtn.querySelector('[data-slot="spinner"]')).not.toBeNull()
+    })
+    expect(sampleBtn).toBeDisabled()
+
+    // Let the pending promise settle so the component unmounts cleanly.
+    resolveFirstPage('PAGE_1')
   })
 
   it('does not show during boot loading state', () => {

@@ -240,7 +240,7 @@ export function HistoryView(): React.ReactElement {
           so users understand why the list is empty and how to expand
           the scope. The cross-space ("All spaces" on) empty state keeps
           the existing generic copy. */}
-      {!loading && entries.length === 0 && (
+      {!loading && !error && entries.length === 0 && (
         <EmptyState
           icon={Clock}
           message={

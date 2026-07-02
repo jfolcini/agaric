@@ -189,7 +189,7 @@ export const references: Record<string, string> = {
   'backlink.ascSort': 'Asc',
   'backlink.descSort': 'Desc',
   'backlink.showingCount': 'Showing {{filtered}} of {{total}} backlinks',
-  'backlinks.linkMention': 'Link it: replace mention in block {{blockId}}',
+  'backlinks.linkMention': 'Link it: {{text}}',
   'search.failed': 'Failed to search',
   'search.loadResultsFailed': 'Failed to load search results',
   'search.noParentPage': 'This block has no parent page',

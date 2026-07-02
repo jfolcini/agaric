@@ -952,9 +952,6 @@ export function BlockTree({
     )
   }
 
-  // DnD measuring config: always measure during drag for correct collision detection
-  const measuring = DND_MEASURING
-
   return (
     <BatchAttachmentsProvider blockIds={windowedBlockIds}>
       <BatchPropertiesProvider
@@ -993,7 +990,7 @@ export function BlockTree({
         <DndContext
           sensors={dnd.sensors}
           collisionDetection={closestCenter}
-          measuring={measuring}
+          measuring={DND_MEASURING}
           // #752 — disable dnd-kit's built-in edge auto-scroll: `useBlockDnD`
           // already runs the custom `useAutoScrollOnDrag` RAF loop against the
           // #main-content container. Running both is additive (jank), and the

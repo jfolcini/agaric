@@ -31,7 +31,7 @@ export function WeeklyView({
     [currentDate, makeDayEntry],
   )
 
-  const { agendaCounts, agendaCountsBySource, backlinkCounts } = useBatchCounts(entries)
+  const { agendaCountsBySource, backlinkCounts } = useBatchCounts(entries)
 
   return (
     <div className="space-y-1">
@@ -45,7 +45,6 @@ export function WeeklyView({
               headingLevel={isToday ? 'h2' : 'h3'}
               compact
               mode="weekly"
-              agendaCounts={agendaCounts}
               agendaCountsBySource={agendaCountsBySource}
               backlinkCounts={backlinkCounts}
               onNavigateToPage={onNavigateToPage}

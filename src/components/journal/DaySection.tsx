@@ -19,14 +19,13 @@ import { PageQuickActions } from '@/components/pages/PageQuickActions'
 import { Button } from '@/components/ui/button'
 import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
+import { getSourceColor, getSourceLabel } from '@/lib/date-property-colors'
+import type { DayEntry } from '@/lib/date-utils'
+import { formatDate } from '@/lib/date-utils'
 import { cn } from '@/lib/utils'
-
-import { getSourceColor, getSourceLabel } from '../../lib/date-property-colors'
-import type { DayEntry } from '../../lib/date-utils'
-import { formatDate } from '../../lib/date-utils'
-import type { JournalMode } from '../../stores/journal'
-import { useJournalStore } from '../../stores/journal'
-import { PageBlockStoreProvider } from '../../stores/page-blocks'
+import type { JournalMode } from '@/stores/journal'
+import { useJournalStore } from '@/stores/journal'
+import { PageBlockStoreProvider } from '@/stores/page-blocks'
 
 /** Stable empty-map defaults so optional count props don't re-create `{}` each render. */
 const EMPTY_COUNTS: Record<string, number> = {}
@@ -38,7 +37,6 @@ interface DaySectionProps {
   hideHeading?: boolean | undefined
   compact?: boolean | undefined
   mode: JournalMode
-  agendaCounts?: Record<string, number> | undefined
   agendaCountsBySource?: Record<string, Record<string, number>> | undefined
   backlinkCounts?: Record<string, number> | undefined
   onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined
@@ -109,7 +107,6 @@ function DaySectionInner({
   hideHeading = false,
   compact = false,
   mode,
-  agendaCounts: _agendaCounts = EMPTY_COUNTS,
   agendaCountsBySource = EMPTY_COUNTS_BY_SOURCE,
   backlinkCounts = EMPTY_COUNTS,
   onNavigateToPage,

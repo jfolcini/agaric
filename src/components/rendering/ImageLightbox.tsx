@@ -104,6 +104,11 @@ export function ImageLightbox({
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [dragging, setDragging] = useState(false)
+  // Broken-source guard: when the <img> fails to load (deleted/moved
+  // attachment, revoked blob URL, unreachable fsPath) we swap in a labelled
+  // in-dialog fallback instead of leaving the user on a broken-image glyph over
+  // a black overlay. Reset whenever the displayed image / open state changes.
+  const [imgError, setImgError] = useState(false)
   // Pointer-drag anchor: pointer + pan position captured at pointerdown.
   const dragOrigin = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null)
   const zoomed = zoom > ZOOM_MIN
@@ -140,9 +145,11 @@ export function ImageLightbox({
     setPan((p) => clampPan(p, zoom))
   }, [zoom, clampPan])
 
-  // Reset zoom/pan when the displayed image or open state changes.
+  // Reset zoom/pan (and the broken-image fallback) when the displayed image or
+  // open state changes.
   useEffect(() => {
     resetZoom()
+    setImgError(false)
   }, [safeIndex, open, resetZoom])
 
   // Keyboard: +/-/0 zoom always; arrows pan when zoomed, else navigate the set.
@@ -280,29 +287,59 @@ export function ImageLightbox({
           {t('lightbox.description', { filename: current.alt })}
         </DialogDescription>
 
-        <img
-          key={current.src}
-          ref={imgRef}
-          src={current.src}
-          alt={current.alt}
-          className={cn(
-            'max-w-[90vw] max-h-[90vh] object-contain touch-none select-none',
-            !reducedMotion && !dragging && 'transition-transform',
-            zoomed && (dragging ? 'cursor-grabbing' : 'cursor-grab'),
-          )}
-          style={{
-            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-          }}
-          onWheel={handleWheel}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerCancel={handlePointerUp}
-          draggable={false}
-          data-testid="lightbox-image"
-        />
+        {imgError ? (
+          <div
+            className="flex max-w-[90vw] flex-col items-center gap-2 px-6 py-10 text-center text-white/80"
+            data-testid="lightbox-image-error"
+          >
+            <p className="text-sm font-medium">{current.alt}</p>
+            <p className="text-sm text-white/70">{t('lightbox.loadError')}</p>
+            {onOpenExternal && (
+              <button
+                type="button"
+                className={cn(
+                  'mt-2 inline-flex items-center gap-1.5',
+                  'rounded-md bg-black/60 px-3 py-1.5 text-xs text-white/80',
+                  'transition-colors hover:bg-black/80 hover:text-white',
+                  'focus-ring-visible',
+                )}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onOpenExternal()
+                }}
+                data-testid="lightbox-error-open-external"
+              >
+                <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                {t('lightbox.openExternal')}
+              </button>
+            )}
+          </div>
+        ) : (
+          <img
+            key={current.src}
+            ref={imgRef}
+            src={current.src}
+            alt={current.alt}
+            className={cn(
+              'max-w-[90vw] max-h-[90vh] object-contain touch-none select-none',
+              !reducedMotion && !dragging && 'transition-transform',
+              zoomed && (dragging ? 'cursor-grabbing' : 'cursor-grab'),
+            )}
+            style={{
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+            }}
+            onWheel={handleWheel}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+            onError={() => setImgError(true)}
+            draggable={false}
+            data-testid="lightbox-image"
+          />
+        )}
 
-        {zoomed && (
+        {!imgError && zoomed && (
           <span
             className="absolute top-4 left-4 rounded-md bg-black/60 px-2 py-1 text-xs text-white/80"
             data-testid="lightbox-zoom-badge"
@@ -312,7 +349,7 @@ export function ImageLightbox({
           </span>
         )}
 
-        {current.caption && (
+        {!imgError && current.caption && (
           <p
             className="absolute bottom-4 left-1/2 -translate-x-1/2 max-w-[80vw] truncate rounded-md bg-black/60 px-3 py-1.5 text-center text-sm text-white/90"
             data-testid="lightbox-caption"
@@ -328,54 +365,57 @@ export function ImageLightbox({
          * via `withShortcut` in each button's accessible name. Wired to the same
          * `zoomBy`/`resetZoom` handlers the wheel/keyboard paths use, so all
          * input paths stay in sync. Disabled at the bounds: ZoomIn at ZOOM_MAX,
-         * ZoomOut + Reset when not zoomed in (ZOOM_MIN).
+         * ZoomOut + Reset when not zoomed in (ZOOM_MIN). Hidden when the image
+         * failed to load — the controls would act on a missing image.
          */}
-        <div
-          className="absolute bottom-4 left-4 flex flex-col gap-1"
-          data-testid="lightbox-zoom-controls"
-        >
-          <IconButton
-            variant="outline"
-            disabled={zoom >= ZOOM_MAX}
-            onClick={(e) => {
-              e.stopPropagation()
-              zoomBy(ZOOM_STEP)
-            }}
-            tooltip={t('lightbox.zoomIn')}
-            ariaLabel={withShortcut(t('lightbox.zoomIn'), 'graphZoomIn')}
-            data-testid="lightbox-zoom-in"
+        {!imgError && (
+          <div
+            className="absolute bottom-4 left-4 flex flex-col gap-1"
+            data-testid="lightbox-zoom-controls"
           >
-            <Plus className="h-4 w-4" />
-          </IconButton>
-          <IconButton
-            variant="outline"
-            disabled={!zoomed}
-            onClick={(e) => {
-              e.stopPropagation()
-              zoomBy(-ZOOM_STEP)
-            }}
-            tooltip={t('lightbox.zoomOut')}
-            ariaLabel={withShortcut(t('lightbox.zoomOut'), 'graphZoomOut')}
-            data-testid="lightbox-zoom-out"
-          >
-            <Minus className="h-4 w-4" />
-          </IconButton>
-          <IconButton
-            variant="outline"
-            disabled={!zoomed}
-            onClick={(e) => {
-              e.stopPropagation()
-              resetZoom()
-            }}
-            tooltip={t('lightbox.zoomReset')}
-            ariaLabel={withShortcut(t('lightbox.zoomReset'), 'graphZoomReset')}
-            data-testid="lightbox-zoom-reset"
-          >
-            <Maximize2 className="h-4 w-4" />
-          </IconButton>
-        </div>
+            <IconButton
+              variant="outline"
+              disabled={zoom >= ZOOM_MAX}
+              onClick={(e) => {
+                e.stopPropagation()
+                zoomBy(ZOOM_STEP)
+              }}
+              tooltip={t('lightbox.zoomIn')}
+              ariaLabel={withShortcut(t('lightbox.zoomIn'), 'graphZoomIn')}
+              data-testid="lightbox-zoom-in"
+            >
+              <Plus className="h-4 w-4" />
+            </IconButton>
+            <IconButton
+              variant="outline"
+              disabled={!zoomed}
+              onClick={(e) => {
+                e.stopPropagation()
+                zoomBy(-ZOOM_STEP)
+              }}
+              tooltip={t('lightbox.zoomOut')}
+              ariaLabel={withShortcut(t('lightbox.zoomOut'), 'graphZoomOut')}
+              data-testid="lightbox-zoom-out"
+            >
+              <Minus className="h-4 w-4" />
+            </IconButton>
+            <IconButton
+              variant="outline"
+              disabled={!zoomed}
+              onClick={(e) => {
+                e.stopPropagation()
+                resetZoom()
+              }}
+              tooltip={t('lightbox.zoomReset')}
+              ariaLabel={withShortcut(t('lightbox.zoomReset'), 'graphZoomReset')}
+              data-testid="lightbox-zoom-reset"
+            >
+              <Maximize2 className="h-4 w-4" />
+            </IconButton>
+          </div>
+        )}
 
-        {hasMultiple && (
+        {!imgError && hasMultiple && (
           <>
             <button
               type="button"
@@ -427,7 +467,7 @@ export function ImageLightbox({
           </>
         )}
 
-        {onOpenExternal && (
+        {!imgError && onOpenExternal && (
           <button
             type="button"
             className={cn(

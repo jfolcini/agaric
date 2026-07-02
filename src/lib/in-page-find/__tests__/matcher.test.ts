@@ -118,7 +118,7 @@ describe('compileQuery', () => {
     const compiled = compileQuery(huge, { ...defaultOpts, isRegex: true })
     expect(compiled.kind).toBe('error')
     if (compiled.kind === 'error') {
-      expect(compiled.message).toBe('findInPage.regexTooLong')
+      expect(compiled.error).toEqual({ kind: 'tooLong' })
     }
   })
 

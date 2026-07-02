@@ -16,6 +16,8 @@ export const editor: Record<string, string> = {
   'attachments.deleted': 'Deleted {{name}}',
   'attachments.confirmDelete': 'Delete "{{name}}"?',
   'attachments.clickAgain': 'Click the delete button again to confirm.',
+  // #2281 — armed-state accessible name for the double-tap-to-confirm delete.
+  'attachments.deleteArmed': 'Click again to confirm deleting {{name}}',
   'attachment.openFile': 'Open file {{filename}}',
   'attachment.openImageFullscreen': 'Open image {{filename}} in full screen',
   'attachment.loadingImage': 'Loading image…',
@@ -148,6 +150,8 @@ export const editor: Record<string, string> = {
   'lightbox.zoomIn': 'Zoom in',
   'lightbox.zoomOut': 'Zoom out',
   'lightbox.zoomReset': 'Reset zoom',
+  // #2281 — shown in-dialog when the image fails to load (broken/moved source).
+  'lightbox.loadError': "Couldn't load image",
   'imageResize.toolbar': 'Image size',
   'imageResize.small': 'Small (25%)',
   'imageResize.medium': 'Medium (50%)',

@@ -32,7 +32,12 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useRovingTabindex } from '@/hooks/useRovingTabindex'
 import { getShortcutKeys, toAriaKeyshortcuts } from '@/lib/keyboard-config'
-import { createMarkToggles, toolbarActiveClass } from '@/lib/toolbar-config'
+import {
+  createMarkToggles,
+  MARK_TOGGLE_SHORTCUT_IDS,
+  toolbarActiveClass,
+  withShortcutHint,
+} from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
 
 interface SelectionBubbleMenuProps {
@@ -54,28 +59,6 @@ function getLinkMarkRange(editor: Editor): { from: number; to: number } | undefi
 }
 
 /**
- * Append the current keyboard binding for `shortcutId` to `label` so the
- * Tooltip stays in sync with user customisations. Returns the
- * plain label when the id is unknown so we never render an empty `()`.
- */
-function tooltipWithShortcut(label: string, shortcutId: string): string {
-  const keys = getShortcutKeys(shortcutId)
-  return keys ? `${label} (${keys})` : label
-}
-
-/**
- * Map of bubble-menu button label keys to keyboard-config shortcut ids.
- * Bold and italic intentionally have no entry — they use TipTap's
- * StarterKit defaults; their pre-existing tip strings already encode the
- * shortcut.
- */
-const BUBBLE_MENU_SHORTCUT_IDS: Record<string, string> = {
-  'toolbar.code': 'inlineCode',
-  'toolbar.strikethrough': 'strikethrough',
-  'toolbar.highlight': 'highlight',
-}
-
-/**
  * #216 C2 — canonical `aria-keyshortcuts` per mark button so AT announces the
  * binding (tooltips never fire on touch). Bold/Italic use TipTap StarterKit
  * built-ins (not in the configurable catalog), so their bindings are fixed
@@ -84,7 +67,7 @@ const BUBBLE_MENU_SHORTCUT_IDS: Record<string, string> = {
 function ariaKeyshortcutsFor(label: string): string | undefined {
   if (label === 'toolbar.bold') return 'Control+B'
   if (label === 'toolbar.italic') return 'Control+I'
-  const id = BUBBLE_MENU_SHORTCUT_IDS[label]
+  const id = MARK_TOGGLE_SHORTCUT_IDS[label]
   if (!id) return undefined
   return toAriaKeyshortcuts(getShortcutKeys(id)) || undefined
 }
@@ -294,8 +277,8 @@ export function SelectionBubbleMenu({
       data-testid="selection-bubble-menu"
     >
       {markToggles.map((btn) => {
-        const shortcutId = BUBBLE_MENU_SHORTCUT_IDS[btn.label]
-        const tooltip = shortcutId ? tooltipWithShortcut(t(btn.label), shortcutId) : t(btn.tip)
+        const shortcutId = MARK_TOGGLE_SHORTCUT_IDS[btn.label]
+        const tooltip = shortcutId ? withShortcutHint(t(btn.label), shortcutId) : t(btn.tip)
         const active = btn.activeKey
           ? (state[btn.activeKey as keyof typeof state] as boolean)
           : false
@@ -321,7 +304,7 @@ export function SelectionBubbleMenu({
 
       <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
 
-      <Tip label={tooltipWithShortcut(t('toolbar.link'), 'linkPopover')}>
+      <Tip label={withShortcutHint(t('toolbar.link'), 'linkPopover')}>
         <Button
           variant="ghost"
           size="icon-xs"

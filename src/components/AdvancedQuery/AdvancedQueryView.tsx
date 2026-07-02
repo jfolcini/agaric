@@ -31,6 +31,7 @@ import { useAdvancedQuery } from '@/hooks/useAdvancedQuery'
 import { notify } from '@/lib/notify'
 import { createBlock, setProperty } from '@/lib/tauri'
 import type { AggregateSpec, FilterPrimitive, GroupSpec, SortKey } from '@/lib/tauri'
+import { cn } from '@/lib/utils'
 import {
   type BuilderPath,
   builderTreeToFilterExpr,
@@ -221,7 +222,24 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
 
       {/* Results pane. */}
       <div className="advanced-query-results">
-        {loading && (
+        {/* Polite live region — announces that a query is (re)running so
+            screen-reader users get more than silence while the list refetches.
+            Mirrors SearchStatusRegion. */}
+        <div
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level status region sibling to (not wrapping) the results list
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          className="sr-only"
+          data-testid="advanced-query-status"
+        >
+          {loading ? t('advancedQuery.searching') : ''}
+        </div>
+
+        {/* Initial load only (no previous results to keep on screen): bare
+            spinner. On a refetch the prior results stay mounted (dimmed +
+            aria-busy) below instead of being replaced by this spinner. */}
+        {loading && isEmpty && (
           <div className="flex justify-center px-3 py-4">
             <Spinner size="sm" />
           </div>
@@ -250,8 +268,14 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
           <EmptyState message={t('advancedQuery.noResults')} compact />
         )}
 
-        {!loading && !error && !isEmpty && (
-          <>
+        {/* Results — kept visible (dimmed + aria-busy) during a refetch rather
+            than unmounted and replaced by a spinner, so builder/sort/group edits
+            don't blank the pane. */}
+        {!error && !isEmpty && (
+          <div
+            aria-busy={loading}
+            className={cn(loading && 'pointer-events-none opacity-60 transition-opacity')}
+          >
             <p
               className="px-1 pb-1 text-xs text-muted-foreground"
               data-testid="advanced-query-total"
@@ -289,7 +313,7 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
               onLoadMore={handleLoadMore}
               className="mx-3 my-2"
             />
-          </>
+          </div>
         )}
       </div>
     </div>

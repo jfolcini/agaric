@@ -32,6 +32,7 @@ import {
 } from 'lucide-react'
 
 import { dispatchBlockEvent } from '@/lib/block-events'
+import { getShortcutKeys } from '@/lib/keyboard-config'
 
 // ── Shared constants ────────────────────────────────────────────────────
 
@@ -148,6 +149,30 @@ export function createMarkToggles(editor: Editor): ToolbarButtonConfig[] {
       action: () => editor.chain().focus().toggleUnderline().run(),
     },
   ]
+}
+
+/**
+ * Mark-toggle button label key → keyboard-config shortcut id. Shared by
+ * `FormatMenu` and `SelectionBubbleMenu` so the two mark-toggle surfaces can
+ * never surface divergent shortcut hints. Bold/Italic are intentionally
+ * absent — they use TipTap StarterKit defaults, already encoded in their tip
+ * strings.
+ */
+export const MARK_TOGGLE_SHORTCUT_IDS: Record<string, string> = {
+  'toolbar.code': 'inlineCode',
+  'toolbar.strikethrough': 'strikethrough',
+  'toolbar.highlight': 'highlight',
+}
+
+/**
+ * Append the current keyboard binding for `shortcutId` to `label` so tooltips
+ * stay in sync with user customisations. Returns the plain label when the id
+ * is undefined or has no binding, so we never render an empty `()`.
+ */
+export function withShortcutHint(label: string, shortcutId: string | undefined): string {
+  if (!shortcutId) return label
+  const keys = getShortcutKeys(shortcutId)
+  return keys ? `${label} (${keys})` : label
 }
 
 export function createRefsAndBlocks(editor: Editor): ToolbarButtonConfig[] {

@@ -653,6 +653,24 @@ describe('BlockContextMenu', () => {
     expect(props.onClose).toHaveBeenCalled()
   })
 
+  it('pressing Tab closes the menu (WAI-ARIA menu pattern)', () => {
+    const { props } = renderMenu()
+
+    // Tab is handled on the menu element (roving-tabindex list), not the
+    // document, so fire it on the menu itself.
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Tab' })
+
+    expect(props.onClose).toHaveBeenCalled()
+  })
+
+  it('pressing Shift+Tab closes the menu', () => {
+    const { props } = renderMenu()
+
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Tab', shiftKey: true })
+
+    expect(props.onClose).toHaveBeenCalled()
+  })
+
   it('restores focus to triggerRef element on Escape', () => {
     const triggerEl = document.createElement('div')
     triggerEl.tabIndex = -1

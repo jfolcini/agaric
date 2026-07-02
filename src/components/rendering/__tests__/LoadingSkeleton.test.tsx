@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
+import { t } from '@/lib/i18n'
 
 describe('LoadingSkeleton', () => {
   it('renders default count of 3 skeletons', () => {
@@ -100,7 +101,8 @@ describe('LoadingSkeleton', () => {
       const wrapper = container.firstElementChild as HTMLElement
       expect(wrapper.getAttribute('aria-busy')).toBe('true')
       expect(wrapper.getAttribute('role')).toBe('status')
-      expect(wrapper.getAttribute('aria-label')).toBe('Loading')
+      // #2232 — the default busy label is routed through i18n, not hardcoded.
+      expect(wrapper.getAttribute('aria-label')).toBe(t('common.loading'))
     })
 
     it('uses the provided ariaLabel when loading=true', () => {

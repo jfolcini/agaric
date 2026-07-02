@@ -73,13 +73,18 @@ export function filterSummary(
   tagResolver?: (id: string) => string,
   t?: (key: string) => string,
 ): string {
+  // #2232 — dimension nouns route through i18n when a `t` is supplied; the
+  // literal is the untranslated fallback for `t`-less callers (tests, logs).
+  const tr = (key: string, fallback: string): string => (t ? t(key) : fallback)
   switch (filter.type) {
     case 'BlockType': {
-      return `type = ${filter.block_type}`
+      return `${tr('filter.summary.type', 'type')} = ${filter.block_type}`
     }
     case 'PropertyText': {
-      if (filter.key === 'todo') return `status ${opLabel(filter.op, t)} ${filter.value}`
-      if (filter.key === 'priority') return `priority ${opLabel(filter.op, t)} ${filter.value}`
+      if (filter.key === 'todo')
+        return `${tr('filter.summary.status', 'status')} ${opLabel(filter.op, t)} ${filter.value}`
+      if (filter.key === 'priority')
+        return `${tr('filter.summary.priority', 'priority')} ${opLabel(filter.op, t)} ${filter.value}`
       return `${filter.key} ${opLabel(filter.op, t)} ${filter.value}`
     }
     case 'PropertyNum': {
@@ -89,30 +94,31 @@ export function filterSummary(
       return `${filter.key} ${opLabel(filter.op, t)} ${filter.value}`
     }
     case 'PropertyIsSet': {
-      return `${filter.key} ${t ? t('filter.isSet') : 'is set'}`
+      return `${filter.key} ${tr('filter.isSet', 'is set')}`
     }
     case 'PropertyIsEmpty': {
-      return `${filter.key} ${t ? t('filter.isEmpty') : 'is empty'}`
+      return `${filter.key} ${tr('filter.isEmpty', 'is empty')}`
     }
     case 'Contains': {
-      return `${t ? t('filter.operatorContains') : 'contains'} "${filter.query}"`
+      return `${tr('filter.operatorContains', 'contains')} "${filter.query}"`
     }
     case 'CreatedInRange': {
       const parts: string[] = []
-      if (filter.after) parts.push(`after ${filter.after}`)
-      if (filter.before) parts.push(`before ${filter.before}`)
-      return `created ${parts.join(' ')}`
+      if (filter.after) parts.push(`${tr('filter.summary.after', 'after')} ${filter.after}`)
+      if (filter.before) parts.push(`${tr('filter.summary.before', 'before')} ${filter.before}`)
+      return `${tr('filter.summary.created', 'created')} ${parts.join(' ')}`
     }
     case 'HasTag': {
+      const hasTag = tr('filter.summary.hasTag', 'has tag')
       return tagResolver
-        ? `has tag ${tagResolver(filter.tag_id)}`
-        : `has tag ${filter.tag_id.slice(0, 8)}...`
+        ? `${hasTag} ${tagResolver(filter.tag_id)}`
+        : `${hasTag} ${filter.tag_id.slice(0, 8)}...`
     }
     case 'HasTagPrefix': {
-      return `${t ? t('filter.tagPrefix') : 'tag prefix'} "${filter.prefix}"`
+      return `${tr('filter.tagPrefix', 'tag prefix')} "${filter.prefix}"`
     }
     default: {
-      return t ? t('filter.default') : 'filter'
+      return tr('filter.default', 'filter')
     }
   }
 }
@@ -139,8 +145,10 @@ export function FilterPillRow({
           <FilterPill
             label={filterSummary(filter, tagResolver, t)}
             onRemove={() => onRemove(index)}
-            removeAriaLabel={`Remove filter ${filterSummary(filter, tagResolver, t)}`}
-            groupAriaLabel={`Filter: ${filterSummary(filter, tagResolver, t)}`}
+            removeAriaLabel={t('filter.remove', {
+              summary: filterSummary(filter, tagResolver, t),
+            })}
+            groupAriaLabel={t('filter.group', { summary: filterSummary(filter, tagResolver, t) })}
           />
         </li>
       ))}

@@ -42,6 +42,16 @@ import { useSpaceStore } from '@/stores/space'
 const MANAGE_SENTINEL = '__manage__'
 
 /**
+ * Sentinel value for the single-space "Create another space" hint. Like
+ * MANAGE_SENTINEL it is short-circuited in `handleValueChange` (opens the
+ * manage dialog, does not switch space). Rendering the hint as a real
+ * SelectItem — rather than a bare `<button>` inside SelectContent — keeps it
+ * in Radix Select's roving-focus/type-ahead model so keyboard users can reach
+ * it (#2281).
+ */
+const CREATE_SENTINEL = '__create__'
+
+/**
  * Only the first nine spaces get a digit hotkey hint
  * (`Ctrl+1` … `Ctrl+9` / `⌘1` … `⌘9` on macOS). Tenth-and-later spaces
  * still render as selectable rows; they just don't carry a chip because
@@ -88,7 +98,7 @@ export function SpaceSwitcher(): React.JSX.Element {
   const [manageOpen, setManageOpen] = useState(false)
 
   const handleValueChange = (next: string) => {
-    if (next === MANAGE_SENTINEL) {
+    if (next === MANAGE_SENTINEL || next === CREATE_SENTINEL) {
       setManageOpen(true)
       return
     }
@@ -208,26 +218,23 @@ export function SpaceSwitcher(): React.JSX.Element {
            * `t('spaceSwitcher.createAnotherHint')` hint inside the dropdown so the
            * single-space user discovers the manage flow without having
            * to scan past the (lone) space row to the `t('space.manage')`
-           * entry below. Rendered as a native `<button>` rather than a
-           * `<SelectItem>` because `SelectItem` requires a `value` and
-           * would interfere with Radix Select's selection model;
-           * clicking it opens the same `SpaceManageDialog` the
-           * MANAGE_SENTINEL route opens via `handleValueChange`.
+           * entry below. Rendered as a real `<SelectItem>` (CREATE_SENTINEL)
+           * so it joins Radix Select's roving-focus/type-ahead model and is
+           * keyboard-reachable (#2281); `handleValueChange` short-circuits the
+           * sentinel and opens the same `SpaceManageDialog` the MANAGE_SENTINEL
+           * route opens, so selecting it does not switch space.
            */}
           {availableSpaces.length === 1 ? (
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground touch-target"
-              onClick={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                setManageOpen(true)
-              }}
+            <SelectItem
+              value={CREATE_SENTINEL}
+              className="text-muted-foreground"
               data-testid="single-space-create-hint"
             >
-              <Plus className="h-3 w-3" aria-hidden="true" />
-              {t('spaceSwitcher.createAnotherHint')}
-            </button>
+              <span className="flex items-center gap-2">
+                <Plus className="h-3 w-3" aria-hidden="true" />
+                {t('spaceSwitcher.createAnotherHint')}
+              </span>
+            </SelectItem>
           ) : null}
           {/*
            * Phase 6 — the `t('space.manage')` entry is now a real,

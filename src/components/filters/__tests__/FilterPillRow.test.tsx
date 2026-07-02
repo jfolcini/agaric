@@ -150,6 +150,34 @@ describe('FilterPillRow', () => {
     expect(screen.getByText('tag prefix "work"')).toBeInTheDocument()
   })
 
+  // #2232 — dimension nouns and the remove/group chip aria-labels must be
+  // routed through i18n (not hardcoded English) so a non-English locale doesn't
+  // render mixed-language pills. In the single (en) locale these resolve to the
+  // same visible text, so we assert against the t() keys rather than literals.
+  it('routes dimension nouns and chip aria-labels through i18n keys', () => {
+    const filters: FilterWithKey[] = [
+      { type: 'BlockType', block_type: 'content', _addId: 1 },
+      { type: 'PropertyText', key: 'todo', op: 'Eq', value: 'DONE', _addId: 2 },
+      { type: 'HasTag', tag_id: 'TAG', _addId: 3 },
+      { type: 'CreatedInRange', after: '2024-01-01', before: null, _addId: 4 },
+    ]
+    render(<FilterPillRow filters={filters} onRemove={vi.fn()} tagResolver={(id) => id} />)
+
+    const typeSummary = `${t('filter.summary.type')} = content`
+    expect(screen.getByText(typeSummary)).toBeInTheDocument()
+    expect(screen.getByText(`${t('filter.summary.status')} = DONE`)).toBeInTheDocument()
+    expect(screen.getByText(`${t('filter.summary.hasTag')} TAG`)).toBeInTheDocument()
+    expect(
+      screen.getByText(`${t('filter.summary.created')} ${t('filter.summary.after')} 2024-01-01`),
+    ).toBeInTheDocument()
+
+    // Chip group + remove aria-labels come from t('filter.group' / 'filter.remove').
+    expect(
+      screen.getByRole('group', { name: t('filter.group', { summary: typeSummary }) }),
+    ).toBeInTheDocument()
+    expect(screen.getByLabelText(t('filter.remove', { summary: typeSummary }))).toBeInTheDocument()
+  })
+
   // ====================================================================
   // FE-L-14 / stable per-filter React key contract.
   //

@@ -136,12 +136,27 @@ export interface WalkerHandle {
   cancel(): void
 }
 
+/**
+ * A regex-mode failure surfaced to the toolbar. Modelled as a discriminated
+ * union so callers switch exhaustively instead of comparing a single
+ * `string | null` slot against magic i18n sentinel keys:
+ *  - `tooLong` — pattern exceeded {@link REGEX_PATTERN_MAX}.
+ *  - `tooSlow` — the scan aborted on its ReDoS time budget (raised by the
+ *    walker driver, not by {@link compileQuery}).
+ *  - `invalid` — `new RegExp(...)` threw; `message` carries the raw compile
+ *    error for display.
+ */
+export type FindRegexError =
+  | { kind: 'tooLong' }
+  | { kind: 'tooSlow' }
+  | { kind: 'invalid'; message: string }
+
 /** Outcome of compiling a query. `null` matcher means "no matches at all". */
 export type CompiledQuery =
   | { kind: 'empty' }
   | { kind: 'literal'; matcher: (text: string) => Array<{ start: number; end: number }> }
   | { kind: 'regex'; matcher: (text: string) => Array<{ start: number; end: number }> }
-  | { kind: 'error'; message: string }
+  | { kind: 'error'; error: FindRegexError }
 
 /**
  * Compile a query string into a matcher function.
@@ -162,7 +177,7 @@ export function compileQuery(query: string, opts: FindOptions): CompiledQuery {
 
   if (opts.isRegex) {
     if (query.length > REGEX_PATTERN_MAX) {
-      return { kind: 'error', message: 'findInPage.regexTooLong' }
+      return { kind: 'error', error: { kind: 'tooLong' } }
     }
     let re: RegExp
     try {
@@ -175,7 +190,7 @@ export function compileQuery(query: string, opts: FindOptions): CompiledQuery {
     } catch (err) {
       return {
         kind: 'error',
-        message: err instanceof Error ? err.message : 'findInPage.regexInvalid',
+        error: { kind: 'invalid', message: err instanceof Error ? err.message : '' },
       }
     }
     const wholeWord = opts.wholeWord

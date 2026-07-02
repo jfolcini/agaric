@@ -153,9 +153,14 @@ test.describe('Delete attachment', () => {
 
     await expect(page.getByText('Click the delete button again to confirm.')).toBeVisible()
 
-    // Second click — confirms deletion
-    // After first click the button has opacity-100 (pending state), so it stays visible
-    await deleteBtn.click()
+    // Second click — confirms deletion. Arming CHANGES the accessible name
+    // (#2281 item 9: aria-label becomes "Click again to confirm deleting …" +
+    // aria-pressed), so the original name-based locator no longer matches —
+    // re-locate via the armed name.
+    const armedBtn = page.getByRole('button', {
+      name: /click again to confirm deleting report\.pdf/i,
+    })
+    await armedBtn.click()
 
     // Success toast
     await expect(page.getByText(/Deleted report\.pdf/i)).toBeVisible()

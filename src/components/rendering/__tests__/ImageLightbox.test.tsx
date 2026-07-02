@@ -79,6 +79,58 @@ describe('ImageLightbox', () => {
     expect(screen.queryByTestId('lightbox-image')).not.toBeInTheDocument()
   })
 
+  describe('broken-image fallback (#2281)', () => {
+    it('swaps the image for a labelled fallback when it fails to load', () => {
+      renderLightbox({ images: SINGLE })
+      const img = screen.getByTestId('lightbox-image')
+      fireEvent.error(img)
+
+      const fallback = screen.getByTestId('lightbox-image-error')
+      expect(fallback).toBeInTheDocument()
+      // The image element is unmounted; the fallback carries the alt text +
+      // the "couldn't load image" message.
+      expect(screen.queryByTestId('lightbox-image')).not.toBeInTheDocument()
+      expect(fallback).toHaveTextContent('one.png')
+      expect(fallback).toHaveTextContent("Couldn't load image")
+    })
+
+    it('keeps the Open-externally affordance inside the fallback', () => {
+      const onOpenExternal = vi.fn()
+      renderLightbox({ images: SINGLE, onOpenExternal })
+      fireEvent.error(screen.getByTestId('lightbox-image'))
+
+      const openBtn = screen.getByTestId('lightbox-error-open-external')
+      fireEvent.click(openBtn)
+      expect(onOpenExternal).toHaveBeenCalledTimes(1)
+      // The regular zoom cluster is hidden once the image errored.
+      expect(screen.queryByTestId('lightbox-zoom-controls')).not.toBeInTheDocument()
+    })
+
+    it('recovers to the image on a fresh open', () => {
+      const { rerender } = render(
+        <ImageLightbox images={SINGLE} index={0} onIndexChange={noop} open onOpenChange={noop} />,
+      )
+      fireEvent.error(screen.getByTestId('lightbox-image'))
+      expect(screen.getByTestId('lightbox-image-error')).toBeInTheDocument()
+
+      // Close then reopen — the fallback resets and the image renders again.
+      rerender(
+        <ImageLightbox
+          images={SINGLE}
+          index={0}
+          onIndexChange={noop}
+          open={false}
+          onOpenChange={noop}
+        />,
+      )
+      rerender(
+        <ImageLightbox images={SINGLE} index={0} onIndexChange={noop} open onOpenChange={noop} />,
+      )
+      expect(screen.getByTestId('lightbox-image')).toBeInTheDocument()
+      expect(screen.queryByTestId('lightbox-image-error')).not.toBeInTheDocument()
+    })
+  })
+
   it('renders nothing when there are no images', () => {
     const { container } = render(
       <ImageLightbox images={[]} index={0} onIndexChange={noop} open onOpenChange={noop} />,

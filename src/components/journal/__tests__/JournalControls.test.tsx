@@ -50,6 +50,19 @@ describe('JournalControls', () => {
     expect(screen.getByRole('tab', { name: /agenda view/i })).toBeInTheDocument()
   })
 
+  it('gives each compact single-letter tab a native title with the full mode name', () => {
+    // #2281 — below 480px each tab collapses to its initial glyph (D/W/M/S/A).
+    // A native `title` on that glyph surfaces the full mode name on hover so a
+    // sighted user can disambiguate; the tab's aria-label already covers AT.
+    render(<JournalControls />)
+    const streamTab = screen.getByRole('tab', { name: /stream view/i })
+    const glyph = streamTab.querySelector('[title]')
+    expect(glyph).not.toBeNull()
+    // Title mirrors the tab's accessible name (the computed ariaLabels[m]).
+    expect(glyph?.getAttribute('title')).toBe(streamTab.getAttribute('aria-label'))
+    expect(glyph).toHaveTextContent('S')
+  })
+
   it('marks the active mode tab aria-selected', () => {
     render(<JournalControls />)
     expect(screen.getByRole('tab', { name: /daily view/i })).toHaveAttribute(

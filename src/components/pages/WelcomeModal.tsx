@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { DialogBody } from '@/components/ui/dialog'
+import { Spinner } from '@/components/ui/spinner'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -186,6 +187,7 @@ export function WelcomeModal() {
         {parts.isMobile ? featureList : <DialogBody>{featureList}</DialogBody>}
         <Footer>
           <Button variant="outline" onClick={handleCreateSamplePages} disabled={creating}>
+            {creating && <Spinner />}
             {t('welcome.createSamplePages')}
           </Button>
           <Button onClick={handleDismiss}>{t('welcome.getStarted')}</Button>

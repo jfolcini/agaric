@@ -28,7 +28,12 @@
 //! (13-space indent).
 
 use super::metadata_filter::{DatePredicate as MetaDatePredicate, MetadataPredicates};
-use crate::domain::search_types::{DateOp, SearchFilter, SearchPropertyFilter};
+use crate::domain::search_types::{DateOp, SearchPropertyFilter};
+// `SearchFilter` is only referenced by the test-only `search_filter_to_primitives`
+// oracle below, so the import is gated to avoid an unused-import warning in
+// production builds.
+#[cfg(test)]
+use crate::domain::search_types::SearchFilter;
 use crate::filters::primitive::{
     Bind, DatePredicate, FilterPrimitive, LastEditedSpec, Projection, PropertyPredicate,
     PropertyValue, SearchProjection,
@@ -198,7 +203,7 @@ impl StructuralFilterBuilder {
     ///
     /// This is the single splice point through which the
     /// [`SearchProjection`]-routed subset (currently `Space` only — see
-    /// [`search_filter_to_primitives`] / `fts_fetch_rows`) enters the
+    /// `search_filter_to_primitives` / `fts_fetch_rows`) enters the
     /// dynamic FTS WHERE clause. The projection emits bare `?`; this method
     /// is the only place that maps them onto the builder's `?N` slots, so
     /// the placeholder/bind invariant the builder guarantees still holds.
@@ -600,7 +605,7 @@ impl StructuralFilterBuilder {
     /// (canonical A2 `SearchProjection` SQL). This legacy single-value `= ?`
     /// fragment is retained for the byte-shape snapshot tests that pin it as
     /// the result-equivalence oracle; it has no non-test callers.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(super) fn add_block_type(&mut self, prefix: &str, block_type: Option<&str>) {
         if let Some(bt) = block_type {
             let i = self.next_param;
@@ -623,7 +628,7 @@ impl StructuralFilterBuilder {
     /// Splice the metadata predicates into the fragment by compiling each
     /// leaf through [`SearchProjection`], recording each bind in declaration
     /// order. The relative position of this call vs
-    /// [`add_block_type`](Self::add_block_type) differs between the FTS
+    /// `add_block_type` (test-only oracle) differs between the FTS
     /// and the toggle builders — the caller drives that order.
     pub(super) fn add_metadata(&mut self, metadata: &MetadataPredicates, alias: &str) {
         // #1280 B2 / #properties-typed-always — EVERY metadata leaf (`state:` /
@@ -763,7 +768,7 @@ impl StructuralFilterBuilder {
 /// the PRODUCTION property path infers the typed `PropertyValue`
 /// (`infer_property_value`) instead — this adapter is not the production
 /// property router and is kept only so its test pins the lift ordering.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(super) fn search_filter_to_primitives(filter: &SearchFilter) -> Vec<FilterPrimitive> {
     use crate::filters::primitive::{PropertyPredicate, PropertyValue};
 
