@@ -129,21 +129,21 @@ describe('astFilterParams', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Issue #1646 step 1 — canonical-model adapter PARITY.
+// Emitted-shape parity (#1646 / #2258).
 //
-// `astFilterParams` now routes the AST projection through the canonical
-// `FilterPredicate` model (`searchProjectionToCanonical` → `canonicalToSearch
-// Projection`) before emitting the IPC bundle. This test pins the byte shape:
-// the emitted `SearchFilterParams` MUST be identical to the pre-migration
-// direct projection→params mapping reproduced below, for a representative set
-// of queries (incl. `state:none`, negations, tag, prop, date).
+// `astFilterParams` emits its IPC bundle directly from the parsed
+// `AstFilterProjection`. #2258 removed a no-op round-trip through the canonical
+// `FilterPredicate` model that used to sit here (it was the identity for every
+// projection). This test keeps pinning the byte shape: the emitted
+// `SearchFilterParams` MUST equal the direct projection→params mapping
+// reproduced below, for a representative set of queries (incl. `state:none`,
+// negations, tag, prop, date).
 // ---------------------------------------------------------------------------
 
 /**
- * The pre-migration emit logic, copied verbatim from `astFilterParams` BEFORE
- * the canonical-model adapter was inserted (the projection→params mapping with
- * the empty→undefined collapse and the #717 tag sentinel). This is the parity
- * oracle: if the adapter changes any emitted byte, these assertions break.
+ * The reference emit logic (the projection→params mapping with the
+ * empty→undefined collapse and the #717 tag sentinel). This is the parity
+ * oracle: if `astFilterParams` ever changes an emitted byte, these break.
  */
 function legacyAstFilterParams(
   projection: AstFilterProjection,
