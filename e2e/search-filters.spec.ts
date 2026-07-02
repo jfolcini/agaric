@@ -146,9 +146,10 @@ test.describe('Filter chip lifecycle (E2E-4)', () => {
     await input.fill('due:notadate')
     const bar = page.getByTestId('filter-chip-bar')
     await expect(bar).toBeVisible()
-    // The invalid chip exposes the localised "Invalid filter token" label
-    // on its group wrapper.
-    await expect(bar.getByRole('group', { name: /Invalid filter token/ })).toBeVisible()
+    // The invalid chip exposes the localised "Invalid filter: <label> — <error>"
+    // accessible name on its group wrapper (#2262 carries the parser error in
+    // the name, not just "invalid").
+    await expect(bar.getByRole('group', { name: /Invalid filter/ })).toBeVisible()
   })
 })
 
