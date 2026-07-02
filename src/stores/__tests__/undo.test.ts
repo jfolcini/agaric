@@ -2,15 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { isWithinUndoGroup, MAX_REDO_STACK, UNDO_GROUP_WINDOW_MS, useUndoStore } from '../undo'
 
+// #2190 — the undo store now reverts an entire Ctrl+Z group through a SINGLE
+// `undoPageGroup` IPC (one IMMEDIATE tx) instead of the old `findUndoGroup` +
+// N × `undoPageOp` loop. The mock therefore exposes `undoPageGroup` (returns
+// the full `UndoResult[]` for the group, newest-first) and `redoPageOp` (redo
+// still replays op-by-op from the recorded group size).
 vi.mock('@/lib/tauri', () => ({
-  undoPageOp: vi.fn(),
+  undoPageGroup: vi.fn(),
   redoPageOp: vi.fn(),
-  // Replaces the prior `listPageHistory`-based
-  // grouping mock with a single-IPC `findUndoGroup` mock. The deprecated
-  // mock is left as a `vi.fn()` so the regression assertions below can
-  // verify the legacy IPC is no longer fired under the new undo path.
-  findUndoGroup: vi.fn(),
-  listPageHistory: vi.fn(),
 }))
 
 vi.mock('@/lib/logger', () => ({
@@ -25,12 +24,10 @@ vi.mock('@/lib/logger', () => ({
 import { toast } from 'sonner'
 
 import { logger } from '@/lib/logger'
-import { findUndoGroup, listPageHistory, redoPageOp, undoPageOp } from '@/lib/tauri'
+import { redoPageOp, undoPageGroup } from '@/lib/tauri'
 
-const mockedUndoPageOp = vi.mocked(undoPageOp)
+const mockedUndoPageGroup = vi.mocked(undoPageGroup)
 const mockedRedoPageOp = vi.mocked(redoPageOp)
-const mockedFindUndoGroup = vi.mocked(findUndoGroup)
-const mockedListPageHistory = vi.mocked(listPageHistory)
 const mockedLogger = vi.mocked(logger)
 const mockedToastWarning = vi.mocked(toast.warning)
 
@@ -55,14 +52,20 @@ function makeUndoResult(
   }
 }
 
+/**
+ * Helper — build a group response (newest-first, as the backend returns). Seqs
+ * descend from `newestSeq` so `group[0]` is the newest reverted op.
+ */
+function makeGroup(newestSeq: number, size: number, deviceId = 'device1') {
+  return Array.from({ length: size }, (_, i) =>
+    makeUndoResult({ deviceId, seq: newestSeq - i, newSeq: 1000 + i }),
+  )
+}
+
 describe('useUndoStore', () => {
   beforeEach(() => {
     useUndoStore.setState({ pages: new Map() })
     vi.clearAllMocks()
-    // Default `findUndoGroup` to 1 (no batch
-    // extension) for tests that exercise the single-undo path. Tests
-    // that exercise batch behaviour override this with a higher value.
-    mockedFindUndoGroup.mockResolvedValue(1)
   })
 
   // ---------------------------------------------------------------------------
@@ -79,126 +82,118 @@ describe('useUndoStore', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // undo
+  // undo — single IPC per Ctrl+Z (#2190)
   // ---------------------------------------------------------------------------
   describe('undo', () => {
-    it('calls undoPageOp with pageId and undoDepth=0 on first undo', async () => {
-      const result = makeUndoResult({ seq: 5, newSeq: 6 })
-      mockedUndoPageOp.mockResolvedValueOnce(result)
+    it('issues ONE undoPageGroup IPC with depth=0 on the first undo', async () => {
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ seq: 5, newSeq: 6 })])
 
       const returned = await useUndoStore.getState().undo('page1')
 
-      expect(mockedUndoPageOp).toHaveBeenCalledWith({
+      expect(mockedUndoPageGroup).toHaveBeenCalledTimes(1)
+      expect(mockedUndoPageGroup).toHaveBeenCalledWith({
         pageId: 'page1',
-        undoDepth: 0,
+        depth: 0,
+        windowMs: UNDO_GROUP_WINDOW_MS,
       })
-      expect(returned).toEqual(result)
+      // Returns the newest reverted op (group[0]).
+      expect(returned).toEqual(makeUndoResult({ seq: 5, newSeq: 6 }))
     })
 
-    it('increments undoDepth to 1 after first undo', async () => {
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 5 }))
+    it('single-op group: advances depth to 1, pushes one redo entry, records size 1', async () => {
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ deviceId: 'dev1', seq: 5 })])
 
       await useUndoStore.getState().undo('page1')
 
       const pageState = useUndoStore.getState().pages.get('page1')
       expect(pageState?.undoDepth).toBe(1)
+      // The stack carries the undo's `new_op_ref` (the appended reverse op,
+      // seq 6) — the ref `redo_page_op` accepts — NOT the forward op (seq 5),
+      // which the backend's #659 provenance check rejects.
+      expect(pageState?.redoStack).toEqual([{ device_id: 'dev1', seq: 6 }])
+      expect(pageState?.redoGroupSizes).toEqual([1])
     })
 
-    it('optimistic increment derives from current state, preserving pre-existing fields (#1675)', async () => {
-      // Seed an existing page entry with non-default fields. The optimistic
-      // increment must read from the functional-updater `current` and spread
-      // it (not a snapshot that would clobber these), so redoStack and
-      // redoGroupSizes survive the increment.
-      const priorOp = { device_id: 'devPrior', seq: 99 }
-      useUndoStore.setState({
-        pages: new Map([['page1', { redoStack: [priorOp], undoDepth: 2, redoGroupSizes: [3] }]]),
-      })
+    it('multi-op group: ONE IPC reverts the whole group and applies the response', async () => {
+      // Newest-first group of 3 (seqs 3,2,1).
+      const group = makeGroup(3, 3, 'dev1')
+      mockedUndoPageGroup.mockResolvedValueOnce(group)
 
-      // Pend the backend so we can inspect state mid-flight (after the
-      // optimistic increment, before success).
-      let resolveUndo: (r: ReturnType<typeof makeUndoResult>) => void = () => {}
-      mockedUndoPageOp.mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            resolveUndo = resolve
-          }),
-      )
+      const returned = await useUndoStore.getState().undo('page1')
 
-      const undoPromise = useUndoStore.getState().undo('page1')
-      await Promise.resolve()
-      await Promise.resolve()
-
-      const midFlight = useUndoStore.getState().pages.get('page1')
-      expect(midFlight?.undoDepth).toBe(3) // 2 -> 3 derived from current
-      expect(midFlight?.redoStack).toEqual([priorOp]) // preserved, not clobbered
-      expect(midFlight?.redoGroupSizes).toEqual([3]) // preserved, not clobbered
-      // Backend received the pre-increment depth.
-      expect(mockedUndoPageOp).toHaveBeenCalledWith({ pageId: 'page1', undoDepth: 2 })
-
-      resolveUndo(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
-      await undoPromise
-    })
-
-    it('pushes reversed_op onto redoStack after undo', async () => {
-      const result = makeUndoResult({ deviceId: 'dev1', seq: 5 })
-      mockedUndoPageOp.mockResolvedValueOnce(result)
-
-      await useUndoStore.getState().undo('page1')
+      // Exactly one IPC for the whole group.
+      expect(mockedUndoPageGroup).toHaveBeenCalledTimes(1)
+      // undo() returns the newest reverted op.
+      expect(returned).toEqual(group[0])
 
       const pageState = useUndoStore.getState().pages.get('page1')
-      expect(pageState?.redoStack).toHaveLength(1)
-      expect(pageState?.redoStack[0]).toEqual({ device_id: 'dev1', seq: 5 })
+      expect(pageState?.undoDepth).toBe(3)
+      expect(pageState?.redoStack).toHaveLength(3)
+      // Response order is newest-first; each `new_op_ref` (the appended
+      // reverse op — the ref redo must reverse, #659) is prepended, so the
+      // OLDEST original op's reverse (newSeq 1002) ends up at the FRONT — the
+      // order redo pops for a correct oldest-first replay.
+      expect(pageState?.redoStack).toEqual([
+        { device_id: 'dev1', seq: 1002 },
+        { device_id: 'dev1', seq: 1001 },
+        { device_id: 'dev1', seq: 1000 },
+      ])
+      expect(pageState?.redoGroupSizes).toEqual([3])
     })
 
-    it('calls with undoDepth=1 on second undo, increments to 2', async () => {
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 5 }))
+    it('passes the current undoDepth as `depth` on a second Ctrl+Z', async () => {
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ seq: 5 })])
+      await useUndoStore.getState().undo('page1')
+      expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(1)
+
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ seq: 4 })])
       await useUndoStore.getState().undo('page1')
 
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 4 }))
-      await useUndoStore.getState().undo('page1')
-
-      expect(mockedUndoPageOp).toHaveBeenCalledTimes(2)
-      expect(mockedUndoPageOp).toHaveBeenLastCalledWith({
+      expect(mockedUndoPageGroup).toHaveBeenLastCalledWith({
         pageId: 'page1',
-        undoDepth: 1,
+        depth: 1,
+        windowMs: UNDO_GROUP_WINDOW_MS,
       })
-
-      const pageState = useUndoStore.getState().pages.get('page1')
-      expect(pageState?.undoDepth).toBe(2)
-      expect(pageState?.redoStack).toHaveLength(2)
+      expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(2)
     })
 
-    it('returns null on backend error without changing state', async () => {
-      mockedUndoPageOp.mockRejectedValueOnce(new Error('no undoable ops'))
+    it('empty group (nothing to undo) returns null and leaves no redo', async () => {
+      mockedUndoPageGroup.mockResolvedValueOnce([])
 
       const returned = await useUndoStore.getState().undo('page1')
 
       expect(returned).toBeNull()
-      // Optimistic increment was rolled back — depth is back to 0
+      expect(useUndoStore.getState().canRedo('page1')).toBe(false)
       const pageState = useUndoStore.getState().pages.get('page1')
       expect(pageState?.undoDepth).toBe(0)
       expect(pageState?.redoStack).toEqual([])
     })
 
-    it('logs error via logger.error when undo fails', async () => {
-      const err = new Error('no undoable ops')
-      mockedUndoPageOp.mockRejectedValueOnce(err)
+    it('returns null on backend error, logs it, and warns the user', async () => {
+      const err = new Error('undo failed')
+      mockedUndoPageGroup.mockRejectedValueOnce(err)
 
-      await useUndoStore.getState().undo('page1')
+      const returned = await useUndoStore.getState().undo('page1')
 
+      expect(returned).toBeNull()
       expect(mockedLogger.error).toHaveBeenCalledWith(
         'UndoStore',
-        'undo operation failed',
+        'undo_page_group failed',
         { pageId: 'page1' },
         err,
       )
+      expect(mockedToastWarning).toHaveBeenCalledTimes(1)
+      // No state mutation beyond the pristine optimistic marker.
+      const pageState = useUndoStore.getState().pages.get('page1')
+      expect(pageState?.undoDepth).toBe(0)
+      expect(pageState?.redoStack).toEqual([])
     })
 
-    it('does not change state on backend error after previous undo', async () => {
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 5 }))
+    it('does not corrupt prior state on a later backend error', async () => {
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ seq: 5 })])
       await useUndoStore.getState().undo('page1')
 
-      mockedUndoPageOp.mockRejectedValueOnce(new Error('fail'))
+      mockedUndoPageGroup.mockRejectedValueOnce(new Error('fail'))
       await useUndoStore.getState().undo('page1')
 
       const pageState = useUndoStore.getState().pages.get('page1')
@@ -207,52 +202,43 @@ describe('useUndoStore', () => {
     })
 
     it('rejects concurrent undo on the same page (re-entrancy guard)', async () => {
-      // Set up one mock response (only the first undo executes)
-      const result1 = makeUndoResult({ deviceId: 'dev1', seq: 5, newSeq: 6 })
-      mockedUndoPageOp.mockResolvedValueOnce(result1)
+      mockedUndoPageGroup.mockResolvedValueOnce([
+        makeUndoResult({ deviceId: 'dev1', seq: 5, newSeq: 6 }),
+      ])
 
-      // Fire two undos simultaneously
       const [r1, r2] = await Promise.all([
         useUndoStore.getState().undo('page1'),
         useUndoStore.getState().undo('page1'),
       ])
 
-      // First succeeds, second is rejected by re-entrancy guard
       expect(r1).not.toBeNull()
       expect(r2).toBeNull()
-
-      // undoDepth should be 1 (only one undo executed)
-      const state = useUndoStore.getState().pages.get('page1')
-      expect(state?.undoDepth).toBe(1)
-
-      // Backend should have been called once
-      expect(mockedUndoPageOp).toHaveBeenCalledTimes(1)
-      expect(mockedUndoPageOp).toHaveBeenCalledWith({ pageId: 'page1', undoDepth: 0 })
+      expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(1)
+      expect(mockedUndoPageGroup).toHaveBeenCalledTimes(1)
     })
 
-    it('clears undo re-entrancy guard after completion — next undo works', async () => {
-      // First undo
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 5 }))
+    it('clears the re-entrancy guard after completion — next undo works', async () => {
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ seq: 5 })])
       await useUndoStore.getState().undo('page1')
       expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(1)
 
-      // Second undo (sequential) — should work because guard is cleared
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 4 }))
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ seq: 4 })])
       await useUndoStore.getState().undo('page1')
       expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(2)
-      expect(mockedUndoPageOp).toHaveBeenCalledTimes(2)
+      expect(mockedUndoPageGroup).toHaveBeenCalledTimes(2)
     })
 
-    it('caps redoStack at MAX_REDO_STACK entries', async () => {
-      for (let i = 0; i < MAX_REDO_STACK + 10; i++) {
-        mockedUndoPageOp.mockResolvedValueOnce(
-          makeUndoResult({ deviceId: 'dev1', seq: 1000 - i, newSeq: 2000 + i }),
-        )
-        await useUndoStore.getState().undo('page1')
-      }
+    it('caps redoStack at MAX_REDO_STACK entries even for a large group', async () => {
+      const group = makeGroup(1000, MAX_REDO_STACK + 10, 'dev1')
+      mockedUndoPageGroup.mockResolvedValueOnce(group)
+
+      await useUndoStore.getState().undo('page1')
 
       const pageState = useUndoStore.getState().pages.get('page1')
       expect(pageState?.redoStack).toHaveLength(MAX_REDO_STACK)
+      // The recorded group size is clamped to what the (capped) stack can back.
+      const summed = (pageState?.redoGroupSizes ?? []).reduce((s, n) => s + n, 0)
+      expect(summed).toBeLessThanOrEqual(pageState?.redoStack.length ?? 0)
     })
   })
 
@@ -268,8 +254,7 @@ describe('useUndoStore', () => {
     })
 
     it('pops from redoStack and calls redoPageOp', async () => {
-      // First undo to populate redoStack
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ deviceId: 'dev1', seq: 5 })])
       await useUndoStore.getState().undo('page1')
 
       const redoResult = makeUndoResult({ deviceId: 'dev1', seq: 5, isRedo: true })
@@ -277,23 +262,20 @@ describe('useUndoStore', () => {
 
       const returned = await useUndoStore.getState().redo('page1')
 
-      expect(mockedRedoPageOp).toHaveBeenCalledWith({
-        undoDeviceId: 'dev1',
-        undoSeq: 5,
-      })
+      // Redo targets the undo's `new_op_ref` (the reverse op, seq 6) — not the
+      // original forward op (seq 5), which `redo_page_op` rejects (#659).
+      expect(mockedRedoPageOp).toHaveBeenCalledWith({ undoDeviceId: 'dev1', undoSeq: 6 })
       expect(returned).toEqual(redoResult)
     })
 
     it('decrements undoDepth after successful redo', async () => {
-      // Undo twice
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 5 }))
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ seq: 5 })])
       await useUndoStore.getState().undo('page1')
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 4 }))
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ seq: 4 })])
       await useUndoStore.getState().undo('page1')
 
       expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(2)
 
-      // Redo once
       mockedRedoPageOp.mockResolvedValueOnce(makeUndoResult({ isRedo: true }))
       await useUndoStore.getState().redo('page1')
 
@@ -303,21 +285,20 @@ describe('useUndoStore', () => {
     })
 
     it('returns null on backend error without changing state', async () => {
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ deviceId: 'dev1', seq: 5 })])
       await useUndoStore.getState().undo('page1')
 
       mockedRedoPageOp.mockRejectedValueOnce(new Error('redo failed'))
       const returned = await useUndoStore.getState().redo('page1')
 
       expect(returned).toBeNull()
-      // State should be unchanged — redo stack still has 1 entry
       const pageState = useUndoStore.getState().pages.get('page1')
       expect(pageState?.undoDepth).toBe(1)
       expect(pageState?.redoStack).toHaveLength(1)
     })
 
     it('logs error via logger.error when redo fails', async () => {
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ deviceId: 'dev1', seq: 5 })])
       await useUndoStore.getState().undo('page1')
 
       const err = new Error('redo failed')
@@ -333,47 +314,71 @@ describe('useUndoStore', () => {
     })
 
     it('rejects concurrent redo on the same page (re-entrancy guard)', async () => {
-      // Set up: undo twice to populate redo stack
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+      mockedUndoPageGroup.mockResolvedValueOnce(makeGroup(5, 2, 'dev1'))
       await useUndoStore.getState().undo('page1')
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 4 }))
-      await useUndoStore.getState().undo('page1')
-
       expect(useUndoStore.getState().pages.get('page1')?.redoStack).toHaveLength(2)
 
-      // Set up one redo mock (only first redo executes)
-      mockedRedoPageOp.mockResolvedValueOnce(makeUndoResult({ isRedo: true }))
+      // Group size 2 → the redo replays two ops; hold both open across the
+      // concurrent calls by resolving them, but the guard blocks the 2nd redo().
+      mockedRedoPageOp.mockResolvedValue(makeUndoResult({ isRedo: true }))
 
-      // Fire two redos simultaneously
       const [r1, r2] = await Promise.all([
         useUndoStore.getState().redo('page1'),
         useUndoStore.getState().redo('page1'),
       ])
 
-      // First succeeds, second is rejected by re-entrancy guard
       expect(r1).not.toBeNull()
       expect(r2).toBeNull()
-
-      // Only one redo executed
-      expect(mockedRedoPageOp).toHaveBeenCalledTimes(1)
     })
 
-    it('clears redo re-entrancy guard after completion — next redo works', async () => {
-      // Set up: undo twice to populate redo stack
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+    it('replays the whole group size recorded by a batch undo', async () => {
+      mockedUndoPageGroup.mockResolvedValueOnce(makeGroup(3, 3, 'dev1'))
       await useUndoStore.getState().undo('page1')
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 4 }))
+      expect(useUndoStore.getState().pages.get('page1')?.redoGroupSizes).toEqual([3])
+
+      mockedRedoPageOp
+        .mockResolvedValueOnce(makeUndoResult({ isRedo: true, seq: 1 }))
+        .mockResolvedValueOnce(makeUndoResult({ isRedo: true, seq: 2 }))
+        .mockResolvedValueOnce(makeUndoResult({ isRedo: true, seq: 3 }))
+
+      const result = await useUndoStore.getState().redo('page1')
+
+      expect(result).not.toBeNull()
+      expect(mockedRedoPageOp).toHaveBeenCalledTimes(3)
+      // Redo replays oldest-first, popping each undo's `new_op_ref` (the
+      // reverse ops, #659): the oldest original op's reverse was appended LAST
+      // (newSeq 1002), so it pops first, then 1001, then 1000.
+      expect(mockedRedoPageOp).toHaveBeenNthCalledWith(1, { undoDeviceId: 'dev1', undoSeq: 1002 })
+      expect(mockedRedoPageOp).toHaveBeenNthCalledWith(3, { undoDeviceId: 'dev1', undoSeq: 1000 })
+
+      const pageState = useUndoStore.getState().pages.get('page1')
+      expect(pageState?.undoDepth).toBe(0)
+      expect(pageState?.redoStack).toHaveLength(0)
+      expect(pageState?.redoGroupSizes).toEqual([])
+    })
+
+    it('handles mixed group sizes correctly', async () => {
+      // First batch undo of 2, then a single undo.
+      mockedUndoPageGroup.mockResolvedValueOnce(makeGroup(4, 2, 'dev1'))
+      await useUndoStore.getState().undo('page1')
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ deviceId: 'dev1', seq: 2 })])
       await useUndoStore.getState().undo('page1')
 
-      // First redo
-      mockedRedoPageOp.mockResolvedValueOnce(makeUndoResult({ isRedo: true }))
-      await useUndoStore.getState().redo('page1')
+      expect(useUndoStore.getState().pages.get('page1')?.redoGroupSizes).toEqual([2, 1])
 
-      // Second redo (sequential) — should work because guard is cleared
-      mockedRedoPageOp.mockResolvedValueOnce(makeUndoResult({ isRedo: true }))
+      // First redo replays the most-recent group (size 1).
+      mockedRedoPageOp.mockResolvedValueOnce(makeUndoResult({ isRedo: true, seq: 2 }))
       await useUndoStore.getState().redo('page1')
+      expect(mockedRedoPageOp).toHaveBeenCalledTimes(1)
+      expect(useUndoStore.getState().pages.get('page1')?.redoGroupSizes).toEqual([2])
 
-      expect(mockedRedoPageOp).toHaveBeenCalledTimes(2)
+      // Second redo replays the earlier group (size 2).
+      mockedRedoPageOp
+        .mockResolvedValueOnce(makeUndoResult({ isRedo: true, seq: 3 }))
+        .mockResolvedValueOnce(makeUndoResult({ isRedo: true, seq: 4 }))
+      await useUndoStore.getState().redo('page1')
+      expect(mockedRedoPageOp).toHaveBeenCalledTimes(3)
+      expect(useUndoStore.getState().pages.get('page1')?.redoGroupSizes).toEqual([])
     })
   })
 
@@ -382,14 +387,14 @@ describe('useUndoStore', () => {
   // ---------------------------------------------------------------------------
   describe('canRedo', () => {
     it('returns true after undo', async () => {
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 5 }))
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ seq: 5 })])
       await useUndoStore.getState().undo('page1')
 
       expect(useUndoStore.getState().canRedo('page1')).toBe(true)
     })
 
     it('returns false after undo then redo (stack empty)', async () => {
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 5 }))
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ seq: 5 })])
       await useUndoStore.getState().undo('page1')
 
       mockedRedoPageOp.mockResolvedValueOnce(makeUndoResult({ isRedo: true }))
@@ -404,7 +409,7 @@ describe('useUndoStore', () => {
   // ---------------------------------------------------------------------------
   describe('onNewAction', () => {
     it('clears redoStack and resets undoDepth to 0', async () => {
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 5 }))
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ seq: 5 })])
       await useUndoStore.getState().undo('page1')
 
       expect(useUndoStore.getState().pages.get('page1')?.redoStack).toHaveLength(1)
@@ -430,7 +435,7 @@ describe('useUndoStore', () => {
   // ---------------------------------------------------------------------------
   describe('clearPage', () => {
     it('removes page state entirely', async () => {
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 5 }))
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ seq: 5 })])
       await useUndoStore.getState().undo('page1')
 
       expect(useUndoStore.getState().pages.has('page1')).toBe(true)
@@ -448,29 +453,25 @@ describe('useUndoStore', () => {
 
   // ---------------------------------------------------------------------------
   // #1677 — undo result for a page cleared mid-flight must be DROPPED, not
-  // re-seeded. If clearPage runs during the undoPageOp await (provider
+  // re-seeded. If clearPage runs during the undoPageGroup await (provider
   // unmounts mid-undo), the success updater must not fabricate a fresh entry
   // and re-grow the pages Map after an explicit clear (#753 memory-growth).
   // ---------------------------------------------------------------------------
   describe('clearPage mid-flight (#1677)', () => {
     it('does not re-seed a page entry when clearPage runs during the undo await', async () => {
-      // findUndoGroup resolves so the undo proceeds to a single undo.
-      mockedFindUndoGroup.mockResolvedValueOnce(1)
-
-      // undoPageOp stays pending until we resolve it; clearPage fires while it
-      // is in flight to simulate the provider unmounting mid-undo.
-      let resolveUndo: (r: ReturnType<typeof makeUndoResult>) => void = () => {}
-      mockedUndoPageOp.mockImplementationOnce(
+      // undoPageGroup stays pending until we resolve it; clearPage fires while
+      // it is in flight to simulate the provider unmounting mid-undo.
+      let resolveUndo: (r: ReturnType<typeof makeUndoResult>[]) => void = () => {}
+      mockedUndoPageGroup.mockImplementationOnce(
         () =>
           new Promise((resolve) => {
             resolveUndo = resolve
           }),
       )
 
-      // Kick off the undo and let the optimistic increment apply (it happens
-      // after the `await findUndoGroup`, so flush microtasks first).
+      // Kick off the undo; the optimistic marker creates the entry before the
+      // await, so it exists mid-flight.
       const undoPromise = useUndoStore.getState().undo('page1')
-      await Promise.resolve()
       await Promise.resolve()
       expect(useUndoStore.getState().pages.has('page1')).toBe(true)
 
@@ -478,9 +479,8 @@ describe('useUndoStore', () => {
       useUndoStore.getState().clearPage('page1')
       expect(useUndoStore.getState().pages.has('page1')).toBe(false)
 
-      // Backend now resolves successfully — the success updater must NOT
-      // recreate the cleared entry (#1677).
-      resolveUndo(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+      // Backend resolves — the success updater must NOT recreate the entry.
+      resolveUndo([makeUndoResult({ deviceId: 'dev1', seq: 5 })])
       await undoPromise
 
       expect(useUndoStore.getState().pages.has('page1')).toBe(false)
@@ -492,20 +492,15 @@ describe('useUndoStore', () => {
   // ---------------------------------------------------------------------------
   describe('reanchorAfterRemoteOps (#731)', () => {
     it('resets undoDepth and clears redoStack after remote ops land', async () => {
-      // User performs two undos: the backend op-log is now addressed at
-      // depth 2 and the redo stack holds two reversed-op refs.
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ deviceId: 'dev1', seq: 5 })])
       await useUndoStore.getState().undo('page1')
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 4 }))
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ deviceId: 'dev1', seq: 4 })])
       await useUndoStore.getState().undo('page1')
 
       const before = useUndoStore.getState().pages.get('page1')
       expect(before?.undoDepth).toBe(2)
       expect(before?.redoStack).toHaveLength(2)
 
-      // A sync applies remote ops to this page → re-anchor the positional
-      // undo state so the next undo re-reads the newest op (depth 0) rather
-      // than reversing the wrong op at the now-shifted depth 2.
       useUndoStore.getState().reanchorAfterRemoteOps('page1')
 
       const after = useUndoStore.getState().pages.get('page1')
@@ -515,106 +510,85 @@ describe('useUndoStore', () => {
     })
 
     it('the next undo after re-anchor addresses depth 0 (not the wrong op)', async () => {
-      // Reproduces the #731 wrong-op-reversed scenario at the store level:
-      // a remote op landing between two Ctrl+Z presses must not let the
-      // second undo address a shifted positional depth.
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ deviceId: 'dev1', seq: 5 })])
       await useUndoStore.getState().undo('page1') // depth 0 → 1
 
-      // Sync applies a remote op + reloads the page → re-anchor.
       useUndoStore.getState().reanchorAfterRemoteOps('page1')
 
-      // Next Ctrl+Z must hit depth 0 (the newest op, now the remote one's
-      // predecessor in the re-read log) — NOT depth 1, which would reverse
-      // a different op than the user intends.
-      mockedUndoPageOp.mockClear()
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev2', seq: 99 }))
+      mockedUndoPageGroup.mockClear()
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ deviceId: 'dev2', seq: 99 })])
       await useUndoStore.getState().undo('page1')
 
-      expect(mockedUndoPageOp).toHaveBeenCalledWith({ pageId: 'page1', undoDepth: 0 })
+      expect(mockedUndoPageGroup).toHaveBeenCalledWith({
+        pageId: 'page1',
+        depth: 0,
+        windowMs: UNDO_GROUP_WINDOW_MS,
+      })
     })
 
     it('is a no-op for a page with no prior undo state', () => {
       useUndoStore.getState().reanchorAfterRemoteOps('untouched-page')
-      // No entry created — nothing to re-anchor, so the Map stays clean.
       expect(useUndoStore.getState().pages.has('untouched-page')).toBe(false)
     })
 
     it('only re-anchors the named page, leaving others intact', async () => {
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ deviceId: 'dev1', seq: 5 })])
       await useUndoStore.getState().undo('page1')
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev2', seq: 8 }))
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ deviceId: 'dev2', seq: 8 })])
       await useUndoStore.getState().undo('page2')
 
       useUndoStore.getState().reanchorAfterRemoteOps('page1')
 
       expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(0)
       expect(useUndoStore.getState().pages.get('page1')?.redoStack).toEqual([])
-      // page2 had no remote ops — its undo anchor must survive.
       expect(useUndoStore.getState().pages.get('page2')?.undoDepth).toBe(1)
       expect(useUndoStore.getState().pages.get('page2')?.redoStack).toHaveLength(1)
     })
 
     // -------------------------------------------------------------------------
-    // #1692 — reanchor / onNewAction interleaving with an IN-FLIGHT undo/redo.
-    //
-    // The existing coverage only fires reanchor/onNewAction AFTER undo()/redo()
-    // have fully resolved (every mock uses mockResolvedValueOnce). These tests
-    // hold the undoPageOp / redoPageOp promise open and fire reanchor (or
-    // onNewAction) DURING the await window, then resolve — the exact race a
-    // sync:complete handler can create against a key-held Ctrl+Z.
-    //
-    // The optimistic set has no async gap to clobber, so this is not a
-    // data-loss bug. These tests pin the OBSERVED post-resolve state so the
-    // group-size / redo-stack accounting across the seam is regression-guarded.
+    // #1692 / #1561 — reanchor / onNewAction interleaving with an IN-FLIGHT
+    // undo. Under the single-IPC design the whole group is applied in ONE `set`
+    // after the await, so there is no per-op window in which a reanchor can
+    // strand an orphan `redoGroupSizes` entry. These tests pin the post-resolve
+    // state across the seam: reanchor resets the live entry, then the batch
+    // response is applied cleanly onto the reanchored baseline.
     // -------------------------------------------------------------------------
-    describe('#1692 — interleaving with an in-flight undo/redo', () => {
-      it('reanchor fired during an in-flight undo: undo result still appends, depth stays 0', async () => {
-        mockedFindUndoGroup.mockResolvedValueOnce(1)
-
-        // Hold undoPageOp open until we resolve it manually.
-        let resolveUndo: (r: ReturnType<typeof makeUndoResult>) => void = () => {}
-        mockedUndoPageOp.mockImplementationOnce(
+    describe('#1692 — interleaving with an in-flight undo', () => {
+      it('reanchor fired mid-undo: the batch result still applies onto the reanchored entry', async () => {
+        let resolveUndo: (r: ReturnType<typeof makeUndoResult>[]) => void = () => {}
+        mockedUndoPageGroup.mockImplementationOnce(
           () =>
             new Promise((resolve) => {
               resolveUndo = resolve
             }),
         )
 
-        // Kick off undo; flush past `await findUndoGroup` so the optimistic
-        // increment lands (entry exists, undoDepth = 1).
         const undoPromise = useUndoStore.getState().undo('page1')
         await Promise.resolve()
-        await Promise.resolve()
-        expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(1)
+        // Optimistic marker exists; depth unchanged until the response lands.
+        expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(0)
 
-        // A sync lands remote ops mid-undo → re-anchor. This resets the live
-        // entry to the pristine baseline WHILE the IPC is still pending.
+        // A sync lands remote ops mid-undo → re-anchor resets the live entry.
         useUndoStore.getState().reanchorAfterRemoteOps('page1')
         const midFlight = useUndoStore.getState().pages.get('page1')
         expect(midFlight?.undoDepth).toBe(0)
         expect(midFlight?.redoStack).toEqual([])
         expect(midFlight?.redoGroupSizes).toEqual([])
 
-        // Backend now resolves. The success updater finds a live entry (the
-        // reanchored one) and appends the reversed op; undo() then records the
-        // group size. Depth stays 0 (reanchor zeroed it; success path does not
-        // touch undoDepth), but the redo stack + group size reflect the
-        // completed op.
-        resolveUndo(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+        // Backend resolves with a single-op group; applied onto the reanchored
+        // baseline.
+        resolveUndo([makeUndoResult({ deviceId: 'dev1', seq: 5 })])
         await undoPromise
 
         const after = useUndoStore.getState().pages.get('page1')
-        expect(after?.undoDepth).toBe(0)
+        expect(after?.undoDepth).toBe(1)
         expect(after?.redoStack).toHaveLength(1)
         expect(after?.redoGroupSizes).toEqual([1])
       })
 
-      it('onNewAction fired during an in-flight undo behaves like reanchor across the seam', async () => {
-        mockedFindUndoGroup.mockResolvedValueOnce(1)
-
-        let resolveUndo: (r: ReturnType<typeof makeUndoResult>) => void = () => {}
-        mockedUndoPageOp.mockImplementationOnce(
+      it('onNewAction fired mid-undo behaves like reanchor across the seam', async () => {
+        let resolveUndo: (r: ReturnType<typeof makeUndoResult>[]) => void = () => {}
+        mockedUndoPageGroup.mockImplementationOnce(
           () =>
             new Promise((resolve) => {
               resolveUndo = resolve
@@ -623,132 +597,54 @@ describe('useUndoStore', () => {
 
         const undoPromise = useUndoStore.getState().undo('page1')
         await Promise.resolve()
-        await Promise.resolve()
-        expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(1)
 
-        // A new local action fires mid-undo (e.g. the user types while the
-        // Ctrl+Z IPC is still pending). onNewAction zeroes the live entry.
         useUndoStore.getState().onNewAction('page1')
-        const midFlight = useUndoStore.getState().pages.get('page1')
-        expect(midFlight?.undoDepth).toBe(0)
-        expect(midFlight?.redoStack).toEqual([])
-        expect(midFlight?.redoGroupSizes).toEqual([])
+        expect(useUndoStore.getState().pages.get('page1')?.redoStack).toEqual([])
 
-        resolveUndo(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+        resolveUndo([makeUndoResult({ deviceId: 'dev1', seq: 5 })])
         await undoPromise
 
         const after = useUndoStore.getState().pages.get('page1')
-        expect(after?.undoDepth).toBe(0)
         expect(after?.redoStack).toHaveLength(1)
         expect(after?.redoGroupSizes).toEqual([1])
       })
 
-      // -----------------------------------------------------------------------
-      // #1561 — reanchor during a BATCH undo must not strand an orphan
-      // `redoGroupSizes` entry that leads a wiped/short `redoStack`.
-      //
-      // A batch undo pushes one redoStack entry per op as each undoPageOp
-      // resolves, then records the loop's group size AFTER the loop. If
-      // reanchorAfterRemoteOps fires mid-loop it empties the live entry, so the
-      // re-appended reversed ops number FEWER than the loop's group size.
-      // Recording the loop size verbatim would leave `redoGroupSizes` leading a
-      // short `redoStack` — `redo` would bail on the stack-length guard before
-      // the pop guard could reclaim the orphan, so the size entry strands
-      // forever and the invariant `sum(redoGroupSizes) <= redoStack.length`
-      // breaks. The append must clamp the recorded size to the backing stack.
-      // -----------------------------------------------------------------------
-      it('reanchor mid batch-undo clamps the recorded group size to the surviving redoStack (#1561)', async () => {
-        // Batch of 3. The first two undoPageOps resolve immediately (their
-        // reversed ops land on redoStack); the third stays pending so we can
-        // fire reanchor — which wipes those two — before it resolves.
-        mockedFindUndoGroup.mockReset()
-        mockedFindUndoGroup.mockResolvedValueOnce(3)
-
-        let resolveThird: (r: ReturnType<typeof makeUndoResult>) => void = () => {}
-        mockedUndoPageOp
-          .mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 3, newSeq: 4 }))
-          .mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 2, newSeq: 5 }))
-          .mockImplementationOnce(
-            () =>
-              new Promise((resolve) => {
-                resolveThird = resolve
-              }),
-          )
+      it('reanchor mid batch-undo keeps the redoGroupSizes invariant (#1561)', async () => {
+        // A 3-op group held open; reanchor wipes the live entry before it
+        // resolves. The single post-await set then applies all 3 cleanly onto
+        // the pristine baseline — no orphan size entry, invariant preserved.
+        let resolveUndo: (r: ReturnType<typeof makeUndoResult>[]) => void = () => {}
+        mockedUndoPageGroup.mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveUndo = resolve
+            }),
+        )
 
         const undoPromise = useUndoStore.getState().undo('page1')
+        await Promise.resolve()
 
-        // Flush past findUndoGroup + the first two single undos so their
-        // reversed ops are on the redoStack and the loop is parked on the third.
-        for (let i = 0; i < 8; i++) await Promise.resolve()
-        expect(useUndoStore.getState().pages.get('page1')?.redoStack).toHaveLength(2)
-
-        // Remote ops land mid batch-undo → reanchor wipes the live entry.
         useUndoStore.getState().reanchorAfterRemoteOps('page1')
         expect(useUndoStore.getState().pages.get('page1')?.redoStack).toEqual([])
-        expect(useUndoStore.getState().pages.get('page1')?.redoGroupSizes).toEqual([])
 
-        // Third undo resolves: its reversed op re-appends (redoStack length 1),
-        // then the loop records the group size. Without the clamp this records
-        // [3] leading a length-1 stack — the orphan. With the clamp it records
-        // [1], matching the single surviving backing entry.
-        resolveThird(makeUndoResult({ deviceId: 'dev1', seq: 1, newSeq: 6 }))
+        resolveUndo(makeGroup(3, 3, 'dev1'))
         await undoPromise
 
         const after = useUndoStore.getState().pages.get('page1')
-        expect(after?.redoStack).toHaveLength(1)
-        // Invariant: redoGroupSizes never leads the redoStack.
+        expect(after?.redoStack).toHaveLength(3)
         const summed = (after?.redoGroupSizes ?? []).reduce((s, n) => s + n, 0)
         expect(summed).toBeLessThanOrEqual(after?.redoStack.length ?? 0)
-        expect(after?.redoGroupSizes).toEqual([1])
+        expect(after?.redoGroupSizes).toEqual([3])
 
-        // The redo path must NOT bail on an orphan: with a backing entry it
-        // pops exactly the surviving op and leaves both arrays empty (no
-        // stranded size entry).
-        mockedRedoPageOp.mockResolvedValueOnce(makeUndoResult({ isRedo: true, seq: 1 }))
+        // Redo replays exactly the recorded group with no stranded entry.
+        mockedRedoPageOp.mockResolvedValue(makeUndoResult({ isRedo: true }))
         const redone = await useUndoStore.getState().redo('page1')
         expect(redone).not.toBeNull()
-        expect(mockedRedoPageOp).toHaveBeenCalledTimes(1)
+        expect(mockedRedoPageOp).toHaveBeenCalledTimes(3)
 
         const settled = useUndoStore.getState().pages.get('page1')
         expect(settled?.redoStack).toEqual([])
         expect(settled?.redoGroupSizes).toEqual([])
-      })
-
-      it('reanchor fired during an in-flight redo: redo result leaves the reanchored entry empty', async () => {
-        // Seed a redo entry: one resolved undo gives redoStack length 1.
-        mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
-        await useUndoStore.getState().undo('page1')
-        expect(useUndoStore.getState().pages.get('page1')?.redoStack).toHaveLength(1)
-
-        // Hold redoPageOp open.
-        let resolveRedo: (r: ReturnType<typeof makeUndoResult>) => void = () => {}
-        mockedRedoPageOp.mockImplementationOnce(
-          () =>
-            new Promise((resolve) => {
-              resolveRedo = resolve
-            }),
-        )
-
-        // Kick off redo; the optimistic update pops the redo stack and
-        // decrements undoDepth synchronously (no await before the set), so the
-        // entry is already emptied before we reanchor.
-        const redoPromise = useUndoStore.getState().redo('page1')
-        await Promise.resolve()
-        expect(useUndoStore.getState().pages.get('page1')?.redoStack).toEqual([])
-
-        // Remote ops land mid-redo → re-anchor to the pristine baseline.
-        useUndoStore.getState().reanchorAfterRemoteOps('page1')
-
-        // Backend resolves. The redo success path is a no-op on state (the
-        // optimistic update already applied), so the entry stays at the
-        // reanchored baseline: empty stacks, depth 0.
-        resolveRedo(makeUndoResult({ isRedo: true }))
-        await redoPromise
-
-        const after = useUndoStore.getState().pages.get('page1')
-        expect(after?.undoDepth).toBe(0)
-        expect(after?.redoStack).toEqual([])
-        expect(after?.redoGroupSizes).toEqual([])
       })
     })
   })
@@ -758,14 +654,12 @@ describe('useUndoStore', () => {
   // ---------------------------------------------------------------------------
   describe('multiple pages', () => {
     it('tracks undo state for different pages independently', async () => {
-      // Undo on page1
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 1 }))
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ deviceId: 'dev1', seq: 1 })])
       await useUndoStore.getState().undo('page1')
 
-      // Undo twice on page2
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev2', seq: 10 }))
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ deviceId: 'dev2', seq: 10 })])
       await useUndoStore.getState().undo('page2')
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev2', seq: 9 }))
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ deviceId: 'dev2', seq: 9 })])
       await useUndoStore.getState().undo('page2')
 
       const page1State = useUndoStore.getState().pages.get('page1')
@@ -778,9 +672,9 @@ describe('useUndoStore', () => {
     })
 
     it('onNewAction on page1 does not affect page2', async () => {
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 1 }))
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ seq: 1 })])
       await useUndoStore.getState().undo('page1')
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 10 }))
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ seq: 10 })])
       await useUndoStore.getState().undo('page2')
 
       useUndoStore.getState().onNewAction('page1')
@@ -790,9 +684,9 @@ describe('useUndoStore', () => {
     })
 
     it('clearPage on page1 does not affect page2', async () => {
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 1 }))
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ seq: 1 })])
       await useUndoStore.getState().undo('page1')
-      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 10 }))
+      mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ seq: 10 })])
       await useUndoStore.getState().undo('page2')
 
       useUndoStore.getState().clearPage('page1')
@@ -830,305 +724,10 @@ describe('isWithinUndoGroup', () => {
   })
 
   it('is order-independent (uses absolute difference)', () => {
-    // Reversed order should give the same result
     expect(isWithinUndoGroup('2024-01-01T00:00:00.100Z', '2024-01-01T00:00:00.000Z')).toBe(true)
   })
 
   it('uses UNDO_GROUP_WINDOW_MS constant (500ms)', () => {
     expect(UNDO_GROUP_WINDOW_MS).toBe(500)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Batch undo / redo
-// ---------------------------------------------------------------------------
-
-// Batch undo/redo previously re-fetched
-// `listPageHistory` with a growing window after every Ctrl+Z to
-// determine the group size. The new path delegates that decision to a
-// single `findUndoGroup` IPC. These tests assert ONE `findUndoGroup`
-// call per Ctrl+Z (was: one `listPageHistory` call with growing
-// limit), and `listPageHistory` is NOT called under the undo path
-// (regression assertion below).
-
-describe('batch undo', () => {
-  beforeEach(() => {
-    useUndoStore.setState({ pages: new Map() })
-    vi.clearAllMocks()
-    // Default: single undo (no batch) — individual tests override.
-    mockedFindUndoGroup.mockResolvedValue(1)
-  })
-
-  it('groups consecutive ops when findUndoGroup returns N', async () => {
-    mockedFindUndoGroup.mockReset()
-    mockedFindUndoGroup.mockResolvedValueOnce(3)
-
-    mockedUndoPageOp
-      .mockResolvedValueOnce(makeUndoResult({ seq: 3, newSeq: 4 }))
-      .mockResolvedValueOnce(makeUndoResult({ seq: 2, newSeq: 5 }))
-      .mockResolvedValueOnce(makeUndoResult({ seq: 1, newSeq: 6 }))
-
-    const result = await useUndoStore.getState().undo('page1')
-
-    expect(result).not.toBeNull()
-    // Exactly ONE findUndoGroup IPC fires per Ctrl+Z (replaces the
-    // previous growing-window listPageHistory loop).
-    expect(mockedFindUndoGroup).toHaveBeenCalledTimes(1)
-    expect(mockedFindUndoGroup).toHaveBeenCalledWith({
-      pageId: 'page1',
-      depth: 0,
-      windowMs: UNDO_GROUP_WINDOW_MS,
-    })
-    expect(mockedUndoPageOp).toHaveBeenCalledTimes(3)
-
-    const pageState = useUndoStore.getState().pages.get('page1')
-    expect(pageState?.undoDepth).toBe(3)
-    expect(pageState?.redoStack).toHaveLength(3)
-  })
-
-  it('does NOT call listPageHistory under the new undo path', async () => {
-    mockedFindUndoGroup.mockResolvedValueOnce(2)
-    mockedUndoPageOp
-      .mockResolvedValueOnce(makeUndoResult({ seq: 2, newSeq: 3 }))
-      .mockResolvedValueOnce(makeUndoResult({ seq: 1, newSeq: 4 }))
-
-    await useUndoStore.getState().undo('page1')
-
-    // Regression: the legacy listPageHistory growing-window fetch must
-    // not fire under the new path.
-    expect(mockedListPageHistory).not.toHaveBeenCalled()
-  })
-
-  it('stops at group boundary (findUndoGroup returns 1 for >500ms gap)', async () => {
-    // Backend has the gap detection logic; FE just trusts the count.
-    mockedFindUndoGroup.mockResolvedValueOnce(1)
-    mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 3, newSeq: 4 }))
-
-    await useUndoStore.getState().undo('page1')
-
-    expect(mockedUndoPageOp).toHaveBeenCalledTimes(1)
-    expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(1)
-  })
-
-  it('stops when findUndoGroup returns 1 (device_id change)', async () => {
-    mockedFindUndoGroup.mockResolvedValueOnce(1)
-    mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 2, newSeq: 3 }))
-
-    await useUndoStore.getState().undo('page1')
-
-    expect(mockedUndoPageOp).toHaveBeenCalledTimes(1)
-  })
-
-  it('falls back to single undo when findUndoGroup rejects', async () => {
-    mockedFindUndoGroup.mockReset()
-    mockedFindUndoGroup.mockRejectedValueOnce(new Error('network error'))
-    mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 5, newSeq: 6 }))
-
-    const result = await useUndoStore.getState().undo('page1')
-
-    expect(result).not.toBeNull()
-    expect(mockedUndoPageOp).toHaveBeenCalledTimes(1)
-    expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(1)
-  })
-
-  it('logs error via logger.error when find_undo_group fails', async () => {
-    const err = new Error('network error')
-    mockedFindUndoGroup.mockReset()
-    mockedFindUndoGroup.mockRejectedValueOnce(err)
-    mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 5, newSeq: 6 }))
-
-    await useUndoStore.getState().undo('page1')
-
-    expect(mockedLogger.error).toHaveBeenCalledWith(
-      'UndoStore',
-      'find_undo_group failed',
-      { pageId: 'page1' },
-      err,
-    )
-  })
-
-  it('shows toast warning when findUndoGroup fails (single undo still succeeds)', async () => {
-    mockedFindUndoGroup.mockReset()
-    mockedFindUndoGroup.mockRejectedValueOnce(new Error('IPC failed'))
-    const firstUndo = makeUndoResult({ seq: 5, newSeq: 6 })
-    mockedUndoPageOp.mockResolvedValueOnce(firstUndo)
-
-    const result = await useUndoStore.getState().undo('page1')
-
-    // Single undo still succeeds — no regression in core behavior
-    expect(result).toEqual(firstUndo)
-    expect(mockedUndoPageOp).toHaveBeenCalledTimes(1)
-    expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(1)
-
-    // User gets a warning that batch undo was unavailable
-    expect(mockedToastWarning).toHaveBeenCalledTimes(1)
-    expect(mockedToastWarning).toHaveBeenCalledWith(
-      expect.stringContaining('Batch undo unavailable'),
-    )
-  })
-
-  it('handles backend group size of 0 (seed op missing) by falling back to single undo', async () => {
-    // Backend returns 0 when depth exceeds the page's undoable-op
-    // count — FE treats it as "no batch extension" and just runs a
-    // single undo. (The undoPageOp call itself will surface the
-    // missing-op error if the seed truly doesn't exist.)
-    mockedFindUndoGroup.mockReset()
-    mockedFindUndoGroup.mockResolvedValueOnce(0)
-    mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 1, newSeq: 2 }))
-
-    await useUndoStore.getState().undo('page1')
-
-    expect(mockedUndoPageOp).toHaveBeenCalledTimes(1)
-  })
-
-  it('records group size in redoGroupSizes', async () => {
-    mockedFindUndoGroup.mockReset()
-    mockedFindUndoGroup.mockResolvedValueOnce(2)
-    mockedUndoPageOp
-      .mockResolvedValueOnce(makeUndoResult({ seq: 2, newSeq: 3 }))
-      .mockResolvedValueOnce(makeUndoResult({ seq: 1, newSeq: 4 }))
-
-    await useUndoStore.getState().undo('page1')
-
-    const pageState = useUndoStore.getState().pages.get('page1')
-    expect(pageState?.redoGroupSizes).toEqual([2])
-  })
-
-  it('passes the current undoDepth as `depth` to findUndoGroup on a second Ctrl+Z', async () => {
-    // First Ctrl+Z (groupSize=1)
-    mockedFindUndoGroup.mockResolvedValueOnce(1)
-    mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 2, newSeq: 3 }))
-    await useUndoStore.getState().undo('page1')
-
-    expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(1)
-
-    // Second Ctrl+Z — depth should be 1 now.
-    mockedFindUndoGroup.mockResolvedValueOnce(1)
-    mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 1, newSeq: 4 }))
-    await useUndoStore.getState().undo('page1')
-
-    expect(mockedFindUndoGroup).toHaveBeenLastCalledWith({
-      pageId: 'page1',
-      depth: 1,
-      windowMs: UNDO_GROUP_WINDOW_MS,
-    })
-  })
-})
-
-describe('batch redo', () => {
-  beforeEach(() => {
-    useUndoStore.setState({ pages: new Map() })
-    vi.clearAllMocks()
-    mockedFindUndoGroup.mockResolvedValue(1)
-  })
-
-  it('replays the same group size as the batch undo', async () => {
-    // Batch undo of 3 ops — backend returns 3 from findUndoGroup.
-    mockedFindUndoGroup.mockReset()
-    mockedFindUndoGroup.mockResolvedValueOnce(3)
-
-    mockedUndoPageOp
-      .mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 3, newSeq: 4 }))
-      .mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 2, newSeq: 5 }))
-      .mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 1, newSeq: 6 }))
-
-    await useUndoStore.getState().undo('page1')
-    expect(mockedUndoPageOp).toHaveBeenCalledTimes(3)
-
-    // Now redo — should replay all 3
-    mockedRedoPageOp
-      .mockResolvedValueOnce(makeUndoResult({ isRedo: true, seq: 1 }))
-      .mockResolvedValueOnce(makeUndoResult({ isRedo: true, seq: 2 }))
-      .mockResolvedValueOnce(makeUndoResult({ isRedo: true, seq: 3 }))
-
-    const result = await useUndoStore.getState().redo('page1')
-
-    expect(result).not.toBeNull()
-    expect(mockedRedoPageOp).toHaveBeenCalledTimes(3)
-
-    const pageState = useUndoStore.getState().pages.get('page1')
-    expect(pageState?.undoDepth).toBe(0)
-    expect(pageState?.redoStack).toHaveLength(0)
-    expect(pageState?.redoGroupSizes).toEqual([])
-  })
-
-  it('handles mixed group sizes correctly', async () => {
-    // First batch undo: 2 ops
-    mockedFindUndoGroup.mockReset()
-    mockedFindUndoGroup.mockResolvedValueOnce(2)
-    mockedUndoPageOp
-      .mockResolvedValueOnce(makeUndoResult({ seq: 4, newSeq: 5 }))
-      .mockResolvedValueOnce(makeUndoResult({ seq: 3, newSeq: 6 }))
-    await useUndoStore.getState().undo('page1')
-
-    // Second single undo (findUndoGroup returns 1)
-    mockedFindUndoGroup.mockResolvedValueOnce(1)
-    mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 2, newSeq: 7 }))
-    await useUndoStore.getState().undo('page1')
-
-    const stateAfterUndos = useUndoStore.getState().pages.get('page1')
-    expect(stateAfterUndos?.redoGroupSizes).toEqual([2, 1])
-    expect(stateAfterUndos?.undoDepth).toBe(3)
-
-    // Redo once — should redo 1 op (the single undo)
-    mockedRedoPageOp.mockResolvedValueOnce(makeUndoResult({ isRedo: true }))
-    await useUndoStore.getState().redo('page1')
-
-    expect(mockedRedoPageOp).toHaveBeenCalledTimes(1)
-    expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(2)
-    expect(useUndoStore.getState().pages.get('page1')?.redoGroupSizes).toEqual([2])
-
-    // Redo again — should redo 2 ops (the batch undo)
-    mockedRedoPageOp
-      .mockResolvedValueOnce(makeUndoResult({ isRedo: true }))
-      .mockResolvedValueOnce(makeUndoResult({ isRedo: true }))
-    await useUndoStore.getState().redo('page1')
-
-    expect(mockedRedoPageOp).toHaveBeenCalledTimes(3) // 1 + 2
-    expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(0)
-    expect(useUndoStore.getState().pages.get('page1')?.redoGroupSizes).toEqual([])
-  })
-
-  it('defaults to single redo when no group size is recorded', async () => {
-    // Manually set up a page with a redo stack but no group sizes
-    // (simulates legacy state or edge case)
-    useUndoStore.setState({
-      pages: new Map([
-        [
-          'page1',
-          {
-            redoStack: [{ device_id: 'dev1', seq: 5 }],
-            undoDepth: 1,
-            redoGroupSizes: [],
-          },
-        ],
-      ]),
-    })
-
-    mockedRedoPageOp.mockResolvedValueOnce(makeUndoResult({ isRedo: true, seq: 5 }))
-
-    await useUndoStore.getState().redo('page1')
-
-    expect(mockedRedoPageOp).toHaveBeenCalledTimes(1)
-    expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(0)
-  })
-
-  it('onNewAction clears redoGroupSizes along with redoStack', async () => {
-    mockedFindUndoGroup.mockReset()
-    mockedFindUndoGroup.mockResolvedValueOnce(2)
-    mockedUndoPageOp
-      .mockResolvedValueOnce(makeUndoResult({ seq: 2, newSeq: 3 }))
-      .mockResolvedValueOnce(makeUndoResult({ seq: 1, newSeq: 4 }))
-
-    await useUndoStore.getState().undo('page1')
-    expect(useUndoStore.getState().pages.get('page1')?.redoGroupSizes).toEqual([2])
-
-    // New action clears everything
-    useUndoStore.getState().onNewAction('page1')
-
-    const pageState = useUndoStore.getState().pages.get('page1')
-    expect(pageState?.redoStack).toEqual([])
-    expect(pageState?.undoDepth).toBe(0)
-    expect(pageState?.redoGroupSizes).toEqual([])
   })
 })

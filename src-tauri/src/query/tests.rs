@@ -1223,6 +1223,141 @@ async fn group_member_preview_is_bounded() {
 }
 
 #[tokio::test]
+async fn grouped_member_preview_left_join_equals_correlated_2269() {
+    // Pins the grouped member-preview output (per-bucket member id sets) for
+    // the two group keys whose key expression is an op_log / block_properties
+    // lookup — the ones #2269 touched. The Property key is now a 1:1 LEFT JOIN
+    // on `block_properties` PK (computed ONCE per row instead of re-run up to
+    // 3× — SELECT / PARTITION BY / IN); the op_log DateBucket key stays a
+    // correlated MIN/MAX scalar subquery (a pre-aggregated GROUP BY join
+    // materialises the WHOLE op_log per statement — measured ~300× slower for
+    // filtered candidate sets; see `group_key_expr`). Whatever the plan shape,
+    // the preview must distribute the SAME members into the SAME buckets:
+    // multi-group, a three-way count tie, and a block carrying MULTIPLE op_log
+    // rows (which must collapse to one member row — no duplicate member — and
+    // MAX, not MIN, drives the LastEdited bucket).
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+
+    const B1: &str = "01B1000000000000000000000";
+    const B2: &str = "01B2000000000000000000000";
+    const B3: &str = "01B3000000000000000000000";
+    const B4: &str = "01B4000000000000000000000";
+
+    // op_log (created_at = epoch-ms). LastEdited buckets on MAX(created_at):
+    //   B1,B2 → 2026-01   B3,B4 → 2026-03   TAG_RED,TAG_BLUE (no op) → none.
+    // B1 carries a SECOND, EARLIER op so MAX (not MIN) drives the bucket and
+    // the block still yields exactly one member row (no duplicate member).
+    let ins_op = |bid: &'static str, seq: i64, ms: i64| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+                 VALUES ('dev', ?, ?, 'edit', '{}', ?, ?)",
+            )
+            .bind(seq)
+            .bind(format!("h{seq}"))
+            .bind(ms)
+            .bind(bid)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    ins_op(B1, 1, 1_768_003_200_000).await; // 2026-01-10 (MAX for B1)
+    ins_op(B1, 2, 1_748_736_000_000).await; // 2025-06-01 (earlier → NOT the bucket)
+    ins_op(B2, 3, 1_768_176_000_000).await; // 2026-01-12
+    ins_op(B3, 4, 1_772_668_800_000).await; // 2026-03-05
+    ins_op(B4, 5, 1_774_051_200_000).await; // 2026-03-21
+
+    // block_properties 'status': B1,B2 → open   B3,B4 → closed   rest → none.
+    let ins_prop = |bid: &'static str, val: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'status', ?)",
+            )
+            .bind(bid)
+            .bind(val)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    ins_prop(B1, "open").await;
+    ins_prop(B2, "open").await;
+    ins_prop(B3, "closed").await;
+    ins_prop(B4, "closed").await;
+
+    let members = |g: &QueryGroup| -> BTreeSet<String> {
+        g.members
+            .iter()
+            .map(|m| m.block.id.as_str().to_string())
+            .collect()
+    };
+    let none_set = BTreeSet::from([TAG_RED.to_string(), TAG_BLUE.to_string()]);
+
+    // ── DateBucket LastEdited (Month): correlated op_log MAX lookup ───────
+    let de = compile_and_run(
+        &pool,
+        group_req(
+            default_filter(),
+            GroupKey::DateBucket {
+                source: DateField::LastEdited,
+                unit: DateBucketUnit::Month,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let dcounts = group_counts(&de);
+    // Three-way tie at count 2 (order gcount DESC, gkey ASC → 2026-01,2026-03,none).
+    assert_eq!(dcounts.get("2026-01"), Some(&2), "got {dcounts:?}");
+    assert_eq!(dcounts.get("2026-03"), Some(&2), "got {dcounts:?}");
+    assert_eq!(
+        dcounts.get("none"),
+        Some(&2),
+        "op-less blocks → none; got {dcounts:?}"
+    );
+    assert_eq!(
+        members(find_group(&de, "2026-01")),
+        BTreeSet::from([B1.to_string(), B2.to_string()]),
+        "B1's two ops must collapse to a single member row"
+    );
+    assert_eq!(
+        members(find_group(&de, "2026-03")),
+        BTreeSet::from([B3.to_string(), B4.to_string()]),
+    );
+    assert_eq!(members(find_group(&de, "none")), none_set);
+
+    // ── Property 'status': block_properties value-text join ───────────────
+    let pr = compile_and_run(
+        &pool,
+        group_req(
+            default_filter(),
+            GroupKey::Property {
+                key: "status".to_string(),
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let pcounts = group_counts(&pr);
+    assert_eq!(pcounts.get("open"), Some(&2), "got {pcounts:?}");
+    assert_eq!(pcounts.get("closed"), Some(&2), "got {pcounts:?}");
+    assert_eq!(pcounts.get("none"), Some(&2), "got {pcounts:?}");
+    assert_eq!(
+        members(find_group(&pr, "open")),
+        BTreeSet::from([B1.to_string(), B2.to_string()]),
+    );
+    assert_eq!(
+        members(find_group(&pr, "closed")),
+        BTreeSet::from([B3.to_string(), B4.to_string()]),
+    );
+    assert_eq!(members(find_group(&pr, "none")), none_set);
+}
+
+#[tokio::test]
 async fn group_pagination_pages_through_all_groups_once() {
     let (pool, _d) = test_pool().await;
     seed(&pool).await;
@@ -2190,5 +2325,44 @@ async fn last_edited_group_by_uses_block_created_index_2039() {
     assert!(
         !plan.contains("USE TEMP B-TREE FOR GROUP BY"),
         "composite index must satisfy the GROUP BY ordering (no temp b-tree sort); plan was:\n{plan}"
+    );
+}
+
+/// #2269 review: the GROUPED path's op_log date-bucket key must stay a
+/// per-candidate correlated seek on `idx_op_log_block_created` — NOT a
+/// pre-aggregated `LEFT JOIN (… GROUP BY block_id)`, which SQLite MATERIALIZEs
+/// over the WHOLE op_log per statement regardless of how selective the WHERE
+/// is (measured ~300× slower for a filtered candidate set on a 500k-row
+/// op_log). The 2039 test above pins the flat sort join's derived-table shape;
+/// this one pins the grouped statement's shape: a correlated `SEARCH` on the
+/// composite index and NO `MATERIALIZE` node.
+#[tokio::test]
+async fn grouped_date_bucket_key_is_correlated_index_seek_2269() {
+    let (pool, _dir) = test_pool().await;
+
+    // Representative grouped count statement (the same key expression is
+    // repeated in the group-page and member-preview statements).
+    let plan_rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(
+        "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM (SELECT \
+           COALESCE(strftime('%Y-%m', (SELECT MAX(created_at) FROM op_log \
+           WHERE block_id = b.id) / 1000, 'unixepoch'), 'none') AS gkey \
+         FROM blocks b WHERE b.deleted_at IS NULL GROUP BY gkey)"
+            .to_string(),
+    ))
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let plan = plan_rows
+        .iter()
+        .map(|(_, _, _, d)| d.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        plan.contains("SEARCH op_log USING COVERING INDEX idx_op_log_block_created"),
+        "grouped date-bucket key must be a correlated covering-index seek; plan was:\n{plan}"
+    );
+    assert!(
+        !plan.contains("MATERIALIZE"),
+        "grouped date-bucket key must not materialise an op_log-wide aggregate; plan was:\n{plan}"
     );
 }

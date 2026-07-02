@@ -127,7 +127,10 @@ export const history: Record<string, string> = {
   'undo.undoFailedMessage': 'Undo failed',
   'undo.redoneMessage': 'Redone',
   'undo.redoFailedMessage': 'Redo failed',
-  'undo.batchUnavailable': 'Batch undo unavailable; undid one op.',
+  // #2190 — the grouped undo is a single atomic IPC; when it fails, NOTHING
+  // was undone (the pre-2190 string claimed a single-op fallback that no
+  // longer exists).
+  'undo.batchUnavailable': 'Undo failed; nothing was undone.',
   'undo.op.createBlock': 'Undid create block',
   'undo.op.editBlock': 'Undid edit',
   'undo.op.deleteBlock': 'Undid delete',

@@ -20,9 +20,10 @@ import {
  * Seed: "Getting Started" → GS_1…GS_5 at positions 0..4, ULID-ascending ids.
  *
  * As with the single-block mouse spec, correctness is asserted on the recorded
- * `move_block` IPC payloads — one per moved selection root, at consecutive
- * 0-based `newIndex` slots (#400). We assert the FIRST move per block id so a
- * later reconciling reload can't confuse the assertion.
+ * IPC payloads. #2274 batched the multi-select drag: the WHOLE selection moves
+ * through ONE `move_blocks_batch` IPC (ordered ids + the 0-based `newIndex`
+ * start slot), replacing the old per-root `move_block` loop. A single-block
+ * drag still issues a plain `move_block`.
  */
 
 const PAGE = 'Getting Started'
@@ -37,6 +38,12 @@ async function moveCalls(
   page: import('@playwright/test').Page,
 ): Promise<Array<{ blockId?: string; newParentId?: string | null; newIndex?: number }>> {
   return (await getInvokeCalls(page, 'move_block')) as never
+}
+
+async function batchMoveCalls(
+  page: import('@playwright/test').Page,
+): Promise<Array<{ blockIds?: string[]; newParentId?: string | null; newIndex?: number }>> {
+  return (await getInvokeCalls(page, 'move_blocks_batch')) as never
 }
 
 /** Hover a block row and return its visible drag handle locator. */
@@ -73,7 +80,9 @@ test.describe('Block drag-and-drop (multi-select, #914)', () => {
     await installIpcRecorder(page)
   })
 
-  test('dragging one of two selected blocks moves BOTH (one move_block each)', async ({ page }) => {
+  test('dragging one of two selected blocks moves BOTH (one move_blocks_batch)', async ({
+    page,
+  }) => {
     const ids = await blockIds(page)
     const gs1 = ids[0] as string
     const gs2 = ids[1] as string
@@ -89,12 +98,14 @@ test.describe('Block drag-and-drop (multi-select, #914)', () => {
     const target = page.locator('[data-testid="sortable-block"]').nth(3) // onto GS_4
     await dragBlock(page, handle, target)
 
-    // Two distinct blocks moved — the selection was NOT silently ignored.
-    await expect.poll(async () => (await moveCalls(page)).length).toBeGreaterThanOrEqual(2)
-    const calls = await moveCalls(page)
-    const movedIds = new Set(calls.map((c) => c.blockId))
+    // Both blocks moved through ONE batched IPC (#2274) — the selection was
+    // NOT silently ignored, and no per-root move_block loop fired.
+    await expect.poll(async () => (await batchMoveCalls(page)).length).toBeGreaterThanOrEqual(1)
+    const calls = await batchMoveCalls(page)
+    const movedIds = new Set(calls[0]?.blockIds ?? [])
     expect(movedIds.has(gs1)).toBe(true)
     expect(movedIds.has(gs2)).toBe(true)
+    expect(await moveCalls(page)).toHaveLength(0)
   })
 
   test('moved selection lands at consecutive slots, preserving document order', async ({
@@ -112,20 +123,13 @@ test.describe('Block drag-and-drop (multi-select, #914)', () => {
     const target = page.locator('[data-testid="sortable-block"]').nth(3) // GS_4
     await dragBlock(page, handle, target)
 
-    await expect.poll(async () => (await moveCalls(page)).length).toBeGreaterThanOrEqual(2)
-    const calls = await moveCalls(page)
-    // FIRST move per id (a reconciling reload may re-issue nothing, but guard anyway).
-    const firstGs1 = calls.find((c) => c.blockId === gs1)
-    const firstGs2 = calls.find((c) => c.blockId === gs2)
-    expect(firstGs1?.newIndex).toBeDefined()
-    expect(firstGs2?.newIndex).toBeDefined()
-    // GS_1 precedes GS_2 in the document, so GS_1 takes the lower (earlier) slot
-    // and GS_2 lands immediately after it (consecutive).
-    expect((firstGs2 as { newIndex: number }).newIndex).toBe(
-      (firstGs1 as { newIndex: number }).newIndex + 1,
-    )
-    // Same parent for both (a root-level reorder keeps newParentId null).
-    expect(firstGs1?.newParentId ?? null).toBe(firstGs2?.newParentId ?? null)
+    await expect.poll(async () => (await batchMoveCalls(page)).length).toBeGreaterThanOrEqual(1)
+    const call = (await batchMoveCalls(page))[0]
+    // GS_1 precedes GS_2 in the document, so the batch carries [GS_1, GS_2] in
+    // that order — the backend lands them at consecutive slots newIndex,
+    // newIndex + 1 under the single requested parent (#2274).
+    expect(call?.blockIds).toEqual([gs1, gs2])
+    expect(call?.newIndex).toBeDefined()
   })
 
   test('dragging an UNSELECTED block ignores the selection (single move_block)', async ({

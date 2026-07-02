@@ -38,7 +38,7 @@ import { recordGraphStructureChange } from '../lib/graph-structure-events'
 import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import { INTERACTIONS, traceInteraction } from '../lib/observability'
-import type { BlockRow, CreateBlockSpec } from '../lib/tauri'
+import type { BlockRow, CreateBlockSpec, MoveResponse } from '../lib/tauri'
 import {
   createBlock,
   createBlocksBatch,
@@ -49,6 +49,7 @@ import {
   listAllTagsInSpace,
   loadPageSubtree,
   moveBlock,
+  moveBlocksBatch,
 } from '../lib/tauri'
 import {
   buildFlatTree,
@@ -331,6 +332,118 @@ interface StructuralMoveSpec {
     blocks: FlatBlock[]
     touchedIds: Iterable<string>
   }
+}
+
+/**
+ * #2274 — surgically reconcile the flat tree after a batched `move_blocks_batch`
+ * IPC, WITHOUT a blind full `load()`.
+ *
+ * Given the commit-time `state`, the authoritative per-root `resp`, the moved
+ * ids (already in destination order), the requested destination parent and the
+ * 0-based `newIndex`, this REPLAYS the backend's per-move pipeline: move k
+ * inserts block[k] at slot `newIndex + k` among the destination parent's
+ * then-current OTHER children (sorted `(position, id)`, slot clamped to the
+ * group size), densely renumbering the touched groups after each step —
+ * exactly the state block[k+1]'s move is computed against in the backend's
+ * single tx (#774). A remove-all-then-splice shortcut is NOT equivalent when
+ * the selection interleaves with non-moved siblings in the destination group
+ * (e.g. [A,B,C,D], move [A,C] to slot 2 → backend yields B,A,D,C, a splice
+ * would yield B,D,A,C) — see the Rust ground-truth test
+ * `move_blocks_batch_interleaved_same_parent_engine_ground_truth_2274`.
+ * Finally it rebuilds the flattened, depth-annotated tree via `buildFlatTree`
+ * (which recomputes each block's depth from its new parent chain — descendants
+ * of a moved root travel with it automatically because they still point at it
+ * via `parent_id`).
+ *
+ * Because every block in a page store belongs to the SAME page, an intra-page
+ * batch move never changes any block's `page_id`, so it is left untouched.
+ *
+ * Returns the new flat array, or `null` to signal "fall back to `load()`":
+ *   - the backend echoed a parent other than the one requested (or a response
+ *     is missing) — a local splice would diverge from the backend tree;
+ *   - a moved id vanished from the tree mid-flight (concurrent write);
+ *   - a moved id fell out of the rebuilt tree (defensive: e.g. a `null`
+ *     requested parent under a non-null page root).
+ */
+function reconcileBatchMove(
+  state: PageBlockState,
+  resp: MoveResponse[],
+  orderedIds: string[],
+  requestedParentId: string | null,
+  newIndex: number,
+): FlatBlock[] | null {
+  const { blocks, rootParentId } = state
+  const wantParent = requestedParentId ?? null
+
+  // Backend-echo guard (mirrors `indent`/`reorder`): every moved root must have
+  // landed under the parent we asked for, and every root must have a response.
+  if (resp.length !== orderedIds.length) return null
+  for (const r of resp) {
+    if ((r.new_parent_id ?? null) !== wantParent) return null
+  }
+
+  // Every moved id must still exist in the current (commit-time) tree.
+  const byId = new Map(blocks.map((b) => [b.id, b] as const))
+  for (const id of orderedIds) {
+    if (!byId.has(id)) return null
+  }
+
+  // Working copy of every block's (parent, position) — mutated as the replay
+  // walks the moves, exactly like the backend's in-tx state.
+  const parentOf = new Map<string, string | null>(blocks.map((b) => [b.id, b.parent_id ?? null]))
+  const posOf = new Map<string, number | null>(blocks.map((b) => [b.id, b.position ?? null]))
+
+  // `(position, id)` comparator over the working copy — the canonical sibling
+  // order used by both the backend and `buildFlatTree`.
+  const cmp = (a: string, b: string) => {
+    const pa = posOf.get(a) ?? Number.MAX_SAFE_INTEGER
+    const pb = posOf.get(b) ?? Number.MAX_SAFE_INTEGER
+    if (pa !== pb) return pa - pb
+    return a.localeCompare(b)
+  }
+  /** Live children of `parent` in the working copy, excluding `except`. */
+  const childrenOf = (parent: string | null, except: string) => {
+    const out: string[] = []
+    for (const b of blocks) {
+      if (b.id !== except && (parentOf.get(b.id) ?? null) === parent) out.push(b.id)
+    }
+    return out.toSorted(cmp)
+  }
+
+  // Replay move k: insert block[k] at slot `newIndex + k` among the
+  // destination's then-current OTHER children (clamped), dense-renumber the
+  // destination group, and collapse the vacated source group (when different).
+  orderedIds.forEach((id, k) => {
+    const oldParent = parentOf.get(id) ?? null
+    const others = childrenOf(wantParent, id)
+    const slot = Math.max(0, Math.min(newIndex + k, others.length))
+    const destGroup = [...others.slice(0, slot), id, ...others.slice(slot)]
+    parentOf.set(id, wantParent)
+    destGroup.forEach((bid, i) => posOf.set(bid, i + 1))
+    if (oldParent !== wantParent) {
+      childrenOf(oldParent, id).forEach((bid, i) => posOf.set(bid, i + 1))
+    }
+  })
+
+  // Materialise the updated bag (only touched blocks re-allocate) and rebuild.
+  const updatedBag: FlatBlock[] = []
+  for (const b of blocks) {
+    const p = parentOf.get(b.id) ?? null
+    const pos = posOf.get(b.id) ?? null
+    updatedBag.push(
+      p === (b.parent_id ?? null) && pos === (b.position ?? null)
+        ? b
+        : { ...b, parent_id: p, position: pos },
+    )
+  }
+  const flat = buildFlatTree(updatedBag, rootParentId)
+
+  // Defensive: if a moved id fell out of the rebuilt tree, reload instead.
+  const present = new Set(flat.map((b) => b.id))
+  for (const id of orderedIds) {
+    if (!present.has(id)) return null
+  }
+  return flat
 }
 
 /**
@@ -1093,29 +1206,41 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         .toSorted((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0))
       if (ordered.length === 0) return
 
+      // #2274 — snapshot for rollback. The batch is transactional (all-or-
+      // nothing) backend-side, so on error NOTHING committed and restoring this
+      // pre-move snapshot exactly reconciles FE with the backend — no reload.
+      const prevBlocks = get().blocks
+      const prevById = get().blocksById
+
       try {
-        // Issue one move per block, landing them at consecutive slots
-        // `newIndex, newIndex + 1, …` under the same parent. The backend's
-        // `move_block` slot excludes the block being moved, so once block[k] is
-        // parked at slot `newIndex + k`, moving block[k+1] to slot
-        // `newIndex + k + 1` drops it immediately after — yielding a contiguous,
-        // order-preserving run. Sequential (not parallel) so each move reads the
-        // state the previous one committed (mirrors the #774 mover serialization
-        // rationale). #730 — each call goes through the shared pool_busy retry.
-        for (let k = 0; k < ordered.length; k++) {
-          const id = ordered[k] as string
-          await retryOnPoolBusy(() => moveBlock(id, newParentId, newIndex + k))
-        }
-        // Structural change across N blocks — reload the full tree to get the
-        // authoritative flattened order (mirrors `moveToParent`).
-        await get().load()
+        // #2274 — ONE IPC. `move_blocks_batch` lands the ordered run at
+        // consecutive slots `newIndex, newIndex + 1, …` under `newParentId`
+        // inside a single backend IMMEDIATE transaction (N `MoveBlock` ops),
+        // preserving the #774 slot semantics WITHIN the tx. Replaces the old
+        // per-root `moveBlock` IPC loop + full page reload. #730 — the single
+        // call still goes through the shared pool_busy retry.
+        const resp = await retryOnPoolBusy(() => moveBlocksBatch(ordered, newParentId, newIndex))
+
+        // Surgical reconcile from the authoritative response — no blind load().
+        // Computed inside the functional updater so it runs against the state
+        // CURRENT AT COMMIT TIME (a concurrent write mid-flight must survive);
+        // `reconcileBatchMove` returns null to request a reconciling reload.
+        let needsReload = false
+        set((state) => {
+          const next = reconcileBatchMove(state, resp, ordered, newParentId, newIndex)
+          if (!next) {
+            needsReload = true
+            return {}
+          }
+          return { blocks: next, blocksById: buildBlocksById(next) }
+        })
+        if (needsReload) await get().load()
         notifyUndoNewAction(rootParentId)
       } catch (err) {
         logger.error('page-blocks', 'Failed to move blocks', { ids, newParentId, newIndex }, err)
         notify.error(i18n.t('error.moveBlockFailed'))
-        // Reconcile FE with whatever the backend committed before the failure
-        // (a partial multi-move leaves the optimistic-free tree stale).
-        await get().load()
+        // Whole batch rolled back backend-side — restore the pre-move snapshot.
+        set({ blocks: prevBlocks, blocksById: prevById })
       }
     },
 

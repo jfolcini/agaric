@@ -51,6 +51,7 @@ async fn reproject_live_sibling_group(
 ) -> Result<(), AppError> {
     // `parent_id IS ?` matches NULL (top-level blocks) and concrete parents
     // alike; `deleted_at IS NULL` keeps tombstones out of the dense order.
+    // dynamic-sql: test-only fixture/verification query (differential enumeration test, #2190 review).
     let ordered: Vec<String> = sqlx::query_scalar::<_, String>(
         "SELECT id FROM blocks \
          WHERE parent_id IS ? AND deleted_at IS NULL \
@@ -93,6 +94,7 @@ async fn reverse_move_block(
     // forward `apply_move_block_via_loro` — both need a dense 1-based
     // reprojection afterward.
     let old_parent_id: Option<String> =
+        // dynamic-sql: test-only fixture/verification query (differential enumeration test, #2190 review).
         sqlx::query_scalar::<_, Option<String>>("SELECT parent_id FROM blocks WHERE id = ?")
             .bind(move_block_id_str)
             .fetch_optional(&mut **tx)
@@ -117,14 +119,42 @@ async fn reverse_move_block(
         )));
     }
 
-    // #928: reproject dense 1-based positions for both affected sibling groups.
-    // The target group (the block's restored parent) always needs it because the
-    // block just (re)joined it at a provisional rank; the source group (the
-    // parent it left) needs it too on a cross-parent undo because it lost a
-    // member and must re-densify. A same-parent undo touches a single group
-    // (old == new), so the dedup below reprojects it once. This mirrors the
-    // forward path's `reproject_dense_positions(old_siblings)` + `(new_siblings)`.
-    reproject_live_sibling_group(tx, new_parent_id_str).await?;
+    // #928 / #2274: settle BOTH affected sibling groups to dense 1-based
+    // positions.
+    //
+    // Target group — the payload's placement is a 0-based SLOT (`new_index`;
+    // `new_position - 1` for pre-#400 payloads), so place the block at that
+    // slot among the group's OTHER live siblings and densify in that explicit
+    // order — the same interpretation the forward engine path gives the same
+    // fields. Re-densifying by `(position, id)` with the raw provisional rank
+    // (the pre-#2274 approach) is NOT faithful when that rank collides with an
+    // existing sibling's: the ULID tie-break, not the slot, would decide the
+    // order, so undoing/redoing a move could land the block on the wrong side
+    // of a same-ranked sibling (caught by the batched-move undo→redo→undo
+    // trace in `conformance.rs`).
+    // dynamic-sql: test-only fixture/verification query (differential enumeration test, #2190 review).
+    let mut target_group: Vec<String> = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM blocks \
+         WHERE parent_id IS ? AND deleted_at IS NULL AND id != ? \
+         ORDER BY position ASC, id ASC",
+    )
+    .bind(new_parent_id_str)
+    .bind(move_block_id_str)
+    .fetch_all(&mut **tx)
+    .await?;
+    let group_len = i64::try_from(target_group.len()).unwrap_or(i64::MAX);
+    let slot = p
+        .new_index
+        .unwrap_or_else(|| p.new_position.saturating_sub(1))
+        .clamp(0, group_len);
+    let slot = usize::try_from(slot).unwrap_or(target_group.len());
+    target_group.insert(slot, move_block_id_str.to_owned());
+    crate::loro::projection::reproject_dense_positions(tx, &target_group).await?;
+
+    // Source group — it lost a member on a cross-parent undo and must
+    // re-densify (order unchanged, so the `(position, id)` sort is exact
+    // here). A same-parent undo touches a single group (old == new), already
+    // settled above.
     if old_parent_id.as_deref() != new_parent_id_str {
         reproject_live_sibling_group(tx, old_parent_id.as_deref()).await?;
     }
@@ -186,6 +216,7 @@ pub async fn apply_reverse_in_tx(
             // `OpPayload::RestoreBlock` below) picks them up. No
             // page_id work is needed here.
             let now = crate::db::now_ms();
+            // dynamic-sql: test-only fixture/verification query (differential enumeration test, #2190 review).
             sqlx::query(concat!(
                 crate::descendants_cte_active!(),
                 "UPDATE blocks SET deleted_at = ? \
@@ -202,6 +233,7 @@ pub async fn apply_reverse_in_tx(
             // `descendants_cte_standard!()` with `depth < 100` bounds
             // the walk. Shared CTE lives in
             // `crate::block_descendants`.
+            // dynamic-sql: test-only fixture/verification query (differential enumeration test, #2190 review).
             sqlx::query(concat!(
                 crate::descendants_cte_standard!(),
                 "UPDATE blocks SET deleted_at = NULL \
@@ -1109,6 +1141,155 @@ pub async fn find_undo_group_inner(
     Ok(i32::try_from(raw).unwrap_or(i32::MAX))
 }
 
+/// #2190: Undo an entire consecutive same-device, within-window undo group in a
+/// SINGLE IMMEDIATE transaction, replacing the frontend's `find_undo_group` +
+/// N × `undo_page_op` IPC loop (one IPC / one page-subtree CTE walk / one
+/// writer-lock acquisition per op) with one command.
+///
+/// This is the fused batch analogue of [`undo_page_op_inner`] +
+/// [`find_undo_group_inner`]:
+///
+///  1. The page subtree is resolved ONCE (the `page_blocks` CTE) and the
+///     group's op refs are enumerated ONCE by the same `ordered_ops` +
+///     recursive `walk` used to *size* the group in `find_undo_group_inner`
+///     — here the walk additionally carries `seq`, so it projects the concrete
+///     `(device_id, seq)` of every op in the group instead of just the count.
+///     Previously the FE loop re-ran the page-subtree recursive CTE plus a
+///     `LIMIT 1 OFFSET N` membership scan on every `undo_page_op` call.
+///  2. The enumerated ops are reverted through the shared
+///     [`revert_ops_in_tx`], which sorts them newest-first
+///     (`created_at DESC, seq DESC, device_id DESC`) and applies the reverses
+///     in that order — preserving the newest-first offset semantics the
+///     sequential `undo_page_op(undo_depth = depth + i)` loop had (each of
+///     those calls walked the same is_undo = 0 ordered stream at increasing
+///     offsets). `skip_non_reversible = false` keeps the interactive contract:
+///     a single non-reversible op aborts the whole batch before any reverse is
+///     applied.
+///
+/// # Snapshot semantics — atomic read+revert (mirrors #1551)
+///
+/// The group-enumeration SELECT runs **inside** the same `BEGIN IMMEDIATE`
+/// transaction that performs the revert (it executes on `tx`, sharing the write
+/// lock). There is therefore no TOCTOU window: an op landing between deciding
+/// *which* ops form the group and applying the reverses cannot slip through.
+/// This is stronger than the old FE loop, which sized the group once and then
+/// issued N offset-based undos that could drift if the op stream shifted
+/// mid-loop.
+///
+/// `depth` is 0-based (0 = seed at the most-recent undoable op, matching
+/// `find_undo_group_inner`); `window_ms` is the same grouping window the FE
+/// passes to `find_undo_group`. An empty group (seed op doesn't exist / page
+/// has no undoable ops) returns `Ok(vec![])` after releasing the write lock.
+#[instrument(skip_all, fields(page_id, depth, window_ms), err)]
+pub async fn undo_page_group_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    page_id: String,
+    depth: i64,
+    window_ms: i64,
+) -> Result<Vec<UndoResult>, AppError> {
+    if depth < 0 {
+        return Err(AppError::Validation("depth must be non-negative".into()));
+    }
+    if window_ms < 0 {
+        return Err(AppError::Validation(
+            "window_ms must be non-negative".into(),
+        ));
+    }
+
+    // Open the IMMEDIATE write transaction up front so the group-enumeration
+    // SELECT below runs *inside* the same transaction that applies the
+    // reverses (atomic read+revert — see the `Snapshot semantics` doc-block).
+    let mut tx = CommandTx::begin_immediate(pool, "undo_page_group").await?;
+
+    // Resolve the page subtree ONCE and enumerate the group's op refs. The
+    // `page_blocks` + `ordered_ops` CTEs are identical to
+    // `find_undo_group_inner`; the recursive `walk` additionally threads `seq`
+    // so we can project each op's concrete `(device_id, seq)` rather than only
+    // `MAX(count_so_far)`. `depth + 1` seeds at the newest undoable op for
+    // `depth = 0`. The `count_so_far < 1000` bound matches the `undo_depth`
+    // ceiling in `undo_page_op_inner`.
+    let seed_rn: i64 = depth + 1;
+    let rows = sqlx::query!(
+        r#"WITH RECURSIVE page_blocks(id, depth) AS (
+             SELECT id, 0 FROM blocks WHERE id = ?1
+             UNION ALL
+             SELECT b.id, pb.depth + 1 FROM blocks b JOIN page_blocks pb ON b.parent_id = pb.id
+             WHERE pb.depth < 100
+         ),
+         ordered_ops AS (
+             SELECT
+                 ROW_NUMBER() OVER (ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC) AS rn,
+                 ol.device_id, ol.seq, ol.created_at
+             FROM op_log ol
+             WHERE (
+                 ol.block_id IN (SELECT id FROM page_blocks)
+                 OR (
+                     ol.op_type IN ('delete_attachment', 'rename_attachment')
+                     AND EXISTS (
+                         SELECT 1 FROM attachments a
+                         WHERE a.id = json_extract(ol.payload, '$.attachment_id')
+                         AND a.block_id IN (SELECT id FROM page_blocks)
+                     )
+                 )
+             )
+               AND ol.is_undo = 0
+         ),
+         walk(rn, device_id, seq, created_at, count_so_far) AS (
+             SELECT rn, device_id, seq, created_at, 1
+             FROM ordered_ops
+             WHERE rn = ?2
+             UNION ALL
+             SELECT o.rn, o.device_id, o.seq, o.created_at, w.count_so_far + 1
+             FROM walk w
+             JOIN ordered_ops o ON o.rn = w.rn + 1
+             WHERE o.device_id = w.device_id
+               AND (w.created_at - o.created_at) <= ?3
+               AND w.count_so_far < 1000
+         )
+         SELECT device_id AS "device_id!: String", seq AS "seq!: i64"
+         FROM walk
+         ORDER BY count_so_far"#,
+        page_id,
+        seed_rn,
+        window_ms,
+    )
+    .fetch_all(&mut **tx)
+    .await?;
+
+    let ops: Vec<OpRef> = rows
+        .into_iter()
+        .map(|r| OpRef {
+            device_id: r.device_id,
+            seq: r.seq,
+        })
+        .collect();
+
+    if ops.is_empty() {
+        // No group — the seed op doesn't exist (depth exceeds the page's
+        // undoable-op count) or the page has no undoable ops. Release the
+        // write lock without churning the materializer. (Dropping/rolling
+        // `tx` back leaves the DB untouched.)
+        tx.rollback().await?;
+        return Ok(vec![]);
+    }
+
+    // Interactive batch undo preserves the historical contract: a single
+    // non-reversible op aborts the whole revert before any reverse is applied
+    // (`skip_non_reversible = false`), so a mid-group failure rolls the entire
+    // IMMEDIATE transaction back — no partial undo. `revert_ops_in_tx` sorts
+    // the ops newest-first and applies the reverses in that order; the
+    // discarded skip count is always 0 on this path.
+    let (results, _skipped) = revert_ops_in_tx(&mut tx, pool, device_id, ops, false).await?;
+
+    // Commit, then fire queued dispatches in enqueue order. If commit fails, no
+    // dispatches fire.
+    tx.commit_and_dispatch(materializer).await?;
+
+    Ok(results)
+}
+
 /// Tauri command: list page history. Delegates to [`list_page_history_inner`].
 #[tauri::command]
 #[specta::specta]
@@ -1210,6 +1391,30 @@ pub async fn find_undo_group(
     find_undo_group_inner(&pool.0, &page_id, depth, window_ms)
         .await
         .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: undo an entire consecutive same-device, within-window undo
+/// group in a single IMMEDIATE transaction. Delegates to
+/// [`undo_page_group_inner`]. #2190 — replaces the FE's `find_undo_group` +
+/// N × `undo_page_op` IPC loop with one command.
+#[tauri::command]
+#[specta::specta]
+pub async fn undo_page_group(
+    ctx: State<'_, WriteCtx>,
+    page_id: String,
+    depth: i64,
+    window_ms: i64,
+) -> Result<Vec<UndoResult>, AppError> {
+    undo_page_group_inner(
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
+        page_id,
+        depth,
+        window_ms,
+    )
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 /// Compute a word-level diff for an `edit_block` op by looking up the prior

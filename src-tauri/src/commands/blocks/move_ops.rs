@@ -41,6 +41,46 @@ pub async fn move_block_inner(
     let block_id = block_id.into_string();
     let new_parent_id = new_parent_id.map(BlockId::into_string);
 
+    // Single IMMEDIATE transaction: validation + op_log + move. BEGIN IMMEDIATE
+    // eagerly acquires the write lock, fixing the TOCTOU window between
+    // validation and mutation. CommandTx couples commit + post-commit dispatch
+    // so a failed commit never leaks the op_record to the materializer.
+    //
+    // #2274: the per-move body now lives in `move_block_in_tx` so the batched
+    // `move_blocks_batch_inner` can run N moves inside ONE tx with identical
+    // slot/cycle/depth semantics — this wrapper is the single-move arity of it.
+    let mut tx = CommandTx::begin_immediate(pool, "move_block").await?;
+    let response = move_block_in_tx(&mut tx, device_id, block_id, new_parent_id, new_index).await?;
+    tx.commit_and_dispatch(materializer).await?;
+    Ok(response)
+}
+
+/// Apply ONE move inside an already-open [`CommandTx`], WITHOUT committing.
+///
+/// Extracted from [`move_block_inner`] (#2274) so both the single-move command
+/// and the batched [`move_blocks_batch_inner`] share one implementation of the
+/// validation + op_log-append + engine-apply + reprojection + cache-recompute
+/// pipeline. The caller owns the transaction lifecycle (BEGIN / COMMIT); this
+/// helper only appends the op via `enqueue_background` so the caller's single
+/// `commit_and_dispatch` drains every enqueued op in FIFO order.
+///
+/// Called back-to-back within one tx, each invocation reads the state the
+/// PREVIOUS move committed in-tx (`apply_move_block_via_loro` writes the engine
+/// + SQL synchronously), which is exactly what preserves the #774 slot
+/// semantics for a batch: parking block[k] at slot `start+k` drops block[k+1]
+/// at `start+k+1` immediately after it. Any `?` propagation rolls the WHOLE
+/// transaction back (nothing moved) because the caller never reaches commit.
+///
+/// See [`move_block_inner`]'s original inline body for the full rationale on
+/// each step; the comments are preserved verbatim below.
+#[instrument(skip(tx, device_id), err)]
+async fn move_block_in_tx(
+    tx: &mut CommandTx,
+    device_id: &str,
+    block_id: String,
+    new_parent_id: Option<String>,
+    new_index: i64,
+) -> Result<MoveResponse, AppError> {
     // 1. Validate block cannot become its own parent (pure-logic check, no DB)
     if let Some(ref pid) = new_parent_id
         && pid == &block_id
@@ -79,20 +119,17 @@ pub async fn move_block_inner(
         new_index: Some(new_index),
     };
 
-    // 3. Single IMMEDIATE transaction: validation + op_log + move.
-    //    BEGIN IMMEDIATE eagerly acquires the write lock, preventing
+    // 3. Validation + op_log + move, inside the caller-owned IMMEDIATE tx.
+    //    The caller's BEGIN IMMEDIATE eagerly acquired the write lock, preventing
     //    SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
-    // And the actual mutation. CommandTx couples commit
-    //    + post-commit dispatch so a failed commit never leaks the
-    //    op_record to the materializer.
-    let mut tx = CommandTx::begin_immediate(pool, "move_block").await?;
+    //    and the actual mutation.
 
     // Validate block exists and is not deleted (TOCTOU-safe)
     let existing = sqlx::query!(
         r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
-    .fetch_optional(&mut **tx)
+    .fetch_optional(&mut ***tx)
     .await?;
     if existing.is_none() {
         return Err(AppError::NotFound(format!(
@@ -106,7 +143,7 @@ pub async fn move_block_inner(
             r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
             pid
         )
-        .fetch_optional(&mut **tx)
+        .fetch_optional(&mut ***tx)
         .await?;
         if exists.is_none() {
             return Err(AppError::NotFound(format!("parent block '{pid}'")));
@@ -122,7 +159,7 @@ pub async fn move_block_inner(
         // The helper returns the boolean only; the rejection is the command
         // path's own (a user-driven move must surface the error, whereas the
         // sync-replay fallback no-op-warns — see the helper docstring).
-        if crate::block_descendants::move_would_cycle(&mut **tx, &block_id, pid).await? {
+        if crate::block_descendants::move_would_cycle(&mut ***tx, &block_id, pid).await? {
             return Err(AppError::Validation("cycle detected".into()));
         }
 
@@ -162,7 +199,7 @@ pub async fn move_block_inner(
             pid,
             block_id
         )
-        .fetch_one(&mut **tx)
+        .fetch_one(&mut ***tx)
         .await?;
 
         let parent_depth = depths.parent_depth;
@@ -177,7 +214,7 @@ pub async fn move_block_inner(
 
     // 4. Append to op_log within transaction
     let op_record = op_log::append_local_op_in_tx(
-        &mut tx,
+        &mut *tx,
         device_id,
         OpPayload::MoveBlock(move_payload.clone()),
         crate::db::now_ms(),
@@ -197,7 +234,7 @@ pub async fn move_block_inner(
     let old_owning_page: Option<String> =
         sqlx::query_scalar::<_, Option<String>>("SELECT page_id FROM blocks WHERE id = ?")
             .bind(&block_id)
-            .fetch_optional(&mut **tx)
+            .fetch_optional(&mut ***tx)
             .await?
             .flatten();
 
@@ -212,7 +249,7 @@ pub async fn move_block_inner(
     let old_parent_id: Option<String> =
         sqlx::query_scalar::<_, Option<String>>("SELECT parent_id FROM blocks WHERE id = ?")
             .bind(&block_id)
-            .fetch_optional(&mut **tx)
+            .fetch_optional(&mut ***tx)
             .await?
             .flatten();
     let same_parent_reorder = old_parent_id == new_parent_id;
@@ -248,7 +285,7 @@ pub async fn move_block_inner(
     //    engine-absent handling the sync `ApplyOp` path already relies on, and
     //    preserves the #1323 convergence (parent_id updated either way; position
     //    dense on the engine path, provisional on the fallback).
-    crate::materializer::apply_move_block_via_loro(&mut tx, device_id, &move_payload).await?;
+    crate::materializer::apply_move_block_via_loro(&mut *tx, device_id, &move_payload).await?;
 
     // #664: recompute `page_id` AND `space_id` for the moved subtree,
     // synchronously. The async `RebuildPageIds` task chains
@@ -256,7 +293,7 @@ pub async fn move_block_inner(
     // commit, so both columns must be re-derived in-tx here. Shared helper
     // (the single source of truth for this chain) lives in
     // `crate::commands::block_cleanup`.
-    crate::commands::block_cleanup::rederive_page_and_space_ids(&mut tx, &block_id).await?;
+    crate::commands::block_cleanup::rederive_page_and_space_ids(&mut *tx, &block_id).await?;
 
     // #1392: tag-inheritance recompute for the moved subtree is now owned by
     // `apply_move_block_via_loro` (step 5 above) — and by its engine-absent
@@ -305,16 +342,17 @@ pub async fn move_block_inner(
                    AND b.page_id IS NOT NULL",
         )
         .bind(&block_id)
-        .fetch_all(&mut **tx)
+        .fetch_all(&mut ***tx)
         .await?;
         affected.extend(rows);
         let affected: Vec<String> = affected.into_iter().collect();
-        crate::materializer::recompute_pages_cache_counts_for_pages(&mut tx, &affected).await?;
+        crate::materializer::recompute_pages_cache_counts_for_pages(&mut *tx, &affected).await?;
     }
 
-    // 6. Commit + dispatch background cache tasks (fire-and-forget).
+    // 6. Enqueue the op for background dispatch. The CALLER's single
+    //    `commit_and_dispatch` drains every enqueued op in FIFO order (one op
+    //    for the single-move path, N for the batch path).
     tx.enqueue_background(op_record);
-    tx.commit_and_dispatch(materializer).await?;
 
     // 7. Return response. `new_position` is the provisional 1-based dense rank;
     // the frontend uses optimistic local splices (R5) and re-reads on navigation.
@@ -341,6 +379,112 @@ pub async fn move_block(
         ctx.device_id(),
         ctx.materializer(),
         block_id.into(),
+        new_parent_id.map(Into::into),
+        new_index,
+    )
+    .await
+    .map_err(sanitize_internal_error)
+}
+
+/// Atomically move an ORDERED list of block subtrees under a single new parent,
+/// landing them at consecutive slots starting at `new_index` (#2274).
+///
+/// This is the batched arity of [`move_block_inner`]: instead of the frontend
+/// firing N sequential `move_block` IPCs (each its own IMMEDIATE tx + writer-lock
+/// window) plus a full page reload, the multi-select drag issues ONE IPC that
+/// runs all moves inside ONE BEGIN IMMEDIATE transaction and returns the
+/// authoritative per-root parent/position so the frontend reconciles WITHOUT a
+/// blind `load()`.
+///
+/// Semantics mirror `create_blocks_batch`:
+///
+/// - **One tx, N ops:** each move runs through the shared [`move_block_in_tx`]
+///   helper, which appends one `MoveBlock` op to the op_log (so undo / sync
+///   convergence stay per-op — no new "batch move" op type is invented) and
+///   drives the same engine-apply + dense-rank reprojection path a single
+///   `move_block` uses. A single `commit_and_dispatch` at the end drains every
+///   enqueued op in order.
+/// - **#774 slot preservation IN-tx:** because each move applies to the engine +
+///   SQL synchronously before the next runs, block[k] parked at slot
+///   `new_index + k` is visible to block[k+1]'s move at slot `new_index + k + 1`,
+///   which drops it immediately after — an order-preserving contiguous run,
+///   identical to the old sequential single-move loop.
+/// - **All-or-nothing:** any per-move rejection (missing block/parent, cycle —
+///   target inside a moved subtree — or depth-cap violation) propagates via `?`,
+///   which drops the tx before commit and rolls the WHOLE batch back. Nothing
+///   moves. The cycle and depth checks are performed per move against the
+///   in-tx state, so a target that is a descendant of ANY moved block is caught.
+///
+/// **Ordering contract:** `block_ids` MUST already be in the desired destination
+/// order (the frontend sorts the selection by current document position first).
+///
+/// **Validation:** empty list → [`AppError::Validation`]; `block_ids.len()` over
+/// [`MAX_BATCH_BLOCK_IDS`](crate::commands::MAX_BATCH_BLOCK_IDS) →
+/// [`AppError::Validation`].
+///
+/// Returns one [`MoveResponse`] per moved root, in input order (1:1 with
+/// `block_ids`), carrying its new `parent_id` + provisional `position`.
+#[instrument(skip(pool, device_id, materializer), err)]
+pub async fn move_blocks_batch_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_ids: Vec<BlockId>,
+    new_parent_id: Option<BlockId>,
+    new_index: i64,
+) -> Result<Vec<MoveResponse>, AppError> {
+    if block_ids.is_empty() {
+        return Err(AppError::Validation(
+            "block_ids list cannot be empty".into(),
+        ));
+    }
+    ensure_batch_within_cap("block_ids", block_ids.len())?;
+
+    let new_parent_id = new_parent_id.map(BlockId::into_string);
+    // #400: `new_index` is a 0-based sibling slot; clamp a stray negative once
+    // (each per-move call re-clamps its own derived slot defensively).
+    let start_index = new_index.max(0);
+
+    let mut tx = CommandTx::begin_immediate(pool, "move_blocks_batch").await?;
+    let mut responses = Vec::with_capacity(block_ids.len());
+    for (k, id) in block_ids.into_iter().enumerate() {
+        // Consecutive destination slots: block[k] → slot `start_index + k`.
+        // In-tx, the previous move is already committed to the engine + SQL, so
+        // this slot is read against the post-prior-move state (#774 semantics).
+        // (`k` is bounded by `MAX_BATCH_BLOCK_IDS`, so the conversion is
+        // infallible in practice; saturate defensively rather than wrap.)
+        let slot = start_index.saturating_add(i64::try_from(k).unwrap_or(i64::MAX));
+        let response = move_block_in_tx(
+            &mut tx,
+            device_id,
+            id.into_string(),
+            new_parent_id.clone(),
+            slot,
+        )
+        .await?;
+        responses.push(response);
+    }
+    tx.commit_and_dispatch(materializer).await?;
+    Ok(responses)
+}
+
+/// Tauri command: batched intra-page reorder/reparent (#2274). See
+/// [`move_blocks_batch_inner`]. `block_ids` are moved, in the given order, under
+/// `new_parent_id` (a real block id, or `None` for top-level) at consecutive
+/// slots starting at the 0-based `new_index`.
+#[tauri::command]
+#[specta::specta]
+pub async fn move_blocks_batch(
+    ctx: State<'_, WriteCtx>,
+    block_ids: Vec<String>,
+    new_parent_id: Option<String>,
+    new_index: i64,
+) -> Result<Vec<MoveResponse>, AppError> {
+    move_blocks_batch_inner(
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
+        block_ids.into_iter().map(Into::into).collect(),
         new_parent_id.map(Into::into),
         new_index,
     )

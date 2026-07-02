@@ -747,6 +747,27 @@ export async function moveBlock(
   return unwrap(await commands.moveBlock(blockId, newParentId, newIndex))
 }
 
+/**
+ * #2274 — batched multi-select drag reparent/reorder. Moves the given block
+ * ids, IN ORDER, under `newParentId` (a real block id, or `null` for the page
+ * root) at consecutive slots starting at the 0-based `newIndex`. The whole
+ * batch runs in ONE backend IMMEDIATE transaction (N `MoveBlock` ops), so it
+ * replaces the old per-root `moveBlock` IPC loop + full page reload with a
+ * single IPC returning the authoritative per-root parent/position.
+ *
+ * `block_ids` MUST already be sorted by current document position (the store's
+ * `moveBlocks` does this) so the moved run preserves relative order at the
+ * destination.
+ *
+ */
+export async function moveBlocksBatch(
+  blockIds: string[],
+  newParentId: string | null,
+  newIndex: number,
+): Promise<MoveResponse[]> {
+  return unwrap(await commands.moveBlocksBatch(blockIds, newParentId, newIndex))
+}
+
 /** Associate a tag with a block. */
 export async function addTag(blockId: string, tagId: string): Promise<TagResponse> {
   return unwrap(await commands.addTag(blockId, tagId))
@@ -1565,6 +1586,28 @@ export async function undoPageOp(params: {
   undoDepth: number
 }): Promise<UndoResult> {
   return unwrap(await commands.undoPageOp(params.pageId, params.undoDepth))
+}
+
+/**
+ * #2190 — Undo an entire consecutive same-device, within-window undo group in
+ * a SINGLE IMMEDIATE transaction.
+ *
+ * Replaces the undo store's `findUndoGroup` + N × `undoPageOp` IPC loop (one
+ * IPC / one page-subtree CTE walk / one writer-lock acquisition per op — 20
+ * IPCs for a 20-op recurrence group) with ONE command. The backend resolves
+ * the page subtree + the group's op refs once, reverts them newest-first, and
+ * returns one `UndoResult` per reverted op (newest-first). An empty array means
+ * no group existed (seed op absent / no undoable ops).
+ *
+ * `depth` is 0-based (0 = seed at the most-recent undoable op, matching
+ * `findUndoGroup`); `windowMs` is the grouping window.
+ */
+export async function undoPageGroup(params: {
+  pageId: string
+  depth: number
+  windowMs: number
+}): Promise<UndoResult[]> {
+  return unwrap(await commands.undoPageGroup(params.pageId, params.depth, params.windowMs))
 }
 
 /**
