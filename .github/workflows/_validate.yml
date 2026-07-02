@@ -19,6 +19,10 @@ name: Validate (prek-equivalent)
 
 on:
   workflow_call:
+  # Manual runs from the Actions tab (e.g. re-validating main after an
+  # ecosystem change without pushing a commit). Reusable-only workflows
+  # get no "Run workflow" button — workflow_dispatch adds it.
+  workflow_dispatch:
 
 # Read-only by default. The workers only check out the code, run prek + the
 # full test suites, and upload the playwright report on failure (which uses
