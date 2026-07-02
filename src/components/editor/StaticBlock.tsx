@@ -6,36 +6,25 @@
  *
  * Inline tokens (block_link, tag_ref) are rendered as styled spans
  * with optional click-to-navigate (block links) and deleted decoration.
+ *
+ * StaticBlock is a thin dispatcher over three render concerns:
+ *   - {@link useRichContent}         — the rich-text tree (inline chips + block nodes)
+ *   - {@link StaticQueryBlock}       — `{{query …}}` blocks
+ *   - {@link StaticBlockAttachments} — attachments + PDF viewer + image lightbox/props
  */
 
 import { Paperclip } from 'lucide-react'
 import type React from 'react'
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { AttachmentRenderer } from '@/components/attachments/AttachmentRenderer'
-import {
-  DEFAULT_IMAGE_ALIGNMENT,
-  type ImageAlignment,
-} from '@/components/editor-toolbar/ImageResizeToolbar'
-import { QueryResult } from '@/components/query/QueryResult'
-import { ImageLightbox } from '@/components/rendering/ImageLightbox'
-import { renderRichContent } from '@/components/RichContentRenderer'
-import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useBatchAttachments } from '@/hooks/useBatchAttachments'
-import { useBatchProperties } from '@/hooks/useBatchProperties'
-import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
-import { logger } from '@/lib/logger'
-import { openUrl } from '@/lib/open-url'
-import { getBatchProperties, type PropertyRow } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
-import { useResolveStore } from '@/stores/resolve'
 
-// Lazy-load PdfViewerDialog to avoid bundling pdfjs-dist on initial load
-const LazyPdfViewerDialog = lazy(() =>
-  import('@/components/dialogs/PdfViewerDialog').then((m) => ({ default: m.PdfViewerDialog })),
-)
+import { StaticBlockAttachments } from './StaticBlockAttachments'
+import { StaticQueryBlock } from './StaticQueryBlock'
+import { useRichContent } from './useRichContent'
 
 export interface StaticBlockProps {
   blockId: string
@@ -70,52 +59,14 @@ function StaticBlockInner({
   onSelect,
 }: StaticBlockProps): React.ReactElement {
   const { t } = useTranslation()
-  // Keep callback refs so the expensive useMemo only re-runs when `content` changes.
-  // Callbacks don't affect the rendered output — they only affect click behaviour —
-  // so they can safely live in refs that are read at call-time.
-  const onNavigateRef = useRef(onNavigate)
-  onNavigateRef.current = onNavigate
-  const resolveBlockTitleRef = useRef(resolveBlockTitle)
-  resolveBlockTitleRef.current = resolveBlockTitle
-  const resolveTagNameRef = useRef(resolveTagName)
-  resolveTagNameRef.current = resolveTagName
-  const resolveBlockStatusRef = useRef(resolveBlockStatus)
-  resolveBlockStatusRef.current = resolveBlockStatus
-  const resolveTagStatusRef = useRef(resolveTagStatus)
-  resolveTagStatusRef.current = resolveTagStatus
-  const onTagClick = useTagClickHandler()
-  const onTagClickRef = useRef(onTagClick)
-  onTagClickRef.current = onTagClick
 
-  // The resolve callbacks are wired through stable refs (so the memo's
-  // identity doesn't churn even when the consumer passes a fresh closure
-  // each render), but they read a mutable cache. Subscribe to `version`
-  // (bumped by preload / set / clearAllForSpace) so the memo recomputes
-  // once the space-switch preload lands — otherwise inline page-link
-  // chips stay stuck on the `[[ULID]]` fallback after a switch.
-  //
-  // `onNavigate` is the only prop that ALSO affects the produced output
-  // (it gates a `undefined` vs wrapper-fn branch), so it's listed
-  // explicitly. The other resolve props feed unconditional wrappers and
-  // are intentionally captured via refs — listing them would invalidate
-  // the memo on every parent render and defeat the optimization.
-  const resolveVersion = useResolveStore((s) => s.version)
-  const richContent = useMemo(
-    () =>
-      content
-        ? renderRichContent(content, {
-            interactive: true,
-            onNavigate: onNavigate ? (id: string) => onNavigateRef.current?.(id) : undefined,
-            onTagClick: (id: string) => onTagClickRef.current(id),
-            resolveBlockTitle: (id) => resolveBlockTitleRef.current?.(id),
-            resolveTagName: (id) => resolveTagNameRef.current?.(id),
-            resolveBlockStatus: (id) => resolveBlockStatusRef.current?.(id) ?? 'active',
-            resolveTagStatus: (id) => resolveTagStatusRef.current?.(id) ?? 'active',
-          })
-        : null,
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolve* callbacks captured via refs (intentional perf optimization — see comment above); resolveVersion drives recomputation on cache updates
-    [content, onNavigate, resolveVersion],
-  )
+  const richContent = useRichContent(content, {
+    onNavigate,
+    resolveBlockTitle,
+    resolveTagName,
+    resolveBlockStatus,
+    resolveTagStatus,
+  })
 
   // StaticBlock half: read from the BatchAttachmentsProvider
   // mounted at the BlockTree level so we don't fire one
@@ -126,142 +77,7 @@ function StaticBlockInner({
   const batchAttachments = useBatchAttachments()
   const attachments = batchAttachments?.get(blockId) ?? []
   const attachmentsLoading = batchAttachments?.loading ?? false
-
-  // PDF viewer dialog state
-  const [pdfViewerOpen, setPdfViewerOpen] = useState(false)
-  const [pdfViewerUrl, setPdfViewerUrl] = useState('')
-  const [pdfViewerFilename, setPdfViewerFilename] = useState('')
-  // ULID of the attachment being viewed — lets the viewer persist an
-  // annotated copy and delete the original on save (#1452).
-  const [pdfViewerAttachmentId, setPdfViewerAttachmentId] = useState('')
-
-  // Image lightbox state. `images` is the full ordered set of image
-  // attachments in this block (#212 item 2 — enables prev/next nav); `index`
-  // points at the currently displayed one.
-  const [lightboxState, setLightboxState] = useState<{
-    images: { src: string; alt: string; fsPath: string; caption?: string | undefined }[]
-    index: number
-  } | null>(null)
-
-  // Image resize / alignment / caption state (#212 items 3 & 4). Alignment and
-  // caption ride the same per-block property mechanism as `image_width`
-  // (setProperty/getProperty) — no schema migration.
-  const [imageWidth, setImageWidth] = useState('100')
-  const [imageAlignment, setImageAlignment] = useState<ImageAlignment>(DEFAULT_IMAGE_ALIGNMENT)
-  const [imageCaption, setImageCaption] = useState('')
-  const [imageHovered, setImageHovered] = useState(false)
-
-  // Only fetch image properties when the block has image attachments
-  const hasImageAttachments =
-    !attachmentsLoading && attachments.some((a) => a.mime_type.startsWith('image/'))
-
-  // #2270 — image_width / image_alignment / image_caption come from the
-  // page-wide `BatchPropertiesProvider` mounted at the BlockTree level
-  // (mirrors the `useBatchAttachments` path above), so a gallery /
-  // journal week/month view no longer fires one `getBatchProperties([blockId])`
-  // IPC per image block — the page-wide batch already carries these rows.
-  //
-  // Freshness: the provider refetches whenever the `block:properties-changed`
-  // event fires (its `invalidationKey`) or the space switches, so an edit to
-  // width/alignment/caption re-syncs here with the same freshness as the old
-  // per-block mount fetch — a caption that arrives later still propagates as a
-  // fresh `imageCaption` prop update to AttachmentRenderer (#2214).
-  //
-  // Outside a provider (unit tests, isolated renders — StaticBlock's only
-  // production mount is under BlockTree, which mounts the provider), fall back
-  // to the single-block batched IPC (#543: one call for all three properties).
-  const batchProperties = useBatchProperties()
-  useEffect(() => {
-    if (!hasImageAttachments) return
-
-    const applyImageProps = (rows: readonly PropertyRow[]): void => {
-      const byKey = new Map(rows.map((r) => [r.key, r]))
-      const width = byKey.get('image_width')?.value_text
-      if (width) setImageWidth(width)
-      const align = byKey.get('image_alignment')?.value_text
-      if (align === 'left' || align === 'center' || align === 'right') {
-        setImageAlignment(align)
-      }
-      const caption = byKey.get('image_caption')?.value_text
-      if (caption != null) setImageCaption(caption)
-    }
-
-    // Provider path: read from the shared page-wide batch. Skip while the
-    // batch is (re)fetching so a mid-refetch render can't clobber an
-    // optimistic width/alignment/caption edit with stale rows; the effect
-    // re-runs (the context value identity changes) once fresh data lands.
-    if (batchProperties) {
-      if (batchProperties.loading) return
-      const rows = batchProperties.get(blockId)
-      if (rows == null) return
-      applyImageProps(rows)
-      return
-    }
-
-    // Fallback path (no provider): one batched IPC for all three image
-    // properties instead of three single-key getProperty round-trips.
-    let cancelled = false
-    getBatchProperties([blockId])
-      .then((byBlock) => {
-        if (cancelled) return
-        applyImageProps(byBlock[blockId] ?? [])
-      })
-      .catch((err) => {
-        logger.warn('StaticBlock', 'image property batch fetch failed', undefined, err)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [blockId, hasImageAttachments, batchProperties])
-
   const hasAttachments = !attachmentsLoading && attachments.length > 0
-
-  const handleLightboxOpen = useCallback(
-    (
-      image: { src: string; alt: string; fsPath: string; caption?: string | undefined },
-      images: { src: string; alt: string; fsPath: string; caption?: string | undefined }[],
-    ) => {
-      const index = Math.max(
-        0,
-        images.findIndex((img) => img.src === image.src),
-      )
-      setLightboxState({ images, index })
-    },
-    [],
-  )
-
-  const handleLightboxIndexChange = useCallback((index: number) => {
-    setLightboxState((prev) => (prev ? { ...prev, index } : prev))
-  }, [])
-
-  const handlePdfOpen = useCallback((url: string, filename: string, attachmentId: string) => {
-    // The PDF url is now a `blob:` object URL (asset protocol is
-    // disabled). Revoke any previously-opened blob URL before replacing it so
-    // we don't leak across successive opens.
-    setPdfViewerUrl((prev) => {
-      if (prev.startsWith('blob:')) URL.revokeObjectURL(prev)
-      return url
-    })
-    setPdfViewerFilename(filename)
-    setPdfViewerAttachmentId(attachmentId)
-    setPdfViewerOpen(true)
-  }, [])
-
-  // #1452 — after the viewer bakes annotations into a new attachment and
-  // deletes the original, refresh the block's attachment list so the new copy
-  // shows up (and the old one disappears) without a full reload.
-  const handlePdfSaved = useCallback(() => {
-    batchAttachments?.invalidate(blockId)
-  }, [batchAttachments, blockId])
-
-  // Revoke the PDF blob URL once the viewer closes (and on unmount) so the
-  // object URL created in AttachmentRenderer doesn't leak.
-  useEffect(() => {
-    if (pdfViewerOpen) return
-    if (!pdfViewerUrl.startsWith('blob:')) return
-    URL.revokeObjectURL(pdfViewerUrl)
-    setPdfViewerUrl('')
-  }, [pdfViewerOpen, pdfViewerUrl])
 
   // The outer wrapper is a passive container — no role, no
   // tabIndex, no keyboard handler. Inner controls (rich-content link/tag
@@ -284,56 +100,18 @@ function StaticBlockInner({
     [blockId, onFocus, onSelect],
   )
 
-  // Capture-phase handler used for query blocks. QueryResult's inner
-  // subtree is densely interactive (chevron toggle, edit-pencil, result
-  // items that navigate to their parent page, PageLink badges) and those
-  // inner handlers call `stopPropagation()`. That left no reliable
-  // bubble-phase click path for "click anywhere on the query block to
-  // re-enter edit mode" — a plain `.click()` on the block-static element
-  // would always land on a result item and never reach this wrapper.
-  //
-  // Running in the capture phase lets us eagerly focus the block for any
-  // non-interactive target (result item content, empty header area, card
-  // background), while still yielding the click to explicit `<button>` /
-  // `<a>` / `role="link"` elements when those are the actual target.
-  const handleQueryBlockClickCapture = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      const target = e.target as HTMLElement
-      // Let the chevron toggle, edit-query pencil, and PageLink badge
-      // handle their own clicks.
-      if (target.closest('button, a, [role="link"]')) return
-      // Otherwise treat the click as "focus this block" (or select, with
-      // modifier keys) and suppress the downstream item-level navigation
-      // that would otherwise send us away to a result's parent page.
-      e.preventDefault()
-      e.stopPropagation()
-      if ((e.ctrlKey || e.metaKey) && onSelect) onSelect(blockId, 'toggle')
-      else if (e.shiftKey && onSelect) onSelect(blockId, 'range')
-      else onFocus(blockId)
-    },
-    [blockId, onFocus, onSelect],
-  )
-
   // Detect {{query ...}} blocks and render QueryResult instead of the text
   if (content?.startsWith('{{query ') && content.endsWith('}}')) {
     const expression = content.slice(8, -2).trim()
     return (
-      // Passive container — no role/tabIndex; the inner subtree
-      // owns keyboard + focus. Click capture forwards bare-card clicks to
-      // onFocus while yielding to inner button/link targets.
-      <div
-        className="block-static w-full min-h-[1.75rem] rounded-md text-left text-sm [@media(pointer:coarse)]:min-h-[2.75rem]"
-        data-testid="block-static"
-        data-block-id={blockId}
-        onClickCapture={handleQueryBlockClickCapture}
-      >
-        <QueryResult
-          expression={expression}
-          blockId={blockId}
-          onNavigate={onNavigate ? (pageId) => onNavigate(pageId) : undefined}
-          resolveBlockTitle={resolveBlockTitle}
-        />
-      </div>
+      <StaticQueryBlock
+        blockId={blockId}
+        expression={expression}
+        onFocus={onFocus}
+        onNavigate={onNavigate}
+        resolveBlockTitle={resolveBlockTitle}
+        onSelect={onSelect}
+      />
     )
   }
 
@@ -384,59 +162,7 @@ function StaticBlockInner({
           </Tooltip>
         )}
       </div>
-      {hasAttachments && (
-        <AttachmentRenderer
-          blockId={blockId}
-          attachments={attachments}
-          imageWidth={imageWidth}
-          imageHovered={imageHovered}
-          imageAlignment={imageAlignment}
-          imageCaption={imageCaption}
-          onImageHoveredChange={setImageHovered}
-          onImageWidthChange={setImageWidth}
-          onImageAlignmentChange={setImageAlignment}
-          onImageCaptionChange={setImageCaption}
-          onLightboxOpen={handleLightboxOpen}
-          onPdfOpen={handlePdfOpen}
-        />
-      )}
-      {/* Gate the lazy dialog on `pdfViewerOpen` so React.lazy only triggers
-          the dynamic import (pulling in the ~450KB pdfjs-dist chunk + its
-          module-scope side effects) when the user actually opens a PDF — not on
-          every static-block render. The dialog tears down its document/viewer on
-          close, so unmounting here loses no state we need to keep (#2035). */}
-      {pdfViewerOpen && (
-        <Suspense fallback={<Spinner />}>
-          <LazyPdfViewerDialog
-            open={pdfViewerOpen}
-            onOpenChange={setPdfViewerOpen}
-            fileUrl={pdfViewerUrl}
-            filename={pdfViewerFilename}
-            blockId={blockId}
-            attachmentId={pdfViewerAttachmentId}
-            onSaved={handlePdfSaved}
-          />
-        </Suspense>
-      )}
-      {lightboxState && (
-        <ImageLightbox
-          images={lightboxState.images.map((img) => ({
-            src: img.src,
-            alt: img.alt,
-            caption: img.caption,
-          }))}
-          index={lightboxState.index}
-          onIndexChange={handleLightboxIndexChange}
-          open={!!lightboxState}
-          onOpenChange={(open) => {
-            if (!open) setLightboxState(null)
-          }}
-          onOpenExternal={() => {
-            const current = lightboxState.images[lightboxState.index]
-            if (current) openUrl(current.fsPath)
-          }}
-        />
-      )}
+      {hasAttachments && <StaticBlockAttachments blockId={blockId} attachments={attachments} />}
     </>
   )
 }
