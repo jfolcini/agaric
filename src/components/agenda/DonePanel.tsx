@@ -7,7 +7,6 @@
  * a `t('donePanel.loadMore')` button.
  */
 
-import { useVirtualizer } from '@tanstack/react-virtual'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -30,10 +29,10 @@ import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useKeyboardNavigableList } from '@/hooks/useKeyboardNavigableList'
 import { usePaginatedQuery } from '@/hooks/usePaginatedQuery'
+import { useVirtualizedGroupedRows } from '@/hooks/useVirtualizedGroupedRows'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
-import type { BlockRow } from '@/lib/tauri'
 import { batchResolve, queryByProperty } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
@@ -161,75 +160,25 @@ export function DonePanel({
     { homeEnd: true, pageUpDown: true, resetKey: date },
   )
 
-  // ── Virtualization (perf-review Tier 2 #6, 2026-05-14) ─────────────
-  // The grouped panel is flattened into a single row list of
-  // `{ kind: 'group-header' | 'item', ... }` so the virtualizer can
-  // drop offscreen groups in their entirety instead of mounting every
-  // sub-list. `flatItemIndex` threads each item row back to the
-  // `flatItems` array used by keyboard navigation.
-  type VirtualRow =
-    | { kind: 'group-header'; key: string; pageId: string; title: string; count: number }
-    | { kind: 'item'; key: string; block: BlockRow; flatItemIndex: number }
-
-  const virtualRows = useMemo<VirtualRow[]>(() => {
-    const rows: VirtualRow[] = []
-    let flatIdx = 0
-    for (const group of grouped) {
-      rows.push({
-        kind: 'group-header',
-        key: `header:${group.pageId}`,
-        pageId: group.pageId,
-        title: group.title,
-        count: group.items.length,
-      })
-      for (const block of group.items) {
-        rows.push({
-          kind: 'item',
-          key: block.id,
-          block,
-          flatItemIndex: flatIdx++,
-        })
-      }
-    }
-    return rows
-  }, [grouped])
-
+  // ── Virtualization (perf-review Tier 2 #6, 2026-05-14; #2252) ──────
+  // Shared grouped-list scaffolding: `useVirtualizedGroupedRows` flattens
+  // the grouped panel into header/item rows so the virtualizer can drop
+  // offscreen groups in their entirety instead of mounting every
+  // sub-list, threads `flatItemIndex` back to the keyboard-nav
+  // `flatItems` array, and owns the focused-row scroll-into-view effect.
   const scrollParentRef = useRef<HTMLDivElement>(null)
 
-  // Header rows (~32px = SectionGroupHeader text + padding); item rows
-  // (~44px = BlockListItem default + touch min-h-11). `measureElement`
-  // corrects to actual height after first paint.
-  const estimateSize = useCallback(
-    (index: number) => {
-      const row = virtualRows[index]
-      if (row?.kind === 'group-header') return 32
-      return 44
-    },
-    [virtualRows],
-  )
-
-  const virtualizer = useVirtualizer({
-    count: virtualRows.length,
-    getScrollElement: () => scrollParentRef.current,
-    estimateSize,
-    overscan: 5,
-    getItemKey: (index) => virtualRows[index]?.key ?? index,
+  const { virtualRows, virtualizer } = useVirtualizedGroupedRows({
+    groups: grouped,
+    getGroupKey: (g) => g.pageId,
+    getGroupItems: (g) => g.items,
+    // Header rows ~32px (SectionGroupHeader text + padding); item rows
+    // ~44px (BlockListItem default + touch min-h-11).
+    headerHeight: 32,
+    itemHeight: 44,
+    focusedIndex,
+    scrollParentRef,
   })
-
-  const flatToVirtualIndex = useMemo(() => {
-    const map: number[] = []
-    virtualRows.forEach((row, idx) => {
-      if (row.kind === 'item') map[row.flatItemIndex] = idx
-    })
-    return map
-  }, [virtualRows])
-
-  useEffect(() => {
-    if (focusedIndex < 0) return
-    const idx = flatToVirtualIndex[focusedIndex]
-    if (idx == null) return
-    virtualizer.scrollToIndex(idx, { align: 'auto' })
-  }, [focusedIndex, virtualizer, flatToVirtualIndex])
 
   const headerLabel =
     totalCount === 1 ? t('donePanel.headerOne') : t('donePanel.header', { count: totalCount })
@@ -353,11 +302,11 @@ export function DonePanel({
                             >
                               <SectionGroupHeader className="done-panel-group-header bg-muted">
                                 <PageLink
-                                  pageId={row.pageId}
-                                  title={row.title}
+                                  pageId={row.group.pageId}
+                                  title={row.group.title}
                                   className="hover:underline"
                                 />{' '}
-                                ({row.count})
+                                ({row.group.items.length})
                               </SectionGroupHeader>
                             </li>
                           )
@@ -366,7 +315,7 @@ export function DonePanel({
                         // per-block handlers from `getRowHandlers` so
                         // `BlockListItem.memo` is not defeated by fresh
                         // inline-arrow identities.
-                        const block = row.block
+                        const block = row.item
                         const rowHandlers = getRowHandlers(block)
                         return (
                           <BlockListItem

@@ -206,12 +206,17 @@ describe('DonePanel', () => {
 
     await screen.findByText(t('donePanel.header', { count: 3 }))
 
-    // Group headers should show page titles with counts, sorted alphabetically
+    // Group headers should show page titles with counts, sorted alphabetically.
+    // Page titles land via a separate async `batchResolve` state update that
+    // the header-count await above does NOT cover, so poll — asserted
+    // synchronously this races to "Untitled (2)" under scheduling jitter.
     const section = screen.getByLabelText(t('donePanel.completedItems'))
-    const groupHeaders = section.querySelectorAll('.done-panel-group-header')
-    expect(groupHeaders).toHaveLength(2)
-    expect(groupHeaders[0]).toHaveTextContent('Alpha Page (2)')
-    expect(groupHeaders[1]).toHaveTextContent('Beta Page (1)')
+    await waitFor(() => {
+      const groupHeaders = section.querySelectorAll('.done-panel-group-header')
+      expect(groupHeaders).toHaveLength(2)
+      expect(groupHeaders[0]).toHaveTextContent('Alpha Page (2)')
+      expect(groupHeaders[1]).toHaveTextContent('Beta Page (1)')
+    })
   })
 
   // 4. Sort blocks by ID descending within groups
