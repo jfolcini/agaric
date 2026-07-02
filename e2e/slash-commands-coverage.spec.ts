@@ -156,7 +156,7 @@ test.describe('Slash structural inserts', () => {
 
     await expect(editor.locator('ol li')).toBeVisible()
 
-    await saveBlock(page)
+    await saveBlock(page, 'Escape')
     await expect(firstStatic(page).locator('ol')).toBeVisible()
     await expect(firstStatic(page).locator('ol li')).toContainText('first item')
 

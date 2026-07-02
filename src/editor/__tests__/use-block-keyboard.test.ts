@@ -2,6 +2,8 @@ import { renderHook } from '@testing-library/react'
 import { Editor } from '@tiptap/core'
 import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
 import Document from '@tiptap/extension-document'
+import { BulletList } from '@tiptap/extension-list'
+import ListItem from '@tiptap/extension-list-item'
 import Paragraph from '@tiptap/extension-paragraph'
 import { Table } from '@tiptap/extension-table'
 import { TableCell } from '@tiptap/extension-table-cell'
@@ -1511,6 +1513,68 @@ describe('#725 — node-type guards (code block / table)', () => {
     })
   })
 
+  describe('Enter inside a pasted list (#2276)', () => {
+    function makeListEditor(): { editor: Editor; cleanup: () => void } {
+      const element = document.createElement('div')
+      document.body.append(element)
+      const editor = new Editor({
+        element,
+        extensions: [Document, Paragraph, Text, BulletList, ListItem],
+        content: {
+          type: 'doc',
+          content: [
+            {
+              type: 'bulletList',
+              content: [
+                {
+                  type: 'listItem',
+                  content: [{ type: 'paragraph', content: [{ type: 'text', text: 'one' }] }],
+                },
+                {
+                  type: 'listItem',
+                  content: [{ type: 'paragraph', content: [{ type: 'text', text: 'two' }] }],
+                },
+              ],
+            },
+          ],
+        },
+      })
+      return {
+        editor,
+        cleanup: () => {
+          editor.destroy()
+          element.remove()
+        },
+      }
+    }
+
+    it('is NOT intercepted by the block rule; the real keymap splits the list item', () => {
+      const { editor, cleanup } = makeListEditor()
+      try {
+        editor.commands.setTextSelection(4) // inside the first list item's "one"
+        expect(editor.isActive('listItem')).toBe(true)
+        const before = editor.state.doc.firstChild?.childCount ?? 0
+
+        // 1. Capture-phase wrapper must yield (no flush, no preventDefault).
+        const cbs = makeCallbacks()
+        const event = makeEvent('Enter')
+        handleBlockKeyDown(event, editor, cbs)
+        expect(event.preventDefault).not.toHaveBeenCalled()
+        expect(cbs._calls['onEnterSave']).toBeUndefined()
+
+        // 2. Real keymap: splitListItem adds a new item INSIDE the list, so the
+        // pasted multi-item list gains an item instead of flushing the block.
+        expect(dispatchKeydown(editor, 'Enter')).toBe(true)
+        expect(editor.state.doc.firstChild?.type.name).toBe('bulletList')
+        expect(editor.state.doc.firstChild?.childCount).toBe(before + 1)
+        // Still a single top-level block — no sibling block was created.
+        expect(editor.state.doc.childCount).toBe(1)
+      } finally {
+        cleanup()
+      }
+    })
+  })
+
   describe('plain paragraphs are unaffected (control)', () => {
     it('Enter in a paragraph still flushes via onEnterSave (real editor)', () => {
       const element = document.createElement('div')
@@ -1554,6 +1618,20 @@ describe('#725 — node-type guards (code block / table)', () => {
       expect(cbs._calls['onEnterSave']).toBeUndefined()
       expect(cbs._calls['onDeleteBlock']).toBeUndefined()
       expect(cbs._calls['onMergeWithPrev']).toBeUndefined()
+    })
+
+    it('mock editor reporting listItem suppresses Enter but NOT Backspace (#2276)', () => {
+      const editor: EditorLike = {
+        ...makeEditor({ from: 1, to: 1, isEmpty: true }),
+        isActive: (name: string) => name === 'listItem',
+      }
+      const cbs = makeCallbacks()
+      handleBlockKeyDown(makeEvent('Enter'), editor, cbs)
+      handleBlockKeyDown(makeEvent('Backspace'), editor, cbs)
+      // Enter defers to ProseMirror (splitListItem) — the block rule stays out.
+      expect(cbs._calls['onEnterSave']).toBeUndefined()
+      // Backspace is intentionally NOT list-guarded — block delete still fires.
+      expect(cbs._calls['onDeleteBlock']).toBe(1)
     })
   })
 })

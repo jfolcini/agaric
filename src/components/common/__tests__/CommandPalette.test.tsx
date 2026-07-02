@@ -524,12 +524,19 @@ describe('CommandPalette — partitioned query', () => {
       expect(screen.getByTestId('palette-page-header-PAGE_FRESH')).toBeInTheDocument()
     })
 
-    // Release the stale promise late — its response carries the older
-    // generation counter and must NOT appear in the UI.
+    // Release the stale promise. Anchor the flush to the promise the guard
+    // itself awaits — `await firstPromise` settles the response chain
+    // deterministically — instead of a fixed real-timer window that could pass
+    // for the wrong reason if a reintroduced stale render flushed later. Its
+    // response carries the older generation counter and must NOT appear.
     await act(async () => {
       firstResolve(partitionedResp([makePageRow('PAGE_STALE', 'Stale')], []))
-      await new Promise((r) => setTimeout(r, 30))
+      await firstPromise
     })
+    await act(async () => {})
+    // Positive settle signal: the FRESH result is still the one shown…
+    expect(screen.getByTestId('palette-page-header-PAGE_FRESH')).toBeInTheDocument()
+    // …and the stale response never rendered.
     expect(screen.queryByTestId('palette-page-header-PAGE_STALE')).toBeNull()
   })
 
@@ -573,14 +580,20 @@ describe('CommandPalette — partitioned query', () => {
     // The cleared keystroke fired no new IPC.
     expect(mockedSearchBlocksPartitioned).toHaveBeenCalledTimes(1)
 
-    // Release the in-flight response late — its generation was
-    // invalidated by the clear, so it must NOT repopulate the list.
+    // Release the in-flight response. Anchor the flush to the promise the guard
+    // awaits (`await firstPromise`) rather than a fixed real-timer window that
+    // could pass for the wrong reason if a reintroduced stale render flushed
+    // later. Its generation was invalidated by the clear, so it must NOT
+    // repopulate the list.
     await act(async () => {
       firstResolve(partitionedResp([makePageRow('PAGE_STALE', 'Stale')], []))
-      await new Promise((r) => setTimeout(r, 30))
+      await firstPromise
     })
-    expect(screen.queryByTestId('palette-page-header-PAGE_STALE')).toBeNull()
+    await act(async () => {})
+    // Positive settle signal: the cleared empty-state stays stable (no shimmer)
+    // and the stale response never repopulated the list.
     expect(screen.queryByTestId('palette-loading-shimmer')).toBeNull()
+    expect(screen.queryByTestId('palette-page-header-PAGE_STALE')).toBeNull()
   })
 
   it('does not repopulate stale results after a mid-flight mode switch (#736)', async () => {

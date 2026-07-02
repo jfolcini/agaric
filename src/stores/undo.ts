@@ -341,14 +341,26 @@ export const useUndoStore = create<UndoStore>((set, get) => {
           redoneCount++
         }
 
-        // Pop the group size after at least one successful redo
+        // Reconcile the group-size accounting for what actually redid. A full
+        // group (redoneCount === groupSize) pops its entry. On a PARTIAL redo
+        // (a mid-group `performSingleRedo` failure rolled the remaining ops
+        // back onto the redo stack), keep a smaller residual entry equal to the
+        // ops still pending, so a later redo replays exactly those — rather
+        // than dropping the whole entry and orphaning `redoStack` refs from
+        // their group accounting (which would break the
+        // `sum(redoGroupSizes) <= redoStack.length` pairing the undo path
+        // relies on).
         if (redoneCount > 0 && pageState.redoGroupSizes.length > 0) {
+          const residual = groupSize - redoneCount
           set((state) => ({
-            pages: setPageState(state.pages, pageId, (current) =>
-              current && current.redoGroupSizes.length > 0
-                ? { ...current, redoGroupSizes: current.redoGroupSizes.slice(0, -1) }
-                : current,
-            ),
+            pages: setPageState(state.pages, pageId, (current) => {
+              if (!current || current.redoGroupSizes.length === 0) return current
+              const trimmed = current.redoGroupSizes.slice(0, -1)
+              return {
+                ...current,
+                redoGroupSizes: residual > 0 ? [...trimmed, residual] : trimmed,
+              }
+            }),
           }))
         }
 

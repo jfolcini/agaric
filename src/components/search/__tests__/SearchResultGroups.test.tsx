@@ -602,4 +602,22 @@ describe('groupResultsByPage', () => {
     expect(groups[0]?.page_title).toBe('My Page')
     expect(groups[0]?.has_page_name_match).toBe(true)
   })
+
+  it('adopts the in-band page name when a content row precedes the page row (#2276)', () => {
+    // A content row for PAGE_X arrives first; the title map has no entry yet
+    // (async resolve pending), so the group seeds with page_title = null. The
+    // page row (block_type 'page', id === page_id) then merges into that group.
+    const rows = [
+      makeRow({ id: 'C1', page_id: 'PAGE_X' }),
+      makeRow({ id: 'PAGE_X', block_type: 'page', content: 'Resolved Name', page_id: 'PAGE_X' }),
+    ]
+    const groups = groupResultsByPage(rows, new Map())
+    expect(groups).toHaveLength(1)
+    expect(groups[0]?.page_id).toBe('PAGE_X')
+    expect(groups[0]?.has_page_name_match).toBe(true)
+    // Without the fix, page_title stays null (only has_page_name_match flips);
+    // the header would fall back to the untitled label despite the name being
+    // present in-band.
+    expect(groups[0]?.page_title).toBe('Resolved Name')
+  })
 })

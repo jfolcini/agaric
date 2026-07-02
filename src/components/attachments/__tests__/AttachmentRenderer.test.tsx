@@ -365,6 +365,50 @@ describe('AttachmentRenderer', () => {
     expect(createSpy).toHaveBeenCalled()
   })
 
+  // #2275 — the blob object URL must be revoked on a LATER tick, not on the
+  // synchronous line after `anchor.click()`. On WebKitGTK / WKWebView the
+  // download can start asynchronously, so a synchronous revoke races (and can
+  // abort) it. Assert the revoke is deferred: pending after the download runs,
+  // fired only once the timer queue drains.
+  it('defers the object-URL revoke to a later tick so async downloads are not aborted (#2275)', async () => {
+    mockedReadAttachment.mockResolvedValue(new Uint8Array([1, 2, 3]))
+    vi.useFakeTimers()
+    try {
+      render(
+        <AttachmentRenderer
+          {...baseProps}
+          attachments={[
+            makeAttachment({
+              id: 'att-defer',
+              filename: 'file.bin',
+              fs_path: 'attachments/att-defer',
+              mime_type: 'application/octet-stream',
+              size_bytes: 3,
+            }),
+          ]}
+        />,
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Open file file.bin' }))
+      // Flush the readAttachment promise + triggerDownload's synchronous work
+      // (blob URL create + anchor click) WITHOUT draining the timer queue.
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(createSpy).toHaveBeenCalled()
+      // The revoke is scheduled (setTimeout), not yet executed.
+      expect(revokeSpy).not.toHaveBeenCalled()
+      // Draining the timer queue fires the deferred revoke.
+      await act(async () => {
+        await vi.runAllTimersAsync()
+      })
+      expect(revokeSpy).toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   // ---- #1451: inline rich-text preview for .md / text attachments ----
 
   describe('markdown / text attachment inline preview (#1451)', () => {

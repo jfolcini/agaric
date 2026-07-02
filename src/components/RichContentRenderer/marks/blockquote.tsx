@@ -63,7 +63,13 @@ function renderCalloutBlock(
   children: React.ReactNode[],
   key: string,
 ): React.ReactElement {
-  const config = CALLOUT_CONFIG[calloutType] ?? CALLOUT_CONFIG['note']
+  // #2275 — the parser accepts any `\w+` as a callout type (`[!frobnicate]`),
+  // but only the five configured types have a CALLOUT_CONFIG entry and a
+  // `callout.<type>` i18n string. Resolve an unknown type to `note` for BOTH
+  // the visual config AND the header label so a missing translation key never
+  // surfaces to the user as the raw `callout.<type>` string.
+  const knownType = Object.hasOwn(CALLOUT_CONFIG, calloutType) ? calloutType : 'note'
+  const config = CALLOUT_CONFIG[knownType] ?? CALLOUT_CONFIG['note']
   if (!config) return <blockquote key={key}>{children}</blockquote>
   const CalloutIcon = config.icon
   return (
@@ -75,7 +81,7 @@ function renderCalloutBlock(
     >
       <div className={cn('flex items-center gap-1.5 font-semibold text-sm mb-1', config.textClass)}>
         <CalloutIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
-        <span>{i18n.t(`callout.${calloutType}`)}</span>
+        <span>{i18n.t(`callout.${knownType}`)}</span>
       </div>
       <div className="text-foreground">{children}</div>
     </blockquote>

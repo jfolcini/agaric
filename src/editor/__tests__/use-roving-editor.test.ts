@@ -1096,6 +1096,44 @@ describe('useRovingEditor integration (renderHook)', () => {
     unmountHook()
   })
 
+  // #2275 — mount() parses + replaces the doc BEFORE committing the identity
+  // refs, guarded. If replaceDocSilently throws (schema-invalid JSON →
+  // editor.schema.nodeFromJSON), the aborted mount must NOT advance the refs;
+  // otherwise the editor keeps the OLD block's doc while the refs name the NEW
+  // block and the next flush overwrites it under the wrong id.
+  it('#2275 — a throwing replaceDocSilently leaves identity refs unadvanced', async () => {
+    const { result, unmount: unmountHook } = await setup()
+
+    // Mount a valid block so the refs point at it.
+    act(() => {
+      result.current.mount('block-good', 'good content')
+    })
+    expect(result.current.activeBlockId).toBe('block-good')
+    expect(result.current.originalMarkdown).toBe('good content')
+
+    // Force the NEXT parse to return schema-invalid JSON so
+    // replaceDocSilently's nodeFromJSON throws during mount.
+    const mockedParse = vi.mocked(parse)
+    mockedParse.mockReturnValueOnce({
+      type: 'doc',
+      content: [{ type: 'nonexistentNodeType' }],
+    } as never)
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    act(() => {
+      result.current.mount('block-bad', 'bad content')
+    })
+
+    // The aborted mount kept the prior block's identity intact.
+    expect(result.current.activeBlockId).toBe('block-good')
+    expect(result.current.originalMarkdown).toBe('good content')
+    expect(warnSpy).toHaveBeenCalled()
+
+    warnSpy.mockRestore()
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
   // #752 — DeleteBlockOpts.cursorPlacement is forwarded to mount(); 'end'
   // must land the caret at the end of the document instead of the bare
   // focus() default.

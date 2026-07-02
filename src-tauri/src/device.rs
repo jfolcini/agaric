@@ -48,6 +48,34 @@ fn unexpected_create_error(e: std::io::Error) -> crate::error::AppError {
     e.into()
 }
 
+/// Best-effort removal of orphaned `<file_name>.tmp.*` sibling tempfiles.
+///
+/// #2275 — the create path writes a `<path>.tmp.<uuid>` sibling and relies on
+/// `fs::rename` to consume it. A crash between `create_new`/`write_all` and the
+/// rename orphans that tempfile, and because every invocation uses a fresh uuid
+/// suffix the code would otherwise never touch it again — orphans accumulate
+/// across crashed boots. A valid device-id is only ever the final renamed file,
+/// so any surviving sibling matching the temp prefix is dead weight. Called on
+/// the create path after the rename (which has already consumed *this* boot's
+/// tempfile). Failures are ignored: a leftover orphan is harmless, just untidy.
+fn sweep_orphaned_temp_files(config_path: &Path) {
+    let Some(parent) = config_path.parent() else {
+        return;
+    };
+    let Some(file_name) = config_path.file_name().and_then(|n| n.to_str()) else {
+        return;
+    };
+    let prefix = format!("{file_name}.tmp.");
+    let Ok(entries) = fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.file_name().to_string_lossy().starts_with(&prefix) {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
 /// Reads or generates a persistent device UUID.
 ///
 /// On first launch, a new UUID v4 is generated and materialized **atomically**
@@ -128,6 +156,10 @@ pub fn get_or_create_device_id(config_path: &Path) -> Result<String, crate::erro
             {
                 let _ = dir.sync_all();
             }
+            // #2275 — the rename above consumed this boot's tempfile; best-effort
+            // sweep any `<file_name>.tmp.*` orphans left by prior crashed boots
+            // so they cannot accumulate.
+            sweep_orphaned_temp_files(config_path);
             Ok(new_id)
         }
         Err(e) => Err(unexpected_create_error(e)),
@@ -432,15 +464,14 @@ mod tests {
         }
     }
 
-    /// I-Core-3: a stale tempfile from a hypothetical prior crashed boot
-    /// (whose suffix won't collide with the freshly-generated UUID this call
-    /// produces) must not block successful creation. The fresh UUID-suffixed
-    /// tempfile path is distinct, so `create_new` succeeds, the rename
-    /// completes, and the stale file is left untouched (we deliberately do
-    /// NOT silently overwrite stale temp content — a deterministic temp path
-    /// would be a regression).
+    /// I-Core-3 / #2275: a stale tempfile from a prior crashed boot (whose
+    /// suffix won't collide with the freshly-generated UUID this call produces)
+    /// must not block successful creation AND must be swept away. Each
+    /// successful create best-effort unlinks any `<file_name>.tmp.*` sibling, so
+    /// orphaned tempfiles cannot accumulate across crashed boots — a valid
+    /// device-id is only ever the final renamed file.
     #[test]
-    fn cleanup_stale_temp_file_or_distinct_temp_path_i_core_3() {
+    fn create_sweeps_orphaned_temp_files_i_core_3() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("device-id");
 
@@ -448,8 +479,7 @@ mod tests {
         // is intentionally non-UUID so the freshly-generated UUID-suffixed
         // tempfile this call uses cannot collide with it.
         let stale = dir.path().join("device-id.tmp.stale-from-prior-boot");
-        let stale_content = "garbage from a prior crashed boot";
-        std::fs::write(&stale, stale_content).unwrap();
+        std::fs::write(&stale, "garbage from a prior crashed boot").unwrap();
 
         let id = get_or_create_device_id(&path)
             .expect("a stale tempfile with a distinct suffix must not block creation");
@@ -466,17 +496,19 @@ mod tests {
             "final device-id must be the freshly-generated UUID, not the stale garbage"
         );
 
-        // The stale tempfile is left untouched: the implementation chose a
-        // fresh UUID-suffixed temp path that doesn't collide, and (correctly)
-        // does not silently overwrite arbitrary `*.tmp.*` siblings.
+        // #2275 — the orphaned tempfile is swept, not left to accumulate.
         assert!(
-            stale.exists(),
-            "stale tempfile with a non-colliding suffix should be untouched"
+            !stale.exists(),
+            "stale orphan tempfile should be removed by the create path"
         );
-        assert_eq!(
-            std::fs::read_to_string(&stale).unwrap(),
-            stale_content,
-            "stale tempfile content should be untouched"
-        );
+        // And no `<file_name>.tmp.*` sibling remains at all.
+        for entry in std::fs::read_dir(dir.path()).unwrap() {
+            let name = entry.unwrap().file_name();
+            assert!(
+                !name.to_string_lossy().starts_with("device-id.tmp."),
+                "no leftover tempfile should remain, found: {}",
+                name.to_string_lossy()
+            );
+        }
     }
 }

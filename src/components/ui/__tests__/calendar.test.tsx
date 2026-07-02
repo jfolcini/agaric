@@ -8,7 +8,8 @@
  *  - a11y compliance via axe audit
  */
 
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import * as React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -195,6 +196,113 @@ describe('Calendar', () => {
 
       const arg = onMonthClick.mock.calls[0]?.[0] as Date
       expect(arg.getMonth()).toBe(6) // July (June +2 -1)
+    })
+  })
+
+  // #745 (continued): caption affordance presence and week-number
+  // click-through. Consolidated here from the former
+  // src/components/__tests__/Calendar.test.tsx (the duplicated caption-click
+  // assertions were dropped — the click contract is covered by the block above).
+  // #2246: the pure Tailwind class-substring tests from that file ("hover
+  // bg-accent styling" and "coarse pointer overrides") were NOT carried over —
+  // jsdom applies neither `hover:` nor `[@media(pointer:coarse)]:` variants,
+  // so they only re-stated the source className; hover/touch sizing is a
+  // runtime concern for the e2e/visual layer.
+  describe('caption affordances & week numbers', () => {
+    it('renders the month caption as plain text when onMonthClick is not provided', () => {
+      render(<Calendar mode="single" defaultMonth={new Date(2026, 2, 1)} />)
+      expect(screen.queryByRole('button', { name: /go to monthly view/i })).not.toBeInTheDocument()
+    })
+
+    it('renders week numbers as clickable buttons when onWeekNumberClick provided', () => {
+      render(
+        <Calendar
+          mode="single"
+          defaultMonth={new Date(2026, 2, 1)}
+          showWeekNumber
+          weekStartsOn={1}
+          onWeekNumberClick={vi.fn()}
+        />,
+      )
+      const weekBtns = screen.getAllByRole('button', { name: /go to week \d+/i })
+      expect(weekBtns.length).toBeGreaterThanOrEqual(4)
+    })
+
+    it('fires onWeekNumberClick with the week number and its dates', async () => {
+      const user = userEvent.setup()
+      const onWeekNumberClick = vi.fn()
+      render(
+        <Calendar
+          mode="single"
+          defaultMonth={new Date(2026, 2, 1)}
+          showWeekNumber
+          weekStartsOn={1}
+          onWeekNumberClick={onWeekNumberClick}
+        />,
+      )
+      const weekBtns = screen.getAllByRole('button', { name: /go to week \d+/i })
+      await user.click(weekBtns[0] as HTMLElement)
+
+      expect(onWeekNumberClick).toHaveBeenCalledTimes(1)
+      expect(typeof onWeekNumberClick.mock.calls[0]?.[0]).toBe('number')
+      expect(Array.isArray(onWeekNumberClick.mock.calls[0]?.[1])).toBe(true)
+    })
+  })
+
+  // #1793: the `day` accent gate. In react-day-picker v10 the Day component
+  // renders the <td> cell and sets `aria-selected` on that SAME <td> — not on
+  // the inner DayButton. The old base class keyed the accent off a DESCENDANT
+  // match (`:has([aria-selected])`), which can never fire because the attribute
+  // lives on the cell itself. Consolidated here from the former
+  // src/components/ui/calendar.test.tsx (which sat outside __tests__/).
+  describe('day accent gate (#1793)', () => {
+    // A fixed, deterministic selected day so the grid always contains a cell
+    // carrying `aria-selected`. Mid-month keeps it off any outside-day edge.
+    const SELECTED = new Date(2026, 5, 15) // 2026-06-15
+
+    function renderCalendarWithSelectedDay() {
+      return render(<Calendar mode="single" selected={SELECTED} defaultMonth={SELECTED} />)
+    }
+
+    function getSelectedCell(container: HTMLElement): HTMLTableCellElement {
+      const cell = container.querySelector('td[aria-selected]')
+      expect(cell).not.toBeNull()
+      return cell as HTMLTableCellElement
+    }
+
+    it('places aria-selected on the <td> cell itself, not on a descendant', () => {
+      const { container } = renderCalendarWithSelectedDay()
+      const cell = getSelectedCell(container)
+
+      expect(cell.tagName).toBe('TD')
+      expect(cell.matches('[aria-selected]')).toBe(true)
+      expect(cell.querySelector('[aria-selected]')).toBeNull()
+    })
+
+    it('the own-attribute selector resolves while the old descendant selector does not', () => {
+      const { container } = renderCalendarWithSelectedDay()
+      const cell = getSelectedCell(container)
+
+      expect(cell.matches('[aria-selected]')).toBe(true)
+      expect(container.querySelector('td[aria-selected]')).toBe(cell)
+
+      expect(cell.matches(':has([aria-selected])')).toBe(false)
+      expect(container.querySelector('td:has([aria-selected])')).toBeNull()
+    })
+
+    it('keys the day base class off the own-attribute predicate', () => {
+      const { container } = renderCalendarWithSelectedDay()
+      const cell = getSelectedCell(container)
+
+      expect(cell.className).toContain('[&[aria-selected]]:bg-accent')
+      expect(cell.className).not.toContain('[&:has([aria-selected])]:bg-accent')
+    })
+
+    it('has no a11y violations with a selected day', async () => {
+      const { container } = renderCalendarWithSelectedDay()
+      await waitFor(async () => {
+        expect(await axe(container)).toHaveNoViolations()
+      })
     })
   })
 })

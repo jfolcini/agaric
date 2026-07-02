@@ -68,7 +68,17 @@ export function useTagResolution(
   // count as settled, so unknown names are looked up exactly once per
   // space (not re-fetched on every map identity change).
   useEffect(() => {
-    const names = tagNames.filter((n) => !tagNameMap.has(n.toLowerCase()))
+    // #2275 — dedupe by lowercased cache key before the fan-out. The cache
+    // keys on the lowercased name, so case-variant duplicates
+    // (`tag:#Foo tag:#foo`) both pass a naive `!has(lower)` filter and would
+    // fire one prefix-lookup IPC each for the same key. Collapse to one entry
+    // per key (keeping the first original spelling for the prefix lookup).
+    const byKey = new Map<string, string>()
+    for (const n of tagNames) {
+      const lower = n.toLowerCase()
+      if (!tagNameMap.has(lower) && !byKey.has(lower)) byKey.set(lower, n)
+    }
+    const names = [...byKey.values()]
     if (names.length === 0) return
     let cancelled = false
     Promise.all(

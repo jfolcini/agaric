@@ -76,27 +76,30 @@ function yearHolds(year: number, month: number, day: number): boolean {
 
 function defaultYear(month: number, day: number, today: Date): number {
   const currentYear = today.getFullYear()
-  // Guard against Feb 29 silently overflowing into March when the current year
+  // Pick the natural candidate year first: this year, or next year when the
+  // date has already passed this year.
+  const candidate = new Date(currentYear, month - 1, day)
+  const targetYear = candidate < today ? currentYear + 1 : currentYear
+  // Guard against Feb 29 silently overflowing into March when the CHOSEN year
   // is not a leap year: advance to the nearest future year that can hold it.
-  // Only do this for an otherwise-plausible month/day (month 1-12, day 1-31)
-  // that the current year can't hold (the sole real case being Feb 29); a
-  // genuinely impossible month/day is left for buildDate/isValidDate to reject,
-  // so we never loop unboundedly.
-  if (month >= 1 && month <= 12 && day >= 1 && day <= 31 && !yearHolds(currentYear, month, day)) {
+  // This keys off whether the *chosen* year can hold the date, not just the
+  // current year — otherwise, once Feb 29 has already passed in a leap year,
+  // `targetYear` rolls forward to the next (non-leap) year and the date is
+  // silently lost (buildDate rejects it). Only do this for an otherwise-
+  // plausible month/day (month 1-12, day 1-31) that the chosen year can't
+  // hold (the sole real case being Feb 29); a genuinely impossible month/day
+  // is left for buildDate/isValidDate to reject, so we never loop unboundedly.
+  if (month >= 1 && month <= 12 && day >= 1 && day <= 31 && !yearHolds(targetYear, month, day)) {
     // Scan a bounded window of future years for one that can hold the date.
     // The only legitimate case is Feb 29, and a leap year occurs at least once
     // every 8 years, so an 8-year window always finds it. Impossible dates
     // (Feb 30/31, Apr/Jun/Sep/Nov 31) hold in NO year, so the bound is what
     // prevents an infinite loop — we fall through and let isValidDate reject.
-    for (let year = currentYear + 1; year <= currentYear + 8; year += 1) {
+    for (let year = targetYear + 1; year <= targetYear + 8; year += 1) {
       if (yearHolds(year, month, day)) return year
     }
   }
-  const candidate = new Date(currentYear, month - 1, day)
-  if (candidate < today) {
-    return currentYear + 1
-  }
-  return currentYear
+  return targetYear
 }
 
 function tryRelative(input: string, today: Date): string | null {

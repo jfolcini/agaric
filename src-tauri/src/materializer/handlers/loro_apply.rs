@@ -536,11 +536,19 @@ pub(crate) async fn apply_purge_block_via_loro(
     p: &PurgeBlockPayload,
 ) -> Result<(), AppError> {
     let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+        super::sql_only_fallback::record(
+            "purge_block",
+            super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
+        );
         return purge_block_sql_cascade(conn, p).await;
     };
 
     {
         let Some(state) = crate::loro::shared::get() else {
+            super::sql_only_fallback::record(
+                "purge_block",
+                super::sql_only_fallback::SqlOnlyFallbackReason::EngineUninit,
+            );
             return purge_block_sql_cascade(conn, p).await;
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
@@ -602,6 +610,41 @@ pub(crate) async fn purge_block_sql_cascade(
     .bind(block_id)
     .execute(&mut *conn)
     .await?;
+    // #2275 — `descendants_cte_purge!()` caps at `depth < 100`, so a subtree
+    // deeper than 100 levels leaves the depth-101+ descendants OUT of
+    // `_purge_descendants`. Since `blocks.parent_id` is a deferred FK with no
+    // ON DELETE action, deleting the collected rows (whose deepest members are
+    // the depth-100 parents of those stragglers) would leave dangling
+    // `parent_id` references and abort the whole COMMIT opaquely under
+    // `PRAGMA defer_foreign_keys = ON`. Extend the set one generation at a time
+    // until it reaches a fixpoint, so the full subtree is consumed regardless
+    // of depth. In the common (shallow) case the first extension INSERT matches
+    // zero rows — everything within 100 levels is already collected — so this
+    // is a single cheap no-op query; it only loops when the cap was actually
+    // saturated, which we surface once as a `cascade_depth_saturated` warn.
+    let mut cascade_depth_saturated = false;
+    loop {
+        let added = sqlx::query(
+            "INSERT INTO _purge_descendants (id) \
+             SELECT b.id FROM blocks b \
+             WHERE b.parent_id IN (SELECT id FROM _purge_descendants) \
+               AND b.id NOT IN (SELECT id FROM _purge_descendants)",
+        )
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+        if added == 0 {
+            break;
+        }
+        cascade_depth_saturated = true;
+    }
+    if cascade_depth_saturated {
+        tracing::warn!(
+            block_id,
+            "purge cascade depth cap (100) saturated; extended the descendant \
+             set to the full subtree to avoid a dangling-FK COMMIT abort"
+        );
+    }
     sqlx::query(
         "DELETE FROM block_tags \
          WHERE block_id IN (SELECT id FROM _purge_descendants) \

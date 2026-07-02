@@ -12,11 +12,14 @@
 //! [`register_instruments`] registers the **observable counters** that read the
 //! existing process-global materializer atomics on each collection cycle, plus
 //! the two **latency histograms** (`record_ipc_duration` /
-//! `record_op_apply_duration`). The histograms are looked up lazily from
-//! `opentelemetry::global::meter`. `record_op_apply_duration` is unconditional:
-//! when no meter provider is registered (observability off — the default) the
-//! global default is a **no-op meter** and the call is a couple of moves into a
-//! no-op instrument. `record_ipc_duration` goes one step further and is gated on
+//! `record_op_apply_duration`), which it builds from the OWNED provider so they
+//! bind to the real meter regardless of global-set ordering (#2275 — a lazy
+//! `opentelemetry::global::meter` lookup on first record could otherwise pin the
+//! default no-op meter forever if a record fired before `init`).
+//! `record_op_apply_duration` is unconditional but no-ops until the histograms
+//! are installed: when no meter provider is registered (observability off — the
+//! default) the record helpers simply return. `record_ipc_duration` goes one
+//! step further and is gated on
 //! the process-global [`ipc_metrics_enabled`] flag, so its per-invoke `cmd`
 //! `KeyValue` allocation (and the matching command-name clone in the `lib.rs`
 //! invoke wrapper) are skipped entirely when off — the IPC hot path then pays
@@ -34,7 +37,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use opentelemetry::KeyValue;
-use opentelemetry::metrics::{Histogram, Meter, MeterProvider as _};
+use opentelemetry::metrics::{Histogram, MeterProvider as _};
 use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 
 use super::config::ObservabilityConfig;
@@ -136,15 +139,44 @@ pub fn register_instruments(meter_provider: &SdkMeterProvider) {
             observer.observe(crate::materializer::descendant_fanout_dropped_count(), &[]);
         })
         .build();
+
+    // #2275 — build the latency histograms from the OWNED provider here, right
+    // after it is installed, and cache them process-globally. Previously they
+    // were built lazily from `opentelemetry::global::meter` on first `record`;
+    // an unconditional `record_op_apply_duration` (or an enabled
+    // `record_ipc_duration`) that fired BEFORE `super::init` set the global
+    // provider would resolve the default **no-op** meter and pin it into the
+    // OnceLock forever, silently dropping every later metric. Installing from
+    // the real provider at registration time makes the record path independent
+    // of global-set ordering. `set` (not `get_or_init`) so a stray earlier
+    // resolve can never win; init runs once so the Err arm is unreachable.
+    let _ = HISTOGRAMS.set(Histograms {
+        ipc_duration: meter
+            .f64_histogram("agaric.ipc.duration")
+            .with_unit("ms")
+            .with_description(
+                "Wall-clock duration of one backend IPC command dispatch, in \
+                 milliseconds, attributed by command name.",
+            )
+            .build(),
+        op_apply_duration: meter
+            .f64_histogram("agaric.materializer.op_apply.duration")
+            .with_unit("ms")
+            .with_description(
+                "Wall-clock duration of one materializer per-op apply \
+                 transaction (apply_op), in milliseconds.",
+            )
+            .build(),
+    });
 }
 
-/// Lazily-built handles to the two latency histograms.
+/// Handles to the two latency histograms, built from the real provider by
+/// [`register_instruments`] at [`super::init`] time.
 ///
-/// Built on first use from `opentelemetry::global::meter`, so the record
-/// helpers below are unconditional + free when observability is off: the
-/// global default is a **no-op meter**, and a no-op `Histogram::record` is a
-/// couple of moves with no allocation or export. Building once and caching in a
-/// `OnceLock` avoids re-resolving the global provider on every record.
+/// #2275 — these are installed once from the OWNED [`SdkMeterProvider`], never
+/// resolved lazily from `opentelemetry::global::meter`. Until they are
+/// installed the record helpers below no-op, so a record that fires before the
+/// provider is set can neither export nor pin the global no-op meter.
 struct Histograms {
     /// `agaric.ipc.duration` — wall-clock duration of one IPC command dispatch,
     /// in milliseconds, attributed by `cmd` (the command name).
@@ -154,32 +186,16 @@ struct Histograms {
     op_apply_duration: Histogram<f64>,
 }
 
-/// Process-global lazy cache of the histogram handles. See [`Histograms`].
+/// Process-global cache of the histogram handles, installed once by
+/// [`register_instruments`] from the real provider. See [`Histograms`].
 static HISTOGRAMS: std::sync::OnceLock<Histograms> = std::sync::OnceLock::new();
 
-/// Obtain (building once) the cached histogram handles.
-fn histograms() -> &'static Histograms {
-    HISTOGRAMS.get_or_init(|| {
-        let meter: Meter = opentelemetry::global::meter(METER_SCOPE);
-        Histograms {
-            ipc_duration: meter
-                .f64_histogram("agaric.ipc.duration")
-                .with_unit("ms")
-                .with_description(
-                    "Wall-clock duration of one backend IPC command dispatch, in \
-                     milliseconds, attributed by command name.",
-                )
-                .build(),
-            op_apply_duration: meter
-                .f64_histogram("agaric.materializer.op_apply.duration")
-                .with_unit("ms")
-                .with_description(
-                    "Wall-clock duration of one materializer per-op apply \
-                     transaction (apply_op), in milliseconds.",
-                )
-                .build(),
-        }
-    })
+/// The installed histogram handles, or `None` until [`register_instruments`]
+/// builds them from the real provider at [`super::init`] time. The record
+/// helpers no-op while `None`, so a record before init can neither export nor
+/// pin the global no-op meter (#2275).
+fn histograms() -> Option<&'static Histograms> {
+    HISTOGRAMS.get()
 }
 
 /// Process-global "is the IPC-duration metric actually being recorded?" flag.
@@ -220,16 +236,20 @@ pub fn record_ipc_duration(ms: f64, cmd: &str) {
     if !ipc_metrics_enabled() {
         return;
     }
-    histograms()
-        .ipc_duration
-        .record(ms, &[KeyValue::new("cmd", cmd.to_owned())]);
+    if let Some(h) = histograms() {
+        h.ipc_duration
+            .record(ms, &[KeyValue::new("cmd", cmd.to_owned())]);
+    }
 }
 
 /// Record one materializer `apply_op` duration (milliseconds).
 ///
-/// Unconditional + free when observability is off (see [`record_ipc_duration`]).
+/// No-op until [`register_instruments`] installs the histograms at
+/// [`super::init`] time; free when observability is off (#2275).
 pub fn record_op_apply_duration(ms: f64) {
-    histograms().op_apply_duration.record(ms, &[]);
+    if let Some(h) = histograms() {
+        h.op_apply_duration.record(ms, &[]);
+    }
 }
 
 #[cfg(test)]
@@ -344,5 +364,48 @@ mod tests {
 
         // Leave the process-global flag off so other tests see the default.
         set_ipc_metrics_enabled(false);
+    }
+
+    /// #2275 — the latency histograms are built from the OWNED provider at
+    /// `register_instruments` time, not lazily from the global meter on first
+    /// record. So a `record_op_apply_duration` that fires with no real provider
+    /// installed is a safe no-op that CANNOT pin the no-op meter, and once
+    /// instruments are registered against a real provider the record reaches it.
+    /// Under the old lazy-from-global design the first record populated the
+    /// OnceLock with the no-op meter forever — this test asserts that no longer
+    /// happens (nextest runs each test in its own process, so the process-global
+    /// HISTOGRAMS OnceLock is fresh here).
+    #[test]
+    fn record_before_register_does_not_pin_noop_meter() {
+        // (a) Record BEFORE any provider/instruments are installed. This must
+        // NOT populate the histogram cache (the old design pinned the no-op
+        // meter here).
+        record_op_apply_duration(1.0);
+        assert!(
+            HISTOGRAMS.get().is_none(),
+            "a record before register_instruments must not populate (pin) the histogram cache",
+        );
+
+        // (b) Install a real provider + instruments, then record. The data
+        // point must reach the real exporter.
+        let exporter = InMemoryMetricExporter::default();
+        let reader = PeriodicReader::builder(exporter.clone()).build();
+        let provider = SdkMeterProvider::builder().with_reader(reader).build();
+        register_instruments(&provider);
+
+        record_op_apply_duration(12.5);
+        provider.force_flush().expect("force_flush");
+
+        let found = exporter
+            .get_finished_metrics()
+            .expect("finished metrics")
+            .iter()
+            .flat_map(opentelemetry_sdk::metrics::data::ResourceMetrics::scope_metrics)
+            .flat_map(opentelemetry_sdk::metrics::data::ScopeMetrics::metrics)
+            .any(|m| m.name() == "agaric.materializer.op_apply.duration");
+        assert!(
+            found,
+            "after register_instruments, record_op_apply_duration must reach the real provider",
+        );
     }
 }

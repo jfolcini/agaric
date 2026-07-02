@@ -39,6 +39,7 @@
 use std::path::Path;
 
 use super::exporter::{RollingFileSink, TRACES_SUBDIR, sanitize_inline};
+use crate::text_utils::truncate_at_char_boundary;
 
 /// Filename prefix for the frontend-span rolling file, kept distinct from the
 /// backend `agaric-traces.log` so the two streams rotate independently while
@@ -59,6 +60,24 @@ const MAX_SPANS_PER_CALL: usize = 512;
 /// runaway attribute list. Generous: real interaction spans carry well under
 /// this (a handful of ids/counts).
 const MAX_ATTRS_PER_SPAN: usize = 64;
+
+/// Per-field byte ceiling for every frontend-supplied span string field
+/// (`name`, ids, `status`, and each attribute `key`/`value`).
+///
+/// #2275 — [`MAX_SPANS_PER_CALL`] and [`MAX_ATTRS_PER_SPAN`] bound how MANY
+/// fields a call writes, but not how LONG any single field is; without a
+/// per-field cap one span could write an effectively unbounded line (`name` and
+/// each attr value pass verbatim through [`sanitize_inline`], which only escapes
+/// tabs/newlines). Generous: a real interaction label / id / count is far under
+/// this, mirroring how the log/bug-report paths cap their fields.
+const MAX_FIELD_BYTES: usize = 4096;
+
+/// Truncate one already-sanitized span field to [`MAX_FIELD_BYTES`] on a char
+/// boundary, appending a byte-count marker. Shares the UTF-8-safe cut with the
+/// logging / bug-report field caps ([`truncate_at_char_boundary`]).
+fn cap_field(s: String) -> String {
+    truncate_at_char_boundary(s, MAX_FIELD_BYTES, |n| format!("…[truncated {n} bytes]"))
+}
 
 /// One frontend-produced span, mirroring a W3C/OTLP span. Deserialized straight
 /// off the IPC boundary; the frontend tracer fills every field.
@@ -169,29 +188,33 @@ fn write_frontend_span(out: &mut String, span: &FrontendSpan) {
 
     let end = epoch_millis_to_rfc3339(span.end_unix_millis);
 
+    // #2275 — every frontend-supplied string field goes through `cap_field`,
+    // not just name/attrs: the id/status fields are plain IPC strings too, so
+    // an adversarial span could otherwise smuggle an unbounded line through
+    // e.g. `trace_id`. Legit ids (32/16 hex chars) are far below the cap.
     let parent = span
         .parent_span_id
         .as_deref()
-        .map_or_else(|| "-".to_owned(), sanitize_inline);
+        .map_or_else(|| "-".to_owned(), |v| cap_field(sanitize_inline(v)));
     let status = span
         .status
         .as_deref()
-        .map_or_else(|| "-".to_owned(), sanitize_inline);
+        .map_or_else(|| "-".to_owned(), |v| cap_field(sanitize_inline(v)));
 
     let _ = write!(
         out,
         "end={end}\tservice={service}\tname={name}\ttrace={trace}\tspan={span_id}\tparent={parent}\tdur_ms={dur_ms:.3}\tstatus={status}",
         service = FRONTEND_SERVICE_NAME,
-        name = sanitize_inline(&span.name),
-        trace = sanitize_inline(&span.trace_id),
-        span_id = sanitize_inline(&span.span_id),
+        name = cap_field(sanitize_inline(&span.name)),
+        trace = cap_field(sanitize_inline(&span.trace_id)),
+        span_id = cap_field(sanitize_inline(&span.span_id)),
     );
     for attr in span.attributes.iter().take(MAX_ATTRS_PER_SPAN) {
         let _ = write!(
             out,
             "\t{}={}",
-            sanitize_inline(&attr.key),
-            sanitize_inline(&attr.value)
+            cap_field(sanitize_inline(&attr.key)),
+            cap_field(sanitize_inline(&attr.value))
         );
     }
     out.push('\n');
@@ -369,6 +392,52 @@ mod tests {
         assert!(
             !contents.contains(&format!("\tattr{MAX_ATTRS_PER_SPAN}=x")),
             "an attribute beyond the cap is dropped"
+        );
+    }
+
+    /// #2275 — a single oversized field (name / attr value) is truncated to the
+    /// per-field byte cap on a char boundary, so one span cannot write an
+    /// unbounded line even when the batch/attr COUNT caps are respected.
+    #[test]
+    fn ingest_caps_oversized_field() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ingestor = build_frontend_ingestor(tmp.path(), true);
+
+        let mut span = sample_span("4bf92f3577b34da6a3ce929d0e0e4736");
+        span.name = "a".repeat(MAX_FIELD_BYTES * 4);
+        span.attributes = vec![FrontendSpanAttr {
+            key: "k".to_owned(),
+            value: "b".repeat(MAX_FIELD_BYTES * 4),
+        }];
+        ingestor.ingest(&[span]);
+
+        let mut contents = String::new();
+        for entry in std::fs::read_dir(tmp.path().join(TRACES_SUBDIR)).expect("read traces dir") {
+            let path = entry.expect("dir entry").path();
+            if path.is_file() {
+                contents.push_str(&std::fs::read_to_string(&path).expect("read trace file"));
+            }
+        }
+
+        // Neither oversized field was written verbatim: no run longer than the
+        // cap survives (marker appended after the char-boundary cut).
+        assert!(
+            !contents.contains(&"a".repeat(MAX_FIELD_BYTES + 1)),
+            "oversized name must be truncated to the cap"
+        );
+        assert!(
+            !contents.contains(&"b".repeat(MAX_FIELD_BYTES + 1)),
+            "oversized attr value must be truncated to the cap"
+        );
+        assert!(
+            contents.contains("[truncated"),
+            "a truncation marker must be present"
+        );
+        // The whole line stays bounded (both capped fields + marker overhead).
+        let longest = contents.lines().map(str::len).max().unwrap_or(0);
+        assert!(
+            longest < MAX_FIELD_BYTES * 3,
+            "line must stay bounded, got {longest} bytes"
         );
     }
 

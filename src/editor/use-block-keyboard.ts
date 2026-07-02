@@ -150,6 +150,11 @@ export function handleBlockKeyDown(
     // merging the whole block.
     inCodeBlock: editor.isActive?.('codeBlock') ?? false,
     inTable: editor.isActive?.('table') ?? false,
+    // #2276 — when a multi-item list has been pasted into a block, the caret
+    // can sit inside a listItem. Enter must defer to ProseMirror's
+    // splitListItem so the block can gain items, rather than flushing and
+    // creating a new sibling block.
+    inList: editor.isActive?.('listItem') ?? false,
   }
   for (const rule of KEY_RULES) {
     if (rule.match(event, ctx)) {
@@ -176,6 +181,8 @@ interface KeyContext {
   inCodeBlock: boolean
   /** Selection is inside a table (#725 — Enter/Backspace guards). */
   inTable: boolean
+  /** Selection is inside a list item (#2276 — Enter defers to splitListItem). */
+  inList: boolean
 }
 
 interface KeyRule {
@@ -308,10 +315,13 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
   // Enter (without Shift): save + create new sibling. Suppressed inside
   // code blocks and tables (#725) so ProseMirror's own Enter handling runs
   // instead (newlineInCode inserts a newline in the fence; splitBlock adds a
-  // paragraph in the table cell). Exiting those nodes still works via
+  // paragraph in the table cell), and inside list items (#2276) so
+  // splitListItem can add an item to a pasted multi-item list rather than
+  // flushing the block. Exiting those nodes still works via
   // Escape / ArrowDown-at-end.
   {
-    match: (e, ctx) => e.key === 'Enter' && !e.shiftKey && !ctx.inCodeBlock && !ctx.inTable,
+    match: (e, ctx) =>
+      e.key === 'Enter' && !e.shiftKey && !ctx.inCodeBlock && !ctx.inTable && !ctx.inList,
     handle: (e, cb) => {
       e.preventDefault()
       cb.onEnterSave()
@@ -532,6 +542,10 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       const atStart = from <= 1 && empty
 
       if (it === 'insertParagraph') {
+        // #2276 — inside a list item, defer to ProseMirror's splitListItem so a
+        // pasted multi-item list can gain items (mirrors the keydown Enter
+        // guard). Scoped to Enter only; Backspace in a list is unchanged.
+        if (editor.isActive?.('listItem') ?? false) return
         event.preventDefault()
         onEnterSave()
         return

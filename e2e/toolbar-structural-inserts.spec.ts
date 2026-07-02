@@ -47,7 +47,7 @@ test.describe('Structural transforms via Turn into (#253, #1960)', () => {
 
     await openTurnInto(page)
     await page.getByRole('menuitemradio', { name: 'Ordered list' }).click()
-    await saveBlock(page)
+    await saveBlock(page, 'Escape')
 
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     const ol = firstBlock.locator('ol')
@@ -63,7 +63,7 @@ test.describe('Structural transforms via Turn into (#253, #1960)', () => {
 
     await openTurnInto(page)
     await page.getByRole('menuitemradio', { name: 'Bullet list' }).click()
-    await saveBlock(page)
+    await saveBlock(page, 'Escape')
 
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     const ul = firstBlock.locator('ul')
