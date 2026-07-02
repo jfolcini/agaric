@@ -12,10 +12,9 @@
  * components (OverdueSection, UpcomingSection, DuePanelFilters).
  */
 
-import { useVirtualizer } from '@tanstack/react-virtual'
 import { Repeat } from 'lucide-react'
 import type React from 'react'
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DuePanelFilters } from '@/components/agenda/DuePanelFilters'
@@ -42,6 +41,7 @@ import {
   useTagClickHandler,
 } from '@/hooks/useRichContentCallbacks'
 import { useToday } from '@/hooks/useToday'
+import { useVirtualizedGroupedRows } from '@/hooks/useVirtualizedGroupedRows'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { priorityRank } from '@/lib/priority-levels'
 import { cn } from '@/lib/utils'
@@ -267,83 +267,33 @@ export function DuePanel({
     },
   )
 
-  // ── Virtualization (perf-review Tier 2 #6, 2026-05-14) ─────────────
-  // The grouped-blocks section is flattened into a single row list of
-  // `{ kind: 'group-header' | 'item', ... }` so the virtualizer can
-  // drop offscreen groups in their entirety instead of mounting every
-  // sub-list. Overdue / Upcoming / projected entries stay
-  // un-virtualized — they're rendered outside the virtualizer and
-  // their item counts are small (overdue/upcoming caps at PAGINATION,
-  // projected is bounded by repeat-projection horizon). The grouped
-  // section is the only `.map((g) => g.items.map((b) => ...))` chain
-  // that the audit flagged (line 292).
+  // ── Virtualization (perf-review Tier 2 #6, 2026-05-14; #2252) ──────
+  // Shared grouped-list scaffolding: `useVirtualizedGroupedRows` flattens
+  // the grouped-blocks section into header/item rows so the virtualizer
+  // can drop offscreen groups in their entirety instead of mounting every
+  // sub-list, and owns the focused-row scroll-into-view effect. Overdue /
+  // Upcoming / projected entries stay un-virtualized — they're rendered
+  // outside the virtualizer and their item counts are small
+  // (overdue/upcoming caps at PAGINATION, projected is bounded by the
+  // repeat-projection horizon).
   // `flatItemIndex` indexes the grouped-blocks portion of `flatItems`
   // (= `grouped.flatMap(g => g.items)`); the projected portion sits at
   // tail indices and is keyboard-navigable via its own `<li>` markup
-  // below, so this map only needs to cover the grouped portion.
-  type VirtualRow =
-    | { kind: 'group-header'; key: string; label: string }
-    | {
-        kind: 'item'
-        key: string
-        block: (typeof grouped)[number]['items'][number]
-        flatItemIndex: number
-      }
-
-  const virtualRows = useMemo<VirtualRow[]>(() => {
-    const rows: VirtualRow[] = []
-    let flatIdx = 0
-    for (const group of grouped) {
-      rows.push({
-        kind: 'group-header',
-        key: `header:${group.label}`,
-        label: group.label,
-      })
-      for (const block of group.items) {
-        rows.push({
-          kind: 'item',
-          key: block.id,
-          block,
-          flatItemIndex: flatIdx++,
-        })
-      }
-    }
-    return rows
-  }, [grouped])
-
+  // below, so the hook's focus mapping only needs to cover the grouped
+  // portion (a projected-tail `focusedIndex` has no map entry → no-op).
   const scrollParentRef = useRef<HTMLDivElement>(null)
 
-  const estimateSize = useCallback(
-    (index: number) => {
-      const row = virtualRows[index]
-      if (row?.kind === 'group-header') return 32
-      return 44
-    },
-    [virtualRows],
-  )
-
-  const virtualizer = useVirtualizer({
-    count: virtualRows.length,
-    getScrollElement: () => scrollParentRef.current,
-    estimateSize,
-    overscan: 5,
-    getItemKey: (index) => virtualRows[index]?.key ?? index,
+  const { virtualRows, virtualizer } = useVirtualizedGroupedRows({
+    groups: grouped,
+    getGroupKey: (g) => g.label,
+    getGroupItems: (g) => g.items,
+    // Header rows ~32px (SectionGroupHeader text + padding); item rows
+    // ~44px (BlockListItem default + touch min-h-11).
+    headerHeight: 32,
+    itemHeight: 44,
+    focusedIndex,
+    scrollParentRef,
   })
-
-  const flatToVirtualIndex = useMemo(() => {
-    const map: number[] = []
-    virtualRows.forEach((row, idx) => {
-      if (row.kind === 'item') map[row.flatItemIndex] = idx
-    })
-    return map
-  }, [virtualRows])
-
-  useEffect(() => {
-    if (focusedIndex < 0) return
-    const idx = flatToVirtualIndex[focusedIndex]
-    if (idx == null) return
-    virtualizer.scrollToIndex(idx, { align: 'auto' })
-  }, [focusedIndex, virtualizer, flatToVirtualIndex])
 
   // Don't render when ALL sources are empty (not loading).
   // When a source filter is active, always keep the panel visible so the
@@ -488,13 +438,13 @@ export function DuePanel({
                               className="due-panel-group-header-row"
                             >
                               <SectionGroupHeader className="due-panel-group-header">
-                                {row.label}
+                                {row.group.label}
                               </SectionGroupHeader>
                             </li>
                           )
                         }
                         // Tier 1.4: stable per-block handlers.
-                        const block = row.block
+                        const block = row.item
                         const rowHandlers = getRowHandlers(block)
                         return (
                           <BlockListItem
