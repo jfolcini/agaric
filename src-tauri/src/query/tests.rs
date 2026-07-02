@@ -845,6 +845,69 @@ async fn fulltext_plus_structural_filter_intersects() {
     assert_eq!(resp.total_count, Some(2));
 }
 
+/// #2282 carve-out — the first page of an advanced query fires the count, the
+/// global aggregates, and the row fetch as three reads over the SAME bound
+/// predicate (count + aggregate now run CONCURRENTLY via `try_join!`). This
+/// pins that all three come back MUTUALLY CONSISTENT for a fixture combining a
+/// full-text MATCH with a structural filter: the reported `total_count`, the
+/// returned row set, and every requested aggregate must agree.
+#[tokio::test]
+async fn first_page_fulltext_structural_count_aggregate_rows_consistent() {
+    let (pool, _d) = test_pool().await;
+    seed_ft(&pool).await;
+    // Numeric `estimate` on the two blocks that survive "alpha" ∩ tag RED
+    // (F1, F2); F3/F4/FX are filtered out so their estimates must NOT fold in.
+    set_property(&pool, F1, "estimate", "4").await;
+    set_property(&pool, F2, "estimate", "6").await;
+    set_property(&pool, F3, "estimate", "100").await; // filtered out (no RED tag)
+
+    let mut request = ft_req("alpha");
+    request.filter = leaf(FilterPrimitive::Tag {
+        tag: TAG_RED.to_string(),
+    });
+    request.aggregates = vec![
+        AggregateSpec {
+            op: AggOp::Count,
+            target: None,
+        },
+        agg_prop(AggOp::Sum, "estimate"),
+        agg_prop(AggOp::Avg, "estimate"),
+        agg_prop(AggOp::Min, "estimate"),
+        agg_prop(AggOp::Max, "estimate"),
+    ];
+
+    let resp = compile_and_run(&pool, request).await.unwrap();
+
+    // Rows: exactly F1, F2 (the full-text ∩ structural intersection).
+    assert_eq!(ids(&resp), set(&[F1, F2]));
+    // The concurrently-fetched count must equal the returned row count.
+    assert_eq!(resp.total_count, Some(2));
+    assert_eq!(
+        resp.total_count,
+        Some(i64::try_from(resp.rows.len()).unwrap())
+    );
+
+    // Aggregates fold over the SAME match set (F1=4, F2=6) — not F3's 100.
+    assert_eq!(agg_at(&resp, 0).op, AggOp::Count);
+    assert_eq!(agg_at(&resp, 0).count, Some(2)); // COUNT(*) == match count
+    assert!(
+        approx(agg_at(&resp, 1).value.unwrap(), 10.0),
+        "sum: {resp:?}"
+    );
+    assert!(
+        approx(agg_at(&resp, 2).value.unwrap(), 5.0),
+        "avg: {resp:?}"
+    );
+    assert!(
+        approx(agg_at(&resp, 3).value.unwrap(), 4.0),
+        "min: {resp:?}"
+    );
+    assert!(
+        approx(agg_at(&resp, 4).value.unwrap(), 6.0),
+        "max: {resp:?}"
+    );
+}
+
 #[tokio::test]
 async fn score_is_some_with_fulltext_and_none_without() {
     let (pool, _d) = test_pool().await;

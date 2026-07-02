@@ -59,11 +59,10 @@ cross-surface; the Pages-only and Search-only groups are surface specialties.
 - **`DatePredicate`** (#1280) — a predicate over a TEXT-ISO date column
   (`b.due_date`, `b.scheduled_date`): `IsNull` / `Before` / `After` /
   `OnOrBefore` / `OnOrAfter` / `On` / `Between`. Comparisons are **lexical** —
-  ISO-8601 dates sort byte-wise the same as chronologically. `On` over a
-  time-bearing column expands to the half-open calendar-day range
-  (`>= d AND < d+1day`) via `to_lexical_sql`; the Pages/Backlink `due-date` /
-  `scheduled` compilers keep the DATE-exact `= ?` form to stay byte-identical
-  with the backlink resolver oracle.
+  ISO-8601 dates sort byte-wise the same as chronologically. The Pages/Backlink
+  `due-date` / `scheduled` columns store pure `YYYY-MM-DD`, so `On` compiles to
+  the DATE-exact `= ?` form (which already matches the whole calendar day),
+  staying byte-identical with the backlink resolver oracle.
 - **`LastEditedSpec`** — `Rolling { days }` / `Range { start, end }` /
   `OlderThan { days }`.
 - **`SnippetSpec`** — FTS5 `snippet()` window parameters.

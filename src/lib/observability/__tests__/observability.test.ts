@@ -8,6 +8,7 @@
  * shape, sampling, and the exporter's defensive caps.
  */
 
+import { type Span, SpanStatusCode } from '@opentelemetry/api'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { FrontendSpan } from '../../bindings'
@@ -22,7 +23,7 @@ import {
   traceInteraction,
 } from '../index'
 import { INTERACTIONS } from '../interactions'
-import { setSpanSink } from '../transport'
+import { _resetSpanSink, setSpanSink } from '../transport'
 
 interface InvokeCall {
   cmd: string
@@ -228,6 +229,62 @@ describe('enabled: end-to-end propagation + export', () => {
   })
 })
 
+describe('traceInteraction: endError re-throws and records an error span', () => {
+  it('a synchronous throw re-raises and flushes an ERROR-status span', async () => {
+    await initFrontendObservability({ enabled: true })
+    const batches = captureSpans()
+    const boom = new Error('sync boom')
+
+    // Spy on the live span so we can assert the exact exception + status calls.
+    let recordException: ReturnType<typeof vi.spyOn> | undefined
+    let setStatus: ReturnType<typeof vi.spyOn> | undefined
+
+    // The call itself must throw synchronously — endError re-raises.
+    expect(() =>
+      traceInteraction(INTERACTIONS.SEARCH, (span: Span) => {
+        recordException = vi.spyOn(span, 'recordException')
+        setStatus = vi.spyOn(span, 'setStatus')
+        throw boom
+      }),
+    ).toThrow(boom)
+
+    expect(recordException).toHaveBeenCalledWith(boom)
+    expect(setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR })
+
+    await flushFrontendSpans()
+    const spans = batches.flat()
+    expect(spans).toHaveLength(1)
+    // A regression that writes 'ok' (or drops the error) fails here.
+    expect(spans[0]?.status).toBe('error')
+  })
+
+  it('a rejected promise re-rejects and flushes an ERROR-status span', async () => {
+    await initFrontendObservability({ enabled: true })
+    const batches = captureSpans()
+    const boom = new Error('async boom')
+
+    let recordException: ReturnType<typeof vi.spyOn> | undefined
+    let setStatus: ReturnType<typeof vi.spyOn> | undefined
+
+    const pending = traceInteraction(INTERACTIONS.SEARCH, (span: Span) => {
+      recordException = vi.spyOn(span, 'recordException')
+      setStatus = vi.spyOn(span, 'setStatus')
+      return Promise.reject(boom)
+    })
+
+    // The returned promise must reject with the SAME error (not swallowed).
+    await expect(pending).rejects.toBe(boom)
+
+    expect(recordException).toHaveBeenCalledWith(boom)
+    expect(setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR })
+
+    await flushFrontendSpans()
+    const spans = batches.flat()
+    expect(spans).toHaveLength(1)
+    expect(spans[0]?.status).toBe('error')
+  })
+})
+
 describe('exporter caps', () => {
   it('auto-flushes at the 128-span batch threshold', async () => {
     const { SpanExporter } = await import('../exporter')
@@ -278,5 +335,71 @@ describe('exporter caps', () => {
     const first = captured[0]
     expect(first).toBeDefined()
     expect(first ? first.attributes.length : -1).toBe(64)
+  })
+})
+
+describe('exporter: coalescing timer + no-sink drain', () => {
+  const makeSpan = (): FrontendSpan => ({
+    trace_id: generateTraceId(),
+    span_id: generateSpanId(),
+    parent_span_id: null,
+    name: 'n',
+    start_unix_millis: 0,
+    end_unix_millis: 1,
+    attributes: [],
+    status: 'ok',
+  })
+
+  it('flushes buffered spans exactly once when the 2000ms coalescing timer fires', async () => {
+    vi.useFakeTimers()
+    try {
+      const { SpanExporter } = await import('../exporter')
+      const batches: number[] = []
+      setSpanSink((spans) => {
+        batches.push(spans.length)
+        return Promise.resolve(null)
+      })
+      const exporter = new SpanExporter()
+      // Two sub-batch enqueues arm the single coalescing timer (no immediate
+      // flush — well under the 128 MAX_BATCH threshold).
+      exporter.enqueue(makeSpan())
+      exporter.enqueue(makeSpan())
+      expect(batches).toEqual([])
+
+      // Nothing fires before the interval elapses.
+      await vi.advanceTimersByTimeAsync(1999)
+      expect(batches).toEqual([])
+
+      // At 2000ms the timer fires ONCE, draining both spans in a single batch.
+      await vi.advanceTimersByTimeAsync(1)
+      expect(batches).toEqual([2])
+
+      // The timer is not re-armed on an empty buffer — no further flushes.
+      await vi.advanceTimersByTimeAsync(10000)
+      expect(batches).toEqual([2])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('drains and drops the buffer without error when no sink is configured', async () => {
+    const { SpanExporter } = await import('../exporter')
+    _resetSpanSink() // ensure getSpanSink() === null for this test
+    const exporter = new SpanExporter()
+    exporter.enqueue(makeSpan())
+    exporter.enqueue(makeSpan())
+
+    // No sink → flush resolves without throwing and empties the buffer.
+    await expect(exporter.flush()).resolves.toBeUndefined()
+
+    // Prove the spans were DROPPED (not retained): wiring a sink now and
+    // flushing again sends nothing, because the buffer was already drained.
+    const batches: number[] = []
+    setSpanSink((spans) => {
+      batches.push(spans.length)
+      return Promise.resolve(null)
+    })
+    await exporter.flush()
+    expect(batches).toEqual([])
   })
 })

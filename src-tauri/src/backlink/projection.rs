@@ -302,8 +302,8 @@ impl Projection for BacklinkProjection {
 /// resolver byte-identity path but compile to the natural forms.
 ///
 /// The column is treated as DATE-exact (the resolver oracle does the same),
-/// so `On` is `= ?` — NOT the day-range expansion of
-/// [`DatePredicate::to_lexical_sql`].
+/// so `On` is `= ?` — a pure `YYYY-MM-DD` compare already matches the whole
+/// calendar day.
 fn due_or_scheduled(predicate: &DatePredicate, column: &str) -> WhereClause {
     match predicate {
         DatePredicate::On { date } => {

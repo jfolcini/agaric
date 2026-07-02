@@ -16,7 +16,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
 
 import type { FlatBlock } from '@/lib/tree-utils'
@@ -146,8 +145,8 @@ describe('BlockTree zoom × DnD drop-root wiring (#712)', () => {
     expect(capturedDnDParams?.rootParentId).toBe('ZOOMED_BLOCK')
   })
 
-  it('has no a11y violations', async () => {
-    const { container } = renderBlockTree()
-    expect(await axe(container)).toHaveNoViolations()
-  })
+  // #2246: no axe assertion here — this suite stubs SortableBlock to empty
+  // <div>s, so an axe audit of the rendered container would be tautological
+  // (it never sees the real row markup). Row a11y is covered by a real-row
+  // audit in BlockTree.a11y.test.tsx (real SortableBlock + EditableBlock).
 })
