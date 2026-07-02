@@ -5,10 +5,10 @@
  *  - General   -- DeadlineWarningSection + AutostartRow + QuickCaptureRow
  *  - Properties -- PropertyDefinitionsList
  * Appearance -- theme selector (7 themes) + font size selector
- *  - Keyboard -- KeyboardSettingsTab
- *  - Data -- DataSettingsTab (lazy)
+ *  - Keyboard -- KeyboardTab
+ *  - Data -- DataTab (lazy)
  *  - Sync & Devices -- DeviceManagement
- * Agent access -- AgentAccessSettingsTab
+ * Agent access -- AgentAccessTab
  * Help -- Report a bug; future home of About / updates
  *
  * (in progress): the General / Appearance / Help tabs and the
@@ -31,15 +31,15 @@ import type React from 'react'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { AgentAccessSettingsTab } from '@/components/AgentAccessSettingsTab'
-import { KeyboardSettingsTab } from '@/components/KeyboardSettingsTab'
 import { DeviceManagement } from '@/components/peers/DeviceManagement'
 import { PropertyDefinitionsList } from '@/components/properties/PropertyDefinitionsList'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
+import { AgentAccessTab } from '@/components/settings/AgentAccessTab'
 import { AppearanceTab } from '@/components/settings/AppearanceTab'
 import { EditorTab } from '@/components/settings/EditorTab'
 import { GeneralTab } from '@/components/settings/GeneralTab'
 import { HelpTab } from '@/components/settings/HelpTab'
+import { KeyboardTab } from '@/components/settings/KeyboardTab'
 import { NotificationsTab } from '@/components/settings/NotificationsTab'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { dispatchBugReport } from '@/lib/bug-report-events'
@@ -51,10 +51,10 @@ import {
 import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation'
 
-// DataSettingsTab drags in `jszip` (~135 kB) for "Export as ZIP". The tab
+// DataTab drags in `jszip` (~135 kB) for "Export as ZIP". The tab
 // Is rarely opened, so defer the import until the user clicks it.
-const DataSettingsTab = lazy(() =>
-  import('@/components/DataSettingsTab').then((m) => ({ default: m.DataSettingsTab })),
+const DataTab = lazy(() =>
+  import('@/components/settings/DataTab').then((m) => ({ default: m.DataTab })),
 )
 
 type SettingsTab =
@@ -333,17 +333,17 @@ export function SettingsView(): React.ReactElement {
 
           {activeTab === 'editor' && <EditorTab />}
 
-          {activeTab === 'keyboard' && <KeyboardSettingsTab />}
+          {activeTab === 'keyboard' && <KeyboardTab />}
 
           {activeTab === 'data' && (
             <Suspense fallback={<LoadingSkeleton count={4} height="h-6" />}>
-              <DataSettingsTab />
+              <DataTab />
             </Suspense>
           )}
 
           {activeTab === 'sync' && <DeviceManagement />}
 
-          {activeTab === 'agent' && <AgentAccessSettingsTab />}
+          {activeTab === 'agent' && <AgentAccessTab />}
 
           {activeTab === 'notifications' && <NotificationsTab />}
 

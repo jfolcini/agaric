@@ -4,19 +4,19 @@ import { useTranslation } from 'react-i18next'
 import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
 import { AppSidebar } from '@/components/layout/AppSidebar'
 import { QuickAccessBar } from '@/components/layout/QuickAccessBar'
-import { QuickCaptureFab } from '@/components/layout/QuickCaptureFab'
 import { SpaceTopStripe } from '@/components/layout/SpaceTopStripe'
 import { TabBar } from '@/components/layout/TabBar'
 import {
   ViewHeaderOutletProvider,
   ViewHeaderOutletSlot,
 } from '@/components/layout/ViewHeaderOutlet'
+import { QuickCaptureFab } from '@/components/mobile/QuickCaptureFab'
 import { BootGate } from '@/components/pages/BootGate'
 import { useHeaderLabel, ViewDispatcher } from '@/components/pages/ViewDispatcher'
 import { notify } from '@/lib/notify'
 
 import { GlobalDateControls, JournalControls } from './components/JournalPage'
-import { SearchSheetTrigger } from './components/SearchSheetTrigger'
+import { SearchSheetTrigger } from './components/mobile/SearchSheetTrigger'
 import { ScrollArea } from './components/ui/scroll-area'
 import { SidebarInset, SidebarProvider } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
@@ -104,7 +104,7 @@ const CommandPalette = lazy(() =>
 // header trigger (`<SearchSheetTrigger />`) is the touch-only entry
 // point; keyboard users still go through Ctrl+F / Cmd+K / Ctrl+Shift+F.
 const SearchSheet = lazy(() =>
-  import('./components/SearchSheet').then((m) => ({ default: m.SearchSheet })),
+  import('./components/mobile/SearchSheet').then((m) => ({ default: m.SearchSheet })),
 )
 
 // #1740 — `GlobalDateControls` is purely a jump-to-journal-date affordance

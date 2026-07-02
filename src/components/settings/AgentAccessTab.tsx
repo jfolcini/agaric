@@ -1,6 +1,8 @@
 /**
- * AgentAccessSettingsTab — Settings tab for the MCP (Model Context
- * Protocol) agent-access surface.
+ * AgentAccessTab — Settings tab for the MCP (Model Context
+ * Protocol) agent-access surface. (The `'AgentAccessSettingsTab'`
+ * logger label below is the stable telemetry namespace shared with the
+ * agent-access child components — kept fixed across this rename.)
  *
  * Sections (top to bottom):
  *   1. Read-only access toggle (backed by the `mcp-ro-enabled` marker
@@ -31,7 +33,6 @@
  * shows a toast, and keeps rendering (no crash on IPC rejection).
  */
 
-import { invoke } from '@tauri-apps/api/core'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -42,15 +43,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Label } from '@/components/ui/label'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { useMcpActivityFeed } from '@/hooks/useMcpActivityFeed'
+import { commands } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { unwrap } from '@/lib/tauri'
 
-import { ActivityFeed } from './agent-access/ActivityFeed'
-import type { McpRwStatus, McpStatus } from './agent-access/McpStatusSection'
-import { McpStatusSection } from './agent-access/McpStatusSection'
+import { ActivityFeed } from '../agent-access/ActivityFeed'
+import type { McpRwStatus, McpStatus } from '../agent-access/McpStatusSection'
+import { McpStatusSection } from '../agent-access/McpStatusSection'
 
-export function AgentAccessSettingsTab(): React.ReactElement {
+export function AgentAccessTab(): React.ReactElement {
   const { t } = useTranslation()
   const [status, setStatus] = useState<McpStatus | null>(null)
   const [rwStatus, setRwStatus] = useState<McpRwStatus | null>(null)
@@ -64,8 +67,8 @@ export function AgentAccessSettingsTab(): React.ReactElement {
     // the RW backend could be absent (older Rust binary) while RO is
     // healthy, or vice versa during a staged rollout.
     const [roResult, rwResult] = await Promise.allSettled([
-      invoke<McpStatus>('get_mcp_status'),
-      invoke<McpRwStatus>('get_mcp_rw_status'),
+      commands.getMcpStatus().then(unwrap),
+      commands.getMcpRwStatus().then(unwrap),
     ])
 
     if (roResult.status === 'fulfilled') {
@@ -107,7 +110,9 @@ export function AgentAccessSettingsTab(): React.ReactElement {
     { enabled: boolean; previous: McpStatus | null },
     void
   >({
-    call: ({ enabled }) => invoke('mcp_set_enabled', { enabled }),
+    call: async ({ enabled }) => {
+      unwrap(await commands.mcpSetEnabled(enabled))
+    },
     module: 'AgentAccessSettingsTab',
     errorLogMessage: 'failed to set MCP enabled',
     errorLogContext: ({ enabled }) => ({ enabled }),
@@ -138,7 +143,9 @@ export function AgentAccessSettingsTab(): React.ReactElement {
     { enabled: boolean; previous: McpRwStatus | null },
     void
   >({
-    call: ({ enabled }) => invoke('mcp_rw_set_enabled', { enabled }),
+    call: async ({ enabled }) => {
+      unwrap(await commands.mcpRwSetEnabled(enabled))
+    },
     module: 'AgentAccessSettingsTab',
     errorLogMessage: 'failed to set MCP RW enabled',
     errorLogContext: ({ enabled }) => ({ enabled }),
@@ -168,7 +175,9 @@ export function AgentAccessSettingsTab(): React.ReactElement {
 
   // RO kill switch — disconnect every active RO agent session.
   const { execute: executeDisconnectAll } = useIpcCommand<void, void>({
-    call: () => invoke('mcp_disconnect_all'),
+    call: async () => {
+      unwrap(await commands.mcpDisconnectAll())
+    },
     module: 'AgentAccessSettingsTab',
     errorLogMessage: 'failed to disconnect all',
     onSuccess: () => {
@@ -186,7 +195,9 @@ export function AgentAccessSettingsTab(): React.ReactElement {
 
   // RW kill switch — disconnect every active RW agent session.
   const { execute: executeDisconnectAllRw } = useIpcCommand<void, void>({
-    call: () => invoke('mcp_rw_disconnect_all'),
+    call: async () => {
+      unwrap(await commands.mcpRwDisconnectAll())
+    },
     module: 'AgentAccessSettingsTab',
     errorLogMessage: 'failed to disconnect all RW',
     onSuccess: () => {

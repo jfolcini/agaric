@@ -102,6 +102,14 @@ pub struct QueueMetrics {
     /// channel. A non-zero value indicates foreground backpressure.
     /// See.
     pub fg_full_waits: AtomicU64,
+    /// Number of times `enqueue_background` (the blocking enqueue path)
+    /// had to await on a full channel. Mirrors [`Self::fg_full_waits`]
+    /// for the background queue: `enqueue_background` `try_send`s first
+    /// and only bumps this counter on the `Full` arm, so a non-zero
+    /// value indicates real background backpressure on the blocking
+    /// enqueue path (distinct from `try_enqueue_background`, which sheds
+    /// to `bg_dropped` instead of awaiting).
+    pub bg_full_waits: AtomicU64,
     /// Count of failed
     /// [`super::retry_queue::record_failure`] calls — i.e. the number
     /// of times the retry-queue persistence write itself returned an
@@ -223,6 +231,7 @@ impl Default for QueueMetrics {
             bg_dropped: AtomicU64::new(0),
             bg_dropped_global: AtomicU64::new(0),
             fg_full_waits: AtomicU64::new(0),
+            bg_full_waits: AtomicU64::new(0),
             retry_queue_persist_errors: AtomicU64::new(0),
             retry_queue_giveup_total: AtomicU64::new(0),
             last_materialize_ms: AtomicU64::new(0),
@@ -291,6 +300,11 @@ pub struct StatusInfo {
     /// Number of times the foreground `enqueue_foreground` path awaited on
     /// a full channel. Non-zero indicates backpressure.
     pub fg_full_waits: u64,
+    /// Number of times the blocking `enqueue_background` path awaited on a
+    /// full channel. Non-zero indicates background backpressure on the
+    /// blocking enqueue path (the shed path `try_enqueue_background`
+    /// surfaces saturation via `bg_dropped` instead).
+    pub bg_full_waits: u64,
     /// Count of failed `record_failure` calls (i.e. retry
     /// queue persistence writes that returned an error). Each
     /// dropped task that fails persistence twice contributes `+2`

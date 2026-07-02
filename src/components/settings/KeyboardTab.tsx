@@ -1,5 +1,5 @@
 /**
- * KeyboardSettingsTab — keyboard shortcut customization panel.
+ * KeyboardTab — keyboard shortcut customization panel.
  * Shows all shortcuts grouped by category with inline editing.
  */
 
@@ -28,7 +28,7 @@ import {
 import { validateBindingInput } from '@/lib/keyboard-config/parse'
 import { renderKeys } from '@/lib/render-keyboard-shortcut'
 
-export function KeyboardSettingsTab(): React.ReactElement {
+export function KeyboardTab(): React.ReactElement {
   const { t } = useTranslation()
   const [version, setVersion] = useState(0)
   const [editingId, setEditingId] = useState<string | null>(null)

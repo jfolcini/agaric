@@ -19,6 +19,7 @@ bg_dropped: 0
 bg_dropped_global: 0
 bg_deduped: 0
 fg_full_waits: 0
+bg_full_waits: 0
 retry_queue_persist_errors: 0
 retry_queue_giveup_total: 0
 last_materialize_at: "[TIMESTAMP]"

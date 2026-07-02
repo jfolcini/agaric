@@ -73,21 +73,19 @@ vi.mock('@/components/peers/DeviceManagement', () => ({
   DeviceManagement: () => <div data-testid="device-management">Device Management</div>,
 }))
 
-vi.mock('@/components/KeyboardSettingsTab', () => ({
-  KeyboardSettingsTab: () => (
-    <div data-testid="keyboard-settings-tab">Keyboard Settings Content</div>
-  ),
+vi.mock('@/components/settings/KeyboardTab', () => ({
+  KeyboardTab: () => <div data-testid="keyboard-settings-tab">Keyboard Settings Content</div>,
 }))
 
-vi.mock('@/components/DataSettingsTab', () => ({
-  DataSettingsTab: () => <div data-testid="data-settings-tab">Data Settings Content</div>,
+vi.mock('@/components/settings/DataTab', () => ({
+  DataTab: () => <div data-testid="data-settings-tab">Data Settings Content</div>,
 }))
 
-// AgentAccessSettingsTab is rendered inside the "Agent access"
+// AgentAccessTab is rendered inside the "Agent access"
 // tab panel. Mock it as an inert marker so the SettingsView tests stay
 // focused on tab routing / theme / font-size behaviour.
-vi.mock('@/components/AgentAccessSettingsTab', () => ({
-  AgentAccessSettingsTab: () => <div data-testid="agent-access-settings-tab">Agent Access</div>,
+vi.mock('@/components/settings/AgentAccessTab', () => ({
+  AgentAccessTab: () => <div data-testid="agent-access-settings-tab">Agent Access</div>,
 }))
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
@@ -1007,7 +1005,7 @@ describe('SettingsView', () => {
     expect(keyboardTab).toBeInTheDocument()
   })
 
-  it('shows KeyboardSettingsTab when keyboard tab is clicked', async () => {
+  it('shows KeyboardTab when keyboard tab is clicked', async () => {
     const user = userEvent.setup()
     render(<SettingsView />)
 

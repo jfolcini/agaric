@@ -3358,6 +3358,13 @@ export type StatusInfo = {
 	 */
 	fg_full_waits: number,
 	/**
+	 *  Number of times the blocking `enqueue_background` path awaited on a
+	 *  full channel. Non-zero indicates background backpressure on the
+	 *  blocking enqueue path (the shed path `try_enqueue_background`
+	 *  surfaces saturation via `bg_dropped` instead).
+	 */
+	bg_full_waits: number,
+	/**
 	 *  Count of failed `record_failure` calls (i.e. retry
 	 *  queue persistence writes that returned an error). Each
 	 *  dropped task that fails persistence twice contributes `+2`

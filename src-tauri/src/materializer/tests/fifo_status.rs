@@ -402,6 +402,33 @@ async fn enqueue_foreground_does_not_bump_fg_full_waits_when_capacity_available(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn enqueue_background_does_not_bump_bg_full_waits_when_capacity_available() {
+    // Background mirror of the foreground happy-path contract: when the
+    // bounded background channel has capacity, `enqueue_background`'s
+    // `try_send` succeeds immediately and `bg_full_waits` must stay at
+    // zero. The counter only counts real wait events on the blocking
+    // enqueue path (a full channel forcing an awaited `send`), not mere
+    // occupancy — so a single, promptly-drained enqueue never bumps it.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+    let before = mat.metrics().bg_full_waits.load(AtomicOrdering::Relaxed);
+    assert_eq!(before, 0, "bg_full_waits starts at zero");
+
+    // A `Barrier` task is a cheap valid variant that the background
+    // consumer completes synchronously, so the channel will not fill.
+    let n = StdArc::new(tokio::sync::Notify::new());
+    mat.enqueue_background(MaterializeTask::Barrier(StdArc::clone(&n)))
+        .await
+        .expect("background enqueue should succeed when capacity is available");
+
+    let after = mat.metrics().bg_full_waits.load(AtomicOrdering::Relaxed);
+    assert_eq!(
+        after, 0,
+        "bg_full_waits must not bump when the channel had capacity"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handle_fg_rebuild_fts_index_returns_validation_err() {
     // An explicit second test using a different background-only
     // variant (`RebuildFtsIndex`) so a future refactor that special-cases
