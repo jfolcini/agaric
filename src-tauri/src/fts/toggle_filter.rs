@@ -823,61 +823,24 @@ async fn regex_mode_query(
     const PREFIX: &str = "\n             AND ";
     let mut fb = super::filter_builder::StructuralFilterBuilder::new(1);
 
-    fb.add_parent(PREFIX, parent_id);
-
-    // Dedupe `tag_ids` before binding, mirroring the
-    // FTS path in `fts::search::fts_fetch_rows`. The "ALL tags" predicate
-    // compares `COUNT(DISTINCT bt.tag_id)` against the bound list length;
-    // a duplicate id makes that length unachievable and the regex scan
-    // silently returns zero rows. Order is preserved for deterministic
-    // placeholder/bind indices.
-    //
-    // SQL-A6 — normalise each id to its canonical UPPERCASE
-    // ULID form BEFORE inserting into the dedup set (and bind the
-    // normalised form). `block_tags.tag_id` stores the canonical
-    // uppercase Crockford-base32 ULID (`BlockId`/`ActiveBlockId` both
-    // normalise via `to_ascii_uppercase`), so a mixed-case duplicate
-    // (e.g. the same id arriving lower- and upper-case from two FE code
-    // paths) would otherwise survive byte-exact dedup, inflate the bound
-    // list length past the achievable `COUNT(DISTINCT)`, and silently
-    // zero out the ALL-tags predicate. Uppercasing collapses the
-    // duplicate AND aligns the bound `IN (...)` values with the stored
-    // canonical form.
-    let tag_ids_active: Vec<String> = match tag_ids.filter(|t| !t.is_empty()) {
-        Some(ids) => {
-            let mut seen = std::collections::HashSet::new();
-            ids.iter()
-                .map(|id| id.to_ascii_uppercase())
-                .filter(|id| seen.insert(id.clone()))
-                .collect()
-        }
-        None => Vec::new(),
-    };
-    // #1320 route the regex-mode ALL-tags + page-glob filters through
-    // `SearchProjection` (the cross-surface filter compiler), matching the
-    // `fts_fetch_rows` cutover. The toggle path receives the SAME
-    // already-prepared, deduped/uppercased tags + already-prepared globs as the
-    // main path (single `prepare_search_filter` source), so these are drop-in,
-    // result-equivalent swaps for the legacy `add_tags_all` / `add_page_globs`.
-    fb.add_tags_via_projection(PREFIX, &tag_ids_active);
-
-    fb.add_space(PREFIX, space_id);
-
-    // P2 (#346) — shared page-glob sub-select helper (via the builder).
-    fb.add_page_globs_via_projection(PREFIX, false, include_page_globs);
-    fb.add_page_globs_via_projection(PREFIX, true, exclude_page_globs);
-
-    // Metadata predicates (same shape as `search_fts`).
-    fb.add_metadata(metadata, "b");
-
-    // Push `block_type` into SQL instead of post-fetch
-    // `Vec::retain()`. Eliminates the 1000-row drag for page-only
-    // regex queries where matching pages live beyond the pre-filter
-    // cap. NOTE: emitted AFTER metadata in this builder (the FTS builder
-    // emits it before) — the builder records each fragment's binds in
-    // call order, so this ordering difference stays self-consistent.
-    // #1280 B2 — routed through `SearchProjection::compile_block_type`.
-    fb.add_block_type_via_projection(PREFIX, block_type_filter);
+    // Shared structural-filter clause sequence (parent → ALL-tags → space →
+    // page globs → metadata → block_type), byte-identical to `filter_only_scan`.
+    // `block_type` is pushed into SQL here instead of a post-fetch
+    // `Vec::retain()`, eliminating the 1000-row drag for page-only regex
+    // queries where matching pages live beyond the pre-filter cap.
+    apply_structural_filters(
+        &mut fb,
+        PREFIX,
+        &StructuralFilterInputs {
+            parent_id,
+            tag_ids,
+            space_id,
+            include_page_globs,
+            exclude_page_globs,
+            block_type_filter,
+            metadata,
+        },
+    );
 
     sql.push_str(fb.sql());
 
@@ -955,33 +918,10 @@ async fn regex_mode_query(
             continue;
         }
         let offsets = byte_to_utf16_offsets(content, &byte_matches);
-        // P4 (#346) — matching is done; truncate the SHIPPED content to
-        // `snippet_len` codepoints (codepoint-safe, same as SQL `substr`).
-        let content_out = match snippet_len {
-            Some(n) => r.content.map(|c| {
-                if c.chars().count() > n {
-                    c.chars().take(n).collect()
-                } else {
-                    c
-                }
-            }),
-            None => r.content,
-        };
-        out.push(SearchBlockRow {
-            id: crate::ulid::ActiveBlockId::from_trusted_active(r.id.as_str()),
-            block_type: r.block_type,
-            content: content_out,
-            parent_id: r.parent_id.map(crate::ulid::BlockId::into_string),
-            position: r.position,
-            deleted_at: r.deleted_at,
-            todo_state: r.todo_state,
-            priority: r.priority,
-            due_date: r.due_date,
-            scheduled_date: r.scheduled_date,
-            page_id: r.page_id,
-            snippet: None,
-            match_offsets: offsets,
-        });
+        // P4 (#346) — matching is done; `into_search_row` truncates the SHIPPED
+        // content to `snippet_len` codepoints (codepoint-safe, same as SQL
+        // `substr`) and attaches the UTF-16 match offsets.
+        out.push(r.into_search_row(snippet_len, offsets));
     }
 
     // Regex-mode never emits a cursor — the candidate set is bounded
@@ -1012,6 +952,100 @@ struct RegexScanRow {
     due_date: Option<String>,
     scheduled_date: Option<String>,
     page_id: Option<String>,
+}
+
+impl RegexScanRow {
+    /// Map a raw scan row onto a [`SearchBlockRow`], applying the P4 (#346)
+    /// codepoint-safe `content` truncation and attaching the supplied match
+    /// offsets. Shared by [`regex_mode_query`] (which passes its computed
+    /// UTF-16 offsets and the caller's `snippet_len`) and [`filter_only_scan`]
+    /// (which has no pattern, so passes `None` / `vec![]` — its `content` was
+    /// already truncated at the DB via `content_select_expr`).
+    ///
+    /// Truncation here mirrors SQL `substr(content, 1, n)`: keep the first `n`
+    /// Unicode scalar values. `None` is a no-op (full content). `snippet: None`
+    /// is always emitted — the frontend prefers explicit match offsets.
+    fn into_search_row(
+        self,
+        snippet_len: Option<usize>,
+        match_offsets: Vec<MatchOffset>,
+    ) -> SearchBlockRow {
+        let content = match snippet_len {
+            Some(n) => self.content.map(|c| {
+                if c.chars().count() > n {
+                    c.chars().take(n).collect()
+                } else {
+                    c
+                }
+            }),
+            None => self.content,
+        };
+        SearchBlockRow {
+            id: crate::ulid::ActiveBlockId::from_trusted_active(self.id.as_str()),
+            block_type: self.block_type,
+            content,
+            parent_id: self.parent_id.map(crate::ulid::BlockId::into_string),
+            position: self.position,
+            deleted_at: self.deleted_at,
+            todo_state: self.todo_state,
+            priority: self.priority,
+            due_date: self.due_date,
+            scheduled_date: self.scheduled_date,
+            page_id: self.page_id,
+            snippet: None,
+            match_offsets,
+        }
+    }
+}
+
+/// Borrowed bundle of the structural-filter inputs shared by the two
+/// toggle-search SQL builders. See [`apply_structural_filters`].
+struct StructuralFilterInputs<'a> {
+    parent_id: Option<&'a str>,
+    tag_ids: Option<&'a [String]>,
+    space_id: Option<&'a str>,
+    include_page_globs: &'a [String],
+    exclude_page_globs: &'a [String],
+    block_type_filter: Option<&'a str>,
+    metadata: &'a MetadataPredicates,
+}
+
+/// Append the common structural-filter clause sequence
+/// (parent → ALL-tags → space → include/exclude page globs → metadata →
+/// block_type) onto `fb`, in the exact order both toggle builders emitted it.
+///
+/// Tag ids are deduped/UPPERCASE-normalised via
+/// [`super::filter_builder::normalize_tag_ids`] (SQL-A6). `filter_only_scan`
+/// appends its extra `after_id` keyset predicate itself, after this call, so
+/// the assembled SQL stays byte-identical to the previous hand-inlined form.
+fn apply_structural_filters(
+    fb: &mut super::filter_builder::StructuralFilterBuilder,
+    prefix: &str,
+    inputs: &StructuralFilterInputs<'_>,
+) {
+    fb.add_parent(prefix, inputs.parent_id);
+
+    // #1320 route the ALL-tags + page-glob filters through `SearchProjection`
+    // (the cross-surface filter compiler), matching the `fts_fetch_rows`
+    // cutover. Same already-prepared deduped/uppercased tags + globs as the
+    // main path — drop-in, result-equivalent swaps for the legacy
+    // `add_tags_all` / `add_page_globs`.
+    let tag_ids_active = super::filter_builder::normalize_tag_ids(inputs.tag_ids);
+    fb.add_tags_via_projection(prefix, &tag_ids_active);
+
+    fb.add_space(prefix, inputs.space_id);
+
+    // P2 (#346) — shared page-glob sub-select helper (via the builder).
+    fb.add_page_globs_via_projection(prefix, false, inputs.include_page_globs);
+    fb.add_page_globs_via_projection(prefix, true, inputs.exclude_page_globs);
+
+    // Metadata predicates. NOTE: the toggle builders emit `block_type` LAST
+    // (the FTS builder emits it before metadata) — the builder records each
+    // fragment's binds in call order, so this ordering stays self-consistent.
+    fb.add_metadata(inputs.metadata, "b");
+
+    // #1280 B2 — routed through `SearchProjection::compile_block_type`.
+    fb.add_block_type_via_projection(prefix, inputs.block_type_filter);
 }
 
 /// NEW-3 — filter-only structural scan (NO free-text pattern).
@@ -1079,40 +1113,23 @@ async fn filter_only_scan(
     const PREFIX: &str = "\n             AND ";
     let mut fb = super::filter_builder::StructuralFilterBuilder::new(1);
 
-    fb.add_parent(PREFIX, parent_id);
-
-    // / SQL-A6 — dedupe + UPPERCASE-normalise tag ids
-    // before binding, exactly as `regex_mode_query` does, so the
-    // `COUNT(DISTINCT)` ALL-tags predicate is achievable and a
-    // mixed-case duplicate can't silently zero the scan.
-    let tag_ids_active: Vec<String> = match tag_ids.filter(|t| !t.is_empty()) {
-        Some(ids) => {
-            let mut seen = std::collections::HashSet::new();
-            ids.iter()
-                .map(|id| id.to_ascii_uppercase())
-                .filter(|id| seen.insert(id.clone()))
-                .collect()
-        }
-        None => Vec::new(),
-    };
-    // #1320 route the filter-only-scan ALL-tags + page-glob filters
-    // through `SearchProjection`, matching the `fts_fetch_rows` cutover
-    // Same already-prepared deduped/uppercased tags + globs as the
-    // main path, so these are drop-in, result-equivalent swaps for the legacy
-    // `add_tags_all` / `add_page_globs`.
-    fb.add_tags_via_projection(PREFIX, &tag_ids_active);
-
-    fb.add_space(PREFIX, space_id);
-
-    // P2 (#346) — shared page-glob sub-select helper (via the builder).
-    fb.add_page_globs_via_projection(PREFIX, false, include_page_globs);
-    fb.add_page_globs_via_projection(PREFIX, true, exclude_page_globs);
-
-    // Metadata predicates (same shape as `regex_mode_query`).
-    fb.add_metadata(metadata, "b");
-
-    // #1280 B2 — routed through `SearchProjection::compile_block_type`.
-    fb.add_block_type_via_projection(PREFIX, block_type_filter);
+    // Shared structural-filter clause sequence, byte-identical to
+    // `regex_mode_query` (parent → ALL-tags → space → page globs → metadata →
+    // block_type). The extra `after_id` keyset predicate is appended AFTER, so
+    // the assembled SQL matches the previous hand-inlined form exactly.
+    apply_structural_filters(
+        &mut fb,
+        PREFIX,
+        &StructuralFilterInputs {
+            parent_id,
+            tag_ids,
+            space_id,
+            include_page_globs,
+            exclude_page_globs,
+            block_type_filter,
+            metadata,
+        },
+    );
 
     // id-DESC cursor pagination — ULID prefixes sort lexicographically by
     // recency, so `b.id < ?` resumes strictly after the previous page's
@@ -1134,23 +1151,11 @@ async fn filter_only_scan(
 
     let rows = db_query.fetch_all(pool).await.map_err(AppError::Database)?;
 
+    // No free-text pattern → no truncation here (`content` was already capped at
+    // the DB via `content_select_expr`, so pass `None`) and no match offsets.
     let out: Vec<SearchBlockRow> = rows
         .into_iter()
-        .map(|r| SearchBlockRow {
-            id: crate::ulid::ActiveBlockId::from_trusted_active(r.id.as_str()),
-            block_type: r.block_type,
-            content: r.content,
-            parent_id: r.parent_id.map(crate::ulid::BlockId::into_string),
-            position: r.position,
-            deleted_at: r.deleted_at,
-            todo_state: r.todo_state,
-            priority: r.priority,
-            due_date: r.due_date,
-            scheduled_date: r.scheduled_date,
-            page_id: r.page_id,
-            snippet: None,
-            match_offsets: vec![],
-        })
+        .map(|r| r.into_search_row(None, vec![]))
         .collect();
 
     Ok(out)

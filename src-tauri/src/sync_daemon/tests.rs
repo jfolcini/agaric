@@ -3834,16 +3834,16 @@ async fn start_with_lifecycle_accepts_backgrounded_initial_state() {
         "test precondition: hooks must reflect backgrounded state"
     );
 
-    let daemon = SyncDaemon::start_with_lifecycle(
-        pool.clone(),
-        "DEV_LIFECYCLE_A".into(),
-        mat.clone(),
+    let daemon = SyncDaemon::start_with_lifecycle(SyncDaemonContext {
+        pool: pool.clone(),
+        device_id: "DEV_LIFECYCLE_A".into(),
+        materializer: mat.clone(),
         scheduler,
         cert,
-        sink,
+        event_sink: sink,
         cancel,
-        lifecycle.clone(),
-    )
+        lifecycle: lifecycle.clone(),
+    })
     .await
     .expect("daemon should start even when the app is backgrounded");
 
@@ -3881,16 +3881,16 @@ async fn start_with_lifecycle_wake_notify_does_not_crash_daemon() {
     let cert = crate::sync_net::generate_self_signed_cert("DEV_LIFECYCLE_B").unwrap();
 
     let lifecycle = crate::lifecycle::LifecycleHooks::new();
-    let daemon = SyncDaemon::start_with_lifecycle(
-        pool.clone(),
-        "DEV_LIFECYCLE_B".into(),
-        mat.clone(),
+    let daemon = SyncDaemon::start_with_lifecycle(SyncDaemonContext {
+        pool: pool.clone(),
+        device_id: "DEV_LIFECYCLE_B".into(),
+        materializer: mat.clone(),
         scheduler,
         cert,
-        sink,
+        event_sink: sink,
         cancel,
-        lifecycle.clone(),
-    )
+        lifecycle: lifecycle.clone(),
+    })
     .await
     .expect("daemon should start");
 

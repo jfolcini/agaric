@@ -215,33 +215,11 @@ pub(super) fn build_fts_fetch(
 
     // Optional tag_ids filter (ALL semantics).
     //
-    // Dedupe the caller's `tag_ids` before binding.
-    // The "ALL tags" clause compares `COUNT(DISTINCT bt.tag_id)` against
-    // the bound list length; a duplicate tag id (e.g. the same chip added
-    // twice, or two FE code paths appending the same id) would make the
-    // raw `len()` exceed the achievable distinct count, so the predicate
-    // could never be satisfied and the query silently returned zero rows.
-    // De-duplicating here makes the bound count match the `DISTINCT`
-    // semantics. Order is preserved so the placeholder/bind indices stay
-    // deterministic.
-    //
-    // SQL-A6 — normalise each id to its canonical UPPERCASE
-    // ULID form BEFORE the dedup set (and bind the normalised form).
-    // `block_tags.tag_id` stores the canonical uppercase Crockford-base32
-    // ULID (`BlockId`/`ActiveBlockId` both normalise via
-    // `to_ascii_uppercase`), so a mixed-case duplicate would survive
-    // byte-exact dedup, inflate the bound count past the achievable
-    // `COUNT(DISTINCT)`, and silently zero out the ALL-tags predicate.
-    let active_tag_ids: Vec<String> = match tag_ids {
-        Some(ids) if !ids.is_empty() => {
-            let mut seen = std::collections::HashSet::new();
-            ids.iter()
-                .map(|id| id.to_ascii_uppercase())
-                .filter(|id| seen.insert(id.clone()))
-                .collect()
-        }
-        _ => Vec::new(),
-    };
+    // Dedupe + canonical-UPPERCASE-normalise the caller's `tag_ids` before
+    // binding via the shared `normalize_tag_ids` helper (SQL-A6). See that
+    // helper's docs for why the normalisation matters (a mixed-case or
+    // duplicate id would otherwise silently zero out the ALL-tags predicate).
+    let active_tag_ids = crate::fts::filter_builder::normalize_tag_ids(tag_ids);
     // #1320 the ALL-tags filter is now compiled through
     // `SearchProjection` (the cross-surface filter compiler) rather than
     // the inline `COUNT(DISTINCT)` fragment. `add_tags_via_projection`
