@@ -10,14 +10,13 @@ import { cn } from '@/lib/utils'
 import { CloseButtonIcon, closeButtonClassName } from './close-button'
 import { ScrollArea } from './scroll-area'
 
-// PERF: hoisted from inline string in render — twMerge only re-parses caller className.
-// See pending/design-system-perf-review-2026-05-09.md Tier 3 item 16.
+// PERF: hoisted from an inline string in render — twMerge then only re-parses
+// the caller's `className` rather than this whole base on every render.
 //
 // `flex flex-col overflow-hidden p-6` is baked into the base so consumers
 // can drop a `<SheetBody>` slot and get a properly height-constrained
 // scrollable region without re-stating padding / overflow at every call
-// site — mirrors the DialogContent shape from
-// pending/dialog-responsiveness-primitive-2026-05-13.md.
+// site — mirrors the DialogContent shape in `./dialog-shared.ts`.
 const SHEET_CONTENT_BASE =
   'fixed z-50 flex flex-col overflow-hidden gap-4 bg-background p-6 shadow-(--shadow-overlay) transition ease-in-out data-[state=closed]:animate-out data-[state=closed]:duration-moderate data-[state=open]:animate-in data-[state=open]:duration-moderate'
 

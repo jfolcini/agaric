@@ -2,8 +2,7 @@
  * SectionGroupHeader — pill-shaped sub-section header used inside
  * agenda-like grouped lists (DuePanel, DonePanel, AgendaResults…).
  *
- * Rationale for adding alongside `SectionTitle` rather than extending it
- * (see plan `pending/design-system-maintainability-2026-05-09.md` § 2d):
+ * Rationale for adding alongside `SectionTitle` rather than extending it:
  *
  *  - `SectionTitle` is an `<h4>` heading-style component with
  *    `text-xs font-semibold mb-1.5 flex items-center gap-1` and no

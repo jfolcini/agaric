@@ -840,8 +840,7 @@ describe('BugReportDialog', () => {
     })
   })
 
-  // ── → pending/dialog-responsiveness-primitive-2026-05-13:
-  // scrollable body keeps title and footer fixed. The custom ScrollArea
+  // Scrollable body keeps title and footer fixed. The custom ScrollArea
   // wrapper became a DialogBody slot baked into the Dialog primitive; the
   // ScrollArea is now an implementation detail of DialogBody.
   describe('scrollable body layout', () => {

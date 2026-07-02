@@ -1771,7 +1771,7 @@ export type FilterExpr =
  *  One filter atom in a compound-filter expression. Variants are tagged
  *  so the cross-surface SQL composer can dispatch via match.
  * 
- *  **Wire shape (Phase 3):** internally-tagged on `"type"` with
+ *  **Wire shape:** internally-tagged on `"type"` with
  *  PascalCase variant names, matching `BacklinkFilter`. Every variant is
  *  a struct variant (single-field where the prior backend-only shape used
  *  a newtype) because `serde`'s internally-tagged representation does not
@@ -1802,13 +1802,13 @@ export type FilterPrimitive =
 /**
  *  Shared — block carries a property matching this predicate.
  * 
- *  D8 (make invalid states unrepresentable): the predicate is a
+ *  Invalid states are unrepresentable: the predicate is a
  *  single nested [`PropertyPredicate`] enum rather than a separate
  *  `op` + `Option<value>` pair. This guarantees by construction that
  *  `Eq`/`Ne` ALWAYS carry a value and `Exists`/`NotExists` NEVER do —
  *  the "partial" states (`Eq` with no value, `Exists` with a value)
- *  are simply not expressible, so `compile_has_property` no longer
- *  needs an `unsupported()` fallback.
+ *  are simply not expressible, so `compile_has_property` needs no
+ *  `unsupported()` fallback.
  */
 { type: "HasProperty"; key: string; predicate: PropertyPredicate } | 
 /**  Shared — block's `last_modified_at` falls in this window. */
@@ -2124,10 +2124,9 @@ export type ImportResult = {
  *  `{ type: "Rolling", days } | { type: "Range", start, end }
  *  | { type: "OlderThan", days }`.
  * 
- *  Phase 2 review — the existing variants already cover the
- *  Plan's full bucket vocabulary (pending/-pages-view-compound-
- *  filters.md:144, lines 308-310). No `LastEditedBucket` variant is
- *  needed — the parser maps each chip token to one of these variants:
+ *  The existing variants already cover the full last-edited bucket
+ *  vocabulary, so no `LastEditedBucket` variant is needed — the parser
+ *  maps each chip token to one of these variants:
  * 
  *  | Chip token                | Variant               |
  *  |---------------------------|-----------------------|
@@ -2602,14 +2601,14 @@ export type PropertyFilter = {
 /**
  *  Predicate on a `has-property:` primitive.
  * 
- *  D8 (make invalid states unrepresentable): a single internally-tagged
- *  enum that fuses the operator with its operand. `Eq`/`Ne` carry a
- *  mandatory [`PropertyValue`]; `Exists`/`NotExists` carry none. The
- *  previous shape — `op: PropertyOp` plus `value: Option<PropertyValue>`
- *  — admitted two nonsensical combinations (`Eq` with no value, `Exists`
- *  with a value) that had to be rejected at compile time with an
- *  `unsupported()` sentinel. Folding the operand into the operator
- *  variant removes those states from the type entirely.
+ *  Invalid states are unrepresentable: a single internally-tagged
+ *  enum fuses the operator with its operand. `Eq`/`Ne` carry a
+ *  mandatory [`PropertyValue`]; `Exists`/`NotExists` carry none. A
+ *  split shape — `op: PropertyOp` plus `value: Option<PropertyValue>`
+ *  — would admit two nonsensical combinations (`Eq` with no value,
+ *  `Exists` with a value) that would each need rejecting at compile
+ *  time with an `unsupported()` sentinel. Folding the operand into the
+ *  operator variant keeps those states out of the type entirely.
  * 
  *  **Wire shape:** internally-tagged on `"type"` (PascalCase) so the TS
  *  union reads `{ type: "Exists" } | { type: "NotExists" }

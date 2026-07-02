@@ -184,6 +184,28 @@ pass_filenames = false
 types_or = ["ts", "tsx"]
 stages = ["pre-commit"]
 
+# Retired-doc-citation guard (#2233). The `pending/*.md` workplan convention
+# was retired — those files were migrated to GitHub issues and no longer
+# exist, so a comment citing `pending/<plan>-<date>.md` points at nothing.
+# This hook fails on any NEW such reference in source (ts/tsx/rs). The
+# pattern requires a hyphen after the slash so it matches the dead plan
+# filenames (`pending/design-system-...`, `pending/-pages-view-...`) without
+# firing on the unrelated `pending/loading` state phrase or the Tailwind
+# opacity classes (`status-pending/30`). Generated `bindings.ts` is exempt
+# (regenerated from the Rust specta docs). Historical archives under
+# `docs/session-log/` and `SESSION-LOG.md` legitimately mention the retired
+# convention and are .md files outside the scanned globs, so they are not hit.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "no-retired-pending-doc-refs"
+name = "no citations of retired pending/*.md workplans (#2233)"
+entry = "bash -c 'if grep -rnE \"pending/[A-Za-z]*-\" src/ src-tauri/src/ --include=\"*.ts\" --include=\"*.tsx\" --include=\"*.rs\" | grep -vE \"^src/lib/bindings\\.ts:\"; then echo \"ERROR: reference to a retired pending/*.md workplan — those docs were migrated to GitHub issues (see MEMORY: pending folder convention). Cite a surviving issue/#NNN or write an inline rationale instead.\"; exit 1; fi'"
+language = "system"
+pass_filenames = false
+types_or = ["ts", "tsx", "rust"]
+stages = ["pre-commit"]
+
 # Elevation-tier drift guard (#1810, follow-up to #1654). #1654 routed the
 # hand-rolled component surfaces through the elevation-tier tokens
 # (`--shadow-resting/floating/overlay`, registered in src/index.css, #1098),

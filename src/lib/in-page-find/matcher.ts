@@ -1,12 +1,13 @@
 /**
- * In-page find matcher —.
+ * In-page find matcher — locates substring matches in a container's
+ * rendered DOM.
  *
  * Walks the DOM under a host container collecting text-node matches.
  * Returns a flat list of `{ node, start, end }` triples suitable for
  * constructing `Range` instances (consumed by the highlight renderer
  * via `CSS.highlights`).
  *
- * ## Architecture call (deviation from the plan's "ProseMirror Decoration")
+ * ## Architecture decision (deviation from the plan's "ProseMirror Decoration")
  *
  * The plan describes match highlighting via ProseMirror
  * Decorations on a single editor document. Agaric uses a **roving

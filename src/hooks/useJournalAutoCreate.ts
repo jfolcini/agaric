@@ -75,7 +75,7 @@ export function useJournalAutoCreate({
       e.preventDefault()
       // Per-keypress probe replaces the in-memory `pageMap.has`
       // gate. Skips creation when a page already exists for `dateStr`,
-      // Matching the pre- short-circuit semantics.
+      // matching the previous short-circuit semantics.
       getJournalPageByDate({ date: dateStr, spaceId })
         .then((page) => {
           if (page != null) return

@@ -5,8 +5,7 @@
 //!
 //! * **Peer discovery** — mDNS browse + announce, including the
 //!   Android `WifiManager.MulticastLock` workaround and the
-//!   graceful-fallback path when raw multicast UDP is unavailable
-//!   .
+//!   graceful-fallback path when raw multicast UDP is unavailable.
 //! * **Per-peer scheduling** — exponential backoff, "due for resync"
 //!   tick, foreground/background gating, and a dormant-mode
 //!   waiter that defers mDNS / TLS listener startup until the user

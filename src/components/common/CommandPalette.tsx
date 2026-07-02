@@ -7,9 +7,8 @@
  * `'commands'` mode reachable via the `>` input prefix (matching
  * VSCode's Cmd+P convention).
  *
- * Wire-level upgrade: the two parallel `searchBlocks` calls per
- * Keystroke that fired are collapsed into one
- * `searchBlocksPartitioned` round-trip (Phase 1).
+ * Each keystroke fires a single `searchBlocksPartitioned` round-trip
+ * rather than two parallel `searchBlocks` calls.
  *
  * Built atop the cmdk wrapper at `@/components/ui/command`:
  *
@@ -173,7 +172,7 @@ export function CommandPalette(): React.ReactElement | null {
  * onClose → setView('search')` flow disposes the sheet cleanly
  * before the find-in-files view appears).
  */
-// oxlint-disable-next-line eslint/complexity -- complexity 26 vs max 25. PaletteBody is the orchestrator across 6 row types (search / commands / tags / help / link / recent), the debounced partitioned-IPC pipeline, and the Phase 5 action-menu state machine. Top-level helpers (routePrefixToMode, buildActionMenuActions, parseRowValue, tryOpenActionMenuOnTab, tryNumericPrefixJump, revealInPagesView) are already extracted; splitting further would mean threading 10+ closures through a custom hook signature for one point over budget. Same trade-off as DaySection.tsx and ConfirmDialog.tsx in this repo.
+// oxlint-disable-next-line eslint/complexity -- complexity 26 vs max 25. PaletteBody is the orchestrator across 6 row types (search / commands / tags / help / link / recent), the debounced partitioned-IPC pipeline, and the action-menu state machine. Top-level helpers (routePrefixToMode, buildActionMenuActions, parseRowValue, tryOpenActionMenuOnTab, tryNumericPrefixJump, revealInPagesView) are already extracted; splitting further would mean threading 10+ closures through a custom hook signature for one point over budget. Same trade-off as DaySection.tsx and ConfirmDialog.tsx in this repo.
 export function PaletteBody({
   onClose,
   actionMenuOpenRef,
@@ -193,18 +192,17 @@ export function PaletteBody({
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const openInNewTab = useTabsStore((s) => s.openInNewTab)
 
-  // Phase 4.M6 — collapse the 8 individual store selectors into
-  // one `useShallow` selector. Matches the SearchSheet.tsx:44 pattern.
-  // Each individual selector subscribed the component to ANY store
-  // change and re-ran the equality check 8 times per commit; the
-  // shallow-compared object lets zustand bail out at the top of the
-  // selector when none of the watched fields changed.
+  // One `useShallow` selector rather than 8 individual ones: individual
+  // selectors each subscribe the component to ANY store change and re-run
+  // their equality check every commit, whereas the shallow-compared object
+  // lets zustand bail out at the top of the selector when none of the
+  // watched fields changed.
   //
-  // Phase 3.U8 — `previousSelectionRange` snapshotted at palette
-  // open time; restored before the Selection/Range fallback insert on
-  // non-TipTap contenteditable targets so `[[page]]` insertion lands at
-  // the user's original caret. (The TipTap branch doesn't need it —
-  // ProseMirror restores its own selection on `.focus()`.)
+  // `previousSelectionRange` is snapshotted at palette open time and
+  // restored before the Selection/Range fallback insert on non-TipTap
+  // contenteditable targets, so `[[page]]` insertion lands at the user's
+  // original caret. (The TipTap branch doesn't need it — ProseMirror
+  // restores its own selection on `.focus()`.)
   const {
     query,
     setQuery: setQueryStore,
@@ -236,13 +234,13 @@ export function PaletteBody({
   // round-trip where the chip click had to fake-type a literal `'> '`
   // into the query.
   //
-  // Phase 6 — `enterModeWithQuery` (vs setMode + setQuery)
-  // clears the search slot's `queryByMode` entry as part of the
-  // transition. Without that, a chip-toggle back to search would
-  // restore the original `>set` text and re-fire this router → loop.
+  // `enterModeWithQuery` (rather than setMode + setQuery) clears the
+  // search slot's `queryByMode` entry as part of the transition. Without
+  // that, a chip-toggle back to search would restore the original `>set`
+  // text and re-fire this router → loop.
   //
-  // Phase 3 — `#` enters tags mode (block_type=tag search)
-  // and `?` enters help mode (keyboard-shortcut catalog). Same
+  // `#` enters tags mode (block_type=tag search) and `?` enters help mode
+  // (keyboard-shortcut catalog). Same
   // prefix-strip-and-restore semantics as `>`. Picker-trigger chars
   // (`/`, `@`, `[[`, `((`, `::`) remain owned by the editor and
   // never enter palette modes — they're scoped to the editor, not
@@ -253,7 +251,7 @@ export function PaletteBody({
     if (route != null) enterModeWithQuery(route.next, route.q)
   }, [query, mode, enterModeWithQuery])
 
-  // Phase 3.U4 — autofocus before paint via useLayoutEffect.
+  // Autofocus before paint via useLayoutEffect:
   // useEffect runs after paint, leaving a one-frame flash on slow
   // mounts where the user sees the unfocused input and then watches
   // the caret jump in. Matches the InPageFind.tsx:155 pattern.
@@ -314,12 +312,12 @@ export function PaletteBody({
     // so listing it cannot cause spurious re-runs; `query` remains the trigger.
   }, [query, debounced])
 
-  // Phase 4.M3 — race-discard via the shared `useGenerationGuard`
-  // hook. Re-bumped on every keystroke; an in-flight response from an
-  // earlier keystroke is dropped if its id doesn't match.
+  // Race-discard via the shared `useGenerationGuard` hook. Re-bumped on
+  // every keystroke; an in-flight response from an earlier keystroke is
+  // dropped if its id doesn't match.
   const searchGen = useGenerationGuard()
-  // Phase 3.U1 — surface real IPC failures (non-cancellation)
-  // once per session via a toast. Logger still captures every failure.
+  // Surface real IPC failures (non-cancellation) once per session via a
+  // toast. Logger still captures every failure.
   const surfaceFailureOnce = useFailedOnce()
   const [pages, setPages] = useState<SearchBlockRow[]>([])
   const [blocks, setBlocks] = useState<SearchBlockRow[]>([])
@@ -338,9 +336,9 @@ export function PaletteBody({
 
   // ── IPC ──────────────────────────────────────────────────────────
   // One `searchBlocksPartitioned` round-trip returns both partitions
-  // ({ pages, blocks }) from a single FTS scan (Phase 1).
+  // ({ pages, blocks }) from a single FTS scan.
   //
-  // The partitioned IPC now runs two parallel scans
+  // The partitioned IPC runs two parallel scans
   // server-side (page-only + unrestricted), each with its own
   // `limit + 1` probe. The pages partition is guaranteed to surface
   // matching pages regardless of how many content rows out-rank them,
@@ -401,8 +399,8 @@ export function PaletteBody({
       })
       .catch((err) => {
         if (!searchGen.isCurrent(gen)) return
-        // Phase 2 — swallow backend cancellations
-        // silently. They fire on every superseded keystroke when a fast
+        // Swallow backend cancellations silently.
+        // They fire on every superseded keystroke when a fast
         // typist races the read pool, and the stale-generation guard
         // above already discards the (non-existent) result. Toasting on
         // every cancelled IPC would spam the user with what is the
@@ -414,7 +412,7 @@ export function PaletteBody({
           { query: effectiveQuery, linkMode },
           err,
         )
-        // Phase 3.U1 — once-per-session toast for real failures.
+        // Once-per-session toast for real failures.
         surfaceFailureOnce('palette:search', () => notify.error(t('search.failed')))
         setPages([])
         setBlocks([])
@@ -545,9 +543,9 @@ export function PaletteBody({
   }
 
   // Cmd/Ctrl-click new-tab on a CommandItem. cmdk's `onSelect` doesn't
-  // Expose modifier keys, so the wrapper has to capture them.
-  // CR-2 rewires this from a fragile `mousedown` flag (which leaked
-  // when the user dragged off-row before release) to:
+  // expose modifier keys, so the wrapper has to capture them. Rather than
+  // a `mousedown` flag (which leaks when the user drags off-row before
+  // release), we use:
   //
   //  - `onClickCapture` on the list: fires in the capture phase before
   //    cmdk's item-level `onClick → onSelect`, so the flag is set
@@ -564,11 +562,11 @@ export function PaletteBody({
     newTabRef.current = e.metaKey || e.ctrlKey
   }
 
-  // ── Phase 5 — per-row action menu ────────────────────────
+  // ── Per-row action menu ──────────────────────────────────
   // Tab on the focused row opens this menu; mouse users can also
-  // open it via the `…` button rendered at row-right (Phase 4
-  // already exposes a pin button there for recents). The menu
-  // closes on Escape, click-outside, or after selecting an action.
+  // open it via the `…` button rendered at row-right (which also
+  // hosts the pin button for recents). The menu closes on Escape,
+  // click-outside, or after selecting an action.
   interface ActionMenuState {
     rowType: ActionMenuRowType
     rowId: string
@@ -593,9 +591,9 @@ export function PaletteBody({
     return { type: value.slice(0, idx), id: value.slice(idx + 1) }
   }
 
-  // Phase 5 — extracted out of `handleListKeyDown` so the
-  // top-level dispatcher stays under oxlint's eslint/complexity
-  // budget (≤ 25). Returns true if the Tab was consumed (caller
+  // Extracted out of `handleListKeyDown` so the top-level dispatcher
+  // stays under oxlint's eslint/complexity budget (≤ 25). Returns true
+  // if the Tab was consumed (caller
   // should `return` early).
   function tryOpenActionMenuOnTab(e: React.KeyboardEvent<HTMLDivElement>): boolean {
     if (e.key !== 'Tab' || e.shiftKey || actionMenu != null) return false
@@ -621,8 +619,8 @@ export function PaletteBody({
     return true
   }
 
-  // Phase 7 — extracted alongside `tryOpenActionMenuOnTab` so
-  // the dispatcher reads as a flat list of "try X branch" calls.
+  // Extracted alongside `tryOpenActionMenuOnTab` so the dispatcher
+  // reads as a flat list of "try X branch" calls.
   function tryNumericPrefixJump(e: React.KeyboardEvent<HTMLDivElement>): boolean {
     if (query.length > 0) return false
     if (e.metaKey || e.ctrlKey || e.altKey) return false
@@ -663,17 +661,17 @@ export function PaletteBody({
     return v
   }
 
-  // Phase 5 — `buildActionMenuActions` (top-level helper) owns
-  // the row-type → action-set mapping. Memoising on `actionMenu` +
-  // `t` keeps the rendered menu stable across unrelated re-renders.
+  // `buildActionMenuActions` (top-level helper) owns the row-type →
+  // action-set mapping. Memoising on `actionMenu` + `t` keeps the
+  // rendered menu stable across unrelated re-renders.
   const actionMenuActions = useMemo<readonly PaletteAction[]>(
     () =>
       actionMenu == null ? [] : buildActionMenuActions(actionMenu.rowType, actionMenu.pinned, t),
     [actionMenu, t],
   )
 
-  // Phase 5 — clipboard write with a uniform success/failure
-  // toast pair so every "Copy …" action looks the same. Extracted
+  // Clipboard write with a uniform success/failure toast pair so every
+  // "Copy …" action looks the same. Extracted
   // outside the row-type handlers so `notify` is the single source of
   // user-visible state for these actions.
   function copyToClipboard(value: string, successKey: string): void {

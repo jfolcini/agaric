@@ -6,9 +6,8 @@
  * `HistoryListItem` (the global history grid row) and `BlockHistoryItem`
  * (the per-block history sheet row).
  *
- * Extracted from the monolithic `HistoryListItem.tsx` per the Phase 3b
- * design-system-maintainability plan (`pending/design-system-maintainability-2026-05-09.md`).
- * The orchestrator (`HistoryListItem.tsx`) keeps re-exporting `opIcon`,
+ * Extracted from the once-monolithic `HistoryListItem.tsx` into a sibling
+ * file. The orchestrator (`HistoryListItem.tsx`) keeps re-exporting `opIcon`,
  * `HistoryItemCore` and `HistoryItemCoreProps` so external consumers see
  * no surface change.
  */

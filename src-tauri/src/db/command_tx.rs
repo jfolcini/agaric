@@ -7,8 +7,8 @@ use super::pool::begin_immediate_logged;
 /// SQLite transaction to the materializer-dispatch calls that must fire
 /// after it commits.
 ///
-/// (phase A): every write-path command previously repeated the
-/// same three-step dance —
+/// Without this wrapper, every write-path command has to repeat the same
+/// three-step dance —
 ///
 /// ```text
 /// let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -17,10 +17,8 @@ use super::pool::begin_immediate_logged;
 /// materializer.dispatch_background_or_warn(&op_record);
 /// ```
 ///
-/// This pattern appears in ~54 command-layer sites (35 raw
-/// `begin_with("BEGIN IMMEDIATE")` + 19 already using
-/// [`begin_immediate_logged`]) and pairs with 22 post-commit
-/// `dispatch_background_or_warn` calls. Two failure modes are easy to
+/// That pattern recurs across the command layer, pairing each mutation with
+/// a post-commit background dispatch. Two failure modes are easy to
 /// introduce and hard to review for:
 ///
 /// 1. **Pre-commit dispatch.** Firing the background task before
@@ -29,8 +27,7 @@ use super::pool::begin_immediate_logged;
 ///    materializer chasing an op that never lands.
 /// 2. **Missing dispatch.** Forgetting the `dispatch_background_or_warn`
 ///    call leaves caches (`tags_cache`, `pages_cache`, FTS, block_links,
-///    block_tag_inherited) stale until the next touch. Session 495's
-///    H-5 / H-6 fixes were both in this class.
+///    block_tag_inherited) stale until the next touch.
 ///
 /// `CommandTx` closes both by construction:
 ///

@@ -1,8 +1,8 @@
 /**
  * Serialize half of the markdown serializer (PM doc → Markdown).
  *
- * Extracted from the original `markdown-serializer.ts` monolith
- *. The public API is still exposed via the
+ * Extracted from the original `markdown-serializer.ts` monolith. The
+ * public API is still exposed via the
  * `markdown-serializer.ts` barrel — every existing
  * `import { serialize } from './markdown-serializer'` site continues to
  * resolve unchanged.

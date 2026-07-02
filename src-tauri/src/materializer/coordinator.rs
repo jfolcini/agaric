@@ -11,9 +11,9 @@ use crate::lifecycle::LifecycleHooks;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-// #1059: `AtomicU32` and `Notify` now back only the test-only
-// `BlockCountTestHooks` sidecar; importing them unconditionally would be
-// an unused-import warning in production builds.
+// `AtomicU32` and `Notify` back only the test-only `BlockCountTestHooks`
+// sidecar (#1059); importing them unconditionally would be an
+// unused-import warning in production builds.
 #[cfg(test)]
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -553,9 +553,9 @@ impl Materializer {
     ///
     /// The method is cheap in the common "already initialized" case — a
     /// single Acquire atomic load. Production code does not call this:
-    /// #1059 moved the backing flag/notify into the test-only
-    /// [`BlockCountTestHooks`] sidecar, so the helper is `#[cfg(test)]`
-    /// and available only to tests in sibling modules.
+    /// the backing flag/notify live in the test-only
+    /// [`BlockCountTestHooks`] sidecar (#1059), so the helper is
+    /// `#[cfg(test)]` and available only to tests in sibling modules.
     #[cfg(test)]
     pub async fn wait_for_initial_block_count_cache(&self) {
         let hooks = &self.block_count_test_hooks;
@@ -598,9 +598,9 @@ impl Materializer {
     ///
     /// Returns immediately if zero refreshes are in flight at call time
     /// (cheap: a single `Acquire` load). Production code does not call
-    /// this: #1059 moved the backing counter/notify into the test-only
-    /// [`BlockCountTestHooks`] sidecar, so the helper is `#[cfg(test)]`
-    /// and available only to tests in sibling modules.
+    /// this: the backing counter/notify live in the test-only
+    /// [`BlockCountTestHooks`] sidecar (#1059), so the helper is
+    /// `#[cfg(test)]` and available only to tests in sibling modules.
     #[cfg(test)]
     pub async fn wait_for_pending_block_count_refreshes(&self) {
         let hooks = &self.block_count_test_hooks;

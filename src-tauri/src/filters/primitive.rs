@@ -4,9 +4,9 @@
 //! defines the types; per-surface implementations live in their own
 //! `impl Projection for PagesProjection` / `SearchProjection` blocks.
 //!
-//! **Wire format:** Phase 3 exposes [`FilterPrimitive`] (and its value
-//! sub-types [`PropertyPredicate`], [`PropertyValue`], [`LastEditedSpec`],
-//! [`SnippetSpec`]) on the IPC boundary via `serde` + `specta::Type`.
+//! **Wire format:** [`FilterPrimitive`] (and its value sub-types
+//! [`PropertyPredicate`], [`PropertyValue`], [`LastEditedSpec`],
+//! [`SnippetSpec`]) is exposed on the IPC boundary via `serde` + `specta::Type`.
 //! The enum is internally-tagged (`#[serde(tag = "type")]`, PascalCase
 //! variant names) so the regenerated TS renders a clean discriminated
 //! union — matching the `BacklinkFilter` convention in
@@ -22,7 +22,7 @@ use std::collections::HashSet;
 /// One filter atom in a compound-filter expression. Variants are tagged
 /// so the cross-surface SQL composer can dispatch via match.
 ///
-/// **Wire shape (Phase 3):** internally-tagged on `"type"` with
+/// **Wire shape:** internally-tagged on `"type"` with
 /// PascalCase variant names, matching `BacklinkFilter`. Every variant is
 /// a struct variant (single-field where the prior backend-only shape used
 /// a newtype) because `serde`'s internally-tagged representation does not
@@ -50,13 +50,13 @@ pub enum FilterPrimitive {
     PathGlob { pattern: String, exclude: bool },
     /// Shared — block carries a property matching this predicate.
     ///
-    /// D8 (make invalid states unrepresentable): the predicate is a
+    /// Invalid states are unrepresentable: the predicate is a
     /// single nested [`PropertyPredicate`] enum rather than a separate
     /// `op` + `Option<value>` pair. This guarantees by construction that
     /// `Eq`/`Ne` ALWAYS carry a value and `Exists`/`NotExists` NEVER do —
     /// the "partial" states (`Eq` with no value, `Exists` with a value)
-    /// are simply not expressible, so `compile_has_property` no longer
-    /// needs an `unsupported()` fallback.
+    /// are simply not expressible, so `compile_has_property` needs no
+    /// `unsupported()` fallback.
     HasProperty {
         key: String,
         predicate: PropertyPredicate,
@@ -150,14 +150,14 @@ pub enum FilterPrimitive {
 
 /// Predicate on a `has-property:` primitive.
 ///
-/// D8 (make invalid states unrepresentable): a single internally-tagged
-/// enum that fuses the operator with its operand. `Eq`/`Ne` carry a
-/// mandatory [`PropertyValue`]; `Exists`/`NotExists` carry none. The
-/// previous shape — `op: PropertyOp` plus `value: Option<PropertyValue>`
-/// — admitted two nonsensical combinations (`Eq` with no value, `Exists`
-/// with a value) that had to be rejected at compile time with an
-/// `unsupported()` sentinel. Folding the operand into the operator
-/// variant removes those states from the type entirely.
+/// Invalid states are unrepresentable: a single internally-tagged
+/// enum fuses the operator with its operand. `Eq`/`Ne` carry a
+/// mandatory [`PropertyValue`]; `Exists`/`NotExists` carry none. A
+/// split shape — `op: PropertyOp` plus `value: Option<PropertyValue>`
+/// — would admit two nonsensical combinations (`Eq` with no value,
+/// `Exists` with a value) that would each need rejecting at compile
+/// time with an `unsupported()` sentinel. Folding the operand into the
+/// operator variant keeps those states out of the type entirely.
 ///
 /// **Wire shape:** internally-tagged on `"type"` (PascalCase) so the TS
 /// union reads `{ type: "Exists" } | { type: "NotExists" }
@@ -339,10 +339,9 @@ fn next_day_iso(date: &str) -> String {
 /// `{ type: "Rolling", days } | { type: "Range", start, end }
 /// | { type: "OlderThan", days }`.
 ///
-/// Phase 2 review — the existing variants already cover the
-/// Plan's full bucket vocabulary (pending/-pages-view-compound-
-/// filters.md:144, lines 308-310). No `LastEditedBucket` variant is
-/// needed — the parser maps each chip token to one of these variants:
+/// The existing variants already cover the full last-edited bucket
+/// vocabulary, so no `LastEditedBucket` variant is needed — the parser
+/// maps each chip token to one of these variants:
 ///
 /// | Chip token                | Variant               |
 /// |---------------------------|-----------------------|
@@ -390,12 +389,11 @@ pub struct SnippetSpec {
 pub struct WhereClause {
     pub sql: String,
     pub binds: Vec<Bind>,
-    /// D18 — explicit "this projection does not support this primitive"
-    /// flag. Replaces the previous substring sentinel (`is_unsupported`
-    /// used to grep the `sql` string for a `/* UNSUPPORTED */` comment,
-    /// which was brittle: any normal fragment containing that exact text
-    /// would have been misread). `false` for every real fragment; only
-    /// [`WhereClause::unsupported`] sets it `true`.
+    /// Explicit "this projection does not support this primitive" flag —
+    /// a dedicated field rather than grepping `sql` for an
+    /// `/* UNSUPPORTED */` substring, which would misread any normal
+    /// fragment containing that exact text. `false` for every real
+    /// fragment; only [`WhereClause::unsupported`] sets it `true`.
     pub unsupported: bool,
 }
 
@@ -413,7 +411,7 @@ impl WhereClause {
     /// should never emit this to SQL — the allow-list gate is the
     /// production-side protection. The cross-surface default `compile_*`
     /// methods (Pages-only on Search, Search-only on Pages) return this;
-    /// after D8 + D26, `HasProperty` itself never does.
+    /// `HasProperty` itself never does — both surfaces compile it.
     pub fn unsupported() -> Self {
         Self {
             sql: String::from("1=0 /* UNSUPPORTED */"),
@@ -722,7 +720,7 @@ impl FilterPrimitive {
 
 // ── Property-value column mapping ─────────────────────────────────────────
 
-/// D26 / #1280 — map a [`PropertyValue`] to the `block_properties` column
+/// Map a [`PropertyValue`] to the `block_properties` column (#1280)
 /// it compares against plus the bound operand (carrying its native
 /// affinity via [`Bind`]). The 4-column mapping:
 ///
@@ -928,10 +926,10 @@ pub static SEARCH_ALLOWED_KEYS: std::sync::LazyLock<HashSet<&'static str>> =
         ])
     });
 
-// ── Per-surface projection structs (Phase 1: stubs) ──────────────────────
+// ── Per-surface projection structs ───────────────────────────────────────
 
-/// Pages-surface projection. Phase 1 stubs the SQL compile sites —
-/// Phase 2 fills them in with the actual SQL fragments.
+/// Pages-surface projection: emits the SQL fragments each `FilterPrimitive`
+/// compiles to when the query runs over the Pages view.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PagesProjection;
 
@@ -974,16 +972,16 @@ impl Projection for PagesProjection {
         )
     }
     fn compile_has_property(&self, key: &str, predicate: &PropertyPredicate) -> WhereClause {
-        // D26 — every valid predicate × value combo compiles; there is no
+        // Every valid predicate × value combo compiles; there is no
         // `unsupported()` fallback. Invalid states (Eq/Ne without a value,
-        // Exists/NotExists with one) are unrepresentable after D8.
+        // Exists/NotExists with one) are unrepresentable by construction
+        // of `PropertyPredicate`.
         //
         // - Exists / NotExists test the key alone.
         // - Eq / Ne over `Text` compare `block_properties.value_text`.
-        // - Eq / Ne over `Ref` compare `block_properties.value_ref`
-        //   (previously rejected — D26 wires it up; the `value_ref`
-        //   column has existed since migration 0001 and is used by the
-        //   `space` property).
+        // - Eq / Ne over `Ref` compare `block_properties.value_ref` (a
+        //   column that has existed since migration 0001; the `space`
+        //   property uses it).
         match predicate {
             PropertyPredicate::Exists => WhereClause::new(
                 "EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?)",
@@ -1029,7 +1027,7 @@ impl Projection for PagesProjection {
         // **No-op-log ⇒ epoch rule:** a page with no `op_log`
         // row has a NULL `MAX(created_at)`. All three variants COALESCE that
         // NULL to a common epoch sentinel (`0`, i.e. 1970-01-01 in the
-        // #109 Phase 2 INTEGER-epoch-ms scheme) so the
+        // INTEGER-epoch-ms scheme, #109) so the
         // "no op-log ⇒ treated as edited at the epoch" rule is uniform:
         //   - Rolling{N}   — epoch is far in the past, so it is `< now-N`
         //                    and the page is EXCLUDED (it wasn't edited
@@ -1038,16 +1036,15 @@ impl Projection for PagesProjection {
         //                    (it counts as "old").
         //   - Range{a,b}   — epoch is below any plausible `start`, so the
         //                    page is EXCLUDED (it falls outside the window).
-        // Before this fix Rolling/Range silently dropped the no-op-log page
-        // (NULL comparisons → NULL → false) while OlderThan included it via
-        // a `'0001-01-01'` COALESCE — an asymmetry. The dates Range binds
-        // Are validated upstream in
-        // `commands::pages::compile_pages_filters`.
+        // Without the shared sentinel, Rolling/Range would silently drop a
+        // no-op-log page (NULL comparisons → NULL → false) while OlderThan
+        // included it — an asymmetry. The dates a Range binds are validated
+        // upstream in `commands::pages::compile_pages_filters`.
         //
         // **End-of-day inclusivity:** the Range `end` bound is
         // a *user-facing calendar window* — selecting `… AND 2026-03-01`
         // means "up to and including all of March 1st". `op_log.created_at`
-        // is INTEGER epoch-ms (#109 Phase 2), so we convert each bound to an
+        // is INTEGER epoch-ms (#109), so we convert each bound to an
         // epoch-ms integer: a bare (`YYYY-MM-DD`, no `T`) `end` is extended
         // to the last instant of that day (`T23:59:59.999Z`) before
         // conversion so the whole end day is included. A `start` bound needs
@@ -1242,26 +1239,23 @@ impl Projection for PagesProjection {
         // here, and file a follow-up to materialise an
         // `outbound_link_count` if measurement shows this term dominating.
         //
-        // **Page-wide outbound semantic** (Phase-2 /
-        // alignment): `block_links.source_id` is the *content* block that
+        // **Page-wide outbound semantic**:
+        // `block_links.source_id` is the *content* block that
         // authored the link, not the page block. Links normally live in the
         // body, so the outbound `NOT EXISTS` MUST cover every non-deleted
         // block on the page (`src.page_id = b.id`), mirroring the page-wide
         // inbound semantic below — not just edges typed on the page's title
-        // row (`source_id = b.id`). Spec
-        // Requires
+        // row (`source_id = b.id`). That requires
         // `source_id IN (SELECT id FROM blocks WHERE page_id = …)`.
         //
-        // **Inbound semantic** (Phase-2 alignment, refined by migration 0070
-        // to exclude same-page,
+        // **Inbound semantic** (migration 0070 excludes same-page,
         // self, and deleted-source edges — mirroring `backlink/grouped.rs`):
         // `pc.inbound_link_count` aggregates `block_links` edges whose
         // target is the page block *or any non-deleted descendant block*
         // (see migration 0069 lines 56-64 + the metadata IPC SELECT at
-        // `commands/pages.rs:1660-1697`). This is broader than the
-        // Phase-1 `target_id = b.id` placeholder — block-reference
-        // `((ULID))` edges into a descendant content block now count as
-        // inbound. The alignment is **intentional**: it makes the filter
+        // `commands/pages.rs:1660-1697`). Block-reference
+        // `((ULID))` edges into a descendant content block therefore count
+        // as inbound. The alignment is **intentional**: it makes the filter
         // match the inbound-link count rendered in `<DensityRow>` and
         // the `MostLinked` sort, so a user clicking `orphan:` after
         // seeing "0 ↗" on a row always agrees with the surfaced count.
@@ -1291,12 +1285,8 @@ impl Projection for PagesProjection {
     }
     fn compile_stub(&self) -> WhereClause {
         // Stub: a page whose only block is its own title row, i.e. zero
-        // Non-title descendants. Matches the vocabulary spec
-        // verbatim ("Page whose only block is its own title row (zero
-        // Non-title descendants)", pending/-pages-view-compound-
-        // filters.md:142). The prior `< 3` threshold was a Phase-1
-        // placeholder. The new comparison is served by the materialised
-        // `pc.child_block_count` column.
+        // non-title descendants. The comparison is served by the
+        // materialised `pc.child_block_count` column.
         WhereClause::new("COALESCE(pc.child_block_count, 0) = 0", Vec::new())
     }
     fn compile_has_no_inbound_links(&self) -> WhereClause {
@@ -1310,8 +1300,8 @@ impl Projection for PagesProjection {
     }
 }
 
-/// Search-surface projection. Phase 1 stubs — Phase 2 wires them into
-/// `fts::search` once the existing `SearchFilter` paths are reshaped.
+/// Search-surface projection: compiles each `FilterPrimitive` to the SQL
+/// fragment used when the query runs over the Search view.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SearchProjection;
 
@@ -1401,7 +1391,7 @@ impl Projection for SearchProjection {
         PagesProjection.compile_scheduled(predicate)
     }
     fn compile_regex(&self, pattern: &str) -> WhereClause {
-        // Search uses a post-FTS regex pass. Phase 2 wires this to the
+        // Search uses a post-FTS regex pass: this is wired to the
         // existing `is_regex` path in `fts::search`.
         WhereClause::new(
             "1=1 /* REGEX: handled by post-filter */",
@@ -1639,10 +1629,10 @@ mod tests {
         }
     }
 
-    /// Phase 2 — snapshot the exact SQL fragments emitted by
+    /// Snapshot the exact SQL fragments emitted by
     /// the three Pages-only grooming primitives. These reference the
-    /// Materialised `pages_cache` columns, not the
-    /// Pre- correlated subqueries. The composition site MUST
+    /// materialised `pages_cache` columns, not live correlated
+    /// subqueries. The composition site MUST
     /// have `LEFT JOIN pages_cache pc ON pc.page_id = b.id` in scope.
     #[test]
     fn pages_only_primitives_emit_materialised_pages_cache_sql() {
@@ -1679,7 +1669,7 @@ mod tests {
         );
         assert!(hnil.binds.is_empty(), "HasNoInboundLinks takes no binds");
 
-        // Regression guard — the pre- shapes must NOT reappear.
+        // Regression guard — the correlated-subquery shapes must NOT reappear.
         for w in [&orphan, &stub, &hnil] {
             assert!(
                 !w.sql.contains("d.page_id = b.id"),
@@ -1699,8 +1689,8 @@ mod tests {
         );
     }
 
-    /// Phase 2 — confirms the LastEditedSpec variants already
-    /// cover the plan's bucket vocabulary so no new variant is needed.
+    /// Confirms the LastEditedSpec variants already
+    /// cover the full bucket vocabulary so no new variant is needed.
     /// See the doc comment on `LastEditedSpec` for the chip-token map.
     #[test]
     fn last_edited_spec_covers_pend58_bucket_vocabulary() {
@@ -1773,9 +1763,8 @@ mod tests {
 
     #[test]
     fn has_property_compiles_for_all_predicate_value_combos() {
-        // D26 — every valid predicate × value combo compiles to real SQL;
-        // none falls through to `unsupported()`. Covers the Ref/Ne case
-        // that the pre-D8 shape rejected.
+        // Every valid predicate × value combo compiles to real SQL;
+        // none falls through to `unsupported()`. Covers the Ref/Ne case.
         let p = PagesProjection;
 
         let eq_text = FilterPrimitive::HasProperty {
@@ -1820,8 +1809,7 @@ mod tests {
         assert!(!w.is_unsupported());
         assert!(w.sql.contains("NOT EXISTS") && w.sql.contains("value_text = ?"));
 
-        // D26 — Eq/Ne over a `Ref` value compare `value_ref` (the
-        // previously-rejected case).
+        // Eq/Ne over a `Ref` value compare `value_ref`.
         let eq_ref = FilterPrimitive::HasProperty {
             key: "parent".into(),
             predicate: PropertyPredicate::Eq {
@@ -1867,11 +1855,11 @@ mod tests {
 
     #[test]
     fn last_edited_range_extends_bare_end_date_to_end_of_day() {
-        // A bare `YYYY-MM-DDend` is extended to the last
+        // A bare `YYYY-MM-DD` end is extended to the last
         // instant of that day so daytime edits on the end day are INCLUDED.
-        // #109 Phase 2: bounds are converted to INTEGER epoch-ms (matching
-        // `op_log.created_at`); a bare `start` is anchored at midnight. The
-        // clause is `>= start_ms AND <= end_ms`.
+        // Bounds are converted to INTEGER epoch-ms (matching
+        // `op_log.created_at`, #109); a bare `start` is anchored at
+        // midnight. The clause is `>= start_ms AND <= end_ms`.
         let p = PagesProjection;
         let bare = p.compile(&FilterPrimitive::LastEdited {
             spec: LastEditedSpec::Range {
@@ -1915,11 +1903,11 @@ mod tests {
     fn last_edited_all_variants_coalesce_no_op_log_to_common_epoch() {
         // The "no op-log ⇒ epoch" rule must be uniform: ALL
         // three variants COALESCE the page's last-edited expression to the
-        // SAME epoch sentinel so a no-op-log page is handled consistently
-        // (excluded by Rolling/Range, included by OlderThan). Before the fix
-        // Rolling/Range omitted the COALESCE (NULL → dropped) while OlderThan
-        // used a `'0001-01-01'` sentinel — the asymmetry D7 closes.
-        // #109 Phase 2: the sentinel is now the INTEGER epoch-ms `0`.
+        // SAME epoch sentinel — the INTEGER epoch-ms `0` (#109) — so a
+        // no-op-log page is handled consistently (excluded by
+        // Rolling/Range, included by OlderThan). Omitting the COALESCE in
+        // Rolling/Range would silently drop such pages (NULL → false)
+        // while OlderThan kept them — an asymmetry.
         const EPOCH: &str = ", 0)"; // COALESCE(..., 0)
         let p = PagesProjection;
         for spec in [
@@ -2584,9 +2572,9 @@ mod tests {
 
 // ── EXPLAIN QUERY PLAN tests (async, real DB) ────────────────────────────
 //
-// Phase 2 — assert each Pages-only grooming primitive composes
+// Assert each Pages-only grooming primitive composes
 // into a query plan that hits an indexed `pages_cache` row read rather
-// Than the pre- correlated-subquery shape. Mirrors the
+// than a correlated-subquery shape. Mirrors the
 // `most_linked_query_plan_uses_pages_cache_not_block_links` snapshot in
 // `commands::tests::list_pages_with_metadata_tests`.
 //
@@ -2607,8 +2595,8 @@ mod explain_query_plan_tests {
     async fn seed_pages(pool: &SqlitePool, n: u32) {
         for i in 0..n {
             let id = format!("01PAGE000000000000000F{i:04}");
-            // Phase 2: space membership lives in `blocks.space_id` (the
-            // column the query plans now filter on), not a
+            // Space membership lives in `blocks.space_id` (the
+            // column the query plans filter on), not a
             // `block_properties(key='space')` row.
             sqlx::query(
                 "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
@@ -2701,8 +2689,8 @@ mod explain_query_plan_tests {
             plan.to_lowercase().contains("pages_cache"),
             "Stub plan must reference pages_cache; got:\n{plan}"
         );
-        // The pre- shape `(SELECT COUNT(*) FROM blocks d WHERE
-        // d.page_id = b.id ...) < 3` produced a `SCAN blocks AS d`
+        // A correlated-subquery shape `(SELECT COUNT(*) FROM blocks d WHERE
+        // d.page_id = b.id ...) < 3` would produce a `SCAN blocks AS d`
         // alias in the plan. The materialised shape never aliases
         // `blocks` as `d`.
         assert!(
@@ -2768,11 +2756,11 @@ mod explain_query_plan_tests {
         );
     }
 
-    /// #1320-A — `PagesProjection::compile_path_glob` now pins the SAME
-    /// `LOWER(title) GLOB ?` dialect as Search (after #1320), NOT the
-    /// former `title COLLATE NOCASE LIKE ? ESCAPE '\'` form. This is a
+    /// `PagesProjection::compile_path_glob` pins the SAME
+    /// `LOWER(title) GLOB ?` dialect as Search (#1320-A), NOT a
+    /// `title COLLATE NOCASE LIKE ? ESCAPE '\'` form. This was a
     /// maintainer-authorised user-visible behaviour change: the Pages
-    /// path-glob filter now supports `GLOB` + brace + `[class]` semantics
+    /// path-glob filter supports `GLOB` + brace + `[class]` semantics
     /// instead of LIKE substring/`%`/`_` semantics. The `pattern` is bound
     /// VERBATIM (the caller `compile_pages_filters` runs `prepare_globs`),
     /// so this method does NOT preprocess. This test pins the compiled

@@ -3,7 +3,8 @@
  *
  * Standalone panel with no props. Polls getStatus() every 5 seconds.
  * Displays 4 metrics: foreground queue depth, background queue depth,
- * total ops dispatched, total background dispatched.
+ * grand-total ops dispatched (foreground + background combined), and the
+ * background-only dispatched count.
  */
 
 import type { TFunction } from 'i18next'
@@ -304,6 +305,8 @@ export function StatusPanel(): React.ReactElement {
                   className="status-metric"
                   value={
                     <span className="status-metric-value">
+                      {/* Grand total: foreground ops + background tasks dispatched
+                          (the next card breaks out the background-only figure). */}
                       {status.total_ops_dispatched + status.total_background_dispatched}
                     </span>
                   }

@@ -74,8 +74,8 @@ describe('Dialog ref forwarding', () => {
 
 describe('DialogContent viewport cap', () => {
   it('caps height to dynamic viewport with flex-col + overflow-hidden so the body scrolls', () => {
-    // pending/dialog-responsiveness-primitive-2026-05-13: DialogContent owns the
-    // viewport cap + pinned header/footer; DialogBody owns the scrollable region.
+    // DialogContent owns the viewport cap + pinned header/footer;
+    // DialogBody owns the scrollable region.
     const { baseElement } = render(
       <Dialog open>
         <DialogContent>

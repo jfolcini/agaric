@@ -26,8 +26,9 @@ import { cn } from '@/lib/utils'
  *  - `tone="status"`   → reads `statusState` and applies the matching
  *    `bg-status-*` / `bg-alert-*` token pair.
  *
- * `StatusBadge` and `PriorityBadge` are collapsed into this primitive; see
- * `pending/design-system-maintainability-2026-05-09.md` §2c.
+ * `StatusBadge` and `PriorityBadge` are collapsed into this single primitive
+ * so status/priority chrome lives in one place instead of three near-duplicate
+ * components.
  */
 
 const BASE =

@@ -34,7 +34,7 @@ use super::row::{FtsSearchRow, content_select_expr};
 ///   [`search_fts`] today; the partitioned caller passes
 ///   `block_type_filter = None` to fetch the unrestricted candidate
 ///   set and partitions in Rust.
-///   `with_snippet` —. `false` omits the FTS5
+/// - `with_snippet` — `false` omits the FTS5
 ///   `snippet(...)` call from the SELECT (projects `NULL` instead) so
 ///   we don't re-tokenize once per row when the downstream pipeline
 ///   will overwrite `row.snippet = None` anyway (regex / non-regex
@@ -134,7 +134,7 @@ pub(super) fn build_fts_fetch(
     // Build dynamic SQL with optional filter clauses.
     // Base parameters: ?1=query, ?2=cursor_flag, ?3=cursor_rank, ?4=cursor_id, ?5=limit
     // Additional parameters are appended after ?5 for parent_id, tag_ids,
-    // And (Phase 2) space_id.
+    // and (Phase 2) space_id.
     // Phase 1 — `snippet()` carries #828 PUA sentinel boundaries
     // (U+E000 open / U+E001 close, see SNIPPET_SQL_PROJECTION) around each
     // match span. Column index 1 = the `stripped`

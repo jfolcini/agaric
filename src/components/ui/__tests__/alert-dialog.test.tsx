@@ -76,9 +76,8 @@ describe('AlertDialog ref forwarding', () => {
 
 describe('AlertDialogContent viewport cap', () => {
   it('caps height to dynamic viewport with flex-col + overflow-hidden so the body scrolls', () => {
-    // pending/dialog-responsiveness-primitive-2026-05-13: AlertDialogContent owns
-    // the viewport cap + pinned header/footer; AlertDialogBody owns the scrollable
-    // region.
+    // AlertDialogContent owns the viewport cap + pinned header/footer;
+    // AlertDialogBody owns the scrollable region.
     const { baseElement } = render(
       <AlertDialog open>
         <AlertDialogContent>

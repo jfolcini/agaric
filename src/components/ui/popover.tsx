@@ -3,8 +3,8 @@ import type * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
-// PERF: hoisted from inline string in render — twMerge only re-parses caller className.
-// See pending/design-system-perf-review-2026-05-09.md Tier 3 item 16.
+// PERF: hoisted from an inline string in render — twMerge then only re-parses
+// the caller's `className` rather than this whole base on every render.
 // #1960 — `overflow-y-auto overscroll-contain` makes every popover scroll with
 // wheel/touch when its content exceeds the viewport cap (the existing
 // `max-h-[calc(100dvh-4rem)]` already bounds it to the visual viewport, so

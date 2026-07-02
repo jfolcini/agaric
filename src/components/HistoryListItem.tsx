@@ -6,10 +6,8 @@
  *
  * Extracted from HistoryView for testability.
  *
- * Per the Phase 3b design-system-maintainability plan
- * (`pending/design-system-maintainability-2026-05-09.md`), this file is the
- * orchestrator: the shared `HistoryItemCore` and the per-block-history
- * `BlockHistoryItem` row live as sibling files under
+ * This file is the orchestrator: the shared `HistoryItemCore` and the
+ * per-block-history `BlockHistoryItem` row live as sibling files under
  * `./HistoryListItem/`. The named exports (`opIcon`, `HistoryItemCore`,
  * `HistoryItemCoreProps`, `BlockHistoryItem`, `BlockHistoryItemProps`,
  * `BlockHistoryDiffMode`) are re-exported here so external consumers

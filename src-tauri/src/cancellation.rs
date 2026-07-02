@@ -22,8 +22,8 @@
 //! This two-layer architecture — extension-state guard registry +
 //! spawned worker — is what makes the cancel actually fire when the
 //! IPC future is dropped. (A purely in-future guard, as in the first
-//! cut of would drop together with the inner future and the
-//! watch signal would have no separate-task receiver to wake.)
+//! cut of this primitive, would drop together with the inner future and
+//! the watch signal would have no separate-task receiver to wake.)
 //!
 //! [`CancellationToken`] is a cheap-to-clone **receiver** handle. Loops
 //! in the search builder call [`CancellationToken::is_cancelled`]

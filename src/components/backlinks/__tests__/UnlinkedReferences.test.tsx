@@ -1401,10 +1401,10 @@ describe('UnlinkedReferences', () => {
   //
   // The backend's `eval_unlinked_references` OR-joins the page title and
   // its aliases into the FTS5 query, so a block whose content mentions
-  // ONLY an alias still surfaces here. Pre- the FE's
+  // ONLY an alias still surfaces here. Previously the FE's
   // `handleLinkIt` compiled `new RegExp(escapeRegExp(pageTitle))` and
   // silently no-op'd on alias-only matches while the optimistic UI told
-  // The user "linked" — see `pending/-...` for the full diagnosis.
+  // the user it had "linked".
   // The four cases below pin: alias-only match rewrites, title takes
   // priority when both present, the no-match guard surfaces a toast and
   // skips the optimistic removal, and aliases follow the page when

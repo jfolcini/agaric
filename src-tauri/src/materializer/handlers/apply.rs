@@ -30,12 +30,12 @@ impl Drop for OpApplyTimer {
     }
 }
 
-/// /L9: takes `&Arc<OpRecord>` so callers (the
-/// `MaterializeTask::ApplyOp` arm) that already hold the record as
-/// `Arc<OpRecord>` thread the borrow through without a deep clone.
+/// Takes `&Arc<OpRecord>` so callers (the `MaterializeTask::ApplyOp` arm)
+/// that already hold the record as `Arc<OpRecord>` thread the borrow
+/// through without a deep clone.
 #[tracing::instrument(skip(pool, record), fields(seq = record.seq), err)]
 pub(super) async fn apply_op(pool: &SqlitePool, record: &Arc<OpRecord>) -> Result<(), AppError> {
-    // #2110 M6 — time the whole per-op apply and record it to the
+    // Time the whole per-op apply and record it to the
     // `agaric.materializer.op_apply.duration` histogram on EVERY exit (the
     // `?`-propagated error paths included), via an RAII guard. The record helper
     // is unconditional + free when observability is off (the global meter is a
@@ -420,7 +420,7 @@ pub(crate) async fn dispatch_delete_descendants(
 
     let Some(space_id) = space_id else {
         // Pre-UPDATE space resolve returned None — the seed has no
-        // Resolvable space (pre- data, or a block whose owning
+        // resolvable space (pre-spaces data, or a block whose owning
         // page never received a `space` SetProperty). Nothing to do —
         // there's no canonical engine to mirror onto. The SQL-side
         // delete already stands as the durable outcome.
@@ -658,7 +658,7 @@ pub(super) struct ApplyEffects {
     /// Space id resolved for the `DeleteBlock` seed at PRE-UPDATE
     /// time. `None` for every other op type and for delete ops on
     /// blocks that have no resolvable space (a permitted but rare
-    /// State — pre- data). Required because
+    /// state — pre-spaces data). Required because
     /// `resolve_block_space` filters `deleted_at IS NULL`; a
     /// post-commit resolve attempt would fail on every cohort row.
     pub delete_space_id: Option<crate::space::SpaceId>,
