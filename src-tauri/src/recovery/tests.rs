@@ -2462,6 +2462,113 @@ async fn replay_walks_unmaterialized_ops_c2b() {
     mat.shutdown();
 }
 
+/// #2237 — the chunked cursor walk (`REPLAY_CHUNK_SIZE = 200`) was never
+/// exercised beyond a single chunk, so multi-chunk pagination and the
+/// classic chunk-boundary off-by-ones (an op at `seq == last_seen` skipped
+/// or replayed twice across the chunk seam) had no coverage. This seeds 450
+/// contiguous-seq CreateBlock ops (spanning THREE chunks: 1..=200, 201..=400,
+/// 401..=450) from a fresh cursor and asserts:
+///   * `ops_replayed == 450` exactly — no chunk-seam op dropped OR
+///     double-enqueued (a duplicate would push the count past 450);
+///   * every one of the 450 blocks materialises exactly once with its own
+///     content — proven by a full count AND by spot-checking the blocks that
+///     straddle each chunk boundary (seq 200/201 and 400/401), which is where
+///     a `seq > last_seen` vs `seq >= last_seen` off-by-one would corrupt;
+///   * the cursor lands on `MAX(seq) == 450`.
+///
+/// Seeding 450 real ops (rather than shrinking `REPLAY_CHUNK_SIZE` behind a
+/// test-only const) keeps the production constant as the single source of
+/// truth; the append+replay of 450 ops runs in a few seconds, well under the
+/// >20s "prohibitive" bar.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replay_paginates_across_multiple_chunks_2237() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let device_id = "dev-2237-multichunk";
+
+    // 450 ops → chunks [1..=200], [201..=400], [401..=450]. Each is a
+    // distinct block with distinct content so "exactly once" is verifiable
+    // per-record, not just in aggregate.
+    const N: i64 = 450;
+    for i in 1..=N {
+        append_local_op(
+            &pool,
+            device_id,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id(&format!("CHUNK_BLK_{i:04}")),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(i),
+                index: None,
+                content: format!("chunk-replay-{i}"),
+            }),
+        )
+        .await
+        .unwrap();
+    }
+
+    // Contiguous seqs 1..=450 from a single device; MAX(seq) is the ceiling.
+    let max_seq: i64 = sqlx::query_scalar!(r#"SELECT MAX(seq) as "m!: i64" FROM op_log"#)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(max_seq, N, "seeded {N} contiguous ops");
+
+    // Fresh cursor (0) → the walk must page through all three chunks.
+    let report = replay_unmaterialized_ops(&pool, &mat).await.unwrap();
+
+    assert_eq!(
+        report.ops_replayed, N as u64,
+        "every seeded op across all 3 chunks must be enqueued exactly once \
+         (a dropped chunk-seam op undershoots, a duplicated one overshoots)",
+    );
+    assert!(
+        report.replay_errors.is_empty(),
+        "multi-chunk replay should have no errors: {:?}",
+        report.replay_errors,
+    );
+    assert_eq!(
+        read_cursor(&pool).await,
+        N,
+        "cursor must land on MAX(seq) after paging through every chunk",
+    );
+
+    // Exact-once materialisation in aggregate: all 450 blocks present.
+    let visible: i64 = sqlx::query_scalar!(r#"SELECT COUNT(*) as "n!: i64" FROM blocks"#)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        visible, N,
+        "all {N} blocks must materialise exactly once (no chunk-seam gap)"
+    );
+
+    // Off-by-one pin: the ops that straddle each chunk boundary (last op of
+    // one chunk + first of the next) must each materialise exactly once with
+    // their own content. `last_seen = max(seq)` + strict `seq > last_seen`
+    // means seq 200 belongs to chunk 1 only and seq 201 to chunk 2 only; a
+    // `>=`/`>` slip would drop seq 201 or re-apply seq 200 here.
+    for seq in [1i64, 200, 201, 400, 401, 450] {
+        let want_id = BlockId::test_id(&format!("CHUNK_BLK_{seq:04}"))
+            .as_str()
+            .to_string();
+        let content: String = sqlx::query_scalar!(
+            r#"SELECT content as "c!: String" FROM blocks WHERE id = ?"#,
+            want_id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|_| panic!("boundary block for seq {seq} must exist exactly once"));
+        assert_eq!(
+            content,
+            format!("chunk-replay-{seq}"),
+            "boundary block seq {seq} must carry its own content (no cross-chunk mixup)"
+        );
+    }
+
+    mat.shutdown();
+}
+
 /// #412 — replay must FAIL LOUDLY when `op_log` spans multiple devices: the
 /// single global apply cursor cannot represent per-device watermarks, so the
 /// `WHERE seq > cursor` walk would silently drop the other device's low-seq

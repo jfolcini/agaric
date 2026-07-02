@@ -582,7 +582,22 @@ mod two_device {
     /// Edit/Delete/Move/SetProperty on a deleted block — see
     /// [`resolve_op`]).  Returns the set of block_ids that ended up
     /// created (so the comparator can read them back).
-    pub(super) fn apply_stream(engine: &mut LoroEngine, ops: &[OpKind]) -> Vec<String> {
+    ///
+    /// #2236: this helper previously DISCARDED every apply `Result`
+    /// (`let _ = apply_to_engine(...)`), which made the two-device /
+    /// N-way convergence properties pass VACUOUSLY — a regression that
+    /// dropped every op symmetrically still produced two identical
+    /// (empty) engines and "converged". We now (a) capture the `Result`
+    /// and fail the case if a *well-formed* op (one `resolve_op`
+    /// accepted) fails to apply — mirroring the single-author mixed-op
+    /// proptest's `apply_to_engine(...)?` — and (b) read the created
+    /// block back to prove the apply actually mutated the engine (a
+    /// no-op apply would leave it absent). Returns a `TestCaseError` so
+    /// proptest bodies propagate the failure via `?`.
+    pub(super) fn apply_stream(
+        engine: &mut LoroEngine,
+        ops: &[OpKind],
+    ) -> Result<Vec<String>, TestCaseError> {
         let mut created: Vec<String> = Vec::new();
         let mut deleted: Vec<String> = Vec::new();
 
@@ -591,13 +606,31 @@ mod two_device {
                 continue;
             };
 
-            // Errors are ignored on the apply side (the resolver guards
-            // against most of them already) and surface as convergence
-            // drift in the post-sync compare.
-            let _ = apply_to_engine(engine, &op);
+            // `resolve_op` only yields well-formed ops, so every one MUST
+            // apply cleanly — a failure is a real engine regression, not a
+            // legitimate rejection. (The `None` arm above already skips the
+            // legitimate-Err cases: edit/move/delete on an absent or
+            // deleted block, duplicate create.)
+            apply_to_engine(engine, &op)
+                .map_err(|e| TestCaseError::fail(format!("apply_stream apply failed: {e}")))?;
 
             match &op {
                 OpPayload::CreateBlock(p) => {
+                    // Anti-vacuity read-back: the just-created block must be
+                    // present in the engine. Without this, a no-op apply
+                    // path would leave `created` populated (ids are pushed
+                    // regardless) while the engines are empty, and the
+                    // downstream `compare_block_reads` would see both peers
+                    // read `None` and call that "convergence".
+                    let snap = engine.read_block(p.block_id.as_str()).map_err(|e| {
+                        TestCaseError::fail(format!("apply_stream read_block after create: {e}"))
+                    })?;
+                    prop_assert!(
+                        snap.is_some(),
+                        "CreateBlock {} must materialize in the engine after apply \
+                         (a no-op apply would leave it absent)",
+                        p.block_id.as_str()
+                    );
                     created.push(p.block_id.as_str().to_string());
                 }
                 OpPayload::DeleteBlock(p) => {
@@ -607,7 +640,7 @@ mod two_device {
             }
         }
 
-        created
+        Ok(created)
     }
 
     /// Mutual snapshot exchange — A imports B's state, B imports A's.
@@ -746,8 +779,8 @@ mod two_device {
                 })
                 .collect();
 
-            let a_created = apply_stream(&mut engine_a, &a_ops);
-            let b_created = apply_stream(&mut engine_b, &b_ops);
+            let a_created = apply_stream(&mut engine_a, &a_ops)?;
+            let b_created = apply_stream(&mut engine_b, &b_ops)?;
 
             sync_engines(&mut engine_a, &mut engine_b);
 
@@ -764,6 +797,20 @@ mod two_device {
                 if let Err(msg) = compare_block_reads(&engine_a, &engine_b, id) {
                     prop_assert!(false, "two-device create-only divergence: {msg}");
                 }
+                // #2236 anti-vacuity: convergence must be on REAL merged
+                // state, not two empty engines. Every id that was created
+                // on either peer must actually EXIST on both after sync
+                // (concurrent same-id create → one LWW survivor seen by
+                // both; distinct ids → all present). A dropped-op
+                // regression makes this Some-check fail rather than
+                // "converging" on mutual absence.
+                let present = engine_a
+                    .read_block(id)
+                    .map_err(|e| TestCaseError::fail(format!("A read_block({id}): {e}")))?;
+                prop_assert!(
+                    present.is_some(),
+                    "created block {id} must be present on engine A after merge",
+                );
             }
         }
 
@@ -799,12 +846,37 @@ mod two_device {
                 .expect("B seed create");
             sync_engines(&mut engine_a, &mut engine_b);
 
+            // #2236: capture each apply `Result` (was `let _ = ...`) —
+            // every whole-content splice against the existing seed block
+            // is well-formed and MUST apply cleanly; a failure is an
+            // engine regression, not a legitimate rejection.
             for edit in &a_edits {
-                let _ = engine_a.apply_edit_via_diff_splice(seed_id, edit);
+                engine_a
+                    .apply_edit_via_diff_splice(seed_id, edit)
+                    .map_err(|e| TestCaseError::fail(format!("A edit apply failed: {e}")))?;
             }
             for edit in &b_edits {
-                let _ = engine_b.apply_edit_via_diff_splice(seed_id, edit);
+                engine_b
+                    .apply_edit_via_diff_splice(seed_id, edit)
+                    .map_err(|e| TestCaseError::fail(format!("B edit apply failed: {e}")))?;
             }
+
+            // #2236 anti-vacuity: BEFORE the merge, each engine is a single
+            // author, so sequential whole-content edits are last-writer-
+            // wins locally — A's content is EXACTLY its final edit. This is
+            // a deterministic, non-vacuous "the edits actually mutated the
+            // engine" check: a no-op apply would leave "seed" here and fail
+            // whenever the last edit differs from the seed.
+            let a_expected = a_edits.last().expect("a_edits is 1..=8, never empty");
+            let a_snap = engine_a
+                .read_block(seed_id)
+                .map_err(|e| TestCaseError::fail(format!("A read_block pre-sync: {e}")))?
+                .ok_or_else(|| TestCaseError::fail("seed block absent on A pre-sync".to_string()))?;
+            prop_assert_eq!(
+                &a_snap.content,
+                a_expected,
+                "A's pre-merge content must equal its last edit (single-author LWW)"
+            );
 
             sync_engines(&mut engine_a, &mut engine_b);
 
@@ -1179,7 +1251,9 @@ mod n_way {
     /// `OpKind` stream on each. Returns the engines plus the union of
     /// every created block id (so the comparators know what to read
     /// back). REUSES `apply_stream` per device.
-    fn build_peers(streams: &[Vec<OpKind>]) -> (Vec<LoroEngine>, Vec<String>) {
+    fn build_peers(
+        streams: &[Vec<OpKind>],
+    ) -> Result<(Vec<LoroEngine>, Vec<String>), TestCaseError> {
         let mut engines: Vec<LoroEngine> = Vec::with_capacity(streams.len());
         let mut all_ids: Vec<String> = Vec::new();
 
@@ -1187,14 +1261,17 @@ mod n_way {
             // Distinct, deterministic peer ids: "DEV-PROP-NWAY-00", etc.
             let mut engine = LoroEngine::with_peer_id(&format!("DEV-PROP-NWAY-{i:02}"))
                 .expect("with_peer_id N-way");
-            let created = apply_stream(&mut engine, stream);
+            // #2236: propagate apply failures (apply_stream now asserts
+            // every well-formed op applies + reads back) instead of
+            // silently building a broken peer that "converges" vacuously.
+            let created = apply_stream(&mut engine, stream)?;
             all_ids.extend(created);
             engines.push(engine);
         }
 
         all_ids.sort();
         all_ids.dedup();
-        (engines, all_ids)
+        Ok((engines, all_ids))
     }
 
     /// Assert every engine in `engines` has decoded the SAME Loro
@@ -1278,7 +1355,7 @@ mod n_way {
         fn n_way_concurrent_mixed_streams_all_to_all_converges(
             streams in proptest::collection::vec(op_stream_strategy(1..=30), 3..=5),
         ) {
-            let (mut engines, all_ids) = build_peers(&streams);
+            let (mut engines, all_ids) = build_peers(&streams)?;
 
             // All-to-all: every peer imports every other peer's snapshot,
             // run to a frontier fixpoint (see `converge_all_to_all` for
@@ -1322,7 +1399,7 @@ mod n_way {
 
             // --- All-to-all (reference topology) ---
             // Run to a frontier fixpoint (see `converge_all_to_all`).
-            let (mut ata, all_ids) = build_peers(&streams);
+            let (mut ata, all_ids) = build_peers(&streams)?;
             converge_all_to_all(&mut ata);
             if let Err(msg) = assert_converged(&ata, &all_ids) {
                 prop_assert!(false, "N-way all-to-all self-divergence: {msg}");
@@ -1334,7 +1411,7 @@ mod n_way {
             // sweeps carry trailing format-version stamps so the frontier
             // converges too — see `converge_all_to_all`). The bounded loop
             // proves the ring reaches the SAME fixpoint as all-to-all. ---
-            let (mut ring, _) = build_peers(&streams);
+            let (mut ring, _) = build_peers(&streams)?;
             for _ in 0..(k + 4) {
                 for i in 0..k {
                     let prev = (i + k - 1) % k;
@@ -1354,7 +1431,7 @@ mod n_way {
             // repeated until the frontier settles (a single gather/scatter
             // converges state but can leave the hub one stamp ahead of the
             // leaves — see `converge_all_to_all`). ---
-            let (mut star, _) = build_peers(&streams);
+            let (mut star, _) = build_peers(&streams)?;
             for _ in 0..4 {
                 let leaf_snaps: Vec<Vec<u8>> = (1..k)
                     .map(|i| star[i].export_snapshot().expect("export star leaf"))
@@ -1448,7 +1525,7 @@ mod n_way {
             apply_seeds in proptest::collection::vec(any::<u64>(), 1..=4),
         ) {
             let k = streams.len();
-            let (mut engines, all_ids) = build_peers(&streams);
+            let (mut engines, all_ids) = build_peers(&streams)?;
 
             // Replay each generated round as a staggered exchange. In a
             // round, the set of participants publish their CURRENT
@@ -1548,7 +1625,7 @@ mod n_way {
             snap_stream in op_stream_strategy(2..=24),
         ) {
             // Build the straight-through peers normally.
-            let (mut engines, mut all_ids) = build_peers(&streams);
+            let (mut engines, mut all_ids) = build_peers(&streams)?;
             let snap_peer_id = format!("DEV-PROP-NWAY-SNAP-{:02}", streams.len());
 
             // --- Mid-stream snapshot for the extra device ---
@@ -1558,7 +1635,7 @@ mod n_way {
             // 1) apply first half to engine A.
             let mut staging = LoroEngine::with_peer_id(&snap_peer_id)
                 .expect("with_peer_id snap staging");
-            let mut created = apply_stream(&mut staging, first_half);
+            let mut created = apply_stream(&mut staging, first_half)?;
 
             // 2) export A's PARTIAL (mid-replay) state.
             let mid_snap = staging.export_snapshot().expect("export mid-stream snapshot");
@@ -1570,7 +1647,7 @@ mod n_way {
             fresh.import(&mid_snap).expect("import mid-stream snapshot");
 
             // 4) continue the replay (second half) on the fresh engine.
-            created.extend(apply_stream(&mut fresh, second_half));
+            created.extend(apply_stream(&mut fresh, second_half)?);
             all_ids.extend(created);
             all_ids.sort();
             all_ids.dedup();

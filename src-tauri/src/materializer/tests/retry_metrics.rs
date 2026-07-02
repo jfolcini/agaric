@@ -187,10 +187,27 @@ async fn record_failure_persist_error_is_metered_pend24_m1() {
 // failure that outlasts one retry still lands in the retry queue.
 //
 // This test makes the persist write fail for longer than a single retry
-// would tolerate: it DROPs the table, then recreates it only after a delay
-// that lets the FIRST attempt + the FIRST backoff elapse. The old
+// would tolerate: it DROPs the table, then recreates it only once the retry
+// loop has DEMONSTRABLY burned through more than one attempt. The old
 // single-retry budget would have already given up and returned `false`;
 // the widened budget retries again, sees the table back, and persists.
+//
+// #2240 hardening — two defects removed:
+//  (a) Determinism. The old version recreated the table after a fixed
+//      `sleep(250ms)` racing the 100ms×4 retry window — flaky under load
+//      (a slow scheduler could let 250ms elapse before attempt 1, or push
+//      the retries past 250ms). We now gate the recreate on the retry
+//      loop's own OBSERVABLE — the `retry_queue_persist_errors` counter each
+//      failed attempt bumps — recreating only after >= 2 observed failures.
+//      That guarantees attempts 1 and 2 fail (table gone) and a later
+//      attempt (3 or 4) succeeds, with no dependence on wall-clock timing.
+//  (b) Single source of truth for the DDL. The old version hand-copied a
+//      `CREATE TABLE ... STRICT` that silently drifts from the migrations
+//      (0028 create + 0044 global-tasks rebuild + 0077 ms-timestamp
+//      rebuild). We instead capture the REAL migrated schema from
+//      `sqlite_master` before the drop and replay that exact statement, so
+//      the recreated table always matches whatever the migration chain
+//      produced.
 // ──────────────────────────────────────────────────────────────────────
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn persist_recovers_within_bounded_budget_851() {
@@ -199,33 +216,42 @@ async fn persist_recovers_within_bounded_budget_851() {
     let (pool, _dir) = test_pool().await;
     let metrics = StdArc::new(crate::materializer::QueueMetrics::default());
 
+    // #2240(b): capture the actual migrated schema as the single source of
+    // truth (no hand-copied DDL that can drift from migrations).
+    let create_sql: String = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'materializer_retry_queue'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
     // Drop the table so the first attempt(s) fail deterministically.
     sqlx::query("DROP TABLE materializer_retry_queue")
         .execute(&pool)
         .await
         .unwrap();
 
-    // Recreate the table after a delay long enough to outlast a single
-    // retry (one 100ms backoff) but well inside the full bounded budget.
-    // 250ms lands the recreate after attempt 2's failure, so attempt 3
-    // succeeds — a scenario the old one-retry budget could not survive.
+    // #2240(a): recreate the table only after the retry loop has observably
+    // failed >= 2 attempts (deterministic trigger off the persist-error
+    // counter), so attempt 3/4 finds the table back — instead of racing a
+    // fixed 250ms sleep against the retry schedule.
     let recreate_pool = pool.clone();
+    let recreate_metrics = StdArc::clone(&metrics);
     let recreate = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(250)).await;
-        sqlx::query(
-            "CREATE TABLE materializer_retry_queue (
-                 block_id   TEXT NOT NULL,
-                 task_kind  TEXT NOT NULL,
-                 attempts   INTEGER NOT NULL DEFAULT 0,
-                 last_error TEXT,
-                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                 next_attempt_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                 PRIMARY KEY (block_id, task_kind)
-             ) STRICT",
-        )
-        .execute(&recreate_pool)
-        .await
-        .unwrap();
+        // Poll the retry loop's observable until 2 attempts have failed.
+        while recreate_metrics
+            .retry_queue_persist_errors
+            .load(AtomicOrdering::Relaxed)
+            < 2
+        {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        // `create_sql` is the schema we just read from `sqlite_master`
+        // (our own migrated DDL), never caller input — safe to replay.
+        sqlx::query(sqlx::AssertSqlSafe(create_sql.as_str()))
+            .execute(&recreate_pool)
+            .await
+            .unwrap();
     });
 
     let task = MaterializeTask::ApplyOp(StdArc::new(fake_op_record("create_block", "{}")));

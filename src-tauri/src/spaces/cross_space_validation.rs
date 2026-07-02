@@ -466,6 +466,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ref_property_space_key_exempts_cross_space_target() {
+        // #2239: the `space` property itself is the migration carve-out —
+        // pointing it at a block in a DIFFERENT space is exactly how a page
+        // moves between spaces (`migrate_personal_pages_to_work`). The
+        // cross-space gate MUST exempt `SPACE_PROPERTY_KEY` even when the
+        // source and target live in different spaces. Every other ref key
+        // rejects that same shape (`ref_property_rejects_cross_space`), so
+        // this pins the exemption the migration depends on.
+        let (pool, _dir) = test_pool().await;
+        seed_spaces(&pool).await;
+        let page_p = BlockId::new().to_string();
+        let page_w = BlockId::new().to_string();
+        let blk = BlockId::new().to_string();
+        let target = BlockId::new().to_string();
+        seed_page(&pool, &page_p, SPACE_PERSONAL_ULID).await;
+        seed_page(&pool, &page_w, SPACE_WORK_ULID).await;
+        seed_content(&pool, &blk, &page_p, "").await;
+        seed_content(&pool, &target, &page_w, "").await;
+
+        // Sanity: the same source/target with a NON-space ref key rejects,
+        // proving the pair really is cross-space (so the Ok below is due to
+        // the exemption, not an orphan/same-space accident).
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        let rejected = validate_ref_property_cross_space(
+            &mut tx,
+            &BlockId::from_trusted(&blk),
+            Some(&target),
+            "linked_page",
+        )
+        .await;
+        assert!(
+            rejected.is_err(),
+            "control: a non-space ref key must still reject this cross-space pair"
+        );
+        drop(tx);
+
+        // The `space` key is exempt: the identical cross-space target is Ok.
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        let result = validate_ref_property_cross_space(
+            &mut tx,
+            &BlockId::from_trusted(&blk),
+            Some(&target),
+            crate::op::SPACE_PROPERTY_KEY,
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "space-key cross-space ref must be exempt (migration carve-out): {:?}",
+            result.err()
+        );
+    }
+
+    #[tokio::test]
     async fn ref_property_none_is_noop() {
         let (pool, _dir) = test_pool().await;
         seed_spaces(&pool).await;
