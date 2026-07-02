@@ -277,6 +277,7 @@ pub(super) async fn run_foreground(
     mut rx: mpsc::Receiver<MaterializeTask>,
     shutdown_flag: Arc<AtomicBool>,
     metrics: Arc<QueueMetrics>,
+    loro: Arc<crate::loro::shared::LoroState>,
 ) {
     loop {
         let Some(first_task) = rx.recv().await else {
@@ -299,15 +300,16 @@ pub(super) async fn run_foreground(
             for task in batch {
                 if matches!(task, MaterializeTask::Barrier(_)) {
                     if !segment.is_empty() {
-                        process_foreground_segment(&pool, mem::take(&mut segment), &metrics).await;
+                        process_foreground_segment(&pool, mem::take(&mut segment), &metrics, &loro)
+                            .await;
                     }
-                    process_single_foreground_task(&pool, task, &metrics).await;
+                    process_single_foreground_task(&pool, task, &metrics, &loro).await;
                 } else {
                     segment.push(task);
                 }
             }
             if !segment.is_empty() {
-                process_foreground_segment(&pool, segment, &metrics).await;
+                process_foreground_segment(&pool, segment, &metrics, &loro).await;
             }
             // Record "we just finished a batch" timestamp so status
             // consumers can detect stalled materializers.
@@ -430,6 +432,7 @@ async fn process_foreground_segment(
     pool: &SqlitePool,
     tasks: Vec<MaterializeTask>,
     metrics: &Arc<QueueMetrics>,
+    loro: &Arc<crate::loro::shared::LoroState>,
 ) {
     // H-5 / H-6 (2026-04): the foreground segment used to bucket tasks
     // by `extract_block_id(task)` and dispatch each bucket in parallel
@@ -459,7 +462,7 @@ async fn process_foreground_segment(
     // the "which bucket does this land in" question the batch grouping
     // key could not answer correctly.
     for task in tasks {
-        process_single_foreground_task(pool, task, metrics).await;
+        process_single_foreground_task(pool, task, metrics, loro).await;
     }
 }
 
@@ -473,6 +476,7 @@ pub(super) async fn process_single_foreground_task(
     pool: &SqlitePool,
     task: MaterializeTask,
     metrics: &Arc<QueueMetrics>,
+    loro: &Arc<crate::loro::shared::LoroState>,
 ) {
     // Barriers carry a `tokio::sync::Notify`; the only work is
     // `notify.notify_one()`. There is no DB read, no fallible step, no
@@ -495,6 +499,7 @@ pub(super) async fn process_single_foreground_task(
     let outcome = {
         let pool = pool.clone();
         let task = task.clone();
+        let loro = Arc::clone(loro);
         retry_with_backoff(
             "fg",
             1,
@@ -502,7 +507,8 @@ pub(super) async fn process_single_foreground_task(
             move || {
                 let pool = pool.clone();
                 let task = task.clone();
-                async move { handle_foreground_task(&pool, &task).await }
+                let loro = Arc::clone(&loro);
+                async move { handle_foreground_task(&pool, &task, &loro).await }
             },
         )
         .await

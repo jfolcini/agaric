@@ -37,17 +37,27 @@
 //! into an already-populated sibling set) is the case that makes them diverge,
 //! proving the gap is real.
 //!
-//! #891 lesson: a test without `install_for_test` silently runs the FALLBACK,
-//! not production. The engine arm therefore asserts that
+//! #891 lesson: a test whose fixtures never seed the engine silently runs the
+//! FALLBACK, not production. The engine arm therefore asserts that
 //! `sql_only_fallback::count()` did NOT increment across its ops (delta == 0),
-//! proving the engine path actually ran.
+//! proving the engine path actually ran — and #2250 seeds the page directly
+//! into the engine (`seed_block_into_engine`) so the child creates genuinely
+//! resolve their parent in the engine rather than cascading into the
+//! parent-absent fallback.
 //!
-//! Process isolation: the `GLOBAL` Loro `OnceLock` is process-wide and
-//! first-write-wins (see `loro::shared::install_for_test`), so a single process
-//! cannot toggle the engine off after installing it. The fallback arm therefore
-//! drives the `apply_*_sql_only` fns directly (the established pattern — see
-//! `tag_convergence_tests` / `delete_restore_convergence_tests`). Run under
-//! `cargo nextest run` (one process per test), never plain `cargo test`.
+//! Process isolation (#2249): the ENGINE STATE is the per-instance
+//! `LoroState::new()` each arm constructs — there is no process-global
+//! `OnceLock` registry anymore — so the registry race that made engine-path
+//! tests nextest-only (#1079) is gone. HOWEVER, the `count() == delta` guard
+//! above reads the process-global `sql_only_fallback::count()` counter, which
+//! is still shared across every test in the binary: two count-measuring tests
+//! running CONCURRENTLY in one process pollute each other's delta. These
+//! count-delta arms therefore still require process-per-test — run them under
+//! `cargo nextest run` (as CI and the pre-push hook do), NOT concurrent plain
+//! `cargo test`. (The state-only isolation tests in `loro::shared` and the
+//! seed-based conformance/undo tests, which do not read the counter, DO run
+//! safely under plain `cargo test`.) The fallback arm drives the
+//! `apply_*_sql_only` fns directly.
 
 use super::*;
 use crate::db::init_pool;
@@ -132,9 +142,37 @@ async fn seed_space(pool: &SqlitePool) {
         .expect("register space");
 }
 
+/// #2250 test helper: seed a block directly into the engine tree for
+/// `space_id`, bypassing the op/create pipeline. Used to place a page that
+/// legitimately cannot engine-apply through a create op (a brand-new page has
+/// no space at create time, so its create falls back to SQL-only) into the
+/// engine, so its descendants' creates genuinely take the engine path rather
+/// than cascading into the parent-absent fallback.
+fn seed_block_into_engine(
+    state: &crate::loro::shared::LoroState,
+    space_id: &str,
+    block_id: &str,
+    block_type: &str,
+    parent: Option<&str>,
+    position: i64,
+) {
+    let space = crate::space::SpaceId::from_trusted(space_id);
+    let mut guard = state
+        .registry
+        .for_space(&space, DEVICE_ID)
+        .expect("for_space (seed into engine)");
+    guard
+        .engine_mut()
+        .apply_create_block(block_id, block_type, "", parent, position)
+        .expect("seed apply_create_block into engine");
+    drop(guard);
+}
+
 /// Drive a CreateBlock op through the real `apply_op_tx` pipeline (engine arm).
+#[allow(clippy::too_many_arguments)]
 async fn create_via_loro(
     pool: &SqlitePool,
+    state: &crate::loro::shared::LoroState,
     block_id: &str,
     block_type: &str,
     parent: Option<&str>,
@@ -154,7 +192,7 @@ async fn create_via_loro(
         .await
         .expect("append create");
     let mut tx = pool.begin().await.expect("begin create");
-    super::apply_op_tx(&mut tx, &record, None)
+    super::apply_op_tx(&mut tx, &record, None, state)
         .await
         .expect("apply create");
     tx.commit().await.expect("commit create");
@@ -176,7 +214,7 @@ async fn run_engine_arm() -> (Vec<ShapeRow>, Option<i64>, Option<i64>, Option<i6
 
     seed_space(&pool).await;
 
-    let _state = crate::loro::shared::install_for_test();
+    let state = crate::loro::shared::LoroState::new();
 
     // Seed page → parent → first child through the engine. The op-log-only
     // create projection does NOT stamp page_id / space_id / parent_id in SQL
@@ -184,7 +222,7 @@ async fn run_engine_arm() -> (Vec<ShapeRow>, Option<i64>, Option<i64>, Option<i6
     // so without stamping each block would resolve `None` and silently route
     // through the sql_only fallback — leaving it ABSENT from the engine tree.
     // Stamp them immediately after each create so the NEXT op resolves a space.
-    create_via_loro(&pool, PAGE_ID, "page", None, Some(0), None, "page").await;
+    create_via_loro(&pool, &state, PAGE_ID, "page", None, Some(0), None, "page").await;
     sqlx::query("UPDATE blocks SET page_id = ?, space_id = ? WHERE id = ?")
         .bind(PAGE_ID)
         .bind(SPACE_ID)
@@ -192,10 +230,28 @@ async fn run_engine_arm() -> (Vec<ShapeRow>, Option<i64>, Option<i64>, Option<i6
         .execute(&pool)
         .await
         .expect("stamp page space");
+    // #2250: the page create above legitimately fell back to SQL-only (a
+    // brand-new page has no space at create time), so it is ABSENT from the
+    // engine tree. A child create whose parent is absent from the engine now
+    // ALSO falls back (rather than silently dropping the child to the engine
+    // root — the divergence #2250 removes). Seed the page directly into the
+    // engine so the parent/child creates in the measured window below
+    // genuinely take the engine path.
+    seed_block_into_engine(&state, SPACE_ID, PAGE_ID, "page", None, 0);
 
     for id in [PARENT_ID, SEED_CHILD_ID] {
         let parent = if id == PARENT_ID { PAGE_ID } else { PARENT_ID };
-        create_via_loro(&pool, id, "content", Some(parent), Some(0), None, "seed").await;
+        create_via_loro(
+            &pool,
+            &state,
+            id,
+            "content",
+            Some(parent),
+            Some(0),
+            None,
+            "seed",
+        )
+        .await;
         sqlx::query("UPDATE blocks SET parent_id = ?, page_id = ?, space_id = ? WHERE id = ?")
             .bind(parent)
             .bind(PAGE_ID)
@@ -216,7 +272,17 @@ async fn run_engine_arm() -> (Vec<ShapeRow>, Option<i64>, Option<i64>, Option<i6
     // We create it BEFORE the no-fallback-delta window below so this expected,
     // production-faithful fallback does not trip the engine-path invariant. Its
     // PARENT-less create does not affect PARENT's child dense ranks.
-    create_via_loro(&pool, NEW_PAGE_ID, "page", None, Some(0), None, "new-page").await;
+    create_via_loro(
+        &pool,
+        &state,
+        NEW_PAGE_ID,
+        "page",
+        None,
+        Some(0),
+        None,
+        "new-page",
+    )
+    .await;
 
     // The no-fallback-delta window covers only the space-RESOLVABLE ops (the
     // two PARENT children + the edit); the page create above is expected to
@@ -226,6 +292,7 @@ async fn run_engine_arm() -> (Vec<ShapeRow>, Option<i64>, Option<i64>, Option<i6
     // (1) Normal child create: 2nd child of PARENT, index = 1.
     create_via_loro(
         &pool,
+        &state,
         NORMAL_CHILD_ID,
         "content",
         Some(PARENT_ID),
@@ -248,6 +315,7 @@ async fn run_engine_arm() -> (Vec<ShapeRow>, Option<i64>, Option<i64>, Option<i6
     //     SEED_CHILD + NORMAL_CHILD), probing the position divergence.
     create_via_loro(
         &pool,
+        &state,
         INDEX_ONLY_ID,
         "content",
         Some(PARENT_ID),
@@ -267,7 +335,7 @@ async fn run_engine_arm() -> (Vec<ShapeRow>, Option<i64>, Option<i64>, Option<i6
         .await
         .expect("append edit");
     let mut tx = pool.begin().await.expect("begin edit");
-    super::apply_op_tx(&mut tx, &edit_record, None)
+    super::apply_op_tx(&mut tx, &edit_record, None, &state)
         .await
         .expect("apply edit");
     tx.commit().await.expect("commit edit");

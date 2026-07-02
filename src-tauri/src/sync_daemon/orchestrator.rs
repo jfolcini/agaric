@@ -1015,12 +1015,11 @@ pub(crate) async fn run_sync_session(
         // catch-up so it can drop + reload the in-memory engines right
         // after `apply_snapshot` wipes the Loro sidecar tables.
         let local_device_id = orch.session().local_device_id.clone();
-        let engine_reload = orch
-            .loro_state()
-            .map(|s| snapshot_transfer::EngineReloadCtx {
-                registry: &s.registry,
-                device_id: &local_device_id,
-            });
+        let loro_state = orch.loro_state();
+        let engine_reload = Some(snapshot_transfer::EngineReloadCtx {
+            registry: &loro_state.registry,
+            device_id: &local_device_id,
+        });
         match snapshot_transfer::try_receive_snapshot_catchup(
             conn,
             pool,

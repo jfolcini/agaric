@@ -13,6 +13,7 @@
 // To the cached columns. Drift here is the cliff is closing.
 
 use super::*;
+use crate::loro::shared::LoroState;
 use crate::materializer::handlers::{handle_background_task, handle_foreground_task};
 
 /// Recompute `(inbound_link_count, child_block_count)` for `page_id`
@@ -154,7 +155,9 @@ async fn run_op(pool: &SqlitePool, task: MaterializeTask, link_block_ids: &[&str
             if matches!(r.op_type.as_str(), "delete_block" | "restore_block" | "purge_block")
     );
 
-    handle_foreground_task(pool, &task).await.unwrap();
+    handle_foreground_task(pool, &task, &LoroState::new())
+        .await
+        .unwrap();
     // Drive ReindexBlockLinks for every block whose `block_links`
     // rows changed. The dispatch in production fires this for
     // create_block / edit_block.

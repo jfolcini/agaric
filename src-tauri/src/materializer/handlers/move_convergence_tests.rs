@@ -86,6 +86,7 @@ const MOVE_INDEX: i64 = 2;
 /// space and route through `apply_move_block_via_loro`).
 async fn create_via_loro(
     pool: &SqlitePool,
+    state: &crate::loro::shared::LoroState,
     block_id: &str,
     block_type: &str,
     parent: Option<&str>,
@@ -103,13 +104,37 @@ async fn create_via_loro(
         .await
         .expect("append create");
     let mut tx = pool.begin().await.expect("begin create");
-    super::apply_op_tx(&mut tx, &record, None)
+    super::apply_op_tx(&mut tx, &record, None, state)
         .await
         .expect("apply create");
     tx.commit().await.expect("commit create");
 }
 
 /// Seed the shared `space` + `spaces` registry row (#708) in a fresh DB.
+/// #2250 test helper: seed a block directly into the engine tree for
+/// `space_id`, bypassing the op/create pipeline — used to place a page that
+/// cannot engine-apply through a create op (no space at create time) so its
+/// descendants' creates/moves take the engine path.
+fn seed_block_into_engine(
+    state: &crate::loro::shared::LoroState,
+    space_id: &str,
+    block_id: &str,
+    block_type: &str,
+    parent: Option<&str>,
+    position: i64,
+) {
+    let space = crate::space::SpaceId::from_trusted(space_id);
+    let mut guard = state
+        .registry
+        .for_space(&space, DEVICE_ID)
+        .expect("for_space (seed into engine)");
+    guard
+        .engine_mut()
+        .apply_create_block(block_id, block_type, "", parent, position)
+        .expect("seed apply_create_block into engine");
+    drop(guard);
+}
+
 async fn seed_space(pool: &SqlitePool) {
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content, parent_id, position) \
@@ -155,9 +180,9 @@ async fn run_engine_arm() -> (Option<String>, i64) {
         .expect("init_pool");
     seed_space(&pool).await;
 
-    let _state = crate::loro::shared::install_for_test();
+    let state = crate::loro::shared::LoroState::new();
 
-    create_via_loro(&pool, PAGE_ID, "page", None, 0).await;
+    create_via_loro(&pool, &state, PAGE_ID, "page", None, 0).await;
     sqlx::query("UPDATE blocks SET page_id = ?, space_id = ? WHERE id = ?")
         .bind(PAGE_ID)
         .bind(SPACE_ID)
@@ -165,6 +190,11 @@ async fn run_engine_arm() -> (Option<String>, i64) {
         .execute(&pool)
         .await
         .expect("stamp page space");
+    // #2250: the brand-new page create above legitimately fell back to
+    // SQL-only (no space at create time), so the page is ABSENT from the
+    // engine. Seed it directly so the child creates and the MoveBlock below
+    // genuinely take the engine path instead of the parent-absent fallback.
+    seed_block_into_engine(&state, SPACE_ID, PAGE_ID, "page", None, 0);
 
     // P1 + P2 under the page; their children. Stamp parent/page/space after
     // each create so the next child (and the MoveBlock) resolve a space and
@@ -177,7 +207,7 @@ async fn run_engine_arm() -> (Option<String>, i64) {
         (C2A_ID, P2_ID, 0),
         (C2B_ID, P2_ID, 1),
     ] {
-        create_via_loro(&pool, id, "content", Some(parent), pos).await;
+        create_via_loro(&pool, &state, id, "content", Some(parent), pos).await;
         sqlx::query("UPDATE blocks SET parent_id = ?, page_id = ?, space_id = ? WHERE id = ?")
             .bind(parent)
             .bind(PAGE_ID)
@@ -201,7 +231,7 @@ async fn run_engine_arm() -> (Option<String>, i64) {
         .await
         .expect("append move");
     let mut tx = pool.begin().await.expect("begin move");
-    super::apply_op_tx(&mut tx, &record, None)
+    super::apply_op_tx(&mut tx, &record, None, &state)
         .await
         .expect("apply move");
     tx.commit().await.expect("commit move");
@@ -348,9 +378,9 @@ async fn run_engine_cycle_arm() -> (Option<String>, Option<String>) {
         .expect("init_pool");
     seed_space(&pool).await;
 
-    let _state = crate::loro::shared::install_for_test();
+    let state = crate::loro::shared::LoroState::new();
 
-    create_via_loro(&pool, PAGE_ID, "page", None, 0).await;
+    create_via_loro(&pool, &state, PAGE_ID, "page", None, 0).await;
     sqlx::query("UPDATE blocks SET page_id = ?, space_id = ? WHERE id = ?")
         .bind(PAGE_ID)
         .bind(SPACE_ID)
@@ -358,8 +388,17 @@ async fn run_engine_cycle_arm() -> (Option<String>, Option<String>) {
         .execute(&pool)
         .await
         .expect("stamp page space");
+    // #2250: the brand-new page create above legitimately fell back to
+    // SQL-only (no space at create time), so the page is ABSENT from the
+    // engine. Seed it directly so the P1/C1A creates AND the cyclic MoveBlock
+    // below genuinely take the engine path — otherwise the parent-absent
+    // fallback would silently route this whole arm through
+    // `apply_move_block_sql_only`, making it a duplicate of the fallback arm
+    // rather than a test of the engine's `LoroTree::mov_to` cycle rejection
+    // (the #891 false-green class this refactor removes).
+    seed_block_into_engine(&state, SPACE_ID, PAGE_ID, "page", None, 0);
     for (id, parent) in [(P1_ID, PAGE_ID), (C1A_ID, P1_ID)] {
-        create_via_loro(&pool, id, "content", Some(parent), 0).await;
+        create_via_loro(&pool, &state, id, "content", Some(parent), 0).await;
         sqlx::query("UPDATE blocks SET parent_id = ?, page_id = ?, space_id = ? WHERE id = ?")
             .bind(parent)
             .bind(PAGE_ID)
@@ -371,10 +410,12 @@ async fn run_engine_cycle_arm() -> (Option<String>, Option<String>) {
     }
 
     // The engine arm's `project_move_block_to_sql` writes the engine's view of
-    // P1's parent (which the seed may or may not have parented under PAGE in the
-    // engine tree); capture it BEFORE the cyclic move so we can assert the move
-    // left it untouched, rather than hard-coding a value.
+    // P1's parent (P1 is parented under PAGE in the engine tree by the seeded
+    // create above); capture it BEFORE the cyclic move so we can assert the
+    // move left it untouched, rather than hard-coding a value.
     let pre = parent_of(&pool, P1_ID).await;
+
+    let fallback_before = super::sql_only_fallback::count();
 
     // Cycle: move P1 under C1A (C1A is P1's child → descendant).
     let mv = OpPayload::MoveBlock(MoveBlockPayload {
@@ -387,10 +428,21 @@ async fn run_engine_cycle_arm() -> (Option<String>, Option<String>) {
         .await
         .expect("append cycle move");
     let mut tx = pool.begin().await.expect("begin cycle move");
-    super::apply_op_tx(&mut tx, &record, None)
+    super::apply_op_tx(&mut tx, &record, None, &state)
         .await
         .expect("engine cycle move returns Ok (deterministic skip, not error)");
     tx.commit().await.expect("commit cycle move");
+
+    // The cyclic move must take the ENGINE path (block + target parent both
+    // live in the engine tree): the deterministic cycle rejection is the
+    // engine's `LoroTree::mov_to`, NOT the SQL fallback's `move_would_cycle`
+    // probe. A nonzero delta here means the arm silently degraded to SQL-only.
+    assert_eq!(
+        super::sql_only_fallback::count() - fallback_before,
+        0,
+        "engine cycle arm must NOT sql_only fallback (count delta must be 0); \
+         the cyclic MoveBlock silently degraded to apply_move_block_sql_only"
+    );
 
     (pre, parent_of(&pool, P1_ID).await)
 }

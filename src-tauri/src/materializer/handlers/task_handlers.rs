@@ -12,10 +12,11 @@ use super::*;
 pub(crate) async fn handle_foreground_task(
     pool: &SqlitePool,
     task: &MaterializeTask,
+    state: &crate::loro::shared::LoroState,
 ) -> Result<(), AppError> {
     match task {
         MaterializeTask::ApplyOp(record) => {
-            if let Err(e) = apply_op(pool, record).await {
+            if let Err(e) = apply_op(pool, record, state).await {
                 tracing::warn!(
                     op_type = %record.op_type,
                     device_id = %record.device_id,
@@ -127,7 +128,7 @@ pub(crate) async fn handle_foreground_task(
             // `records` is `&Arc<Vec<OpRecord>>`; `.iter()` derefs
             // through `Arc -> Vec` to yield `&OpRecord` without copying.
             for record in records.iter() {
-                let effects = match apply_op_tx(&mut tx, record, chunk.as_mut()).await {
+                let effects = match apply_op_tx(&mut tx, record, chunk.as_mut(), state).await {
                     Ok(eff) => eff,
                     Err(e) => {
                         tracing::warn!(
@@ -181,15 +182,16 @@ pub(crate) async fn handle_foreground_task(
             // the Restore/Delete descendant cohorts fan out, so the
             // engine's per-block-id mutation matches the SQL cascade.
             for (record, effects) in records.iter().zip(per_record_effects.iter()) {
-                dispatch_restore_descendants(pool, record, &effects.restored_cohort).await;
+                dispatch_restore_descendants(pool, record, &effects.restored_cohort, state).await;
                 // #2017: symmetric UPWARD fan-out for the restored ancestor
                 // chain (see `apply_op` for the divergence rationale). Mirrors
                 // the descendant fan-out on the batch path too.
-                dispatch_restore_ancestors(pool, record, &effects.restored_ancestors).await;
+                dispatch_restore_ancestors(pool, record, &effects.restored_ancestors, state).await;
                 dispatch_delete_descendants(
                     record,
                     &effects.deleted_cohort,
                     effects.delete_space_id.as_ref(),
+                    state,
                 )
                 .await;
             }

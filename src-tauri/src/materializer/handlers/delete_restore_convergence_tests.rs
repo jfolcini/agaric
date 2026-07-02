@@ -158,8 +158,33 @@ async fn seed_blocks_sql(pool: &SqlitePool) {
 /// Drive a CreateBlock op through the real `apply_op_tx` pipeline so the
 /// Loro engine has the node (precondition for the engine-arm DeleteBlock /
 /// RestoreBlock to resolve a space and route through `apply_*_via_loro`).
+/// #2250 test helper: seed a block directly into the engine tree for
+/// `space_id`, bypassing the op/create pipeline — used to place a page that
+/// cannot engine-apply through a create op (no space at create time) so its
+/// descendants' creates/deletes/restores take the engine path.
+fn seed_block_into_engine(
+    state: &crate::loro::shared::LoroState,
+    space_id: &str,
+    block_id: &str,
+    block_type: &str,
+    parent: Option<&str>,
+    position: i64,
+) {
+    let space = crate::space::SpaceId::from_trusted(space_id);
+    let mut guard = state
+        .registry
+        .for_space(&space, DEVICE_ID)
+        .expect("for_space (seed into engine)");
+    guard
+        .engine_mut()
+        .apply_create_block(block_id, block_type, "", parent, position)
+        .expect("seed apply_create_block into engine");
+    drop(guard);
+}
+
 async fn create_via_loro(
     pool: &SqlitePool,
+    state: &crate::loro::shared::LoroState,
     block_id: &str,
     block_type: &str,
     parent: Option<&str>,
@@ -177,7 +202,7 @@ async fn create_via_loro(
         .await
         .expect("append create");
     let mut tx = pool.begin().await.expect("begin create");
-    super::apply_op_tx(&mut tx, &record, None)
+    super::apply_op_tx(&mut tx, &record, None, state)
         .await
         .expect("apply create");
     tx.commit().await.expect("commit create");
@@ -213,7 +238,7 @@ async fn run_engine_arm() -> (Vec<DeleteShapeRow>, Vec<i64>, Vec<DeleteShapeRow>
         .await
         .expect("register space");
 
-    let _state = crate::loro::shared::install_for_test();
+    let state = crate::loro::shared::LoroState::new();
     // Seed the whole subtree through the engine so every block resolves to
     // SPACE_ID and the Delete / Restore ops take the via_loro arm.
     //
@@ -228,7 +253,7 @@ async fn run_engine_arm() -> (Vec<DeleteShapeRow>, Vec<i64>, Vec<DeleteShapeRow>
     // We therefore stamp `page_id` + `space_id` on each block immediately
     // after its create so the NEXT child's create (and the eventual
     // Delete/Restore) resolve a space and take the via_loro arm.
-    create_via_loro(&pool, PAGE_ID, "page", None, 0).await;
+    create_via_loro(&pool, &state, PAGE_ID, "page", None, 0).await;
     sqlx::query("UPDATE blocks SET page_id = ?, space_id = ? WHERE id = ?")
         .bind(PAGE_ID)
         .bind(SPACE_ID)
@@ -236,13 +261,19 @@ async fn run_engine_arm() -> (Vec<DeleteShapeRow>, Vec<i64>, Vec<DeleteShapeRow>
         .execute(&pool)
         .await
         .expect("stamp page space");
+    // #2250: the brand-new page create above legitimately fell back to
+    // SQL-only (no space at create time), so the page is ABSENT from the
+    // engine. Seed it directly so the child creates and the Delete/Restore
+    // ops below genuinely take the engine path (a parent-absent create/delete
+    // now falls back rather than corrupting the engine tree).
+    seed_block_into_engine(&state, SPACE_ID, PAGE_ID, "page", None, 0);
 
     for (id, parent) in [
         (PARENT_ID, PAGE_ID),
         (CHILD_ID, PARENT_ID),
         (GRANDCHILD_ID, CHILD_ID),
     ] {
-        create_via_loro(&pool, id, "content", Some(parent), 0).await;
+        create_via_loro(&pool, &state, id, "content", Some(parent), 0).await;
         // The op-log-only create seed leaves `blocks.parent_id` NULL (the
         // engine tracks parentage in its Loro tree; the SQL `parent_id`
         // column is reconciled post-commit). Both the cascade CTE and the
@@ -270,7 +301,7 @@ async fn run_engine_arm() -> (Vec<DeleteShapeRow>, Vec<i64>, Vec<DeleteShapeRow>
         .await
         .expect("append delete");
     let mut tx = pool.begin().await.expect("begin delete");
-    super::apply_op_tx(&mut tx, &delete_record, None)
+    super::apply_op_tx(&mut tx, &delete_record, None, &state)
         .await
         .expect("apply delete");
     tx.commit().await.expect("commit delete");
@@ -300,7 +331,7 @@ async fn run_engine_arm() -> (Vec<DeleteShapeRow>, Vec<i64>, Vec<DeleteShapeRow>
         .await
         .expect("append restore");
     let mut tx = pool.begin().await.expect("begin restore");
-    super::apply_op_tx(&mut tx, &restore_record, None)
+    super::apply_op_tx(&mut tx, &restore_record, None, &state)
         .await
         .expect("apply restore");
     tx.commit().await.expect("commit restore");
@@ -509,9 +540,9 @@ async fn run_orphan_engine_arm() -> Vec<DeleteShapeRow> {
         .await
         .expect("register space");
 
-    let _state = crate::loro::shared::install_for_test();
+    let state = crate::loro::shared::LoroState::new();
 
-    create_via_loro(&pool, PAGE_ID, "page", None, 0).await;
+    create_via_loro(&pool, &state, PAGE_ID, "page", None, 0).await;
     sqlx::query("UPDATE blocks SET page_id = ?, space_id = ? WHERE id = ?")
         .bind(PAGE_ID)
         .bind(SPACE_ID)
@@ -519,9 +550,15 @@ async fn run_orphan_engine_arm() -> Vec<DeleteShapeRow> {
         .execute(&pool)
         .await
         .expect("stamp page space");
+    // #2250: the brand-new page create above legitimately fell back to
+    // SQL-only (no space at create time), so the page is ABSENT from the
+    // engine. Seed it directly so the child creates and the Delete/Restore
+    // ops below genuinely take the engine path (a parent-absent create/delete
+    // now falls back rather than corrupting the engine tree).
+    seed_block_into_engine(&state, SPACE_ID, PAGE_ID, "page", None, 0);
 
     for (id, parent) in [(PARENT_ID, PAGE_ID), (CHILD_ID, PARENT_ID)] {
-        create_via_loro(&pool, id, "content", Some(parent), 0).await;
+        create_via_loro(&pool, &state, id, "content", Some(parent), 0).await;
         sqlx::query("UPDATE blocks SET parent_id = ?, page_id = ?, space_id = ? WHERE id = ?")
             .bind(parent)
             .bind(PAGE_ID)
@@ -542,7 +579,7 @@ async fn run_orphan_engine_arm() -> Vec<DeleteShapeRow> {
         .await
         .expect("append delete child");
     let mut tx = pool.begin().await.expect("begin delete child");
-    super::apply_op_tx(&mut tx, &del_child_record, None)
+    super::apply_op_tx(&mut tx, &del_child_record, None, &state)
         .await
         .expect("apply delete child");
     tx.commit().await.expect("commit delete child");
@@ -557,7 +594,7 @@ async fn run_orphan_engine_arm() -> Vec<DeleteShapeRow> {
         .await
         .expect("append delete parent");
     let mut tx = pool.begin().await.expect("begin delete parent");
-    super::apply_op_tx(&mut tx, &del_parent_record, None)
+    super::apply_op_tx(&mut tx, &del_parent_record, None, &state)
         .await
         .expect("apply delete parent");
     tx.commit().await.expect("commit delete parent");
@@ -582,7 +619,7 @@ async fn run_orphan_engine_arm() -> Vec<DeleteShapeRow> {
         .await
         .expect("append restore child");
     let mut tx = pool.begin().await.expect("begin restore child");
-    super::apply_op_tx(&mut tx, &restore_record, None)
+    super::apply_op_tx(&mut tx, &restore_record, None, &state)
         .await
         .expect("apply restore child");
     tx.commit().await.expect("commit restore child");

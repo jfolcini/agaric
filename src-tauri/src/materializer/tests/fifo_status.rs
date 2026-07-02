@@ -1,4 +1,5 @@
 use super::*;
+use crate::loro::shared::LoroState;
 
 /// H-5 / H-6 (2026-04) regression guard: two `ApplyOp` tasks targeting
 /// *different* block_ids are now processed strictly FIFO (no JoinSet
@@ -170,7 +171,7 @@ async fn status_surfaces_sql_only_fallback_count() {
 
     sql_only_fallback::record(
         "test_op",
-        sql_only_fallback::SqlOnlyFallbackReason::EngineUninit,
+        sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
     );
 
     let after = mat.status().await.sql_only_fallback_count;
@@ -242,7 +243,9 @@ async fn handle_fg_apply_op() {
         r#"{"block_id":"NOOP_BLK","to_text":"modified","prev_edit":null}"#,
     )));
     assert!(
-        handle_foreground_task(&pool, &task).await.is_ok(),
+        handle_foreground_task(&pool, &task, &LoroState::new())
+            .await
+            .is_ok(),
         "handle_foreground_task should succeed for valid ApplyOp"
     );
     let c: Option<String> = sqlx::query_scalar!("SELECT content FROM blocks WHERE id = 'NOOP_BLK'")
@@ -260,9 +263,13 @@ async fn handle_fg_barrier() {
     let (pool, _dir) = test_pool().await;
     let n = Arc::new(tokio::sync::Notify::new());
     assert!(
-        handle_foreground_task(&pool, &MaterializeTask::Barrier(Arc::clone(&n)),)
-            .await
-            .is_ok(),
+        handle_foreground_task(
+            &pool,
+            &MaterializeTask::Barrier(Arc::clone(&n)),
+            &LoroState::new()
+        )
+        .await
+        .is_ok(),
         "barrier task should succeed"
     );
     assert!(
@@ -279,7 +286,8 @@ async fn handle_fg_unexpected() {
     // `fg_errors` and reviewers see a real signal instead of a silent
     // drop.
     let (pool, _dir) = test_pool().await;
-    let result = handle_foreground_task(&pool, &MaterializeTask::RebuildTagsCache).await;
+    let result =
+        handle_foreground_task(&pool, &MaterializeTask::RebuildTagsCache, &LoroState::new()).await;
     match result {
         Err(AppError::Validation { message: msg, .. }) => {
             assert!(
@@ -300,6 +308,7 @@ async fn handle_fg_unexpected_reindex() {
         &MaterializeTask::ReindexBlockLinks {
             block_id: "01FAKE00000000000000000000".into(),
         },
+        &LoroState::new(),
     )
     .await;
     match result {
@@ -399,7 +408,8 @@ async fn handle_fg_rebuild_fts_index_returns_validation_err() {
     // any single variant cannot accidentally re-introduce the silent-Ok
     // behavior.
     let (pool, _dir) = test_pool().await;
-    let result = handle_foreground_task(&pool, &MaterializeTask::RebuildFtsIndex).await;
+    let result =
+        handle_foreground_task(&pool, &MaterializeTask::RebuildFtsIndex, &LoroState::new()).await;
     match result {
         Err(AppError::Validation { message: msg, .. }) => {
             assert!(

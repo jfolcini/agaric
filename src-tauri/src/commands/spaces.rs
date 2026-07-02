@@ -259,6 +259,7 @@ pub async fn create_page_in_space_inner(
     //    appends a `CreateBlock` op, and inserts the materialized row.
     let (block, page_op_record) = create_block_in_tx(
         &mut tx,
+        materializer.loro_state(),
         device_id,
         "page".to_string(),
         content,
@@ -277,6 +278,7 @@ pub async fn create_page_in_space_inner(
     //    steady state.
     let (_block, space_op_record) = set_property_in_tx(
         &mut tx,
+        materializer.loro_state(),
         device_id,
         block.id.clone().into_string(),
         "space",
@@ -370,6 +372,7 @@ pub async fn create_space_inner(
     //    spaces — see `crate::spaces::bootstrap`.
     let (block, create_op) = create_block_in_tx(
         &mut tx,
+        materializer.loro_state(),
         device_id,
         "page".to_string(),
         name,
@@ -386,6 +389,7 @@ pub async fn create_space_inner(
     //    that `list_spaces_inner` filters on.
     let (_block, is_space_op) = set_property_in_tx(
         &mut tx,
+        materializer.loro_state(),
         device_id,
         block.id.clone().into_string(),
         "is_space",
@@ -404,6 +408,7 @@ pub async fn create_space_inner(
     if let Some(color) = accent_color {
         let (_block, accent_op) = set_property_in_tx(
             &mut tx,
+            materializer.loro_state(),
             device_id,
             block.id.clone().into_string(),
             "accent_color",

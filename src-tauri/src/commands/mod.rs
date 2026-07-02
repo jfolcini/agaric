@@ -834,11 +834,17 @@ async fn delete_property_core(
     // page-group clear; non-reserved → `DELETE FROM block_properties`). We do NOT
     // call `apply_op_tx` / `advance_apply_cursor`: the apply cursor stays put on
     // the LOCAL path so boot replay re-applies idempotently (the safety net —
-    // #1257). If the engine can't be resolved (space unresolvable / engine
-    // uninitialised — e.g. a test without `install_for_test`), the helper FALLS
+    // #1257). If the block's space can't be resolved (#2250:
+    // `SpaceUnresolved`, the only remaining sql_only trigger), the helper FALLS
     // BACK to `apply_delete_property_sql_only`, which runs the SAME projection —
     // so the clear is never skipped and we never crash.
-    crate::materializer::apply_delete_property_via_loro(&mut tx, device_id, &del_payload).await?;
+    crate::materializer::apply_delete_property_via_loro(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        &del_payload,
+    )
+    .await?;
 
     // 5. Dispatch background cache tasks after commit (fire-and-forget).
     tx.enqueue_background(Arc::new(op_record));

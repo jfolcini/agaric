@@ -200,6 +200,7 @@ pub(crate) fn typed_property_args_for_registry_value(
 /// siblings itself.
 pub(crate) async fn create_block_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     block_type: String,
     content: String,
@@ -334,18 +335,24 @@ pub(crate) async fn create_block_in_tx(
     // (`materialized_through_seq`) must stay put on the LOCAL path so boot
     // replay re-applies these ops idempotently (`project_create_block_to_sql`
     // is `INSERT OR IGNORE`; engine apply is idempotent) — the intended safety
-    // net while local engine-apply hardens (#1248 / #1257). If the engine can't
-    // be resolved (space unresolvable / engine uninitialised — e.g. a brand-new
-    // top-level page before its `SetProperty(space)`, or a test without
-    // `install_for_test`), the helper internally FALLS BACK to the SQL-only
+    // net while local engine-apply hardens (#1248 / #1257). If the block's space can't
+    // be resolved (#2250: `SpaceUnresolved` — e.g. a brand-new top-level
+    // page before its `SetProperty(space)` — the only remaining sql_only
+    // trigger), the helper internally FALLS BACK to the SQL-only
     // projection, which writes the provisional rank — so the row is never
     // skipped and we never crash. This mirrors the engine-absent handling the
     // sync `ApplyOp` path already relies on.
     // #2200: the LOCAL create path is a "chunk of one" — pass `None` so the
     // dense-position reprojection runs inline here, exactly as before (deferral
     // is a batch-import-only optimisation).
-    crate::materializer::apply_create_block_via_loro(&mut *tx, device_id, &create_payload, None)
-        .await?;
+    crate::materializer::apply_create_block_via_loro(
+        &mut *tx,
+        state,
+        device_id,
+        &create_payload,
+        None,
+    )
+    .await?;
 
     // #533 / #1324: `project_create_block_to_sql` INSERTs `space_id = NULL` and
     // only stamps `page_id` for PAGE blocks (a deferred `SetBlockPageId` task
@@ -374,7 +381,7 @@ pub(crate) async fn create_block_in_tx(
     // #1257 ENGINE-ABSENT bare-append position parity. When the engine
     // path engages, `reproject_dense_positions` gives every sibling a concrete
     // dense 1-based rank (never the sentinel). But when the create falls back to
-    // the SQL-only path (engine uninitialised / space unresolved) AND it's a
+    // the SQL-only path (space unresolved, #2250) AND it's a
     // bare append (`index: None`, `position: None` — the payload this command
     // path always builds), `apply_create_block_sql_only` writes the append
     // sentinel `i64::MAX` (its documented both-`None` corner). The pre-PR-2
@@ -632,6 +639,7 @@ fn validate_property_value(
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn set_property_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     block_id: String,
     key: &str,
@@ -668,6 +676,7 @@ pub(crate) async fn set_property_in_tx(
     };
     set_property_in_tx_with_declaration(
         tx,
+        state,
         device_id,
         block_id,
         key,
@@ -695,6 +704,7 @@ pub(crate) async fn set_property_in_tx(
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn set_property_in_tx_with_declaration(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     block_id: String,
     key: &str,
@@ -801,12 +811,13 @@ pub(crate) async fn set_property_in_tx_with_declaration(
     // block_properties`). We do NOT call `apply_op_tx` / `advance_apply_cursor`:
     // the apply cursor stays put on the LOCAL path so boot replay re-applies
     // idempotently (the safety net while local engine-apply hardens — #1257). If
-    // the engine can't be resolved (space unresolvable / engine uninitialised —
-    // e.g. a test without `install_for_test`), the helper internally FALLS BACK
+    // the block's space can't be resolved (#2250: `SpaceUnresolved`,
+    // the only remaining sql_only trigger), the helper internally FALLS BACK
     // to `apply_set_property_sql_only`, which runs the SAME projection — so the
     // row is never skipped and we never crash. The up-front `space`-registration
     // Validation above is preserved regardless.
-    crate::materializer::apply_set_property_via_loro(&mut *tx, device_id, &prop_payload).await?;
+    crate::materializer::apply_set_property_via_loro(&mut *tx, state, device_id, &prop_payload)
+        .await?;
 
     // Return block + op record; caller is responsible for commit + dispatch.
     Ok((

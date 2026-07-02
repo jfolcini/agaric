@@ -139,17 +139,6 @@ pub struct SyncOrchestrator {
     /// full [`LoroSyncMessage::Snapshot`]); drained one per call to
     /// [`next_message`](Self::next_message).
     pending_loro_messages: VecDeque<crate::sync_protocol::loro_sync_types::LoroSyncMessage>,
-    /// #602 test seam: per-orchestrator Loro state override.
-    ///
-    /// Production always uses the process-global
-    /// [`crate::loro::shared::get`] registry (one device per process).
-    /// Multi-device convergence tests need TWO devices in ONE process,
-    /// each with its own engine registry — impossible through the
-    /// `OnceLock` global. Tests inject a leaked per-device
-    /// [`crate::loro::shared::LoroState`] here; all engine access goes
-    /// through [`Self::loro_state`] so the production path is unchanged.
-    #[cfg(test)]
-    loro_state_override: Option<&'static crate::loro::shared::LoroState>,
     remote_device_id: Option<String>,
     /// When set, the orchestrator validates that the remote device_id
     /// received in HeadExchange matches this expected peer identity.
@@ -184,8 +173,6 @@ impl SyncOrchestrator {
             state: SyncState::Idle,
             last_sent_hash: None,
             pending_loro_messages: VecDeque::new(),
-            #[cfg(test)]
-            loro_state_override: None,
             remote_device_id: None,
             expected_remote_id: None,
             streamed_to_peer: false,
@@ -199,32 +186,17 @@ impl SyncOrchestrator {
         self
     }
 
-    /// #602 test seam: route all Loro engine access through this
-    /// per-orchestrator state instead of the process-global
-    /// [`crate::loro::shared::get`]. See `loro_state_override`.
-    #[cfg(test)]
-    pub(crate) fn with_loro_state(
-        mut self,
-        state: &'static crate::loro::shared::LoroState,
-    ) -> Self {
-        self.loro_state_override = Some(state);
-        self
-    }
-
-    /// Resolve the Loro engine state for this session: the test-injected
-    /// override when present (#602 multi-device tests), otherwise the
-    /// process-global registry installed at bootstrap.
+    /// Resolve the Loro engine state for this session: the materializer's
+    /// state (#2249 — the one instance `crate::run` constructed at boot;
+    /// no process global). Each device (production or a test's device)
+    /// owns its `Arc<LoroState>`, so two devices in one test process use
+    /// distinct engines without any override seam. Always present.
     ///
     /// `pub(crate)` for the daemon layer: `run_sync_session` threads this
-    /// State into the snapshot catch-up so the post-RESET engine
-    /// reload (#607) hits the same registry the session syncs against
-    /// (override-aware in tests, process-global in production).
-    pub(crate) fn loro_state(&self) -> Option<&'static crate::loro::shared::LoroState> {
-        #[cfg(test)]
-        if let Some(state) = self.loro_state_override {
-            return Some(state);
-        }
-        crate::loro::shared::get()
+    /// state into the snapshot catch-up so the post-RESET engine
+    /// reload (#607) hits the same registry the session syncs against.
+    pub(crate) fn loro_state(&self) -> std::sync::Arc<crate::loro::shared::LoroState> {
+        std::sync::Arc::clone(self.materializer.loro_state())
     }
 
     /// Incremental sync: collect this device's per-space Loro version
@@ -233,9 +205,7 @@ impl SyncOrchestrator {
     /// our vv) per space instead of a full snapshot. Empty when no Loro
     /// state is initialised (the responder then falls back to snapshots).
     fn collect_local_loro_vvs(&self) -> Vec<crate::sync_protocol::types::SpaceVersionVector> {
-        let Some(state) = self.loro_state() else {
-            return Vec::new();
-        };
+        let state = self.loro_state();
         let mut out = Vec::new();
         for sid in state.registry.space_ids() {
             // Read-only accessor: must NOT bump the registry dirty_count, or
@@ -514,7 +484,8 @@ impl SyncOrchestrator {
                 {
                     use crate::sync_protocol::loro_sync::{self, ApplyOutcome};
 
-                    if let Some(loro_state) = self.loro_state() {
+                    {
+                        let loro_state = self.loro_state();
                         self.state = SyncState::ApplyingOps;
                         self.session.state = SyncState::ApplyingOps;
                         self.emit(crate::sync_events::SyncEvent::Progress {
@@ -523,13 +494,28 @@ impl SyncOrchestrator {
                             ops_received: self.session.ops_received,
                             ops_sent: self.session.ops_sent,
                         });
-                        let outcome = loro_sync::apply_remote(
+                        // #705 / #2249: a LoroSync payload we cannot import
+                        // (e.g. an undecodable snapshot) must FAIL the session
+                        // and surface the error — never fake convergence by
+                        // proceeding to `SyncComplete` / recording `synced_at`.
+                        // The registry is always present now (#2249 removed the
+                        // process-global-`None` defensive branch), so an
+                        // unimportable/corrupt payload is the sole failure here.
+                        let outcome = match loro_sync::apply_remote(
                             &self.pool,
                             &loro_state.registry,
                             &self.device_id,
                             msg,
                         )
-                        .await?;
+                        .await
+                        {
+                            Ok(outcome) => outcome,
+                            Err(e) => {
+                                self.state = SyncState::Failed(e.to_string());
+                                self.session.state = self.state.clone();
+                                return Err(e);
+                            }
+                        };
                         match outcome {
                             ApplyOutcome::Imported {
                                 changed_blocks,
@@ -613,26 +599,11 @@ impl SyncOrchestrator {
                                 }));
                             }
                         }
-                    } else {
-                        // #705: the registry must be initialised before
-                        // any session runs (init is synchronous and
-                        // pre-recovery in `lib.rs`), so this branch is
-                        // unreachable in production. If it is ever hit,
-                        // the payload cannot be imported — silently
-                        // dropping it and proceeding to `SyncComplete`
-                        // would fake convergence and let the responder
-                        // record a bogus `synced_at`. Fail the session
-                        // loudly instead.
-                        let msg_str = "loro: shared state not initialised; \
-                                       cannot import incoming LoroSync";
-                        self.state = SyncState::Failed(msg_str.into());
-                        self.session.state = self.state.clone();
-                        self.emit(crate::sync_events::SyncEvent::Error {
-                            message: msg_str.into(),
-                            remote_device_id: self.session.remote_device_id.clone(),
-                        });
-                        return Err(AppError::InvalidOperation(msg_str.into()));
                     }
+                    // #2249: the old "shared state not initialised" failure
+                    // arm is gone — engine state is a constructor-threaded
+                    // `&LoroState` (always present), so an un-importable
+                    // LoroSync payload is unrepresentable here.
                 }
 
                 if !is_last {
@@ -899,22 +870,12 @@ impl SyncOrchestrator {
         use crate::sync_protocol::loro_sync;
         use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
 
-        // Look up the process-global registry and snapshot its
-        // currently-registered space ids. If Loro state was never
-        // initialised (e.g., a test that skipped the bootstrap path),
-        // treat it as an empty registry — we still need to advance
-        // the remote's state machine, just with zero ops sent.
-        let loro_state_opt = self.loro_state();
-        let space_ids: Vec<crate::space::SpaceId> = if let Some(s) = &loro_state_opt {
-            s.registry.space_ids()
-        } else {
-            tracing::warn!(
-                device_id = %self.device_id,
-                "loro: shared state not initialised; \
-                 skipping LoroSync push (short-circuiting to SyncComplete)"
-            );
-            Vec::new()
-        };
+        // Snapshot the registry's currently-registered space ids
+        // (#2249: engine state is always present — threaded from the
+        // materializer / test override; an empty registry simply means
+        // nothing to ship).
+        let loro_state = self.loro_state();
+        let space_ids: Vec<crate::space::SpaceId> = loro_state.registry.space_ids();
 
         // Empty-stream short-circuit. No registered spaces means there
         // is nothing to ship; reply with `SyncComplete` directly so we
@@ -941,11 +902,6 @@ impl SyncOrchestrator {
             });
             return Ok(Some(SyncMessage::SyncComplete { last_hash }));
         }
-
-        // `space_ids` is non-empty here, so `loro_state_opt` was `Some`
-        // when we read it (the `None` branch produced an empty Vec).
-        let loro_state = loro_state_opt
-            .expect("space_ids non-empty implies loro_state_opt was Some on the read above");
 
         // Enumerate spaces and build one LoroSync per space. When the
         // initiator advertised a version vector for a space, ship an

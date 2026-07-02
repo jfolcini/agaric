@@ -332,16 +332,13 @@ pub async fn tombstone_purge(
 /// has been touched since the last save. Predicate gating
 /// (`dirty_count > 0 && !is_foreground`) lives at the spawn site;
 /// the pass itself resets the dirty counter to 0 on success.
-/// `shared::get() == None` (registry not yet initialised) skips
-/// the tick.
-pub async fn loro_snapshot_if_dirty(write_pool: &SqlitePool) -> Result<(), AppError> {
-    let Some(state) = crate::loro::shared::get() else {
-        tracing::debug!(
-            "loro_snapshot_if_dirty: shared::get() returned None (registry not yet \
-             initialised); skipping tick"
-        );
-        return Ok(());
-    };
+/// #2249: engine state is threaded in by the spawn site (a clone of the
+/// materializer's `Arc<LoroState>`) — it exists by construction, so
+/// there is no "registry not yet initialised" skip arm anymore.
+pub async fn loro_snapshot_if_dirty(
+    write_pool: &SqlitePool,
+    state: &crate::loro::shared::LoroState,
+) -> Result<(), AppError> {
     let ok = crate::loro::snapshot::save_all_engines(write_pool, &state.registry).await;
     tracing::debug!(saved = ok, "loro_snapshot_if_dirty tick ran");
     Ok(())
@@ -889,9 +886,9 @@ mod tests {
         let pool = crate::db::init_pool(&dir.path().join("test.db"))
             .await
             .unwrap();
-        loro_snapshot_if_dirty(&pool)
+        loro_snapshot_if_dirty(&pool, &crate::loro::shared::LoroState::new())
             .await
-            .expect("loro_snapshot_if_dirty must succeed when shared::get() returns None");
+            .expect("loro_snapshot_if_dirty must succeed on a fresh, empty registry");
     }
 
     /// Issue #157 sub-item H — first call post-boot fires (sentinel

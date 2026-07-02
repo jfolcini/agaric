@@ -1,12 +1,9 @@
-//! Isolation contract — run with `cargo nextest`, NEVER `cargo test` (#1079).
-//!
-//! These tests `install_for_test()` the PROCESS-GLOBAL Loro engine and isolate
-//! by `state.registry.clear()` (drops every engine in the process) under a
-//! single shared `TEST_SPACE_ID`. They are only safe one-process-per-test, which
-//! `cargo nextest` (CI + pre-push hook) provides; plain `cargo test` runs the
-//! binary multi-threaded in one process and will flake. See
-//! `loro::shared::install_for_test` and
-//! <https://github.com/jfolcini/agaric/issues/1079>.
+//! Isolation contract (#1079 → resolved by #2249): each test's engine
+//! registry is its own `Materializer`'s per-instance `LoroState` — no
+//! process-global registry — so these tests are safe under BOTH
+//! `cargo nextest` (process-per-test) and plain `cargo test` (one process,
+//! many threads). The historical nextest-only constraint
+//! (<https://github.com/jfolcini/agaric/issues/1079>) is gone.
 
 use super::common::*;
 
@@ -75,8 +72,8 @@ async fn dispatch_via_engine(pool: &SqlitePool, mat: &Materializer, payload: cra
 /// positions that never converged. The fix reprojects both affected groups in
 /// `apply_reverse_in_tx::MoveBlock`; this test pins the converged dense end-state.
 ///
-/// ENGINE-PATH confirmation: this test installs the process-global Loro engine
-/// (`install_for_test`), seeds the per-space tree (`seed_block_both`), and routes
+/// ENGINE-PATH confirmation: this test seeds the materializer's per-space
+/// engine tree (`seed_block_both`, #2249: the per-instance state) and routes
 /// the forward move through `dispatch_op` (the engine apply + reproject). The
 /// guard at the end asserts every block is present in the engine tree, so a
 /// silent regression to the SQL-only fallback fails loudly rather than passing
@@ -89,12 +86,11 @@ async fn undo_cross_page_move_reprojects_source_group_dense() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
-    // #891/#928: install the engine so the move routes through
-    // `apply_*_via_loro` (dense reproject), not the SQL-only fallback. The
-    // OnceLock is process-global; clear the registry so this test starts from a
-    // fresh per-space tree regardless of sibling tests in the binary.
-    let state = crate::loro::shared::install_for_test();
-    state.registry.clear();
+    // #891/#928/#2249: route the move through `apply_*_via_loro` (dense
+    // reproject) by seeding the materializer's own per-instance engine
+    // state — the very registry the command pipeline mutates. Fresh and
+    // isolated per test; no process global.
+    let state = mat.loro_state();
 
     // Fixed ids so the engine guard + SQL asserts can reference them directly.
     const S1: &str = "01HZ928000000000000000PAG1";
@@ -224,7 +220,7 @@ async fn undo_cross_page_move_reprojects_source_group_dense() {
     // ENGINE-PATH GUARD (#891/#928): the moved block must exist in the per-space
     // engine tree. The SQL-only fallback never touches the engine, so this
     // proves the forward ops genuinely ran the production `apply_*_via_loro`
-    // path; if a future change drops `install_for_test` / the space assignment
+    // path; if a future change drops the engine seeding / space assignment
     // and silently regresses to the fallback, this fails loudly.
     {
         let space = SpaceId::from_trusted(TEST_SPACE_ID);
@@ -275,8 +271,9 @@ async fn undo_cross_parent_move_persists_settled_position_both_groups() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
-    let state = crate::loro::shared::install_for_test();
-    state.registry.clear();
+    // #2249: the engine state is the materializer's own per-instance
+    // registry (fresh + isolated per test; no process global).
+    let state = mat.loro_state();
 
     const S1: &str = "01HZ1553000000000000000PG1";
     const S2: &str = "01HZ1553000000000000000PG2";
@@ -808,8 +805,9 @@ async fn reverse_create_block_leaves_recoverable_soft_delete_not_purge_1543() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
-    let state = crate::loro::shared::install_for_test();
-    state.registry.clear();
+    // #2249: the engine state is the materializer's own per-instance
+    // registry (fresh + isolated per test; no process global).
+    let state = mat.loro_state();
 
     const PAGE: &str = "01HZ1543000000000000000PAG";
     const BLK: &str = "01HZ15430000000000000000BB";

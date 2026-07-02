@@ -78,8 +78,16 @@ pub async fn create_block_inner(
     // CommandTx couples commit + post-commit dispatch.
     let parent_id = parent_id.map(BlockId::into_string);
     let mut tx = CommandTx::begin_immediate(pool, "create_block").await?;
-    let (block, op_record) =
-        create_block_in_tx(&mut tx, device_id, block_type, content, parent_id, index).await?;
+    let (block, op_record) = create_block_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        block_type,
+        content,
+        parent_id,
+        index,
+    )
+    .await?;
     tx.enqueue_background(op_record);
     tx.commit_and_dispatch(materializer).await?;
     Ok(block)
@@ -309,13 +317,19 @@ pub async fn edit_block_inner(
     // `deleted_at IS NULL` guard is preserved by the shared projection). We do
     // NOT call `apply_op_tx` / `advance_apply_cursor`: the apply cursor stays put
     // on the LOCAL path so boot replay re-applies idempotently (the safety net
-    // while local engine-apply hardens — #1248 / #1257). If the engine can't be
-    // resolved (space unresolvable / engine uninitialised — e.g. a test without
-    // `install_for_test`), the helper internally FALLS BACK to
+    // while local engine-apply hardens — #1248 / #1257). If the block's space can't be
+    // resolved (#2250: `SpaceUnresolved`, the only remaining sql_only
+    // trigger), the helper internally FALLS BACK to
     // `apply_edit_block_sql_only`, which runs the same projection with
     // `content = to_text` — byte-identical to the old inline UPDATE, so the row
     // is never skipped and we never crash.
-    crate::materializer::apply_edit_block_via_loro(&mut tx, device_id, &edit_payload).await?;
+    crate::materializer::apply_edit_block_via_loro(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        &edit_payload,
+    )
+    .await?;
 
     // 5. Commit + dispatch edit background cache tasks (fire-and-forget).
     //    The `block_type` hint restricts the rebuild fan-out so content
@@ -799,14 +813,15 @@ pub async fn delete_blocks_by_ids_inner(
     // dead-space-resolution problem (post-delete `resolve_block_space`
     // returns None for every cohort row). Without this the engine would
     // keep the cohort alive while SQL reports it deleted — the #1257
-    // Phantom the freshness gate refuses to ship. Engine-absent
-    // (no `install_for_test` / production-uninit) is a no-op inside the
-    // helper; the SQL cascade above stands as the durable outcome.
+    // Phantom the freshness gate refuses to ship. A cohort row whose
+    // space did not resolve is a no-op inside the helper; the SQL cascade
+    // above stands as the durable outcome.
     for (op_record, cohort, delete_space_id) in &delete_fanout {
         crate::materializer::dispatch_delete_descendants(
             op_record,
             cohort,
             delete_space_id.as_ref(),
+            materializer.loro_state(),
         )
         .await;
     }
@@ -943,6 +958,7 @@ pub async fn move_blocks_to_space_inner(
         // is exempt from the cross-space ref guard (see `set_property_in_tx`).
         let (_row, op_record) = set_property_in_tx(
             &mut tx,
+            materializer.loro_state(),
             device_id,
             block_id,
             "space",
@@ -1775,7 +1791,13 @@ pub async fn restore_blocks_by_ids_inner(
     // from the pool — valid because the cohort is alive again post-commit.
     // Engine `apply_restore_block` is idempotent. Engine-absent is a no-op.
     for (op_record, cohort) in &restore_fanout {
-        crate::materializer::dispatch_restore_descendants(pool, op_record, cohort).await;
+        crate::materializer::dispatch_restore_descendants(
+            pool,
+            op_record,
+            cohort,
+            materializer.loro_state(),
+        )
+        .await;
     }
 
     Ok(BulkTrashResponse {
@@ -1988,30 +2010,28 @@ pub async fn purge_blocks_by_ids_inner(
     // recovered here). `engine_apply(PurgeBlock)` removes a block's
     // `blocks`/`block_properties`/`block_tags` entries from the LoroDoc; it
     // is per-block-id, so we drive the whole captured cohort. Mirrors the
-    // delete/restore fan-out. Engine-absent / no-space is a no-op inside
-    // `engine_apply`; the SQL cascade above stands as the durable outcome.
-    if let Some(state) = crate::loro::shared::get() {
-        for (op_record, cohort, purge_space_id) in &purge_fanout {
-            let Some(space_id) = purge_space_id else {
-                continue;
-            };
-            for cohort_id in cohort {
-                let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
-                    block_id: BlockId::from_trusted(cohort_id),
-                });
-                let op_id = format!(
-                    "{}/{}#cohort/{}",
-                    op_record.device_id, op_record.seq, cohort_id,
-                );
-                crate::merge::engine_apply(
-                    &op_id,
-                    &payload,
-                    &op_record.device_id,
-                    space_id,
-                    &op_record.created_at.to_string(),
-                    state,
-                );
-            }
+    // delete/restore fan-out. A no-space root is a no-op; the SQL cascade
+    // above stands as the durable outcome.
+    for (op_record, cohort, purge_space_id) in &purge_fanout {
+        let Some(space_id) = purge_space_id else {
+            continue;
+        };
+        for cohort_id in cohort {
+            let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
+                block_id: BlockId::from_trusted(cohort_id),
+            });
+            let op_id = format!(
+                "{}/{}#cohort/{}",
+                op_record.device_id, op_record.seq, cohort_id,
+            );
+            crate::merge::engine_apply(
+                &op_id,
+                &payload,
+                &op_record.device_id,
+                space_id,
+                &op_record.created_at.to_string(),
+                materializer.loro_state(),
+            );
         }
     }
 
@@ -2043,6 +2063,7 @@ pub async fn purge_blocks_by_ids_inner(
 /// the caller can queue background dispatch.
 pub(crate) async fn delete_property_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     block_id: &str,
     key: &str,
@@ -2084,12 +2105,12 @@ pub(crate) async fn delete_property_in_tx(
     // `space_id` page-group clear; non-reserved → `DELETE FROM block_properties`).
     // We do NOT call `apply_op_tx` / `advance_apply_cursor`: the apply cursor
     // stays put on the LOCAL path so boot replay re-applies idempotently (the
-    // safety net while local engine-apply hardens — #1257). If the engine can't
-    // be resolved (space unresolvable / engine uninitialised — e.g. a test
-    // without `install_for_test`), the helper internally FALLS BACK to
+    // safety net while local engine-apply hardens — #1257). If the block's
+    // space cannot be resolved the helper internally FALLS BACK to
     // `apply_delete_property_sql_only`, which runs the SAME projection — so the
     // clear is never skipped and we never crash.
-    crate::materializer::apply_delete_property_via_loro(&mut *tx, device_id, &del_payload).await?;
+    crate::materializer::apply_delete_property_via_loro(&mut *tx, state, device_id, &del_payload)
+        .await?;
 
     Ok(op_record)
 }
@@ -2333,6 +2354,7 @@ pub async fn create_blocks_batch_inner(
         let index = spec.position.map(|p| (p - 1).max(0));
         let (block, block_op) = create_block_in_tx(
             &mut tx,
+            materializer.loro_state(),
             device_id,
             spec.block_type,
             spec.content,
@@ -2354,6 +2376,7 @@ pub async fn create_blocks_batch_inner(
                 crate::domain::block_ops::typed_property_args_for_string_value(key, value.clone());
             let (_block, prop_op) = set_property_in_tx(
                 &mut tx,
+                materializer.loro_state(),
                 device_id,
                 block.id.clone().into_string(),
                 key,

@@ -101,6 +101,7 @@ pub async fn bootstrap_spaces(
     // / `accent_color` ops every boot); the backfill runs every boot
     // to catch any page that slipped through `create_block`'s
     // page+space invariant (legacy callsites, sync replay, etc.).
+    let state = materializer.loro_state();
     let seeded_blocks_already_done = is_bootstrap_complete(pool).await?;
 
     // (#110) — `CommandTx` so the op records emitted below
@@ -133,12 +134,14 @@ pub async fn bootstrap_spaces(
         )
         .await?;
         let personal_is_space_set =
-            ensure_is_space_property(&mut tx, device_id, SPACE_PERSONAL_ULID, &mut records).await?;
+            ensure_is_space_property(&mut tx, state, device_id, SPACE_PERSONAL_ULID, &mut records)
+                .await?;
         // Seed the default `accent_color` for Personal. The
         // helper short-circuits when the property already exists so a
         // re-run / partial-resume never piles up duplicate ops.
         let personal_accent_set = ensure_accent_color_property(
             &mut tx,
+            state,
             device_id,
             SPACE_PERSONAL_ULID,
             SPACE_PERSONAL_DEFAULT_ACCENT,
@@ -149,11 +152,13 @@ pub async fn bootstrap_spaces(
         let work_created =
             ensure_space_block(&mut tx, device_id, SPACE_WORK_ULID, "Work", &mut records).await?;
         let work_is_space_set =
-            ensure_is_space_property(&mut tx, device_id, SPACE_WORK_ULID, &mut records).await?;
+            ensure_is_space_property(&mut tx, state, device_id, SPACE_WORK_ULID, &mut records)
+                .await?;
         // Seed the default `accent_color` for Work. Same
         // idempotency guard as Personal above.
         let work_accent_set = ensure_accent_color_property(
             &mut tx,
+            state,
             device_id,
             SPACE_WORK_ULID,
             SPACE_WORK_DEFAULT_ACCENT,
@@ -319,6 +324,7 @@ async fn ensure_space_block(
 /// was appended.
 async fn ensure_is_space_property(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     block_id: &str,
     records: &mut Vec<OpRecord>,
@@ -337,6 +343,7 @@ async fn ensure_is_space_property(
 
     let (_block, record) = set_property_in_tx(
         tx,
+        state,
         device_id,
         block_id.to_owned(),
         "is_space",
@@ -365,6 +372,7 @@ async fn ensure_is_space_property(
 /// overwrites a user choice on a re-run.
 async fn ensure_accent_color_property(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     block_id: &str,
     default_token: &str,
@@ -384,6 +392,7 @@ async fn ensure_accent_color_property(
 
     let (_block, record) = set_property_in_tx(
         tx,
+        state,
         device_id,
         block_id.to_owned(),
         "accent_color",
@@ -613,6 +622,7 @@ pub async fn migrate_personal_pages_to_work(
     device_id: &str,
     materializer: &Materializer,
 ) -> Result<(), AppError> {
+    let state = materializer.loro_state();
     // Guard #1 — marker fast-path. Read the marker from outside any
     // transaction so the common (already-migrated) case skips the
     // BEGIN IMMEDIATE round-trip entirely.
@@ -642,6 +652,7 @@ pub async fn migrate_personal_pages_to_work(
     for page_id in pages {
         let (_block, record) = set_property_in_tx(
             &mut tx,
+            state,
             device_id,
             page_id,
             "space",
@@ -661,6 +672,7 @@ pub async fn migrate_personal_pages_to_work(
     // pattern as `is_space = "true"` itself).
     let (_block, marker_record) = set_property_in_tx(
         &mut tx,
+        state,
         device_id,
         SPACE_PERSONAL_ULID.to_owned(),
         "personal_to_work_migration_v1",

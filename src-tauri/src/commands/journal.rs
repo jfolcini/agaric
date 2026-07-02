@@ -206,6 +206,7 @@ async fn resolve_or_create_journal_page(
     // keep the SELECT + INSERT pair atomic in *this* transaction.
     let (block, page_op_record) = create_block_in_tx(
         &mut tx,
+        materializer.loro_state(),
         device_id,
         "page".into(),
         date.to_string(),
@@ -216,6 +217,7 @@ async fn resolve_or_create_journal_page(
 
     let (_block_after_prop, space_op_record) = set_property_in_tx(
         &mut tx,
+        materializer.loro_state(),
         device_id,
         block.id.clone().into_string(),
         "space",
