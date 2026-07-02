@@ -106,13 +106,13 @@ async function searchPagesViaCache(q: string, pagesListRef: PagesListRef): Promi
   if (source.length === 0) {
     // limit-clamp-followup — replaced the silently-clamped
     // `listBlocks({ limit: 500 })` call with `listAllPagesInSpace`, the
-    // no-pagination IPC that returns every page in the space.  The
-    // `?? ''` fallback is preserved pre-bootstrap: the backend treats
-    // an empty `space_id` as a no-match filter (the `block_properties`
-    // `value_ref = ?` clause never matches the empty string since
-    // space IDs are ULIDs), so we get an empty list instead of a
-    // runtime null deref.
-    const spaceId = useSpaceStore.getState().currentSpaceId ?? ''
+    // no-pagination IPC that returns every page in the space.
+    // b1 — `listAllPagesInSpace` is required-active: with no active space
+    // there are no page suggestions to offer, so short-circuit to an empty
+    // list instead of dispatching (a Global scope is rejected by the
+    // backend).
+    const spaceId = useSpaceStore.getState().currentSpaceId
+    if (spaceId == null) return []
     const pages = await listAllPagesInSpace(spaceId)
     source = pages.map((p) => ({ id: p.id, title: p.content ?? 'Untitled' }))
     // #732 — only persist the lazy fill while the active space is still

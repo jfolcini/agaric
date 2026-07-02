@@ -105,12 +105,12 @@ describe(' Phase 4 — space scoping integration', () => {
   it('GraphView.helpers.fetchGraphData scopes every IPC call to the active space', async () => {
     await fetchGraphData([], 'SPACE_GRAPH')
 
-    // `list_all_pages_in_space` + `list_template_page_ids_in_space` both
-    // take the bare `spaceId: string` shape.
+    // b1 — `list_all_pages_in_space` + `list_template_page_ids_in_space`
+    // now take `scope: SpaceScope` (required-active).
     const listAllPagesArgs = lastInvokeArgs('list_all_pages_in_space')
-    expect(listAllPagesArgs['spaceId']).toBe('SPACE_GRAPH')
+    expect(listAllPagesArgs['scope']).toEqual({ kind: 'active', space_id: 'SPACE_GRAPH' })
     const listTemplateArgs = lastInvokeArgs('list_template_page_ids_in_space')
-    expect(listTemplateArgs['spaceId']).toBe('SPACE_GRAPH')
+    expect(listTemplateArgs['scope']).toEqual({ kind: 'active', space_id: 'SPACE_GRAPH' })
     // Phase 3: `listPageLinks` takes `scope: SpaceScope`; the
     // wrapper translates `spaceId | null` into `{ kind: 'active', ... }`.
     const listPageLinksArgs = lastInvokeArgs('list_page_links')

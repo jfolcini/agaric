@@ -21,16 +21,13 @@ export type { GraphEdge, GraphFetchResult, GraphNode } from '@/lib/graph-types'
  * `list_all_pages_in_space` which has no pagination and no clamp —
  * the graph view genuinely wants every node.
  *
- * `?? ''` is the intentional pre-bootstrap fallback: the empty string
- * forces a no-match SQL filter (returning an empty list) instead of a
- * runtime null deref.
+ * `spaceId` is required-active here — `fetchGraphData` short-circuits to
+ * an empty graph before this is reached when there is no active space, so
+ * a non-null id is always passed.
  */
-function fetchPages(
-  tagFilterIds: readonly string[],
-  spaceId: string | null,
-): Promise<PageHeading[]> {
+function fetchPages(tagFilterIds: readonly string[], spaceId: string): Promise<PageHeading[]> {
   const tagIds = tagFilterIds.length > 0 ? [...tagFilterIds] : null
-  return listAllPagesInSpace(spaceId ?? '', tagIds)
+  return listAllPagesInSpace(spaceId, tagIds)
 }
 
 function buildNodes(
@@ -70,14 +67,17 @@ function countBacklinks(
  * The only server-side filter this applies is tag membership; every other
  * dimension is handled client-side via `applyGraphFilters`.
  *
- * `spaceId` (Phase 4) — when set, every IPC request is restricted
- * To the active space. Pass `null` to keep the pre- cross-space
- * behaviour (used by tests that don't seed a space).
+ * `spaceId` — every IPC request is restricted to the active space. The
+ * page-list and template-id fetches are required-active (b1): with no
+ * active space the graph has nothing to render, so we short-circuit to an
+ * empty result before dispatching rather than sending a `Global` scope
+ * (which the backend rejects for these commands).
  */
 export async function fetchGraphData(
   tagFilterIds: readonly string[],
   spaceId: string | null,
 ): Promise<GraphFetchResult> {
+  if (spaceId == null) return { nodes: [], edges: [] }
   // Push the active tag filter into `list_page_links`
   // so the backend ships only edges whose **target page** carries one
   // of the requested tags. Pre-Tier-4.5 the renderer fetched every
@@ -88,7 +88,7 @@ export async function fetchGraphData(
   const [pages, links, templateIdList] = await Promise.all([
     fetchPages(tagFilterIds, spaceId),
     listPageLinks({ spaceId, tagIds: linksTagIds }),
-    listTemplatePageIdsInSpace(spaceId ?? ''),
+    listTemplatePageIdsInSpace(spaceId),
   ])
 
   const templateIds = new Set<string>(templateIdList)

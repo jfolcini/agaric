@@ -117,10 +117,17 @@ export function useCalendarPageDates(
     const start = performance.now()
     setLoading(true)
     setPageMap(new Map())
-    // `listJournalPagesInRange` requires `spaceId`. The `?? ''` fallback
-    // is intentional pre-bootstrap behaviour: empty string forces a
-    // no-match SQL filter rather than a runtime null deref.
-    fetchPageMap(currentSpaceId ?? '', startDate, endDate)
+    // b1 — `listJournalPagesInRange` is required-active: with no active
+    // space there are no journal pages to show, so short-circuit locally
+    // to an empty page map instead of dispatching (a Global scope is
+    // rejected by the backend).
+    if (currentSpaceId == null) {
+      setLoading(false)
+      return () => {
+        cancelled = true
+      }
+    }
+    fetchPageMap(currentSpaceId, startDate, endDate)
       .then((map) => {
         if (cancelled || !mountedRef.current) return
         setPageMap(map)

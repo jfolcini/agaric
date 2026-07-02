@@ -261,10 +261,16 @@ export const commands = {
 	/**  Tauri command: list tags matching a name prefix. Delegates to [`list_tags_by_prefix_inner`]. */
 	listTagsByPrefix: (prefix: string, limit: number | null) => typedError<TagCacheRow[], AppError>(__TAURI_INVOKE("list_tags_by_prefix", { prefix, limit })),
 	/**
-	 *  Tauri command: list every tag in `space_id` as `TagCacheRow[]`. No
-	 *  pagination, no clamp.  Delegates to [`list_all_tags_in_space_inner`].
+	 *  Tauri command: list every tag in the active space as
+	 *  `TagCacheRow[]`. No pagination, no clamp.  Delegates to
+	 *  [`list_all_tags_in_space_inner`].
+	 * 
+	 *  `scope` is a required-active [`SpaceScope`] (b1 migration);
+	 *  [`SpaceScope::Global`] is rejected by [`SpaceScope::require_active`].
+	 *  The frontend short-circuits locally to an empty list when there is no
+	 *  active space rather than dispatching a `Global` scope.
 	 */
-	listAllTagsInSpace: (spaceId: string) => typedError<TagCacheRow[], AppError>(__TAURI_INVOKE("list_all_tags_in_space", { spaceId })),
+	listAllTagsInSpace: (scope: SpaceScope) => typedError<TagCacheRow[], AppError>(__TAURI_INVOKE("list_all_tags_in_space", { scope })),
 	/**  Tauri command: list tag IDs for a block. Delegates to [`list_tags_for_block_inner`]. */
 	listTagsForBlock: (blockId: BlockId) => typedError<string[], AppError>(__TAURI_INVOKE("list_tags_for_block", { blockId })),
 	/**
@@ -828,8 +834,14 @@ export const commands = {
 	/**
 	 *  Tauri command: look up a journal page by date. Delegates to
 	 *  [`get_journal_page_by_date_inner`].
+	 * 
+	 *  `scope` is a required-active [`SpaceScope`] (b1 migration): the
+	 *  per-space journal lookup has no cross-space form, so
+	 *  [`SpaceScope::Global`] is rejected by [`SpaceScope::require_active`].
+	 *  The frontend skips the probe (no auto-create) when there is no active
+	 *  space rather than dispatching a `Global` scope.
 	 */
-	getJournalPageByDate: (date: string, spaceId: string) => typedError<{
+	getJournalPageByDate: (date: string, scope: SpaceScope) => typedError<{
 	id: BlockId,
 	block_type: string,
 	content: string | null,
@@ -842,28 +854,47 @@ export const commands = {
 	due_date: string | null,
 	scheduled_date: string | null,
 	page_id: BlockId | null,
-} | null, AppError>(__TAURI_INVOKE("get_journal_page_by_date", { date, spaceId })),
+} | null, AppError>(__TAURI_INVOKE("get_journal_page_by_date", { date, scope })),
 	/**
 	 *  Tauri command: list date-formatted journal pages in `[start_date,
 	 *  end_date]`. Delegates to [`list_journal_pages_in_range_inner`].
+	 * 
+	 *  `scope` is a required-active [`SpaceScope`] (b1 migration);
+	 *  [`SpaceScope::Global`] is rejected by [`SpaceScope::require_active`].
+	 *  The frontend short-circuits locally to an empty page map when there
+	 *  is no active space rather than dispatching a `Global` scope.
 	 */
-	listJournalPagesInRange: (startDate: string, endDate: string, spaceId: string) => typedError<BlockRow[], AppError>(__TAURI_INVOKE("list_journal_pages_in_range", { startDate, endDate, spaceId })),
+	listJournalPagesInRange: (startDate: string, endDate: string, scope: SpaceScope) => typedError<BlockRow[], AppError>(__TAURI_INVOKE("list_journal_pages_in_range", { startDate, endDate, scope })),
 	/**
-	 *  Tauri command: list every page in `space_id` as `{ id, content }`,
-	 *  optionally restricted to pages carrying at least one of `tag_ids`.
-	 *  Delegates to [`list_all_pages_in_space_inner`].
+	 *  Tauri command: list every page in the active space as
+	 *  `{ id, content }`, optionally restricted to pages carrying at least
+	 *  one of `tag_ids`. Delegates to [`list_all_pages_in_space_inner`].
+	 * 
+	 *  `scope` is a required-active [`SpaceScope`] (b1 migration): the
+	 *  listing has no cross-space form, so [`SpaceScope::Global`] is
+	 *  rejected by [`SpaceScope::require_active`]. The frontend must
+	 *  short-circuit locally to an empty list when there is no active space
+	 *  rather than dispatching a `Global` scope.
 	 */
-	listAllPagesInSpace: (spaceId: string, tagIds: string[] | null) => typedError<PageHeading[], AppError>(__TAURI_INVOKE("list_all_pages_in_space", { spaceId, tagIds })),
+	listAllPagesInSpace: (scope: SpaceScope, tagIds: string[] | null) => typedError<PageHeading[], AppError>(__TAURI_INVOKE("list_all_pages_in_space", { scope, tagIds })),
 	/**
-	 *  Tauri command: list template page IDs in `space_id`.
+	 *  Tauri command: list template page IDs in the active space.
 	 *  Delegates to [`list_template_page_ids_in_space_inner`].
+	 * 
+	 *  `scope` is a required-active [`SpaceScope`] (b1 migration);
+	 *  [`SpaceScope::Global`] is rejected by [`SpaceScope::require_active`].
 	 */
-	listTemplatePageIdsInSpace: (spaceId: string) => typedError<string[], AppError>(__TAURI_INVOKE("list_template_page_ids_in_space", { spaceId })),
+	listTemplatePageIdsInSpace: (scope: SpaceScope) => typedError<string[], AppError>(__TAURI_INVOKE("list_template_page_ids_in_space", { scope })),
 	/**
 	 *  Tauri command: load every active descendant under `root_block_id`
-	 *  in `space_id`.  Delegates to [`load_page_subtree_inner`].
+	 *  in the active space.  Delegates to [`load_page_subtree_inner`].
+	 * 
+	 *  `scope` is a required-active [`SpaceScope`] (b1 migration);
+	 *  [`SpaceScope::Global`] is rejected by [`SpaceScope::require_active`].
+	 *  The frontend short-circuits (returns an empty subtree) when there is
+	 *  no active space rather than dispatching a `Global` scope.
 	 */
-	loadPageSubtree: (rootBlockId: BlockId, spaceId: string) => typedError<PageSubtree, AppError>(__TAURI_INVOKE("load_page_subtree", { rootBlockId, spaceId })),
+	loadPageSubtree: (rootBlockId: BlockId, scope: SpaceScope) => typedError<PageSubtree, AppError>(__TAURI_INVOKE("load_page_subtree", { rootBlockId, scope })),
 	/**
 	 *  Tauri command: paginated page list with per-page metadata columns
 	 *  (last-modified timestamp, inbound link count, descendant count,

@@ -295,7 +295,7 @@ describe('useBlockDatePicker handleDatePick — date mode', () => {
 
     expect(mockedInvoke).toHaveBeenCalledWith(
       'list_all_pages_in_space',
-      expect.objectContaining({ spaceId: 'SPACE_TEST' }),
+      expect.objectContaining({ scope: { kind: 'active', space_id: 'SPACE_TEST' } }),
     )
     // / H-3b — date pages route through `create_page_in_space` so
     // they own a `space` property and surface in PageBrowser. The

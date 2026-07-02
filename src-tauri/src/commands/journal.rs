@@ -9,6 +9,7 @@ use crate::db::{CommandTx, ReadPool, WriteCtx};
 use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::pagination::BlockRow;
+use crate::space::SpaceScope;
 
 use super::sanitize_internal_error;
 use super::*;
@@ -360,14 +361,21 @@ pub async fn get_journal_page_by_date_inner(
 
 /// Tauri command: look up a journal page by date. Delegates to
 /// [`get_journal_page_by_date_inner`].
+///
+/// `scope` is a required-active [`SpaceScope`] (b1 migration): the
+/// per-space journal lookup has no cross-space form, so
+/// [`SpaceScope::Global`] is rejected by [`SpaceScope::require_active`].
+/// The frontend skips the probe (no auto-create) when there is no active
+/// space rather than dispatching a `Global` scope.
 #[tauri::command]
 #[specta::specta]
 pub async fn get_journal_page_by_date(
     pool: State<'_, ReadPool>,
     date: String,
-    space_id: String,
+    scope: SpaceScope,
 ) -> Result<Option<BlockRow>, AppError> {
-    get_journal_page_by_date_inner(&pool.0, &date, &space_id)
+    let space_id = scope.require_active()?;
+    get_journal_page_by_date_inner(&pool.0, &date, space_id.as_str())
         .await
         .map_err(sanitize_internal_error)
 }
@@ -434,15 +442,21 @@ pub async fn list_journal_pages_in_range_inner(
 
 /// Tauri command: list date-formatted journal pages in `[start_date,
 /// end_date]`. Delegates to [`list_journal_pages_in_range_inner`].
+///
+/// `scope` is a required-active [`SpaceScope`] (b1 migration);
+/// [`SpaceScope::Global`] is rejected by [`SpaceScope::require_active`].
+/// The frontend short-circuits locally to an empty page map when there
+/// is no active space rather than dispatching a `Global` scope.
 #[tauri::command]
 #[specta::specta]
 pub async fn list_journal_pages_in_range(
     pool: State<'_, ReadPool>,
     start_date: String,
     end_date: String,
-    space_id: String,
+    scope: SpaceScope,
 ) -> Result<Vec<BlockRow>, AppError> {
-    list_journal_pages_in_range_inner(&pool.0, &start_date, &end_date, &space_id)
+    let space_id = scope.require_active()?;
+    list_journal_pages_in_range_inner(&pool.0, &start_date, &end_date, space_id.as_str())
         .await
         .map_err(sanitize_internal_error)
 }

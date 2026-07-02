@@ -124,7 +124,21 @@ export function useStreamDates(): UseStreamDatesResult {
     if (isFirst) setLoading(true)
     else setLoadingOlder(true)
 
-    listJournalPagesInRange({ startDate, endDate, spaceId: currentSpaceId ?? '' })
+    // b1 — `listJournalPagesInRange` is required-active: with no active
+    // space there are no journal pages to show, so short-circuit locally
+    // to an empty page map instead of dispatching (a Global scope is
+    // rejected by the backend).
+    if (currentSpaceId == null) {
+      setPageMap(new Map())
+      setLoading(false)
+      setLoadingOlder(false)
+      firstFetchRef.current = false
+      return () => {
+        cancelled = true
+      }
+    }
+
+    listJournalPagesInRange({ startDate, endDate, spaceId: currentSpaceId })
       .then((rows) => {
         if (cancelled || !mountedRef.current) return
         const map = new Map<string, string>()

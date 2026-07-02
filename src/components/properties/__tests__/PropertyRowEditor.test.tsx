@@ -22,6 +22,7 @@ import { axe } from 'vitest-axe'
 
 import { __resetPriorityLevelsForTests, getPriorityLevels } from '../../../lib/priority-levels'
 import type { PropertyDefinition, PropertyRow } from '../../../lib/tauri'
+import { useSpaceStore } from '../../../stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -82,6 +83,14 @@ function makeDef(key: string, valueType: string, options?: string): PropertyDefi
 beforeEach(() => {
   vi.clearAllMocks()
   __resetPriorityLevelsForTests()
+  // b1 — the ref picker's `list_all_pages_in_space` is required-active;
+  // seed an active space so opening the picker dispatches instead of
+  // short-circuiting to an empty list.
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_TEST',
+    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
+    isReady: true,
+  })
 })
 
 afterEach(() => {
@@ -887,12 +896,15 @@ describe('PropertyRowEditor ref picker', () => {
   })
 
   it('displays resolved page title when value_ref is set', async () => {
-    // Cache is now keyed by composite `${spaceId}::${ulid}`.
-    // No active space is set up here, so the default `__global__`
-    // sentinel is used (lookup falls back to it via `keyFor(null, id)`).
+    // Cache is keyed by composite `${spaceId}::${ulid}`. The beforeEach
+    // seeds an active space ('SPACE_TEST'), so the component resolves the
+    // ref title via `keyFor('SPACE_TEST', id)` — seed the cache under that
+    // same key.
     const { useResolveStore, keyFor } = await import('../../../stores/resolve')
     useResolveStore.setState({
-      cache: new Map([[keyFor(null, 'TARGET_PAGE'), { title: 'My Target', deleted: false }]]),
+      cache: new Map([
+        [keyFor('SPACE_TEST', 'TARGET_PAGE'), { title: 'My Target', deleted: false }],
+      ]),
       version: 1,
     })
 

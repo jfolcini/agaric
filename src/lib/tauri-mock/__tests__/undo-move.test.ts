@@ -58,7 +58,7 @@ function loadedRootOrder(): string[] {
   // #1258 — `load_page_subtree` now returns `{ blocks, truncated, total }`.
   const { blocks: rows } = dispatch('load_page_subtree', {
     rootBlockId: PAGE,
-    spaceId: SPACE,
+    scope: { kind: 'active', space_id: SPACE },
   }) as { blocks: Array<Record<string, unknown>> }
   return rows
     .filter((r) => (r['parent_id'] as string | null) === PAGE)
@@ -124,7 +124,10 @@ describe('#958 — reorder/reparent undo reverts in place', () => {
     // Root now holds only GS1, GS2; GS3 is GS2's child.
     expect(loadedRootOrder()).toEqual([GS1, GS2])
     const gs2Children = (
-      dispatch('load_page_subtree', { rootBlockId: PAGE, spaceId: SPACE }) as {
+      dispatch('load_page_subtree', {
+        rootBlockId: PAGE,
+        scope: { kind: 'active', space_id: SPACE },
+      }) as {
         blocks: Array<Record<string, unknown>>
       }
     ).blocks.filter((r) => (r['parent_id'] as string | null) === GS2)

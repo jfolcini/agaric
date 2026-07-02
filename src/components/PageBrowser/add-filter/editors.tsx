@@ -580,10 +580,18 @@ export function LinkTargetEditor({
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    // Phase 4 — `listAllPagesInSpace` requires a space id; the `?? ''`
-    // pre-bootstrap fallback forces an empty (no-match) result rather than a
-    // runtime null-deref, matching the property ref picker.
-    listAllPagesInSpace(currentSpaceId ?? '')
+    // b1 — `listAllPagesInSpace` is required-active (no cross-space form).
+    // With no active space the picker has nothing to offer, so short-circuit
+    // locally to an empty list instead of dispatching (a Global scope is
+    // rejected by the backend).
+    if (currentSpaceId == null) {
+      setPages([])
+      setLoading(false)
+      return () => {
+        cancelled = true
+      }
+    }
+    listAllPagesInSpace(currentSpaceId)
       .then((res) => {
         if (!cancelled) setPages(res)
       })

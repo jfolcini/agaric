@@ -72,7 +72,15 @@ beforeEach(() => {
   vi.clearAllMocks()
   clearGraphCache()
   captured = { nodes: [], edges: [] }
-  useSpaceStore.setState({ currentSpaceId: null })
+  // b1 — GraphView's page/template fetches are required-active; seed an
+  // active space so `fetchGraphData` dispatches instead of short-circuiting
+  // to an empty graph. (These tests exercise local-graph mode, not the
+  // no-space path.)
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_TEST',
+    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
+    isReady: true,
+  })
   useNavigationStore.setState({ currentView: 'graph', selectedBlockId: null })
   seedTab('hub')
   mockedInvoke.mockImplementation((cmd: string) => {

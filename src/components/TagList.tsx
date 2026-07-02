@@ -70,13 +70,17 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       // `listTagsByPrefix({ prefix: '', limit: 500 })`, which the
       // backend silently clamped to 200 (`MAX_TAGS_PREFIX`).  Routes
       // through `list_all_tags_in_space`, the no-pagination IPC that
-      // returns every tag in the active space.  The `?? ''` fallback
-      // mirrors `useBlockResolve.searchPagesViaCache` for the pre-
-      // bootstrap case — the backend treats an empty `space_id` as a
-      // no-match filter (space IDs are ULIDs; the `value_ref = ''`
-      // comparison never matches), so we get an empty list instead of
-      // a runtime null deref.
-      const spaceId = useSpaceStore.getState().currentSpaceId ?? ''
+      // returns every tag in the active space.
+      // b1 — `list_all_tags_in_space` is required-active: with no active
+      // space there are no tags to show, so short-circuit locally to an
+      // empty list instead of dispatching (a Global scope is rejected by
+      // the backend).
+      const spaceId = useSpaceStore.getState().currentSpaceId
+      if (spaceId == null) {
+        setTags([])
+        setLoading(false)
+        return
+      }
       const resp = await listAllTagsInSpace(spaceId)
       setTags(resp)
     } catch (error) {

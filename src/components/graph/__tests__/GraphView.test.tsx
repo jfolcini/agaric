@@ -282,6 +282,14 @@ beforeEach(() => {
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
   })
+  // b1 — GraphView's page/template fetches are required-active: with no
+  // active space `fetchGraphData` short-circuits to an empty graph. Seed an
+  // active space so the default graph-render path dispatches its IPCs.
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_TEST',
+    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
+    isReady: true,
+  })
 })
 
 afterEach(() => {
@@ -850,7 +858,7 @@ describe('GraphView', () => {
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith(
           'list_all_pages_in_space',
-          expect.objectContaining({ spaceId: expect.any(String) }),
+          expect.objectContaining({ scope: expect.objectContaining({ kind: 'active' }) }),
         )
       })
 
@@ -1414,7 +1422,7 @@ describe('GraphView', () => {
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith(
           'list_all_pages_in_space',
-          expect.objectContaining({ spaceId: expect.any(String) }),
+          expect.objectContaining({ scope: expect.objectContaining({ kind: 'active' }) }),
         )
       })
 
@@ -1760,7 +1768,7 @@ describe('GraphView', () => {
       // Verify list_template_page_ids_in_space was called
       expect(mockedInvoke).toHaveBeenCalledWith(
         'list_template_page_ids_in_space',
-        expect.objectContaining({ spaceId: '' }),
+        expect.objectContaining({ scope: expect.objectContaining({ kind: 'active' }) }),
       )
       // Verify list_all_pages_in_space was called (no tag filter)
       expect(mockedInvoke).toHaveBeenCalledWith(

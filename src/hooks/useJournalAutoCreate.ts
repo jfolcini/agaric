@@ -8,8 +8,12 @@ interface UseJournalAutoCreateOptions {
   loading: boolean
   mode: string
   currentDate: Date
-  /** Active space ULID — used to look up an existing page for `currentDate`. */
-  spaceId: string
+  /**
+   * Active space ULID, or `null` when no space is active. `getJournalPageByDate`
+   * is required-active (b1), so both effects below skip the probe entirely when
+   * this is `null` rather than dispatching a scope with no active space.
+   */
+  spaceId: string | null
   /** Pages this React tree just created (not yet visible to the backend index). */
   createdPages: Map<string, string>
   handleAddBlock: (dateStr: string) => void
@@ -36,6 +40,8 @@ export function useJournalAutoCreate({
   useEffect(() => {
     if (loading) return
     if (mode !== 'daily') return
+    // b1 — no active space → skip the required-active probe (no auto-create).
+    if (spaceId == null) return
     const dateStr = formatDate(currentDate)
     if (dateStr !== formatDate(new Date())) return
     if (autoCreatedRef.current === dateStr) return
@@ -63,6 +69,8 @@ export function useJournalAutoCreate({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (mode !== 'daily') return
+      // b1 — no active space → the shortcut is a no-op (required-active probe).
+      if (spaceId == null) return
       const dateStr = formatDate(currentDate)
       if (createdPages.has(dateStr)) return
       const target = e.target as HTMLElement
