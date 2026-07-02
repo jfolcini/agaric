@@ -33,7 +33,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
 import { activeSpaceKey } from '../lib/active-space'
-import { createSpaceSubscriber } from '../lib/createSpaceSubscriber'
+import { createPerSpaceSlice } from './createPerSpaceSlice'
 import { LEGACY_SPACE_KEY } from './space'
 
 /**
@@ -424,6 +424,30 @@ function coercePersistedRecentPages(
   }
 }
 
+/**
+ * Per-space primitive owning the `recentPagesBySpace` map, the derived flat
+ * `recentPages` mirror, and the space-change flush/pull reconcile. Actions call
+ * `applyActive` instead of hand-writing both fields; `attach` (below) wires the
+ * subscriber.
+ *
+ * `fallback` is the empty list — switching to a fresh space shows nothing and
+ * does NOT seed the space's slot (the cross-space leak vector). `seedOnFirstFire`
+ * is restricted to the `__legacy__` key: the flat mirror can hold a *foreign*
+ * space's list after a rehydrate, so a real space's slice must never be seeded
+ * from it (the "write-time corruption" / Defect-1 path). For a real space with
+ * no slice the first fire instead resets the mirror to `[]`.
+ */
+const recentPagesSlice = createPerSpaceSlice<RecentState, PageRef[]>({
+  readMirror: (state) => state.recentPages,
+  writeMirror: (value) => ({ recentPages: value }),
+  getSlice: (state, key) => state.recentPagesBySpace[key],
+  setSlice: (state, key, value) => ({
+    recentPagesBySpace: { ...state.recentPagesBySpace, [key]: value },
+  }),
+  fallback: () => [],
+  seedOnFirstFire: (key) => key === LEGACY_SPACE_KEY,
+})
+
 export const useRecentPagesStore = create<RecentPagesState>()(
   persist(
     (set, get) => ({
@@ -453,10 +477,7 @@ export const useRecentPagesStore = create<RecentPagesState>()(
           ...((ref.pinned === true || existing?.pinned === true) && { pinned: true }),
         }
         const next = applyPinFirstCap([nextEntry, ...filtered])
-        set({
-          recentPages: next,
-          recentPagesBySpace: { ...state.recentPagesBySpace, [key]: next },
-        })
+        set(recentPagesSlice.applyActive(state, next))
       },
       addRecentPage: (id, title) => {
         const state = get()
@@ -471,10 +492,7 @@ export const useRecentPagesStore = create<RecentPagesState>()(
           ...(existing?.pinned === true && { pinned: true }),
         }
         const next = applyPinFirstCap([nextEntry, ...filtered])
-        set({
-          recentPages: next,
-          recentPagesBySpace: { ...state.recentPagesBySpace, [key]: next },
-        })
+        set(recentPagesSlice.applyActive(state, next))
       },
       removeRecentPage: (id) => {
         const state = get()
@@ -482,10 +500,7 @@ export const useRecentPagesStore = create<RecentPagesState>()(
         const current = state.recentPagesBySpace[key] ?? []
         const next = current.filter((p) => p.pageId !== id)
         if (next.length === current.length) return false
-        set({
-          recentPages: next,
-          recentPagesBySpace: { ...state.recentPagesBySpace, [key]: next },
-        })
+        set(recentPagesSlice.applyActive(state, next))
         return true
       },
       togglePinRecentPage: (id) => {
@@ -509,19 +524,12 @@ export const useRecentPagesStore = create<RecentPagesState>()(
         }
         const reordered = [...current.slice(0, idx), updated, ...current.slice(idx + 1)]
         const next = applyPinFirstCap(reordered)
-        set({
-          recentPages: next,
-          recentPagesBySpace: { ...state.recentPagesBySpace, [key]: next },
-        })
+        set(recentPagesSlice.applyActive(state, next))
         return !wasPinned
       },
       clear: () => {
         const state = get()
-        const key = activeSpaceKey()
-        set({
-          recentPages: [],
-          recentPagesBySpace: { ...state.recentPagesBySpace, [key]: [] },
-        })
+        set(recentPagesSlice.applyActive(state, []))
       },
     }),
     {
@@ -578,51 +586,11 @@ export const useRecentPagesStore = create<RecentPagesState>()(
 
 /**
  * Flush the outgoing space's slice and pull the incoming space's slice into
- * the flat `recentPages` mirror on a space change. On first fire
- * (`prevKey === newKey`) it (a) seeds the legacy slot from the rehydrated
- * flat list for the v0→v1 path, then (b) reconciles the flat mirror to the
- * Active space's slice — Defect 2: on rehydrate the flat field may
- * hold a *different* space's list (whichever was active when persistence
- * last ran), and leaving it stale leaks that list through the flat-field
- * read paths.
- *
- * Subscription mechanics + diff detection live in
- * `createSpaceSubscriber`; this callback owns only the recent-pages
- * flush/pull/reconcile. Exported because the module-level subscriber fires
- * its first-fire (seed) path once at import, so that path is otherwise
- * unreachable from the test runtime.
+ * the flat `recentPages` mirror on a space change. The flush/pull/first-fire
+ * logic — including the v0→v1 legacy seed and the Defect-2 rehydrate
+ * reconcile — now lives in the shared `createPerSpaceSlice` primitive
+ * (`recentPagesSlice`); this is the wired reconcile callback, re-exported
+ * because the module-level subscriber fires its first-fire (seed) path once at
+ * import, so that path is otherwise unreachable from the test runtime.
  */
-export function reconcileRecentPagesOnSpaceChange(prevKey: string, newKey: string): void {
-  const recentState = useRecentPagesStore.getState()
-  if (prevKey === newKey) {
-    if (
-      newKey === LEGACY_SPACE_KEY &&
-      recentState.recentPagesBySpace[newKey] === undefined &&
-      recentState.recentPages.length > 0
-    ) {
-      useRecentPagesStore.setState({
-        recentPagesBySpace: {
-          ...recentState.recentPagesBySpace,
-          [newKey]: recentState.recentPages,
-        },
-      })
-      return
-    }
-    const slice = recentState.recentPagesBySpace[newKey] ?? []
-    if (slice !== recentState.recentPages) {
-      useRecentPagesStore.setState({ recentPages: slice })
-    }
-    return
-  }
-  const flushedBySpace = {
-    ...recentState.recentPagesBySpace,
-    [prevKey]: recentState.recentPages,
-  }
-  const next = recentState.recentPagesBySpace[newKey] ?? []
-  useRecentPagesStore.setState({
-    recentPages: next,
-    recentPagesBySpace: flushedBySpace,
-  })
-}
-
-createSpaceSubscriber(reconcileRecentPagesOnSpaceChange)
+export const reconcileRecentPagesOnSpaceChange = recentPagesSlice.attach(useRecentPagesStore)
