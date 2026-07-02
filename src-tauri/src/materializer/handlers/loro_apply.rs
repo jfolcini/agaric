@@ -13,7 +13,7 @@ use super::*;
 /// 3. Applies `apply_create_block` to the engine.
 /// 4. Reads back the engine's `BlockSnapshot` for the freshly-created
 ///    block.
-/// 5. Drops the registry guard (the `MutexGuard` is `!Send` so it
+/// 5. Drops the engine guard (the per-space guard is `!Send` so it
 ///    cannot cross an `.await`).
 /// 6. Projects the snapshot into SQL via
 ///    [`crate::loro::projection::project_create_block_to_sql`].

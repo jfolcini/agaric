@@ -20,23 +20,74 @@
 //! actively touch one or two during a session, so we don't pre-spin
 //! engines for unused spaces.
 //!
-//! ## Concurrency
+//! ## Concurrency (#2205)
 //!
-//! A single top-level `Mutex<HashMap<SpaceId, LoroEngine>>` is the
-//! simplest correctness story. The apply rate is bounded by human
-//! typing / sync cadence — well below the rate at which the
-//! coarse-grained lock would matter. A future iteration could switch
-//! to per-space mutexes if benchmarks show contention.
+//! Locking is sharded per space so CRDT work on DIFFERENT spaces runs
+//! concurrently — peer B's sync of space Y no longer waits behind peer
+//! A's export of space X (the pre-#2205 single
+//! `Mutex<HashMap<SpaceId, LoroEngine>>` serialized every engine
+//! operation process-wide, and #2188 made the long CPU-bound
+//! export/import passes hold that one lock inside `block_in_place`):
+//!
+//! * an **outer map mutex** — `Mutex<HashMap<SpaceId,
+//!   Arc<Mutex<LoroEngine>>>>` — guards only the map structure
+//!   (lookup / lazy-insert / replace / clear). It is held for
+//!   O(1)-per-entry map work only, NEVER while an engine lock is being
+//!   acquired or held, and NEVER across CRDT work;
+//! * one **inner engine mutex per space** — held for the duration of a
+//!   single engine operation, including the CPU-bound export/import
+//!   passes running under `block_in_place` (#2188). Same-space
+//!   operations therefore serialize exactly as before.
+//!
+//! ### Lock discipline
+//!
+//! No path in this module ever holds two locks at once: every method
+//! clones the per-space `Arc` out of the map, **drops the outer
+//! guard**, and only then locks the engine. No path locks two engines
+//! simultaneously either. Preserve both properties when extending this
+//! module — together they make lock-order cycles structurally
+//! impossible. (If a future path genuinely must hold two engine locks,
+//! acquire them in `SpaceId` order and document it here.)
+//!
+//! ### Detached engines (clear / install_engine races)
+//!
+//! Callers hold an owned, `Arc`-backed engine guard ([`EngineGuard`]),
+//! so an engine can outlive its map entry: a
+//! [`clear`](LoroEngineRegistry::clear) (snapshot RESET) or an
+//! [`install_engine`](LoroEngineRegistry::install_engine) replacement
+//! racing an in-flight engine operation detaches that engine from the
+//! map. The in-flight operation completes against the detached engine,
+//! whose state drops with the last `Arc` clone. The outcome is
+//! identical to the op having completed immediately BEFORE the
+//! clear/replace under the old whole-map mutex — its engine state is
+//! discarded either way — and a detached engine can never be
+//! re-inserted: [`for_space`](LoroEngineRegistry::for_space) only ever
+//! lazy-creates FRESH engines via a get-or-insert performed atomically
+//! under the outer lock.
+//!
+//! ### Poisoning
+//!
+//! `parking_lot` mutexes (no poisoning) replace the previous
+//! `std::sync::Mutex` + `PoisonError::into_inner` recovery. Behaviour
+//! is identical: this module always continued straight through poison,
+//! which is exactly what a non-poisoning mutex does.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Mutex, MutexGuard};
 
 use loro::{ExportMode, LoroDoc};
+use parking_lot::lock_api::ArcMutexGuard;
+use parking_lot::{Mutex, RawMutex};
 
 use crate::error::AppError;
 use crate::loro::engine::LoroEngine;
 use crate::space::SpaceId;
+
+/// A per-space engine slot: the map stores `Arc<Mutex<LoroEngine>>` so
+/// the (long) engine critical section is taken WITHOUT the map lock —
+/// see the module-level Concurrency section (#2205).
+type SharedEngine = Arc<Mutex<LoroEngine>>;
 
 /// Lazily-instantiated map of `SpaceId -> LoroEngine`.
 ///
@@ -53,8 +104,13 @@ use crate::space::SpaceId;
 /// extra snapshot is idempotent). [`save_all_engines`] resets the
 /// counter to 0 after a successful walk so subsequent ticks observe
 /// "clean" until the next mutation.
+///
+/// [`save_all_engines`]: crate::loro::snapshot::save_all_engines
 pub struct LoroEngineRegistry {
-    inner: Mutex<HashMap<SpaceId, LoroEngine>>,
+    /// Outer map lock (#2205). Guards ONLY the `SpaceId -> Arc` map;
+    /// engine work happens under the per-space inner mutex with this
+    /// lock released. See the module-level lock discipline.
+    inner: Mutex<HashMap<SpaceId, SharedEngine>>,
     /// Issue #157 sub-item I — see struct-level docstring.
     dirty_count: AtomicUsize,
     /// #607 review: monotone counter bumped by [`clear`](Self::clear).
@@ -137,9 +193,17 @@ impl LoroEngineRegistry {
         self.dirty_count.store(0, Ordering::Release);
     }
 
-    /// Acquire the registry's mutex and ensure an engine for `space_id`
-    /// exists.  Returns a `MutexGuard` so the caller can mutate the
-    /// engine without dropping the lock between lookup and use.
+    /// Get-or-lazily-create the engine for `space_id` and lock it,
+    /// returning an owned RAII guard ([`EngineGuard`]) the caller can
+    /// mutate the engine through.
+    ///
+    /// #2205 — the outer map mutex is held only for the get-or-insert
+    /// (performed atomically, so racing callers can never install two
+    /// engines for one space) and is dropped BEFORE this method blocks
+    /// on the per-space engine mutex. Engine work on other spaces —
+    /// including CPU-bound export/import under `block_in_place` (#2188)
+    /// — is therefore never blocked by this call; only same-space
+    /// operations serialize, on the engine's own lock.
     ///
     /// The caller-supplied `device_id` becomes the engine's stable
     /// peer id via [`LoroEngine::with_peer_id`].  If two callers race
@@ -153,23 +217,28 @@ impl LoroEngineRegistry {
     /// Returns `AppError::Validation` if [`LoroEngine::with_peer_id`]
     /// rejects the `device_id` — see that function's docs for the
     /// (extremely unlikely) Loro-internal failure mode.
-    pub fn for_space<'a>(
-        &'a self,
-        space_id: &SpaceId,
-        device_id: &str,
-    ) -> Result<EngineGuard<'a>, AppError> {
-        let mut guard = match self.inner.lock() {
-            Ok(g) => g,
-            Err(poison) => poison.into_inner(),
+    pub fn for_space(&self, space_id: &SpaceId, device_id: &str) -> Result<EngineGuard, AppError> {
+        let shared: SharedEngine = {
+            let mut map = self.inner.lock();
+            if let Some(existing) = map.get(space_id) {
+                Arc::clone(existing)
+            } else {
+                // #792: salt the deterministic peer id with the registry's
+                // current epoch so an engine lazily created after a snapshot
+                // RESET never reuses the pre-reset PeerID (epoch 0 == the
+                // legacy mapping, unchanged for never-reset vaults).
+                //
+                // Construction is O(1) (an empty LoroDoc), so doing it
+                // under the map lock is cheap and keeps check+insert
+                // atomic — no two racing callers can each install an
+                // engine for the same space.
+                let engine = LoroEngine::with_peer_id_epoch(device_id, self.peer_epoch())?;
+                let shared: SharedEngine = Arc::new(Mutex::new(engine));
+                map.insert(space_id.clone(), Arc::clone(&shared));
+                shared
+            }
+            // Outer map guard drops HERE — before the engine lock below.
         };
-        if !guard.contains_key(space_id) {
-            // #792: salt the deterministic peer id with the registry's
-            // current epoch so an engine lazily created after a snapshot
-            // RESET never reuses the pre-reset PeerID (epoch 0 == the
-            // legacy mapping, unchanged for never-reset vaults).
-            let engine = LoroEngine::with_peer_id_epoch(device_id, self.peer_epoch())?;
-            guard.insert(space_id.clone(), engine);
-        }
         // Issue #157 sub-item I — `for_space` is the chokepoint
         // every mutation path goes through, so a per-call increment
         // is the simplest "engines have changed since last save"
@@ -177,9 +246,12 @@ impl LoroEngineRegistry {
         // bumps the counter); the extra snapshot the daemon may then
         // fire is idempotent so the false positive is harmless.
         self.dirty_count.fetch_add(1, Ordering::Relaxed);
+        // Block on the PER-SPACE lock only (#2205). `lock_arc` returns an
+        // owned guard that keeps the engine alive even if the map entry is
+        // concurrently removed (`clear`) or replaced (`install_engine`) —
+        // see "Detached engines" in the module docs.
         Ok(EngineGuard {
-            guard,
-            key: space_id.clone(),
+            guard: shared.lock_arc(),
         })
     }
 
@@ -192,41 +264,33 @@ impl LoroEngineRegistry {
     /// chokepoint and over-counts read-only calls) and arm a spurious full
     /// **disk** snapshot of every space on each otherwise-quiescent session
     /// — directly counterproductive for a path whose purpose is to *cut*
-    /// snapshot churn. This accessor reads under the lock without that side
-    /// effect and never lazily creates an engine: an unregistered space
-    /// returns `None`, and the sender falls back to a full snapshot for it.
+    /// snapshot churn. This accessor never lazily creates an engine: an
+    /// unregistered space returns `None`, and the sender falls back to a
+    /// full snapshot for it. #2205: the read takes the per-space engine
+    /// lock (with the map lock already released), so it waits only on
+    /// in-flight work for THIS space, never on other spaces'.
     pub fn loro_vv(&self, space_id: &SpaceId) -> Option<Vec<u8>> {
-        let guard = match self.inner.lock() {
-            Ok(g) => g,
-            Err(poison) => poison.into_inner(),
-        };
-        guard.get(space_id).map(LoroEngine::version_vector)
+        let shared = { self.inner.lock().get(space_id).map(Arc::clone) }?;
+        Some(shared.lock().version_vector())
     }
 
     /// All [`SpaceId`]s currently registered, in arbitrary order.
     ///
     /// Used by the sync orchestrator to enumerate which spaces to
     /// push when entering `StreamingOps`. The returned `Vec` is a
-    /// snapshot (cloned under the lock); the caller may iterate
-    /// without holding the registry mutex. Concurrent `for_space`
+    /// snapshot (cloned under the map lock); the caller may iterate
+    /// without holding any registry lock. Concurrent `for_space`
     /// calls that lazy-create new engines after this snapshot are
     /// simply not visible to the current sync round — they will be
     /// picked up by the next `HeadExchange`.
     pub fn space_ids(&self) -> Vec<SpaceId> {
-        let guard = match self.inner.lock() {
-            Ok(g) => g,
-            Err(poison) => poison.into_inner(),
-        };
-        guard.keys().cloned().collect()
+        self.inner.lock().keys().cloned().collect()
     }
 
     /// Number of engines currently held.  Used by tests to assert
     /// per-space isolation.
     pub fn len(&self) -> usize {
-        match self.inner.lock() {
-            Ok(g) => g.len(),
-            Err(poison) => poison.into_inner().len(),
-        }
+        self.inner.lock().len()
     }
 
     /// Returns true iff the registry holds zero engines.
@@ -244,12 +308,15 @@ impl LoroEngineRegistry {
     /// registry on app boot avoids both the
     /// `for_space`-becomes-async ripple and the `block_in_place` /
     /// `block_on` hack.
+    ///
+    /// #2205 — an in-flight engine operation holding the REPLACED
+    /// entry's guard completes against the detached engine (whose state
+    /// then drops), exactly as if it had finished before this call under
+    /// the old whole-map mutex. See "Detached engines" in the module docs.
     pub fn install_engine(&self, space_id: SpaceId, engine: LoroEngine) {
-        let mut guard = match self.inner.lock() {
-            Ok(g) => g,
-            Err(poison) => poison.into_inner(),
-        };
-        guard.insert(space_id, engine);
+        self.inner
+            .lock()
+            .insert(space_id, Arc::new(Mutex::new(engine)));
     }
 
     /// Drop every registered engine (#607).
@@ -262,67 +329,84 @@ impl LoroEngineRegistry {
     /// [`for_space`](Self::for_space) calls lazy-create fresh empty engines,
     /// exactly like a first boot.
     ///
-    /// Holding the single registry mutex makes the swap atomic with respect
-    /// to concurrent appliers: an `engine_apply` racing this call either
-    /// lands on the pre-clear engine (whose state is dropped — same outcome
-    /// as the op arriving pre-reset) or lazy-creates a fresh post-reset one.
+    /// #2205 — this needs only the outer MAP lock, so it never waits on
+    /// (nor deadlocks with) an in-flight engine operation. An
+    /// `engine_apply` racing this call either
+    /// * already holds its engine guard — the engine is detached from
+    ///   the map, the op completes against it, and the engine state
+    ///   drops with the guard (same outcome as the op having landed
+    ///   just BEFORE the clear under the old whole-map mutex: the
+    ///   pre-reset state is discarded either way), or
+    /// * arrives at `for_space` after the clear — it lazy-creates a
+    ///   fresh post-reset engine.
+    ///
+    /// A detached engine is never re-inserted (`for_space`'s
+    /// get-or-insert is atomic under the map lock and only creates
+    /// FRESH engines), and the generation bump below happens while the
+    /// map lock is held, so `save_all_engines`' pre-collect generation
+    /// capture vs. re-check-per-write protocol still detects any clear
+    /// that lands after its handle collection.
     pub fn clear(&self) {
-        let mut guard = match self.inner.lock() {
-            Ok(g) => g,
-            Err(poison) => poison.into_inner(),
-        };
-        guard.clear();
-        // Bump the generation WHILE holding the lock so any saver that
+        let mut map = self.inner.lock();
+        map.clear();
+        // Bump the generation WHILE holding the map lock so any saver that
         // collected handles before this clear observes the new value on
         // its next check (see the `generation` field docs).
         self.generation.fetch_add(1, Ordering::AcqRel);
     }
 
-    /// Snapshot every registered engine via [`LoroEngine::export_snapshot`]
-    /// and return the resulting `(space_id, Result<bytes, AppError>)`
+    /// Snapshot every registered engine via `LoroDoc::export` and
+    /// return the resulting `(space_id, Result<bytes, AppError>)`
     /// pairs.  Per-engine errors are returned in the inner `Result` so
     /// the caller can decide whether to log + continue (the periodic
     /// scheduler) or abort (a debug "snapshot now" command).
     ///
-    /// ## Issue #153 — export runs OUTSIDE the registry mutex
+    /// ## Issue #153 / #2205 — exports run with NO registry lock held
     ///
-    /// The top-level mutex serialises *every* engine apply (the
-    /// materializer's hot path goes through [`for_space`](Self::for_space)).
-    /// Previously this method ran [`LoroEngine::export_snapshot`] for each
-    /// space while holding that lock, so an O(spaces x export) serialization
-    /// pass blocked all applies for its duration. To keep the lock window
-    /// O(spaces) instead, we:
+    /// 1. collect the `(SpaceId, Arc<Mutex<LoroEngine>>)` pairs under
+    ///    the map lock (O(spaces) pointer clones) and drop it — the
+    ///    space SET is an atomic cut of the map;
+    /// 2. per space, take THAT engine's lock only for the O(1)
+    ///    [`LoroEngine::doc_handle`] reference-clone (waiting, at most,
+    ///    for an in-flight operation on that one space) and release it;
+    /// 3. run the (comparatively slow) snapshot export on each handle
+    ///    with no lock held at all, so concurrent applies — even to the
+    ///    space being exported — are never blocked.
     ///
-    /// 1. collect a [`LoroDoc`] *handle* per space under the lock —
-    ///    [`LoroEngine::doc_handle`] is an O(1) reference clone, NOT a
-    ///    deep copy, so this neither serialises nor doubles memory;
-    /// 2. drop the guard;
-    /// 3. run the (comparatively slow) snapshot export on each handle with
-    ///    the lock released, so concurrent applies are not blocked.
+    /// ## Consistency contract
     ///
-    /// Because a `LoroDoc` handle shares the underlying document, an apply
-    /// that lands on the same space *after* the lock is dropped but
-    /// *before* its export runs is simply included in that snapshot — a
-    /// strictly fresher (still consistent) point-in-time export. The
-    /// snapshot watermark in [`crate::loro::snapshot::save_all_engines`] is
-    /// already a conservative lower bound that tolerates this.
+    /// Each returned snapshot is **internally consistent** for its
+    /// space and at-least-as-fresh-as the collect instant: a `LoroDoc`
+    /// handle shares the underlying document, so an apply that lands
+    /// after its engine-lock release but before its export is simply
+    /// included — a strictly fresher point-in-time export. There is
+    /// **no cross-space atomic cut**: space A's snapshot and space B's
+    /// may reflect different instants. This is the SAME contract the
+    /// pre-#2205 code had (since #153 the exports already ran after the
+    /// registry lock was dropped, so cross-space skew already existed);
+    /// the sole production caller,
+    /// [`crate::loro::snapshot::save_all_engines`], tolerates it by
+    /// construction — its `applied_through_seq` watermark is a
+    /// conservative per-space lower bound read BEFORE the collect, and
+    /// its generation re-check before every write handles a racing
+    /// [`clear`](Self::clear).
     pub fn snapshot_all_engines(&self) -> Vec<(SpaceId, Result<Vec<u8>, AppError>)> {
-        // Phase 1: collect O(1) doc handles under the lock, then release it.
-        let handles: Vec<(SpaceId, LoroDoc)> = {
-            let guard = match self.inner.lock() {
-                Ok(g) => g,
-                Err(poison) => poison.into_inner(),
-            };
-            guard
-                .iter()
-                .map(|(space_id, engine)| (space_id.clone(), engine.doc_handle()))
+        // Phase 1: clone the Arc handles under the map lock, then release it
+        // (no engine lock is taken while the map lock is held — see the
+        // module-level lock discipline).
+        let engines: Vec<(SpaceId, SharedEngine)> = {
+            let map = self.inner.lock();
+            map.iter()
+                .map(|(space_id, shared)| (space_id.clone(), Arc::clone(shared)))
                 .collect()
         };
 
-        // Phase 2: export each handle with the registry lock released.
-        handles
+        // Phase 2: per space, lock the engine ONLY for the O(1) doc-handle
+        // clone, then export with no locks held.
+        engines
             .into_iter()
-            .map(|(space_id, doc)| {
+            .map(|(space_id, shared)| {
+                let doc: LoroDoc = shared.lock().doc_handle();
                 let bytes = doc
                     .export(ExportMode::Snapshot)
                     .map_err(|e| AppError::Validation(format!("loro: export snapshot: {e}")));
@@ -338,25 +422,52 @@ impl Default for LoroEngineRegistry {
     }
 }
 
-/// RAII guard returned by [`LoroEngineRegistry::for_space`].  Holds
-/// the registry mutex until dropped; deref-mut yields the per-space
-/// engine.  This avoids the "lookup, drop lock, re-acquire" pattern
-/// that would let another thread mutate the engine between read and
-/// write.
-pub struct EngineGuard<'a> {
-    guard: MutexGuard<'a, HashMap<SpaceId, LoroEngine>>,
-    key: SpaceId,
+/// Owned RAII guard returned by [`LoroEngineRegistry::for_space`].
+///
+/// Holds the **per-space engine mutex** (#2205 — NOT the registry map
+/// mutex, which was already released) until dropped; `engine_mut`
+/// yields the engine. Holding one lock across the whole
+/// lookup-and-mutate span avoids the "lookup, drop lock, re-acquire"
+/// pattern that would let another thread mutate the engine between
+/// read and write — same-space callers serialize on this guard.
+///
+/// The guard is `Arc`-backed ([`ArcMutexGuard`]), so it keeps its
+/// engine alive even if the registry entry is concurrently removed or
+/// replaced — see "Detached engines" in the module docs. Like the
+/// `std::sync::MutexGuard` it replaced, it is `!Send`: it cannot be
+/// held across an `.await`, which callers rely on to keep engine
+/// critical sections synchronous.
+pub struct EngineGuard {
+    guard: ArcMutexGuard<RawMutex, LoroEngine>,
 }
 
-impl EngineGuard<'_> {
-    /// Mutable access to the engine.  Always succeeds — the constructor
-    /// guaranteed the key exists.
+impl EngineGuard {
+    /// Mutable access to the engine.
     pub fn engine_mut(&mut self) -> &mut LoroEngine {
-        self.guard
-            .get_mut(&self.key)
-            .expect("invariant: for_space inserts before returning the guard")
+        &mut self.guard
     }
 }
+
+// Compile-time tripwire: `EngineGuard` must stay `!Send`. Callers rely on
+// it to keep engine critical sections synchronous — the guard can never be
+// held across an `.await` (#2188 reactor stalls), which is what lets the
+// CPU-bound export/import passes hold it inside `block_in_place` safely.
+// `ArcMutexGuard` silently becomes `Send` if parking_lot's `send_guard`
+// feature is ever enabled anywhere in the workspace (cargo feature
+// unification), so pin the property here: if `EngineGuard: Send` ever
+// holds, the `<EngineGuard as AmbiguousIfSend<_>>` lookup below matches
+// two impls and this stops compiling. (Inlined expansion of
+// `static_assertions::assert_not_impl_any!(EngineGuard: Send)` — no new
+// dependency.)
+const _: fn() = || {
+    trait AmbiguousIfSend<A> {
+        fn some_item() {}
+    }
+    impl<T: ?Sized> AmbiguousIfSend<()> for T {}
+    struct Invalid;
+    impl<T: ?Sized + Send> AmbiguousIfSend<Invalid> for T {}
+    let _ = <EngineGuard as AmbiguousIfSend<_>>::some_item;
+};
 
 #[cfg(test)]
 mod tests {
@@ -629,18 +740,18 @@ mod tests {
         );
     }
 
-    /// Issue #153 — the registry mutex must NOT be held while the
-    /// per-space snapshot export runs. `snapshot_all_engines` collects
-    /// O(1) `LoroDoc` handles under the lock, drops it, then exports.
-    /// This drives a real export pass on a worker thread while the main
-    /// thread concurrently hammers `for_space`/`space_ids` (both of which
-    /// take the registry mutex); if the export still held the lock for its
-    /// duration this would serialise, but the assertion is simply that
-    /// every operation completes — i.e. no deadlock and no panic from a
-    /// poisoned/aliased guard.
+    /// Issue #153 — no registry lock may be held while the per-space
+    /// snapshot export runs. `snapshot_all_engines` collects Arc handles
+    /// under the map lock, locks each engine only for the O(1) doc-handle
+    /// clone, then exports lock-free. This drives a real export pass on a
+    /// worker thread while the main thread concurrently hammers
+    /// `for_space`/`space_ids` (which take the engine and map locks); if
+    /// the export still held either lock for its duration this would
+    /// serialise, but the assertion is simply that every operation
+    /// completes — i.e. no deadlock and no panic from a poisoned/aliased
+    /// guard.
     #[test]
     fn snapshot_export_does_not_hold_registry_lock() {
-        use std::sync::Arc;
         use std::thread;
 
         let r = Arc::new(LoroEngineRegistry::new());
@@ -663,7 +774,7 @@ mod tests {
             })
         };
 
-        // Concurrently take the registry mutex via for_space + space_ids.
+        // Concurrently take the registry locks via for_space + space_ids.
         for _ in 0..50 {
             let _ = r.space_ids();
             let mut g = r.for_space(&a, "device-1").expect("for_space");
@@ -705,5 +816,373 @@ mod tests {
         }
 
         assert_eq!(r.len(), 2);
+    }
+
+    // -----------------------------------------------------------------
+    // #2205 — per-space lock sharding
+    // -----------------------------------------------------------------
+
+    /// #2205 — engine work on one space must NOT block engine access to
+    /// a DIFFERENT space. Deterministic pin: the main thread acquires
+    /// and HOLDS space A's engine guard; a worker thread then completes
+    /// a full `for_space` + create + read on space B while A's guard is
+    /// still held. Under the pre-#2205 whole-map mutex the worker's
+    /// `for_space` would block until A's guard dropped and the
+    /// `recv_timeout` below would fail.
+    #[test]
+    fn engine_guard_on_one_space_does_not_block_another_space_2205() {
+        use std::sync::mpsc;
+        use std::thread;
+        use std::time::Duration;
+
+        let r = Arc::new(LoroEngineRegistry::new());
+        let a = SpaceId::from_trusted(SPACE_A);
+        let b = SpaceId::from_trusted(SPACE_B);
+
+        // Hold space A's engine guard for the whole test body.
+        let mut guard_a = r.for_space(&a, "device-1").expect("hold A");
+        guard_a
+            .engine_mut()
+            .apply_create_block("BLOCK_A", "content", "held", None, 0)
+            .expect("create A");
+
+        let (tx, rx) = mpsc::channel();
+        let worker = {
+            let r = Arc::clone(&r);
+            let b = b.clone();
+            thread::spawn(move || {
+                // Full lazy-create + apply + read on space B — must
+                // complete while space A's guard is held elsewhere.
+                let mut g = r.for_space(&b, "device-1").expect("b in worker");
+                g.engine_mut()
+                    .apply_create_block("BLOCK_B", "content", "concurrent", None, 0)
+                    .expect("create B");
+                let snap = g
+                    .engine_mut()
+                    .read_block("BLOCK_B")
+                    .expect("read")
+                    .expect("present");
+                tx.send(snap.content).expect("send");
+            })
+        };
+
+        let content = rx.recv_timeout(Duration::from_secs(30)).expect(
+            "space-B engine op must complete while space-A's guard is held — \
+             a timeout means engine access is still serialized across spaces \
+             (#2205 regression)",
+        );
+        assert_eq!(content, "concurrent");
+
+        // Space A's guard was valid throughout.
+        assert!(
+            guard_a
+                .engine_mut()
+                .read_block("BLOCK_A")
+                .unwrap()
+                .is_some()
+        );
+        drop(guard_a);
+        worker.join().expect("worker");
+        assert_eq!(r.len(), 2);
+    }
+
+    /// #2205 — sustained concurrent import/export traffic on two
+    /// DIFFERENT spaces (real `LoroEngine` ops on a multi-thread tokio
+    /// runtime, mirroring the production sync daemon shape): both tasks
+    /// make progress, every exported snapshot round-trips, and neither
+    /// space's engine ends up with the other's blocks.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_import_export_on_two_spaces_2205() {
+        const ROUNDS: usize = 20;
+
+        let r = Arc::new(LoroEngineRegistry::new());
+
+        let spawn_traffic = |space: SpaceId, prefix: &'static str| {
+            let r = Arc::clone(&r);
+            tokio::task::spawn_blocking(move || {
+                for i in 0..ROUNDS {
+                    let id = format!("{prefix}{i:03}");
+                    // Apply + export under ONE per-space guard (the
+                    // production export path holds the engine lock across
+                    // the encode, #2188).
+                    let bytes = {
+                        let mut g = r.for_space(&space, "device-1").expect("for_space");
+                        let engine = g.engine_mut();
+                        engine
+                            .apply_create_block(&id, "content", &id, None, 0)
+                            .expect("create");
+                        engine.export_snapshot().expect("export")
+                    };
+                    // Import round-trip into a fresh engine — pins that the
+                    // concurrently-produced export is internally consistent.
+                    let mut probe = LoroEngine::new();
+                    probe.import(&bytes).expect("import");
+                    assert!(
+                        probe.read_block(&id).expect("read").is_some(),
+                        "exported snapshot must contain the block just created"
+                    );
+                }
+            })
+        };
+
+        let a = SpaceId::from_trusted(SPACE_A);
+        let b = SpaceId::from_trusted(SPACE_B);
+        let task_a = spawn_traffic(a.clone(), "A");
+        let task_b = spawn_traffic(b.clone(), "B");
+        task_a.await.expect("space-A traffic task");
+        task_b.await.expect("space-B traffic task");
+
+        // Every block landed in ITS OWN space's engine and nowhere else.
+        let mut g = r.for_space(&a, "device-1").expect("a final");
+        for i in 0..ROUNDS {
+            assert!(
+                g.engine_mut()
+                    .read_block(&format!("A{i:03}"))
+                    .unwrap()
+                    .is_some()
+            );
+            assert!(
+                g.engine_mut()
+                    .read_block(&format!("B{i:03}"))
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        drop(g);
+        let mut g = r.for_space(&b, "device-1").expect("b final");
+        for i in 0..ROUNDS {
+            assert!(
+                g.engine_mut()
+                    .read_block(&format!("B{i:03}"))
+                    .unwrap()
+                    .is_some()
+            );
+            assert!(
+                g.engine_mut()
+                    .read_block(&format!("A{i:03}"))
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    /// #2205 — sharding must NOT weaken same-space exclusion: two
+    /// threads hammer ONE space, each performing a multi-step
+    /// apply + read-back sequence under a single guard. Any
+    /// interleaving inside the critical section would break the
+    /// `before + 1` live-count invariant; afterwards the engine holds
+    /// every block from both threads (no torn/lost writes).
+    #[test]
+    fn same_space_ops_stay_serialized_2205() {
+        use std::thread;
+
+        const PER_THREAD: usize = 25;
+
+        let r = Arc::new(LoroEngineRegistry::new());
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        let workers: Vec<_> = (0..2)
+            .map(|t| {
+                let r = Arc::clone(&r);
+                let space = space.clone();
+                thread::spawn(move || {
+                    for i in 0..PER_THREAD {
+                        let id = format!("T{t}B{i:02}");
+                        let mut g = r.for_space(&space, "device-1").expect("for_space");
+                        let engine = g.engine_mut();
+                        let before = engine.live_block_ids().expect("live").len();
+                        engine
+                            .apply_create_block(&id, "content", &id, None, 0)
+                            .expect("create");
+                        // Still under the guard: exactly ONE block was
+                        // added, and it is ours — an interleaved writer
+                        // inside the critical section would break this.
+                        let after = engine.live_block_ids().expect("live").len();
+                        assert_eq!(
+                            after,
+                            before + 1,
+                            "same-space critical section must be exclusive"
+                        );
+                        let snap = engine
+                            .read_block(&id)
+                            .expect("read")
+                            .expect("own write visible under the same guard");
+                        assert_eq!(snap.content, id);
+                    }
+                })
+            })
+            .collect();
+        for w in workers {
+            w.join().expect("worker");
+        }
+
+        let mut g = r.for_space(&space, "device-1").expect("final");
+        assert_eq!(
+            g.engine_mut().live_block_ids().expect("live").len(),
+            2 * PER_THREAD,
+            "every block from both threads must land (no lost updates)"
+        );
+        assert_eq!(r.len(), 1, "still exactly one engine for the space");
+    }
+
+    /// #2205 — `snapshot_all_engines` racing concurrent writers on two
+    /// spaces: every pass completes (no deadlock), returns BOTH spaces
+    /// (the space set is an atomic cut of the map), and every exported
+    /// snapshot is internally consistent — it imports cleanly into a
+    /// fresh engine and contains its space's seed block.
+    #[test]
+    fn snapshot_all_engines_during_concurrent_writes_2205() {
+        use std::sync::atomic::AtomicBool;
+        use std::thread;
+
+        let r = Arc::new(LoroEngineRegistry::new());
+        let a = SpaceId::from_trusted(SPACE_A);
+        let b = SpaceId::from_trusted(SPACE_B);
+        for (space, seed) in [(&a, "SEED_A"), (&b, "SEED_B")] {
+            let mut g = r.for_space(space, "device-1").expect("seed");
+            g.engine_mut()
+                .apply_create_block(seed, "content", seed, None, 0)
+                .expect("create seed");
+        }
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let writers: Vec<_> = [(a.clone(), "WA"), (b.clone(), "WB")]
+            .into_iter()
+            .map(|(space, prefix)| {
+                let r = Arc::clone(&r);
+                let stop = Arc::clone(&stop);
+                thread::spawn(move || {
+                    let mut i = 0usize;
+                    while !stop.load(Ordering::Relaxed) {
+                        let id = format!("{prefix}{i:04}");
+                        let mut g = r.for_space(&space, "device-1").expect("for_space");
+                        g.engine_mut()
+                            .apply_create_block(&id, "content", &id, None, 0)
+                            .expect("create");
+                        i += 1;
+                    }
+                })
+            })
+            .collect();
+
+        for _ in 0..20 {
+            let pairs = r.snapshot_all_engines();
+            assert_eq!(
+                pairs.len(),
+                2,
+                "snapshot pass must contain every registered space"
+            );
+            let mut seen = Vec::new();
+            for (space_id, bytes) in pairs {
+                let bytes = bytes.expect("export must succeed mid-write");
+                let mut probe = LoroEngine::new();
+                probe
+                    .import(&bytes)
+                    .expect("snapshot taken during concurrent writes must import cleanly");
+                let seed = if space_id.as_str() == SPACE_A {
+                    "SEED_A"
+                } else {
+                    "SEED_B"
+                };
+                assert!(
+                    probe.read_block(seed).expect("read").is_some(),
+                    "snapshot must contain its space's pre-existing seed block"
+                );
+                seen.push(space_id.as_str().to_string());
+            }
+            seen.sort();
+            assert_eq!(seen, vec![SPACE_A.to_string(), SPACE_B.to_string()]);
+        }
+
+        stop.store(true, Ordering::Relaxed);
+        for w in writers {
+            w.join().expect("writer");
+        }
+    }
+
+    /// #2205 — `clear` during an in-flight `for_space` operation:
+    /// `clear` must not block on the held ENGINE guard (it needs only
+    /// the MAP lock — under the pre-#2205 whole-map mutex this exact
+    /// schedule deadlocked), the in-flight op completes against the
+    /// detached engine without panicking, the map is empty immediately
+    /// after the clear, and the detached engine never reappears.
+    #[test]
+    fn clear_races_inflight_for_space_op_2205() {
+        use std::sync::mpsc;
+        use std::thread;
+        use std::time::Duration;
+
+        let r = Arc::new(LoroEngineRegistry::new());
+        let a = SpaceId::from_trusted(SPACE_A);
+
+        let (held_tx, held_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let worker = {
+            let r = Arc::clone(&r);
+            let a = a.clone();
+            thread::spawn(move || {
+                let mut g = r.for_space(&a, "device-1").expect("for_space");
+                g.engine_mut()
+                    .apply_create_block("BLOCK_PRE", "content", "pre-clear", None, 0)
+                    .expect("create pre-clear");
+                held_tx.send(()).expect("signal guard held");
+                release_rx.recv().expect("wait for clear to finish");
+                // `clear()` has run: this engine is now detached from the
+                // map. The in-flight op must still complete cleanly.
+                g.engine_mut()
+                    .apply_create_block("BLOCK_POST", "content", "post-clear", None, 0)
+                    .expect("create on detached engine");
+                let snap = g
+                    .engine_mut()
+                    .read_block("BLOCK_POST")
+                    .expect("read")
+                    .expect("present on detached engine");
+                assert_eq!(snap.content, "post-clear");
+            })
+        };
+
+        held_rx
+            .recv_timeout(Duration::from_secs(30))
+            .expect("worker must acquire the engine guard");
+
+        // Run clear() on a helper thread so a regression (clear blocking
+        // on the held engine guard) fails the recv_timeout instead of
+        // hanging the test.
+        let generation_before = r.generation();
+        let (cleared_tx, cleared_rx) = mpsc::channel();
+        {
+            let r = Arc::clone(&r);
+            thread::spawn(move || {
+                r.clear();
+                cleared_tx.send(()).expect("signal cleared");
+            });
+        }
+        cleared_rx.recv_timeout(Duration::from_secs(30)).expect(
+            "clear must not block on an in-flight engine guard (#2205) — \
+             a timeout means clear waits for engine operations again",
+        );
+        assert_eq!(r.len(), 0, "map is empty immediately after clear");
+        assert_eq!(
+            r.generation(),
+            generation_before + 1,
+            "clear must bump the generation (#607 saver protocol)"
+        );
+
+        // Let the in-flight op finish against the detached engine.
+        release_tx.send(()).expect("release worker");
+        worker.join().expect("in-flight op completes without panic");
+
+        // The detached engine must NOT have been re-inserted, and a fresh
+        // for_space lazy-creates an empty post-clear engine.
+        assert_eq!(r.len(), 0, "detached engine must not reappear after its op");
+        let mut g = r.for_space(&a, "device-1").expect("fresh post-clear");
+        assert!(
+            g.engine_mut().read_block("BLOCK_PRE").unwrap().is_none(),
+            "post-clear engine must not contain pre-clear content"
+        );
+        assert!(
+            g.engine_mut().read_block("BLOCK_POST").unwrap().is_none(),
+            "detached-engine writes must not leak into the fresh engine"
+        );
     }
 }

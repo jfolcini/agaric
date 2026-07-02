@@ -169,7 +169,7 @@ pub(super) async fn apply_op(pool: &SqlitePool, record: &Arc<OpRecord>) -> Resul
 /// We call `engine_apply` directly with a synthesised
 /// [`OpPayload::RestoreBlock`] — synthetic per-descendant records have
 /// no stored payload to JSON-parse, so going direct keeps the per-call
-/// cost bounded by the registry lock + the engine's per-block-id
+/// cost bounded by the per-space engine lock + the engine's per-block-id
 /// mutation (single-digit microseconds).
 ///
 /// Errors inside `engine_apply` are absorbed (warn + skip) so this
@@ -399,7 +399,7 @@ pub(crate) async fn dispatch_restore_ancestors(
 /// `engine_apply` directly (no JSON round-trip through a stored
 /// payload).  Errors inside `engine_apply`
 /// are absorbed (warn + skip) so this helper has nothing to propagate.
-/// Per-call cost is bounded by the registry lock + the engine's
+/// Per-call cost is bounded by the per-space engine lock + the engine's
 /// per-block-id mutation (single-digit microseconds).
 pub(crate) async fn dispatch_delete_descendants(
     root_record: &OpRecord,

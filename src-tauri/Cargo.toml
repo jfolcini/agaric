@@ -173,6 +173,15 @@ specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
 specta-typescript = "0.0.12"
 tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
 rustc-hash = "2.1.2"
+# #2205 — per-space engine-lock sharding in `loro/registry.rs`. The registry
+# map stores `Arc<Mutex<LoroEngine>>` and `for_space` returns an OWNED guard
+# (`lock_api::ArcMutexGuard`, via the `arc_lock` feature) that stays valid
+# after the map lock is released — the owned-guard shape std's borrowing
+# `MutexGuard` cannot express safely (this crate denies `unsafe_code`, ruling
+# out a hand-rolled self-referential guard). Already a transitive dep of the
+# tauri/sqlx stack, so this adds no new crate to the tree — only the feature
+# and a direct declaration.
+parking_lot = { version = "0.12.5", features = ["arc_lock"] }
 similar = "3"
 zstd = "0.13"
 ciborium = "0.2"
