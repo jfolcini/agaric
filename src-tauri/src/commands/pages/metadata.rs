@@ -674,19 +674,14 @@ fn compile_pages_filters(
                 "InvalidFilter: filter shape is not supported on the Pages surface: {prim:?}"
             )));
         }
-        // Substitute each anonymous `?` left-to-right with `?{next_pos}`.
-        let mut sql = String::with_capacity(wc.sql.len());
-        for ch in wc.sql.chars() {
-            if ch == '?' {
-                sql.push('?');
-                sql.push_str(&next_pos.to_string());
-                next_pos += 1;
-            } else {
-                sql.push(ch);
-            }
-        }
+        // Compose the fragment via a structured `SqlFragment` (#2255): its bare
+        // `?` placeholders are numbered `?{next_pos}` in a single arithmetic
+        // pass and a `?`/bind-count drift is a release-active hard error,
+        // replacing the former char-by-char scan.
+        let fragment = crate::filters::SqlFragment::from_where_clause(wc);
+        let sql = fragment.render(&mut next_pos);
         clauses.push(format!("({sql})"));
-        for b in wc.binds {
+        for b in fragment.into_binds() {
             binds.push(match b {
                 crate::filters::primitive::Bind::Text(s) => SqlBind::OwnedStr(s),
                 crate::filters::primitive::Bind::Int(i) => SqlBind::I64(i),
