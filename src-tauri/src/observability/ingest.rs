@@ -136,16 +136,23 @@ impl FrontendSpanIngestor {
 
         let take = spans.len().min(MAX_SPANS_PER_CALL);
         // Build the full buffer outside the lock, then write under it (one
-        // atomic write per call), mirroring the backend exporter.
+        // atomic write per call), mirroring the backend exporter. Each span is
+        // appended directly into `buf` (#2282) — no per-span `String` is
+        // allocated just to be copied in and dropped.
         let mut buf = String::with_capacity(take * 128);
         for span in &spans[..take] {
-            buf.push_str(&format_frontend_span(span));
+            write_frontend_span(&mut buf, span);
         }
         sink.write_buf(&buf);
     }
 }
 
-/// Serialize one frontend span to a single line.
+/// Serialize one frontend span as a single line, appended directly to `out`.
+///
+/// #2282 — writes INTO the caller's buffer instead of allocating a fresh
+/// `String` per span just to be copied in and dropped (the ingest loop builds
+/// one buffer for the whole batch). The small `parent` / `status` `sanitize_-`
+/// `inline` allocations remain — they are the sanitizer's owned results.
 ///
 /// Format (tab-separated `key=value`), mirroring `format_span` in
 /// [`super::exporter`]:
@@ -155,7 +162,7 @@ impl FrontendSpanIngestor {
 /// rendered as RFC-3339 (UTC, millis) so a line is self-describing in time and
 /// sorts alongside the backend trace lines. Every value is routed through
 /// [`sanitize_inline`] so no field can split a record.
-fn format_frontend_span(span: &FrontendSpan) -> String {
+fn write_frontend_span(out: &mut String, span: &FrontendSpan) {
     use std::fmt::Write as _;
 
     let dur_ms = span.end_unix_millis - span.start_unix_millis;
@@ -171,9 +178,8 @@ fn format_frontend_span(span: &FrontendSpan) -> String {
         .as_deref()
         .map_or_else(|| "-".to_owned(), sanitize_inline);
 
-    let mut line = String::new();
     let _ = write!(
-        line,
+        out,
         "end={end}\tservice={service}\tname={name}\ttrace={trace}\tspan={span_id}\tparent={parent}\tdur_ms={dur_ms:.3}\tstatus={status}",
         service = FRONTEND_SERVICE_NAME,
         name = sanitize_inline(&span.name),
@@ -182,14 +188,13 @@ fn format_frontend_span(span: &FrontendSpan) -> String {
     );
     for attr in span.attributes.iter().take(MAX_ATTRS_PER_SPAN) {
         let _ = write!(
-            line,
+            out,
             "\t{}={}",
             sanitize_inline(&attr.key),
             sanitize_inline(&attr.value)
         );
     }
-    line.push('\n');
-    line
+    out.push('\n');
 }
 
 /// Render an epoch-millisecond `f64` as RFC-3339 (UTC, millisecond precision).

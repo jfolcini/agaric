@@ -46,6 +46,23 @@ async fn seed_block(pool: &SqlitePool, block_id: &str) {
     .unwrap();
 }
 
+/// Insert a minimal `op_log` row for `device_id` at `seq`. Column values are
+/// valid but otherwise arbitrary — these tests only exercise the
+/// `MAX(seq) WHERE device_id = ?` anchor query, not op-log semantics.
+async fn insert_op_log_row(pool: &SqlitePool, device_id: &str, seq: i64) {
+    sqlx::query(
+        "INSERT INTO op_log \
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+         VALUES (?, ?, NULL, ?, 'create_block', '{}', 1767225600000)",
+    )
+    .bind(device_id)
+    .bind(seq)
+    .bind(format!("hash-{device_id}-{seq}"))
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 // ── save_draft ──────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -80,6 +97,59 @@ async fn save_draft_upserts_existing_row() {
     assert_eq!(
         drafts[0].content, CONTENT_V2,
         "content must be the latest version"
+    );
+}
+
+/// #1256 / #2282 — `draft_anchor_seq` is the SAVING device's op-log high-water
+/// (`MAX(seq)`), scoped to that device. The single-statement subquery form
+/// (#2282, which folded the old separate SELECT MAX(seq) into the INSERT) must
+/// still ignore other devices' rows: an other-device row with a HIGHER seq must
+/// not bleed into this device's anchor.
+#[tokio::test]
+async fn save_draft_anchor_seq_is_this_devices_op_log_high_water() {
+    let (pool, _dir) = test_pool().await;
+
+    // This device: seqs 1,2,3 → high-water 3.
+    for seq in 1..=3i64 {
+        insert_op_log_row(&pool, DEVICE, seq).await;
+    }
+    // A DIFFERENT device carrying a HIGHER seq (5) that must be ignored.
+    insert_op_log_row(&pool, "other-device-999", 5).await;
+
+    save_draft(&pool, DEVICE, BLOCK_A, CONTENT_V1)
+        .await
+        .unwrap();
+
+    let draft = get_draft(&pool, BLOCK_A)
+        .await
+        .unwrap()
+        .expect("draft should exist after save");
+    assert_eq!(
+        draft.draft_anchor_seq, 3,
+        "anchor must be THIS device's MAX(seq), not the other device's higher seq"
+    );
+    assert_eq!(
+        draft.draft_anchor_device.as_deref(),
+        Some(DEVICE),
+        "anchor device must be the saving device"
+    );
+}
+
+/// A draft saved with NO prior local op anchors at 0 (the `COALESCE(...,0)`
+/// floor), even when another device already has ops in the log.
+#[tokio::test]
+async fn save_draft_anchor_seq_is_zero_without_local_ops() {
+    let (pool, _dir) = test_pool().await;
+    insert_op_log_row(&pool, "other-device-999", 7).await;
+
+    save_draft(&pool, DEVICE, BLOCK_A, CONTENT_V1)
+        .await
+        .unwrap();
+
+    let draft = get_draft(&pool, BLOCK_A).await.unwrap().unwrap();
+    assert_eq!(
+        draft.draft_anchor_seq, 0,
+        "no local op ⇒ anchor 0 (COALESCE floor), unaffected by other devices"
     );
 }
 

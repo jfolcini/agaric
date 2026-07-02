@@ -63,6 +63,10 @@ export function DateChip({
   chipClass,
 }: DateChipProps) {
   const { t } = useTranslation()
+  // #2282 — compute the compact date and the translated label ONCE; the same
+  // strings feed the title, the aria-label, and the visible text below.
+  const compact = formatCompactDate(date)
+  const label = t(i18nKey, { date: compact })
   return (
     <button
       type="button"
@@ -70,8 +74,8 @@ export function DateChip({
         `${chipClass} flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer`,
         colorClass,
       )}
-      title={t(i18nKey, { date: formatCompactDate(date) })}
-      aria-label={t(i18nKey, { date: formatCompactDate(date) })}
+      title={label}
+      aria-label={label}
       // #1498: keep editor focus on click so the date-picker event fires (a
       // blur would flush/remount the block and swallow the click). See the
       // collapse-toggle note in BlockInlineControls for the full rationale.
@@ -81,7 +85,7 @@ export function DateChip({
       }}
     >
       <Icon className="h-3.5 w-3.5 flex-shrink-0" />
-      {formatCompactDate(date)}
+      {compact}
     </button>
   )
 }

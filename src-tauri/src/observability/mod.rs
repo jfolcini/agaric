@@ -117,7 +117,7 @@ pub use sampling::{sampling_ratio, set_sampling_ratio};
 // a no-op, so these compile to a couple of moves into a no-op instrument. The
 // IPC helper is called from the `lib.rs` invoke wrapper; the apply helper from
 // `materializer::handlers::apply::apply_op`.
-pub use metrics::{record_ipc_duration, record_op_apply_duration};
+pub use metrics::{ipc_metrics_enabled, record_ipc_duration, record_op_apply_duration};
 pub use propagation::extract_trace_context;
 
 use tracing_subscriber::Layer;
@@ -211,6 +211,12 @@ pub fn init(log_dir: &std::path::Path, config: &ObservabilityConfig) -> Observab
             let meter_provider = metrics::build_meter_provider(config, metric_exporter);
             opentelemetry::global::set_meter_provider(meter_provider.clone());
             metrics::register_instruments(&meter_provider);
+            // #2282 — flip the process-global IPC-metrics gate now that the
+            // meter is installed and `agaric.ipc.duration` is actually
+            // captured. Until this point (and in the default observability-off
+            // build) the `lib.rs` invoke wrapper + `record_ipc_duration` skip
+            // their per-invoke `String` allocations behind this flag.
+            metrics::set_ipc_metrics_enabled(true);
             Some(meter_provider)
         }
         None => None,

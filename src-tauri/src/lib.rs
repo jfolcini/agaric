@@ -2081,14 +2081,23 @@ pub fn run() {
                 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
                 // #2110 M6 — time each IPC command dispatch and record it to the
                 // `agaric.ipc.duration` histogram, attributed by the command
-                // NAME (an opaque compile-time identifier, never user data). The
-                // command name is captured BEFORE dispatch (which consumes
-                // `invoke`). `record_ipc_duration` is unconditional + free when
-                // observability is off (the global meter is a no-op), so this
-                // wraps both the re-parented and the unwrapped path with no
-                // enabled-check.
-                let cmd = invoke.message.command().to_owned();
-                let started = std::time::Instant::now();
+                // NAME (an opaque compile-time identifier, never user data).
+                //
+                // #2282 — gate the timing on the process-global IPC-metrics flag
+                // (set in `observability::init` only when the meter is
+                // installed). When observability is OFF (the default) this skips
+                // BOTH per-invoke `String` allocations — the command-name clone
+                // here and the `KeyValue` inside `record_ipc_duration` — so the
+                // wrapper costs one relaxed atomic load on the hot path. When on,
+                // the command name is captured BEFORE dispatch (which consumes
+                // `invoke`). The trace re-parenting below is independent of this
+                // gate and still runs whenever a `traceparent` is present.
+                let ipc_timing = observability::ipc_metrics_enabled().then(|| {
+                    (
+                        invoke.message.command().to_owned(),
+                        std::time::Instant::now(),
+                    )
+                });
                 let response = match observability::extract_trace_context(invoke.message.headers())
                 {
                     Some(parent_cx) => {
@@ -2099,7 +2108,12 @@ pub fn run() {
                     }
                     None => specta_invoke_handler(invoke),
                 };
-                observability::record_ipc_duration(started.elapsed().as_secs_f64() * 1000.0, &cmd);
+                if let Some((cmd, started)) = ipc_timing {
+                    observability::record_ipc_duration(
+                        started.elapsed().as_secs_f64() * 1000.0,
+                        &cmd,
+                    );
+                }
                 response
             }
         })

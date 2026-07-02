@@ -62,24 +62,23 @@ pub async fn save_draft(
     content: &str,
 ) -> Result<(), AppError> {
     let updated_at = now_ms();
-    // Op-log high-water for THIS device: every op with seq <= this value is
-    // already reflected in the editor view this draft was typed against, so
-    // only an op with a strictly greater seq is a genuine superseding flush.
-    let anchor_seq = sqlx::query_scalar!(
-        r#"SELECT COALESCE(MAX(seq), 0) as "seq!: i64" FROM op_log WHERE device_id = ?"#,
-        device_id,
-    )
-    .fetch_one(pool)
-    .await?;
+    // #2282 — one round-trip instead of two. The op-log high-water for THIS
+    // device (`COALESCE(MAX(seq), 0)` over `op_log WHERE device_id = ?`) is
+    // computed as a scalar subquery INLINE in the INSERT rather than a separate
+    // SELECT followed by a bound value. It means the same thing: "every op with
+    // seq <= this value is already reflected in the editor view this draft was
+    // typed against, so only an op with a strictly greater seq is a genuine
+    // superseding flush." `device_id` is bound twice — once for the anchor
+    // subquery, once for `draft_anchor_device`.
     sqlx::query(
         "INSERT OR REPLACE INTO block_drafts \
          (block_id, content, updated_at, draft_anchor_seq, draft_anchor_device) \
-         VALUES (?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, (SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?), ?)",
     )
     .bind(block_id)
     .bind(content)
     .bind(updated_at)
-    .bind(anchor_seq)
+    .bind(device_id)
     .bind(device_id)
     .execute(pool)
     .await?;
