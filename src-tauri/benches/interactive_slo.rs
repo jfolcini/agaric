@@ -684,6 +684,48 @@ fn problem_skipped(cmd: &str) -> bool {
     gate_skipped(cmd, "SLO_INCLUDE_PROBLEM")
 }
 
+/// Problem-tier budget failures deferred to `problem_tier_verdict` so ONE
+/// `slo_include_problem=true` dispatch measures EVERY probe before the bench
+/// fails (#2298 — previously the first over-budget probe panicked and the
+/// remaining probes were never measured).
+static PROBLEM_TIER_FAILURES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Like `assert_under_budget`, but records an over-budget result instead of
+/// panicking, so later problem-tier probes still run. The over-budget line is
+/// still printed immediately in the exact grep-stable
+/// `interactive_slo: {cmd} = … > budget …` format log consumers depend on;
+/// `problem_tier_verdict` fails the bench at the end if anything was recorded.
+fn assert_under_budget_deferred(cmd: &str, acc: &Acc, budget_ms: f64) {
+    let iters = acc.iters();
+    assert!(
+        iters > 0,
+        "interactive_slo: {cmd} ran zero iterations (Criterion harness bug?)"
+    );
+    let mean_ms = (acc.total().as_secs_f64() * 1000.0) / iters as f64;
+    if mean_ms <= budget_ms {
+        println!("interactive_slo: {cmd} = {mean_ms:.2} ms <= budget {budget_ms} ms (PASS)");
+    } else {
+        let line = format!(
+            "interactive_slo: {cmd} = {mean_ms:.2} ms > budget {budget_ms} ms (regression — see docs/architecture/operations.md § Product SLO)"
+        );
+        println!("{line}");
+        PROBLEM_TIER_FAILURES.lock().unwrap().push(line);
+    }
+}
+
+/// Final member of the `slo_problem` group: fails the bench run iff any
+/// deferred problem-tier probe exceeded its budget. Runs after every probe,
+/// so a single dispatch yields the complete problem-tier dataset (#2298).
+fn problem_tier_verdict(_c: &mut Criterion) {
+    let failures = PROBLEM_TIER_FAILURES.lock().unwrap();
+    assert!(
+        failures.is_empty(),
+        "interactive_slo: {n} problem-tier probe(s) over budget:\n{list}",
+        n = failures.len(),
+        list = failures.join("\n")
+    );
+}
+
 /// Skip-gate for `revert_ops @ 100K`. This is a *permanently* known-over-budget
 /// bench (~6× the 200 ms ceiling; see its doc) with no near-term promotion path,
 /// so it must NOT ride the shared `SLO_INCLUDE_PROBLEM` flag — otherwise
@@ -1254,7 +1296,7 @@ fn bench_list_page_links(c: &mut Criterion) {
     });
     group.finish();
 
-    assert_under_budget("list_page_links @ 100K", &acc, BUDGET_MS);
+    assert_under_budget_deferred("list_page_links @ 100K", &acc, BUDGET_MS);
 }
 
 /// `list_projected_agenda` — repeating-task projection over 100K rows.
@@ -1318,7 +1360,7 @@ fn bench_list_projected_agenda(c: &mut Criterion) {
     });
     group.finish();
 
-    assert_under_budget("list_projected_agenda @ 100K", &acc, BUDGET_MS);
+    assert_under_budget_deferred("list_projected_agenda @ 100K", &acc, BUDGET_MS);
 }
 
 // ===========================================================================
@@ -1342,6 +1384,7 @@ criterion_group!(
     slo_problem,
     bench_list_page_links,
     bench_list_projected_agenda,
+    problem_tier_verdict,
 );
 
 criterion_main!(slo_green, slo_problem);
