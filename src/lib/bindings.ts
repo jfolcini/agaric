@@ -90,8 +90,20 @@ export const commands = {
 	/**  Optional source filter (`due_date` / `scheduled_date`). */
 	source: string | null,
 } | null, cursor: string | null, limit: number | null, spaceId: string) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("list_blocks", { parentId, blockType, tagId, agenda, cursor, limit, spaceId })),
-	/**  Tauri command: paginate soft-deleted blocks. Delegates to [`list_trash_inner`]. */
-	listTrash: (cursor: string | null, limit: number | null, spaceId: string) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("list_trash", { cursor, limit, spaceId })),
+	/**
+	 *  Tauri command: paginate soft-deleted blocks. Delegates to [`list_trash_inner`].
+	 * 
+	 *  # Scope (#2248)
+	 * 
+	 *  Takes the canonical [`SpaceScope`] rather than a bare `space_id: String`.
+	 *  Trash is inherently per-space (each space owns its own deletion set) and
+	 *  the old bare-string API had no cross-space mode, so [`SpaceScope::Global`]
+	 *  is rejected via [`SpaceScope::require_active`] instead of silently widening
+	 *  into a cross-space listing. The frontend wrapper keeps a required
+	 *  `spaceId: string` and threads it through `toSpaceScope`, so `Active` is the
+	 *  only shape it can produce.
+	 */
+	listTrash: (cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("list_trash", { cursor, limit, scope })),
 	/**
 	 *  Tauri command: fetch a single block by ID. Delegates to
 	 *  [`get_active_block_inner`].
@@ -641,8 +653,16 @@ export const commands = {
 	/**
 	 *  Tauri command: count soft-deleted blocks in a space. Delegates to
 	 *  [`count_trash_inner`].
+	 * 
+	 *  # Scope (#2248)
+	 * 
+	 *  Takes the canonical [`SpaceScope`]. The backing SQL is a strict
+	 *  `b.space_id = ?1` equality with no cross-space bypass, so
+	 *  [`SpaceScope::Global`] is rejected via [`SpaceScope::require_active`] —
+	 *  there is no "count trash across every space" operation, and the old bare
+	 *  `space_id: String` API never offered one.
 	 */
-	countTrash: (spaceId: string) => typedError<number, AppError>(__TAURI_INVOKE("count_trash", { spaceId })),
+	countTrash: (scope: SpaceScope) => typedError<number, AppError>(__TAURI_INVOKE("count_trash", { scope })),
 	/**
 	 *  Tauri command: batch-fetch the first child per parent block. Delegates
 	 *  to [`first_child_for_blocks_inner`].

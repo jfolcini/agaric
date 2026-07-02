@@ -251,6 +251,32 @@ impl SpaceScope {
         }
     }
 
+    /// Resolve to the wrapped [`SpaceId`], rejecting [`SpaceScope::Global`].
+    ///
+    /// For commands that are *inherently* space-scoped — the trash views
+    /// (`list_trash` / `count_trash`), per-space listings, etc. — a
+    /// cross-space (`Global`) query is not a supported operation. These
+    /// commands were, before the `SpaceScope` unification (#2248), typed as
+    /// a bare **required** `space_id: String`: there was never a
+    /// cross-space mode, and passing an empty string bound a
+    /// never-matching SQL filter (a silent empty result). Under
+    /// `SpaceScope` that empty-string footgun is already gone — `''`
+    /// deserialises to `Active("")` and is rejected by [`Self::validate`] —
+    /// but `Global` is now *representable*, so these commands must reject it
+    /// explicitly rather than let it fall through [`Self::as_filter_param`]
+    /// (`None`) and silently widen into a cross-space leak (the class of bug
+    /// #2248 tracks). Preserves the old contract exactly: no input yields a
+    /// cross-space result; `Global` is a loud [`AppError::Validation`].
+    pub fn require_active(&self) -> Result<&SpaceId, AppError> {
+        match self {
+            SpaceScope::Active(id) => Ok(id),
+            SpaceScope::Global => Err(AppError::validation(
+                "this command requires an active space scope; global scope is not supported"
+                    .to_string(),
+            )),
+        }
+    }
+
     /// Validate that an `Active` scope wraps a well-formed space ULID.
     ///
     /// `Global` is always valid (it applies no filter). `Active(id)` is
@@ -577,6 +603,30 @@ mod tests {
     fn as_filter_param_active_is_some_inner_str() {
         let scope = SpaceScope::Active(SpaceId::from_trusted(FIXTURE_ULID));
         assert_eq!(scope.as_filter_param(), Some(FIXTURE_ULID));
+    }
+
+    // --- SpaceScope::require_active (#2248 — inherently-scoped commands) ---
+
+    #[test]
+    fn require_active_returns_inner_id_for_active_scope() {
+        let scope = SpaceScope::Active(SpaceId::from_trusted(FIXTURE_ULID));
+        let id = scope
+            .require_active()
+            .expect("Active scope must resolve to its inner SpaceId");
+        assert_eq!(id.as_str(), FIXTURE_ULID);
+    }
+
+    #[test]
+    fn require_active_rejects_global_with_validation_error() {
+        // The crux (#2248): an inherently space-scoped command (trash views)
+        // must NOT silently widen `Global` into a cross-space result. The old
+        // bare `space_id: String` API had no cross-space mode; `require_active`
+        // preserves that by making `Global` a loud validation error rather than
+        // a `None` filter that spans every space.
+        let err = SpaceScope::Global
+            .require_active()
+            .expect_err("Global scope must be rejected by require_active");
+        assert!(matches!(err, AppError::Validation { .. }));
     }
 
     // --- sqlx column-cast probe ---

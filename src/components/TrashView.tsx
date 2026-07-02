@@ -36,7 +36,7 @@ import { useTrashFilter } from '../hooks/useTrashFilter'
 import { useTrashListShortcuts } from '../hooks/useTrashListShortcuts'
 import { announce } from '../lib/announcer'
 import { logger } from '../lib/logger'
-import type { BlockRow } from '../lib/tauri'
+import type { BlockRow, PageResponse } from '../lib/tauri'
 import {
   listTrash,
   purgeAllDeleted,
@@ -61,16 +61,20 @@ export function TrashView(): React.ReactElement {
   const onTagClick = useTagClickHandler()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const queryFn = useCallback(
-    (cursor?: string) =>
-      // Phase 4 — trash is scoped to the active space (each
-      // space owns its own deletion set). The `?? ''` fallback is
-      // intentional pre-bootstrap behaviour: empty string forces a
-      // no-match SQL filter rather than a runtime null deref.
-      listTrash({
-        ...(cursor != null && { cursor }),
-        limit: PAGINATION_LIMIT,
-        spaceId: currentSpaceId ?? '',
-      }),
+    (cursor?: string): Promise<PageResponse<BlockRow>> =>
+      // Trash is scoped to the active space (each space owns its own
+      // deletion set). #2248 — with no active space there is nothing to
+      // list, so resolve to an empty page locally instead of passing an
+      // empty-string sentinel to the backend (which now rejects a
+      // malformed `Active('')` scope rather than treating it as a
+      // no-match).
+      currentSpaceId == null
+        ? Promise.resolve({ items: [], next_cursor: null, has_more: false, total_count: null })
+        : listTrash({
+            ...(cursor != null && { cursor }),
+            limit: PAGINATION_LIMIT,
+            spaceId: currentSpaceId,
+          }),
     [currentSpaceId],
   )
   const {

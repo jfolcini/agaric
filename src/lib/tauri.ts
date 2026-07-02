@@ -492,6 +492,14 @@ export async function listBlocks(params: {
 
 /**
  * Paginate soft-deleted blocks (the trash view). Scoped to a single space.
+ *
+ * #2248 — the IPC now takes the canonical `SpaceScope`. `spaceId` is still a
+ * required non-empty ULID; it is wrapped into `{ kind: 'active', space_id }`
+ * via `toSpaceScope`. There is intentionally no cross-space (`global`) trash
+ * listing — callers with no active space must not invoke this (guard on
+ * `currentSpaceId` and render an empty view locally). Passing `''` reaches the
+ * backend as `Active('')` and is rejected as a malformed space id, rather than
+ * the old silent empty-page no-match.
  */
 export async function listTrash(params: {
   cursor?: string | undefined
@@ -499,7 +507,11 @@ export async function listTrash(params: {
   spaceId: string
 }): Promise<PageResponse<BlockRow>> {
   return unwrap(
-    await commands.listTrash(params.cursor ?? null, params.limit ?? null, params.spaceId),
+    await commands.listTrash(
+      params.cursor ?? null,
+      params.limit ?? null,
+      toSpaceScope(params.spaceId),
+    ),
   )
 }
 
@@ -1241,12 +1253,14 @@ export async function countBacklinksBatch(params: {
  * The badge fetches the count via a `SELECT COUNT(*)` IPC so it stays
  * accurate regardless of trash size (limit-clamp follow-up).
  *
- * Pass `''` for the pre-bootstrap window before a space is active — the
- * backend `value_ref` filter treats the empty string as a no-match, so
- * the result is `0`. Mirrors the `?? ''` fallback used by `TrashView`.
+ * #2248 — the IPC takes the canonical `SpaceScope`; `spaceId` is a required
+ * non-empty ULID wrapped into `{ kind: 'active', space_id }`. There is no
+ * cross-space (`global`) trash count. In the pre-bootstrap window (no active
+ * space) callers must short-circuit to `0` locally rather than pass `''`
+ * (which now reaches the backend as a malformed `Active('')` and is rejected).
  */
 export async function countTrash(spaceId: string): Promise<number> {
-  return unwrap(await commands.countTrash(spaceId))
+  return unwrap(await commands.countTrash(toSpaceScope(spaceId)))
 }
 
 // ---------------------------------------------------------------------------

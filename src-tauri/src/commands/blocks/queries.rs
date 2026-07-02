@@ -432,14 +432,25 @@ pub async fn list_trash_inner(
 }
 
 /// Tauri command: paginate soft-deleted blocks. Delegates to [`list_trash_inner`].
+///
+/// # Scope (#2248)
+///
+/// Takes the canonical [`SpaceScope`] rather than a bare `space_id: String`.
+/// Trash is inherently per-space (each space owns its own deletion set) and
+/// the old bare-string API had no cross-space mode, so [`SpaceScope::Global`]
+/// is rejected via [`SpaceScope::require_active`] instead of silently widening
+/// into a cross-space listing. The frontend wrapper keeps a required
+/// `spaceId: string` and threads it through `toSpaceScope`, so `Active` is the
+/// only shape it can produce.
 #[tauri::command]
 #[specta::specta]
 pub async fn list_trash(
     pool: State<'_, ReadPool>,
     cursor: Option<String>,
     limit: Option<i64>,
-    space_id: String,
+    scope: SpaceScope,
 ) -> Result<PageResponse<BlockRow>, AppError> {
+    let space_id = scope.require_active()?.as_str().to_owned();
     list_trash_inner(&pool.0, cursor, limit, space_id)
         .await
         .map_err(sanitize_internal_error)
@@ -708,10 +719,19 @@ pub async fn count_trash_inner(pool: &SqlitePool, space_id: &str) -> Result<i64,
 
 /// Tauri command: count soft-deleted blocks in a space. Delegates to
 /// [`count_trash_inner`].
+///
+/// # Scope (#2248)
+///
+/// Takes the canonical [`SpaceScope`]. The backing SQL is a strict
+/// `b.space_id = ?1` equality with no cross-space bypass, so
+/// [`SpaceScope::Global`] is rejected via [`SpaceScope::require_active`] —
+/// there is no "count trash across every space" operation, and the old bare
+/// `space_id: String` API never offered one.
 #[tauri::command]
 #[specta::specta]
-pub async fn count_trash(pool: State<'_, ReadPool>, space_id: String) -> Result<i64, AppError> {
-    count_trash_inner(&pool.0, &space_id)
+pub async fn count_trash(pool: State<'_, ReadPool>, scope: SpaceScope) -> Result<i64, AppError> {
+    let space_id = scope.require_active()?;
+    count_trash_inner(&pool.0, space_id.as_str())
         .await
         .map_err(sanitize_internal_error)
 }

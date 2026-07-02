@@ -3250,9 +3250,13 @@ export const HANDLERS: Record<string, Handler> = {
     // page carries `space = <space_id>`.  The page-owner resolution
     // is the same `COALESCE(page_id, id)` lookup as
     // `count_backlinks_batch` above.
+    // #2248 — the IPC now carries `scope: SpaceScope`. Trash is inherently
+    // per-space, so only an `active` scope produces a count; `global` (never
+    // sent by the FE for trash) resolves to no space and counts nothing.
     const a = args as Record<string, unknown>
-    const spaceId = a['spaceId'] as string
-    if (!spaceId) return 0
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    if (spaceId == null) return 0
     let count = 0
     for (const b of blocks.values()) {
       if (!b['deleted_at']) continue

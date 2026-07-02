@@ -412,12 +412,19 @@ describe('useHeaderLabel', () => {
 // ---------------------------------------------------------------------------
 
 describe('useTrashCount', () => {
+  // #2248 — trash is inherently space-scoped: the badge only counts when a
+  // space is active. Seed a valid active space so the hook actually issues the
+  // `count_trash` IPC (the null-space short-circuit is covered separately).
+  const ACTIVE_SPACE = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
+
   beforeEach(() => {
     vi.useFakeTimers()
+    useSpaceStore.setState({ currentSpaceId: ACTIVE_SPACE })
   })
 
   afterEach(() => {
     vi.useRealTimers()
+    useSpaceStore.setState({ currentSpaceId: null })
   })
 
   it('polls count_trash every 30 s', async () => {
@@ -469,6 +476,45 @@ describe('useTrashCount', () => {
     // falls back to 0 rather than surfacing an error to the user.
     expect(result.current).toBe(0)
     expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'count_trash').length).toBe(1)
+  })
+
+  // #2248 — the IPC carries a `SpaceScope`, not a bare `spaceId` string. The
+  // wrapper wraps the active-space ULID into `{ kind: 'active', space_id }`;
+  // there is no cross-space trash count.
+  it('sends an active SpaceScope carrying the current space id', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'count_trash') return 3 as unknown as never
+      return emptyPage
+    })
+
+    renderHook(() => useTrashCount())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('count_trash', {
+      scope: { kind: 'active', space_id: ACTIVE_SPACE },
+    })
+  })
+
+  // #2248 (the crux) — with no active space, the badge must NOT issue a
+  // cross-space count. The old bare-string API relied on an empty-string
+  // "no-match" sentinel; the hook now short-circuits to 0 locally and never
+  // touches the IPC, so a malformed/global scope can never leak across spaces.
+  it('short-circuits to 0 without calling count_trash when no space is active', async () => {
+    useSpaceStore.setState({ currentSpaceId: null })
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'count_trash') return 99 as unknown as never
+      return emptyPage
+    })
+
+    const { result } = renderHook(() => useTrashCount())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    expect(result.current).toBe(0)
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'count_trash').length).toBe(0)
   })
 })
 
