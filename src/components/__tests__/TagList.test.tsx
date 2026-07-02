@@ -29,6 +29,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { t } from '@/lib/i18n'
+import { useSpaceStore } from '@/stores/space'
 
 import { TagList } from '../TagList'
 
@@ -65,6 +66,13 @@ function findColorButton(tagRow: HTMLElement): HTMLButtonElement {
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.removeItem('tag-colors')
+  // b1 — `list_all_tags_in_space` is required-active; seed an active space
+  // so the tag-list load runs.
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_TEST',
+    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
+    isReady: true,
+  })
 })
 
 describe('TagList', () => {
@@ -101,12 +109,24 @@ describe('TagList', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith(
         'list_all_tags_in_space',
-        expect.objectContaining({ spaceId: expect.any(String) }),
+        expect.objectContaining({ scope: { kind: 'active', space_id: 'SPACE_TEST' } }),
       )
     })
     // Belt-and-braces: the legacy prefix command must not be invoked
     // on initial load.
     expect(mockedInvoke).not.toHaveBeenCalledWith('list_tags_by_prefix', expect.anything())
+  })
+
+  it('does not load tags when no space is active (b1)', async () => {
+    // b1 — `list_all_tags_in_space` is required-active. With no active space
+    // the load short-circuits to an empty list rather than dispatching a
+    // Global scope (which the backend rejects).
+    useSpaceStore.setState({ currentSpaceId: null })
+
+    render(<TagList />)
+
+    await new Promise((r) => setTimeout(r, 0))
+    expect(mockedInvoke).not.toHaveBeenCalledWith('list_all_tags_in_space', expect.anything())
   })
 
   it('displays usage counts next to tag names', async () => {

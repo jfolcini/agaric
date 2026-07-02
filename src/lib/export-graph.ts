@@ -90,9 +90,10 @@ function relativePrefixForDepth(zipPath: string): string {
  * exported image renders in other tools (#1490 residual).
  *
  * `spaceId` (Phase 4) — only pages in the active space are
- * included in the export.  The `?? ''` fallback at the call site is
- * the pre-bootstrap no-match sentinel; `listAllPagesInSpace('')`
- * returns an empty list.
+ * included in the export. The caller (DataTab) guards on a null active
+ * space and short-circuits to an empty export before reaching this
+ * function, since listAllPagesInSpace now requires an active
+ * SpaceScope (#2248) rather than accepting an empty-string sentinel.
  */
 export async function exportGraphAsZip(spaceId: string | null): Promise<Blob> {
   const zip = new JSZip()
@@ -100,7 +101,10 @@ export async function exportGraphAsZip(spaceId: string | null): Promise<Blob> {
   // Load every page in the space.  `listAllPagesInSpace` returns every
   // page in one query (no pagination, no clamp) — bounded by the
   // space's intrinsic page count, which is what the export needs.
-  const pages = await listAllPagesInSpace(spaceId ?? '')
+  // b1 — required-active: with no active space there is nothing to
+  // export, so short-circuit to an empty page set (yielding an empty
+  // zip) instead of dispatching a Global scope the backend rejects.
+  const pages = spaceId == null ? [] : await listAllPagesInSpace(spaceId)
 
   // Cache of emitted assets keyed by attachment id, so an image referenced from
   // multiple pages is written once and every page links to the same file.

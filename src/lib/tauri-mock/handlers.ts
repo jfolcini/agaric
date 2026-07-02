@@ -1013,7 +1013,11 @@ export const HANDLERS: Record<string, Handler> = {
   get_journal_page_by_date: (args) => {
     const a = args as Record<string, unknown>
     const date = a['date'] as string
-    const spaceId = a['spaceId'] as string
+    // b1 — IPC arg is now `scope: SpaceScope`. Recover the active space
+    // id; a `global` scope yields `null`, which the loop treats as a
+    // no-match filter (the backend rejects Global via `require_active`).
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
     for (const b of blocks.values()) {
       if (b['block_type'] !== 'page') continue
       if (b['deleted_at']) continue
@@ -1034,7 +1038,9 @@ export const HANDLERS: Record<string, Handler> = {
     const a = args as Record<string, unknown>
     const startDate = a['startDate'] as string
     const endDate = a['endDate'] as string
-    const spaceId = a['spaceId'] as string
+    // b1 — `scope: SpaceScope`. `global` → null → no-match filter.
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
     const datePattern = /^\d{4}-\d{2}-\d{2}$/
     const items: Record<string, unknown>[] = []
     for (const b of blocks.values()) {
@@ -1064,7 +1070,9 @@ export const HANDLERS: Record<string, Handler> = {
   // direct-tag filter; inherited tags intentionally not modelled here).
   list_all_pages_in_space: (args) => {
     const a = args as Record<string, unknown>
-    const spaceId = a['spaceId'] as string
+    // b1 — `scope: SpaceScope`. `global` → null → no-match filter.
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
     const rawTagIds = a['tagIds'] as string[] | null | undefined
     const tagFilter = rawTagIds && rawTagIds.length > 0 ? new Set(rawTagIds) : null
     const items: Array<{ id: string; content: string | null }> = []
@@ -1101,7 +1109,10 @@ export const HANDLERS: Record<string, Handler> = {
   load_page_subtree: (args) => {
     const a = args as Record<string, unknown>
     const rootBlockId = a['rootBlockId'] as string
-    const spaceId = a['spaceId'] as string
+    // b1 — `scope: SpaceScope`. `global` → null (backend rejects Global
+    // via `require_active`); the membership check below then throws.
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
     // Space-membership check — mirrors the backend.
     const rootProps = properties.get(rootBlockId)
     const rootSpace = rootProps?.get('space')
@@ -1326,7 +1337,9 @@ export const HANDLERS: Record<string, Handler> = {
   // No pagination, no clamp; the graph view uses this to flag templates.
   list_template_page_ids_in_space: (args) => {
     const a = args as Record<string, unknown>
-    const spaceId = a['spaceId'] as string
+    // b1 — `scope: SpaceScope`. `global` → null → no-match filter.
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
     const ids: string[] = []
     for (const b of blocks.values()) {
       if (b['block_type'] !== 'page') continue
@@ -2643,7 +2656,9 @@ export const HANDLERS: Record<string, Handler> = {
   // block itself.
   list_all_tags_in_space: (args) => {
     const a = args as Record<string, unknown>
-    const spaceId = a['spaceId'] as string
+    // b1 — `scope: SpaceScope`. `global` → null → no-match filter.
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
     const tagRows: Array<{
       tag_id: string
       name: string

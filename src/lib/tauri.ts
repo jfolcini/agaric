@@ -139,6 +139,30 @@ function toSpaceScope(spaceId: string | null | undefined): SpaceScope {
   return spaceId == null ? { kind: 'global' } : { kind: 'active', space_id: spaceId }
 }
 
+/**
+ * Required-active scope helper for the `b1` command group (page/tag
+ * listing + journal lookup). Unlike {@link toSpaceScope}, there is NO
+ * `null → global` mapping: these commands filter to a single active
+ * space and have no meaningful cross-space (`Global`) form. The backend
+ * rejects a `Global` scope for them via `SpaceScope::require_active`.
+ *
+ * Every caller MUST short-circuit locally (return an empty result)
+ * before dispatching when there is no active space — passing an empty
+ * or absent space id would encode `Active('')`, which the backend
+ * rejects at deserialize (a never-matching filter would otherwise
+ * silently return nothing). The empty-string guard here is a loud
+ * tripwire for any caller that slips through that contract.
+ */
+function requireActiveScope(spaceId: string): SpaceScope {
+  if (spaceId.length === 0) {
+    throw new Error(
+      'requireActiveScope: empty space id — the caller must short-circuit to an empty ' +
+        'result when there is no active space instead of dispatching this command',
+    )
+  }
+  return { kind: 'active', space_id: spaceId }
+}
+
 export interface ProjectedAgendaEntry {
   block: BlockRow
   projected_date: string
@@ -533,7 +557,9 @@ export async function getJournalPageByDate(params: {
   date: string
   spaceId: string
 }): Promise<BlockRow | null> {
-  return unwrap(await commands.getJournalPageByDate(params.date, params.spaceId))
+  return unwrap(
+    await commands.getJournalPageByDate(params.date, requireActiveScope(params.spaceId)),
+  )
 }
 
 /**
@@ -553,7 +579,11 @@ export async function listJournalPagesInRange(params: {
   spaceId: string
 }): Promise<BlockRow[]> {
   return unwrap(
-    await commands.listJournalPagesInRange(params.startDate, params.endDate, params.spaceId),
+    await commands.listJournalPagesInRange(
+      params.startDate,
+      params.endDate,
+      requireActiveScope(params.spaceId),
+    ),
   )
 }
 
@@ -2047,7 +2077,7 @@ export async function listAllPagesInSpace(
   spaceId: string,
   tagIds: string[] | null = null,
 ): Promise<PageHeading[]> {
-  return unwrap(await commands.listAllPagesInSpace(spaceId, tagIds))
+  return unwrap(await commands.listAllPagesInSpace(requireActiveScope(spaceId), tagIds))
 }
 
 /**
@@ -2057,7 +2087,7 @@ export async function listAllPagesInSpace(
  * template pages with a visual marker.
  */
 export async function listTemplatePageIdsInSpace(spaceId: string): Promise<string[]> {
-  return unwrap(await commands.listTemplatePageIdsInSpace(spaceId))
+  return unwrap(await commands.listTemplatePageIdsInSpace(requireActiveScope(spaceId)))
 }
 
 /**
@@ -2073,7 +2103,7 @@ export async function listTemplatePageIdsInSpace(spaceId: string): Promise<strin
  * itself (see `commands/tags.rs` cross-space guard).
  */
 export async function listAllTagsInSpace(spaceId: string): Promise<TagCacheRow[]> {
-  return unwrap(await commands.listAllTagsInSpace(spaceId))
+  return unwrap(await commands.listAllTagsInSpace(requireActiveScope(spaceId)))
 }
 
 /**
@@ -2092,7 +2122,7 @@ export async function listAllTagsInSpace(spaceId: string): Promise<TagCacheRow[]
  * "showing the first N of M" notice instead of silently dropping blocks.
  */
 export async function loadPageSubtree(rootBlockId: string, spaceId: string): Promise<PageSubtree> {
-  return unwrap(await commands.loadPageSubtree(rootBlockId, spaceId))
+  return unwrap(await commands.loadPageSubtree(rootBlockId, requireActiveScope(spaceId)))
 }
 
 // ---------------------------------------------------------------------------

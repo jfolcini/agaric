@@ -137,7 +137,9 @@ describe('PageBrowserBatchToolbar', () => {
         tagId: 'TAG_A',
       })
     })
-    expect(mockedInvoke).toHaveBeenCalledWith('list_all_tags_in_space', { spaceId: 'SPACE_TEST' })
+    expect(mockedInvoke).toHaveBeenCalledWith('list_all_tags_in_space', {
+      scope: { kind: 'active', space_id: 'SPACE_TEST' },
+    })
     expect(onClearSelection).toHaveBeenCalledTimes(1)
     expect(onMutated).toHaveBeenCalledTimes(1)
     expect(mockedToastSuccess).toHaveBeenCalledWith(t('pageBrowser.batch.tagged', { count: 2 }))

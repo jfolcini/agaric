@@ -19,6 +19,7 @@ import { GlobalDateControls } from '@/components/agenda/GlobalDateControls'
 import { __resetCalendarPageDatesForTests } from '@/hooks/useCalendarPageDates'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
+import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 
 // Mock the Calendar component used by JournalCalendarDropdown.
@@ -53,6 +54,13 @@ beforeEach(() => {
   useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
+  })
+  // b1 — `list_journal_pages_in_range` is required-active; seed an active
+  // space so the calendar-highlight mount fetch runs.
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_TEST',
+    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
+    isReady: true,
   })
   // UseCalendarPageDates now hits `list_journal_pages_in_range`,
   // which returns a flat `BlockRow[]` (no pagination envelope).
@@ -216,9 +224,22 @@ describe('GlobalDateControls', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith(
         'list_journal_pages_in_range',
-        expect.objectContaining({ spaceId: '' }),
+        expect.objectContaining({ scope: { kind: 'active', space_id: 'SPACE_TEST' } }),
       )
     })
+  })
+
+  it('does not fetch the page list when no space is active (b1)', async () => {
+    // b1 — `list_journal_pages_in_range` is required-active. With no active
+    // space the calendar-highlight fetch must be skipped entirely rather
+    // than dispatching a Global scope (which the backend rejects).
+    useSpaceStore.setState({ currentSpaceId: null })
+
+    render(<GlobalDateControls />)
+
+    // Give the mount effect a chance to run, then assert nothing dispatched.
+    await new Promise((r) => setTimeout(r, 0))
+    expect(mockedInvoke).not.toHaveBeenCalledWith('list_journal_pages_in_range', expect.anything())
   })
 
   it('shows error toast when page list fetch fails on mount', async () => {

@@ -20,9 +20,12 @@ import { formatDate } from '../../lib/date-utils'
 const listJournalPagesInRange = vi.hoisted(() => vi.fn())
 vi.mock('../../lib/tauri', () => ({ listJournalPagesInRange }))
 
+// Mutable active-space id so a single test can exercise the b1
+// no-active-space short-circuit by flipping it to `null`.
+const spaceRef = vi.hoisted(() => ({ current: 'space-1' as string | null }))
 vi.mock('../../stores/space', () => ({
-  useSpaceStore: (selector: (s: { currentSpaceId: string }) => unknown) =>
-    selector({ currentSpaceId: 'space-1' }),
+  useSpaceStore: (selector: (s: { currentSpaceId: string | null }) => unknown) =>
+    selector({ currentSpaceId: spaceRef.current }),
 }))
 
 import { STREAM_BATCH_DAYS, STREAM_INITIAL_DAYS, useStreamDates } from '../useStreamDates'
@@ -31,6 +34,7 @@ const TODAY = new Date(2026, 5, 20) // Sat, Jun 20, 2026
 
 beforeEach(() => {
   vi.clearAllMocks()
+  spaceRef.current = 'space-1'
   // `shouldAdvanceTime` lets RTL's `waitFor` real-time polling proceed while
   // `new Date()` inside the hook still resolves to the pinned `TODAY`.
   vi.useFakeTimers({ shouldAdvanceTime: true })
@@ -98,5 +102,18 @@ describe('useStreamDates', () => {
     act(() => result.current.addPage('2026-06-20', 'new-page'))
     expect(result.current.pageMap.get('2026-06-20')).toBe('new-page')
     expect(listJournalPagesInRange.mock.calls.length).toBe(callsBefore)
+  })
+
+  it('short-circuits to an empty pageMap with no active space, fetching nothing (b1)', async () => {
+    // b1 — `list_journal_pages_in_range` is required-active. With no active
+    // space the hook must not call the command (a Global scope is rejected
+    // by the backend); the pageMap stays empty and loading resolves.
+    spaceRef.current = null
+
+    const { result } = renderHook(() => useStreamDates())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    expect(result.current.pageMap.size).toBe(0)
+    expect(listJournalPagesInRange).not.toHaveBeenCalled()
   })
 })

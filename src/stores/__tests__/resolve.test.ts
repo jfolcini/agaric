@@ -141,9 +141,11 @@ describe('preload', () => {
     // The space-scoped IPC must be forwarded the active spaceId.
     const tagCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_all_tags_in_space')
     expect(tagCalls).toHaveLength(1)
-    expect((tagCalls[0]?.[1] as Record<string, unknown> | undefined)?.['spaceId']).toBe(
-      TEST_SPACE_ID,
-    )
+    // b1 — `list_all_tags_in_space` now takes `scope: SpaceScope`.
+    expect((tagCalls[0]?.[1] as Record<string, unknown> | undefined)?.['scope']).toEqual({
+      kind: 'active',
+      space_id: TEST_SPACE_ID,
+    })
   })
 
   it('uses "Untitled" for pages with null content', async () => {

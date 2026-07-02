@@ -76,7 +76,10 @@ describe('useJournalAutoCreate', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith(
         'get_journal_page_by_date',
-        expect.objectContaining({ date: todayStr, spaceId: 'SPACE_TEST' }),
+        expect.objectContaining({
+          date: todayStr,
+          scope: { kind: 'active', space_id: 'SPACE_TEST' },
+        }),
       )
     })
 

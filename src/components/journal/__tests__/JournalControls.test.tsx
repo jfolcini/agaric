@@ -18,6 +18,7 @@ import { axe } from 'vitest-axe'
 import { JournalControls } from '@/components/journal/JournalControls'
 import { __resetCalendarPageDatesForTests } from '@/hooks/useCalendarPageDates'
 import { useJournalStore } from '@/stores/journal'
+import { useSpaceStore } from '@/stores/space'
 
 // Calendar mock — the real react-day-picker Calendar warns about unrecognised
 // props on a plain <div>; we only care that *something* is rendered.
@@ -35,6 +36,13 @@ beforeEach(() => {
     currentDate: new Date(2025, 5, 15),
     scrollToDate: null,
     scrollToPanel: null,
+  })
+  // b1 — `list_journal_pages_in_range` is required-active; seed an active
+  // space so the calendar-highlight mount fetch runs.
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_TEST',
+    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
+    isReady: true,
   })
   // UseCalendarPageDates now hits `list_journal_pages_in_range`,
   // which returns a flat `BlockRow[]` (no pagination envelope).
@@ -137,13 +145,24 @@ describe('JournalControls', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith(
         'list_journal_pages_in_range',
-        expect.objectContaining({ spaceId: '' }),
+        expect.objectContaining({ scope: { kind: 'active', space_id: 'SPACE_TEST' } }),
       )
     })
     const fetchCalls = mockedInvoke.mock.calls.filter(
       ([cmd]) => cmd === 'list_journal_pages_in_range',
     )
     expect(fetchCalls).toHaveLength(1)
+  })
+
+  it('does not fetch the page list when no space is active (b1)', async () => {
+    // b1 — required-active: with no active space the mount fetch is skipped
+    // rather than dispatching a Global scope (which the backend rejects).
+    useSpaceStore.setState({ currentSpaceId: null })
+
+    render(<JournalControls />)
+
+    await new Promise((r) => setTimeout(r, 0))
+    expect(mockedInvoke).not.toHaveBeenCalledWith('list_journal_pages_in_range', expect.anything())
   })
 
   // The date readout's min-width is gated on sm: so phones

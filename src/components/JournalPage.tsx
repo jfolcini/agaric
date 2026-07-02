@@ -132,7 +132,9 @@ export function JournalPage({
     loading,
     mode,
     currentDate,
-    spaceId: currentSpaceId ?? '',
+    // b1 — pass the raw active space id (or null); the hook skips its
+    // required-active probe when there is no active space.
+    spaceId: currentSpaceId,
     createdPages,
     handleAddBlock,
   })

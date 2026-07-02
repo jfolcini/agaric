@@ -305,16 +305,17 @@ export async function insertTemplateBlocks(
   spaceId: string | null,
   context?: { pageTitle?: string; onCursorBlock?: (blockId: string) => void },
 ): Promise<string[]> {
-  // Templates belong to a single space, so the descendant fetch is
-  // scoped to `spaceId`. The `?? ''` fallback exists for the pre-
-  // bootstrap call paths inherited from the previous `listBlocks`
-  // implementation; `loadPageSubtree`'s backend rejects an empty
-  // spaceId with `AppError::Validation` (the root cannot carry
-  // `space = ''`), so a real null-spaceId call propagates a loud
-  // error instead of silently returning `[]`.  In practice
-  // `insertTemplateBlocks` is only reached via user action after
-  // bootstrap, so the fallback should never trigger.
-  const effectiveSpaceId = spaceId ?? ''
+  // Templates belong to a single space, so the descendant fetch
+  // (`loadPageSubtree`) is required-active (b1). With no active space
+  // there is no template to expand, so short-circuit to "no blocks
+  // inserted" instead of dispatching a Global scope the backend rejects.
+  // In practice `insertTemplateBlocks` is only reached via user action
+  // after bootstrap, so this guard should never fire.
+  if (spaceId == null) {
+    logger.warn('template-utils', 'insertTemplateBlocks: no active space; skipping', {})
+    return []
+  }
+  const effectiveSpaceId = spaceId
 
   // Collect specs in DFS order. Each spec's `parentId` is either the
   // top-level destination (`parentId` arg) when the source's parent is

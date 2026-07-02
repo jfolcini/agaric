@@ -4655,7 +4655,7 @@ describe('BlockTree handleDatePick date format', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith(
         'list_all_pages_in_space',
-        expect.objectContaining({ spaceId: 'SPACE_TEST' }),
+        expect.objectContaining({ scope: { kind: 'active', space_id: 'SPACE_TEST' } }),
       )
     })
 

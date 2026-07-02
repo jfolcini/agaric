@@ -12,6 +12,10 @@ import { fetchGraphData } from '@/components/graph/GraphView.helpers'
 
 const mockedInvoke = vi.mocked(invoke)
 
+// A canonical active-space ULID. `fetchGraphData` is required-active (b1):
+// the page-list and template-id fetches only run for an active space.
+const SPACE_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
+
 beforeEach(() => {
   vi.clearAllMocks()
 })
@@ -25,13 +29,13 @@ describe('fetchGraphData', () => {
       return Promise.resolve(null)
     })
 
-    const result = await fetchGraphData([], null)
+    const result = await fetchGraphData([], SPACE_ID)
 
     expect(result.nodes).toHaveLength(0)
     expect(result.edges).toHaveLength(0)
     expect(mockedInvoke).toHaveBeenCalledWith(
       'list_all_pages_in_space',
-      expect.objectContaining({ spaceId: '', tagIds: null }),
+      expect.objectContaining({ scope: { kind: 'active', space_id: SPACE_ID }, tagIds: null }),
     )
     // No legacy paths.
     expect(mockedInvoke).not.toHaveBeenCalledWith('list_blocks', expect.anything())
@@ -46,7 +50,7 @@ describe('fetchGraphData', () => {
       return Promise.resolve(null)
     })
 
-    await fetchGraphData(['tag-a'], null)
+    await fetchGraphData(['tag-a'], SPACE_ID)
 
     expect(mockedInvoke).toHaveBeenCalledWith(
       'list_all_pages_in_space',
@@ -62,7 +66,7 @@ describe('fetchGraphData', () => {
       return Promise.resolve(null)
     })
 
-    await fetchGraphData(['tag-a', 'tag-b'], null)
+    await fetchGraphData(['tag-a', 'tag-b'], SPACE_ID)
 
     expect(mockedInvoke).toHaveBeenCalledWith(
       'list_all_pages_in_space',
@@ -78,7 +82,7 @@ describe('fetchGraphData', () => {
       return Promise.resolve(null)
     })
 
-    await fetchGraphData(['tag-a', 'tag-b'], null)
+    await fetchGraphData(['tag-a', 'tag-b'], SPACE_ID)
 
     expect(mockedInvoke).toHaveBeenCalledWith(
       'list_page_links',
@@ -94,7 +98,7 @@ describe('fetchGraphData', () => {
       return Promise.resolve(null)
     })
 
-    await fetchGraphData([], null)
+    await fetchGraphData([], SPACE_ID)
 
     expect(mockedInvoke).toHaveBeenCalledWith(
       'list_page_links',
@@ -114,7 +118,7 @@ describe('fetchGraphData', () => {
       return Promise.resolve(null)
     })
 
-    const result = await fetchGraphData([], null)
+    const result = await fetchGraphData([], SPACE_ID)
 
     const page1 = result.nodes.find((n) => n.id === 'page-1')
     const page2 = result.nodes.find((n) => n.id === 'page-2')
@@ -141,7 +145,7 @@ describe('fetchGraphData', () => {
       return Promise.resolve(null)
     })
 
-    const result = await fetchGraphData([], null)
+    const result = await fetchGraphData([], SPACE_ID)
     const byId = new Map(result.nodes.map((n) => [n.id, n]))
     expect(byId.get('page-1')?.backlink_count).toBe(0)
     expect(byId.get('page-2')?.backlink_count).toBe(2)
@@ -161,7 +165,7 @@ describe('fetchGraphData', () => {
       return Promise.resolve(null)
     })
 
-    const result = await fetchGraphData([], null)
+    const result = await fetchGraphData([], SPACE_ID)
     expect(result.edges).toHaveLength(0)
   })
 
@@ -177,7 +181,7 @@ describe('fetchGraphData', () => {
       return Promise.resolve(null)
     })
 
-    const result = await fetchGraphData([], null)
+    const result = await fetchGraphData([], SPACE_ID)
     expect(result.nodes.map((n) => n.label)).toEqual(['Untitled', 'Untitled'])
   })
 
@@ -190,6 +194,18 @@ describe('fetchGraphData', () => {
       return Promise.resolve(null)
     })
 
-    await expect(fetchGraphData([], null)).rejects.toThrow('boom')
+    await expect(fetchGraphData([], SPACE_ID)).rejects.toThrow('boom')
+  })
+
+  it('short-circuits to an empty graph with no active space, dispatching nothing (b1)', async () => {
+    // b1 — `fetchGraphData` is required-active. With `spaceId == null` it must
+    // return an empty graph WITHOUT dispatching any IPC (a Global scope would
+    // be rejected by the backend for these required-active commands).
+    mockedInvoke.mockImplementation(() => Promise.resolve([]))
+
+    const result = await fetchGraphData([], null)
+
+    expect(result).toEqual({ nodes: [], edges: [] })
+    expect(mockedInvoke).not.toHaveBeenCalled()
   })
 })

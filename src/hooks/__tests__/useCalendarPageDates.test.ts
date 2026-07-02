@@ -16,15 +16,26 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useSpaceStore } from '@/stores/space'
+
 import { __resetCalendarPageDatesForTests, useCalendarPageDates } from '../useCalendarPageDates'
 
 const mockedInvoke = vi.mocked(invoke)
 
 const RANGE = { startDate: '2025-06-01', endDate: '2025-06-30' }
 
+const SPACE_ID = 'SPACE_TEST'
+
 beforeEach(() => {
   vi.clearAllMocks()
   __resetCalendarPageDatesForTests()
+  // b1 — `list_journal_pages_in_range` is required-active: the hook only
+  // fetches when a space is active. Seed one so the mount-fetch path runs.
+  useSpaceStore.setState({
+    currentSpaceId: SPACE_ID,
+    availableSpaces: [{ id: SPACE_ID, name: 'Test', accent_color: null }],
+    isReady: true,
+  })
   // Follow-up: the underlying fetch is `list_journal_pages_in_range`,
   // which returns a flat `BlockRow[]` (not a paginated envelope).
   mockedInvoke.mockResolvedValue([])
@@ -63,7 +74,7 @@ describe('useCalendarPageDates', () => {
     expect(result.current.pageMap.size).toBe(2)
   })
 
-  it('passes startDate/endDate/spaceId to the IPC call', async () => {
+  it('passes startDate/endDate/scope to the IPC call', async () => {
     renderHook(() => useCalendarPageDates(RANGE))
 
     await waitFor(() => {
@@ -72,10 +83,25 @@ describe('useCalendarPageDates', () => {
         expect.objectContaining({
           startDate: '2025-06-01',
           endDate: '2025-06-30',
-          spaceId: '',
+          scope: { kind: 'active', space_id: SPACE_ID },
         }),
       )
     })
+  })
+
+  it('short-circuits to an empty pageMap with no active space, dispatching nothing (b1)', async () => {
+    // b1 — `list_journal_pages_in_range` is required-active. With no active
+    // space the hook must not dispatch (a Global scope is rejected by the
+    // backend); the pageMap stays empty and loading resolves.
+    useSpaceStore.setState({ currentSpaceId: null })
+
+    const { result } = renderHook(() => useCalendarPageDates(RANGE))
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+    expect(result.current.pageMap.size).toBe(0)
+    expect(mockedInvoke).not.toHaveBeenCalledWith('list_journal_pages_in_range', expect.anything())
   })
 
   it('exposes highlightedDays derived from pageMap keys', async () => {

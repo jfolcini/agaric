@@ -18,6 +18,10 @@ import { logger } from '../logger'
 const mockedInvoke = vi.mocked(invoke)
 const mockedLogger = vi.mocked(logger)
 
+// Canonical active-space ULID. `exportGraphAsZip` is required-active (b1):
+// the page fetch only runs for an active space.
+const SPACE_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
+
 beforeEach(() => {
   vi.clearAllMocks()
 })
@@ -38,7 +42,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip(null)
+    const blob = await exportGraphAsZip(SPACE_ID)
 
     expect(blob).toBeInstanceOf(Blob)
     expect(blob.size).toBeGreaterThan(0)
@@ -65,7 +69,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip(null)
+    const blob = await exportGraphAsZip(SPACE_ID)
     expect(blob).toBeInstanceOf(Blob)
 
     // Inspect the ZIP — a regression that collapsed duplicates into a single
@@ -90,7 +94,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip(null)
+    const blob = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
     const filenames = Object.keys(unzipped.files)
 
@@ -109,7 +113,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip(null)
+    const blob = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
     const filenames = Object.keys(unzipped.files)
 
@@ -127,7 +131,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip(null)
+    const blob = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
     const filenames = Object.keys(unzipped.files)
 
@@ -164,7 +168,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip(null)
+    const blob = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
     const filenames = Object.keys(unzipped.files)
 
@@ -193,7 +197,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip(null)
+    const blob = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
     const md = await unzipped.file('Notes.md')?.async('string')
     // Unresolvable attachment → original ref preserved, nothing dropped.
@@ -209,7 +213,7 @@ describe('exportGraphAsZip', () => {
   it('returns empty ZIP when no pages exist', async () => {
     mockedInvoke.mockResolvedValue([])
 
-    const blob = await exportGraphAsZip(null)
+    const blob = await exportGraphAsZip(SPACE_ID)
     expect(blob).toBeInstanceOf(Blob)
   })
 
@@ -233,7 +237,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip(null)
+    const blob = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
     const filenames = Object.keys(unzipped.files)
 
@@ -247,5 +251,18 @@ describe('exportGraphAsZip', () => {
       { pageId: 'P2' },
       expect.any(Error),
     )
+  })
+
+  it('short-circuits to an empty ZIP with no active space, never calling list_all_pages_in_space (b1)', async () => {
+    // b1 — the page fetch is required-active. With `spaceId == null` the
+    // export must short-circuit to an empty page set (an empty but valid ZIP)
+    // WITHOUT dispatching `list_all_pages_in_space` (a Global scope would be
+    // rejected by the backend).
+    mockedInvoke.mockResolvedValue([])
+
+    const blob = await exportGraphAsZip(null)
+
+    expect(blob).toBeInstanceOf(Blob)
+    expect(mockedInvoke).not.toHaveBeenCalledWith('list_all_pages_in_space', expect.anything())
   })
 })

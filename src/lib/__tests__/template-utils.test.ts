@@ -103,7 +103,7 @@ describe('insertTemplateBlocks', () => {
       { id: 'NEW2', block_type: 'content', content: '## Agenda' },
     ])
 
-    const ids = await insertTemplateBlocks('TMPL', 'PARENT', null)
+    const ids = await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST')
 
     expect(ids).toEqual(['NEW1', 'NEW2'])
     expect(mockedInvoke).toHaveBeenCalledWith(
@@ -160,7 +160,7 @@ describe('insertTemplateBlocks', () => {
       { id: 'NEW_B', block_type: 'content', content: 'Sub-bullet B' },
     ])
 
-    const ids = await insertTemplateBlocks('TMPL', 'PARENT', null)
+    const ids = await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST')
 
     // Both blocks were created
     expect(ids).toEqual(['NEW_A', 'NEW_B'])
@@ -209,7 +209,7 @@ describe('insertTemplateBlocks', () => {
     // depth 1 → fail
     mockedInvoke.mockRejectedValueOnce(new Error('batch insert failed'))
 
-    const ids = await insertTemplateBlocks('TMPL', 'PARENT', null)
+    const ids = await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST')
 
     // A landed from depth 0; depth-1 failure is logged but doesn't
     // throw — the partial result is returned.
@@ -224,7 +224,7 @@ describe('insertTemplateBlocks', () => {
     // load_page_subtree returns no descendants → no batch IPC fires.
     mockedInvoke.mockResolvedValueOnce({ blocks: [], truncated: false, total: 0 })
 
-    const ids = await insertTemplateBlocks('TMPL', 'PARENT', null)
+    const ids = await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST')
 
     expect(ids).toEqual([])
     expect(mockedInvoke).toHaveBeenCalledTimes(1)
@@ -268,7 +268,9 @@ describe('insertTemplateBlocks — {{ }} variable substitution (#1442)', () => {
       { id: 'NEW2', block_type: 'content', content: 'For Weekly Review' },
     ])
 
-    const ids = await insertTemplateBlocks('TMPL', 'PARENT', null, { pageTitle: 'Weekly Review' })
+    const ids = await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST', {
+      pageTitle: 'Weekly Review',
+    })
 
     expect(ids).toEqual(['NEW1', 'NEW2'])
     const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
@@ -299,7 +301,7 @@ describe('insertTemplateBlocks — {{ }} variable substitution (#1442)', () => {
     ])
 
     let cursorBlockId: string | null = null
-    await insertTemplateBlocks('TMPL', 'PARENT', null, {
+    await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST', {
       onCursorBlock: (blockId) => {
         cursorBlockId = blockId
       },
@@ -311,6 +313,17 @@ describe('insertTemplateBlocks — {{ }} variable substitution (#1442)', () => {
     const batchCall = mockedInvoke.mock.calls.find(([cmd]) => cmd === 'create_blocks_batch')
     const specs = (batchCall?.[1] as { specs: Array<{ content: string }> } | undefined)?.specs
     expect(specs?.[1]?.content).toBe('here')
+  })
+
+  it('short-circuits to [] with no active space, dispatching no load_page_subtree (b1)', async () => {
+    // b1 — the descendant fetch (`load_page_subtree`) is required-active.
+    // With `spaceId == null` there is no template to expand, so
+    // `insertTemplateBlocks` returns an empty id list WITHOUT dispatching
+    // (a Global scope would be rejected by the backend).
+    const ids = await insertTemplateBlocks('TMPL', 'PARENT', null)
+
+    expect(ids).toEqual([])
+    expect(mockedInvoke).not.toHaveBeenCalledWith('load_page_subtree', expect.anything())
   })
 })
 

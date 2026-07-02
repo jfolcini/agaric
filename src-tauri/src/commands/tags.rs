@@ -1023,15 +1023,22 @@ pub async fn list_inherited_tags_for_block(
         .map_err(sanitize_internal_error)
 }
 
-/// Tauri command: list every tag in `space_id` as `TagCacheRow[]`. No
-/// pagination, no clamp.  Delegates to [`list_all_tags_in_space_inner`].
+/// Tauri command: list every tag in the active space as
+/// `TagCacheRow[]`. No pagination, no clamp.  Delegates to
+/// [`list_all_tags_in_space_inner`].
+///
+/// `scope` is a required-active [`SpaceScope`] (b1 migration);
+/// [`SpaceScope::Global`] is rejected by [`SpaceScope::require_active`].
+/// The frontend short-circuits locally to an empty list when there is no
+/// active space rather than dispatching a `Global` scope.
 #[tauri::command]
 #[specta::specta]
 pub async fn list_all_tags_in_space(
     pool: State<'_, ReadPool>,
-    space_id: String,
+    scope: SpaceScope,
 ) -> Result<Vec<TagCacheRow>, AppError> {
-    list_all_tags_in_space_inner(&pool.0, &space_id)
+    let space_id = scope.require_active()?;
+    list_all_tags_in_space_inner(&pool.0, space_id.as_str())
         .await
         .map_err(sanitize_internal_error)
 }

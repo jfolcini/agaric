@@ -249,12 +249,17 @@ export function usePropertyRowEditor({
     // empty page-picker list with no indication that the load failed.
     // The toast + `logger.error` on the catch path remains the only
     // failure surface the user sees.
-    // Phase 4 — `listAllPagesInSpace` requires `spaceId`. The
-    // `?? ''` fallback is intentional pre-bootstrap behaviour: empty
-    // string forces a no-match SQL filter rather than a runtime null
-    // deref.  `listAllPagesInSpace` has no clamp (the ref picker filters
+    // b1 — `listAllPagesInSpace` is required-active. With no active space
+    // there are no pages to pick, so short-circuit locally to an empty
+    // picker instead of dispatching (a Global scope is rejected by the
+    // backend).  `listAllPagesInSpace` has no clamp (the ref picker filters
     // client-side), so any workspace size shows up correctly here.
-    listAllPagesInSpace(currentSpaceId ?? '')
+    if (currentSpaceId == null) {
+      setRefPages([])
+      setRefPickerOpen(true)
+      return
+    }
+    listAllPagesInSpace(currentSpaceId)
       .then((pages) => {
         setRefPages(pages)
         setRefPickerOpen(true)
