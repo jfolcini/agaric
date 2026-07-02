@@ -7,17 +7,14 @@
  */
 
 import {
-  forceCenter,
-  forceCollide,
   forceLink,
-  forceManyBody,
   forceSimulation,
-  forceX,
-  forceY,
   type Simulation,
   type SimulationLinkDatum,
   type SimulationNodeDatum,
 } from 'd3-force'
+
+import { applyGraphForces, applyResizeForces, RESIZE_ALPHA } from '@/lib/graph-forces'
 
 import type {
   WorkerErrorMessage,
@@ -146,18 +143,11 @@ self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => 
         simNodes = nodes.map((n) => Object.assign({}, n))
         const simEdges: SimEdge[] = edges.map((e) => Object.assign({}, e))
 
-        simulation = forceSimulation<SimNode, SimEdge>(simNodes)
-          .force(
-            'link',
-            forceLink<SimNode, SimEdge>(simEdges)
-              .id((d) => d.id)
-              .distance(60),
-          )
-          .force('charge', forceManyBody().strength(-100))
-          .force('center', forceCenter(width / 2, height / 2))
-          .force('collide', forceCollide(20))
-          .force('x', forceX(width / 2).strength(0.05))
-          .force('y', forceY(height / 2).strength(0.05))
+        simulation = applyGraphForces(forceSimulation<SimNode, SimEdge>(simNodes), {
+          edges: simEdges,
+          width,
+          height,
+        })
 
         simulation.on('tick', () => {
           // #2273: throttle tick emission to ~one per animation-frame interval.
@@ -230,10 +220,8 @@ self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => 
         if (!simulation) break
 
         const { width, height } = msg
-        simulation.force('center', forceCenter(width / 2, height / 2))
-        simulation.force('x', forceX(width / 2).strength(0.05))
-        simulation.force('y', forceY(height / 2).strength(0.05))
-        simulation.alpha(0.3).restart()
+        applyResizeForces(simulation, { width, height })
+        simulation.alpha(RESIZE_ALPHA).restart()
         break
       }
 

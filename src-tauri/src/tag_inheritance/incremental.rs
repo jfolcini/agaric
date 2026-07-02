@@ -84,6 +84,8 @@ pub(crate) async fn remove_inherited_tag(
     // descendants set; `taggers` are the descendants that hold the tag directly.
     // For each descendant we re-walk its own ancestor chain, intersect with the
     // in-subtree taggers, and take the closest.
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants (both the
+    // descendants and anc recursive arms below carry the cap)
     // dynamic-sql: #675 — static concat! CTE, all values bound (?1/?2), no interpolation.
     sqlx::query(concat!(
         "WITH RECURSIVE ",

@@ -21,6 +21,7 @@ async fn rebuild_page_ids_impl(pool: &SqlitePool) -> Result<u64, AppError> {
     // Invariant #9: recursive CTE over `blocks` must bound `depth < 100`
     // to defend against runaway recursion on corrupted `parent_id`
     // chains.
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
     let result = sqlx::query(
         "WITH RECURSIVE ancestors(block_id, cur_id, cur_type, depth) AS ( \
              SELECT b.id, b.id, b.block_type, 0 FROM blocks b \
@@ -86,6 +87,7 @@ async fn rebuild_page_ids_split_impl(
     // `(block_id, page_id)` mapping instead of folding into an inline
     // UPDATE. Invariant #9 filters apply identically.
     let mut read_tx = read_pool.begin().await?;
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
     let pairs: Vec<(String, String)> = sqlx::query_as(
         "WITH RECURSIVE ancestors(block_id, cur_id, cur_type, depth) AS ( \
              SELECT b.id, b.id, b.block_type, 0 FROM blocks b \

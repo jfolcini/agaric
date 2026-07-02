@@ -199,6 +199,7 @@ pub async fn list_page_history(
 
     // Recursive CTE with `depth < 100` to bound the walk against
     // runaway recursion on corrupted data (invariant #9).
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
     let rows = sqlx::query_as!(
         HistoryEntry,
         "WITH RECURSIVE page_blocks(id, depth) AS ( \

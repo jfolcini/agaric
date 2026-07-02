@@ -518,6 +518,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                         let placeholders = std::iter::repeat_n("?", excluded.len())
                             .collect::<Vec<_>>()
                             .join(",");
+                        // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
                         let sql = format!(
                             "SELECT id FROM blocks WHERE deleted_at IS NULL \
                              AND id NOT IN ( \
@@ -536,6 +537,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                         result = q.fetch_all(pool).await?.into_iter().collect();
                     } else {
                         let json_ids = serde_json::to_string(&excluded)?;
+                        // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
                         let rows = sqlx::query_scalar::<_, String>(
                             "SELECT id FROM blocks WHERE deleted_at IS NULL \
                              AND id NOT IN ( \
@@ -1113,6 +1115,7 @@ async fn fetch_descendants_of(
         let placeholders = std::iter::repeat_n("?", roots.len())
             .collect::<Vec<_>>()
             .join(",");
+        // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
         let sql = format!(
             "WITH RECURSIVE desc(id, depth) AS ( \
                 SELECT id, 0 FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL \
@@ -1127,6 +1130,7 @@ async fn fetch_descendants_of(
         Ok(q.fetch_all(pool).await?.into_iter().collect())
     } else {
         let json_ids = serde_json::to_string(&roots)?;
+        // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
         let rows = sqlx::query_scalar::<_, String>(
             "WITH RECURSIVE desc(id, depth) AS ( \
                 SELECT b.id, 0 FROM blocks b \

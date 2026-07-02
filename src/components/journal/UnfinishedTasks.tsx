@@ -14,6 +14,7 @@ import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHead
 import { BlockListItem } from '@/components/editor/BlockListItem'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
+import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 
 import { useBlockNavigation } from '../../hooks/useBlockNavigation'
 import { useToday } from '../../hooks/useToday'
@@ -25,8 +26,12 @@ import { useSpaceStore } from '../../stores/space'
 
 // ── Constants ──────────────────────────────────────────────────────────
 
-const STORAGE_KEY = 'unfinishedTasks.collapsed'
+// #2227 — both persistence keys carry the shared `agaric:` prefix.
+const COLLAPSED_STORAGE_KEY = 'agaric:unfinishedTasks.collapsed'
 const GROUP_STORAGE_KEY = 'agaric:unfinishedTasks.groupCollapsed'
+// Legacy (unprefixed) collapsed key, read once on mount to migrate existing
+// users to the prefixed key without dropping their saved collapsed preference.
+const LEGACY_COLLAPSED_STORAGE_KEY = 'unfinishedTasks.collapsed'
 
 /**
  * Runaway guard for the cursor-drain loop (#757). Each page is capped at
@@ -113,65 +118,39 @@ function groupByAge(blocks: BlockRow[], todayStr: string): AgeGroup[] {
   return groups
 }
 
-/** Read collapsed state from localStorage. Defaults to collapsed (true). */
-function readCollapsedState(): boolean {
+/**
+ * One-time migration default for the collapsed toggle (#2227): read the legacy
+ * (unprefixed) key so a user's saved collapsed state survives the move to the
+ * `agaric:`-prefixed key. Only consulted when the prefixed key is absent (the
+ * `useLocalStoragePreference` contract). Defaults to collapsed (true). The old
+ * writer stored a bare `'true'`/`'false'` string, which is also valid JSON, so
+ * it round-trips through the hook's default JSON parse unchanged.
+ */
+function readLegacyCollapsedDefault(): boolean {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored === null) return true
-    return stored === 'true'
+    const legacy = localStorage.getItem(LEGACY_COLLAPSED_STORAGE_KEY)
+    if (legacy === null) return true
+    return legacy === 'true'
   } catch {
     return true
   }
 }
 
-/** Persist collapsed state to localStorage. */
-function writeCollapsedState(collapsed: boolean): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, String(collapsed))
-  } catch (err) {
-    logger.warn(
-      'UnfinishedTasks',
-      'failed to write collapsed state to localStorage',
-      undefined,
-      err,
-    )
-  }
-}
-
 /**
- * Read per-group collapsed state from localStorage. SSR-safe; returns an
- * empty map if `localStorage` is unavailable or the stored JSON is corrupt.
+ * Parse the per-group collapsed map, dropping any non-boolean entries (and
+ * rejecting non-object / array shapes). Mirrors the sanitisation the previous
+ * bespoke reader performed so a corrupt/partial map can't feed a truthy string
+ * into a group's collapsed flag. Invalid JSON is handled by
+ * `useLocalStoragePreference` itself (falls back to the default).
  */
-function readGroupCollapsedState(): Record<string, boolean> {
-  if (typeof window === 'undefined') return {}
-  try {
-    const stored = window.localStorage.getItem(GROUP_STORAGE_KEY)
-    if (stored === null) return {}
-    const parsed = JSON.parse(stored) as unknown
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-    const result: Record<string, boolean> = {}
-    for (const [key, value] of Object.entries(parsed)) {
-      if (typeof value === 'boolean') result[key] = value
-    }
-    return result
-  } catch {
-    return {}
+function parseGroupCollapsed(raw: string): Record<string, boolean> {
+  const parsed = JSON.parse(raw) as unknown
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+  const result: Record<string, boolean> = {}
+  for (const [key, value] of Object.entries(parsed)) {
+    if (typeof value === 'boolean') result[key] = value
   }
-}
-
-/** Persist per-group collapsed state to localStorage. */
-function writeGroupCollapsedState(state: Record<string, boolean>): void {
-  if (typeof window === 'undefined') return
-  try {
-    window.localStorage.setItem(GROUP_STORAGE_KEY, JSON.stringify(state))
-  } catch (err) {
-    logger.warn(
-      'UnfinishedTasks',
-      'failed to write group collapsed state to localStorage',
-      undefined,
-      err,
-    )
-  }
+  return result
 }
 
 /** Resolve a set of page IDs to title map. Returns empty map on failure. */
@@ -196,11 +175,21 @@ export function UnfinishedTasks({
 }: UnfinishedTasksProps): React.ReactElement | null {
   const { t } = useTranslation()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
-  const [collapsed, setCollapsed] = useState(readCollapsedState)
+  // Migration default computed once (reads the legacy unprefixed key); only
+  // used when the prefixed key is absent.
+  const [collapsedDefault] = useState(readLegacyCollapsedDefault)
+  const [collapsed, setCollapsed] = useLocalStoragePreference<boolean>(
+    COLLAPSED_STORAGE_KEY,
+    collapsedDefault,
+    { source: 'UnfinishedTasks' },
+  )
   const [blocks, setBlocks] = useState<BlockRow[]>([])
   const [loading, setLoading] = useState(true)
-  const [groupCollapsed, setGroupCollapsed] =
-    useState<Record<string, boolean>>(readGroupCollapsedState)
+  const [groupCollapsed, setGroupCollapsed] = useLocalStoragePreference<Record<string, boolean>>(
+    GROUP_STORAGE_KEY,
+    {},
+    { parse: parseGroupCollapsed, source: 'UnfinishedTasks' },
+  )
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
 
   const todayStr = useToday()
@@ -272,20 +261,16 @@ export function UnfinishedTasks({
   const groups = useMemo(() => groupByAge(blocks, todayStr), [blocks, todayStr])
 
   const handleToggle = useCallback(() => {
-    setCollapsed((prev) => {
-      const next = !prev
-      writeCollapsedState(next)
-      return next
-    })
-  }, [])
+    // `useLocalStoragePreference` persists the new value via its write effect.
+    setCollapsed((prev) => !prev)
+  }, [setCollapsed])
 
-  const handleGroupToggle = useCallback((key: string) => {
-    setGroupCollapsed((prev) => {
-      const next = { ...prev, [key]: !prev[key] }
-      writeGroupCollapsedState(next)
-      return next
-    })
-  }, [])
+  const handleGroupToggle = useCallback(
+    (key: string) => {
+      setGroupCollapsed((prev) => ({ ...prev, [key]: !prev[key] }))
+    },
+    [setGroupCollapsed],
+  )
 
   // Initial load: show a visible skeleton placeholder so sighted users see the
   // panel reserving space (rather than a blank gap that pops in when ready).

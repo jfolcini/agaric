@@ -586,6 +586,7 @@ pub(super) async fn reparent_moved_subtree_page_id(
     // `deleted_at IS NULL` in both members so soft-deleted conflict
     // copies don't leak into the walk. Mirrors `move_ops.rs`.
     let effective_page_id_ref = effective_page_id.as_deref();
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
     sqlx::query!(
         "WITH RECURSIVE descendants(id, depth) AS ( \
              SELECT b.id, 0 FROM blocks b \

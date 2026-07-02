@@ -186,90 +186,10 @@ pub(crate) async fn dispatch_restore_descendants(
     root_record: &OpRecord,
     cohort: &[String],
 ) {
-    use crate::op::{OpPayload, RestoreBlockPayload};
-    use crate::ulid::BlockId;
-
-    if cohort.is_empty() {
-        return;
-    }
-
-    let Some(state) = crate::loro::shared::get() else {
-        // Loro state not initialised (test environment that bypasses
-        // the boot setup). Nothing to do.
-        return;
-    };
-
-    // Parse the root's payload once to extract `deleted_at_ref`.  The
-    // payload is the raw inner-only JSON (per `serialize_inner_payload`
-    // in `op_log.rs`), not the tagged `OpPayload` form, so we go
-    // through the inner struct directly.
-    let root_payload: RestoreBlockPayload = match serde_json::from_str(&root_record.payload) {
-        Ok(p) => p,
-        Err(e) => {
-            // #2031: the SQL restore already committed but we cannot fan
-            // out to the engine — the engine stays divergent until boot
-            // replay reconciles. Meter the skip so it is observable.
-            super::descendant_fanout_dropped::record();
-            tracing::warn!(
-                seq = root_record.seq,
-                error = %e,
-                "restore-cascade fanout: failed to parse root RestoreBlockPayload; \
-                 skipping descendant fan-out",
-            );
-            return;
-        }
-    };
-
-    // Resolve the space once via the root's block_id (every descendant
-    // is in the same space — the descendant CTE walks within a single
-    // `blocks.parent_id` graph).  Keeps fanout O(N) on the engine call
-    // and not O(N) on `resolve_block_space` SQL queries.
-    let root_block = BlockId::from_trusted(root_payload.block_id.as_str());
-    let space_id = match crate::space::resolve_block_space(pool, &root_block).await {
-        Ok(Some(s)) => s,
-        Ok(None) => {
-            // #2031: SQL restore committed but the root block has no
-            // resolvable space, so the engine cohort cannot be mirrored
-            // and stays divergent until boot replay. Meter the skip.
-            super::descendant_fanout_dropped::record();
-            tracing::trace!(
-                block_id = root_payload.block_id.as_str(),
-                "restore-cascade fanout: no space for root block; skipping",
-            );
-            return;
-        }
-        Err(e) => {
-            // #2031: resolve_block_space failed post-commit; the engine
-            // cohort is left divergent. Meter the skip.
-            super::descendant_fanout_dropped::record();
-            tracing::warn!(
-                error = %e,
-                "restore-cascade fanout: resolve_block_space failed; skipping",
-            );
-            return;
-        }
-    };
-
-    for cohort_id in cohort {
-        // Build the typed payload directly (no JSON round-trip).
-        let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
-            block_id: BlockId::from_trusted(cohort_id),
-            deleted_at_ref: root_payload.deleted_at_ref,
-        });
-
-        let op_id = format!(
-            "{}/{}#cohort/{}",
-            root_record.device_id, root_record.seq, cohort_id,
-        );
-        crate::merge::engine_apply(
-            &op_id,
-            &payload,
-            &root_record.device_id,
-            &space_id,
-            &root_record.created_at.to_string(),
-            state,
-        );
-    }
+    // #2226: thin wrapper over the shared restore fan-out; the downward cohort
+    // and upward ancestor variants differ only in the op-id infix + log wording
+    // carried by `FanoutKind`.
+    fan_out_restore(pool, root_record, cohort, FanoutKind::Descendants).await;
 }
 
 /// #2017: symmetric UPWARD companion to [`dispatch_restore_descendants`].
@@ -298,10 +218,80 @@ pub(crate) async fn dispatch_restore_ancestors(
     root_record: &OpRecord,
     ancestors: &[String],
 ) {
+    // #2226: thin wrapper over the shared restore fan-out (see
+    // [`dispatch_restore_descendants`]); only the op-id infix (`#ancestor/`)
+    // and log wording differ, both carried by `FanoutKind::Ancestors`.
+    fan_out_restore(pool, root_record, ancestors, FanoutKind::Ancestors).await;
+}
+
+/// Which restore fan-out is being driven onto the per-space engine.
+///
+/// [`dispatch_restore_descendants`] (downward cohort) and
+/// [`dispatch_restore_ancestors`] (upward chain, #2017 / #1884) were
+/// byte-for-byte identical apart from the op-id infix and the log/metric
+/// wording; this enum selects those so both share one body
+/// ([`fan_out_restore`]).
+///
+/// The `DeleteBlock` cascade ([`dispatch_delete_descendants`]) is deliberately
+/// NOT modelled here: it carries a different payload type
+/// (`OpPayload::DeleteBlock`, no `deleted_at_ref`) and resolves its space from a
+/// caller-supplied `SpaceId` param rather than from the pool, so folding it into
+/// this restore-shaped body would contort it rather than simplify it.
+#[derive(Clone, Copy)]
+enum FanoutKind {
+    /// Downward descendant-cohort restore — op-id infix `#cohort/`.
+    Descendants,
+    /// Upward ancestor-chain restore (#1884 live-orphan fix / #2017 engine
+    /// fan-out) — op-id infix `#ancestor/`.
+    Ancestors,
+}
+
+impl FanoutKind {
+    /// The op-id infix segment (`cohort` → `#cohort/`, `ancestor` →
+    /// `#ancestor/`) that lets triage tell the two synthetic fan-out families
+    /// apart in the op log.
+    fn op_id_infix(self) -> &'static str {
+        match self {
+            FanoutKind::Descendants => "cohort",
+            FanoutKind::Ancestors => "ancestor",
+        }
+    }
+
+    /// Log-line prefix — `restore-cascade fanout` / `restore-ancestor fanout`.
+    fn log_prefix(self) -> &'static str {
+        match self {
+            FanoutKind::Descendants => "restore-cascade fanout",
+            FanoutKind::Ancestors => "restore-ancestor fanout",
+        }
+    }
+
+    /// Noun used in the parse-failure skip line (`skipping <noun>`).
+    fn fanout_noun(self) -> &'static str {
+        match self {
+            FanoutKind::Descendants => "descendant fan-out",
+            FanoutKind::Ancestors => "ancestor fan-out",
+        }
+    }
+}
+
+/// #2226: shared body for the two symmetric restore fan-outs. Drives
+/// `RestoreBlock` onto the per-space engine for every id in `ids`, reusing the
+/// root op's metadata; `kind` selects the op-id infix + log wording.
+///
+/// The #2031 fanout-dropped metric is bumped (with the same warn/trace lines
+/// as before) on exactly the three skip paths: unparseable root payload,
+/// unresolved root space, or a `resolve_block_space` error. Errors inside
+/// `engine_apply` are absorbed there, so this helper has nothing to propagate.
+async fn fan_out_restore(
+    pool: &SqlitePool,
+    root_record: &OpRecord,
+    ids: &[String],
+    kind: FanoutKind,
+) {
     use crate::op::{OpPayload, RestoreBlockPayload};
     use crate::ulid::BlockId;
 
-    if ancestors.is_empty() {
+    if ids.is_empty() {
         return;
     }
 
@@ -311,59 +301,74 @@ pub(crate) async fn dispatch_restore_ancestors(
         return;
     };
 
+    // Parse the root's payload once to extract `deleted_at_ref`. The payload is
+    // the raw inner-only JSON (per `serialize_inner_payload` in `op_log.rs`),
+    // not the tagged `OpPayload` form, so we go through the inner struct.
     let root_payload: RestoreBlockPayload = match serde_json::from_str(&root_record.payload) {
         Ok(p) => p,
         Err(e) => {
-            // #2031: SQL restore committed but we cannot fan the ancestor
-            // chain out to the engine — it stays divergent until boot
-            // replay reconciles. Meter the skip so it is observable.
+            // #2031: the SQL restore already committed but we cannot fan out to
+            // the engine — it stays divergent until boot replay reconciles.
+            // Meter the skip so it is observable.
             super::descendant_fanout_dropped::record();
             tracing::warn!(
                 seq = root_record.seq,
                 error = %e,
-                "restore-ancestor fanout: failed to parse root RestoreBlockPayload; \
-                 skipping ancestor fan-out",
+                "{}: failed to parse root RestoreBlockPayload; skipping {}",
+                kind.log_prefix(),
+                kind.fanout_noun(),
             );
             return;
         }
     };
 
-    // Resolve the space once via the root's block_id (every restored
-    // ancestor shares the seed's per-space tree and is alive again
-    // post-commit, so `resolve_block_space` succeeds).
+    // Resolve the space once via the root's block_id (every id shares the seed's
+    // per-space tree and is alive again post-commit, so `resolve_block_space`
+    // succeeds). Keeps fanout O(N) on the engine call, not on SQL queries.
     let root_block = BlockId::from_trusted(root_payload.block_id.as_str());
     let space_id = match crate::space::resolve_block_space(pool, &root_block).await {
         Ok(Some(s)) => s,
         Ok(None) => {
+            // #2031: SQL restore committed but the root block has no resolvable
+            // space, so the engine cohort cannot be mirrored and stays divergent
+            // until boot replay. Meter the skip.
             super::descendant_fanout_dropped::record();
             tracing::trace!(
                 block_id = root_payload.block_id.as_str(),
-                "restore-ancestor fanout: no space for root block; skipping",
+                "{}: no space for root block; skipping",
+                kind.log_prefix(),
             );
             return;
         }
         Err(e) => {
+            // #2031: resolve_block_space failed post-commit; the engine cohort
+            // is left divergent. Meter the skip.
             super::descendant_fanout_dropped::record();
             tracing::warn!(
                 error = %e,
-                "restore-ancestor fanout: resolve_block_space failed; skipping",
+                "{}: resolve_block_space failed; skipping",
+                kind.log_prefix(),
             );
             return;
         }
     };
 
-    for ancestor_id in ancestors {
-        // The engine's `apply_restore_block` is per-block-id; `deleted_at_ref`
-        // is unused by it (the ancestor's own delete timestamp differs from
-        // the seed's, but the engine only clears the deleted marker).
+    for id in ids {
+        // Build the typed payload directly (no JSON round-trip). The engine's
+        // `apply_restore_block` is per-block-id; `deleted_at_ref` is unused by
+        // it (it only clears the deleted marker), so reusing the root's is safe
+        // for both the descendant cohort and the ancestor chain.
         let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
-            block_id: BlockId::from_trusted(ancestor_id),
+            block_id: BlockId::from_trusted(id),
             deleted_at_ref: root_payload.deleted_at_ref,
         });
 
         let op_id = format!(
-            "{}/{}#ancestor/{}",
-            root_record.device_id, root_record.seq, ancestor_id,
+            "{}/{}#{}/{}",
+            root_record.device_id,
+            root_record.seq,
+            kind.op_id_infix(),
+            id,
         );
         crate::merge::engine_apply(
             &op_id,

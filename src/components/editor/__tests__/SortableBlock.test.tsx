@@ -260,6 +260,26 @@ import { TestBlockActionsOverride } from '@/components/__tests__/_test-utils/Tes
 import { SortableBlock } from '@/components/editor/SortableBlock'
 import { useBlockStore } from '@/stores/blocks'
 
+// #2222: `dispatchBlockEvent` no longer broadcasts a legacy document
+// CustomEvent (the broadcast had zero production listeners; the focus-keyed
+// command bus is the only delivery path). These tests observe producer
+// dispatches as document events, so shim the bus back onto `document`: the
+// existing assertions keep pinning the producer contract — typed
+// BLOCK_EVENTS key mapped to the expected event name, plus the detail
+// payload — and fail if a producer stops dispatching or changes its detail.
+vi.mock('@/lib/block-command-bus', async () => {
+  const actual =
+    await vi.importActual<typeof import('@/lib/block-command-bus')>('@/lib/block-command-bus')
+  const { BLOCK_EVENTS } =
+    await vi.importActual<typeof import('@/lib/block-event-names')>('@/lib/block-event-names')
+  return {
+    ...actual,
+    dispatchBlockCommand: (name: keyof typeof BLOCK_EVENTS, detail?: unknown) => {
+      document.dispatchEvent(new CustomEvent(BLOCK_EVENTS[name], { detail }))
+    },
+  }
+})
+
 // Create a minimal mock sortable return value
 function makeSortable() {
   return {

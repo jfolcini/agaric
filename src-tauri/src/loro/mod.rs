@@ -17,8 +17,6 @@
 
 pub mod engine;
 
-pub mod envelope;
-
 // Persisted peer-id epoch (#792): bumped inside the snapshot-RESET
 // transaction so post-reset engines mint ops under a fresh PeerID
 // instead of forking the (peer, counter) space against pre-reset

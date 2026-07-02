@@ -16,7 +16,10 @@
 //! | [`ancestors_cte_active`]      | upward      | `b.deleted_at IS NULL AND a.depth < 100`     | Reserved for future soft-delete-aware ancestor walks (no current caller). |
 //!
 //! The `depth < 100` bound is unconditional — it prevents runaway
-//! recursion on corrupted `parent_id` chains.
+//! recursion on corrupted `parent_id` chains. The cap value is named
+//! [`DESCENDANT_DEPTH_CAP`]; the SQL spells it as the literal `100` (see that
+//! constant for why it cannot be interpolated, and its relationship to the
+//! `MAX_BLOCK_DEPTH` product invariant).
 //!
 //! # Why both macros and constants?
 //!
@@ -51,11 +54,41 @@
 //! the last three copies. If sqlx ever learns to accept `concat!()`, migrate
 //! those sites too.
 
+/// Recursion-depth safety cap shared by every block-tree recursive CTE in
+/// this crate. Each recursive arm carries `WHERE … depth < 100` to bound the
+/// walk against runaway recursion on a corrupted `parent_id` chain — AGENTS.md
+/// invariant #9. This constant is the single *named* source of truth for that
+/// `100`.
+///
+/// # Why the SQL still spells `100` literally
+///
+/// The CTEs live inside `macro_rules!` string literals consumed by
+/// `sqlx::query!` (which demands a raw string-literal first argument) and are
+/// pinned by the #1655 drift guard (which greps the literal text
+/// `d.depth < 100`). Neither can accept an interpolated `const`, so the number
+/// stays inline at every site and this constant names it, documents it, and is
+/// the value the drift tests pin the emitted SQL against. Grep
+/// `DESCENDANT_DEPTH_CAP` to find every site that hard-codes the cap.
+///
+/// # Relationship to `MAX_BLOCK_DEPTH` (= 20)
+///
+/// [`crate::domain::block_ops::MAX_BLOCK_DEPTH`] (= 20) is the *product*
+/// invariant: block creation rejects a new block whose nesting would exceed
+/// depth 20. This `DESCENDANT_DEPTH_CAP` of 100 is a much looser
+/// *runaway-safety net* sitting well above that product limit — it exists only
+/// so a pathological / corrupted `parent_id` chain (which bypasses the
+/// create-path check, e.g. via a bad sync replay) cannot blow SQLite's
+/// recursion budget. It is deliberately NOT the enforced product depth limit;
+/// the two numbers are independent and must not be conflated.
+pub(crate) const DESCENDANT_DEPTH_CAP: i64 = 100;
+
 /// Recursive descendant CTE, standard variant.
 ///
 /// Walks `blocks.parent_id` from a seed id. Expands to a string
 /// literal, so it can be combined via `concat!()` in `sqlx::query(…)`
 /// call sites.
+///
+/// depth<100: [`DESCENDANT_DEPTH_CAP`], kept as a literal (macro string).
 #[macro_export]
 macro_rules! descendants_cte_standard {
     () => {
@@ -263,7 +296,12 @@ where
     .bind(root_id)
     .fetch_one(executor)
     .await?;
-    Ok(max_depth.unwrap_or(0) >= 99)
+    // `>= DESCENDANT_DEPTH_CAP - 1` (i.e. `>= 99`): the recursive arm's
+    // `d.depth < DESCENDANT_DEPTH_CAP` filter lets the walk step from
+    // `d.depth = CAP-1` to `d.depth+1 = CAP`, so MAX(depth) can reach the cap
+    // when saturation occurs. The conservative `CAP-1` boundary catches both
+    // genuine cap saturation and a tree sitting exactly at the cap leaf level.
+    Ok(max_depth.unwrap_or(0) >= DESCENDANT_DEPTH_CAP - 1)
 }
 
 /// #1323 (Step 4): shared cycle probe for a `MoveBlock`, used by BOTH the
@@ -520,6 +558,34 @@ mod tests {
         assert!(
             !ANCESTORS_CTE_STANDARD.contains("deleted_at"),
             "standard ancestor CTE must not reference deleted_at",
+        );
+    }
+
+    /// #2218 drift tripwire: the named [`DESCENDANT_DEPTH_CAP`] and the literal
+    /// baked into every macro's SQL must stay in lockstep. If someone bumps the
+    /// const but forgets the string literals (or vice-versa), this fails —
+    /// making the "un-named `100`" no longer silently drift from its name.
+    #[test]
+    fn macros_emit_the_named_depth_cap() {
+        let needle = format!("depth < {DESCENDANT_DEPTH_CAP}");
+        for cte in [
+            descendants_cte_standard!(),
+            descendants_cte_active!(),
+            descendants_cte_cohort!(),
+            descendants_cte_purge!(),
+            ancestors_cte_standard!(),
+            ancestors_cte_active!(),
+        ] {
+            assert!(
+                cte.contains(&needle),
+                "macro-emitted CTE must contain the named cap `{needle}` \
+                 (DESCENDANT_DEPTH_CAP); update the const and the SQL literal \
+                 together:\n{cte}",
+            );
+        }
+        assert_eq!(
+            DESCENDANT_DEPTH_CAP, 100,
+            "runaway-safety cap value pinned for invariant #9",
         );
     }
 

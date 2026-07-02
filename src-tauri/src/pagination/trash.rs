@@ -133,6 +133,7 @@ pub async fn trash_descendant_counts(
     // seed matches `list_trash`. Depth is bounded at 100 per AGENTS.md
     // invariant #9. `COUNT(*) - 1` subtracts the root row itself so the
     // result is the descendant count (excluding the root).
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
     let rows = sqlx::query!(
         r#"WITH RECURSIVE descendants AS (
                SELECT rb.id AS root_id, rb.id AS desc_id,

@@ -3,13 +3,16 @@
  *
  * Validates:
  *  - BLOCK_EVENTS has the expected keys and string values
- *  - dispatchBlockEvent dispatches on document with correct event name
- *  - onBlockEvent adds listener and cleanup removes it
+ *
+ * (#2222 — `dispatchBlockEvent` is now a thin alias of the focus-keyed
+ * `dispatchBlockCommand` bus; its routing is covered by the block-command-bus
+ * tests. The dead document-broadcast path and the `onBlockEvent` listener
+ * helper were removed, so their tests are gone with them.)
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
-import { BLOCK_EVENTS, dispatchBlockEvent, onBlockEvent } from '../block-events'
+import { BLOCK_EVENTS } from '../block-events'
 
 describe('BLOCK_EVENTS', () => {
   it('contains all 17 expected event keys', () => {
@@ -54,78 +57,5 @@ describe('BLOCK_EVENTS', () => {
     for (const v of values) {
       expect(typeof v).toBe('string')
     }
-  })
-})
-
-describe('dispatchBlockEvent', () => {
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
-  it('dispatches a CustomEvent on document with the correct event name', () => {
-    const handler = vi.fn()
-    document.addEventListener('open-date-picker', handler)
-
-    dispatchBlockEvent('OPEN_DATE_PICKER')
-
-    expect(handler).toHaveBeenCalledTimes(1)
-    const event = handler.mock.calls[0]?.[0] as CustomEvent
-    expect(event).toBeInstanceOf(CustomEvent)
-    expect(event.type).toBe('open-date-picker')
-
-    document.removeEventListener('open-date-picker', handler)
-  })
-
-  it('passes detail payload through', () => {
-    const handler = vi.fn()
-    document.addEventListener('cycle-priority', handler)
-
-    dispatchBlockEvent('CYCLE_PRIORITY', { foo: 42 })
-
-    expect(handler).toHaveBeenCalledTimes(1)
-    const event = handler.mock.calls[0]?.[0] as CustomEvent
-    expect(event.detail).toEqual({ foo: 42 })
-
-    document.removeEventListener('cycle-priority', handler)
-  })
-})
-
-describe('onBlockEvent', () => {
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
-  it('adds a listener that receives the event', () => {
-    const handler = vi.fn()
-    const el = document.createElement('div')
-
-    onBlockEvent(el, 'TOGGLE_TODO_STATE', handler)
-    el.dispatchEvent(new CustomEvent('toggle-todo-state'))
-
-    expect(handler).toHaveBeenCalledTimes(1)
-  })
-
-  it('returns a cleanup function that removes the listener', () => {
-    const handler = vi.fn()
-    const el = document.createElement('div')
-
-    const cleanup = onBlockEvent(el, 'DISCARD_BLOCK_EDIT', handler)
-    cleanup()
-
-    el.dispatchEvent(new CustomEvent('discard-block-edit'))
-    expect(handler).not.toHaveBeenCalled()
-  })
-
-  it('works with document as the target', () => {
-    const handler = vi.fn()
-
-    const cleanup = onBlockEvent(document, 'SET_PRIORITY_1', handler)
-    document.dispatchEvent(new CustomEvent('set-priority-1'))
-
-    expect(handler).toHaveBeenCalledTimes(1)
-    cleanup()
-
-    document.dispatchEvent(new CustomEvent('set-priority-1'))
-    expect(handler).toHaveBeenCalledTimes(1) // still 1 — no new call
   })
 })

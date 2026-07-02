@@ -16,7 +16,7 @@
  *  12. A11y audit passes (axe)
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -792,13 +792,20 @@ describe('DonePanel', () => {
     rerender(<DonePanel date="2025-06-16" />)
     expect(await screen.findByText('new-day block')).toBeInTheDocument()
 
-    // Now resolve the stale day-A load-more page.
-    resolveLoadMore(stalePage)
+    // Now resolve the stale day-A load-more page, and deterministically flush
+    // its response all the way through the hook before asserting. A bare
+    // `waitFor` with a negative assertion is a false green here: its first
+    // check runs synchronously, BEFORE the resolution's microtask chain lands,
+    // so it would pass even with the stale-response guard removed. A macrotask
+    // hop drains the whole microtask queue plus React's scheduled render, so
+    // if the guard were gone the grafted STALE row WOULD be in the DOM below.
+    await act(async () => {
+      resolveLoadMore(stalePage)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
 
     // The stale prev-day page must be dropped, not grafted onto day B's list.
-    await waitFor(() => {
-      expect(screen.queryByText('stale prev-day block')).not.toBeInTheDocument()
-    })
+    expect(screen.queryByText('stale prev-day block')).not.toBeInTheDocument()
     // Day B's content stays intact.
     expect(screen.getByText('new-day block')).toBeInTheDocument()
   })

@@ -81,6 +81,8 @@ pub async fn cascade_soft_delete(
     // enqueued below).
     let mut tx = CommandTx::begin_immediate(pool, "soft_delete_cascade").await?;
 
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants (query! needs a
+    // string literal, so the cap stays inline; mirrors descendants_cte_active!)
     let result = sqlx::query!(
         "WITH RECURSIVE descendants(id, depth) AS ( \
              SELECT id, 0 FROM blocks WHERE id = ? \
