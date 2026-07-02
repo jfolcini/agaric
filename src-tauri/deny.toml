@@ -56,6 +56,13 @@ ignore = [
     { id = "RUSTSEC-2025-0075", reason = "Tauri transitive dep: unic-char-range" },
     { id = "RUSTSEC-2025-0080", reason = "Tauri transitive dep: unic-common" },
     { id = "RUSTSEC-2025-0081", reason = "Tauri transitive dep: unic-char-property" },
+    # quick-xml <0.41 quadratic duplicate-attribute check (DoS-class, needs
+    # attacker-controlled XML). All three lock entries are transitive pins we
+    # cannot bump: plist->tauri-utils (0.38), wayland-scanner (0.39), and a
+    # 0.37 leaf — none parse untrusted XML at app runtime (build-time codegen
+    # and bundled-config parsing). Remove once upstreams release against
+    # >=0.41 (tracking issue filed the day the advisory published).
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml transitive via tauri-utils/plist + wayland-scanner; no untrusted-XML runtime exposure; awaiting upstream bumps to >=0.41" },
     { id = "RUSTSEC-2025-0098", reason = "Tauri transitive dep: unic-ucd-version" },
     { id = "RUSTSEC-2025-0100", reason = "Tauri transitive dep: unic-ucd-ident" },
     { id = "RUSTSEC-2024-0436", reason = "Tauri transitive dep: paste (via serde_with, specta)" },
