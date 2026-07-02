@@ -224,7 +224,12 @@ impl ChainDriver {
     /// own tx (the production engine path). After a create, stamp the new
     /// block's `parent_id`/`page_id`/`space_id` so the NEXT op resolves a space
     /// in-line (the discipline `move_convergence_tests` uses).
-    async fn drive(&mut self, pool: &SqlitePool, payload: OpPayload) {
+    async fn drive(
+        &mut self,
+        pool: &SqlitePool,
+        state: &crate::loro::shared::LoroState,
+        payload: OpPayload,
+    ) {
         let created: Option<(String, String)> = match &payload {
             OpPayload::CreateBlock(c) => Some((
                 c.block_id.as_str().to_owned(),
@@ -240,7 +245,9 @@ impl ChainDriver {
             .expect("append op");
 
         let mut tx = pool.begin().await.expect("begin apply");
-        apply_op_tx(&mut tx, &record, None).await.expect("apply op");
+        apply_op_tx(&mut tx, &record, None, state)
+            .await
+            .expect("apply op");
         tx.commit().await.expect("commit apply");
 
         if let Some((id, parent)) = created {
@@ -319,8 +326,7 @@ proptest! {
     ) {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
-            let state = crate::loro::shared::install_for_test();
-            state.registry.clear();
+            let state = &crate::loro::shared::LoroState::new();
 
             let (pool, _dir) = fresh_pool("b2").await;
             seed_space_row(&pool).await;
@@ -331,7 +337,7 @@ proptest! {
             let payloads = prepare_chain(resolve_chain(&sketches));
             let mut driver = ChainDriver::new(HARNESS_DEVICE);
             for payload in payloads {
-                driver.drive(&pool, payload).await;
+                driver.drive(&pool, state, payload).await;
             }
 
             // ENGINE-PATH GUARD (#891): no op silently degraded to sql_only.
@@ -406,7 +412,7 @@ proptest! {
     ) {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
-            let state = crate::loro::shared::install_for_test();
+            let state = &crate::loro::shared::LoroState::new();
 
             // Resolve the op chain ONCE so both boots replay the IDENTICAL
             // payloads (same block ULIDs) — `resolve_chain` mints a fresh ULID
@@ -423,7 +429,7 @@ proptest! {
             let fallback_before = sql_only_fallback::count();
             let mut driver_a = ChainDriver::new(HARNESS_DEVICE);
             for payload in payloads.clone() {
-                driver_a.drive(&pool_a, payload).await;
+                driver_a.drive(&pool_a, state, payload).await;
             }
             prop_assert_eq!(
                 sql_only_fallback::count() - fallback_before,
@@ -458,7 +464,7 @@ proptest! {
             let replay_fallback_before = sql_only_fallback::count();
             let mut driver_b = ChainDriver::new(HARNESS_DEVICE);
             for payload in payloads {
-                driver_b.drive(&pool_b, payload).await;
+                driver_b.drive(&pool_b, state, payload).await;
             }
             prop_assert_eq!(
                 sql_only_fallback::count() - replay_fallback_before,
@@ -496,7 +502,7 @@ proptest! {
     ) {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
-            let state = crate::loro::shared::install_for_test();
+            let state = &crate::loro::shared::LoroState::new();
 
             // --- Shared common ancestor: the rooting page, created ONCE. ---
             // Both peers start from this same base snapshot so the page node has
@@ -551,7 +557,7 @@ proptest! {
 /// containing just the rooting page, created on the GLOBAL engine (cleared
 /// first) under a dedicated base device id. Both peers import this so the page
 /// shares ONE Loro identity across them.
-async fn build_base_snapshot(state: &'static crate::loro::shared::LoroState) -> Vec<u8> {
+async fn build_base_snapshot(state: &crate::loro::shared::LoroState) -> Vec<u8> {
     state.registry.clear();
     let (pool, _dir) = fresh_pool("b4-base").await;
     seed_space_row(&pool).await;
@@ -571,7 +577,7 @@ async fn build_base_snapshot(state: &'static crate::loro::shared::LoroState) -> 
 /// its own `device_id` (⇒ its own Loro peer id), which is what makes the two
 /// peers' independent edits merge cleanly on cross-import.
 async fn build_peer_snapshot(
-    state: &'static crate::loro::shared::LoroState,
+    state: &crate::loro::shared::LoroState,
     name: &str,
     device_id: &str,
     base: &[u8],
@@ -607,7 +613,7 @@ async fn build_peer_snapshot(
     let payloads = prepare_chain(resolve_chain(sketches));
     let mut driver = ChainDriver::new(device_id);
     for payload in payloads {
-        driver.drive(&pool, payload).await;
+        driver.drive(&pool, state, payload).await;
     }
     prop_assert!(
         sql_only_fallback::count() - fallback_before == 0,

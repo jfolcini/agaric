@@ -1144,6 +1144,7 @@ pub async fn import_markdown_with_progress(
     // Create the page inside the transaction
     let (page, page_op) = create_block_in_tx(
         &mut tx,
+        materializer.loro_state(),
         device_id,
         "page".into(),
         page_title.clone(),
@@ -1161,6 +1162,7 @@ pub async fn import_markdown_with_progress(
     // space property in steady state.
     let (_page_block, page_space_op) = set_property_in_tx(
         &mut tx,
+        materializer.loro_state(),
         device_id,
         page_id.clone(),
         "space",
@@ -1314,6 +1316,7 @@ pub async fn import_markdown_with_progress(
                 });
         let (_page_block, prop_op) = crate::domain::block_ops::set_property_in_tx_with_declaration(
             &mut tx,
+            materializer.loro_state(),
             device_id,
             page_id.clone(),
             key,
@@ -1418,13 +1421,21 @@ pub async fn import_markdown_with_progress(
                 // Create the missing target page inside this chunk's tx, then
                 // stamp its `space` ref (mirrors the importing page above), so
                 // the new page is a first-class member of the import's space.
-                let (new_page, new_page_op) =
-                    create_block_in_tx(&mut tx, device_id, "page".into(), name.clone(), None, None)
-                        .await?;
+                let (new_page, new_page_op) = create_block_in_tx(
+                    &mut tx,
+                    materializer.loro_state(),
+                    device_id,
+                    "page".into(),
+                    name.clone(),
+                    None,
+                    None,
+                )
+                .await?;
                 tx.enqueue_background(new_page_op);
                 let new_page_id = new_page.id.clone().into_string();
                 let (_b, new_space_op) = set_property_in_tx(
                     &mut tx,
+                    materializer.loro_state(),
                     device_id,
                     new_page_id.clone(),
                     "space",
@@ -1540,6 +1551,7 @@ pub async fn import_markdown_with_progress(
         // `resolved_tag_tokens`).
         match create_block_in_tx(
             &mut tx,
+            materializer.loro_state(),
             device_id,
             "tag".into(),
             token_name.clone(),
@@ -1560,6 +1572,7 @@ pub async fn import_markdown_with_progress(
                 // materializing into `block_tag_refs`.
                 let (_b, tag_space_op) = set_property_in_tx(
                     &mut tx,
+                    materializer.loro_state(),
                     device_id,
                     new_tag_id.clone(),
                     "space",
@@ -1725,6 +1738,7 @@ pub async fn import_markdown_with_progress(
         // before — this is not a blanket catch-all.
         let create_result = create_block_in_tx(
             &mut tx,
+            materializer.loro_state(),
             device_id,
             "content".into(),
             content,
@@ -1799,6 +1813,7 @@ pub async fn import_markdown_with_progress(
                 crate::domain::block_ops::typed_property_args_for_string_value(key, value.clone());
             let (_block, prop_op) = set_property_in_tx(
                 &mut tx,
+                materializer.loro_state(),
                 device_id,
                 new_block.id.clone().into_string(),
                 key,

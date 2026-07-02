@@ -51,6 +51,7 @@ pub(crate) async fn handle_recurrence(
     materializer: &Materializer,
     block_id: &str,
 ) -> Result<bool, crate::error::AppError> {
+    let state = std::sync::Arc::clone(materializer.loro_state());
     // H-17: open BEGIN IMMEDIATE up front so every property read below
     // and the sibling creation/property writes downstream all run inside
     // the same serialized write transaction. Two concurrent DONE clicks
@@ -65,7 +66,7 @@ pub(crate) async fn handle_recurrence(
     // uniquely identifies the op so the source block can still be
     // recovered via the op log.
     let mut tx = crate::db::CommandTx::begin_immediate(pool, "recurrence_handle").await?;
-    let created = handle_recurrence_in_tx(&mut tx, device_id, block_id).await?;
+    let created = handle_recurrence_in_tx(&mut tx, &state, device_id, block_id).await?;
     tx.commit_and_dispatch(materializer).await?;
     Ok(created)
 }
@@ -81,6 +82,7 @@ pub(crate) async fn handle_recurrence(
 /// function only enqueues op records via `tx.enqueue_background(...)`.
 pub(crate) async fn handle_recurrence_in_tx(
     tx: &mut crate::db::CommandTx,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     block_id: &str,
 ) -> Result<bool, crate::error::AppError> {
@@ -244,6 +246,7 @@ pub(crate) async fn handle_recurrence_in_tx(
     // Create next occurrence as a sibling
     let (new_block, op) = create_block_in_tx(
         &mut *tx,
+        state,
         device_id,
         original.block_type.clone(),
         original.content.unwrap_or_default(),
@@ -259,6 +262,7 @@ pub(crate) async fn handle_recurrence_in_tx(
     // Set TODO state on new block
     set_recurrence_property(
         &mut *tx,
+        state,
         device_id,
         new_block.id.clone().into_string(),
         "todo_state",
@@ -273,6 +277,7 @@ pub(crate) async fn handle_recurrence_in_tx(
     // Copy repeat property to new block
     set_recurrence_property(
         &mut *tx,
+        state,
         device_id,
         new_block.id.clone().into_string(),
         "repeat",
@@ -305,6 +310,7 @@ pub(crate) async fn handle_recurrence_in_tx(
     if let Some(shifted) = shifted_due {
         push_shifted_date_property(
             &mut *tx,
+            state,
             device_id,
             &new_block,
             block_id,
@@ -318,6 +324,7 @@ pub(crate) async fn handle_recurrence_in_tx(
     if let Some(shifted) = shifted_sched {
         push_shifted_date_property(
             &mut *tx,
+            state,
             device_id,
             &new_block,
             block_id,
@@ -332,6 +339,7 @@ pub(crate) async fn handle_recurrence_in_tx(
     if let Some(ref until_str) = repeat_until {
         set_recurrence_property(
             &mut *tx,
+            state,
             device_id,
             new_block.id.clone().into_string(),
             "repeat-until",
@@ -390,6 +398,7 @@ pub(crate) async fn handle_recurrence_in_tx(
         // Copy repeat-count (propagate via `?`).
         set_recurrence_property(
             &mut *tx,
+            state,
             device_id,
             new_block.id.clone().into_string(),
             "repeat-count",
@@ -404,6 +413,7 @@ pub(crate) async fn handle_recurrence_in_tx(
         // Set incremented repeat-seq (propagate via `?`).
         set_recurrence_property(
             &mut *tx,
+            state,
             device_id,
             new_block.id.clone().into_string(),
             "repeat-seq",
@@ -420,6 +430,7 @@ pub(crate) async fn handle_recurrence_in_tx(
     // (propagate via `?`).
     set_recurrence_property(
         &mut *tx,
+        state,
         device_id,
         new_block.id.clone().into_string(),
         "repeat-origin",
@@ -452,8 +463,10 @@ pub(crate) async fn handle_recurrence_in_tx(
 /// returning `Err(AppError::Validation)` we let the `?` at the call site roll
 /// Back the IMMEDIATE tx, matching the contract for the other property
 /// writes in this flow.
+#[allow(clippy::too_many_arguments)]
 async fn push_shifted_date_property(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     new_block: &BlockRow,
     block_id: &str,
@@ -470,6 +483,7 @@ async fn push_shifted_date_property(
     }
     set_recurrence_property(
         tx,
+        state,
         device_id,
         new_block.id.clone().into_string(),
         key,
@@ -490,6 +504,7 @@ async fn push_shifted_date_property(
 #[allow(clippy::too_many_arguments)]
 async fn set_recurrence_property(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     block_id: String,
     key: &str,
@@ -500,7 +515,7 @@ async fn set_recurrence_property(
     op_records: &mut Vec<op_log::OpRecord>,
 ) -> Result<(), crate::error::AppError> {
     let (_, op) = set_property_in_tx(
-        tx, device_id, block_id, key, value_text, value_num, value_date, value_ref, None,
+        tx, state, device_id, block_id, key, value_text, value_num, value_date, value_ref, None,
     )
     .await?;
     op_records.push(op);
@@ -1295,6 +1310,7 @@ mod tests_l99_l100 {
 
         let err = push_shifted_date_property(
             &mut tx,
+            &crate::loro::shared::LoroState::new(),
             DEV,
             &new_block,
             "source-block-id",

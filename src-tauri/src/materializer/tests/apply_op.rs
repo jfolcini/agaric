@@ -42,11 +42,13 @@ async fn apply_op_create() {
         "position should match created block position"
     );
 }
-// #1057: prove the SQL-only fallback instrumentation actually fires. This
-// test does NOT call `install_for_test`, so the create flows through
-// `apply_create_block_sql_only` (the EngineUninit fallback arm), which now
-// calls `sql_only_fallback::record`. The counter is process-global and
-// monotonic, so a `>` assertion is robust under nextest parallelism.
+// #1057: prove the SQL-only fallback instrumentation actually fires. The
+// created block is a bare content block with no `space` ancestor, so the
+// create flows through `apply_create_block_sql_only` (the SpaceUnresolved
+// fallback arm — the only remaining trigger after #2249/#2250 deleted
+// EngineUninit), which calls `sql_only_fallback::record`. The counter is
+// process-global and monotonic, so a `>` assertion is robust under test
+// parallelism.
 #[tokio::test]
 async fn apply_op_create_records_sql_only_fallback() {
     use crate::materializer::handlers::sql_only_fallback;
@@ -79,7 +81,7 @@ async fn apply_op_create_records_sql_only_fallback() {
     // ...and the fallback was observed by the #1057 instrumentation.
     assert!(
         sql_only_fallback::count() > before,
-        "apply_op create without install_for_test must record a SQL-only fallback"
+        "apply_op create on a space-less block must record a SQL-only fallback"
     );
 }
 #[tokio::test]
@@ -371,7 +373,13 @@ async fn fg_retry_success() {
         }),
     )
     .await;
-    process_single_foreground_task(&pool, MaterializeTask::ApplyOp(StdArc::new(r)), &metrics).await;
+    process_single_foreground_task(
+        &pool,
+        MaterializeTask::ApplyOp(StdArc::new(r)),
+        &metrics,
+        &Arc::new(crate::loro::shared::LoroState::new()),
+    )
+    .await;
     assert_eq!(
         metrics.fg_processed.load(AtomicOrdering::Relaxed),
         1,
@@ -396,6 +404,7 @@ async fn fg_retry_barrier() {
         &pool,
         MaterializeTask::Barrier(Arc::new(tokio::sync::Notify::new())),
         &metrics,
+        &Arc::new(crate::loro::shared::LoroState::new()),
     )
     .await;
     assert_eq!(
@@ -417,6 +426,7 @@ async fn fg_retry_bad_payload() {
         &pool,
         MaterializeTask::ApplyOp(StdArc::new(fake_op_record("bogus_op_type", "{}"))),
         &metrics,
+        &Arc::new(crate::loro::shared::LoroState::new()),
     )
     .await;
     assert_eq!(
@@ -588,7 +598,12 @@ async fn apply_op_different_device_trips_single_device_cursor_assert() {
     )
     .await;
     // Should panic on the `debug_assert!` before the cursor advances.
-    let _ = handle_foreground_task(&pool, &MaterializeTask::ApplyOp(StdArc::new(mine))).await;
+    let _ = handle_foreground_task(
+        &pool,
+        &MaterializeTask::ApplyOp(StdArc::new(mine)),
+        &crate::loro::shared::LoroState::new(),
+    )
+    .await;
 }
 
 #[cfg(debug_assertions)]
@@ -609,9 +624,13 @@ async fn apply_op_same_device_does_not_trip_single_device_cursor_assert() {
     )
     .await;
     // Must NOT panic; the apply succeeds on a single-device op_log.
-    handle_foreground_task(&pool, &MaterializeTask::ApplyOp(StdArc::new(mine)))
-        .await
-        .expect("same-device single-op apply must succeed without tripping the #412 assert");
+    handle_foreground_task(
+        &pool,
+        &MaterializeTask::ApplyOp(StdArc::new(mine)),
+        &crate::loro::shared::LoroState::new(),
+    )
+    .await
+    .expect("same-device single-op apply must succeed without tripping the #412 assert");
     let count = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM blocks WHERE id = ?")
         .bind(BlockId::test_id("blk-single-dev").as_str())
         .fetch_one(&pool)

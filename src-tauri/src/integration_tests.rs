@@ -142,16 +142,6 @@ async fn settle_bg_tasks(mat: &Materializer) {
 // #891 lesson: a conformance/integration test that applies ops WITHOUT
 // `install_for_test` silently validates the fallback, not production.
 
-/// Install the process-global Loro engine and reset its registry so the
-/// calling test starts from a fresh per-space tree, regardless of sibling
-/// tests sharing the binary (the `OnceLock` is first-write-wins; only the
-/// registry is per-test resettable). Returns the shared `LoroState`.
-fn install_engine() -> &'static crate::loro::shared::LoroState {
-    let state = crate::loro::shared::install_for_test();
-    state.registry.clear();
-    state
-}
-
 /// Seed one pre-existing ROOT page into BOTH the SQL `blocks` table and the
 /// per-space Loro engine tree, then register it in [`TEST_SPACE_ID`].
 ///
@@ -1306,11 +1296,13 @@ async fn children_listed_in_position_order() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    // #1689: install the engine + seed a real ROOT page so child CreateBlock
-    // ops resolve a space (`resolve_block_space`) and route through the
-    // production `apply_create_block_via_loro` path instead of the SQL-only
-    // fallback.
-    let state = install_engine();
+    // #1689: seed a real ROOT page so child CreateBlock ops resolve a
+    // space (`resolve_block_space`) and route through the production
+    // `apply_create_block_via_loro` path instead of the SQL-only
+    // fallback. #2249: the engine state IS the materializer's own
+    // per-instance state — seed the same registry the dispatch pipeline
+    // mutates (no process global anymore).
+    let state = mat.loro_state();
     const PARENT: &str = "01HZ1689000000000000000PAR";
     seed_page_both(&pool, state, PARENT).await;
 

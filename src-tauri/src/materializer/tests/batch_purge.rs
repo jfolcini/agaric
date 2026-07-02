@@ -1,4 +1,5 @@
 use super::*;
+use crate::loro::shared::LoroState;
 
 // ======================================================================
 // B-62: BatchApplyOps atomicity — if last op fails, none persist
@@ -26,7 +27,7 @@ async fn batch_apply_ops_atomic_rollback_on_failure() {
     let bad = fake_op_record("create_block", "{}");
 
     let task = MaterializeTask::BatchApplyOps(StdArc::new(vec![good, bad]));
-    let result = handle_foreground_task(&pool, &task).await;
+    let result = handle_foreground_task(&pool, &task, &LoroState::new()).await;
     assert!(
         result.is_err(),
         "batch should fail because the last op has bad payload"
@@ -74,7 +75,7 @@ async fn batch_apply_ops_all_succeed_commits() {
     .await;
 
     let task = MaterializeTask::BatchApplyOps(StdArc::new(vec![op1, op2]));
-    let result = handle_foreground_task(&pool, &task).await;
+    let result = handle_foreground_task(&pool, &task, &LoroState::new()).await;
     result.unwrap();
 
     // Both blocks should be visible
@@ -127,7 +128,9 @@ async fn purge_handler_cleans_page_aliases() {
     )
     .await;
     let task = MaterializeTask::ApplyOp(StdArc::new(r));
-    handle_foreground_task(&pool, &task).await.unwrap();
+    handle_foreground_task(&pool, &task, &LoroState::new())
+        .await
+        .unwrap();
 
     // Verify block and alias are gone
     let block_exists = sqlx::query("SELECT id FROM blocks WHERE id = 'PURGE_PA_1'")
@@ -183,7 +186,9 @@ async fn purge_handler_cleans_projected_agenda_cache() {
     )
     .await;
     let task = MaterializeTask::ApplyOp(StdArc::new(r));
-    handle_foreground_task(&pool, &task).await.unwrap();
+    handle_foreground_task(&pool, &task, &LoroState::new())
+        .await
+        .unwrap();
 
     // Verify block and cache row are gone
     let block_exists = sqlx::query("SELECT id FROM blocks WHERE id = 'PURGE_PAC_1'")
@@ -288,7 +293,9 @@ async fn purge_handler_cascades_through_100_block_tree_and_cleans_temp_table() {
     )
     .await;
     let task = MaterializeTask::ApplyOp(StdArc::new(r));
-    handle_foreground_task(&pool, &task).await.unwrap();
+    handle_foreground_task(&pool, &task, &LoroState::new())
+        .await
+        .unwrap();
 
     // 1. Every block in the subtree is physically gone.
     let post_count: i64 =
@@ -341,7 +348,9 @@ async fn purge_handler_runs_cleanly_when_invoked_consecutively() {
         )
         .await;
         let task = MaterializeTask::ApplyOp(StdArc::new(r));
-        handle_foreground_task(&pool, &task).await.unwrap();
+        handle_foreground_task(&pool, &task, &LoroState::new())
+            .await
+            .unwrap();
         let after: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT COUNT(*) FROM blocks WHERE id LIKE '{root_id}%'"
         )))

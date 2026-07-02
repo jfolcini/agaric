@@ -102,8 +102,9 @@ async fn seed_deleted_subtree(pool: &SqlitePool) {
 /// Returns a fresh LoroState — install_for_test pattern.  Unlike
 /// `loro::shared::install_for_test` the global is process-local and
 /// per-nextest-process, so tests don't conflict.
-fn fresh_loro_state() -> &'static LoroState {
-    crate::loro::shared::install_for_test()
+fn fresh_loro_state() -> LoroState {
+    // #2249: per-test isolated state (no process global).
+    LoroState::new()
 }
 
 /// Pre-populate the engine with the four blocks (alive), then mark
@@ -170,12 +171,12 @@ async fn restore_block_dispatches_to_loro_for_each_descendant() {
     let (pool, _dir) = fresh_pool().await;
     seed_deleted_subtree(&pool).await;
     let state = fresh_loro_state();
-    seed_engine_with_deleted_subtree(state);
+    seed_engine_with_deleted_subtree(&state);
 
     // Sanity: every block is currently deleted in the engine.
     for id in [PAGE_ID, CHILD_1, CHILD_2, CHILD_3] {
         assert_eq!(
-            engine_block_deleted(state, id),
+            engine_block_deleted(&state, id),
             Some(true),
             "{id} must start deleted",
         );
@@ -197,7 +198,9 @@ async fn restore_block_dispatches_to_loro_for_each_descendant() {
 
     // Drive the materializer's apply path (which fans out the
     // engine cohort dispatch).
-    super::apply_op(&pool, &record).await.expect("apply_op");
+    super::apply_op(&pool, &record, &state)
+        .await
+        .expect("apply_op");
 
     // Every block in the cohort — root + three descendants — must
     // now be alive in the engine.  This is the load-bearing
@@ -206,7 +209,7 @@ async fn restore_block_dispatches_to_loro_for_each_descendant() {
     // report deleted_at != Null.
     for id in [PAGE_ID, CHILD_1, CHILD_2, CHILD_3] {
         assert_eq!(
-            engine_block_deleted(state, id),
+            engine_block_deleted(&state, id),
             Some(false),
             "{id} must be restored after RestoreBlock cascade fanout",
         );
@@ -222,7 +225,7 @@ async fn dispatch_restore_descendants_empty_list_is_noop() {
     let (pool, _dir) = fresh_pool().await;
     seed_deleted_subtree(&pool).await;
     let state = fresh_loro_state();
-    seed_engine_with_deleted_subtree(state);
+    seed_engine_with_deleted_subtree(&state);
 
     // Build a synthetic root record (we don't actually run the SQL
     // restore here — only the empty-list fanout path).
@@ -243,13 +246,13 @@ async fn dispatch_restore_descendants_empty_list_is_noop() {
     };
 
     // Empty descendant list — no engine mutations expected.
-    super::dispatch_restore_descendants(&pool, &root, &[]).await;
+    super::dispatch_restore_descendants(&pool, &root, &[], &state).await;
 
     // Engine state unchanged: every block is still deleted (we
     // seeded them deleted in seed_engine_with_deleted_subtree).
     for id in [PAGE_ID, CHILD_1, CHILD_2, CHILD_3] {
         assert_eq!(
-            engine_block_deleted(state, id),
+            engine_block_deleted(&state, id),
             Some(true),
             "{id} must remain deleted on empty-fanout path",
         );
@@ -275,7 +278,7 @@ async fn dispatch_restore_descendants_parse_failure_bumps_divergence_metric() {
     seed_deleted_subtree(&pool).await;
     // Engine MUST be installed so the `get()` early-return is not the
     // path exercised — we want to reach the payload parse.
-    let _state = fresh_loro_state();
+    let state = fresh_loro_state();
 
     // Root record with an UNPARSEABLE payload (not valid JSON, and in
     // particular not a `RestoreBlockPayload`).
@@ -296,7 +299,7 @@ async fn dispatch_restore_descendants_parse_failure_bumps_divergence_metric() {
     // Sample the process-global counter as a delta — it is monotonic and
     // other tests in this nextest process may have bumped it concurrently.
     let before = super::descendant_fanout_dropped::count();
-    super::dispatch_restore_descendants(&pool, &root, &cohort).await;
+    super::dispatch_restore_descendants(&pool, &root, &cohort, &state).await;
     let after = super::descendant_fanout_dropped::count();
 
     assert_eq!(

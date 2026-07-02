@@ -61,6 +61,7 @@ use super::*;
 /// path) we reproject inline immediately, unchanged.
 pub(crate) async fn apply_create_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &CreateBlockPayload,
     chunk: Option<&mut super::ChunkAccumulator>,
@@ -86,49 +87,67 @@ pub(crate) async fn apply_create_block_via_loro(
 
     // Acquire engine guard, apply, read-back, drop guard.  The guard
     // is `!Send` so it cannot live across an `.await` — we keep all
-    // engine work inside this sync block.
-    let (snapshot, siblings): (BlockSnapshot, Vec<String>) = {
-        let Some(state) = crate::loro::shared::get() else {
-            super::sql_only_fallback::record(
-                "create_block",
-                super::sql_only_fallback::SqlOnlyFallbackReason::EngineUninit,
-            );
-            return apply_create_block_sql_only(conn, p.clone()).await;
-        };
+    // engine work inside this sync block. `None` requests the SQL-only
+    // fallback (handled after the scope closes, since an `.await` cannot
+    // cross the guard).
+    //
+    // #2250 (#1257 reconciliation): if this create has a parent but that
+    // parent is absent from the resolved space's engine tree — because the
+    // parent was projected SQL-only during a no-space window (e.g. a page
+    // created before its `SetProperty(space)`) and so never entered the engine
+    // — `apply_create_block` would silently drop the child to the engine root
+    // (parent → None), diverging from SQL. Defer to the authoritative SQL
+    // projection instead and let boot-replay reconcile. (No parent ⇒ a
+    // top-level create, which needs no parent lookup.)
+    let create_result: Option<(BlockSnapshot, Vec<String>)> = {
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
         let parent = p.parent_id.as_ref().map(crate::ulid::BlockId::as_str);
-        // #400 routing: new ops carry a 0-based `index`; pre-#400 ops carry the
-        // legacy sparse `position` (mapped to a slot by the engine); neither ⇒
-        // append at the end.
-        match p.index {
-            Some(index) => engine.apply_create_block_at(
-                p.block_id.as_str(),
-                &p.block_type,
-                &p.content,
-                parent,
-                usize::try_from(index.max(0)).unwrap_or(usize::MAX),
-            )?,
-            None => engine.apply_create_block(
-                p.block_id.as_str(),
-                &p.block_type,
-                &p.content,
-                parent,
-                p.position.unwrap_or(i64::MAX), // None ⇒ sort last (append)
-            )?,
+        let parent_absent = match parent {
+            Some(pid) => engine.read_block(pid)?.is_none(),
+            None => false,
+        };
+        if parent_absent {
+            None
+        } else {
+            // #400 routing: new ops carry a 0-based `index`; pre-#400 ops carry
+            // the legacy sparse `position` (mapped to a slot); neither ⇒ append.
+            match p.index {
+                Some(index) => engine.apply_create_block_at(
+                    p.block_id.as_str(),
+                    &p.block_type,
+                    &p.content,
+                    parent,
+                    usize::try_from(index.max(0)).unwrap_or(usize::MAX),
+                )?,
+                None => engine.apply_create_block(
+                    p.block_id.as_str(),
+                    &p.block_type,
+                    &p.content,
+                    parent,
+                    p.position.unwrap_or(i64::MAX), // None ⇒ sort last (append)
+                )?,
+            }
+            let snap_opt = engine.read_block(p.block_id.as_str())?;
+            // Authoritative sibling order for the dense-rank reprojection.
+            let siblings = engine.children_ordered_block_ids(parent)?;
+            drop(guard);
+            let snap = snap_opt.ok_or_else(|| {
+                AppError::validation(format!(
+                    "apply_create_block_via_loro: engine read_block returned None \
+                     immediately after apply_create_block for {}",
+                    p.block_id.as_str()
+                ))
+            })?;
+            Some((snap, siblings))
         }
-        let snap_opt = engine.read_block(p.block_id.as_str())?;
-        // Authoritative sibling order for the dense-rank reprojection.
-        let siblings = engine.children_ordered_block_ids(parent)?;
-        drop(guard);
-        let snap = snap_opt.ok_or_else(|| {
-            AppError::validation(format!(
-                "apply_create_block_via_loro: engine read_block returned None \
-                 immediately after apply_create_block for {}",
-                p.block_id.as_str()
-            ))
-        })?;
-        (snap, siblings)
+    };
+    let Some((snapshot, siblings)) = create_result else {
+        super::sql_only_fallback::record(
+            "create_block",
+            super::sql_only_fallback::SqlOnlyFallbackReason::EngineMissingTarget,
+        );
+        return apply_create_block_sql_only(conn, p.clone()).await;
     };
 
     // Project the engine's post-apply state into SQL, then reproject the whole
@@ -169,6 +188,7 @@ pub(crate) async fn apply_create_block_via_loro(
 /// `parent_id` row in `blocks` — the resolution walks up from there).
 pub(crate) async fn apply_edit_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &EditBlockPayload,
 ) -> Result<(), AppError> {
@@ -183,26 +203,34 @@ pub(crate) async fn apply_edit_block_via_loro(
         return apply_edit_block_sql_only(conn, p.clone()).await;
     };
 
-    let snapshot: BlockSnapshot = {
-        let Some(state) = crate::loro::shared::get() else {
-            super::sql_only_fallback::record(
-                "edit_block",
-                super::sql_only_fallback::SqlOnlyFallbackReason::EngineUninit,
-            );
-            return apply_edit_block_sql_only(conn, p.clone()).await;
-        };
+    // #2250 (#1257 reconciliation): if the block is absent from this space's
+    // engine tree (projected SQL-only during a no-space window),
+    // `apply_edit_via_diff_splice` would error. Fall back to the authoritative
+    // SQL projection (`None` below) and let boot-replay reconcile.
+    let snapshot: Option<BlockSnapshot> = {
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
-        engine.apply_edit_via_diff_splice(p.block_id.as_str(), &p.to_text)?;
-        let snap_opt = engine.read_block(p.block_id.as_str())?;
-        drop(guard);
-        snap_opt.ok_or_else(|| {
-            AppError::validation(format!(
-                "apply_edit_block_via_loro: engine read_block returned None for {} \
-                 (the block must exist for an EditBlock op to make sense)",
-                p.block_id.as_str()
-            ))
-        })?
+        if engine.read_block(p.block_id.as_str())?.is_none() {
+            None
+        } else {
+            engine.apply_edit_via_diff_splice(p.block_id.as_str(), &p.to_text)?;
+            let snap_opt = engine.read_block(p.block_id.as_str())?;
+            drop(guard);
+            Some(snap_opt.ok_or_else(|| {
+                AppError::validation(format!(
+                    "apply_edit_block_via_loro: engine read_block returned None for {} \
+                     (the block must exist for an EditBlock op to make sense)",
+                    p.block_id.as_str()
+                ))
+            })?)
+        }
+    };
+    let Some(snapshot) = snapshot else {
+        super::sql_only_fallback::record(
+            "edit_block",
+            super::sql_only_fallback::SqlOnlyFallbackReason::EngineMissingTarget,
+        );
+        return apply_edit_block_sql_only(conn, p.clone()).await;
     };
 
     projection::project_edit_block_to_sql(conn, &snapshot).await?;
@@ -221,6 +249,7 @@ pub(crate) async fn apply_edit_block_via_loro(
 /// path.
 pub(crate) async fn apply_set_property_via_loro(
     conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &SetPropertyPayload,
 ) -> Result<(), AppError> {
@@ -235,13 +264,6 @@ pub(crate) async fn apply_set_property_via_loro(
     };
 
     {
-        let Some(state) = crate::loro::shared::get() else {
-            super::sql_only_fallback::record(
-                "set_property",
-                super::sql_only_fallback::SqlOnlyFallbackReason::EngineUninit,
-            );
-            return apply_set_property_sql_only(conn, p.clone()).await;
-        };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
         // Store the value with its native type so the engine is
@@ -272,6 +294,7 @@ pub(crate) async fn apply_set_property_via_loro(
 /// engine. An unresolvable space falls back to the SQL-only path.
 pub(crate) async fn apply_delete_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &DeleteBlockPayload,
     now: i64,
@@ -286,20 +309,30 @@ pub(crate) async fn apply_delete_block_via_loro(
         return apply_delete_block_sql_only(conn, p.clone(), now).await;
     };
 
-    {
-        let Some(state) = crate::loro::shared::get() else {
-            super::sql_only_fallback::record(
-                "delete_block",
-                super::sql_only_fallback::SqlOnlyFallbackReason::EngineUninit,
-            );
-            return apply_delete_block_sql_only(conn, p.clone(), now).await;
-        };
+    // #2250 (#1257 reconciliation): if the block was projected SQL-only during
+    // a no-space window and never entered this space's engine,
+    // `apply_delete_block` would error ("block not found"). Fall back to the
+    // authoritative SQL cascade for the tombstone; boot-replay reconciles the
+    // engine.
+    let engine_applied = {
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
-        // #109 Phase 2: the engine seed carries `deleted_at` as a String
-        // slot (bridged to i64 at the SQL boundary); stringify here.
-        engine.apply_delete_block(p.block_id.as_str(), &now.to_string())?;
-        drop(guard);
+        if engine.read_block(p.block_id.as_str())?.is_none() {
+            false
+        } else {
+            // #109 Phase 2: the engine seed carries `deleted_at` as a String
+            // slot (bridged to i64 at the SQL boundary); stringify here.
+            engine.apply_delete_block(p.block_id.as_str(), &now.to_string())?;
+            drop(guard);
+            true
+        }
+    };
+    if !engine_applied {
+        super::sql_only_fallback::record(
+            "delete_block",
+            super::sql_only_fallback::SqlOnlyFallbackReason::EngineMissingTarget,
+        );
+        return apply_delete_block_sql_only(conn, p.clone(), now).await;
     }
 
     projection::project_delete_block_to_sql(conn, p.block_id.as_str(), now).await?;
@@ -316,6 +349,7 @@ pub(crate) async fn apply_delete_block_via_loro(
 /// projection helper's docstring for the rationale).
 pub(crate) async fn apply_move_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &MoveBlockPayload,
 ) -> Result<(), AppError> {
@@ -330,52 +364,74 @@ pub(crate) async fn apply_move_block_via_loro(
         return apply_move_block_sql_only(conn, p.clone()).await;
     };
 
-    // `(snapshot, old_parent_siblings, new_parent_siblings)`. A move can change
-    // parent, so both the source and the target sibling groups need a dense
-    // reprojection (#400). The resulting parent may differ from the requested
-    // one (a cyclic/unknown-parent move keeps the current parent), so the
-    // authoritative new parent is the post-apply snapshot's `parent_id`.
-    let (snapshot, old_siblings, new_siblings): (BlockSnapshot, Vec<String>, Vec<String>) = {
-        let Some(state) = crate::loro::shared::get() else {
-            super::sql_only_fallback::record(
-                "move_block",
-                super::sql_only_fallback::SqlOnlyFallbackReason::EngineUninit,
-            );
-            return apply_move_block_sql_only(conn, p.clone()).await;
-        };
+    // `Some((snapshot, old_parent_siblings, new_parent_siblings))` from the
+    // engine path; `None` requests the SQL-only fallback (handled after the
+    // guard scope closes, since an `.await` cannot cross the non-`Send`
+    // `EngineGuard`). A move can change parent, so both the source and target
+    // sibling groups need a dense reprojection (#400). The resulting parent may
+    // differ from the requested one (a cyclic/unknown-parent move keeps the
+    // current parent), so the authoritative new parent is the post-apply
+    // snapshot's `parent_id`.
+    #[allow(clippy::type_complexity)]
+    let engine_result: Option<(BlockSnapshot, Vec<String>, Vec<String>)> = {
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
         let new_parent = p.new_parent_id.as_ref().map(crate::ulid::BlockId::as_str);
-        let old_parent = engine.read_parent(p.block_id.as_str())?;
-        // #400 routing: new ops carry a 0-based `new_index`; pre-#400 ops carry
-        // the legacy sparse `new_position` (mapped to a slot by the engine).
-        match p.new_index {
-            Some(index) => engine.apply_move_block_to(
-                p.block_id.as_str(),
-                new_parent,
-                usize::try_from(index.max(0)).unwrap_or(usize::MAX),
-            )?,
-            None => engine.apply_move_block(p.block_id.as_str(), new_parent, p.new_position)?,
-        }
-        let snap_opt = engine.read_block(p.block_id.as_str())?;
-        let snap = snap_opt.ok_or_else(|| {
-            AppError::validation(format!(
-                "apply_move_block_via_loro: engine read_block returned None for {} \
-                 (a MoveBlock op presupposes the block exists)",
-                p.block_id.as_str()
-            ))
-        })?;
-        let old_siblings = engine.children_ordered_block_ids(old_parent.as_deref())?;
-        // Same-parent reorder (the common DnD / moveUp / moveDown case): source
-        // and target groups are identical, so reproject once. Only fetch the
-        // second group when the parent actually changed (#400, review perf).
-        let new_siblings = if old_parent.as_deref() == snap.parent_id.as_deref() {
-            Vec::new()
-        } else {
-            engine.children_ordered_block_ids(snap.parent_id.as_deref())?
+        // #2250 (#1257 reconciliation): this per-space engine can only apply
+        // the move when BOTH the block and — for a reparent — its target
+        // parent live in THIS space's tree. It cannot when (a) the block was
+        // projected SQL-only during a no-space window (never entered any
+        // engine) or (b) the move is cross-space (the target parent lives in
+        // another space's tree). A single-engine `apply_move_block*` in either
+        // case corrupts parent linkage (it drops the block to the root), so we
+        // fall back to the authoritative SQL projection below and let
+        // boot-replay reconcile the per-space engines.
+        let block_in_engine = engine.read_block(p.block_id.as_str())?.is_some();
+        let parent_in_engine = match new_parent {
+            Some(pid) => engine.read_block(pid)?.is_some(),
+            None => true,
         };
-        drop(guard);
-        (snap, old_siblings, new_siblings)
+        if !block_in_engine || !parent_in_engine {
+            None
+        } else {
+            let old_parent = engine.read_parent(p.block_id.as_str())?;
+            // #400 routing: new ops carry a 0-based `new_index`; pre-#400 ops
+            // carry the legacy sparse `new_position` (mapped to a slot).
+            match p.new_index {
+                Some(index) => engine.apply_move_block_to(
+                    p.block_id.as_str(),
+                    new_parent,
+                    usize::try_from(index.max(0)).unwrap_or(usize::MAX),
+                )?,
+                None => engine.apply_move_block(p.block_id.as_str(), new_parent, p.new_position)?,
+            }
+            let snap_opt = engine.read_block(p.block_id.as_str())?;
+            let snap = snap_opt.ok_or_else(|| {
+                AppError::validation(format!(
+                    "apply_move_block_via_loro: engine read_block returned None for {} \
+                     (a MoveBlock op presupposes the block exists)",
+                    p.block_id.as_str()
+                ))
+            })?;
+            let old_siblings = engine.children_ordered_block_ids(old_parent.as_deref())?;
+            // Same-parent reorder (the common DnD / moveUp / moveDown case):
+            // source and target groups are identical, so reproject once. Only
+            // fetch the second group when the parent actually changed (#400).
+            let new_siblings = if old_parent.as_deref() == snap.parent_id.as_deref() {
+                Vec::new()
+            } else {
+                engine.children_ordered_block_ids(snap.parent_id.as_deref())?
+            };
+            drop(guard);
+            Some((snap, old_siblings, new_siblings))
+        }
+    };
+    let Some((snapshot, old_siblings, new_siblings)) = engine_result else {
+        super::sql_only_fallback::record(
+            "move_block",
+            super::sql_only_fallback::SqlOnlyFallbackReason::EngineMissingTarget,
+        );
+        return apply_move_block_sql_only(conn, p.clone()).await;
     };
 
     projection::project_move_block_to_sql(conn, &snapshot).await?;
@@ -423,6 +479,7 @@ pub(crate) async fn apply_move_block_via_loro(
 /// the engine never hears, so the next reproject re-deletes them in SQL.
 pub(crate) async fn apply_restore_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &RestoreBlockPayload,
 ) -> Result<Vec<String>, AppError> {
@@ -449,13 +506,6 @@ pub(crate) async fn apply_restore_block_via_loro(
     };
 
     {
-        let Some(state) = crate::loro::shared::get() else {
-            super::sql_only_fallback::record(
-                "restore_block",
-                super::sql_only_fallback::SqlOnlyFallbackReason::EngineUninit,
-            );
-            return apply_restore_block_sql_only(conn, p.clone()).await;
-        };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
         engine.apply_restore_block(p.block_id.as_str())?;
@@ -532,6 +582,7 @@ pub(super) async fn topmost_live_ancestor(
 /// unreachable.
 pub(crate) async fn apply_purge_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &PurgeBlockPayload,
 ) -> Result<(), AppError> {
@@ -544,13 +595,6 @@ pub(crate) async fn apply_purge_block_via_loro(
     };
 
     {
-        let Some(state) = crate::loro::shared::get() else {
-            super::sql_only_fallback::record(
-                "purge_block",
-                super::sql_only_fallback::SqlOnlyFallbackReason::EngineUninit,
-            );
-            return purge_block_sql_cascade(conn, p).await;
-        };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
         engine.apply_purge_block(p.block_id.as_str())?;
@@ -779,6 +823,7 @@ pub(crate) async fn purge_block_sql_cascade(
 /// SQL-only path.
 pub(crate) async fn apply_add_tag_via_loro(
     conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &AddTagPayload,
 ) -> Result<(), AppError> {
@@ -793,13 +838,6 @@ pub(crate) async fn apply_add_tag_via_loro(
     };
 
     {
-        let Some(state) = crate::loro::shared::get() else {
-            super::sql_only_fallback::record(
-                "add_tag",
-                super::sql_only_fallback::SqlOnlyFallbackReason::EngineUninit,
-            );
-            return apply_add_tag_sql_only(conn, p.clone()).await;
-        };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
         engine.apply_add_tag(p.block_id.as_str(), p.tag_id.as_str())?;
@@ -825,6 +863,7 @@ pub(crate) async fn apply_add_tag_via_loro(
 /// path.
 pub(crate) async fn apply_remove_tag_via_loro(
     conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &RemoveTagPayload,
 ) -> Result<(), AppError> {
@@ -839,13 +878,6 @@ pub(crate) async fn apply_remove_tag_via_loro(
     };
 
     {
-        let Some(state) = crate::loro::shared::get() else {
-            super::sql_only_fallback::record(
-                "remove_tag",
-                super::sql_only_fallback::SqlOnlyFallbackReason::EngineUninit,
-            );
-            return apply_remove_tag_sql_only(conn, p.clone()).await;
-        };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
         engine.apply_remove_tag(p.block_id.as_str(), p.tag_id.as_str())?;
@@ -868,6 +900,7 @@ pub(crate) async fn apply_remove_tag_via_loro(
 /// unresolvable space falls back to the SQL-only path.
 pub(crate) async fn apply_delete_property_via_loro(
     conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &DeletePropertyPayload,
 ) -> Result<(), AppError> {
@@ -882,13 +915,6 @@ pub(crate) async fn apply_delete_property_via_loro(
     };
 
     {
-        let Some(state) = crate::loro::shared::get() else {
-            super::sql_only_fallback::record(
-                "delete_property",
-                super::sql_only_fallback::SqlOnlyFallbackReason::EngineUninit,
-            );
-            return apply_delete_property_sql_only(conn, p.clone()).await;
-        };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
         engine.apply_delete_property(p.block_id.as_str(), &p.key)?;

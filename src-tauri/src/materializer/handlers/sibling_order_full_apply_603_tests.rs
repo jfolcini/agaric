@@ -69,13 +69,15 @@ async fn seed_page(pool: &SqlitePool, state: &LoroState) {
 /// Append `payload` to op_log and drive it through the FULL
 /// `apply_op` path — in-tx engine apply, cursor advance, commit,
 /// post-commit fanout — exactly like the production consumer.
-async fn apply(pool: &SqlitePool, payload: OpPayload) {
+async fn apply(pool: &SqlitePool, state: &crate::loro::shared::LoroState, payload: OpPayload) {
     let record = std::sync::Arc::new(
         crate::op_log::append_local_op(pool, DEVICE_ID, payload)
             .await
             .expect("append op_log"),
     );
-    super::apply_op(pool, &record).await.expect("apply_op");
+    super::apply_op(pool, &record, state)
+        .await
+        .expect("apply_op");
 }
 
 fn new_scheme_create(block_id: &str, index: i64) -> OpPayload {
@@ -135,23 +137,23 @@ async fn sql_children(pool: &SqlitePool) -> Vec<String> {
 #[tokio::test]
 async fn full_apply_op_keeps_engine_and_sql_sibling_order_in_lockstep() {
     let (pool, _dir) = fresh_pool().await;
-    let state = crate::loro::shared::install_for_test();
-    seed_page(&pool, state).await;
+    let state = crate::loro::shared::LoroState::new();
+    seed_page(&pool, &state).await;
 
     // A appended at slot 0.
-    apply(&pool, new_scheme_create(BLOCK_A, 0)).await;
+    apply(&pool, &state, new_scheme_create(BLOCK_A, 0)).await;
     // B inserted ABOVE A (insert-above) → [B, A].
-    apply(&pool, new_scheme_create(BLOCK_B, 0)).await;
+    apply(&pool, &state, new_scheme_create(BLOCK_B, 0)).await;
     assert_eq!(
-        engine_children(state),
+        engine_children(&state),
         vec![BLOCK_B.to_string(), BLOCK_A.to_string()],
         "after 2 new-scheme creates the engine must hold the user's \
              order, not ULID order",
     );
     // C inserted between → [B, C, A].
-    apply(&pool, new_scheme_create(BLOCK_C, 1)).await;
+    apply(&pool, &state, new_scheme_create(BLOCK_C, 1)).await;
     assert_eq!(
-        engine_children(state),
+        engine_children(&state),
         vec![
             BLOCK_B.to_string(),
             BLOCK_C.to_string(),
@@ -159,7 +161,7 @@ async fn full_apply_op_keeps_engine_and_sql_sibling_order_in_lockstep() {
         ],
     );
     assert_eq!(
-        engine_children(state),
+        engine_children(&state),
         sql_children(&pool).await,
         "engine order and SQL ORDER BY position must agree after creates",
     );
@@ -184,6 +186,7 @@ async fn full_apply_op_keeps_engine_and_sql_sibling_order_in_lockstep() {
     // path routing on it is caught) → [C, B, A].
     apply(
         &pool,
+        &state,
         OpPayload::MoveBlock(crate::op::MoveBlockPayload {
             block_id: BlockId::from_trusted(BLOCK_C),
             new_parent_id: Some(BlockId::from_trusted(PAGE_ID)),
@@ -199,7 +202,7 @@ async fn full_apply_op_keeps_engine_and_sql_sibling_order_in_lockstep() {
         BLOCK_A.to_string(),
     ];
     assert_eq!(
-        engine_children(state),
+        engine_children(&state),
         expected,
         "engine must hold the user's final order (reverse of ULID order)",
     );

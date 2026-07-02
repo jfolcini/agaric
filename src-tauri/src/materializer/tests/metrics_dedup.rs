@@ -74,7 +74,12 @@ fn materializer_with_read_pool_and_lifecycle_does_not_panic_without_current_runt
     );
 
     let lifecycle = crate::lifecycle::LifecycleHooks::new();
-    let mat = Materializer::with_read_pool_and_lifecycle(pool.clone(), pool, lifecycle);
+    let mat = Materializer::with_read_pool_and_lifecycle(
+        pool.clone(),
+        pool,
+        lifecycle,
+        std::sync::Arc::new(crate::loro::shared::LoroState::new()),
+    );
 
     mat.shutdown();
     drop(pool_runtime);

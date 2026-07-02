@@ -69,6 +69,18 @@ pub struct Materializer {
     /// `cleanup_orphaned_attachments` short-circuits with a debug log
     /// when the dir is not set.
     pub(super) app_data_dir: Arc<OnceLock<PathBuf>>,
+    /// #2249 — per-space Loro engine state the apply path mutates.
+    ///
+    /// Production receives the ONE process-wide instance from
+    /// `crate::run` setup (also registered as Tauri managed state);
+    /// the test convenience constructors ([`Self::new`] /
+    /// [`Self::with_read_pool`]) build a FRESH instance, giving every
+    /// `Materializer` its own isolated engine registry. LOCAL command
+    /// paths (which already carry a `&Materializer` for
+    /// `commit_and_dispatch`) reach engine state through
+    /// [`Self::loro_state`]; the queue consumers thread a clone into
+    /// `apply_op` / `apply_op_tx`.
+    pub(super) loro: Arc<crate::loro::shared::LoroState>,
     /// Tracks every tokio task spawned via [`Self::spawn_task`] so
     /// [`Self::shutdown`] can call `abort_all()` on them. Without this,
     /// long-running futures (e.g. an FTS rebuild taking many seconds)
@@ -173,30 +185,54 @@ impl Drop for PendingRefreshGuard {
 }
 
 impl Materializer {
+    /// Test/tooling convenience constructor: single pool, no lifecycle
+    /// hooks, and a FRESH per-instance [`crate::loro::shared::LoroState`]
+    /// — each `Materializer::new` owns an isolated engine registry,
+    /// which is exactly the per-test isolation contract (#2249). Engine
+    /// state is reachable via [`Self::loro_state`].
     pub fn new(pool: SqlitePool) -> Self {
-        Self::build(pool.clone(), None, pool, None)
+        Self::build(
+            pool.clone(),
+            None,
+            pool,
+            None,
+            Arc::new(crate::loro::shared::LoroState::new()),
+        )
     }
 
     pub fn with_read_pool(write_pool: SqlitePool, read_pool: SqlitePool) -> Self {
-        Self::build(write_pool, Some(read_pool.clone()), read_pool, None)
+        Self::build(
+            write_pool,
+            Some(read_pool.clone()),
+            read_pool,
+            None,
+            Arc::new(crate::loro::shared::LoroState::new()),
+        )
     }
 
     /// Construct a `Materializer` wired up to app-foreground
-    /// lifecycle hooks.
+    /// lifecycle hooks and the process-wide Loro engine state.
     ///
     /// The internal metrics-snapshot task skips its body when
     /// `lifecycle.is_foreground == false`, eliminating debug-level log
     /// writes while the app is backgrounded on mobile.
+    ///
+    /// `loro` is the engine state constructed at the top of `crate::run`
+    /// setup (#2249) — taking it as a constructor argument (rather than
+    /// reading a process global) makes "engine state exists before the
+    /// materializer can apply its first op" true by construction.
     pub fn with_read_pool_and_lifecycle(
         write_pool: SqlitePool,
         read_pool: SqlitePool,
         lifecycle: LifecycleHooks,
+        loro: Arc<crate::loro::shared::LoroState>,
     ) -> Self {
         Self::build(
             write_pool,
             Some(read_pool.clone()),
             read_pool,
             Some(lifecycle),
+            loro,
         )
     }
 
@@ -211,11 +247,14 @@ impl Materializer {
     ///   (cheap `SELECT COUNT(*)` etc.). Always required.
     /// - `lifecycle`: optional foreground-gating hooks for the metrics
     ///   snapshot task.
+    /// - `loro`: per-space Loro engine state the apply path mutates
+    ///   (#2249 — threaded explicitly, not process-global).
     fn build(
         write_pool: SqlitePool,
         read_pool_for_consumer: Option<SqlitePool>,
         reader_pool_for_caches: SqlitePool,
         lifecycle: Option<LifecycleHooks>,
+        loro: Arc<crate::loro::shared::LoroState>,
     ) -> Self {
         let (fg_tx, fg_rx) = mpsc::channel::<MaterializeTask>(FOREGROUND_CAPACITY);
         let (bg_tx, bg_rx) = mpsc::channel::<MaterializeTask>(BACKGROUND_CAPACITY);
@@ -232,7 +271,8 @@ impl Materializer {
             let p = write_pool.clone();
             let s = shutdown_flag.clone();
             let m = metrics.clone();
-            Self::spawn_task(&tasks, consumer::run_foreground(p, fg_rx, s, m));
+            let l = Arc::clone(&loro);
+            Self::spawn_task(&tasks, consumer::run_foreground(p, fg_rx, s, m, l));
         }
         // Clone write_pool for the queue-saturation persistence
         // path before moving the original into `run_background`.
@@ -312,8 +352,18 @@ impl Materializer {
             #[cfg(test)]
             block_count_test_hooks,
             app_data_dir,
+            loro,
             tasks,
         }
+    }
+
+    /// #2249 — the per-space Loro engine state this materializer applies
+    /// ops against. LOCAL command paths (which already hold a
+    /// `&Materializer` for `commit_and_dispatch`) thread this into the
+    /// shared `apply_*_via_loro` helpers; tests use it to seed/assert
+    /// engine state for the SAME registry the apply pipeline mutates.
+    pub fn loro_state(&self) -> &Arc<crate::loro::shared::LoroState> {
+        &self.loro
     }
 
     /// C-3c — register the OS-correct app data directory

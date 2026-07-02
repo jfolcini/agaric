@@ -2842,7 +2842,11 @@ async fn boot_replay_preserves_new_scheme_sibling_order_603() {
     let device_id = "dev-replay-order-603";
 
     let (pool, _dir) = test_pool().await;
-    let state = crate::loro::shared::install_for_test();
+    // #2249: construct the materializer up front — its per-instance
+    // LoroState is the registry both the engine seeding below and the
+    // boot-replay pipeline mutate (no process global).
+    let mat = Materializer::new(pool.clone());
+    let state = mat.loro_state();
 
     // Seed SQL: space block + page with `blocks.space_id` set (#533
     // column-only membership), and seed the engine with the same page.
@@ -2931,8 +2935,8 @@ async fn boot_replay_preserves_new_scheme_sibling_order_603() {
     assert_eq!(read_cursor(&pool).await, 0, "nothing materialised yet");
 
     // Boot-replay: walk `op_log WHERE seq > cursor` through the real
-    // foreground queue.
-    let mat = Materializer::new(pool.clone());
+    // foreground queue (the `mat` constructed at the top, whose state
+    // holds the seeded engine).
     let report = replay_unmaterialized_ops(&pool, &mat).await.unwrap();
     assert_eq!(report.ops_replayed, 4);
     assert!(

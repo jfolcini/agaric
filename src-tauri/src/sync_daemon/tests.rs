@@ -4271,7 +4271,7 @@ async fn pump_full_session_602(
 async fn make_local_edit_602(
     pool: &SqlitePool,
     mat: &Materializer,
-    state: &'static crate::loro::shared::LoroState,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     space: &crate::space::SpaceId,
     block_id: &str,
@@ -4311,7 +4311,7 @@ async fn make_local_edit_602(
 async fn apply_local_op_602(
     pool: &SqlitePool,
     mat: &Materializer,
-    state: &'static crate::loro::shared::LoroState,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     space: &crate::space::SpaceId,
     payload: crate::op::OpPayload,
@@ -4373,8 +4373,8 @@ async fn issue602_two_edited_devices_converge_without_reset_required() {
 
     // #602 test seam: one Loro registry per device. Leaked to match the
     // `&'static` shape of the production process-global state.
-    let state_a: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
-    let state_b: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+    let state_a = std::sync::Arc::clone(mat_a.loro_state());
+    let state_b = std::sync::Arc::clone(mat_b.loro_state());
 
     // The devices are mutually paired.
     peer_refs::upsert_peer_ref(&pool_a, DEV_B).await.unwrap();
@@ -4384,7 +4384,7 @@ async fn issue602_two_edited_devices_converge_without_reset_required() {
     make_local_edit_602(
         &pool_a,
         &mat_a,
-        state_a,
+        &state_a,
         DEV_A,
         &space,
         BLOCK_A,
@@ -4395,7 +4395,7 @@ async fn issue602_two_edited_devices_converge_without_reset_required() {
     make_local_edit_602(
         &pool_b,
         &mat_b,
-        state_b,
+        &state_b,
         DEV_B,
         &space,
         BLOCK_B,
@@ -4406,10 +4406,8 @@ async fn issue602_two_edited_devices_converge_without_reset_required() {
 
     // ── Session 1: A initiates, B responds (B's state flows to A) ────
     let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-        .with_loro_state(state_a)
         .with_expected_remote_id(DEV_B.into());
     let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_loro_state(state_b)
         .with_expected_remote_id(DEV_A.into());
     pump_full_session_602(&mut init_a, &mut resp_b).await;
 
@@ -4431,10 +4429,8 @@ async fn issue602_two_edited_devices_converge_without_reset_required() {
 
     // ── Session 2: B initiates, A responds (A's state flows to B) ────
     let mut init_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_loro_state(state_b)
         .with_expected_remote_id(DEV_A.into());
     let mut resp_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-        .with_loro_state(state_a)
         .with_expected_remote_id(DEV_B.into());
     pump_full_session_602(&mut init_b, &mut resp_a).await;
 
@@ -4526,12 +4522,10 @@ async fn issue602_two_edited_devices_converge_without_reset_required() {
 async fn run_one_real_loopback_session_2129(
     init_pool: &SqlitePool,
     init_mat: &Materializer,
-    init_state: &'static crate::loro::shared::LoroState,
     init_device: &str,
     init_cert: &SyncCert,
     resp_pool: &SqlitePool,
     resp_mat: &Materializer,
-    resp_state: &'static crate::loro::shared::LoroState,
     resp_device: &str,
     resp_cert: &SyncCert,
 ) -> crate::sync_protocol::SyncState {
@@ -4573,7 +4567,7 @@ async fn run_one_real_loopback_session_2129(
     // Spawn the production responder loop with device B's own registry.
     let resp_scheduler = Arc::new(SyncScheduler::new());
     let resp_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
-    let resp_handle = tokio::spawn(handle_incoming_sync_with_loro_state(
+    let resp_handle = tokio::spawn(handle_incoming_sync(
         server_conn,
         resp_pool.clone(),
         resp_device.to_string(),
@@ -4581,13 +4575,11 @@ async fn run_one_real_loopback_session_2129(
         resp_scheduler,
         resp_sink,
         Arc::new(AtomicBool::new(false)),
-        resp_state,
     ));
 
     // Run the production initiator loop with device A's own registry.
     let mut init_orch =
         SyncOrchestrator::new(init_pool.clone(), init_device.into(), init_mat.clone())
-            .with_loro_state(init_state)
             .with_expected_remote_id(resp_device.into());
     let init_cancel = AtomicBool::new(false);
     let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
@@ -4677,8 +4669,8 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
     // #602 test seam: one leaked Loro registry per device (the single
     // process-global registry cannot represent two devices in one
     // process).
-    let state_a: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
-    let state_b: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+    let state_a = std::sync::Arc::clone(mat_a.loro_state());
+    let state_b = std::sync::Arc::clone(mat_b.loro_state());
 
     // Devices are mutually paired (responder rejects unpaired peers).
     peer_refs::upsert_peer_ref(&pool_a, DEV_B).await.unwrap();
@@ -4696,7 +4688,7 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
     make_local_edit_602(
         &pool_a,
         &mat_a,
-        state_a,
+        &state_a,
         DEV_A,
         &space,
         BLOCK_A,
@@ -4708,7 +4700,7 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
     apply_local_op_602(
         &pool_a,
         &mat_a,
-        state_a,
+        &state_a,
         DEV_A,
         &space,
         // A NON-reserved key so the value projects into `block_properties`
@@ -4731,7 +4723,7 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
     apply_local_op_602(
         &pool_a,
         &mat_a,
-        state_a,
+        &state_a,
         DEV_A,
         &space,
         OpPayload::CreateBlock(CreateBlockPayload {
@@ -4748,7 +4740,7 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
     apply_local_op_602(
         &pool_a,
         &mat_a,
-        state_a,
+        &state_a,
         DEV_A,
         &space,
         OpPayload::DeleteBlock(DeleteBlockPayload {
@@ -4763,7 +4755,7 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
     make_local_edit_602(
         &pool_b,
         &mat_b,
-        state_b,
+        &state_b,
         DEV_B,
         &space,
         BLOCK_B,
@@ -4775,7 +4767,7 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
     apply_local_op_602(
         &pool_b,
         &mat_b,
-        state_b,
+        &state_b,
         DEV_B,
         &space,
         OpPayload::CreateBlock(CreateBlockPayload {
@@ -4793,7 +4785,7 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
     apply_local_op_602(
         &pool_b,
         &mat_b,
-        state_b,
+        &state_b,
         DEV_B,
         &space,
         OpPayload::AddTag(AddTagPayload {
@@ -4806,7 +4798,7 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
 
     // ── Session 1: A initiates, B responds (B's state flows to A) ────
     let state1 = run_one_real_loopback_session_2129(
-        &pool_a, &mat_a, state_a, DEV_A, &cert_a, &pool_b, &mat_b, state_b, DEV_B, &cert_b,
+        &pool_a, &mat_a, DEV_A, &cert_a, &pool_b, &mat_b, DEV_B, &cert_b,
     )
     .await;
     assert_eq!(
@@ -4819,7 +4811,7 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
 
     // ── Session 2: B initiates, A responds (A's state flows to B) ────
     let state2 = run_one_real_loopback_session_2129(
-        &pool_b, &mat_b, state_b, DEV_B, &cert_b, &pool_a, &mat_a, state_a, DEV_A, &cert_a,
+        &pool_b, &mat_b, DEV_B, &cert_b, &pool_a, &mat_a, DEV_A, &cert_a,
     )
     .await;
     assert_eq!(
@@ -4910,7 +4902,7 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
     // Re-running A→B against already-converged devices must complete
     // without error and leave both version vectors stable.
     let state3 = run_one_real_loopback_session_2129(
-        &pool_a, &mat_a, state_a, DEV_A, &cert_a, &pool_b, &mat_b, state_b, DEV_B, &cert_b,
+        &pool_a, &mat_a, DEV_A, &cert_a, &pool_b, &mat_b, DEV_B, &cert_b,
     )
     .await;
     assert_eq!(
@@ -4986,8 +4978,8 @@ async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
     let mat_b = Materializer::new(pool_b.clone());
 
     // #602 test seam: one leaked Loro registry per device.
-    let state_a: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
-    let state_b: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+    let state_a = std::sync::Arc::clone(mat_a.loro_state());
+    let state_b = std::sync::Arc::clone(mat_b.loro_state());
 
     peer_refs::upsert_peer_ref(&pool_a, DEV_B).await.unwrap();
     peer_refs::upsert_peer_ref(&pool_b, DEV_A).await.unwrap();
@@ -5003,13 +4995,13 @@ async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
         (BLOCK_D, "to delete then restore"),
         (BLOCK_E, "to delete then purge"),
     ] {
-        make_local_edit_602(&pool_a, &mat_a, state_a, DEV_A, &space, block, content, ts).await;
+        make_local_edit_602(&pool_a, &mat_a, &state_a, DEV_A, &space, block, content, ts).await;
         ts += 1_000;
     }
 
     // Sync the base both directions so B holds every base block.
     let s = run_one_real_loopback_session_2129(
-        &pool_a, &mat_a, state_a, DEV_A, &cert_a, &pool_b, &mat_b, state_b, DEV_B, &cert_b,
+        &pool_a, &mat_a, DEV_A, &cert_a, &pool_b, &mat_b, DEV_B, &cert_b,
     )
     .await;
     assert_eq!(
@@ -5018,7 +5010,7 @@ async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
         "#2129 mvp: base sync A->B must complete"
     );
     let s = run_one_real_loopback_session_2129(
-        &pool_b, &mat_b, state_b, DEV_B, &cert_b, &pool_a, &mat_a, state_a, DEV_A, &cert_a,
+        &pool_b, &mat_b, DEV_B, &cert_b, &pool_a, &mat_a, DEV_A, &cert_a,
     )
     .await;
     assert_eq!(
@@ -5043,7 +5035,7 @@ async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
     apply_local_op_602(
         &pool_a,
         &mat_a,
-        state_a,
+        &state_a,
         DEV_A,
         &space,
         OpPayload::MoveBlock(MoveBlockPayload {
@@ -5061,7 +5053,7 @@ async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
     apply_local_op_602(
         &pool_a,
         &mat_a,
-        state_a,
+        &state_a,
         DEV_A,
         &space,
         OpPayload::DeleteBlock(DeleteBlockPayload {
@@ -5074,7 +5066,7 @@ async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
     apply_local_op_602(
         &pool_a,
         &mat_a,
-        state_a,
+        &state_a,
         DEV_A,
         &space,
         OpPayload::RestoreBlock(RestoreBlockPayload {
@@ -5092,7 +5084,7 @@ async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
     apply_local_op_602(
         &pool_b,
         &mat_b,
-        state_b,
+        &state_b,
         DEV_B,
         &space,
         OpPayload::DeleteBlock(DeleteBlockPayload {
@@ -5105,7 +5097,7 @@ async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
     apply_local_op_602(
         &pool_b,
         &mat_b,
-        state_b,
+        &state_b,
         DEV_B,
         &space,
         OpPayload::PurgeBlock(PurgeBlockPayload {
@@ -5117,7 +5109,7 @@ async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
 
     // ── Final bidirectional sync ─────────────────────────────────────────
     let s = run_one_real_loopback_session_2129(
-        &pool_a, &mat_a, state_a, DEV_A, &cert_a, &pool_b, &mat_b, state_b, DEV_B, &cert_b,
+        &pool_a, &mat_a, DEV_A, &cert_a, &pool_b, &mat_b, DEV_B, &cert_b,
     )
     .await;
     assert_eq!(
@@ -5126,7 +5118,7 @@ async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
         "#2129 mvp: final sync A->B must complete"
     );
     let s = run_one_real_loopback_session_2129(
-        &pool_b, &mat_b, state_b, DEV_B, &cert_b, &pool_a, &mat_a, state_a, DEV_A, &cert_a,
+        &pool_b, &mat_b, DEV_B, &cert_b, &pool_a, &mat_a, DEV_A, &cert_a,
     )
     .await;
     assert_eq!(
@@ -5221,8 +5213,8 @@ async fn issue2006_concurrent_same_block_edits_converge_deterministically() {
     let mat_a = Materializer::new(pool_a.clone());
     let mat_b = Materializer::new(pool_b.clone());
 
-    let state_a: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
-    let state_b: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+    let state_a = std::sync::Arc::clone(mat_a.loro_state());
+    let state_b = std::sync::Arc::clone(mat_b.loro_state());
 
     peer_refs::upsert_peer_ref(&pool_a, DEV_B).await.unwrap();
     peer_refs::upsert_peer_ref(&pool_b, DEV_A).await.unwrap();
@@ -5232,7 +5224,7 @@ async fn issue2006_concurrent_same_block_edits_converge_deterministically() {
     make_local_edit_602(
         &pool_a,
         &mat_a,
-        state_a,
+        &state_a,
         DEV_A,
         &space,
         BLOCK_SHARED,
@@ -5243,7 +5235,7 @@ async fn issue2006_concurrent_same_block_edits_converge_deterministically() {
     make_local_edit_602(
         &pool_b,
         &mat_b,
-        state_b,
+        &state_b,
         DEV_B,
         &space,
         BLOCK_SHARED,
@@ -5254,10 +5246,8 @@ async fn issue2006_concurrent_same_block_edits_converge_deterministically() {
 
     // ── Bidirectional sync (mirror of #602) ──────────────────────────
     let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-        .with_loro_state(state_a)
         .with_expected_remote_id(DEV_B.into());
     let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_loro_state(state_b)
         .with_expected_remote_id(DEV_A.into());
     pump_full_session_602(&mut init_a, &mut resp_b).await;
     assert_eq!(
@@ -5272,10 +5262,8 @@ async fn issue2006_concurrent_same_block_edits_converge_deterministically() {
     );
 
     let mut init_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_loro_state(state_b)
         .with_expected_remote_id(DEV_A.into());
     let mut resp_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-        .with_loro_state(state_a)
         .with_expected_remote_id(DEV_B.into());
     pump_full_session_602(&mut init_b, &mut resp_a).await;
     assert_eq!(
@@ -5374,8 +5362,8 @@ async fn issue2006_interrupted_then_resumed_transfer_converges() {
     let mat_b = Materializer::new(pool_b.clone());
 
     // #602 test seam: one Loro registry per device.
-    let state_a: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
-    let state_b: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+    let state_a = std::sync::Arc::clone(mat_a.loro_state());
+    let state_b = std::sync::Arc::clone(mat_b.loro_state());
 
     peer_refs::upsert_peer_ref(&pool_a, DEV_B).await.unwrap();
     peer_refs::upsert_peer_ref(&pool_b, DEV_A).await.unwrap();
@@ -5383,7 +5371,7 @@ async fn issue2006_interrupted_then_resumed_transfer_converges() {
     make_local_edit_602(
         &pool_a,
         &mat_a,
-        state_a,
+        &state_a,
         DEV_A,
         &space,
         BLOCK_A,
@@ -5394,7 +5382,7 @@ async fn issue2006_interrupted_then_resumed_transfer_converges() {
     make_local_edit_602(
         &pool_b,
         &mat_b,
-        state_b,
+        &state_b,
         DEV_B,
         &space,
         BLOCK_B,
@@ -5407,10 +5395,8 @@ async fn issue2006_interrupted_then_resumed_transfer_converges() {
     //    wire dies before any of B's messages reach A. ───────────────────
     {
         let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-            .with_loro_state(state_a)
             .with_expected_remote_id(DEV_B.into());
         let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-            .with_loro_state(state_b)
             .with_expected_remote_id(DEV_A.into());
 
         let first = init_a.start().await.expect("initiator start");
@@ -5446,10 +5432,8 @@ async fn issue2006_interrupted_then_resumed_transfer_converges() {
 
     // ── Resume: fresh orchestrators, full bidirectional sync. ───────────
     let mut init_a2 = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-        .with_loro_state(state_a)
         .with_expected_remote_id(DEV_B.into());
     let mut resp_b2 = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_loro_state(state_b)
         .with_expected_remote_id(DEV_A.into());
     pump_full_session_602(&mut init_a2, &mut resp_b2).await;
     assert_eq!(
@@ -5464,10 +5448,8 @@ async fn issue2006_interrupted_then_resumed_transfer_converges() {
     );
 
     let mut init_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_loro_state(state_b)
         .with_expected_remote_id(DEV_A.into());
     let mut resp_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-        .with_loro_state(state_a)
         .with_expected_remote_id(DEV_B.into());
     pump_full_session_602(&mut init_b, &mut resp_a).await;
     assert_eq!(
@@ -5559,8 +5541,7 @@ async fn issue610_only_the_puller_records_synced_at() {
     let (pool_b, _dir_b) = test_pool().await;
     let mat_a = Materializer::new(pool_a.clone());
     let mat_b = Materializer::new(pool_b.clone());
-    let state_a: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
-    let state_b: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+    let state_b = std::sync::Arc::clone(mat_b.loro_state());
 
     // Mutually paired; both peer rows start with synced_at = NULL.
     peer_refs::upsert_peer_ref(&pool_a, DEV_B).await.unwrap();
@@ -5570,7 +5551,7 @@ async fn issue610_only_the_puller_records_synced_at() {
     make_local_edit_602(
         &pool_b,
         &mat_b,
-        state_b,
+        &state_b,
         DEV_B,
         &space,
         BLOCK_B,
@@ -5581,10 +5562,8 @@ async fn issue610_only_the_puller_records_synced_at() {
 
     // ── Session: A initiates (pulls from B); B responds (streams) ────
     let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-        .with_loro_state(state_a)
         .with_expected_remote_id(DEV_B.into());
     let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_loro_state(state_b)
         .with_expected_remote_id(DEV_A.into());
     pump_full_session_602(&mut init_a, &mut resp_b).await;
 
@@ -5661,8 +5640,7 @@ async fn issue610_empty_registry_initiator_records_via_synccomplete() {
     let (pool_b, _dir_b) = test_pool().await;
     let mat_a = Materializer::new(pool_a.clone());
     let mat_b = Materializer::new(pool_b.clone());
-    let state_a: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
-    let state_b: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+    let state_a = std::sync::Arc::clone(mat_a.loro_state());
 
     peer_refs::upsert_peer_ref(&pool_a, DEV_B).await.unwrap();
     peer_refs::upsert_peer_ref(&pool_b, DEV_A).await.unwrap();
@@ -5672,7 +5650,7 @@ async fn issue610_empty_registry_initiator_records_via_synccomplete() {
     make_local_edit_602(
         &pool_a,
         &mat_a,
-        state_a,
+        &state_a,
         DEV_A,
         &space,
         BLOCK_A,
@@ -5683,10 +5661,8 @@ async fn issue610_empty_registry_initiator_records_via_synccomplete() {
 
     // ── Session: A initiates; B (empty) responds via SyncComplete ────
     let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-        .with_loro_state(state_a)
         .with_expected_remote_id(DEV_B.into());
     let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_loro_state(state_b)
         .with_expected_remote_id(DEV_A.into());
     pump_full_session_602(&mut init_a, &mut resp_b).await;
 
@@ -5752,8 +5728,8 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
     let (pool_b, _dir_b) = test_pool().await;
     let mat_a = Materializer::new(pool_a.clone());
     let mat_b = Materializer::new(pool_b.clone());
-    let state_a: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
-    let state_b: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+    let state_a = std::sync::Arc::clone(mat_a.loro_state());
+    let state_b = std::sync::Arc::clone(mat_b.loro_state());
 
     peer_refs::upsert_peer_ref(&pool_b, DEV_A).await.unwrap();
 
@@ -5762,7 +5738,7 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
     make_local_edit_602(
         &pool_a,
         &mat_a,
-        state_a,
+        &state_a,
         DEV_A,
         &space,
         BLOCK_A,
@@ -5773,7 +5749,7 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
     make_local_edit_602(
         &pool_b,
         &mat_b,
-        state_b,
+        &state_b,
         DEV_B,
         &space,
         BLOCK_B,
@@ -5794,7 +5770,6 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
 
     // Case 1: initiator advertises its vv → responder streams an Update.
     let mut resp = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_loro_state(state_b)
         .with_expected_remote_id(DEV_A.into());
     let out = resp
         .handle_message(SyncMessage::HeadExchange {
@@ -5850,7 +5825,6 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
 
     // Case 2: no advertised vv (older peer / fresh space) → full Snapshot.
     let mut resp2 = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_loro_state(state_b)
         .with_expected_remote_id(DEV_A.into());
     let out2 = resp2
         .handle_message(SyncMessage::HeadExchange {
@@ -5907,9 +5881,9 @@ async fn issue778_fresh_device_empty_heads_completes_session_against_seeded_resp
     // process-global Loro state, so the RESPONDER owns the global
     // registry; the initiator gets its own leaked registry via the
     // #602 `with_loro_state` test seam.
-    let resp_state = crate::loro::shared::install_for_test();
     let (resp_pool, _resp_dir) = test_pool().await;
     let resp_mat = Materializer::new(resp_pool.clone());
+    let resp_state = std::sync::Arc::clone(resp_mat.loro_state());
     let resp_scheduler = Arc::new(SyncScheduler::new());
     let resp_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
@@ -5919,7 +5893,7 @@ async fn issue778_fresh_device_empty_heads_completes_session_against_seeded_resp
     make_local_edit_602(
         &resp_pool,
         &resp_mat,
-        resp_state,
+        &resp_state,
         RESP_DEV,
         &space,
         BLOCK,
@@ -5931,7 +5905,6 @@ async fn issue778_fresh_device_empty_heads_completes_session_against_seeded_resp
     // ── Initiator: completely fresh device — ZERO local ops ──────────
     let (init_pool, _init_dir) = test_pool().await;
     let init_mat = Materializer::new(init_pool.clone());
-    let init_state: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
     peer_refs::upsert_peer_ref(&init_pool, RESP_DEV)
         .await
         .unwrap();
@@ -5964,7 +5937,6 @@ async fn issue778_fresh_device_empty_heads_completes_session_against_seeded_resp
     let init_sink_box: Box<dyn SyncEventSink> = Box::new(SharedEventSink(init_sink.clone()));
     let mut init_orch =
         SyncOrchestrator::new(init_pool.clone(), FRESH_DEV.into(), init_mat.clone())
-            .with_loro_state(init_state)
             .with_event_sink(init_sink_box)
             .with_expected_remote_id(RESP_DEV.into());
 
@@ -6107,9 +6079,9 @@ async fn issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path() {
     // ── Responder: one seeded local edit with the huge content ───────
     // (Same global-vs-leaked registry split as the #778 test above:
     // `handle_incoming_sync` reads the process-global Loro state.)
-    let resp_state = crate::loro::shared::install_for_test();
     let (resp_pool, _resp_dir) = test_pool().await;
     let resp_mat = Materializer::new(resp_pool.clone());
+    let resp_state = std::sync::Arc::clone(resp_mat.loro_state());
     let resp_scheduler = Arc::new(SyncScheduler::new());
     let resp_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
@@ -6119,7 +6091,7 @@ async fn issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path() {
     make_local_edit_602(
         &resp_pool,
         &resp_mat,
-        resp_state,
+        &resp_state,
         RESP_DEV,
         &space,
         BLOCK,
@@ -6161,7 +6133,6 @@ async fn issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path() {
     // ── Initiator: fresh device, its own leaked registry ─────────────
     let (init_pool, _init_dir) = test_pool().await;
     let init_mat = Materializer::new(init_pool.clone());
-    let init_state: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
     peer_refs::upsert_peer_ref(&init_pool, RESP_DEV)
         .await
         .unwrap();
@@ -6187,7 +6158,6 @@ async fn issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path() {
     let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
     let init_sink_box: Box<dyn SyncEventSink> = Box::new(SharedEventSink(init_sink.clone()));
     let mut init_orch = SyncOrchestrator::new(init_pool.clone(), INIT_DEV.into(), init_mat.clone())
-        .with_loro_state(init_state)
         .with_event_sink(init_sink_box)
         .with_expected_remote_id(RESP_DEV.into());
 
@@ -6792,7 +6762,7 @@ struct Device2141 {
     id: String,
     pool: SqlitePool,
     mat: Materializer,
-    state: &'static crate::loro::shared::LoroState,
+    state: std::sync::Arc<crate::loro::shared::LoroState>,
     cert: SyncCert,
     // Held only to keep the temp DB directory alive for the test's
     // lifetime; never read.
@@ -6824,8 +6794,9 @@ async fn make_n_devices_2141(ids: &[&str]) -> Vec<Device2141> {
     for id in ids {
         let (pool, dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
-        // #602 test seam: one leaked Loro registry per device.
-        let state: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+        // #602/#2249: the device's registry is its materializer's own
+        // per-instance state (the process global is gone).
+        let state = std::sync::Arc::clone(mat.loro_state());
         let cert = sync_net::generate_self_signed_cert(id).unwrap();
         devices.push(Device2141 {
             id: (*id).to_string(),
@@ -6863,12 +6834,10 @@ async fn run_session_2141(
     run_one_real_loopback_session_2129(
         &initiator.pool,
         &initiator.mat,
-        initiator.state,
         &initiator.id,
         &initiator.cert,
         &responder.pool,
         &responder.mat,
-        responder.state,
         &responder.id,
         &responder.cert,
     )
@@ -6932,7 +6901,7 @@ async fn issue2141_n_devices_converge_round_robin_over_real_loopback_tls() {
             make_local_edit_602(
                 &dev.pool,
                 &dev.mat,
-                dev.state,
+                &dev.state,
                 &dev.id,
                 &space,
                 &block_id,
@@ -6949,7 +6918,7 @@ async fn issue2141_n_devices_converge_round_robin_over_real_loopback_tls() {
         apply_local_op_602(
             &devices[0].pool,
             &devices[0].mat,
-            devices[0].state,
+            &devices[0].state,
             &devices[0].id,
             &space,
             OpPayload::SetProperty(SetPropertyPayload {
@@ -6967,7 +6936,7 @@ async fn issue2141_n_devices_converge_round_robin_over_real_loopback_tls() {
         apply_local_op_602(
             &devices[1].pool,
             &devices[1].mat,
-            devices[1].state,
+            &devices[1].state,
             &devices[1].id,
             &space,
             OpPayload::CreateBlock(crate::op::CreateBlockPayload {
@@ -6984,7 +6953,7 @@ async fn issue2141_n_devices_converge_round_robin_over_real_loopback_tls() {
         apply_local_op_602(
             &devices[1].pool,
             &devices[1].mat,
-            devices[1].state,
+            &devices[1].state,
             &devices[1].id,
             &space,
             OpPayload::AddTag(AddTagPayload {
@@ -7114,7 +7083,7 @@ async fn issue2141_device_acts_as_responder_and_initiator_concurrently() {
         make_local_edit_602(
             &dev.pool,
             &dev.mat,
-            dev.state,
+            &dev.state,
             &dev.id,
             &space,
             block,
@@ -7251,7 +7220,7 @@ async fn issue2140_connection_drop_mid_stream_fails_then_recovers() {
     make_local_edit_602(
         &a.pool,
         &a.mat,
-        a.state,
+        &a.state,
         &a.id,
         &space,
         "01HZ2140DROPBLKAXXXXXXXXXX",
@@ -7262,7 +7231,7 @@ async fn issue2140_connection_drop_mid_stream_fails_then_recovers() {
     make_local_edit_602(
         &b.pool,
         &b.mat,
-        b.state,
+        &b.state,
         &b.id,
         &space,
         "01HZ2140DROPBLKBXXXXXXXXXX",
@@ -7278,7 +7247,7 @@ async fn issue2140_connection_drop_mid_stream_fails_then_recovers() {
 
     let resp_scheduler = Arc::new(SyncScheduler::new());
     let resp_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
-    let resp_handle = tokio::spawn(handle_incoming_sync_with_loro_state(
+    let resp_handle = tokio::spawn(handle_incoming_sync(
         server_conn,
         b.pool.clone(),
         b.id.clone(),
@@ -7286,7 +7255,6 @@ async fn issue2140_connection_drop_mid_stream_fails_then_recovers() {
         resp_scheduler,
         resp_sink,
         Arc::new(AtomicBool::new(false)),
-        b.state,
     ));
 
     // Send a valid opening HeadExchange so the responder is mid-session,
@@ -7551,7 +7519,7 @@ async fn issue2140_snapshot_fallback_on_real_compaction_over_real_socket() {
         RESP_DEV,
         &crate::space::SpaceId::from_trusted("01HZ2140SNAPSPACEXXXXXXXXX"),
         &record.created_at.to_string(),
-        resp.state,
+        &resp.state,
     );
 
     create_snapshot(&resp.pool, RESP_DEV).await.unwrap();
@@ -7654,7 +7622,7 @@ async fn issue2140_backoff_advances_on_failure_and_clears_on_success() {
     make_local_edit_602(
         &a.pool,
         &a.mat,
-        a.state,
+        &a.state,
         &a.id,
         &space,
         "01HZ2140BOBLKAXXXXXXXXXXXX",
@@ -7670,7 +7638,7 @@ async fn issue2140_backoff_advances_on_failure_and_clears_on_success() {
     make_local_edit_602(
         &b.pool,
         &b.mat,
-        b.state,
+        &b.state,
         &b.id,
         &space,
         "01HZ2140BOBLKBXXXXXXXXXXXX",
@@ -7685,7 +7653,7 @@ async fn issue2140_backoff_advances_on_failure_and_clears_on_success() {
     // ── A broken session: initiator drops mid-stream → the session fails,
     //    so we record a failure for the peer on the scheduler.
     let (mut client_conn, server_conn, server) = connect_real_pair_2140(&a.cert, &b.cert).await;
-    let resp_handle = tokio::spawn(handle_incoming_sync_with_loro_state(
+    let resp_handle = tokio::spawn(handle_incoming_sync(
         server_conn,
         b.pool.clone(),
         b.id.clone(),
@@ -7693,7 +7661,6 @@ async fn issue2140_backoff_advances_on_failure_and_clears_on_success() {
         Arc::new(SyncScheduler::new()),
         Arc::new(RecordingEventSink::new()) as Arc<dyn SyncEventSink>,
         Arc::new(AtomicBool::new(false)),
-        b.state,
     ));
     let heads = crate::sync_protocol::get_local_heads(&a.pool)
         .await

@@ -754,8 +754,6 @@ async fn orchestrator_rejects_incompatible_engine_format() {
 /// [`loro_sync_orchestrator_handles_empty_registry_without_panic`].
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn orchestrator_accepts_legacy_and_matching_engine_format() {
-    let _state = crate::loro::shared::install_for_test();
-
     for version in [0, crate::loro::engine::ENGINE_FORMAT_VERSION] {
         let (pool, _dir) = test_pool().await;
         let materializer = Materializer::new(pool.clone());
@@ -819,18 +817,20 @@ async fn orchestrator_handles_reset_required() {
     materializer.shutdown();
 }
 
-/// #705: when the Loro registry is not initialised, an incoming
-/// `LoroSync` cannot be imported. The orchestrator must FAIL the
-/// session (transition to `Failed`, return an error) rather than
-/// silently dropping the payload and proceeding to `SyncComplete` —
-/// the latter would fake convergence and let the responder record a
-/// bogus `synced_at`.
+/// #705 / #2249: an incoming `LoroSync` payload that cannot be imported
+/// must FAIL the session (transition to `Failed`, return an error) rather
+/// than silently dropping the payload and proceeding to `SyncComplete` —
+/// the latter would fake convergence and let the responder record a bogus
+/// `synced_at`.
 ///
-/// In a unit test the process-global `loro::shared::get()` is `None`
-/// (no bootstrap ran) and no `with_loro_state` override is attached, so
-/// `loro_state()` returns `None` — exactly the defensive branch.
+/// #2249 note: the registry is now always present (`loro_state()` returns
+/// a real `Arc<LoroState>` from the materializer — the old process-global
+/// `None` defensive branch is gone), so the sole remaining failure at
+/// import time is an undecodable/corrupt snapshot. This test feeds
+/// deliberately-garbage snapshot bytes and pins that the invariant still
+/// holds: error surfaced, session `Failed`, no fake success.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn orchestrator_loro_sync_without_registry_fails_session() {
+async fn orchestrator_loro_sync_undecodable_snapshot_fails_session() {
     use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
 
     let (pool, _dir) = test_pool().await;
@@ -855,11 +855,11 @@ async fn orchestrator_loro_sync_without_registry_fails_session() {
 
     assert!(
         result.is_err(),
-        "registry-None LoroSync must error, not fake success; got {result:?}"
+        "undecodable LoroSync must error, not fake success; got {result:?}"
     );
     assert!(
         matches!(orch.session().state, SyncState::Failed(_)),
-        "registry-None LoroSync must transition to Failed, got {:?}",
+        "undecodable LoroSync must transition to Failed, got {:?}",
         orch.session().state
     );
     assert!(
@@ -1504,7 +1504,7 @@ async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
     // Bypass the SyncComplete handler we are exercising here).
     // The block payload itself is irrelevant — we just need at least
     // one registered space.
-    let state = crate::loro::shared::install_for_test();
+    let state = materializer.loro_state();
     let space = crate::space::SpaceId::from_trusted("01HZBUG27EMPTYPEERIDXXXXXXX");
     {
         let mut g = state
@@ -2191,10 +2191,6 @@ async fn handle_message_emits_within_sync_msg_span() {
 async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
-
-    // Ensure Loro state is installed (first call wins; subsequent
-    // calls are no-ops since OnceLock).
-    let _state = crate::loro::shared::install_for_test();
 
     let mut orch = SyncOrchestrator::new(pool.clone(), "local-dev".into(), materializer.clone())
         .with_expected_remote_id("remote-dev".into());

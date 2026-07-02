@@ -19,33 +19,35 @@
 //!
 //! ## Engine path (#891 — production parity)
 //!
-//! Production installs the Loro engine unconditionally at boot
-//! (`crate::loro::shared::init()` in `app.setup`), so every op runs the
-//! `apply_*_via_loro` ENGINE path — which reprojects dense 1-based sibling
-//! positions via `projection::reproject_dense_positions`. This runner therefore
-//! `install_for_test()`s the engine and SEEDS each fixture's seed blocks into
-//! the per-space Loro tree (mirroring the raw-SQL seed insert) so ops resolve
-//! their space and route through the engine, not the SQL-only fallback. Without
-//! this, `shared::get()` is `None` and every op silently took the SQL-only
-//! fallback whose provisional `index+1` positions DIFFER from production —
-//! which produced the spurious `position_reproject_drift` (#763).
+//! Production constructs the Loro engine state unconditionally at boot
+//! (#2249: an `Arc<LoroState>` built at the top of `crate::run` setup and
+//! handed to the `Materializer` as a constructor argument), so every op
+//! runs the `apply_*_via_loro` ENGINE path — which reprojects dense
+//! 1-based sibling positions via `projection::reproject_dense_positions`.
+//! This runner therefore SEEDS each fixture's seed blocks into the test
+//! materializer's per-space Loro tree (mirroring the raw-SQL seed insert)
+//! so ops resolve their space and route through the engine, not the
+//! SQL-only fallback — whose provisional `index+1` positions DIFFER from
+//! production, producing the spurious `position_reproject_drift` (#763).
+//! #2249/#2250: the engine can no longer be "uninstalled" — the state is a
+//! required `&LoroState` parameter down the whole apply path, so the #891
+//! false-drift class (a test silently exercising the fallback while
+//! believing it covers the engine path) is structurally impossible; the
+//! only remaining fallback trigger is an unresolvable space.
 //!
 //! The TS runner (`src/lib/tauri-mock/__tests__/conformance.test.ts`) builds
 //! the SAME normalized snapshot from the tauri-mock and asserts it matches the
 //! backend-authored `expected`. Behavioral drift between the 3.5k-line mock and
 //! the real backend then fails CI.
 //!
-//! ## Isolation contract — run with `cargo nextest`, NEVER `cargo test` (#1079)
+//! ## Isolation contract (#1079 → resolved by #2249)
 //!
-//! The tests here `install_for_test()` the PROCESS-GLOBAL Loro engine and
-//! isolate fixtures by `state.registry.clear()`, which drops EVERY engine in the
-//! whole process. All fixtures reuse a single shared `TEST_SPACE_ID`. That means
-//! two tests in this module CANNOT safely run concurrently in the same process —
-//! one's `clear()` would destroy the other's just-seeded tree. Isolation holds
-//! only because `cargo nextest` forks one process per test (what CI and the
-//! pre-push hook run). Plain `cargo test` runs the whole binary in one process
-//! across threads and will flake here. See `loro::shared::install_for_test` and
-//! <https://github.com/jfolcini/agaric/issues/1079>.
+//! Each test's engine registry is its own `Materializer`'s per-instance
+//! `LoroState` — there is no process-global registry anymore, so tests in
+//! this module are fully isolated from each other and run safely under
+//! BOTH `cargo nextest` (process-per-test) and plain `cargo test` (one
+//! process, many threads). The historical nextest-only constraint
+//! (<https://github.com/jfolcini/agaric/issues/1079>) is gone.
 
 use super::common::*;
 use crate::op::{
@@ -494,8 +496,12 @@ async fn run_fixture(path: &PathBuf) {
     // so the `for_space` below lazy-creates a FRESH empty tree for this
     // fixture — equivalent to a first boot, against this fixture's own fresh
     // pool.
-    let state = crate::loro::shared::install_for_test();
-    state.registry.clear();
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
 
     // 1. Seed blocks (literal expanded ids), then scope every seed block to one
     //    test space so created children inherit it and same-space ref/link
@@ -696,8 +702,12 @@ async fn move_same_parent_tail_clamp_matches_fe_new_index() {
     // Install the process-global engine so ops route through the production
     // `apply_*_via_loro` ENGINE path (dense reproject), not the SQL-only
     // fallback. `registry.clear()` gives this test a fresh per-space tree.
-    let state = crate::loro::shared::install_for_test();
-    state.registry.clear();
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
 
     // Seed S1 > {A, B, C} into BOTH SQL and the engine tree (parent-first so the
     // engine's parent-before-child requirement holds), then scope to one space.
@@ -848,8 +858,12 @@ async fn local_create_is_engine_fresh_and_dense_1257() {
     // Install the process-global engine so the LOCAL create routes through the
     // production `apply_create_block_via_loro` ENGINE path (dense reproject), not
     // the SQL-only fallback. `registry.clear()` gives this test a fresh tree.
-    let state = crate::loro::shared::install_for_test();
-    state.registry.clear();
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
 
     // Seed S1 > {A, B} into BOTH SQL and the engine tree (parent-first), then
     // scope every seed block to one space so `resolve_block_space` succeeds and
@@ -983,6 +997,131 @@ async fn local_create_is_engine_fresh_and_dense_1257() {
     mat.shutdown();
 }
 
+/// #2250 — LOCAL and SYNC apply of the SAME op project byte-identical SQL.
+///
+/// The two op-projection entry points — the LOCAL command path
+/// (`create_block_inner`, which engine-applies in-tx and does NOT advance
+/// the apply cursor) and the SYNC/boot-replay path
+/// (`MaterializeTask::ApplyOp` → `apply_op` → `apply_op_tx`, which advances
+/// the cursor) — both funnel through the single shared
+/// `apply_create_block_via_loro` helper. This test drives the SAME
+/// CreateBlock op down BOTH entry points, on two identically-seeded
+/// databases, and asserts the projected `blocks` rows (content, type,
+/// parent, dense position) are identical for the new block AND for the two
+/// reprojected siblings. If the paths ever diverge (the #2250 risk), the
+/// row comparison fails instead of a drift counter silently ticking.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_and_sync_apply_project_identical_rows_2250() {
+    let s1 = seed_label_to_id("S1");
+    let a = seed_label_to_id("BA");
+    let b = seed_label_to_id("BB");
+    let seed = [
+        json!({"id": "S1", "block_type": "page", "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "BA", "block_type": "content", "content": "A", "parent_id": "S1", "position": 1}),
+        json!({"id": "BB", "block_type": "content", "content": "B", "parent_id": "S1", "position": 2}),
+    ];
+
+    // The four columns `apply_*_via_loro` projects directly (background cache
+    // rebuilds own space_id/page_id, whose timing differs, so they are out of
+    // scope for a projection-equivalence check).
+    async fn projected_row(
+        pool: &SqlitePool,
+        id: &str,
+    ) -> (String, String, Option<String>, Option<i64>) {
+        sqlx::query_as("SELECT content, block_type, parent_id, position FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    // ── LOCAL command path ────────────────────────────────────────────────
+    let (pool_l, _dir_l) = test_pool().await;
+    let mat_l = test_materializer(&pool_l);
+    let state_l = mat_l.loro_state();
+    for blk in &seed {
+        insert_seed_block(&pool_l, blk).await;
+    }
+    assign_all_to_test_space(&pool_l).await;
+    for blk in &seed {
+        seed_block_into_engine(state_l, blk);
+    }
+    let created = create_block_inner(
+        &pool_l,
+        DEV,
+        &mat_l,
+        "content".into(),
+        "shared-content".into(),
+        Some(BlockId::from(s1.as_str())),
+        Some(0),
+    )
+    .await
+    .expect("local create_block_inner");
+    settle(&mat_l).await;
+    let new_id = created.id.clone().into_string();
+
+    // Capture the exact CreateBlock op the LOCAL path emitted into the op_log
+    // so the SYNC side replays a byte-identical op (same block_id / index).
+    let payload_json: String = sqlx::query_scalar(
+        "SELECT payload FROM op_log WHERE device_id = ? AND op_type = 'create_block' \
+         ORDER BY seq DESC LIMIT 1",
+    )
+    .bind(DEV)
+    .fetch_one(&pool_l)
+    .await
+    .expect("local create op must be in op_log");
+    let payload: CreateBlockPayload =
+        serde_json::from_str(&payload_json).expect("deserialize CreateBlock payload");
+    assert_eq!(
+        payload.block_id.as_str(),
+        new_id,
+        "captured the create op for the freshly-created block",
+    );
+
+    // ── SYNC / boot-replay path (fresh DB, identical seed, same op) ────────
+    let (pool_s, _dir_s) = test_pool().await;
+    let mat_s = test_materializer(&pool_s);
+    let state_s = mat_s.loro_state();
+    for blk in &seed {
+        insert_seed_block(&pool_s, blk).await;
+    }
+    assign_all_to_test_space(&pool_s).await;
+    for blk in &seed {
+        seed_block_into_engine(state_s, blk);
+    }
+    let record_s = crate::op_log::append_local_op(&pool_s, DEV, OpPayload::CreateBlock(payload))
+        .await
+        .expect("append sync op");
+    mat_s
+        .enqueue_foreground(crate::materializer::MaterializeTask::ApplyOp(
+            std::sync::Arc::new(record_s),
+        ))
+        .await
+        .expect("enqueue ApplyOp");
+    mat_s.flush_foreground().await.expect("flush foreground");
+    settle(&mat_s).await;
+
+    // ── The two entry points must project identically ─────────────────────
+    assert_eq!(
+        projected_row(&pool_l, &new_id).await,
+        projected_row(&pool_s, &new_id).await,
+        "LOCAL and SYNC apply must project the new block's row identically (#2250)",
+    );
+    assert_eq!(
+        projected_row(&pool_l, &a).await,
+        projected_row(&pool_s, &a).await,
+        "sibling A dense reprojection must match across LOCAL and SYNC (#2250)",
+    );
+    assert_eq!(
+        projected_row(&pool_l, &b).await,
+        projected_row(&pool_s, &b).await,
+        "sibling B dense reprojection must match across LOCAL and SYNC (#2250)",
+    );
+
+    mat_l.shutdown();
+    mat_s.shutdown();
+}
+
 // ---------------------------------------------------------------------------
 // #1257 local simple-op engine-freshness conformance.
 //
@@ -1002,10 +1141,10 @@ async fn local_create_is_engine_fresh_and_dense_1257() {
 //       the local path is the engine-apply-without-cursor-advance shape (#1248
 //       / #1257).
 //
-// Each test is its OWN `#[tokio::test]` fn so `cargo nextest` forks one process
-// per test — REQUIRED by this module's process-global-engine isolation contract
-// (see the module docstring); two tests sharing a process would `clear()` each
-// other's engine.
+// Each test constructs its OWN materializer (`test_materializer`) and thus its
+// OWN `Arc<LoroState>` / engine registry (#2249 — no process global), so tests
+// are isolated by construction and run safely under BOTH `cargo nextest`
+// (process-per-test) and plain `cargo test` (one process, many threads).
 // ---------------------------------------------------------------------------
 
 /// Read the apply cursor (`materialized_through_seq`).
@@ -1037,8 +1176,12 @@ async fn local_edit_block_is_engine_fresh_1257() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
-    let state = crate::loro::shared::install_for_test();
-    state.registry.clear();
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
 
     let seed = [
         json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
@@ -1123,8 +1266,12 @@ async fn local_set_property_is_engine_fresh_1257() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
-    let state = crate::loro::shared::install_for_test();
-    state.registry.clear();
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
 
     let seed = [
         json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
@@ -1219,8 +1366,12 @@ async fn local_add_tag_is_engine_fresh_1257() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
-    let state = crate::loro::shared::install_for_test();
-    state.registry.clear();
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
 
     // S1 > {BA}; TG is a top-level tag block. All scoped to one space so
     // `resolve_block_space` succeeds and add_tag engages the engine path.
@@ -1340,8 +1491,12 @@ async fn local_move_is_engine_fresh_and_dense_1257() {
     // Install the process-global engine so the LOCAL move routes through the
     // production `apply_move_block_via_loro` ENGINE path (dense reproject of both
     // parents), not the SQL-only fallback. `registry.clear()` gives a fresh tree.
-    let state = crate::loro::shared::install_for_test();
-    state.registry.clear();
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
 
     // Seed two pages: PA > {A1, A2, A3}, PB > {B1, B2}. Parent-first so the
     // engine seed satisfies parent-before-child.
@@ -1550,8 +1705,12 @@ async fn local_delete_restore_tombstones_cohort_no_phantom_1257() {
     // Install the process-global engine so the LOCAL delete/restore route
     // through the ENGINE path (not the SQL-only fallback). `registry.clear()`
     // gives this test a fresh tree.
-    let state = crate::loro::shared::install_for_test();
-    state.registry.clear();
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
 
     // Seed S1 > P > C > G into BOTH SQL and the engine tree (parent-first), then
     // scope every seed block to one space so `resolve_block_space` succeeds and
@@ -1744,8 +1903,12 @@ async fn restore_does_not_over_restore_independently_deleted_nested_subtree_1549
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
-    let state = crate::loro::shared::install_for_test();
-    state.registry.clear();
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
 
     let seed = [
         json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
@@ -1864,12 +2027,12 @@ async fn restore_does_not_over_restore_independently_deleted_nested_subtree_1549
 // redundant second subtree walk on every move. #1392 dropped it. These two
 // tests pin that `block_tag_inherited` stays correct after a move WITHOUT the
 // explicit call, on EACH arm:
-//   * `local_move_inheritance_engine_arm_1392`  — engine installed → the move
+//   * `local_move_inheritance_engine_arm_1392`  — engine seeded → the move
 //     routes through `apply_move_block_via_loro`'s engine path;
-//   * `local_move_inheritance_sql_fallback_arm_1392` — engine NOT installed →
-//     the move falls back to `apply_move_block_sql_only`.
-// Each forks its own process (nextest), so the fallback test genuinely runs
-// with the process-global engine uninitialised.
+//   * `local_move_inheritance_sql_fallback_arm_1392` — blocks left WITHOUT a
+//     space (#2249/#2250: `SpaceUnresolved` is the ONLY remaining sql_only
+//     trigger; the old EngineUninit arm is structurally gone) → the move
+//     falls back to `apply_move_block_sql_only`.
 //
 // Fixture (both arms): S1 > {PA > XX, PB}; PB carries a direct tag TG. Moving
 // XX from PA into PB must make XX inherit TG from PB (the move's recompute
@@ -1878,10 +2041,16 @@ async fn restore_does_not_over_restore_independently_deleted_nested_subtree_1549
 // identical on both arms — only the move's apply path differs.
 // ---------------------------------------------------------------------------
 
-/// Seed the shared #1392 fixture into SQL and assign every block to the test
-/// space. Returns `(pa, pb, xx, tg)` literal ids. Does NOT touch the engine —
-/// callers seed the engine themselves on the engine arm only.
-async fn seed_move_inheritance_fixture_1392(pool: &SqlitePool) -> (String, String, String, String) {
+/// Seed the shared #1392 fixture into SQL; `assign_space` scopes every block
+/// to the test space (the engine arm needs it so `resolve_block_space`
+/// succeeds; the fallback arm passes `false` so the move hits the
+/// `SpaceUnresolved` sql_only arm — the only remaining fallback trigger,
+/// #2250). Returns `(pa, pb, xx, tg)` literal ids. Does NOT touch the
+/// engine — callers seed the engine themselves on the engine arm only.
+async fn seed_move_inheritance_fixture_1392(
+    pool: &SqlitePool,
+    assign_space: bool,
+) -> (String, String, String, String) {
     let pa = seed_label_to_id("PA");
     let pb = seed_label_to_id("PB");
     let xx = seed_label_to_id("XX");
@@ -1896,7 +2065,9 @@ async fn seed_move_inheritance_fixture_1392(pool: &SqlitePool) -> (String, Strin
     for blk in &seed {
         insert_seed_block(pool, blk).await;
     }
-    assign_all_to_test_space(pool).await;
+    if assign_space {
+        assign_all_to_test_space(pool).await;
+    }
     // PB carries TG directly. The move's `recompute_subtree_inheritance` reads
     // ancestor `block_tags`, so a direct SQL row is exactly the source it walks.
     sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
@@ -1932,10 +2103,14 @@ async fn local_move_inheritance_engine_arm_1392() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
-    let state = crate::loro::shared::install_for_test();
-    state.registry.clear();
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
 
-    let (pa, pb, xx, tg) = seed_move_inheritance_fixture_1392(&pool).await;
+    let (pa, pb, xx, tg) = seed_move_inheritance_fixture_1392(&pool, true).await;
     // Engine seed (parent-first) so the move routes through the engine arm.
     for blk in [
         json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
@@ -1989,20 +2164,24 @@ async fn local_move_inheritance_engine_arm_1392() {
     mat.shutdown();
 }
 
-/// #1392 SQL-FALLBACK ARM — with the engine NOT installed (process-global
-/// engine uninitialised), the same move falls back to
-/// `apply_move_block_sql_only`, whose own `recompute_subtree_inheritance`
-/// likewise makes XX inherit TG from PB — confirming the dropped explicit call
-/// is unnecessary on the fallback arm too (the regression #1392 guards).
+/// #1392 SQL-FALLBACK ARM — with the blocks left OUTSIDE any space
+/// (`resolve_block_space` misses → `SpaceUnresolved`, the only sql_only
+/// trigger left after #2249/#2250 deleted EngineUninit), the same move
+/// falls back to `apply_move_block_sql_only`, whose own
+/// `recompute_subtree_inheritance` likewise makes XX inherit TG from PB —
+/// confirming the dropped explicit call is unnecessary on the fallback arm
+/// too (the regression #1392 guards).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn local_move_inheritance_sql_fallback_arm_1392() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
-    // Deliberately DO NOT `install_for_test()` — `crate::loro::shared::get()`
-    // returns None, so `apply_move_block_via_loro` records an EngineUninit
-    // fallback and routes the move through `apply_move_block_sql_only`.
-    let (pa, pb, xx, tg) = seed_move_inheritance_fixture_1392(&pool).await;
+    // Deliberately do NOT assign the blocks to a space —
+    // `resolve_block_space` returns None, so `apply_move_block_via_loro`
+    // records a `SpaceUnresolved` fallback and routes the move through
+    // `apply_move_block_sql_only` (#2250: the engine is always present now;
+    // an unresolvable space is the only legitimate sql_only trigger).
+    let (pa, pb, xx, tg) = seed_move_inheritance_fixture_1392(&pool, false).await;
 
     assert!(
         !xx_inherits_from(&pool, &xx, &tg, &pb).await,
@@ -2070,8 +2249,12 @@ async fn move_blocks_batch_interleaved_same_parent_engine_ground_truth_2274() {
     let mat = test_materializer(&pool);
 
     // Production ENGINE path (dense reproject), not the SQL-only fallback.
-    let state = crate::loro::shared::install_for_test();
-    state.registry.clear();
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
 
     let seed = [
         json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
@@ -2147,8 +2330,12 @@ async fn batched_move_undo_group_redo_undo_roundtrip_engine_2274() {
 
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
-    let state = crate::loro::shared::install_for_test();
-    state.registry.clear();
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
 
     // Seed only the page shell; the children are born through REAL
     // `create_block` ops (by a DIFFERENT device, so the DEV move group is

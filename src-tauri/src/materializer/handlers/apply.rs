@@ -33,8 +33,12 @@ impl Drop for OpApplyTimer {
 /// Takes `&Arc<OpRecord>` so callers (the `MaterializeTask::ApplyOp` arm)
 /// that already hold the record as `Arc<OpRecord>` thread the borrow
 /// through without a deep clone.
-#[tracing::instrument(skip(pool, record), fields(seq = record.seq), err)]
-pub(super) async fn apply_op(pool: &SqlitePool, record: &Arc<OpRecord>) -> Result<(), AppError> {
+#[tracing::instrument(skip(pool, record, state), fields(seq = record.seq), err)]
+pub(super) async fn apply_op(
+    pool: &SqlitePool,
+    record: &Arc<OpRecord>,
+    state: &crate::loro::shared::LoroState,
+) -> Result<(), AppError> {
     // Time the whole per-op apply and record it to the
     // `agaric.materializer.op_apply.duration` histogram on EVERY exit (the
     // `?`-propagated error paths included), via an RAII guard. The record helper
@@ -50,7 +54,7 @@ pub(super) async fn apply_op(pool: &SqlitePool, record: &Arc<OpRecord>) -> Resul
     // #2200: single-op apply is a "chunk of one" — pass `None` so the derived
     // maintenance passes (dense reproject, count recompute) run inline, exactly
     // as before this refactor. Only the batch import path opts into deferral.
-    let effects = apply_op_tx(&mut tx, record, None).await?;
+    let effects = apply_op_tx(&mut tx, record, None, state).await?;
     // #412 / #667 — SINGLE-DEVICE-CURSOR ASSUMPTION (single-op mirror of
     // the `BatchApplyOps` arm's guard in `task_handlers.rs`).
     //
@@ -130,7 +134,7 @@ pub(super) async fn apply_op(pool: &SqlitePool, record: &Arc<OpRecord>) -> Resul
     // PRE-UPDATE in `apply_op_tx` because `resolve_block_space`
     // filters `deleted_at IS NULL`; a post-commit lookup would return
     // `None` for every cohort row.
-    dispatch_restore_descendants(pool, record, &effects.restored_cohort).await;
+    dispatch_restore_descendants(pool, record, &effects.restored_cohort, state).await;
     // #2017: symmetric UPWARD fan-out. The SQL restore also un-deleted the
     // contiguous soft-deleted ANCESTOR chain (the #1884 live-orphan fix) but
     // the in-tx engine apply touched only the seed, so the ancestors are alive
@@ -138,11 +142,12 @@ pub(super) async fn apply_op(pool: &SqlitePool, record: &Arc<OpRecord>) -> Resul
     // the next `reproject_block_deleted_at` re-deletes them in SQL —
     // self-perpetuating divergence. Reuses the same engine RestoreBlock helper
     // as the descendant fan-out.
-    dispatch_restore_ancestors(pool, record, &effects.restored_ancestors).await;
+    dispatch_restore_ancestors(pool, record, &effects.restored_ancestors, state).await;
     dispatch_delete_descendants(
         record,
         &effects.deleted_cohort,
         effects.delete_space_id.as_ref(),
+        state,
     )
     .await;
 
@@ -185,11 +190,12 @@ pub(crate) async fn dispatch_restore_descendants(
     pool: &SqlitePool,
     root_record: &OpRecord,
     cohort: &[String],
+    state: &crate::loro::shared::LoroState,
 ) {
     // #2226: thin wrapper over the shared restore fan-out; the downward cohort
     // and upward ancestor variants differ only in the op-id infix + log wording
     // carried by `FanoutKind`.
-    fan_out_restore(pool, root_record, cohort, FanoutKind::Descendants).await;
+    fan_out_restore(pool, root_record, cohort, FanoutKind::Descendants, state).await;
 }
 
 /// #2017: symmetric UPWARD companion to [`dispatch_restore_descendants`].
@@ -217,11 +223,12 @@ pub(crate) async fn dispatch_restore_ancestors(
     pool: &SqlitePool,
     root_record: &OpRecord,
     ancestors: &[String],
+    state: &crate::loro::shared::LoroState,
 ) {
     // #2226: thin wrapper over the shared restore fan-out (see
     // [`dispatch_restore_descendants`]); only the op-id infix (`#ancestor/`)
     // and log wording differ, both carried by `FanoutKind::Ancestors`.
-    fan_out_restore(pool, root_record, ancestors, FanoutKind::Ancestors).await;
+    fan_out_restore(pool, root_record, ancestors, FanoutKind::Ancestors, state).await;
 }
 
 /// Which restore fan-out is being driven onto the per-space engine.
@@ -287,6 +294,7 @@ async fn fan_out_restore(
     root_record: &OpRecord,
     ids: &[String],
     kind: FanoutKind,
+    state: &crate::loro::shared::LoroState,
 ) {
     use crate::op::{OpPayload, RestoreBlockPayload};
     use crate::ulid::BlockId;
@@ -294,12 +302,6 @@ async fn fan_out_restore(
     if ids.is_empty() {
         return;
     }
-
-    let Some(state) = crate::loro::shared::get() else {
-        // Loro state not initialised (test environment that bypasses
-        // the boot setup). Nothing to do.
-        return;
-    };
 
     // Parse the root's payload once to extract `deleted_at_ref`. The payload is
     // the raw inner-only JSON (per `serialize_inner_payload` in `op_log.rs`),
@@ -415,6 +417,7 @@ pub(crate) async fn dispatch_delete_descendants(
     root_record: &OpRecord,
     cohort: &[String],
     space_id: Option<&crate::space::SpaceId>,
+    state: &crate::loro::shared::LoroState,
 ) {
     use crate::op::OpPayload;
     use crate::ulid::BlockId;
@@ -438,12 +441,6 @@ pub(crate) async fn dispatch_delete_descendants(
             seq = root_record.seq,
             "delete-cascade fanout: no space captured for root block; skipping",
         );
-        return;
-    };
-
-    let Some(state) = crate::loro::shared::get() else {
-        // Engine state not initialised (test environment that
-        // bypasses the boot setup).  Nothing to do.
         return;
     };
 
@@ -687,11 +684,12 @@ pub(super) struct ApplyEffects {
 /// pass (#2200). When `None` (single-op `apply_op`, every LOCAL command path)
 /// both passes run inline exactly as before, so the "chunk of one" flushes
 /// once with an identical result.
-#[tracing::instrument(skip(conn, record, chunk), fields(seq = record.seq), err)]
+#[tracing::instrument(skip(conn, record, chunk, state), fields(seq = record.seq), err)]
 pub(super) async fn apply_op_tx(
     conn: &mut sqlx::SqliteConnection,
     record: &OpRecord,
     chunk: Option<&mut ChunkAccumulator>,
+    state: &crate::loro::shared::LoroState,
 ) -> Result<ApplyEffects, AppError> {
     use std::str::FromStr;
     let op_type = OpType::from_str(&record.op_type).map_err(|e| {
@@ -726,7 +724,8 @@ pub(super) async fn apply_op_tx(
             // #2200 Item 1: when in a chunk, DEFER the dense-position
             // reprojection to end-of-chunk (record the touched parent group in
             // the accumulator); off the chunk path (`None`) reproject inline.
-            apply_create_block_via_loro(conn, &record.device_id, &p, chunk.as_deref_mut()).await?;
+            apply_create_block_via_loro(conn, state, &record.device_id, &p, chunk.as_deref_mut())
+                .await?;
         }
         OpType::EditBlock => {
             let p: EditBlockPayload = serde_json::from_str(&record.payload)?;
@@ -736,7 +735,7 @@ pub(super) async fn apply_op_tx(
                 block_id: p.block_id.as_str().to_owned(),
                 to_text: p.to_text.clone(),
             };
-            apply_edit_block_via_loro(conn, &record.device_id, &p).await?;
+            apply_edit_block_via_loro(conn, state, &record.device_id, &p).await?;
         }
         OpType::DeleteBlock => {
             let p: DeleteBlockPayload = serde_json::from_str(&record.payload)?;
@@ -758,7 +757,8 @@ pub(super) async fn apply_op_tx(
                 crate::space::resolve_block_space(&mut *conn, &p.block_id).await?;
             // Feed the cohort into the count-refresh hook.
             pre_state = PreOpState::Cohort(cohort.clone());
-            apply_delete_block_via_loro(conn, &record.device_id, &p, record.created_at).await?;
+            apply_delete_block_via_loro(conn, state, &record.device_id, &p, record.created_at)
+                .await?;
             effects.deleted_cohort = cohort;
             effects.delete_space_id = delete_space_id;
         }
@@ -787,7 +787,7 @@ pub(super) async fn apply_op_tx(
             // touched the seed, so without this the ancestors stay tombstoned
             // in the CRDT and the next reproject re-deletes them in SQL.
             let restored_ancestors =
-                apply_restore_block_via_loro(conn, &record.device_id, &p).await?;
+                apply_restore_block_via_loro(conn, state, &record.device_id, &p).await?;
             // Both the descendant cohort AND the restored ancestors feed the
             // pages_cache count refresh: an un-deleted ancestor's owning page
             // gains a live child, so its `child_block_count` must be recomputed
@@ -806,7 +806,7 @@ pub(super) async fn apply_op_tx(
             // set), which recomputes from post-cascade state — so we no longer
             // capture a pre-cascade affected-pages snapshot here.
             pre_state = PreOpState::Purge;
-            apply_purge_block_via_loro(conn, &record.device_id, &p).await?;
+            apply_purge_block_via_loro(conn, state, &record.device_id, &p).await?;
         }
         OpType::MoveBlock => {
             let p: MoveBlockPayload = serde_json::from_str(&record.payload)?;
@@ -825,23 +825,23 @@ pub(super) async fn apply_op_tx(
                 block_id: p.block_id.as_str().to_owned(),
                 src_page,
             };
-            apply_move_block_via_loro(conn, &record.device_id, &p).await?;
+            apply_move_block_via_loro(conn, state, &record.device_id, &p).await?;
         }
         OpType::AddTag => {
             let p: AddTagPayload = serde_json::from_str(&record.payload)?;
-            apply_add_tag_via_loro(conn, &record.device_id, &p).await?;
+            apply_add_tag_via_loro(conn, state, &record.device_id, &p).await?;
         }
         OpType::RemoveTag => {
             let p: RemoveTagPayload = serde_json::from_str(&record.payload)?;
-            apply_remove_tag_via_loro(conn, &record.device_id, &p).await?;
+            apply_remove_tag_via_loro(conn, state, &record.device_id, &p).await?;
         }
         OpType::SetProperty => {
             let p: SetPropertyPayload = serde_json::from_str(&record.payload)?;
-            apply_set_property_via_loro(conn, &record.device_id, &p).await?;
+            apply_set_property_via_loro(conn, state, &record.device_id, &p).await?;
         }
         OpType::DeleteProperty => {
             let p: DeletePropertyPayload = serde_json::from_str(&record.payload)?;
-            apply_delete_property_via_loro(conn, &record.device_id, &p).await?;
+            apply_delete_property_via_loro(conn, state, &record.device_id, &p).await?;
         }
         OpType::AddAttachment => {
             // Attachments stay on the SQL-only path — they don't go

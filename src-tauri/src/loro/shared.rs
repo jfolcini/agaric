@@ -1,48 +1,52 @@
-//! Process-global Loro engine state — the [`LoroEngineRegistry`]
-//! holder that outlives individual op-applies.
+//! Owned Loro engine state — the [`LoroEngineRegistry`] holder that
+//! outlives individual op-applies.
 //!
-//! ## Why a process global
+//! ## Ownership (#2249 — no process global)
 //!
-//! `crate::merge::engine_apply` is called from the materializer's
-//! apply path (the in-tx `apply_*_via_loro` helpers read this state,
-//! and the post-commit cohort fanouts dispatch through it). Those
-//! functions do not (and should not) take an `AppHandle` parameter
-//! — the merge layer has been kept tauri-agnostic for testability.
-//! But the engine state must persist across calls so successive ops
-//! mutate the same Loro doc (otherwise every op would start from an
-//! empty engine).
+//! `LoroState` used to live in a private `static GLOBAL:
+//! OnceLock<LoroState>` read via `shared::get()`. That global forced
+//! engine-path integration tests onto `cargo nextest` (one process per
+//! test — the shared registry raced under plain `cargo test`, #1079),
+//! leaked an `EngineUninit` fallback arm into every `apply_*_via_loro`
+//! handler, and made boot ordering a hand-sequenced comment
+//! (`shared::init()` before recovery replay).
 //!
-//! A `OnceLock<LoroState>` is the simplest correctness story:
-//! initialise once at bootstrap (see `crate::run` → `app.manage(...)`
-//! sequence), read by reference from `engine_apply`, never re-init.
-//! Tests use [`LoroState::install_for_test`] to drop the once-lock
-//! invariant inside test-only code paths.
+//! The state is now an ordinary value threaded explicitly:
 //!
-//! ## Lifetime
+//! * **Production** — `crate::run` constructs ONE `Arc<LoroState>` at
+//!   the top of setup, BEFORE the materializer or recovery exist, so
+//!   boot ordering holds by construction (constructor argument, not
+//!   sequencing). The same `Arc` is
+//!   - held by the [`Materializer`](crate::materializer::Materializer)
+//!     (its consumers thread it into `apply_op` / `apply_op_tx` →
+//!     `apply_*_via_loro`, and LOCAL command paths reach it through the
+//!     `&Materializer` they already carry),
+//!   - registered as Tauri managed state (`app.manage(Arc<LoroState>)`)
+//!     for the `RunEvent::Exit` snapshot save,
+//!   - captured by the maintenance jobs and the periodic snapshot task.
+//! * **Tests** — construct a fresh `LoroState` (or let
+//!   `Materializer::new` build one) per test. Isolation is per-instance
+//!   now, so engine-path tests run safely under plain `cargo test` in
+//!   one process across threads; the nextest-only constraint is gone.
 //!
-//! Created in `crate::run` immediately after the device_id is known
-//! (the registry's `for_space` call requires a `device_id`). Lives
-//! for the rest of the process.
-
-use std::sync::OnceLock;
+//! `crate::merge::engine_apply` stays Tauri-agnostic: it takes
+//! `&LoroState` as a parameter and never touches an `AppHandle`.
 
 use crate::loro::registry::LoroEngineRegistry;
 
-/// The process-global engine state.  `None` until [`init`] runs at
-/// bootstrap; `Some(...)` thereafter.
-static GLOBAL: OnceLock<LoroState> = OnceLock::new();
-
-/// Bundle of process-global Loro state. One instance per process.
+/// Bundle of engine state. Production holds exactly one instance for
+/// the process lifetime (inside an `Arc`); tests construct one per
+/// test for isolation.
 ///
-/// Wraps the registry as a struct (rather than a type alias for
-/// `LoroEngineRegistry`) so adding future fields (per-space stats, op
-/// counters, etc.) doesn't require a global field-access rewrite.
+/// Wraps the registry in a struct so future fields (per-space stats,
+/// op counters, etc.) don't require a field-access rewrite at every
+/// call site.
 pub struct LoroState {
     pub registry: LoroEngineRegistry,
 }
 
 impl LoroState {
-    /// Construct a fresh, empty state.  Engines are created lazily on
+    /// Construct fresh, empty state. Engines are created lazily on
     /// first hit per space.
     pub fn new() -> Self {
         Self {
@@ -57,57 +61,78 @@ impl Default for LoroState {
     }
 }
 
-/// Initialise the process-global state. Idempotent — a second call
-/// is a no-op (the first install wins). Called unconditionally from
-/// `crate::run`'s `app.setup` closure.
-///
-/// Returns `true` if this call performed the initialisation, `false`
-/// if a previous call already did.
-pub fn init() -> bool {
-    GLOBAL.set(LoroState::new()).is_ok()
-}
-
-/// Read-only access to the global engine state.  Returns `None` if
-/// [`init`] has not been called yet — callers must treat that as
-/// "engine state unavailable, skip the dispatch".
-pub fn get() -> Option<&'static LoroState> {
-    GLOBAL.get()
-}
-
-/// Test-only shim — install a fresh `LoroState` if the global is
-/// empty, returning the process-global state.
-///
-/// ## Isolation contract (read before adding engine-path tests)
-///
-/// This `GLOBAL` `OnceLock` is **process-wide**: the first
-/// `install_for_test` (or [`init`]) wins and every subsequent call is a
-/// no-op, so all tests in a binary share ONE `LoroState` and therefore
-/// ONE [`LoroEngineRegistry`](crate::loro::registry::LoroEngineRegistry).
-/// The engine-path conformance/undo tests deliberately reuse a single
-/// shared `TEST_SPACE_ID` (NOT distinct spaces) and isolate themselves by
-/// calling [`registry.clear()`](crate::loro::registry::LoroEngineRegistry::clear),
-/// which drops EVERY registered engine in the whole process so the next
-/// `for_space` lazy-creates a fresh tree.
-///
-/// Because the registry is shared and `clear()` is process-wide, two such
-/// tests running **concurrently in the same process** would collide: one
-/// test's `clear()` (or its lazy fresh-tree creation) can destroy the
-/// other's just-seeded tree mid-run. Isolation therefore holds ONLY when
-/// each test runs in its own process.
-///
-/// `cargo nextest` provides exactly that — one process per test — and it
-/// is what CI and the pre-push hook run. Plain `cargo test` is
-/// **UNSUPPORTED** for these modules (`command_integration_tests::conformance`,
-/// `command_integration_tests::undo_integration`): it runs every test of a
-/// binary in a single process across multiple threads, which exposes the
-/// shared-registry race and produces nondeterministic failures. Run engine-path
-/// tests with `cargo nextest run`, never `cargo test`.
-///
-/// See <https://github.com/jfolcini/agaric/issues/1079>.
 #[cfg(test)]
-pub fn install_for_test() -> &'static LoroState {
-    let _ = GLOBAL.set(LoroState::new());
-    GLOBAL
-        .get()
-        .expect("install_for_test: state must be present")
+mod tests {
+    use super::*;
+    use crate::space::SpaceId;
+    use crate::ulid::BlockId;
+
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+
+    /// #2249 — two `LoroState` instances in ONE process are fully
+    /// independent: writes through one registry are invisible to the
+    /// other. This (together with its sibling below, running
+    /// concurrently in the same test binary under plain `cargo test`)
+    /// pins that per-test isolation no longer depends on
+    /// process-per-test scheduling (the old nextest-only constraint,
+    /// #1079).
+    #[test]
+    fn separate_states_are_isolated_in_one_process_a() {
+        let state_a = LoroState::new();
+        let state_b = LoroState::new();
+        let space = SpaceId::from_trusted(SPACE);
+        let block = BlockId::from_trusted("01HZ00000000000000000ISOA1");
+
+        {
+            let mut g = state_a
+                .registry
+                .for_space(&space, "device-a")
+                .expect("for_space a");
+            g.engine_mut()
+                .apply_create_block(block.as_str(), "content", "only in A", None, 0)
+                .expect("create in A");
+        }
+        let mut g = state_b
+            .registry
+            .for_space(&space, "device-b")
+            .expect("for_space b");
+        assert!(
+            g.engine_mut()
+                .read_block(block.as_str())
+                .expect("read")
+                .is_none(),
+            "state B must not observe state A's writes"
+        );
+    }
+
+    /// #2249 — sibling of the test above; both mutate the SAME space id
+    /// through DIFFERENT `LoroState` instances and run concurrently in
+    /// one process under plain `cargo test`. Under the retired
+    /// process-global registry this exact shape raced (#1079).
+    #[test]
+    fn separate_states_are_isolated_in_one_process_b() {
+        let state = LoroState::new();
+        let space = SpaceId::from_trusted(SPACE);
+        let block = BlockId::from_trusted("01HZ00000000000000000ISOB1");
+
+        let mut g = state
+            .registry
+            .for_space(&space, "device-b")
+            .expect("for_space");
+        g.engine_mut()
+            .apply_create_block(block.as_str(), "content", "fresh", None, 0)
+            .expect("create");
+        let snap = g
+            .engine_mut()
+            .read_block(block.as_str())
+            .expect("read")
+            .expect("present");
+        assert_eq!(snap.content, "fresh");
+        drop(g);
+        assert_eq!(
+            state.registry.len(),
+            1,
+            "a fresh per-test registry holds exactly the engines this test created"
+        );
+    }
 }

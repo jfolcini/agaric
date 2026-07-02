@@ -75,8 +75,9 @@ async fn seed_alive_subtree(pool: &SqlitePool) {
         .expect("seed denormalized space_id");
 }
 
-fn fresh_loro_state() -> &'static LoroState {
-    crate::loro::shared::install_for_test()
+fn fresh_loro_state() -> LoroState {
+    // #2249: per-test isolated state (no process global).
+    LoroState::new()
 }
 
 /// Pre-populate the engine with the three blocks ALIVE.  Mirrors the
@@ -124,12 +125,12 @@ async fn delete_block_dispatches_to_loro_for_each_descendant() {
     let (pool, _dir) = fresh_pool().await;
     seed_alive_subtree(&pool).await;
     let state = fresh_loro_state();
-    seed_engine_with_alive_subtree(state);
+    seed_engine_with_alive_subtree(&state);
 
     // Sanity: every block is currently alive in the engine.
     for id in [PAGE_ID, CHILD_1, CHILD_2] {
         assert_eq!(
-            engine_block_deleted(state, id),
+            engine_block_deleted(&state, id),
             Some(false),
             "{id} must start alive",
         );
@@ -144,7 +145,9 @@ async fn delete_block_dispatches_to_loro_for_each_descendant() {
             .expect("append op_log"),
     );
 
-    super::apply_op(&pool, &record).await.expect("apply_op");
+    super::apply_op(&pool, &record, &state)
+        .await
+        .expect("apply_op");
 
     // Every block in the cohort — root + two descendants — must
     // now be deleted in the engine.  This is the load-bearing
@@ -153,7 +156,7 @@ async fn delete_block_dispatches_to_loro_for_each_descendant() {
     // `deleted_at = Null`.
     for id in [PAGE_ID, CHILD_1, CHILD_2] {
         assert_eq!(
-            engine_block_deleted(state, id),
+            engine_block_deleted(&state, id),
             Some(true),
             "{id} must be deleted after DeleteBlock cascade fanout",
         );

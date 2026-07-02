@@ -50,7 +50,15 @@ pub async fn move_block_inner(
     // `move_blocks_batch_inner` can run N moves inside ONE tx with identical
     // slot/cycle/depth semantics — this wrapper is the single-move arity of it.
     let mut tx = CommandTx::begin_immediate(pool, "move_block").await?;
-    let response = move_block_in_tx(&mut tx, device_id, block_id, new_parent_id, new_index).await?;
+    let response = move_block_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        block_id,
+        new_parent_id,
+        new_index,
+    )
+    .await?;
     tx.commit_and_dispatch(materializer).await?;
     Ok(response)
 }
@@ -73,9 +81,10 @@ pub async fn move_block_inner(
 ///
 /// See [`move_block_inner`]'s original inline body for the full rationale on
 /// each step; the comments are preserved verbatim below.
-#[instrument(skip(tx, device_id), err)]
+#[instrument(skip(tx, state, device_id), err)]
 async fn move_block_in_tx(
     tx: &mut CommandTx,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     block_id: String,
     new_parent_id: Option<String>,
@@ -279,15 +288,16 @@ async fn move_block_in_tx(
     //    must stay put on the LOCAL path so boot replay re-applies these ops
     //    idempotently (engine apply is idempotent; the projection UPDATEs are by
     //    construction) — the intended safety net while local engine-apply hardens
-    //    (#1248 / #1257). If the engine can't be resolved (space unresolvable /
-    //    engine uninitialised — e.g. a test without `install_for_test`), the
+    //    (#1248 / #1257). If the block's space can't be resolved (#2250:
+    //    `SpaceUnresolved`, the only remaining sql_only trigger), the
     //    helper internally FALLS BACK to `apply_move_block_sql_only`, which writes
     //    the provisional rank (`index_to_provisional_position`) + `parent_id` — so
     //    the row is never skipped and we never crash. This mirrors the
     //    engine-absent handling the sync `ApplyOp` path already relies on, and
     //    preserves the #1323 convergence (parent_id updated either way; position
     //    dense on the engine path, provisional on the fallback).
-    crate::materializer::apply_move_block_via_loro(&mut *tx, device_id, &move_payload).await?;
+    crate::materializer::apply_move_block_via_loro(&mut *tx, state, device_id, &move_payload)
+        .await?;
 
     // #664: recompute `page_id` AND `space_id` for the moved subtree,
     // synchronously. The async `RebuildPageIds` task chains
@@ -459,6 +469,7 @@ pub async fn move_blocks_batch_inner(
         let slot = start_index.saturating_add(i64::try_from(k).unwrap_or(i64::MAX));
         let response = move_block_in_tx(
             &mut tx,
+            materializer.loro_state(),
             device_id,
             id.into_string(),
             new_parent_id.clone(),

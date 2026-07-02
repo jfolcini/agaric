@@ -90,7 +90,7 @@ async fn seed_space_and_page(pool: &SqlitePool) {
 
 /// Push the page into the per-space engine tree (single-op create) so later
 /// child creates resolve the space and take the engine arm.
-async fn seed_page_via_loro(pool: &SqlitePool) {
+async fn seed_page_via_loro(pool: &SqlitePool, state: &crate::loro::shared::LoroState) {
     let payload = OpPayload::CreateBlock(CreateBlockPayload {
         block_id: BlockId::from_trusted(PAGE_ID),
         block_type: "page".into(),
@@ -103,7 +103,7 @@ async fn seed_page_via_loro(pool: &SqlitePool) {
         .await
         .expect("append page create");
     let mut tx = pool.begin().await.expect("begin");
-    super::apply_op_tx(&mut tx, &record, None)
+    super::apply_op_tx(&mut tx, &record, None, state)
         .await
         .expect("apply page create");
     tx.commit().await.expect("commit");
@@ -214,10 +214,15 @@ async fn stamp_child_page_and_space(pool: &SqlitePool, block_id: &str) {
 /// Create a content child under `PAGE_ID` at `index` via the single-op path
 /// (committed) and stamp its page_id/space_id so later moves/deletes resolve the
 /// engine. Used to establish pre-existing siblings before a mixed-op batch.
-async fn seed_committed_child(pool: &SqlitePool, block_id: &str, index: i64) {
+async fn seed_committed_child(
+    pool: &SqlitePool,
+    state: &crate::loro::shared::LoroState,
+    block_id: &str,
+    index: i64,
+) {
     let record = build_one_create(pool, block_id, index).await;
     let mut tx = pool.begin().await.expect("begin");
-    super::apply_op_tx(&mut tx, &record, None)
+    super::apply_op_tx(&mut tx, &record, None, state)
         .await
         .expect("apply seed child");
     tx.commit().await.expect("commit seed child");
@@ -231,14 +236,14 @@ async fn seed_committed_child(pool: &SqlitePool, block_id: &str, index: i64) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_import_defers_reproject_and_counts_to_end_of_chunk() {
     const N: usize = 12;
-    let _state = crate::loro::shared::install_for_test();
+    let state = crate::loro::shared::LoroState::new();
 
     let dir = TempDir::new().expect("tempdir");
     let pool = init_pool(&dir.path().join("import_chunk.db"))
         .await
         .expect("init_pool");
     seed_space_and_page(&pool).await;
-    seed_page_via_loro(&pool).await;
+    seed_page_via_loro(&pool, &state).await;
 
     let records = build_child_batch(&pool, N).await;
 
@@ -248,7 +253,7 @@ async fn batch_import_defers_reproject_and_counts_to_end_of_chunk() {
     super::recompute_call_spy::reset();
 
     let task = crate::materializer::MaterializeTask::BatchApplyOps(Arc::new(records));
-    super::handle_foreground_task(&pool, &task)
+    super::handle_foreground_task(&pool, &task, &state)
         .await
         .expect("batch apply");
 
@@ -320,14 +325,14 @@ async fn build_prepended_child_batch(pool: &SqlitePool, n: usize) -> Vec<crate::
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_import_prepend_defers_to_final_order_not_stale_snapshot() {
     const N: usize = 8;
-    let _state = crate::loro::shared::install_for_test();
+    let state = crate::loro::shared::LoroState::new();
 
     let dir = TempDir::new().expect("tempdir");
     let pool = init_pool(&dir.path().join("import_prepend.db"))
         .await
         .expect("init_pool");
     seed_space_and_page(&pool).await;
-    seed_page_via_loro(&pool).await;
+    seed_page_via_loro(&pool, &state).await;
 
     let records = build_prepended_child_batch(&pool, N).await;
 
@@ -335,7 +340,7 @@ async fn batch_import_prepend_defers_to_final_order_not_stale_snapshot() {
     super::recompute_call_spy::reset();
 
     let task = crate::materializer::MaterializeTask::BatchApplyOps(Arc::new(records));
-    super::handle_foreground_task(&pool, &task)
+    super::handle_foreground_task(&pool, &task, &state)
         .await
         .expect("batch apply");
 
@@ -385,14 +390,14 @@ async fn batch_import_prepend_defers_to_final_order_not_stale_snapshot() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn single_op_path_matches_batch_final_state() {
     const N: usize = 12;
-    let _state = crate::loro::shared::install_for_test();
+    let state = crate::loro::shared::LoroState::new();
 
     let dir = TempDir::new().expect("tempdir");
     let pool = init_pool(&dir.path().join("import_single.db"))
         .await
         .expect("init_pool");
     seed_space_and_page(&pool).await;
-    seed_page_via_loro(&pool).await;
+    seed_page_via_loro(&pool, &state).await;
 
     let records = build_child_batch(&pool, N).await;
 
@@ -403,7 +408,7 @@ async fn single_op_path_matches_batch_final_state() {
     // inline reproject + inline recompute), committing between ops.
     for record in &records {
         let mut tx = pool.begin().await.expect("begin");
-        super::apply_op_tx(&mut tx, record, None)
+        super::apply_op_tx(&mut tx, record, None, &state)
             .await
             .expect("apply single op");
         tx.commit().await.expect("commit");
@@ -482,9 +487,13 @@ async fn rank_of(pool: &SqlitePool, block_id: &str) -> i64 {
 
 /// Apply a slice of records as one `BatchApplyOps` chunk through the REAL
 /// pipeline.
-async fn apply_as_batch(pool: &SqlitePool, records: Vec<crate::op_log::OpRecord>) {
+async fn apply_as_batch(
+    pool: &SqlitePool,
+    state: &crate::loro::shared::LoroState,
+    records: Vec<crate::op_log::OpRecord>,
+) {
     let task = crate::materializer::MaterializeTask::BatchApplyOps(Arc::new(records));
-    super::handle_foreground_task(pool, &task)
+    super::handle_foreground_task(pool, &task, state)
         .await
         .expect("batch apply");
 }
@@ -510,14 +519,14 @@ async fn apply_as_batch(pool: &SqlitePool, records: Vec<crate::op_log::OpRecord>
 /// test actually exercises the stale-snapshot clobber.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mixed_create_and_move_matches_inline_path() {
-    let _state = crate::loro::shared::install_for_test();
+    let state = crate::loro::shared::LoroState::new();
 
     let dir = TempDir::new().expect("tempdir");
     let pool = init_pool(&dir.path().join("mixed_move.db"))
         .await
         .expect("init_pool");
     seed_space_and_page(&pool).await;
-    seed_page_via_loro(&pool).await;
+    seed_page_via_loro(&pool, &state).await;
 
     let a = child_id(0);
     let b = child_id(1);
@@ -525,13 +534,13 @@ async fn mixed_create_and_move_matches_inline_path() {
 
     // Pre-existing siblings a (rank 1) and b (rank 2), space-stamped so the
     // in-batch move resolves the engine (not the SQL-only fallback).
-    seed_committed_child(&pool, &a, 0).await;
-    seed_committed_child(&pool, &b, 1).await;
+    seed_committed_child(&pool, &state, &a, 0).await;
+    seed_committed_child(&pool, &state, &b, 1).await;
 
     // Mixed batch: create c at the end, then move b to the front.
     let create_c = build_one_create(&pool, &c, 2).await;
     let move_b = move_child_record(&pool, &b, 0).await;
-    apply_as_batch(&pool, vec![create_c, move_b]).await;
+    apply_as_batch(&pool, &state, vec![create_c, move_b]).await;
 
     // Correct final order [b, a, c]. A stale-snapshot flush would clobber this
     // back to [a, b, c].
@@ -546,28 +555,28 @@ async fn mixed_create_and_move_matches_inline_path() {
 /// gate must not change the outcome relative to the known-correct inline path.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mixed_create_and_move_single_op_parity() {
-    let _state = crate::loro::shared::install_for_test();
+    let state = crate::loro::shared::LoroState::new();
 
     let dir = TempDir::new().expect("tempdir");
     let pool = init_pool(&dir.path().join("mixed_move_single.db"))
         .await
         .expect("init_pool");
     seed_space_and_page(&pool).await;
-    seed_page_via_loro(&pool).await;
+    seed_page_via_loro(&pool, &state).await;
 
     let a = child_id(0);
     let b = child_id(1);
     let c = child_id(2);
 
-    seed_committed_child(&pool, &a, 0).await;
-    seed_committed_child(&pool, &b, 1).await;
+    seed_committed_child(&pool, &state, &a, 0).await;
+    seed_committed_child(&pool, &state, &b, 1).await;
 
     for record in [
         build_one_create(&pool, &c, 2).await,
         move_child_record(&pool, &b, 0).await,
     ] {
         let mut tx = pool.begin().await.expect("begin");
-        super::apply_op_tx(&mut tx, &record, None)
+        super::apply_op_tx(&mut tx, &record, None, &state)
             .await
             .expect("apply single op");
         tx.commit().await.expect("commit");
@@ -591,7 +600,7 @@ async fn mixed_create_and_move_single_op_parity() {
 /// comparing) — proving the gate keeps the mixed batch on the inline path.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mixed_create_and_delete_sibling_matches_inline_path() {
-    let _state = crate::loro::shared::install_for_test();
+    let state = crate::loro::shared::LoroState::new();
 
     // Batch path.
     let dir_b = TempDir::new().expect("tempdir");
@@ -599,15 +608,15 @@ async fn mixed_create_and_delete_sibling_matches_inline_path() {
         .await
         .expect("init_pool");
     seed_space_and_page(&pool_b).await;
-    seed_page_via_loro(&pool_b).await;
+    seed_page_via_loro(&pool_b, &state).await;
     let a = child_id(0);
     let b = child_id(1);
     let c = child_id(2);
-    seed_committed_child(&pool_b, &a, 0).await;
-    seed_committed_child(&pool_b, &b, 1).await;
+    seed_committed_child(&pool_b, &state, &a, 0).await;
+    seed_committed_child(&pool_b, &state, &b, 1).await;
     let create_c = build_one_create(&pool_b, &c, 2).await;
     let delete_a = delete_child_record(&pool_b, &a).await;
-    apply_as_batch(&pool_b, vec![create_c, delete_a]).await;
+    apply_as_batch(&pool_b, &state, vec![create_c, delete_a]).await;
 
     // Inline path (fresh DB), same op sequence one-at-a-time.
     let dir_i = TempDir::new().expect("tempdir");
@@ -615,15 +624,15 @@ async fn mixed_create_and_delete_sibling_matches_inline_path() {
         .await
         .expect("init_pool");
     seed_space_and_page(&pool_i).await;
-    seed_page_via_loro(&pool_i).await;
-    seed_committed_child(&pool_i, &a, 0).await;
-    seed_committed_child(&pool_i, &b, 1).await;
+    seed_page_via_loro(&pool_i, &state).await;
+    seed_committed_child(&pool_i, &state, &a, 0).await;
+    seed_committed_child(&pool_i, &state, &b, 1).await;
     for record in [
         build_one_create(&pool_i, &c, 2).await,
         delete_child_record(&pool_i, &a).await,
     ] {
         let mut tx = pool_i.begin().await.expect("begin");
-        super::apply_op_tx(&mut tx, &record, None)
+        super::apply_op_tx(&mut tx, &record, None, &state)
             .await
             .expect("apply single op");
         tx.commit().await.expect("commit");
@@ -668,7 +677,7 @@ async fn mixed_create_and_delete_sibling_matches_inline_path() {
 /// overwrite another's, most sharply for the shared top-level `None` key).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn multi_space_all_create_batch_does_not_collide_across_spaces() {
-    let _state = crate::loro::shared::install_for_test();
+    let state = crate::loro::shared::LoroState::new();
 
     let dir = TempDir::new().expect("tempdir");
     let pool = init_pool(&dir.path().join("multi_space.db"))
@@ -712,7 +721,7 @@ async fn multi_space_all_create_batch_does_not_collide_across_spaces() {
             .await
             .expect("append space root create");
         let mut tx = pool.begin().await.expect("begin");
-        super::apply_op_tx(&mut tx, &record, None)
+        super::apply_op_tx(&mut tx, &record, None, &state)
             .await
             .expect("apply space root");
         tx.commit().await.expect("commit");
@@ -737,7 +746,7 @@ async fn multi_space_all_create_batch_does_not_collide_across_spaces() {
                 .expect("append child"),
         );
     }
-    apply_as_batch(&pool, records).await;
+    apply_as_batch(&pool, &state, records).await;
 
     // Each space's lone child is dense rank 1 in its OWN space. A collision on
     // the top-level key would have dropped one space's reproject.

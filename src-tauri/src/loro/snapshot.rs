@@ -407,6 +407,7 @@ pub fn spawn_periodic_snapshot(
     pool: SqlitePool,
     shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
     interval_secs: u64,
+    state: std::sync::Arc<crate::loro::shared::LoroState>,
 ) {
     use std::sync::atomic::Ordering;
     use std::time::Duration;
@@ -429,9 +430,6 @@ pub fn spawn_periodic_snapshot(
             if shutdown.load(Ordering::Relaxed) {
                 break;
             }
-            let Some(state) = crate::loro::shared::get() else {
-                continue;
-            };
             let saved = save_all_engines(&pool, &state.registry).await;
             if saved > 0 {
                 tracing::debug!(spaces = saved, "loro: periodic snapshot persisted");
@@ -797,7 +795,7 @@ mod tests {
         // Install fresh process-global state and register an engine the
         // task can find via `crate::loro::shared::get()`. Mutate it so
         // the exported snapshot is non-trivial.
-        let state = crate::loro::shared::install_for_test();
+        let state = std::sync::Arc::new(crate::loro::shared::LoroState::new());
         {
             let mut g = state
                 .registry
@@ -811,7 +809,7 @@ mod tests {
         // Spawn the periodic task (1s cadence). The first tick is skipped,
         // so the first persist lands ~1s in.
         let shutdown = Arc::new(AtomicBool::new(false));
-        spawn_periodic_snapshot(pool.clone(), shutdown.clone(), 1);
+        spawn_periodic_snapshot(pool.clone(), shutdown.clone(), 1, Arc::clone(&state));
 
         // Poll for the row rather than sleeping a fixed interval: bounded
         // loop, ~5s total timeout, short sleeps in between. Deterministic

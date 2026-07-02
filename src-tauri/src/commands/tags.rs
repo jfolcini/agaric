@@ -122,9 +122,16 @@ pub async fn add_tag_inner(
     //      `payload` is consumed inside the helper. A `None` result means the
     //      association already exists — the single-row path surfaces that as
     //      an explicit `InvalidOperation` error (the bulk path skips it).
-    let op_record = apply_tag_to_block_in_tx(&mut tx, device_id, block_id_str, tag_id_str, payload)
-        .await?
-        .ok_or_else(|| AppError::InvalidOperation("tag already applied".into()))?;
+    let op_record = apply_tag_to_block_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        block_id_str,
+        tag_id_str,
+        payload,
+    )
+    .await?
+    .ok_or_else(|| AppError::InvalidOperation("tag already applied".into()))?;
 
     // 6. Commit + dispatch background cache tasks (fire-and-forget).
     tx.enqueue_background(op_record);
@@ -164,6 +171,7 @@ pub async fn add_tag_inner(
 /// has `block_type = 'tag'`, and `block_id != tag_id`.
 async fn apply_tag_to_block_in_tx(
     tx: &mut CommandTx,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     block_id: &str,
     tag_id: &str,
@@ -194,6 +202,7 @@ async fn apply_tag_to_block_in_tx(
 
     apply_tag_to_block_resolved(
         tx,
+        state,
         device_id,
         block_id,
         tag_id,
@@ -234,6 +243,7 @@ async fn apply_tag_to_block_in_tx(
 #[allow(clippy::too_many_arguments)]
 async fn apply_tag_to_block_resolved(
     tx: &mut CommandTx,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     block_id: &str,
     tag_id: &str,
@@ -320,16 +330,16 @@ async fn apply_tag_to_block_resolved(
     // inert: the dup-check above already returned `Ok(None)` if the row existed,
     // so the row is always absent here. We do NOT call `apply_op_tx` /
     // `advance_apply_cursor`: the apply cursor stays put on the LOCAL path so boot
-    // replay re-applies idempotently (the safety net — #1257). If the engine
-    // can't be resolved (source block has no space / engine uninitialised — e.g.
-    // a test without `install_for_test`), the helper FALLS BACK to
+    // replay re-applies idempotently (the safety net — #1257). If the source
+    // block's space can't be resolved (#2250: `SpaceUnresolved`, the only
+    // remaining sql_only trigger), the helper FALLS BACK to
     // `apply_add_tag_sql_only`, which runs the SAME projection + inheritance — so
     // the association is never skipped and we never crash.
     let add_payload = AddTagPayload {
         block_id: BlockId::from_trusted(block_id),
         tag_id: BlockId::from_trusted(tag_id),
     };
-    crate::materializer::apply_add_tag_via_loro(tx, device_id, &add_payload).await?;
+    crate::materializer::apply_add_tag_via_loro(tx, state, device_id, &add_payload).await?;
 
     Ok(Some(op_record))
 }
@@ -414,12 +424,18 @@ pub async fn remove_tag_inner(
     // BOTH `block_tags` AND `block_tag_inherited` end up identical to before
     // (#1323 convergence). We do NOT call `apply_op_tx` / `advance_apply_cursor`:
     // the apply cursor stays put on the LOCAL path so boot replay re-applies
-    // idempotently (the safety net — #1257). If the engine can't be resolved
-    // (block has no space / engine uninitialised — e.g. a test without
-    // `install_for_test`), the helper FALLS BACK to `apply_remove_tag_sql_only`,
+    // idempotently (the safety net — #1257). If the block's space can't be resolved
+    // (#2250: `SpaceUnresolved`, the only remaining sql_only trigger), the
+    // helper FALLS BACK to `apply_remove_tag_sql_only`,
     // which runs the SAME projection + cleanup — so the removal is never skipped
     // and we never crash.
-    crate::materializer::apply_remove_tag_via_loro(&mut tx, device_id, &remove_payload).await?;
+    crate::materializer::apply_remove_tag_via_loro(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        &remove_payload,
+    )
+    .await?;
 
     // 5. Commit + dispatch background cache tasks (fire-and-forget).
     tx.enqueue_background(op_record);
@@ -844,6 +860,7 @@ pub async fn add_tags_by_ids_inner(
         let src_space = block_spaces.get(block_id_str);
         if let Some(op_record) = apply_tag_to_block_resolved(
             &mut tx,
+            materializer.loro_state(),
             device_id,
             block_id_str,
             tag_id_str,

@@ -154,6 +154,7 @@ pub async fn set_property_inner(
     let mut tx = CommandTx::begin_immediate(pool, "set_property").await?;
     let (block, op_record) = set_property_in_tx(
         &mut tx,
+        materializer.loro_state(),
         device_id,
         block_id.into_string(),
         &key,
@@ -252,6 +253,7 @@ pub async fn set_todo_state_inner(
     let block_id_owned = block_id.into_string();
     let (result, todo_op) = set_property_in_tx(
         &mut tx,
+        materializer.loro_state(),
         device_id,
         block_id_owned.clone(),
         "todo_state",
@@ -272,6 +274,7 @@ pub async fn set_todo_state_inner(
         (None, Some("TODO" | "DOING")) => {
             let (_, op) = set_property_in_tx(
                 &mut tx,
+                materializer.loro_state(),
                 device_id,
                 block_id_owned.clone(),
                 "created_at",
@@ -288,6 +291,7 @@ pub async fn set_todo_state_inner(
         (Some("DONE"), Some("TODO" | "DOING")) => {
             let (_, op) = set_property_in_tx(
                 &mut tx,
+                materializer.loro_state(),
                 device_id,
                 block_id_owned.clone(),
                 "created_at",
@@ -299,14 +303,21 @@ pub async fn set_todo_state_inner(
             )
             .await?;
             tx.enqueue_background(op);
-            let op =
-                delete_property_in_tx(&mut tx, device_id, &block_id_owned, "completed_at").await?;
+            let op = delete_property_in_tx(
+                &mut tx,
+                materializer.loro_state(),
+                device_id,
+                &block_id_owned,
+                "completed_at",
+            )
+            .await?;
             tx.enqueue_background(op);
         }
         // TODO/DOING → DONE: set completed_at
         (Some("TODO" | "DOING"), Some("DONE")) => {
             let (_, op) = set_property_in_tx(
                 &mut tx,
+                materializer.loro_state(),
                 device_id,
                 block_id_owned.clone(),
                 "completed_at",
@@ -321,11 +332,23 @@ pub async fn set_todo_state_inner(
         }
         // Any → null (un-tasking): clear both
         (Some(_), None) => {
-            let op =
-                delete_property_in_tx(&mut tx, device_id, &block_id_owned, "created_at").await?;
+            let op = delete_property_in_tx(
+                &mut tx,
+                materializer.loro_state(),
+                device_id,
+                &block_id_owned,
+                "created_at",
+            )
+            .await?;
             tx.enqueue_background(op);
-            let op =
-                delete_property_in_tx(&mut tx, device_id, &block_id_owned, "completed_at").await?;
+            let op = delete_property_in_tx(
+                &mut tx,
+                materializer.loro_state(),
+                device_id,
+                &block_id_owned,
+                "completed_at",
+            )
+            .await?;
             tx.enqueue_background(op);
         }
         _ => {} // Same state or other transitions — no timestamp changes
@@ -335,7 +358,13 @@ pub async fn set_todo_state_inner(
     // module — using the in-tx form so the sibling creation rolls back
     // alongside the state change if anything below fails.
     if new_state.as_deref() == Some("DONE") && prev_state.as_deref() != Some("DONE") {
-        crate::recurrence::handle_recurrence_in_tx(&mut tx, device_id, &block_id_owned).await?;
+        crate::recurrence::handle_recurrence_in_tx(
+            &mut tx,
+            materializer.loro_state(),
+            device_id,
+            &block_id_owned,
+        )
+        .await?;
     }
 
     tx.commit_and_dispatch(materializer).await?;
@@ -484,6 +513,7 @@ pub async fn set_todo_state_batch_inner(
         // post-commit dispatch.
         let (_row, op_record) = crate::commands::blocks::set_property_in_tx(
             &mut tx,
+            materializer.loro_state(),
             device_id,
             block_id.into_string(),
             "todo_state",
@@ -556,6 +586,7 @@ pub async fn set_priority_inner(
 
     let (block, op_record) = set_property_in_tx(
         &mut tx,
+        materializer.loro_state(),
         device_id,
         block_id.into_string(),
         "priority",

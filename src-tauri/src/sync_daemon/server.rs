@@ -119,13 +119,10 @@ pub(crate) async fn handle_incoming_sync(
     event_sink: std::sync::Arc<dyn SyncEventSink>,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), AppError> {
-    // Production responder: the orchestrator resolves its Loro engine
-    // state from the process-global registry (`loro_state_override` =
-    // `None`). The `_inner` seam below lets the #2129 real-loopback
-    // convergence test inject a PER-DEVICE registry so two devices can
-    // run in one test process (the single process-global `OnceLock`
-    // registry cannot represent two distinct devices — see
-    // `loro::shared::install_for_test`'s isolation contract).
+    // The responder resolves its Loro engine state from the
+    // materializer it is handed (#2249: each device — production or a
+    // test's device — owns its `Arc<LoroState>`, so two devices in one
+    // test process naturally use distinct engines with no override seam).
     //
     // `Box::pin` keeps THIS wrapper's future tiny (just a heap pointer)
     // instead of embedding the large `_inner` future inline, so the
@@ -139,37 +136,6 @@ pub(crate) async fn handle_incoming_sync(
         scheduler,
         event_sink,
         cancel,
-        None,
-    ))
-    .await
-}
-
-/// Test-only seam: run the responder session with a per-device Loro
-/// engine registry override, exactly as `SyncOrchestrator::with_loro_state`
-/// does for the initiator. Lets the #2129 two-instance real-socket
-/// convergence test stand up device B's responder against its OWN leaked
-/// `LoroState` instead of the process-global one.
-#[cfg(test)]
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn handle_incoming_sync_with_loro_state(
-    conn: SyncConnection,
-    pool: sqlx::SqlitePool,
-    device_id: String,
-    materializer: crate::materializer::Materializer,
-    scheduler: std::sync::Arc<SyncScheduler>,
-    event_sink: std::sync::Arc<dyn SyncEventSink>,
-    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    loro_state: &'static crate::loro::shared::LoroState,
-) -> Result<(), AppError> {
-    Box::pin(handle_incoming_sync_inner(
-        conn,
-        pool,
-        device_id,
-        materializer,
-        scheduler,
-        event_sink,
-        cancel,
-        Some(loro_state),
     ))
     .await
 }
@@ -183,7 +149,6 @@ async fn handle_incoming_sync_inner(
     scheduler: std::sync::Arc<SyncScheduler>,
     event_sink: std::sync::Arc<dyn SyncEventSink>,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    loro_override: Option<&'static crate::loro::shared::LoroState>,
 ) -> Result<(), AppError> {
     tracing::info!("incoming sync connection received, starting responder session");
 
@@ -466,17 +431,6 @@ async fn handle_incoming_sync_inner(
     if let Some(cert_cn) = conn.peer_cert_cn() {
         orch = orch.with_expected_remote_id(cert_cn.to_string());
     }
-    // #2129 test seam: when a per-device registry override is supplied,
-    // attach it so the responder dispatches inbound ops against THIS
-    // device's engines (not the process-global ones shared by the whole
-    // test binary). `None` in production → process-global registry.
-    #[cfg(test)]
-    if let Some(state) = loro_override {
-        orch = orch.with_loro_state(state);
-    }
-    #[cfg(not(test))]
-    let _ = loro_override;
-
     // ── Process first message ─────────────────────────────────────────────
     let response = orch.handle_message(first_msg).await?;
     if let Some(resp) = response {

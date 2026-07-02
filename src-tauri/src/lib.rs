@@ -766,9 +766,23 @@ fn init_persistence(
 fn build_materializer(
     pools: &db::DbPools,
     app_data_dir: &std::path::Path,
-) -> (lifecycle::LifecycleHooks, materializer::Materializer) {
+) -> (
+    lifecycle::LifecycleHooks,
+    materializer::Materializer,
+    std::sync::Arc<loro::shared::LoroState>,
+) {
     use lifecycle::LifecycleHooks;
     use materializer::Materializer;
+
+    // #2249: construct the process-wide Loro engine state FIRST and hand
+    // it to the materializer as a constructor argument. Engine state
+    // therefore exists before the materializer can apply its first op —
+    // and before recovery replay (which receives the materializer) — by
+    // construction, replacing the old hand-sequenced
+    // `shared::init()`-before-recovery comment. The same `Arc` is
+    // registered as Tauri managed state later in setup for the
+    // `RunEvent::Exit` snapshot save.
+    let loro_state = std::sync::Arc::new(loro::shared::LoroState::new());
 
     // Create materializer — bg cache rebuilds read from read pool, write to write pool (P-8)
     //
@@ -782,6 +796,7 @@ fn build_materializer(
         pools.write.clone(),
         pools.read.clone(),
         lifecycle.clone(),
+        std::sync::Arc::clone(&loro_state),
     );
     // C-3c — register `app_data_dir` so the
     // `CleanupOrphanedAttachments` background task can locate
@@ -795,7 +810,7 @@ fn build_materializer(
     // hooks it.
     materializer.set_app_data_dir(app_data_dir.to_path_buf());
 
-    (lifecycle, materializer)
+    (lifecycle, materializer, loro_state)
 }
 
 /// Boot-phase 5 — synchronous Loro init + rehydrate, crash recovery, and
@@ -812,29 +827,21 @@ fn recover_and_bootstrap(
 ) -> Result<recovery::RecoveryReport, Box<dyn std::error::Error>> {
     use materializer::MaterializeTask;
 
-    // Boot ordering: the per-space `LoroEngine` registry MUST
-    // be populated before the materializer dispatches its first
-    // op. Recovery (`recover_at_boot` below) replays
-    // unmaterialised ops through the materializer, so any op it
-    // replays would race a deferred rehydrate and land in an
-    // empty engine. Run the Loro state init + rehydrate
-    // synchronously (via `block_on`) BEFORE recovery. The
-    // boot-latency cost is one `loro_doc_state` table scan —
-    // single-digit ms at typical workspace scales. The periodic
-    // flush task is spawned separately (it's a long-running
-    // background task; blocking on it would pin boot).
-    let installed = crate::loro::shared::init();
-    tracing::info!(
-        installed,
-        "loro: process-global LoroState init complete (synchronous, pre-recovery)",
-    );
-    // Bind the process-global registry once: rehydrate reads it, and
-    // recovery's #535 sync-inbox replay re-imports leftover slots into
-    // it. `get()` is `Some` immediately after `init()` (the static is
-    // installed synchronously above), so the `expect` is infallible at
-    // this point in boot.
-    let loro_state = crate::loro::shared::get()
-        .expect("LoroState must be installed by shared::init() before recovery");
+    // Boot ordering: the per-space `LoroEngine` registry MUST be
+    // populated before the materializer dispatches its first op.
+    // Recovery (`recover_at_boot` below) replays unmaterialised ops
+    // through the materializer, so any op it replays would race a
+    // deferred rehydrate and land in an empty engine. #2249: the state
+    // itself was constructed BEFORE the materializer (a
+    // `Materializer::with_read_pool_and_lifecycle` constructor
+    // argument, see `build_materializer`), so "engine state exists
+    // pre-recovery" holds by construction; only the epoch load +
+    // rehydrate below still run synchronously (via `block_on`) before
+    // recovery. The boot-latency cost is one `loro_doc_state` table
+    // scan — single-digit ms at typical workspace scales. The periodic
+    // flush task is spawned separately (it's a long-running background
+    // task; blocking on it would pin boot).
+    let loro_state = materializer.loro_state();
     // #792: install the persisted peer-id epoch BEFORE any engine is
     // constructed (rehydrate below + every lazy `for_space`). A vault
     // that went through a snapshot RESET carries a bumped epoch in
@@ -1230,6 +1237,10 @@ fn spawn_background_tasks(
     let tombstone_device_id = device_id.to_owned();
     let tombstone_materializer = materializer.clone();
     let loro_snapshot_write_pool = pools.write.clone();
+    // #2249: the maintenance predicate + job read engine state through
+    // clones of the materializer's Arc (no process global).
+    let loro_state_for_pred = Arc::clone(materializer.loro_state());
+    let loro_state_for_snapshot_job = Arc::clone(materializer.loro_state());
     let projected_agenda_materializer = materializer.clone();
     // Issue #157 sub-item H — shared "last fired UTC day"
     // sentinel for the projected_agenda_midnight job.
@@ -1344,11 +1355,12 @@ fn spawn_background_tasks(
                 {
                     return false;
                 }
-                crate::loro::shared::get().is_some_and(|s| s.registry.dirty_count() > 0)
+                loro_state_for_pred.registry.dirty_count() > 0
             }),
             run: Box::new(move || {
                 let pool = loro_snapshot_write_pool.clone();
-                Box::pin(async move { maintenance::loro_snapshot_if_dirty(&pool).await })
+                let state = Arc::clone(&loro_state_for_snapshot_job);
+                Box::pin(async move { maintenance::loro_snapshot_if_dirty(&pool, &state).await })
             }),
         },
         // Issue #157 sub-item H — projected-agenda midnight
@@ -1387,6 +1399,7 @@ fn spawn_background_tasks(
         pools.write.clone(),
         snapshot_shutdown,
         crate::loro::snapshot::SNAPSHOT_INTERVAL_SECS,
+        Arc::clone(materializer.loro_state()),
     );
 }
 
@@ -1979,7 +1992,11 @@ pub fn run() {
 
             // C-2b: build the materializer BEFORE recovery so the boot-time
             // op-log replay can drive ApplyOp tasks through the foreground queue.
-            let (lifecycle, materializer) = build_materializer(&pools, &app_data_dir);
+            let (lifecycle, materializer, loro_state) = build_materializer(&pools, &app_data_dir);
+            // #2249: expose engine state to the Tauri state graph — the
+            // `RunEvent::Exit` handler resolves it via `try_state` for the
+            // shutdown snapshot save.
+            app.manage(std::sync::Arc::clone(&loro_state));
 
             // Loro init + rehydrate, crash recovery, and per-space bootstrap
             // (bootstrap_spaces is boot-fatal).
@@ -2139,7 +2156,9 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 use tauri::Manager;
                 if let (Some(state), Some(pool)) = (
-                    crate::loro::shared::get(),
+                    app_handle
+                        .try_state::<std::sync::Arc<crate::loro::shared::LoroState>>()
+                        .map(|s| std::sync::Arc::clone(&s)),
                     app_handle.try_state::<WritePool>(),
                 ) {
                     let saved = tauri::async_runtime::block_on(

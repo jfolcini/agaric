@@ -133,6 +133,7 @@ async fn seed_blocks_sql(pool: &SqlitePool) {
 /// RemoveTag to resolve a space and route through `apply_*_via_loro`).
 async fn create_via_loro(
     pool: &SqlitePool,
+    state: &crate::loro::shared::LoroState,
     block_id: &str,
     block_type: &str,
     parent: Option<&str>,
@@ -150,7 +151,7 @@ async fn create_via_loro(
         .await
         .expect("append create");
     let mut tx = pool.begin().await.expect("begin create");
-    super::apply_op_tx(&mut tx, &record, None)
+    super::apply_op_tx(&mut tx, &record, None, state)
         .await
         .expect("apply create");
     tx.commit().await.expect("commit create");
@@ -192,13 +193,13 @@ async fn run_engine_arm() -> (
         .await
         .expect("register space");
 
-    let _state = crate::loro::shared::install_for_test();
+    let state = crate::loro::shared::LoroState::new();
     // Seed the whole hierarchy through the engine so every block resolves
     // to SPACE_ID and the AddTag / RemoveTag ops take the via_loro arm.
-    create_via_loro(&pool, PAGE_ID, "page", None, 0).await;
-    create_via_loro(&pool, PARENT_ID, "content", Some(PAGE_ID), 0).await;
-    create_via_loro(&pool, CHILD_ID, "content", Some(PARENT_ID), 0).await;
-    create_via_loro(&pool, TAG_ID, "tag", Some(PAGE_ID), 1).await;
+    create_via_loro(&pool, &state, PAGE_ID, "page", None, 0).await;
+    create_via_loro(&pool, &state, PARENT_ID, "content", Some(PAGE_ID), 0).await;
+    create_via_loro(&pool, &state, CHILD_ID, "content", Some(PARENT_ID), 0).await;
+    create_via_loro(&pool, &state, TAG_ID, "tag", Some(PAGE_ID), 1).await;
 
     // Production fills `blocks.page_id` / `space_id` via background rebuild /
     // the deferred SetBlockPageId task, which this op-log-only seed skips.
@@ -226,7 +227,7 @@ async fn run_engine_arm() -> (
         .await
         .expect("append add");
     let mut tx = pool.begin().await.expect("begin add");
-    super::apply_op_tx(&mut tx, &record, None)
+    super::apply_op_tx(&mut tx, &record, None, &state)
         .await
         .expect("apply add");
     tx.commit().await.expect("commit add");
@@ -243,7 +244,7 @@ async fn run_engine_arm() -> (
         .await
         .expect("append remove");
     let mut tx = pool.begin().await.expect("begin remove");
-    super::apply_op_tx(&mut tx, &record, None)
+    super::apply_op_tx(&mut tx, &record, None, &state)
         .await
         .expect("apply remove");
     tx.commit().await.expect("commit remove");
