@@ -60,6 +60,20 @@ describe('astToFilterProjection —  (tag / path)', () => {
     const p = project('path:Journal/*,Notes/*')
     expect(p.includePageGlobs).toEqual(['Journal/*', 'Notes/*'])
   })
+
+  it('does NOT split commas inside a {…} brace group (top-level split only)', () => {
+    // Pins the brace-depth guard in the projection's comma splitter: the
+    // comma inside `{Journal,Archive}` belongs to the brace alternative and
+    // must stay put, while the top-level comma before `Notes/*` splits. A
+    // broken depth guard would emit `{Journal` + `Archive}/*` + `Notes/*`.
+    const p = project('path:{Journal,Archive}/*,Notes/*')
+    expect(p.includePageGlobs).toEqual(['{Journal,Archive}/*', 'Notes/*'])
+  })
+
+  it('keeps braced commas intact for not-path: excludes too', () => {
+    const p = project('not-path:{Journal,Archive}/*,Notes/*')
+    expect(p.excludePageGlobs).toEqual(['{Journal,Archive}/*', 'Notes/*'])
+  })
 })
 
 describe('astToFilterProjection —  (metadata)', () => {

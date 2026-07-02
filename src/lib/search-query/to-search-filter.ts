@@ -26,6 +26,7 @@
  * query. The `not-state:none` chip flips to `col IS NOT NULL`.
  */
 
+import { splitTopLevelCommas } from './glob-validate'
 import type { DateFilterValue, SearchPropertyFilter, SearchQueryAST } from './types'
 
 export interface AstFilterProjection {
@@ -143,20 +144,12 @@ export function astToFilterProjection(ast: SearchQueryAST): AstFilterProjection 
 
 function splitCommas(value: string): string[] {
   // Top-level comma split — commas inside a `{...}` group belong to
-  // brace alternatives and must not break the entry into separate
-  // globs. Mirrors the Rust `split_top_level_commas` helper.
-  const parts: string[] = []
-  let depth = 0
-  let last = 0
-  for (let i = 0; i < value.length; i++) {
-    const ch = value[i]
-    if (ch === '{') depth++
-    else if (ch === '}') depth = Math.max(0, depth - 1)
-    else if (ch === ',' && depth === 0) {
-      parts.push(value.slice(last, i))
-      last = i + 1
-    }
-  }
-  parts.push(value.slice(last))
-  return parts.map((s) => s.trim()).filter((s) => s.length > 0)
+  // brace alternatives and must not break the entry into separate globs.
+  // Single-sourced from `splitTopLevelCommas` (the tested port of the Rust
+  // `split_top_level_commas` helper) so the brace-depth guard can't drift
+  // between the projection here and `prepareGlobs`; this wrapper only adds
+  // the trim + drop-empties the projection wants.
+  return splitTopLevelCommas(value)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
 }

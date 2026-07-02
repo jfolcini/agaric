@@ -345,6 +345,21 @@ describe('classify / parse', () => {
     }
   })
 
+  it('flags calendar-invalid dates that pass the range checks as invalid', () => {
+    // `2026-13-99` short-circuits on `isIsoDate`'s month>12 / day>31 range
+    // guards. These two have in-range month AND day, so the ONLY thing that
+    // rejects them is the `Date.UTC` calendar roundtrip (Feb has no 30th;
+    // April has no 31st). Pins that branch, which was otherwise uncovered.
+    for (const query of ['due:2026-02-30', 'scheduled:>=2026-04-31']) {
+      const tok = parse(query).filters[0]
+      if (tok && tok.kind === 'invalid') {
+        expect(tok.error).toMatch(/^InvalidDateFilter:/)
+      } else {
+        throw new Error(`expected invalid token for '${query}'`)
+      }
+    }
+  })
+
   it('recognises prop:key=value tokens', () => {
     const ast = parse('prop:status=done not-prop:archived=true')
     expect(ast.filters).toHaveLength(2)

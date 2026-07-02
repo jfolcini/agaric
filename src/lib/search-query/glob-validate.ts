@@ -182,7 +182,7 @@ export function asciiLowercase(input: string): string {
  * are brace alternatives and must NOT split the entry. Mirrors
  * `split_top_level_commas` in `glob_filter.rs`.
  */
-function splitTopLevelCommas(input: string): string[] {
+export function splitTopLevelCommas(input: string): string[] {
   const out: string[] = []
   let depth = 0
   let last = 0
