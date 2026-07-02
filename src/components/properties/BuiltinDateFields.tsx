@@ -2,7 +2,7 @@
  * BuiltinDateFields — read-only date field display for built-in
  * block dates (due_date, scheduled_date).
  *
- * Extracted from BlockPropertyDrawer. Shows each date as a PropertyRow
+ * Extracted from BlockPropertyDrawer. Shows each date as a PropertyField
  * with an editable date input and a clear button. Only used by
  * BlockPropertyDrawer (page properties don't have built-in dates).
  */
@@ -10,7 +10,7 @@
 import { CalendarCheck2, CalendarClock } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { PropertyRow } from '@/components/properties/PropertyRow'
+import { PropertyField } from '@/components/properties/PropertyField'
 
 export interface BuiltinDateFieldsProps {
   dueDate: string | null
@@ -36,7 +36,7 @@ export function BuiltinDateFields({
   return (
     <>
       {dueDate !== null && (
-        <PropertyRow
+        <PropertyField
           key={`due-${dueDate}`}
           icon={CalendarCheck2}
           label={t('property.dueDate')}
@@ -51,7 +51,7 @@ export function BuiltinDateFields({
         />
       )}
       {scheduledDate !== null && (
-        <PropertyRow
+        <PropertyField
           key={`sched-${scheduledDate}`}
           icon={CalendarClock}
           label={t('property.scheduledDate')}

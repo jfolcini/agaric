@@ -26,7 +26,7 @@ Names below are how we refer to each surface in conversation. They mostly match 
 | **SuggestionList** | Shared popup for every inline picker (`[[`, `@`, `((`, `/`, `::`). | `SuggestionList.tsx` |
 | **BlockLinkPicker** / **TagPicker** / **BlockRefPicker** / **SlashMenu** / **PropertyPicker** | The five inline pickers, all rendered through SuggestionList. | TipTap extensions under `src/editor/extensions/` |
 | **BlockPropertyDrawer** | Slide-out sheet of typed property editors for a block. | `BlockPropertyDrawer.tsx` |
-| **PropertyRowEditor** | One typed property row inside the drawer. | `PropertyRowEditor.tsx` + `PropertyRowEditor/` |
+| **PropertyRowEditor** | One typed property row inside the drawer. | `properties/PropertyRowEditor.tsx` + `properties/PropertyRowEditor/` |
 | **SortableBlockWrapper** | DnD wrapper around each block. Owns the offscreen-placeholder optimisation. | `SortableBlockWrapper.tsx` |
 | **SpaceSwitcher** | Sidebar header dropdown for active space. Collapses to **SpaceAccentBadge** in icon-rail mode. | `SpaceSwitcher.tsx` |
 | **SpaceAccentBadge** | Collapsed-state space indicator; click cycles to next space. | `SpaceAccentBadge.tsx` |

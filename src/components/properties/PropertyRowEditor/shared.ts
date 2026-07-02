@@ -8,7 +8,7 @@
 
 import { logger } from '@/lib/logger'
 
-import type { PropertyDefinition, PropertyRow } from '../../lib/tauri'
+import type { PropertyDefinition, PropertyRow } from '../../../lib/tauri'
 
 /**
  * Extract the canonical string value for the current property, picking the

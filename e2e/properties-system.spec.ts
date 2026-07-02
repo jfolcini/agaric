@@ -190,7 +190,7 @@ test.describe('Set property via drawer', () => {
     await valueInput.fill('@home')
 
     // Commit the value. The drawer has no dedicated Save button — pressing
-    // Enter triggers the input's onKeyDown→blur handler in PropertyRow,
+    // Enter triggers the input's onKeyDown→blur handler in PropertyField,
     // which calls onSave and persists via setProperty.
     await valueInput.press('Enter')
 

@@ -20,8 +20,8 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { __resetPriorityLevelsForTests, getPriorityLevels } from '../../lib/priority-levels'
-import type { PropertyDefinition, PropertyRow } from '../../lib/tauri'
+import { __resetPriorityLevelsForTests, getPriorityLevels } from '../../../lib/priority-levels'
+import type { PropertyDefinition, PropertyRow } from '../../../lib/tauri'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -890,7 +890,7 @@ describe('PropertyRowEditor ref picker', () => {
     // Cache is now keyed by composite `${spaceId}::${ulid}`.
     // No active space is set up here, so the default `__global__`
     // sentinel is used (lookup falls back to it via `keyFor(null, id)`).
-    const { useResolveStore, keyFor } = await import('../../stores/resolve')
+    const { useResolveStore, keyFor } = await import('../../../stores/resolve')
     useResolveStore.setState({
       cache: new Map([[keyFor(null, 'TARGET_PAGE'), { title: 'My Target', deleted: false }]]),
       version: 1,

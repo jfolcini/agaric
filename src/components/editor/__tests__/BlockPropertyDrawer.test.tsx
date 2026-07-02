@@ -19,7 +19,7 @@ import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
 
 import { reportIpcError } from '@/lib/report-ipc-error'
-import type { PropertyDefinition, PropertyRow as PropertyRowData } from '@/lib/tauri'
+import type { PropertyDefinition, PropertyRow } from '@/lib/tauri'
 import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 
@@ -42,7 +42,7 @@ const mockedReportIpcError = vi.mocked(reportIpcError)
 // (see src/__tests__/mocks/ui-select.tsx).
 
 import { BlockPropertyDrawer } from '@/components/editor/BlockPropertyDrawer'
-import { PropertyRow } from '@/components/properties/PropertyRow'
+import { PropertyField } from '@/components/properties/PropertyField'
 
 let pageStore: StoreApi<PageBlockState>
 
@@ -53,7 +53,7 @@ function renderWithProvider(ui: React.ReactElement) {
   return render(ui, { wrapper })
 }
 
-function makeProp(key: string, overrides?: Partial<PropertyRowData>): PropertyRowData {
+function makeProp(key: string, overrides?: Partial<PropertyRow>): PropertyRow {
   return {
     key,
     value_text: null,
@@ -74,7 +74,7 @@ function makeDef(key: string, valueType = 'text'): PropertyDefinition {
   }
 }
 
-function setupMock(props: PropertyRowData[] = [], defs: PropertyDefinition[] = []) {
+function setupMock(props: PropertyRow[] = [], defs: PropertyDefinition[] = []) {
   mockedInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'get_properties') return props
     // Paginated PageResponse envelope.
@@ -948,11 +948,13 @@ describe('BlockPropertyDrawer', () => {
   })
 })
 
-// ── PropertyRow unit tests ──────────────────────────────────────────────
+// ── PropertyField unit tests ──────────────────────────────────────────────
 
-describe('PropertyRow', () => {
+describe('PropertyField', () => {
   it('renders label and value', () => {
-    render(<PropertyRow label="Status" value="active" ariaLabel="Status value" onSave={vi.fn()} />)
+    render(
+      <PropertyField label="Status" value="active" ariaLabel="Status value" onSave={vi.fn()} />,
+    )
 
     expect(screen.getByTitle('Status')).toBeInTheDocument()
     expect(screen.getByText('Status')).toBeInTheDocument()
@@ -962,7 +964,7 @@ describe('PropertyRow', () => {
   it('calls onSave when input is blurred', async () => {
     const user = userEvent.setup()
     const onSave = vi.fn()
-    render(<PropertyRow label="Name" value="" ariaLabel="Name value" onSave={onSave} />)
+    render(<PropertyField label="Name" value="" ariaLabel="Name value" onSave={onSave} />)
 
     const input = screen.getByLabelText('Name value')
     await user.click(input)
@@ -975,7 +977,7 @@ describe('PropertyRow', () => {
   it('calls onSave via Enter key', async () => {
     const user = userEvent.setup()
     const onSave = vi.fn()
-    render(<PropertyRow label="Name" value="" ariaLabel="Name value" onSave={onSave} />)
+    render(<PropertyField label="Name" value="" ariaLabel="Name value" onSave={onSave} />)
 
     const input = screen.getByLabelText('Name value')
     await user.click(input)
@@ -989,7 +991,7 @@ describe('PropertyRow', () => {
     const user = userEvent.setup()
     const onRemove = vi.fn()
     render(
-      <PropertyRow
+      <PropertyField
         label="Tag"
         value="v1"
         ariaLabel="Tag value"
@@ -1007,7 +1009,7 @@ describe('PropertyRow', () => {
 
   it('does not render X button when onRemove is not provided', () => {
     render(
-      <PropertyRow label="ReadOnly" value="locked" ariaLabel="ReadOnly value" onSave={vi.fn()} />,
+      <PropertyField label="ReadOnly" value="locked" ariaLabel="ReadOnly value" onSave={vi.fn()} />,
     )
 
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
@@ -1015,7 +1017,7 @@ describe('PropertyRow', () => {
 
   it('renders a text input for NL date support when inputType is "date"', () => {
     render(
-      <PropertyRow
+      <PropertyField
         label="Due"
         value="2026-06-15"
         inputType="date"
@@ -1032,7 +1034,13 @@ describe('PropertyRow', () => {
   it('shows "Parsing…" indicator while NL date is being debounced', async () => {
     const user = userEvent.setup()
     render(
-      <PropertyRow label="Due" value="" inputType="date" ariaLabel="Due value" onSave={vi.fn()} />,
+      <PropertyField
+        label="Due"
+        value=""
+        inputType="date"
+        ariaLabel="Due value"
+        onSave={vi.fn()}
+      />,
     )
 
     // Hidden by default — no parse in flight on initial render.
@@ -1058,7 +1066,7 @@ describe('PropertyRow', () => {
   })
 
   it('renders a text input by default', () => {
-    render(<PropertyRow label="Note" value="some text" ariaLabel="Note value" onSave={vi.fn()} />)
+    render(<PropertyField label="Note" value="some text" ariaLabel="Note value" onSave={vi.fn()} />)
 
     const input = screen.getByLabelText('Note value')
     // When no type is specified, the input defaults to text
@@ -1072,7 +1080,7 @@ describe('PropertyRow', () => {
       <svg data-testid="fake-icon" width={size} height={size} />
     )
     render(
-      <PropertyRow
+      <PropertyField
         icon={FakeIcon as unknown as import('lucide-react').LucideIcon}
         label="Due Date"
         value="2026-01-01"
@@ -1089,7 +1097,12 @@ describe('PropertyRow', () => {
 
   it('shows font-mono styling when no icon is provided', () => {
     render(
-      <PropertyRow label="custom_key" value="val" ariaLabel="custom_key value" onSave={vi.fn()} />,
+      <PropertyField
+        label="custom_key"
+        value="val"
+        ariaLabel="custom_key value"
+        onSave={vi.fn()}
+      />,
     )
 
     const badge = screen.getByTitle('custom_key')
@@ -1099,7 +1112,7 @@ describe('PropertyRow', () => {
 
   it('has no a11y violations', async () => {
     const { container } = render(
-      <PropertyRow
+      <PropertyField
         label="Status"
         value="active"
         ariaLabel="Status value"
