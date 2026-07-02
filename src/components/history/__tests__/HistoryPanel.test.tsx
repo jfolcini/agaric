@@ -20,7 +20,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -362,6 +362,54 @@ describe('HistoryPanel', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to load history')
     })
+  })
+
+  // #2256 — HistoryPanel gained the shared `usePaginatedQuery` stale-guard on
+  // migration. A late response from a superseded blockId must NOT repopulate
+  // the list after the panel has already switched to a different block.
+  it('drops a stale response after blockId changes (#2256 stale-guard)', async () => {
+    // Block A's fetch stays pending until we release it — after the panel has
+    // already switched to block B and rendered B's entry.
+    let resolveBlockA: (page: unknown) => void = () => {}
+    const blockAPage = new Promise((resolve) => {
+      resolveBlockA = resolve
+    })
+
+    mockedInvoke.mockImplementation((cmd: unknown, args?: unknown) => {
+      if (cmd === 'get_block_history') {
+        const a = args as { blockId: string }
+        if (a.blockId === 'BLOCK_A') return blockAPage
+        // Block B resolves immediately with its own entry.
+        return Promise.resolve({
+          items: [makeHistoryEntry(2, 'edit_block', { to_text: 'block-B content' })],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        })
+      }
+      return Promise.resolve(null)
+    })
+
+    const { rerender } = render(<HistoryPanel blockId="BLOCK_A" />)
+
+    // Switch to block B before A resolves → new generation.
+    rerender(<HistoryPanel blockId="BLOCK_B" />)
+    expect(await screen.findByText('block-B content')).toBeInTheDocument()
+
+    // Now release the stale block-A response and flush it through the hook.
+    await act(async () => {
+      resolveBlockA({
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'stale block-A content' })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    // The stale block-A entry must be dropped; block B's list stays intact.
+    expect(screen.queryByText('stale block-A content')).not.toBeInTheDocument()
+    expect(screen.getByText('block-B content')).toBeInTheDocument()
   })
 
   it('handles malformed JSON payload gracefully', async () => {

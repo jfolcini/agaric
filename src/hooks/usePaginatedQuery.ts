@@ -28,6 +28,16 @@ export interface PaginatedResponse<T> {
   total_count?: number | null
 }
 
+/**
+ * Runaway guard for {@link UsePaginatedQueryOptions.drain}. Each backend page
+ * is capped by `PageRequest::new`'s `MAX_PAGE_SIZE` (200 rows), so the default
+ * bounds a drained section at 200 × 1000 = 200 000 rows — far past any list
+ * where an eager flat drain is still useful, while keeping a hard stop if the
+ * backend ever returns a non-advancing cursor. Consumers that want a tighter
+ * bound (e.g. UnfinishedTasks' 25-page cap) pass an explicit `maxPages`.
+ */
+const DEFAULT_MAX_DRAIN_PAGES = 1000
+
 export interface UsePaginatedQueryOptions {
   /** Toast message shown on error. Omit to suppress toast (error state is still tracked). */
   onError?: string
@@ -35,6 +45,23 @@ export interface UsePaginatedQueryOptions {
   enabled?: boolean
   /** Maximum number of accumulated items before capping. Defaults to 5000. */
   maxItems?: number
+  /**
+   * #2256 — drain-to-completion mode. When `true`, the initial (cursorless)
+   * load follows the `next_cursor` chain to the end, accumulating every page
+   * into a single `items` list in one commit, instead of stopping at page 1
+   * and surfacing `loadMore`. `hasMore` always ends `false` and `loadMore`
+   * becomes a no-op, so a drain panel renders the *full* set without a "Load
+   * more" affordance. Bounded by {@link maxPages} so a backend returning a
+   * non-advancing cursor can't spin forever. Used by UnfinishedTasks, whose
+   * "Older" group and count badge must reflect every page (#757).
+   */
+  drain?: boolean
+  /**
+   * Runaway guard for {@link drain}: the maximum number of cursor pages the
+   * drain will follow before stopping. Defaults to {@link DEFAULT_MAX_DRAIN_PAGES}.
+   * Ignored when `drain` is not set.
+   */
+  maxPages?: number
 }
 
 export interface UsePaginatedQueryResult<T> {
@@ -72,6 +99,59 @@ export interface UsePaginatedQueryResult<T> {
   totalCount: number | undefined
 }
 
+/**
+ * Derive the display error + structured detail for a failed request, or `null`
+ * when the rejection is a cancellation that must be swallowed silently (a
+ * superseded keystroke / filter change — the stale-id guard already discarded
+ * its result). Factored out of {@link usePaginatedQuery}'s `load` to keep the
+ * callback's cyclomatic complexity within the lint budget.
+ *
+ * #2251 — real IPC rejections are plain `{ kind, message }` objects (NOT
+ * `Error` instances), so the message is read off the AppError shape too rather
+ * than collapsing to 'Request failed'.
+ */
+function deriveErrorState(
+  err: unknown,
+  onError: string | undefined,
+): { error: string; errorDetail: TypedAppError | null } | null {
+  if (isCancellation(err)) return null
+  const detail = isAppError(err) ? err : null
+  const error =
+    onError ?? (err instanceof Error ? err.message : (detail?.message ?? 'Request failed'))
+  return { error, errorDetail: detail }
+}
+
+/**
+ * Drain the cursor chain to completion for {@link UsePaginatedQueryOptions.drain}
+ * mode. Follows `next_cursor` until the backend reports no more pages (or
+ * `maxPages` is reached), accumulating every page's items into one list.
+ * `isStale` is re-checked after each page so a superseded request (deps change
+ * mid-drain) abandons the chain early. Returns the accumulated items plus the
+ * last page's response (for `total_count`), or `null` when abandoned as stale.
+ *
+ * Factored out of {@link usePaginatedQuery}'s `load` so the drain branch does
+ * not push the callback's cyclomatic complexity past the lint budget.
+ */
+async function drainCursorChain<T>(
+  queryFn: (cursor?: string, signal?: AbortSignal) => Promise<PaginatedResponse<T>>,
+  signal: AbortSignal,
+  maxPages: number,
+  isStale: () => boolean,
+): Promise<{ items: T[]; lastResp: PaginatedResponse<T> | null } | null> {
+  const drained: T[] = []
+  let pageCursor: string | undefined
+  let lastResp: PaginatedResponse<T> | null = null
+  for (let page = 0; page < maxPages; page++) {
+    const resp = await queryFn(pageCursor, signal)
+    if (isStale()) return null
+    drained.push(...resp.items)
+    lastResp = resp
+    if (!resp.has_more || resp.next_cursor == null) break
+    pageCursor = resp.next_cursor
+  }
+  return { items: drained, lastResp }
+}
+
 export function usePaginatedQuery<T>(
   queryFn: (cursor?: string, signal?: AbortSignal) => Promise<PaginatedResponse<T>>,
   options?: UsePaginatedQueryOptions,
@@ -107,6 +187,34 @@ export function usePaginatedQuery<T>(
       abortRef.current = controller
       setLoading(true)
       try {
+        // #2256 — drain-to-completion. The initial (cursorless) load follows
+        // the cursor chain to the end, accumulating every page into one list
+        // committed in a single `setItems`, then leaves nothing more to load
+        // (`hasMore` false, `nextCursor` null → `loadMore` is a no-op). The
+        // request-id guard is re-checked after every page so a deps change
+        // mid-drain discards the stale tail instead of grafting it onto the
+        // fresh query. Load-more cursors (cursor != null) never take this
+        // path — a drain panel never calls `loadMore`.
+        if (optionsRef.current?.drain && !cursor) {
+          const maxPages = optionsRef.current?.maxPages ?? DEFAULT_MAX_DRAIN_PAGES
+          const result = await drainCursorChain(
+            queryFn,
+            controller.signal,
+            maxPages,
+            () => requestIdRef.current !== rid,
+          )
+          if (result === null) return
+          setItems(result.items)
+          setCapped(false)
+          setNextCursor(null)
+          setHasMore(false)
+          setTotalCount(
+            result.lastResp?.total_count == null ? undefined : result.lastResp.total_count,
+          )
+          setError(null)
+          setErrorDetail(null)
+          return
+        }
         const resp = await queryFn(cursor, controller.signal)
         if (requestIdRef.current !== rid) return
         if (cursor) {
@@ -143,22 +251,12 @@ export function usePaginatedQuery<T>(
         setErrorDetail(null)
       } catch (err) {
         if (requestIdRef.current !== rid) return
-        // Phase 2 — swallow cancellations silently.
-        // A superseded keystroke or filter change is the expected case
-        // and should not flash a toast / set error state. The stale-id
-        // guard above already discards the (non-existent) result.
-        if (isCancellation(err)) return
-        // #2251 — keep the structured AppError alongside the display string.
-        // Real IPC rejections are plain `{ kind, message }` objects (NOT
-        // `Error` instances), so the old `err instanceof Error` fallback
-        // collapsed them to 'Request failed'; read `.message` off the
-        // AppError shape too so the body error-state shows the real reason.
-        const detail = isAppError(err) ? err : null
-        setErrorDetail(detail)
-        const msg =
-          optionsRef.current?.onError ??
-          (err instanceof Error ? err.message : (detail?.message ?? 'Request failed'))
-        setError(msg)
+        // Swallow cancellations silently (a superseded keystroke / filter
+        // change); otherwise surface the display error + structured detail.
+        const errState = deriveErrorState(err, optionsRef.current?.onError)
+        if (errState === null) return
+        setErrorDetail(errState.errorDetail)
+        setError(errState.error)
         if (optionsRef.current?.onError) notify.error(optionsRef.current.onError)
       } finally {
         if (requestIdRef.current === rid) setLoading(false)

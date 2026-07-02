@@ -6,6 +6,26 @@
  * page titles, and a loadMore function.
  *
  * Extracted from DuePanel.tsx for testability (#651-R6).
+ *
+ * #2256 — deliberately NOT migrated onto `usePaginatedQuery`. Unlike the
+ * other paginated panels (HistoryView / HistoryPanel / DonePanel each drive a
+ * single cursor list, and UnfinishedTasks drains one), this hook is a
+ * multi-source coordinator, not a thin cursor wrapper:
+ *  - It runs FOUR distinct fetches (main due blocks + overdue + upcoming +
+ *    projected agenda), merging all of their parent-title resolutions into a
+ *    single shared `pageTitles` map.
+ *  - The main list is post-filtered client-side (`applySourceFilter` drops
+ *    `property:`-source and empty-content rows per page), so its `totalCount`
+ *    is the accumulated POST-filter count — not the backend's `total_count`
+ *    that `usePaginatedQuery` exposes. Routing it through the hook would
+ *    silently desync the header count from the rendered rows.
+ *  - `projected` uses a module-level 30s TTL cache keyed by space+date, and
+ *    `overdue` / `upcoming` are single bounded queries, none of which are
+ *    cursor-paginated.
+ * Forcing only the main-blocks sub-fetch through the hook would fracture this
+ * coordinated state into a hybrid that is harder to reason about, not easier,
+ * and would regress the post-filter count. The hook already carries its own
+ * request-id stale-guard (#1531). Left as-is by design.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'

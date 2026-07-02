@@ -31,6 +31,7 @@ import { HistoryFilterBar } from '@/components/history/HistoryFilterBar'
 import { BlockHistoryItem } from '@/components/HistoryListItem'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { useHistoryDiffToggle } from '@/hooks/useHistoryDiffToggle'
+import { usePaginatedQuery } from '@/hooks/usePaginatedQuery'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -68,10 +69,6 @@ function isRestorable(entry: HistoryEntry): boolean {
 
 export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement {
   const { t } = useTranslation()
-  const [entries, setEntries] = useState<HistoryEntry[]>([])
-  const [loading, setLoading] = useState(false)
-  const [nextCursor, setNextCursor] = useState<string | null>(null)
-  const [hasMore, setHasMore] = useState(false)
   const [opTypeFilter, setOpTypeFilter] = useState<string | null>(null)
   // Part B — only one row is expanded at a time. `null` ⇒
   // collapsed/idle. Tracked by `seq` (stable per device) instead of
@@ -100,46 +97,50 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   // nowhere (no row receives it) and the user is silently stuck.
   const pendingKeyboardFocusRef = useRef(false)
 
-  const loadHistory = useCallback(
+  // #2256 — the paginated data path now runs through the shared
+  // `usePaginatedQuery` hook (matching HistoryView / DonePanel) instead of a
+  // hand-rolled loadHistory/cursor/hasMore trio. This gives HistoryPanel the
+  // canonical stale-guard for free: when `blockId` / `opTypeFilter` change,
+  // `queryFn`'s identity changes, so the hook bumps its request id and aborts
+  // the in-flight request — a late response from a superseded block/filter can
+  // no longer repopulate the just-switched list. `opTypeFilter` is applied in
+  // SQL by the backend, so entries arrive pre-filtered.
+  const queryFn = useCallback(
     async (cursor?: string) => {
-      if (!blockId) return
-      setLoading(true)
+      // `enabled` below gates the fetch on a non-null blockId, so this guard is
+      // only a type-narrowing safety net — the hook never calls queryFn when
+      // disabled. Returning an empty page keeps the signature total.
+      if (!blockId) return { items: [], next_cursor: null, has_more: false }
       try {
-        const resp = await getBlockHistory({
+        return await getBlockHistory({
           blockId,
           ...(opTypeFilter != null && { opTypeFilter }),
           ...(cursor != null && { cursor }),
           limit: PAGINATION_LIMIT,
         })
-        if (cursor) {
-          setEntries((prev) => [...prev, ...resp.items])
-        } else {
-          setEntries(resp.items)
-        }
-        setNextCursor(resp.next_cursor)
-        setHasMore(resp.has_more)
       } catch (err) {
         logger.error('HistoryPanel', 'Failed to load block history', { blockId }, err)
-        notify.error(t('history.loadFailed'))
+        throw err
       }
-      setLoading(false)
     },
-    // `opTypeFilter` is now part of the cache key so
-    // changing the filter forces a refetch with pre-filtered SQL.
-    [blockId, opTypeFilter, t],
+    [blockId, opTypeFilter],
   )
+  const {
+    items: entries,
+    loading,
+    hasMore,
+    loadMore,
+  } = usePaginatedQuery<HistoryEntry>(queryFn, {
+    enabled: blockId != null,
+    onError: t('history.loadFailed'),
+  })
 
+  // Collapse any expanded row when the fetch identity changes (new block /
+  // filter), matching the pre-migration reset that lived in the load effect.
+  // Kept SEPARATE from the hook so a cursor-page load-more doesn't reset it.
   useEffect(() => {
-    setEntries([])
-    setNextCursor(null)
-    setHasMore(false)
     setExpandedSeq(null)
-    loadHistory()
-  }, [blockId, opTypeFilter, loadHistory])
-
-  const loadMore = useCallback(() => {
-    if (nextCursor) loadHistory(nextCursor)
-  }, [nextCursor, loadHistory])
+  }, [blockId, opTypeFilter])
 
   // Backend now applies `op_type_filter` in SQL, so
   // entries arrive pre-filtered. Keep the alias to minimise diff churn
