@@ -3,13 +3,14 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { getPinnedSearchScope, setPinnedSearchScope } from '../../lib/pinned-search-scope'
-import { useNavigationStore } from '../../stores/navigation'
-import { useSpaceStore } from '../../stores/space'
-import { useTabsStore } from '../../stores/tabs'
-import { useCommandPaletteStore } from '../../stores/useCommandPaletteStore'
-import { useInPageFindStore } from '../../stores/useInPageFindStore'
-import { useSearchSheetStore } from '../../stores/useSearchSheetStore'
+import { getPinnedSearchScope, setPinnedSearchScope } from '@/lib/pinned-search-scope'
+import { useNavigationStore } from '@/stores/navigation'
+import { useSpaceStore } from '@/stores/space'
+import { useTabsStore } from '@/stores/tabs'
+import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
+import { useInPageFindStore } from '@/stores/useInPageFindStore'
+import { useSearchSheetStore } from '@/stores/useSearchSheetStore'
+
 import { SearchSheet } from '../SearchSheet'
 
 // Shared host element for the in-page segment tests. The find-in-page
@@ -27,8 +28,8 @@ function makeHost(): HTMLElement {
 // CommandPalette, which fires `searchBlocksPartitioned` IPC on every
 // debounced keystroke. Mock both `searchBlocks` (linkMode) and
 // `searchBlocksPartitioned` (default) to keep tests deterministic.
-vi.mock('../../lib/tauri', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/tauri')>()
+vi.mock('@/lib/tauri', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/tauri')>()
   return {
     ...actual,
     searchBlocks: vi.fn(),
@@ -36,7 +37,7 @@ vi.mock('../../lib/tauri', async (importOriginal) => {
   }
 })
 
-import { searchBlocks, searchBlocksPartitioned } from '../../lib/tauri'
+import { searchBlocks, searchBlocksPartitioned } from '@/lib/tauri'
 
 const mockedSearchBlocksPartitioned = vi.mocked(searchBlocksPartitioned)
 const mockedSearchBlocks = vi.mocked(searchBlocks)

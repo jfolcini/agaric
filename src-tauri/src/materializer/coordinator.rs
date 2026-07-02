@@ -706,9 +706,27 @@ impl Materializer {
 
     pub async fn enqueue_background(&self, task: MaterializeTask) -> Result<(), AppError> {
         let tx = self.bg_sender()?;
-        tx.send(task)
-            .await
-            .map_err(|e| AppError::Channel(format!("background queue send failed: {e}")))?;
+        // Mirror `enqueue_foreground`: `try_send` first so that on a full
+        // channel we bump `bg_full_waits` before awaiting the blocking
+        // send. This makes background backpressure on the blocking enqueue
+        // path observable in `StatusInfo` — a snapshot `capacity()` read
+        // would be racy (the consumer can drain between the check and the
+        // send), so the counter correlates 1:1 with real wait events.
+        // `Closed` still propagates as a `Channel` error.
+        match tx.try_send(task) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(task)) => {
+                self.metrics.bg_full_waits.fetch_add(1, Ordering::Relaxed);
+                tx.send(task)
+                    .await
+                    .map_err(|e| AppError::Channel(format!("background queue send failed: {e}")))?;
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                return Err(AppError::Channel(
+                    "background queue send failed: channel closed".into(),
+                ));
+            }
+        }
         let depth = BACKGROUND_CAPACITY - tx.capacity();
         self.metrics
             .bg_high_water
@@ -997,6 +1015,7 @@ impl Materializer {
             bg_dropped_global: self.metrics.bg_dropped_global.load(Ordering::Relaxed),
             bg_deduped: self.metrics.bg_deduped.load(Ordering::Relaxed),
             fg_full_waits: self.metrics.fg_full_waits.load(Ordering::Relaxed),
+            bg_full_waits: self.metrics.bg_full_waits.load(Ordering::Relaxed),
             retry_queue_persist_errors: self
                 .metrics
                 .retry_queue_persist_errors

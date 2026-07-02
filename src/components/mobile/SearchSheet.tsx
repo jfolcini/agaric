@@ -28,7 +28,9 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { useLongPress } from '@/hooks/useLongPress'
 import { usePullToDismiss } from '@/hooks/usePullToDismiss'
+import { useSearchSheetBridge } from '@/hooks/useSearchSheetBridge'
 import { haptic } from '@/lib/haptics'
 import { notify } from '@/lib/notify'
 import {
@@ -37,12 +39,9 @@ import {
   setPinnedSearchScope,
 } from '@/lib/pinned-search-scope'
 import { cn } from '@/lib/utils'
-
-import { useLongPress } from '../hooks/useLongPress'
-import { useSearchSheetBridge } from '../hooks/useSearchSheetBridge'
-import { useCommandPaletteStore } from '../stores/useCommandPaletteStore'
-import { useInPageFindStore } from '../stores/useInPageFindStore'
-import { type SearchSheetMode, useSearchSheetStore } from '../stores/useSearchSheetStore'
+import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
+import { useInPageFindStore } from '@/stores/useInPageFindStore'
+import { type SearchSheetMode, useSearchSheetStore } from '@/stores/useSearchSheetStore'
 
 // The in-page-find toolbar and the palette body are both lazy-imported
 // at the App level for their overlay surfaces. Importing them here

@@ -151,10 +151,15 @@ export interface ProjectedAgendaEntry {
 
 /**
  * Unwrap a `commands.*` result, throwing on error to preserve the
- * reject-based semantics of the legacy `invoke()` wrappers. Internal
- * helper for the staged migration to `bindings.ts`.
+ * reject-based semantics of the legacy `invoke()` wrappers. Helper for
+ * the staged migration to `bindings.ts` — exported so component-level
+ * call sites (which cannot use the raw `invoke()` bypass, per the
+ * `no-raw-invoke` guard) can adopt the same unwrap convention the
+ * wrappers in this file use.
  */
-function unwrap<T>(result: { status: 'ok'; data: T } | { status: 'error'; error: unknown }): T {
+export function unwrap<T>(
+  result: { status: 'ok'; data: T } | { status: 'error'; error: unknown },
+): T {
   if (result.status === 'ok') return result.data
   throw result.error
 }

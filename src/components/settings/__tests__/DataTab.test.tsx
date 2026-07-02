@@ -1,5 +1,5 @@
 /**
- * Tests for DataSettingsTab component.
+ * Tests for DataTab component.
  *
  * Validates:
  *  - Renders import and export sections
@@ -17,14 +17,15 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import type { SpaceRow } from '../../lib/tauri'
-import { useSpaceStore } from '../../stores/space'
-import { DataSettingsTab } from '../DataSettingsTab'
+import type { SpaceRow } from '@/lib/tauri'
+import { useSpaceStore } from '@/stores/space'
+
+import { DataTab } from '../DataTab'
 
 const mockExportGraphAsZip = vi.fn()
 const mockDownloadBlob = vi.fn()
 
-vi.mock('../../lib/export-graph', () => ({
+vi.mock('@/lib/export-graph', () => ({
   exportGraphAsZip: (...args: unknown[]) => mockExportGraphAsZip(...args),
   downloadBlob: (...args: unknown[]) => mockDownloadBlob(...args),
 }))
@@ -34,7 +35,7 @@ const mockImportMarkdown = vi.fn()
 // id via `resolvePageByAlias`, then calls `useTabsStore.navigateToPage`.
 const mockResolvePageByAlias = vi.fn()
 
-vi.mock('../../lib/tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   importMarkdown: (...args: unknown[]) => mockImportMarkdown(...args),
   resolvePageByAlias: (...args: unknown[]) => mockResolvePageByAlias(...args),
 }))
@@ -42,7 +43,7 @@ vi.mock('../../lib/tauri', () => ({
 // #1927 — mock the tabs store so we can assert post-import navigation
 // without standing up the full multi-store navigation chain.
 const mockNavigateToPage = vi.fn()
-vi.mock('../../stores/tabs', () => ({
+vi.mock('@/stores/tabs', () => ({
   useTabsStore: (selector: (s: { navigateToPage: typeof mockNavigateToPage }) => unknown) =>
     selector({ navigateToPage: mockNavigateToPage }),
 }))
@@ -51,7 +52,7 @@ vi.mock('../../stores/tabs', () => ({
 // filename-distinct message (so the rate-limiter doesn't suppress repeats).
 const mockLoggerError = vi.fn()
 const mockLoggerWarn = vi.fn()
-vi.mock('../../lib/logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     debug: vi.fn(),
     info: vi.fn(),
@@ -87,9 +88,9 @@ beforeEach(() => {
   })
 })
 
-describe('DataSettingsTab', () => {
+describe('DataTab', () => {
   it('renders import and export sections', () => {
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     expect(screen.getByText('Import')).toBeInTheDocument()
     expect(screen.getByText('Export All Pages')).toBeInTheDocument()
@@ -99,7 +100,7 @@ describe('DataSettingsTab', () => {
 
   it('import button triggers file input click', async () => {
     const user = userEvent.setup()
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
     const clickSpy = vi.spyOn(fileInput, 'click')
@@ -119,7 +120,7 @@ describe('DataSettingsTab', () => {
     }
     mockImportMarkdown.mockResolvedValueOnce(importResult)
 
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
     const file = new File(['# Hello'], 'test.md', { type: 'text/markdown' })
@@ -159,7 +160,7 @@ describe('DataSettingsTab', () => {
       isReady: false,
     })
 
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const importBtn = screen.getByRole('button', { name: /Choose Files/i })
     expect(importBtn).toBeDisabled()
@@ -178,7 +179,7 @@ describe('DataSettingsTab', () => {
       isReady: false,
     })
 
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const hint = screen.getByTestId('import-space-not-ready-hint')
     expect(hint).toHaveTextContent('Select a space before importing.')
@@ -198,7 +199,7 @@ describe('DataSettingsTab', () => {
     // Sanity check: when the SpaceStore eventually hydrates, the hint
     // disappears and `aria-describedby` is dropped — otherwise screen
     // readers would announce a stale "Select a space…" forever.
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     expect(screen.queryByTestId('import-space-not-ready-hint')).not.toBeInTheDocument()
     const importBtn = screen.getByRole('button', { name: /Choose Files/i })
@@ -215,7 +216,7 @@ describe('DataSettingsTab', () => {
     }
     mockImportMarkdown.mockResolvedValueOnce(importResult)
 
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
     const file = new File(['# Hello'], 'test.md', { type: 'text/markdown' })
@@ -263,7 +264,7 @@ describe('DataSettingsTab', () => {
       },
     )
 
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
     const file = new File(['- a\n- b\n- c'], 'big.md', { type: 'text/markdown' })
@@ -302,7 +303,7 @@ describe('DataSettingsTab', () => {
     const mockBlob = new Blob(['zip'], { type: 'application/zip' })
     mockExportGraphAsZip.mockResolvedValueOnce(mockBlob)
 
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const exportBtn = screen.getByRole('button', { name: /Export All/i })
     await user.click(exportBtn)
@@ -333,7 +334,7 @@ describe('DataSettingsTab', () => {
       isReady: true,
     })
 
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const exportBtn = screen.getByRole('button', { name: /Export All/i })
     await user.click(exportBtn)
@@ -353,7 +354,7 @@ describe('DataSettingsTab', () => {
     const user = userEvent.setup()
     mockExportGraphAsZip.mockRejectedValueOnce(new Error('export error'))
 
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const exportBtn = screen.getByRole('button', { name: /Export All/i })
     await user.click(exportBtn)
@@ -380,7 +381,7 @@ describe('DataSettingsTab', () => {
           }),
       )
 
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
     const file1 = new File(['# A'], 'one.md', { type: 'text/markdown' })
@@ -429,7 +430,7 @@ describe('DataSettingsTab', () => {
           }),
       )
 
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
     // 2048-byte payload so formatBytes promotes to "2.0 KB" and the
@@ -480,7 +481,7 @@ describe('DataSettingsTab', () => {
         }),
     )
 
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
     const file1 = new File(['# A'], 'one.md', { type: 'text/markdown' })
@@ -520,7 +521,7 @@ describe('DataSettingsTab', () => {
           }),
       )
 
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
     const file1 = new File(['# A'], 'one.md', { type: 'text/markdown' })
@@ -557,7 +558,7 @@ describe('DataSettingsTab', () => {
   })
 
   it('has no a11y violations', async () => {
-    const { container } = render(<DataSettingsTab />)
+    const { container } = render(<DataTab />)
 
     await waitFor(async () => {
       const results = await axe(container)
@@ -575,7 +576,7 @@ describe('DataSettingsTab', () => {
       warnings: ['Dropped malformed YAML on line 2', 'Unrecognized property "foo"'],
     })
 
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
     const file = new File(['# Hello'], 'doc.md', { type: 'text/markdown' })
@@ -603,7 +604,7 @@ describe('DataSettingsTab', () => {
     // 7 files, all fail → 7 failure rows, capped at 5 until expanded.
     mockImportMarkdown.mockRejectedValue(new Error('boom'))
 
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
     const files = Array.from(
@@ -635,7 +636,7 @@ describe('DataSettingsTab', () => {
   it('shows an error state and no success toast when every file fails (#1928)', async () => {
     mockImportMarkdown.mockRejectedValue(new Error('boom'))
 
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
     const file1 = new File(['x'], 'a.md', { type: 'text/markdown' })
@@ -668,7 +669,7 @@ describe('DataSettingsTab', () => {
       })
       .mockRejectedValueOnce(new Error('boom'))
 
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
     const file1 = new File(['x'], 'ok.md', { type: 'text/markdown' })
@@ -701,7 +702,7 @@ describe('DataSettingsTab', () => {
       warnings: [],
     })
 
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
     const file = new File(['# Hello'], 'doc.md', { type: 'text/markdown' })
@@ -737,7 +738,7 @@ describe('DataSettingsTab', () => {
       },
     )
 
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
     const file = new File(['- a\n- b\n- c'], 'big.md', { type: 'text/markdown' })
@@ -772,7 +773,7 @@ describe('DataSettingsTab', () => {
       })
       .mockRejectedValueOnce(new Error('boom'))
 
-    const { container } = render(<DataSettingsTab />)
+    const { container } = render(<DataTab />)
 
     const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
     const file1 = new File(['x'], 'ok.md', { type: 'text/markdown' })
@@ -795,7 +796,7 @@ describe('DataSettingsTab', () => {
   // it `file.webkitRelativePath` is always empty and the #1446
   // folder→namespace mapping can never fire.
   it('exposes a folder input carrying webkitdirectory (#1927)', () => {
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const folderInput = screen.getByTestId('import-folder-input') as HTMLInputElement
     // jsdom lowercases the attribute; assert presence (value is empty string).
@@ -808,7 +809,7 @@ describe('DataSettingsTab', () => {
   // #1927 — the import target space must be visible so the destination is
   // not silent.
   it('shows the import target space name (#1927)', () => {
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const label = screen.getByTestId('import-target-space')
     expect(label).toHaveTextContent('Importing into: Personal')
@@ -823,7 +824,7 @@ describe('DataSettingsTab', () => {
       { kind: 'validation', message: 'space_id does not refer to a live space block' },
     )
 
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
     const file = new File(['# Hello'], 'bad.md', { type: 'text/markdown' })
@@ -848,7 +849,7 @@ describe('DataSettingsTab', () => {
       .mockRejectedValueOnce(new Error('boom-a'))
       .mockRejectedValueOnce(new Error('boom-b'))
 
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
     const file1 = new File(['x'], 'a.md', { type: 'text/markdown' })
@@ -884,7 +885,7 @@ describe('DataSettingsTab', () => {
     })
     mockResolvePageByAlias.mockResolvedValueOnce(['PAGE_ULID', 'My Imported Page'])
 
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
     const file = new File(['# Hello'], 'page.md', { type: 'text/markdown' })
@@ -925,7 +926,7 @@ describe('DataSettingsTab', () => {
         throw new Error('second file should not start after cancel')
       })
 
-    render(<DataSettingsTab />)
+    render(<DataTab />)
 
     const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
     const file1 = new File(['# A'], 'one.md', { type: 'text/markdown' })
@@ -966,7 +967,7 @@ describe('DataSettingsTab', () => {
         }),
     )
 
-    const { container } = render(<DataSettingsTab />)
+    const { container } = render(<DataTab />)
 
     const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
     const file = new File(['# A'], 'one.md', { type: 'text/markdown' })
@@ -1012,7 +1013,7 @@ describe('DataSettingsTab', () => {
     it('ships a referenced sibling file as vaultFiles { path, bytes }', async () => {
       mockImportMarkdown.mockResolvedValueOnce(okResult)
 
-      render(<DataSettingsTab />)
+      render(<DataTab />)
       const folderInput = screen.getByTestId('import-folder-input') as HTMLInputElement
 
       const md = folderFile(['![](assets/diagram.png)'], 'note.md', 'MyVault/note.md')
@@ -1043,7 +1044,7 @@ describe('DataSettingsTab', () => {
     it('omits a referenced-but-absent file from vaultFiles', async () => {
       mockImportMarkdown.mockResolvedValueOnce(okResult)
 
-      render(<DataSettingsTab />)
+      render(<DataTab />)
       const folderInput = screen.getByTestId('import-folder-input') as HTMLInputElement
 
       // Markdown references a file that is NOT in the FileList.
@@ -1062,7 +1063,7 @@ describe('DataSettingsTab', () => {
     it('passes null vaultFiles for a single-file (non-folder) import', async () => {
       mockImportMarkdown.mockResolvedValueOnce(okResult)
 
-      render(<DataSettingsTab />)
+      render(<DataTab />)
       const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
       // A plain `.md` pick: webkitRelativePath is empty ⇒ no sibling assets.
       const file = new File(['![](assets/diagram.png)'], 'note.md', { type: 'text/markdown' })

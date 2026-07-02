@@ -1,5 +1,5 @@
 /**
- * Tests for AgentAccessSettingsTab — Settings tab.
+ * Tests for AgentAccessTab — Settings tab.
  *
  * Validates:
  *  - Renders the happy-path layout (RO toggle, socket path, copy
@@ -33,7 +33,7 @@ import { axe } from 'vitest-axe'
 import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
 
-import { AgentAccessSettingsTab } from '../AgentAccessSettingsTab'
+import { AgentAccessTab } from '../AgentAccessTab'
 
 // ---------------------------------------------------------------------------
 // Tauri event mock — every test registers its listener here and can fire
@@ -74,7 +74,7 @@ vi.mock('@/lib/logger', () => ({
 }))
 
 // ---------------------------------------------------------------------------
-// Clipboard wrapper mock — `AgentAccessSettingsTab` calls
+// Clipboard wrapper mock — `AgentAccessTab` calls
 // `writeText(text)` from `@/lib/clipboard` (the Tauri clipboard-manager
 // plugin wrapper), not `navigator.clipboard.writeText` directly. Mocking
 // the wrapper here lets us assert on the call and force rejection paths
@@ -194,11 +194,11 @@ afterEach(() => {
 // Happy-path rendering
 // ---------------------------------------------------------------------------
 
-describe('AgentAccessSettingsTab — rendering', () => {
+describe('AgentAccessTab — rendering', () => {
   it('renders every section once the status loads', async () => {
     setupInvoke(makeStatus({ enabled: true, active_connections: 0 }))
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
 
     // Section headings
     expect(await screen.findByText('Agent access')).toBeInTheDocument()
@@ -234,7 +234,7 @@ describe('AgentAccessSettingsTab — rendering', () => {
 
   it('renders loading skeleton before status loads', () => {
     mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
-    const { container } = render(<AgentAccessSettingsTab />)
+    const { container } = render(<AgentAccessTab />)
     expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0)
   })
 
@@ -243,7 +243,7 @@ describe('AgentAccessSettingsTab — rendering', () => {
       makeStatus({ enabled: true, active_connections: 2 }),
       makeRwStatus({ enabled: true, active_connections: 1 }),
     )
-    const { container } = render(<AgentAccessSettingsTab />)
+    const { container } = render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
     // axe cold-load can exceed 1 s under worker contention.
     await waitFor(
@@ -260,12 +260,12 @@ describe('AgentAccessSettingsTab — rendering', () => {
 // Toggle — RO access
 // ---------------------------------------------------------------------------
 
-describe('AgentAccessSettingsTab — RO toggle', () => {
+describe('AgentAccessTab — RO toggle', () => {
   it('invokes mcp_set_enabled(true) when toggled on', async () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus({ enabled: false }))
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     const toggle = await screen.findByRole('switch', { name: 'Read-only access' })
     expect(toggle).toHaveAttribute('aria-checked', 'false')
 
@@ -281,7 +281,7 @@ describe('AgentAccessSettingsTab — RO toggle', () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus({ enabled: true }))
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     const toggle = await screen.findByRole('switch', { name: 'Read-only access' })
     expect(toggle).toHaveAttribute('aria-checked', 'true')
 
@@ -303,7 +303,7 @@ describe('AgentAccessSettingsTab — RO toggle', () => {
       return undefined
     })
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     const toggle = await screen.findByRole('switch', { name: 'Read-only access' })
     await user.click(toggle)
 
@@ -325,12 +325,12 @@ describe('AgentAccessSettingsTab — RO toggle', () => {
 // Toggle — RW access
 // ---------------------------------------------------------------------------
 
-describe('AgentAccessSettingsTab — RW toggle', () => {
+describe('AgentAccessTab — RW toggle', () => {
   it('invokes mcp_rw_set_enabled(true) when toggled on', async () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus(), makeRwStatus({ enabled: false }))
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     const toggle = await screen.findByRole('switch', { name: 'Read-write access' })
     expect(toggle).toHaveAttribute('aria-checked', 'false')
 
@@ -350,7 +350,7 @@ describe('AgentAccessSettingsTab — RW toggle', () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus(), makeRwStatus({ enabled: true }))
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     const toggle = await screen.findByRole('switch', { name: 'Read-write access' })
     expect(toggle).toHaveAttribute('aria-checked', 'true')
 
@@ -371,7 +371,7 @@ describe('AgentAccessSettingsTab — RW toggle', () => {
       return undefined
     })
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     const toggle = await screen.findByRole('switch', { name: 'Read-write access' })
     await user.click(toggle)
 
@@ -392,10 +392,10 @@ describe('AgentAccessSettingsTab — RW toggle', () => {
 // Destructive warning badge (RW only)
 // ---------------------------------------------------------------------------
 
-describe('AgentAccessSettingsTab — RW warning badge', () => {
+describe('AgentAccessTab — RW warning badge', () => {
   it('renders the destructive warning badge while RW is enabled', async () => {
     setupInvoke(makeStatus(), makeRwStatus({ enabled: true }))
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-write access')
 
     const badge = await screen.findByTestId('mcp-rw-warning-badge')
@@ -406,7 +406,7 @@ describe('AgentAccessSettingsTab — RW warning badge', () => {
 
   it('does not render the warning badge when RW is disabled', async () => {
     setupInvoke(makeStatus(), makeRwStatus({ enabled: false }))
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-write access')
 
     expect(screen.queryByTestId('mcp-rw-warning-badge')).not.toBeInTheDocument()
@@ -417,12 +417,12 @@ describe('AgentAccessSettingsTab — RW warning badge', () => {
 // Copy-config buttons
 // ---------------------------------------------------------------------------
 
-describe('AgentAccessSettingsTab — copy buttons', () => {
+describe('AgentAccessTab — copy buttons', () => {
   it('copies the socket path to the clipboard', async () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus())
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     const copyBtn = await screen.findByRole('button', { name: 'Copy socket path' })
     await user.click(copyBtn)
 
@@ -438,7 +438,7 @@ describe('AgentAccessSettingsTab — copy buttons', () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus(), makeRwStatus())
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     const copyBtn = await screen.findByRole('button', { name: 'Copy read-write socket path' })
     await user.click(copyBtn)
 
@@ -454,7 +454,7 @@ describe('AgentAccessSettingsTab — copy buttons', () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus())
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     const btn = await screen.findByRole('button', { name: /Copy Claude Desktop config/i })
     await user.click(btn)
 
@@ -478,7 +478,7 @@ describe('AgentAccessSettingsTab — copy buttons', () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus())
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     const btn = await screen.findByRole('button', { name: /Copy generic MCP config/i })
     await user.click(btn)
 
@@ -498,7 +498,7 @@ describe('AgentAccessSettingsTab — copy buttons', () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus())
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     const btn = await screen.findByRole('button', { name: /Copy Claude Desktop config/i })
     // Override the clipboard writeText just for this test to reject.
     clipboardWriteText.mockRejectedValueOnce(new Error('clipboard blocked'))
@@ -520,10 +520,10 @@ describe('AgentAccessSettingsTab — copy buttons', () => {
 // Activity feed
 // ---------------------------------------------------------------------------
 
-describe('AgentAccessSettingsTab — activity feed', () => {
+describe('AgentAccessTab — activity feed', () => {
   it('renders the empty state when no activity has arrived', async () => {
     setupInvoke(makeStatus())
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     expect(
       await screen.findByText(
         /No agent activity yet\. When an agent connects, tool calls appear here\./,
@@ -533,7 +533,7 @@ describe('AgentAccessSettingsTab — activity feed', () => {
 
   it('prepends incoming events to the rendered feed (newest first)', async () => {
     setupInvoke(makeStatus())
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -572,7 +572,7 @@ describe('AgentAccessSettingsTab — activity feed', () => {
 
   it('caps rendered rows at 100 (101st push drops the oldest)', async () => {
     setupInvoke(makeStatus())
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -601,7 +601,7 @@ describe('AgentAccessSettingsTab — activity feed', () => {
 
   it('shows error-result summaries in destructive color', async () => {
     setupInvoke(makeStatus())
-    const { container } = render(<AgentAccessSettingsTab />)
+    const { container } = render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -636,12 +636,12 @@ describe('AgentAccessSettingsTab — activity feed', () => {
 // dedicated toast; every other error falls through to the generic one.
 // ---------------------------------------------------------------------------
 
-describe('AgentAccessSettingsTab — undo agent op', () => {
+describe('AgentAccessTab — undo agent op', () => {
   const undoLabel = 'Undo this agent action'
 
   it('renders the undo button on an agent-authored RW activity row', async () => {
     setupInvoke(makeStatus())
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -660,7 +660,7 @@ describe('AgentAccessSettingsTab — undo agent op', () => {
 
   it('hides the undo button on a user-authored activity row', async () => {
     setupInvoke(makeStatus())
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -680,7 +680,7 @@ describe('AgentAccessSettingsTab — undo agent op', () => {
 
   it('hides the undo button on a failed agent activity row', async () => {
     setupInvoke(makeStatus())
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -699,7 +699,7 @@ describe('AgentAccessSettingsTab — undo agent op', () => {
 
   it('hides the undo button when opRef is missing (e.g. RO tool)', async () => {
     setupInvoke(makeStatus())
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -720,7 +720,7 @@ describe('AgentAccessSettingsTab — undo agent op', () => {
   it('invokes revert_ops with the correct OpRef and fires a success toast', async () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus())
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -753,7 +753,7 @@ describe('AgentAccessSettingsTab — undo agent op', () => {
       return undefined
     })
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -802,7 +802,7 @@ describe('AgentAccessSettingsTab — undo agent op', () => {
       return undefined
     })
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -844,7 +844,7 @@ describe('AgentAccessSettingsTab — undo agent op', () => {
       return undefined
     })
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -869,7 +869,7 @@ describe('AgentAccessSettingsTab — undo agent op', () => {
 
   it('has no axe violations with a mixed agent/user/ok/err activity feed', async () => {
     setupInvoke(makeStatus())
-    const { container } = render(<AgentAccessSettingsTab />)
+    const { container } = render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -952,13 +952,13 @@ describe('AgentAccessSettingsTab — undo agent op', () => {
 // error handling (generic failure vs NonReversible).
 // ---------------------------------------------------------------------------
 
-describe('AgentAccessSettingsTab — revert session', () => {
+describe('AgentAccessTab — revert session', () => {
   const revertSessionLabelExact3 = 'Revert this agent session (3 actions)'
   const revertSessionLabelExact2 = 'Revert this agent session (2 actions)'
 
   it('renders a session header on the first-seen entry when the session has ≥ 2 undoable ops', async () => {
     setupInvoke(makeStatus())
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -1008,7 +1008,7 @@ describe('AgentAccessSettingsTab — revert session', () => {
 
   it('does NOT render a session header when the session has only 1 undoable op', async () => {
     setupInvoke(makeStatus())
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -1029,7 +1029,7 @@ describe('AgentAccessSettingsTab — revert session', () => {
 
   it('does NOT render a session header on non-first-seen entries of the same session', async () => {
     setupInvoke(makeStatus())
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -1069,7 +1069,7 @@ describe('AgentAccessSettingsTab — revert session', () => {
 
   it('renders separate session headers when two sessions are interleaved', async () => {
     setupInvoke(makeStatus())
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -1117,7 +1117,7 @@ describe('AgentAccessSettingsTab — revert session', () => {
 
   it('ignores user-authored and failed entries when counting session ops', async () => {
     setupInvoke(makeStatus())
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -1161,7 +1161,7 @@ describe('AgentAccessSettingsTab — revert session', () => {
   it('clicking Revert session opens the confirm dialog with the correct count', async () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus())
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -1205,7 +1205,7 @@ describe('AgentAccessSettingsTab — revert session', () => {
   it('confirming invokes revert_ops with every undoable opRef in the session in iteration order', async () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus())
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     // Fire events in seq order 1, 2, 3 — feed is newest-first so
@@ -1266,7 +1266,7 @@ describe('AgentAccessSettingsTab — revert session', () => {
   it('cancelling the confirm dialog does NOT invoke revert_ops', async () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus())
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -1319,7 +1319,7 @@ describe('AgentAccessSettingsTab — revert session', () => {
       return undefined
     })
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -1364,7 +1364,7 @@ describe('AgentAccessSettingsTab — revert session', () => {
 
   it('has no axe violations on a session-grouped feed', async () => {
     setupInvoke(makeStatus())
-    const { container } = render(<AgentAccessSettingsTab />)
+    const { container } = render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -1449,13 +1449,13 @@ describe('AgentAccessSettingsTab — revert session', () => {
 // behaviour.  On error no keys are added, so the user can retry.
 // ---------------------------------------------------------------------------
 
-describe('AgentAccessSettingsTab — revertedOpKeys tracking', () => {
+describe('AgentAccessTab — revertedOpKeys tracking', () => {
   const undoLabel = 'Undo this agent action'
 
   it('hides the per-entry Undo button after a successful revert', async () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus())
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -1478,7 +1478,7 @@ describe('AgentAccessSettingsTab — revertedOpKeys tracking', () => {
   it('keeps the entry summary / timestamp / toolName badge after a successful revert', async () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus())
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -1511,7 +1511,7 @@ describe('AgentAccessSettingsTab — revertedOpKeys tracking', () => {
   it('hides the session header after a successful per-session revert', async () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus())
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -1575,7 +1575,7 @@ describe('AgentAccessSettingsTab — revertedOpKeys tracking', () => {
       return undefined
     })
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -1599,7 +1599,7 @@ describe('AgentAccessSettingsTab — revertedOpKeys tracking', () => {
   it('reduces the session-header count by one after a per-entry Undo in a 5-op session', async () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus())
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -1640,7 +1640,7 @@ describe('AgentAccessSettingsTab — revertedOpKeys tracking', () => {
   it('hides the session header after a per-entry Undo in a 2-op session drops the count to 1', async () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus())
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -1696,12 +1696,12 @@ describe('AgentAccessSettingsTab — revertedOpKeys tracking', () => {
 // (span present, class pinned) rather than computed visibility.
 // ---------------------------------------------------------------------------
 
-describe('AgentAccessSettingsTab — touch discoverability', () => {
+describe('AgentAccessTab — touch discoverability', () => {
   const undoLabel = 'Undo this agent action'
 
   it('renders the buttonText span with the responsive class when the icon is visible', async () => {
     setupInvoke(makeStatus())
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -1732,7 +1732,7 @@ describe('AgentAccessSettingsTab — touch discoverability', () => {
       return undefined
     })
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     await screen.findByText('Read-only access')
 
     act(() => {
@@ -1769,10 +1769,10 @@ describe('AgentAccessSettingsTab — touch discoverability', () => {
 // Kill switch — RO
 // ---------------------------------------------------------------------------
 
-describe('AgentAccessSettingsTab — kill switch', () => {
+describe('AgentAccessTab — kill switch', () => {
   it('disables the disconnect button when no connections are active', async () => {
     setupInvoke(makeStatus({ active_connections: 0 }))
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
 
     const btn = await screen.findByRole('button', { name: 'Disconnect all' })
     expect(btn).toBeDisabled()
@@ -1782,7 +1782,7 @@ describe('AgentAccessSettingsTab — kill switch', () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus({ active_connections: 3 }))
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     const btn = await screen.findByRole('button', { name: 'Disconnect all' })
     expect(btn).not.toBeDisabled()
 
@@ -1808,7 +1808,7 @@ describe('AgentAccessSettingsTab — kill switch', () => {
       return undefined
     })
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     const btn = await screen.findByRole('button', { name: 'Disconnect all' })
     await user.click(btn)
 
@@ -1832,10 +1832,10 @@ describe('AgentAccessSettingsTab — kill switch', () => {
 // Kill switch — RW
 // ---------------------------------------------------------------------------
 
-describe('AgentAccessSettingsTab — RW kill switch', () => {
+describe('AgentAccessTab — RW kill switch', () => {
   it('disables the RW disconnect button when no RW connections are active', async () => {
     setupInvoke(makeStatus(), makeRwStatus({ active_connections: 0 }))
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
 
     const btn = await screen.findByRole('button', { name: 'Disconnect all read-write' })
     expect(btn).toBeDisabled()
@@ -1845,7 +1845,7 @@ describe('AgentAccessSettingsTab — RW kill switch', () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus(), makeRwStatus({ active_connections: 2 }))
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     const btn = await screen.findByRole('button', { name: 'Disconnect all read-write' })
     expect(btn).not.toBeDisabled()
 
@@ -1880,7 +1880,7 @@ describe('AgentAccessSettingsTab — RW kill switch', () => {
       return undefined
     })
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
     const btn = await screen.findByRole('button', { name: 'Disconnect all read-write' })
     await user.click(btn)
 
@@ -1906,7 +1906,7 @@ describe('AgentAccessSettingsTab — RW kill switch', () => {
 // Status load error
 // ---------------------------------------------------------------------------
 
-describe('AgentAccessSettingsTab — status load error', () => {
+describe('AgentAccessTab — status load error', () => {
   it('renders a degraded fallback UI when get_mcp_status rejects', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_mcp_status') throw new Error('backend down')
@@ -1914,7 +1914,7 @@ describe('AgentAccessSettingsTab — status load error', () => {
       return undefined
     })
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
 
     // Error banner surfaces the failure.
     expect(await screen.findByText('Failed to load MCP status')).toBeInTheDocument()
@@ -1946,7 +1946,7 @@ describe('AgentAccessSettingsTab — status load error', () => {
       return undefined
     })
 
-    render(<AgentAccessSettingsTab />)
+    render(<AgentAccessTab />)
 
     // RO side renders normally with no banner.
     expect(await screen.findByText('Read-only access')).toBeInTheDocument()

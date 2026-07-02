@@ -1,5 +1,7 @@
 /**
- * DataSettingsTab — Import/Export data management.
+ * DataTab — Import/Export data management. (The `'DataSettingsTab'`
+ * logger label below is kept stable across this rename as its telemetry
+ * namespace.)
  *
  * Provides:
  *  - Import: select .md files to create pages from Logseq/Markdown content
@@ -14,15 +16,14 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { isAppError } from '@/lib/app-error'
+import { downloadBlob, exportGraphAsZip } from '@/lib/export-graph'
+import { formatBytes } from '@/lib/format'
+import { scanAttachmentRefs } from '@/lib/import-attachments'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import { downloadBlob, exportGraphAsZip } from '../lib/export-graph'
-import { formatBytes } from '../lib/format'
-import { scanAttachmentRefs } from '../lib/import-attachments'
-import { logger } from '../lib/logger'
-import { importMarkdown, resolvePageByAlias, type VaultFile } from '../lib/tauri'
-import { useSpaceStore } from '../stores/space'
-import { useTabsStore } from '../stores/tabs'
+import { importMarkdown, resolvePageByAlias, type VaultFile } from '@/lib/tauri'
+import { useSpaceStore } from '@/stores/space'
+import { useTabsStore } from '@/stores/tabs'
 
 /**
  * Extract a user-facing reason from a failed import. The backend rejects
@@ -189,7 +190,7 @@ function sanitizeSpaceNameForFilename(name: string): string {
     .replace(/^-+|-+$/g, '')
 }
 
-export function DataSettingsTab(): React.ReactElement {
+export function DataTab(): React.ReactElement {
   const { t } = useTranslation()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const availableSpaces = useSpaceStore((s) => s.availableSpaces)

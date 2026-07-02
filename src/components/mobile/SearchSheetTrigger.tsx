@@ -15,9 +15,8 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { getPinnedSearchScope } from '@/lib/pinned-search-scope'
-
-import { useNavigationStore } from '../stores/navigation'
-import { defaultModeForView, useSearchSheetStore } from '../stores/useSearchSheetStore'
+import { useNavigationStore } from '@/stores/navigation'
+import { defaultModeForView, useSearchSheetStore } from '@/stores/useSearchSheetStore'
 
 export function SearchSheetTrigger(): React.ReactElement {
   const { t } = useTranslation()

@@ -1,5 +1,5 @@
 /**
- * Tests for KeyboardSettingsTab component.
+ * Tests for KeyboardTab component.
  *
  * Validates:
  *  - Renders all categories
@@ -22,7 +22,7 @@ import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 import type { ShortcutBinding } from '@/lib/keyboard-config'
 
-import { KeyboardSettingsTab } from '../KeyboardSettingsTab'
+import { KeyboardTab } from '../KeyboardTab'
 
 const mockGetCurrentShortcuts = vi.fn()
 const mockSetCustomShortcut = vi.fn()
@@ -88,16 +88,16 @@ beforeEach(() => {
   mockFindConflicts.mockReturnValue([])
 })
 
-describe('KeyboardSettingsTab', () => {
+describe('KeyboardTab', () => {
   it('renders all categories', () => {
-    render(<KeyboardSettingsTab />)
+    render(<KeyboardTab />)
 
     expect(screen.getByText(t('keyboard.category.navigation'))).toBeInTheDocument()
     expect(screen.getByText(t('keyboard.category.editing'))).toBeInTheDocument()
   })
 
   it('shows shortcut descriptions', () => {
-    render(<KeyboardSettingsTab />)
+    render(<KeyboardTab />)
 
     expect(screen.getByText(t('keyboard.moveToPreviousBlock'))).toBeInTheDocument()
     expect(screen.getByText(t('keyboard.moveToNextBlock'))).toBeInTheDocument()
@@ -106,7 +106,7 @@ describe('KeyboardSettingsTab', () => {
   })
 
   it('shows kbd elements for shortcut keys', () => {
-    render(<KeyboardSettingsTab />)
+    render(<KeyboardTab />)
 
     // Check for kbd elements
     const kbdElements = screen.getAllByText((_, element) => element?.tagName === 'KBD')
@@ -115,7 +115,7 @@ describe('KeyboardSettingsTab', () => {
 
   it('edit button opens input', async () => {
     const user = userEvent.setup()
-    render(<KeyboardSettingsTab />)
+    render(<KeyboardTab />)
 
     const editButtons = screen.getAllByRole('button', { name: /Edit shortcut for/i })
     expect(editButtons.length).toBeGreaterThan(0)
@@ -129,7 +129,7 @@ describe('KeyboardSettingsTab', () => {
 
   it('save persists changes', async () => {
     const user = userEvent.setup()
-    render(<KeyboardSettingsTab />)
+    render(<KeyboardTab />)
 
     const editButtons = screen.getAllByRole('button', { name: /Edit shortcut for/i })
     await user.click(editButtons[0] as HTMLElement)
@@ -146,7 +146,7 @@ describe('KeyboardSettingsTab', () => {
 
   it('cancel discards changes', async () => {
     const user = userEvent.setup()
-    render(<KeyboardSettingsTab />)
+    render(<KeyboardTab />)
 
     const editButtons = screen.getAllByRole('button', { name: /Edit shortcut for/i })
     await user.click(editButtons[0] as HTMLElement)
@@ -176,7 +176,7 @@ describe('KeyboardSettingsTab', () => {
       mockGetCurrentShortcuts.mockReturnValue(shortcutsAfterReset)
     })
 
-    render(<KeyboardSettingsTab />)
+    render(<KeyboardTab />)
 
     // Before reset: "Customized" badge should be visible
     expect(screen.getByText('Customized')).toBeInTheDocument()
@@ -202,7 +202,7 @@ describe('KeyboardSettingsTab', () => {
 
   it('reset all with confirmation dialog', async () => {
     const user = userEvent.setup()
-    render(<KeyboardSettingsTab />)
+    render(<KeyboardTab />)
 
     const resetAllButton = screen.getByRole('button', { name: 'Reset All to Defaults' })
     await user.click(resetAllButton)
@@ -231,7 +231,7 @@ describe('KeyboardSettingsTab', () => {
       },
     ])
 
-    render(<KeyboardSettingsTab />)
+    render(<KeyboardTab />)
 
     // Should show conflict warning with the description of the conflicting shortcut
     expect(screen.getAllByText(/Conflicts with:/i).length).toBeGreaterThan(0)
@@ -239,7 +239,7 @@ describe('KeyboardSettingsTab', () => {
 
   it('empty binding rejected (save disabled)', async () => {
     const user = userEvent.setup()
-    render(<KeyboardSettingsTab />)
+    render(<KeyboardTab />)
 
     const editButtons = screen.getAllByRole('button', { name: /Edit shortcut for/i })
     await user.click(editButtons[0] as HTMLElement)
@@ -257,7 +257,7 @@ describe('KeyboardSettingsTab', () => {
 
   it('modifier-only binding (e.g. "Ctrl + Shift") disables Save and shows inline error', async () => {
     const user = userEvent.setup()
-    render(<KeyboardSettingsTab />)
+    render(<KeyboardTab />)
 
     const editButtons = screen.getAllByRole('button', { name: /Edit shortcut for/i })
     await user.click(editButtons[0] as HTMLElement)
@@ -285,7 +285,7 @@ describe('KeyboardSettingsTab', () => {
 
   it('valid binding ("Ctrl + E") clears the validation error and enables Save', async () => {
     const user = userEvent.setup()
-    render(<KeyboardSettingsTab />)
+    render(<KeyboardTab />)
 
     const editButtons = screen.getAllByRole('button', { name: /Edit shortcut for/i })
     await user.click(editButtons[0] as HTMLElement)
@@ -316,7 +316,7 @@ describe('KeyboardSettingsTab', () => {
       },
     ])
 
-    render(<KeyboardSettingsTab />)
+    render(<KeyboardTab />)
 
     const warning = screen.getAllByText(/Conflicts with:/i)[0] as HTMLElement
     expect(warning).toBeInTheDocument()
@@ -334,7 +334,7 @@ describe('KeyboardSettingsTab', () => {
 
   it('empty-binding error is wired to the input via aria-describedby + aria-invalid', async () => {
     const user = userEvent.setup()
-    render(<KeyboardSettingsTab />)
+    render(<KeyboardTab />)
 
     const editButtons = screen.getAllByRole('button', { name: /Edit shortcut for/i })
     await user.click(editButtons[0] as HTMLElement)
@@ -359,7 +359,7 @@ describe('KeyboardSettingsTab', () => {
 
   it('shows format hint below the input while editing', async () => {
     const user = userEvent.setup()
-    render(<KeyboardSettingsTab />)
+    render(<KeyboardTab />)
 
     // Hint is supplementary context — only shown while editing.
     expect(screen.queryByText('Format: Ctrl + Shift + E')).not.toBeInTheDocument()
@@ -377,7 +377,7 @@ describe('KeyboardSettingsTab', () => {
   })
 
   it('#724: rebindable entries get an edit button, documentation-only entries do not', () => {
-    render(<KeyboardSettingsTab />)
+    render(<KeyboardTab />)
 
     // Rebindable entries (no `rebindable: false`) keep the pencil.
     expect(
@@ -399,7 +399,7 @@ describe('KeyboardSettingsTab', () => {
   })
 
   it('shows "Customized" badge for custom shortcuts', () => {
-    render(<KeyboardSettingsTab />)
+    render(<KeyboardTab />)
 
     const badge = screen.getByText('Customized')
     expect(badge).toBeInTheDocument()
@@ -410,7 +410,7 @@ describe('KeyboardSettingsTab', () => {
 
   it('save via Enter key', async () => {
     const user = userEvent.setup()
-    render(<KeyboardSettingsTab />)
+    render(<KeyboardTab />)
 
     const editButtons = screen.getAllByRole('button', { name: /Edit shortcut for/i })
     await user.click(editButtons[0] as HTMLElement)
@@ -425,7 +425,7 @@ describe('KeyboardSettingsTab', () => {
   // #1092: the reset-shortcut link button uses the canonical focus-ring-visible
   // utility, not the legacy 2px ring.
   it('#1092: reset-shortcut button uses focus-ring-visible (no legacy 2px ring)', () => {
-    render(<KeyboardSettingsTab />)
+    render(<KeyboardTab />)
     // indentBlock is custom, so its "Reset to default" link button is present.
     const resetBtn = screen.getByText('Reset to default')
     expect(resetBtn.className).toContain('focus-ring-visible')
@@ -434,7 +434,7 @@ describe('KeyboardSettingsTab', () => {
   })
 
   it('has no a11y violations', async () => {
-    const { container } = render(<KeyboardSettingsTab />)
+    const { container } = render(<KeyboardTab />)
 
     await waitFor(async () => {
       const results = await axe(container)
@@ -445,7 +445,7 @@ describe('KeyboardSettingsTab', () => {
   // Uses `dvh` (dynamic viewport height) so the scroll area
   // does not flicker as the mobile address bar collapses/expands.
   it('scroll area uses 60dvh, not 60vh', () => {
-    const { container } = render(<KeyboardSettingsTab />)
+    const { container } = render(<KeyboardTab />)
     const scrollArea = container.querySelector('[data-slot="scroll-area"]') as HTMLElement | null
     expect(scrollArea).not.toBeNull()
     expect(scrollArea?.className).toContain('max-h-[60dvh]')
@@ -459,9 +459,9 @@ describe('KeyboardSettingsTab', () => {
     ;(navigator as any).userAgentData = undefined
 
     try {
-      const { __resetPlatformCacheForTests } = await import('../../lib/platform')
+      const { __resetPlatformCacheForTests } = await import('@/lib/platform')
       __resetPlatformCacheForTests()
-      const { KeyboardSettingsTab: MacTab } = await import('../KeyboardSettingsTab')
+      const { KeyboardTab: MacTab } = await import('../KeyboardTab')
 
       render(<MacTab />)
 
@@ -482,9 +482,9 @@ describe('KeyboardSettingsTab', () => {
     ;(navigator as any).userAgentData = undefined
 
     try {
-      const { __resetPlatformCacheForTests } = await import('../../lib/platform')
+      const { __resetPlatformCacheForTests } = await import('@/lib/platform')
       __resetPlatformCacheForTests()
-      const { KeyboardSettingsTab: LinuxTab } = await import('../KeyboardSettingsTab')
+      const { KeyboardTab: LinuxTab } = await import('../KeyboardTab')
 
       render(<LinuxTab />)
 

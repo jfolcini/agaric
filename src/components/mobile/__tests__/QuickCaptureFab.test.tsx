@@ -16,7 +16,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { QuickCaptureFab } from '@/components/layout/QuickCaptureFab'
+import { QuickCaptureFab } from '@/components/mobile/QuickCaptureFab'
 import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
 
 vi.mock('@/hooks/useShouldShowMobileChrome', () => ({
