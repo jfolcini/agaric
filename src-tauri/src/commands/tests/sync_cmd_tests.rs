@@ -284,10 +284,10 @@ async fn confirm_pairing_empty_remote_id_sets_pending_marker_not_peer() {
 // machinery in `pairing.rs` was dead code. These tests pin down the
 // post-H-1 contract:
 //
-// 1. Wrong passphrase → `Err(AppError::Validation(_))` tagged
+// 1. Wrong passphrase → `Err(AppError::Validation { .. })` tagged
 //    `pairing.passphrase.mismatch`.
 // 2. Correct passphrase → `Ok(())`, peer persisted, session cleared.
-// 3. No active slot → `Err(AppError::Validation(_))` tagged
+// 3. No active slot → `Err(AppError::Validation { .. })` tagged
 //    `pairing.no_active_session`.
 //
 // Per the threat model in AGENTS.md, the pairing passphrase is the one
@@ -318,7 +318,7 @@ async fn confirm_pairing_inner_rejects_wrong_passphrase() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg == "pairing.passphrase.mismatch"),
+        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg == "pairing.passphrase.mismatch"),
         "wrong passphrase must surface as Validation(\"pairing.passphrase.mismatch\"), got {result:?}"
     );
 
@@ -399,7 +399,7 @@ async fn confirm_pairing_inner_invalidates_session_after_max_attempts() {
         )
         .await;
         assert!(
-            matches!(result, Err(AppError::Validation(ref msg)) if msg == "pairing.passphrase.mismatch"),
+            matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg == "pairing.passphrase.mismatch"),
             "attempt {attempt} must surface mismatch, got {result:?}"
         );
         assert!(
@@ -420,7 +420,7 @@ async fn confirm_pairing_inner_invalidates_session_after_max_attempts() {
     )
     .await;
     assert!(
-        matches!(exhausting, Err(AppError::Validation(ref msg)) if msg == "pairing.attempts_exhausted"),
+        matches!(exhausting, Err(AppError::Validation { message: ref msg, .. }) if msg == "pairing.attempts_exhausted"),
         "the final failed attempt must surface as attempts_exhausted, got {exhausting:?}"
     );
     assert!(
@@ -462,7 +462,7 @@ async fn confirm_pairing_inner_succeeds_within_attempt_budget_after_typos() {
         )
         .await;
         assert!(
-            matches!(bad, Err(AppError::Validation(ref msg)) if msg == "pairing.passphrase.mismatch"),
+            matches!(bad, Err(AppError::Validation { message: ref msg, .. }) if msg == "pairing.passphrase.mismatch"),
             "pre-cap typo must be a plain mismatch, got {bad:?}"
         );
     }
@@ -510,7 +510,7 @@ async fn confirm_pairing_inner_errors_when_no_pairing_in_flight() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg == "pairing.no_active_session"),
+        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg == "pairing.no_active_session"),
         "missing slot must surface as Validation(\"pairing.no_active_session\"), got {result:?}"
     );
 
@@ -681,7 +681,7 @@ async fn set_peer_address_rejects_invalid_address() {
 
     let result = set_peer_address_inner(&pool, "peer-1".into(), "not-an-address".into()).await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "invalid address should return Validation error"
     );
 }

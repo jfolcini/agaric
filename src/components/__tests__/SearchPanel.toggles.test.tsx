@@ -363,13 +363,14 @@ describe('SearchPanel match-offset rendering', () => {
 
 describe('SearchPanel invalid-regex announcement', () => {
   it('does not double-announce: the status live region stays silent on an invalid regex', async () => {
-    // The backend rejects an unparseable pattern with the `InvalidRegex:`
-    // prefix; SearchPanel surfaces the specific message inline in the
-    // header. The generic "Search failed" status branch must NOT also
-    // fire (that would double-announce to screen readers).
+    // The backend rejects an unparseable pattern with a structured
+    // `InvalidRegex`-coded validation error (#2251); SearchPanel surfaces
+    // the specific message inline in the header. The generic "Search
+    // failed" status branch must NOT also fire (that would double-announce
+    // to screen readers).
     mockedInvoke.mockImplementation(async (cmd) => {
       if (cmd === 'search_blocks') {
-        throw new Error('InvalidRegex: unclosed group at position 0')
+        throw { kind: 'validation', code: 'InvalidRegex', message: 'unclosed group at position 0' }
       }
       return emptyPage
     })
@@ -390,15 +391,15 @@ describe('SearchPanel invalid-regex announcement', () => {
     expect(within(status).queryByTestId('search-results-count')).toBeNull()
   })
 
-  it('does NOT surface the inline regex alert for an `InvalidRegex:` error when regex mode is OFF', async () => {
+  it('does NOT surface the inline regex alert for an `InvalidRegex`-coded error when regex mode is OFF', async () => {
     // Case-sensitive / whole-word mode builds a *literal*
     // match regex server-side; an oversized literal makes the backend reject
-    // with an `InvalidRegex:`-prefixed message even though the user never
-    // enabled regex. The inline "invalid regex" alert must NOT fire in that
-    // case — the failure falls through to the generic error body + status.
+    // with an `InvalidRegex`-coded validation error even though the user
+    // never enabled regex. The inline "invalid regex" alert must NOT fire in
+    // that case — the failure falls through to the generic error body + status.
     mockedInvoke.mockImplementation(async (cmd) => {
       if (cmd === 'search_blocks') {
-        throw new Error('InvalidRegex: pattern too large')
+        throw { kind: 'validation', code: 'InvalidRegex', message: 'pattern too large' }
       }
       return emptyPage
     })
@@ -425,7 +426,7 @@ describe('SearchPanel invalid-regex announcement', () => {
   })
 
   it('still announces the generic failure for a non-regex backend error', async () => {
-    // A plain backend error (no `InvalidRegex:` prefix) must still light
+    // A plain backend error (no `InvalidRegex` code) must still light
     // Up the status region — only suppresses the regex case.
     mockedInvoke.mockImplementation(async (cmd) => {
       if (cmd === 'search_blocks') {
@@ -448,7 +449,7 @@ describe('SearchPanel invalid-regex announcement', () => {
   it('has no a11y violations while showing an invalid-regex error', async () => {
     mockedInvoke.mockImplementation(async (cmd) => {
       if (cmd === 'search_blocks') {
-        throw new Error('InvalidRegex: unclosed group at position 0')
+        throw { kind: 'validation', code: 'InvalidRegex', message: 'unclosed group at position 0' }
       }
       return emptyPage
     })

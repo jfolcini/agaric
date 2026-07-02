@@ -256,7 +256,7 @@ pub const ANCESTORS_CTE_ACTIVE: &str = ancestors_cte_active!();
 /// either:
 /// * `tracing::warn!` (default — best-effort cascades like soft-delete
 ///   and restore should not break on a pathological tree).
-/// * `Err(AppError::Validation(...))` (purge — hard delete should be
+/// * `Err(AppError::validation(...))` (purge — hard delete should be
 ///   all-or-nothing; a saturating cascade leaves orphans behind).
 ///
 /// # Variant choice
@@ -319,7 +319,7 @@ where
 /// **It returns the boolean only — NOT a rejection.** The two callers reject
 /// differently and that difference is intentional, so each keeps its own
 /// handling:
-/// * `move_block_inner` → `Err(AppError::Validation("cycle detected"))`
+/// * `move_block_inner` → `Err(AppError::validation("cycle detected"))`
 ///   (a user-driven command must surface the error).
 /// * `apply_move_block_sql_only` → no-op-warn + `Ok(())` (the sync-replay
 ///   fallback must not wedge inbound sync on a self-evidently invalid op).

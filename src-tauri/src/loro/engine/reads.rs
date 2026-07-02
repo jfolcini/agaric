@@ -16,7 +16,7 @@ impl LoroEngine {
             return Ok(None);
         };
         let block_map = self.tree().get_meta(node).map_err(|e| {
-            AppError::Validation(format!("loro: read_block {block_id}: get_meta: {e}"))
+            AppError::validation(format!("loro: read_block {block_id}: get_meta: {e}"))
         })?;
 
         let block_type = read_string(&block_map, FIELD_BLOCK_TYPE)
@@ -57,7 +57,7 @@ impl LoroEngine {
             return Ok(None);
         };
         let block_map = self.tree().get_meta(node).map_err(|e| {
-            AppError::Validation(format!("loro: read_block {block_id}: get_meta: {e}"))
+            AppError::validation(format!("loro: read_block {block_id}: get_meta: {e}"))
         })?;
         let content = read_text(&block_map, FIELD_CONTENT)
             .map_err(|e| ctx_err(&e, &format!("block {block_id}: content")))?;
@@ -99,7 +99,7 @@ impl LoroEngine {
                 continue;
             };
             let block_map = self.tree().get_meta(node).map_err(|e| {
-                AppError::Validation(format!("loro: read_blocks_bulk {block_id}: get_meta: {e}"))
+                AppError::validation(format!("loro: read_blocks_bulk {block_id}: get_meta: {e}"))
             })?;
             let block_type = read_string(&block_map, FIELD_BLOCK_TYPE)
                 .map_err(|e| ctx_err(&e, &format!("block {block_id}: block_type")))?;
@@ -153,13 +153,13 @@ impl LoroEngine {
         let block_props: LoroMap = voc
             .into_container()
             .map_err(|_| {
-                AppError::Validation(format!(
+                AppError::validation(format!(
                     "loro: read_all_properties_typed block {block_id} props slot is not a container"
                 ))
             })?
             .into_map()
             .map_err(|_| {
-                AppError::Validation(format!(
+                AppError::validation(format!(
                     "loro: read_all_properties_typed block {block_id} props is not a LoroMap"
                 ))
             })?;
@@ -175,7 +175,7 @@ impl LoroEngine {
                     Err(e) => err = Some(e),
                 },
                 Err(_) => {
-                    err = Some(AppError::Validation(format!(
+                    err = Some(AppError::validation(format!(
                         "loro: read_all_properties_typed {block_id}/{key} expected scalar"
                     )));
                 }
@@ -206,13 +206,13 @@ impl LoroEngine {
         let block_props: LoroMap = voc
             .into_container()
             .map_err(|_| {
-                AppError::Validation(format!(
+                AppError::validation(format!(
                     "loro: read_property_typed block {block_id} props slot is not a container"
                 ))
             })?
             .into_map()
             .map_err(|_| {
-                AppError::Validation(format!(
+                AppError::validation(format!(
                     "loro: read_property_typed block {block_id} props is not a LoroMap"
                 ))
             })?;
@@ -220,7 +220,7 @@ impl LoroEngine {
             return Ok(None);
         };
         let value = value_voc.into_value().map_err(|_| {
-            AppError::Validation(format!(
+            AppError::validation(format!(
                 "loro: read_property_typed {block_id}/{key} expected scalar"
             ))
         })?;
@@ -231,7 +231,7 @@ impl LoroEngine {
     /// is missing from the engine.
     pub fn read_parent(&self, block_id: &str) -> Result<Option<String>, AppError> {
         let node = self.node_for(block_id).ok_or_else(|| {
-            AppError::Validation(format!("loro: read parent: block {block_id} not found"))
+            AppError::validation(format!("loro: read parent: block {block_id} not found"))
         })?;
         self.parent_block_id_of(node)
     }
@@ -239,7 +239,7 @@ impl LoroEngine {
     /// children in fractional-index order (#400), not the legacy meta key.
     pub fn read_position(&self, block_id: &str) -> Result<i64, AppError> {
         let node = self.node_for(block_id).ok_or_else(|| {
-            AppError::Validation(format!("loro: read position: block {block_id} not found"))
+            AppError::validation(format!("loro: read position: block {block_id} not found"))
         })?;
         Ok(self.child_rank_position(node))
     }
@@ -280,13 +280,13 @@ impl LoroEngine {
                     match voc.into_value() {
                         Ok(LoroValue::String(s)) => push_unique((*s).clone()),
                         Ok(other) => {
-                            err = Some(AppError::Validation(format!(
+                            err = Some(AppError::validation(format!(
                                 "loro: read_tags block {block_id} key {key}: \
                                  expected String tag_id, got {other:?}"
                             )));
                         }
                         Err(_) => {
-                            err = Some(AppError::Validation(format!(
+                            err = Some(AppError::validation(format!(
                                 "loro: read_tags block {block_id} key {key}: \
                                  tag value is not a scalar"
                             )));
@@ -302,12 +302,12 @@ impl LoroEngine {
                     match voc.into_value() {
                         Ok(LoroValue::String(s)) => push_unique((*s).clone()),
                         Ok(other) => {
-                            err = Some(AppError::Validation(format!(
+                            err = Some(AppError::validation(format!(
                                 "loro: read_tags block {block_id}: expected String tag, got {other:?}"
                             )));
                         }
                         Err(_) => {
-                            err = Some(AppError::Validation(format!(
+                            err = Some(AppError::validation(format!(
                                 "loro: read_tags block {block_id}: tag value is not a scalar"
                             )));
                         }
@@ -327,7 +327,7 @@ impl LoroEngine {
             None => Ok(false),
             Some(voc) => {
                 let value = voc.into_value().map_err(|_| {
-                    AppError::Validation(format!(
+                    AppError::validation(format!(
                         "loro: read_deleted block {block_id} deleted_at is not a scalar"
                     ))
                 })?;
@@ -354,7 +354,7 @@ impl LoroEngine {
             return Ok(None);
         };
         let meta = self.tree().get_meta(node).map_err(|e| {
-            AppError::Validation(format!("loro: read_deleted_at {block_id}: get_meta: {e}"))
+            AppError::validation(format!("loro: read_deleted_at {block_id}: get_meta: {e}"))
         })?;
         read_deleted_at_meta(&meta, block_id)
     }
@@ -375,7 +375,7 @@ impl LoroEngine {
         let mut out = Vec::with_capacity(children.len());
         for child in children {
             let meta = tree.get_meta(child).map_err(|e| {
-                AppError::Validation(format!("loro: list_children_walk: get_meta: {e}"))
+                AppError::validation(format!("loro: list_children_walk: get_meta: {e}"))
             })?;
             if read_deleted_at_meta(&meta, "child")?.is_some() {
                 continue; // soft-deleted — excluded, like the SQL filter
@@ -396,7 +396,7 @@ impl LoroEngine {
         for node in tree.get_nodes(false) {
             let meta = tree
                 .get_meta(node.id)
-                .map_err(|e| AppError::Validation(format!("loro: count_alive: get_meta: {e}")))?;
+                .map_err(|e| AppError::validation(format!("loro: count_alive: get_meta: {e}")))?;
             if read_deleted_at_meta(&meta, "count_alive")?.is_none() {
                 alive += 1;
             }
@@ -422,7 +422,7 @@ impl LoroEngine {
         let mut out = Vec::new();
         for (node_id, block_id) in self.live_nodes_with_block_id() {
             let meta = tree.get_meta(node_id).map_err(|e| {
-                AppError::Validation(format!("loro: live_block_ids: get_meta: {e}"))
+                AppError::validation(format!("loro: live_block_ids: get_meta: {e}"))
             })?;
             if read_deleted_at_meta(&meta, "live_block_ids")?.is_none() {
                 out.push(block_id);

@@ -394,7 +394,7 @@ impl PropertyValue {
                 Ok(PropertyValue::Num(i as f64))
             }
             LoroValue::Bool(b) => Ok(PropertyValue::Bool(b)),
-            other => Err(AppError::Validation(format!(
+            other => Err(AppError::validation(format!(
                 "loro: property value expected scalar, got {other:?}"
             ))),
         }
@@ -502,7 +502,7 @@ impl LoroEngine {
         let doc = LoroDoc::new();
         let peer = peer_id_for_epoch(device_id, epoch);
         doc.set_peer_id(peer).map_err(|e| {
-            AppError::Validation(format!(
+            AppError::validation(format!(
                 "loro: set_peer_id from device_id {device_id} failed: {e}"
             ))
         })?;
@@ -595,7 +595,7 @@ impl Default for LoroEngine {
 // ---------------------------------------------------------------------------
 
 fn ctx_err(inner: &AppError, ctx: &str) -> AppError {
-    AppError::Validation(format!("loro: {ctx}: {inner}"))
+    AppError::validation(format!("loro: {ctx}: {inner}"))
 }
 
 /// True iff `e` is LoroTree's deterministic cycle-rejection error — a
@@ -611,17 +611,17 @@ fn read_value(map: &LoroMap, key: &str) -> Result<Option<LoroValue>, AppError> {
         return Ok(None);
     };
     let value = voc.into_value().map_err(|_| {
-        AppError::Validation(format!("loro: expected scalar at key {key}, got container"))
+        AppError::validation(format!("loro: expected scalar at key {key}, got container"))
     })?;
     Ok(Some(value))
 }
 
 fn read_string(map: &LoroMap, key: &str) -> Result<String, AppError> {
     let value = read_value(map, key)?
-        .ok_or_else(|| AppError::Validation(format!("loro: missing key {key}")))?;
+        .ok_or_else(|| AppError::validation(format!("loro: missing key {key}")))?;
     match value {
         LoroValue::String(s) => Ok((*s).clone()),
-        other => Err(AppError::Validation(format!(
+        other => Err(AppError::validation(format!(
             "loro: key {key}: expected String, got {other:?}"
         ))),
     }
@@ -630,12 +630,12 @@ fn read_string(map: &LoroMap, key: &str) -> Result<String, AppError> {
 fn read_text(map: &LoroMap, key: &str) -> Result<String, AppError> {
     let voc = map
         .get(key)
-        .ok_or_else(|| AppError::Validation(format!("loro: missing key {key}")))?;
+        .ok_or_else(|| AppError::validation(format!("loro: missing key {key}")))?;
     let container = voc.into_container().map_err(|_| {
-        AppError::Validation(format!("loro: key {key}: expected container, got scalar"))
+        AppError::validation(format!("loro: key {key}: expected container, got scalar"))
     })?;
     let text: LoroText = container.into_text().map_err(|_| {
-        AppError::Validation(format!(
+        AppError::validation(format!(
             "loro: key {key}: expected LoroText, got other container"
         ))
     })?;
@@ -649,12 +649,12 @@ fn read_deleted_at_meta(meta: &LoroMap, block_id: &str) -> Result<Option<String>
         None => Ok(None),
         Some(voc) => {
             let value = voc.into_value().map_err(|_| {
-                AppError::Validation(format!("loro: block {block_id} deleted_at is not a scalar"))
+                AppError::validation(format!("loro: block {block_id} deleted_at is not a scalar"))
             })?;
             match value {
                 LoroValue::Null => Ok(None),
                 LoroValue::String(s) => Ok(Some((*s).clone())),
-                other => Err(AppError::Validation(format!(
+                other => Err(AppError::validation(format!(
                     "loro: block {block_id}: deleted_at expected String|Null, got {other:?}"
                 ))),
             }
@@ -669,20 +669,20 @@ fn block_map_get_text(
     ctx: &str,
 ) -> Result<LoroText, AppError> {
     let value = block_map.get(field).ok_or_else(|| {
-        AppError::Validation(format!(
+        AppError::validation(format!(
             "loro: {ctx}: block {block_id} has no {field} field"
         ))
     })?;
     value
         .into_container()
         .map_err(|_| {
-            AppError::Validation(format!(
+            AppError::validation(format!(
                 "loro: {ctx}: block {block_id} {field} slot is not a container"
             ))
         })?
         .into_text()
         .map_err(|_| {
-            AppError::Validation(format!(
+            AppError::validation(format!(
                 "loro: {ctx}: block {block_id} {field} is not a LoroText"
             ))
         })
@@ -698,10 +698,10 @@ fn clamp_slot(slot: usize, max: usize) -> usize {
 
 fn read_i64(map: &LoroMap, key: &str) -> Result<i64, AppError> {
     let value = read_value(map, key)?
-        .ok_or_else(|| AppError::Validation(format!("loro: missing key {key}")))?;
+        .ok_or_else(|| AppError::validation(format!("loro: missing key {key}")))?;
     match value {
         LoroValue::I64(n) => Ok(n),
-        other => Err(AppError::Validation(format!(
+        other => Err(AppError::validation(format!(
             "loro: key {key}: expected I64, got {other:?}"
         ))),
     }
@@ -733,14 +733,14 @@ fn tags_slot(tags_root: &LoroMap, block_id: &str, ctx: &str) -> Result<Option<Ta
         return Ok(None);
     };
     let container = voc.into_container().map_err(|_| {
-        AppError::Validation(format!(
+        AppError::validation(format!(
             "loro: {ctx} block {block_id} tags slot is not a container"
         ))
     })?;
     match container {
         Container::Map(map) => Ok(Some(TagsSlot::Map(map))),
         Container::List(list) => Ok(Some(TagsSlot::List(list))),
-        other => Err(AppError::Validation(format!(
+        other => Err(AppError::validation(format!(
             "loro: {ctx} block {block_id} tags slot is neither a LoroMap \
              nor a legacy LoroList (got {:?})",
             other.get_type()
@@ -2236,7 +2236,7 @@ mod tree_tests {
 
         let mut e = LoroEngine::new();
         match e.import(&bytes).unwrap_err() {
-            AppError::Validation(m) => assert!(
+            AppError::Validation { message: m, .. } => assert!(
                 m.contains("v1") && m.contains("flat-map"),
                 "expected a v1-rejection message, got: {m}"
             ),

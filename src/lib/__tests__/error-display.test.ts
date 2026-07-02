@@ -69,6 +69,14 @@ describe('formatErrorForDisplay', () => {
       )
     })
 
+    it('appends kind/code for a coded validation error when debug is on (#2251)', () => {
+      const coded = { kind: 'validation', message: 'unclosed group', code: 'InvalidRegex' }
+      expect(formatErrorForDisplay(coded, { debug: false })).toBe('unclosed group')
+      expect(formatErrorForDisplay(coded, { debug: true })).toBe(
+        'unclosed group · code: validation/InvalidRegex',
+      )
+    })
+
     it('preserves the (err: <id>) correlation code in both modes', () => {
       // #2045: sanitized internal failures now arrive with wire
       // `kind:"internal"` (distinct from `invalid_operation`, which real

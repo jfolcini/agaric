@@ -462,7 +462,7 @@ async fn push_shifted_date_property(
     op_records: &mut Vec<op_log::OpRecord>,
 ) -> Result<(), crate::error::AppError> {
     if !is_valid_iso_date(&shifted) {
-        return Err(crate::error::AppError::Validation(format!(
+        return Err(crate::error::AppError::validation(format!(
             "recurrence sibling {new_block_id}: shifted {key} '{shifted}' is not a valid \
              YYYY-MM-DD date (source block {block_id})",
             new_block_id = new_block.id,
@@ -1306,7 +1306,7 @@ mod tests_l99_l100 {
         .expect_err("invalid shifted date must return Err, not silently skip (#1547)");
 
         assert!(
-            matches!(err, crate::error::AppError::Validation(_)),
+            matches!(err, crate::error::AppError::Validation { .. }),
             "invalid shifted date must surface AppError::Validation so the tx rolls back, got {err:?}"
         );
         assert!(

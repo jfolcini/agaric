@@ -164,12 +164,12 @@ fn classify_from_vv_reachability(
     peer_encoded: &[u8],
 ) -> Result<Option<String>, AppError> {
     let local_vv = VersionVector::decode(local_encoded).map_err(|e| {
-        AppError::Validation(format!(
+        AppError::validation(format!(
             "loro_sync: decode local oplog_vv for reachability check: {e}",
         ))
     })?;
     let peer_vv = VersionVector::decode(peer_encoded).map_err(|e| {
-        AppError::Validation(format!(
+        AppError::validation(format!(
             "loro_sync: decode peer from_vv for reachability check: {e}",
         ))
     })?;
@@ -381,7 +381,7 @@ pub(crate) async fn read_sql_soft_deleted_ids(
             .fetch_all(pool)
             .await
             .map_err(|e| {
-                AppError::Validation(format!(
+                AppError::validation(format!(
                     "loro_sync: #1257 freshness gate: read SQL soft-deleted ids: {e}"
                 ))
             })?
@@ -454,7 +454,7 @@ pub async fn apply_remote(
             bytes,
         } => {
             if protocol_version != LORO_SYNC_PROTOCOL_VERSION {
-                return Err(AppError::Validation(format!(
+                return Err(AppError::validation(format!(
                     "loro_sync: unsupported snapshot protocol version {protocol_version} \
                      (this build speaks {LORO_SYNC_PROTOCOL_VERSION})",
                 )));
@@ -468,7 +468,7 @@ pub async fn apply_remote(
             bytes,
         } => {
             if protocol_version != LORO_SYNC_PROTOCOL_VERSION {
-                return Err(AppError::Validation(format!(
+                return Err(AppError::validation(format!(
                     "loro_sync: unsupported update protocol version {protocol_version} \
                      (this build speaks {LORO_SYNC_PROTOCOL_VERSION})",
                 )));
@@ -1965,7 +1965,7 @@ mod tests {
             .await
             .expect_err("must reject unsupported protocol_version");
         match err {
-            AppError::Validation(msg) => {
+            AppError::Validation { message: msg, .. } => {
                 assert!(
                     msg.contains("99") && msg.contains("protocol version"),
                     "error must mention the rejected version, got: {msg}"
@@ -1985,7 +1985,7 @@ mod tests {
             .await
             .expect_err("must reject unsupported protocol_version (Update)");
         match err {
-            AppError::Validation(msg) => {
+            AppError::Validation { message: msg, .. } => {
                 assert!(
                     msg.contains("99") && msg.contains("protocol version"),
                     "error must mention the rejected version, got: {msg}"

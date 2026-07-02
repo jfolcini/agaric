@@ -5,7 +5,7 @@
 //! parses each entry into one or more SQL-ready `GLOB` patterns and
 //! validates them; mismatched brackets, nested braces, and escape
 //! sequences are surfaced as typed `AppError::Validation` errors with
-//! an `InvalidGlob:` prefix the frontend keys on.
+//! an `InvalidGlob`-coded validation error the frontend keys on (#2251).
 //!
 //! Brace expansion is bounded: each input entry may not produce more
 //! than [`EXPANSION_CAP`] expanded patterns (the plan caps at ~64 to
@@ -16,7 +16,7 @@
 //! silently dropped.
 
 use crate::error::AppError;
-use crate::error::validation_code::{INVALID_GLOB, prefixed};
+use crate::error::ValidationCode;
 
 /// Cap on the total number of patterns produced from a single brace
 /// expansion. Mirrors the frontend `EXPANSION_CAP` so the chip
@@ -55,13 +55,13 @@ pub fn prepare_globs(entries: &[String]) -> Result<Vec<String>, AppError> {
                 continue;
             }
             if trimmed.len() > MAX_GLOB_LEN {
-                return Err(AppError::Validation(prefixed(
-                    INVALID_GLOB,
-                    &format!(
+                return Err(AppError::validation_coded(
+                    ValidationCode::InvalidGlob,
+                    format!(
                         "pattern length {} exceeds cap {MAX_GLOB_LEN}",
                         trimmed.len()
                     ),
-                )));
+                ));
             }
             validate(trimmed)?;
             let mut expanded = expand_braces(trimmed)?;
@@ -82,10 +82,10 @@ pub fn prepare_globs(entries: &[String]) -> Result<Vec<String>, AppError> {
                 out.push(with_substring.to_ascii_lowercase());
             }
             if out.len() > EXPANSION_CAP {
-                return Err(AppError::Validation(prefixed(
-                    INVALID_GLOB,
-                    &format!("expansion exceeded {EXPANSION_CAP} patterns"),
-                )));
+                return Err(AppError::validation_coded(
+                    ValidationCode::InvalidGlob,
+                    format!("expansion exceeded {EXPANSION_CAP} patterns"),
+                ));
             }
         }
     }
@@ -124,10 +124,10 @@ fn validate(input: &str) -> Result<(), AppError> {
             if let Some(&next) = chars.peek()
                 && matches!(next, '{' | '}' | '[' | ']')
             {
-                return Err(AppError::Validation(prefixed(
-                    INVALID_GLOB,
+                return Err(AppError::validation_coded(
+                    ValidationCode::InvalidGlob,
                     "escapes not supported",
-                )));
+                ));
             }
             continue;
         }
@@ -135,28 +135,28 @@ fn validate(input: &str) -> Result<(), AppError> {
             '[' => bracket_depth += 1,
             ']' => {
                 if bracket_depth == 0 {
-                    return Err(AppError::Validation(prefixed(
-                        INVALID_GLOB,
+                    return Err(AppError::validation_coded(
+                        ValidationCode::InvalidGlob,
                         "unbalanced bracket",
-                    )));
+                    ));
                 }
                 bracket_depth -= 1;
             }
             '{' => {
                 brace_depth += 1;
                 if brace_depth > 1 {
-                    return Err(AppError::Validation(prefixed(
-                        INVALID_GLOB,
+                    return Err(AppError::validation_coded(
+                        ValidationCode::InvalidGlob,
                         "brace nesting not supported",
-                    )));
+                    ));
                 }
             }
             '}' => {
                 if brace_depth == 0 {
-                    return Err(AppError::Validation(prefixed(
-                        INVALID_GLOB,
+                    return Err(AppError::validation_coded(
+                        ValidationCode::InvalidGlob,
                         "unbalanced brace",
-                    )));
+                    ));
                 }
                 brace_depth -= 1;
             }
@@ -164,16 +164,16 @@ fn validate(input: &str) -> Result<(), AppError> {
         }
     }
     if bracket_depth != 0 {
-        return Err(AppError::Validation(prefixed(
-            INVALID_GLOB,
+        return Err(AppError::validation_coded(
+            ValidationCode::InvalidGlob,
             "unbalanced bracket",
-        )));
+        ));
     }
     if brace_depth != 0 {
-        return Err(AppError::Validation(prefixed(
-            INVALID_GLOB,
+        return Err(AppError::validation_coded(
+            ValidationCode::InvalidGlob,
             "unbalanced brace",
-        )));
+        ));
     }
     Ok(())
 }
@@ -205,10 +205,10 @@ fn expand_braces(input: &str) -> Result<Vec<String>, AppError> {
             let close = input[i + 1..].find('}');
             let Some(rel) = close else {
                 // Unbalanced — should have been caught by `validate`.
-                return Err(AppError::Validation(prefixed(
-                    INVALID_GLOB,
+                return Err(AppError::validation_coded(
+                    ValidationCode::InvalidGlob,
                     "unbalanced brace",
-                )));
+                ));
             };
             let end = i + 1 + rel;
             let inner = &input[i + 1..end];
@@ -364,11 +364,10 @@ mod tests {
     }
 
     #[test]
-    fn every_glob_emit_site_uses_the_shared_invalid_glob_prefix_1061() {
-        // #1061 — every glob validation error must carry the shared
-        // `InvalidGlob:` prefix sourced from `error::validation_code`, not a
-        // hand-spelled literal. Each tuple drives one distinct emit site.
-        let expect = format!("{INVALID_GLOB}: ");
+    fn every_glob_emit_site_uses_the_shared_invalid_glob_code_1061() {
+        // #1061 / #2251 — every glob validation error must carry the shared
+        // structured `ValidationCode::InvalidGlob` (formerly an `InvalidGlob:`
+        // message prefix). Each tuple drives one distinct emit site.
         let cases: &[&str] = &[
             &"a".repeat(MAX_GLOB_LEN + 1), // pattern length cap (line ~58)
             "\\{",                         // escapes not supported (~123)
@@ -380,20 +379,21 @@ mod tests {
         ];
         for input in cases {
             let err = prepare_globs(&[(*input).to_string()]).unwrap_err();
-            let AppError::Validation(msg) = err else {
+            let AppError::Validation { code, message } = err else {
                 panic!("expected AppError::Validation for {input:?}, got {err:?}");
             };
-            assert!(
-                msg.starts_with(&expect),
-                "emit site for {input:?} must start with {expect:?}; got {msg:?}",
+            assert_eq!(
+                code,
+                Some(ValidationCode::InvalidGlob),
+                "emit site for {input:?} must carry InvalidGlob; message: {message:?}",
             );
         }
         // The expansion-overflow site (~82) is only reachable via a heavy
         // brace product; assert it too when it errors rather than truncates.
-        if let Err(AppError::Validation(msg)) =
+        if let Err(AppError::Validation { code, .. }) =
             prepare_globs(&["{a,b,c,d}{a,b,c,d}{a,b,c,d}{a,b,c,d}{a,b,c,d}".to_string()])
         {
-            assert!(msg.starts_with(&expect), "expansion-overflow msg: {msg:?}");
+            assert_eq!(code, Some(ValidationCode::InvalidGlob));
         }
     }
 
@@ -444,7 +444,7 @@ mod tests {
     #[test]
     fn expansion_cap_enforced() {
         // 4 ^ 5 = 1024 patterns; the cap truncates to 64. We accept
-        // either truncation or an `InvalidGlob: expansion exceeded`
+        // either truncation or an `InvalidGlob`-coded `expansion exceeded`
         // error as a valid response (both are defensible — the plan
         // names 64 as the documented limit).
         let result = prepare_globs(&["{a,b,c,d}{a,b,c,d}{a,b,c,d}{a,b,c,d}{a,b,c,d}".to_string()]);

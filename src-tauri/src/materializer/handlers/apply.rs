@@ -695,7 +695,7 @@ pub(super) async fn apply_op_tx(
 ) -> Result<ApplyEffects, AppError> {
     use std::str::FromStr;
     let op_type = OpType::from_str(&record.op_type).map_err(|e| {
-        AppError::Validation(format!("unknown op_type '{}': {}", record.op_type, e))
+        AppError::validation(format!("unknown op_type '{}': {}", record.op_type, e))
     })?;
     let mut effects = ApplyEffects::default();
     // Per-op pre-state captured for the post-projection count refresh.

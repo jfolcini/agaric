@@ -764,7 +764,7 @@ async fn query_by_tag_expr_rejects_over_max_depth() {
         .await
         .expect_err("over-MAX_DEPTH tree must be rejected");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "expected Validation error for over-depth tree, got {err:?}"
     );
 }
@@ -832,7 +832,7 @@ async fn add_tag_rejects_genuine_cross_space_tag() {
 
     let result = add_tag_inner(&pool, DEV, &mat, "F4X_BLK".into(), "F4X_TAG".into()).await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "a tag from a different space must still be rejected, got {result:?}"
     );
 }
@@ -990,7 +990,7 @@ async fn add_tags_by_ids_rejects_empty_list() {
 
     let result = add_tags_by_ids_inner(&pool, DEV, &mat, vec![], "ABI4_TAG".into()).await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "empty block_ids must be rejected, got {result:?}"
     );
 }
@@ -1007,7 +1007,7 @@ async fn add_tags_by_ids_rejects_oversize_list() {
         .collect();
     let result = add_tags_by_ids_inner(&pool, DEV, &mat, oversize, "ABI5_TAG".into()).await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "oversize block_ids must be rejected, got {result:?}"
     );
 }
@@ -1184,7 +1184,7 @@ async fn add_tags_by_ids_rejects_cross_space_in_batch() {
     let result =
         add_tags_by_ids_inner(&pool, DEV, &mat, vec!["P91X_A".into()], "P91X_TAG".into()).await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "cross-space pairing in a batch must still be rejected, got {result:?}"
     );
 

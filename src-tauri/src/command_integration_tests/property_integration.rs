@@ -213,7 +213,7 @@ async fn set_property_inner_with_empty_key_returns_validation() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "empty property key must return AppError::Validation, got: {result:?}"
     );
 }
@@ -276,7 +276,7 @@ async fn set_property_inner_with_type_mismatch_returns_validation() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "value-type mismatch (text vs date-typed definition) must return \
          AppError::Validation, got: {result:?}"
     );
@@ -444,7 +444,7 @@ async fn boolean_property_type_mismatch_returns_validation() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "value_bool against a text-typed definition must return Validation, got: {result:?}"
     );
 }
@@ -503,7 +503,7 @@ async fn delete_property_on_deleted_block_returns_soft_deleted() {
         delete_property_inner(&pool, DEV, &mat, block.id.as_str().into(), "status".into()).await;
 
     match result {
-        Err(AppError::Validation(msg)) => assert!(
+        Err(AppError::Validation { message: msg, .. }) => assert!(
             msg.contains("soft-deleted"),
             "delete_property on a soft-deleted block must report Validation 'soft-deleted', got: {msg}"
         ),
@@ -623,7 +623,7 @@ async fn get_batch_properties_empty_ids_returns_validation_error() {
     let result = get_batch_properties_inner(&pool, vec![]).await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "empty block_ids must return Validation error, got: {result:?}"
     );
 }
@@ -708,7 +708,7 @@ async fn date_validation_invalid_month_13_returns_validation() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "month=13 must return Validation error, got: {result:?}"
     );
 }
@@ -733,7 +733,7 @@ async fn date_validation_short_format_returns_validation() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "short date '2025-01' must return Validation error, got: {result:?}"
     );
 }
@@ -758,7 +758,7 @@ async fn date_validation_two_digit_year_returns_validation() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "'25-1-1' must return Validation error, got: {result:?}"
     );
 }
@@ -783,7 +783,7 @@ async fn date_validation_day_32_returns_validation() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "day=32 must return Validation error, got: {result:?}"
     );
 }
@@ -808,7 +808,7 @@ async fn date_validation_non_date_string_returns_validation() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "'not-a-date' must return Validation error, got: {result:?}"
     );
 }
@@ -1134,7 +1134,7 @@ async fn create_property_def_empty_key_returns_validation() {
     let (pool, _dir) = test_pool().await;
     let result = create_property_def_inner(&pool, String::new(), "text".into(), None).await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "empty key must return Validation error"
     );
 }
@@ -1145,7 +1145,7 @@ async fn create_property_def_key_too_long_returns_validation() {
     let long_key = "a".repeat(65);
     let result = create_property_def_inner(&pool, long_key, "text".into(), None).await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "65-char key must return Validation error"
     );
 }
@@ -1155,7 +1155,7 @@ async fn create_property_def_invalid_chars_returns_validation() {
     let (pool, _dir) = test_pool().await;
     let result = create_property_def_inner(&pool, "has spaces".into(), "text".into(), None).await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "key with spaces must return Validation error"
     );
 }
@@ -1167,7 +1167,7 @@ async fn create_property_def_invalid_value_type_returns_validation() {
     // identifier here to keep the negative-path coverage.
     let result = create_property_def_inner(&pool, "flag".into(), "garbage".into(), None).await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "invalid value_type must return Validation error"
     );
 }
@@ -1177,7 +1177,7 @@ async fn create_property_def_select_without_options_returns_validation() {
     let (pool, _dir) = test_pool().await;
     let result = create_property_def_inner(&pool, "pick".into(), "select".into(), None).await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "select without options must return Validation error"
     );
 }
@@ -1189,7 +1189,7 @@ async fn create_property_def_text_with_options_returns_validation() {
         create_property_def_inner(&pool, "note".into(), "text".into(), Some(r#"["a"]"#.into()))
             .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "text type with options must return Validation error"
     );
 }
@@ -1214,7 +1214,7 @@ async fn update_property_def_options_non_select_returns_validation() {
 
     let result = update_property_def_options_inner(&pool, "mytext".into(), r#"["a"]"#.into()).await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "update options on text-type must return Validation error"
     );
 }
@@ -1239,7 +1239,7 @@ async fn create_property_def_select_empty_options_returns_validation() {
     let result =
         create_property_def_inner(&pool, "empty".into(), "select".into(), Some("[]".into())).await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "select with empty options array must return Validation error"
     );
 }

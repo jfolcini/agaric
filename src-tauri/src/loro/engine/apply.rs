@@ -84,7 +84,7 @@ impl LoroEngine {
             let tree = self.tree();
             let parent = target.unwrap_or_else(|| tree.parent(node).unwrap_or(TreeParentId::Root));
             let meta = tree.get_meta(node).map_err(|e| {
-                AppError::Validation(format!("loro: re-create block {block_id}: get_meta: {e}"))
+                AppError::validation(format!("loro: re-create block {block_id}: get_meta: {e}"))
             })?;
             self.write_node_identity(&meta, block_id, block_type)?;
             if let Some(pos) = legacy_position {
@@ -100,7 +100,7 @@ impl LoroEngine {
                 content_text
                     .splice(0, content_text.len_unicode(), content)
                     .map_err(|e| {
-                        AppError::Validation(format!(
+                        AppError::validation(format!(
                             "loro: re-create block {block_id}: rewrite content: {e}"
                         ))
                     })?;
@@ -124,12 +124,12 @@ impl LoroEngine {
         // `create_at` requires `index <= children_count`; clamp defensively.
         let slot = clamp_slot(slot, tree.children_num(parent).unwrap_or(0));
         let node = tree.create_at(parent, slot).map_err(|e| {
-            AppError::Validation(format!(
+            AppError::validation(format!(
                 "loro: create block {block_id}: tree.create_at: {e}"
             ))
         })?;
         let meta = tree.get_meta(node).map_err(|e| {
-            AppError::Validation(format!("loro: create block {block_id}: get_meta: {e}"))
+            AppError::validation(format!("loro: create block {block_id}: get_meta: {e}"))
         })?;
         self.write_node_identity(&meta, block_id, block_type)?;
         if let Some(pos) = legacy_position {
@@ -143,12 +143,12 @@ impl LoroEngine {
         let content_text: LoroText = meta
             .insert_container(FIELD_CONTENT, LoroText::new())
             .map_err(|e| {
-                AppError::Validation(format!(
+                AppError::validation(format!(
                     "loro: create block {block_id}: insert content container: {e}"
                 ))
             })?;
         content_text.insert(0, content).map_err(|e| {
-            AppError::Validation(format!(
+            AppError::validation(format!(
                 "loro: create block {block_id}: write initial content: {e}"
             ))
         })?;
@@ -186,7 +186,7 @@ impl LoroEngine {
         // bytes and the `Ok(None)`-for-missing behaviour are identical to
         // `read_block(block_id)?.content`.
         let current = self.read_block_content(block_id)?.ok_or_else(|| {
-            AppError::Validation(format!(
+            AppError::validation(format!(
                 "loro: apply_edit_via_diff_splice: block {block_id} not found"
             ))
         })?;
@@ -274,7 +274,7 @@ impl LoroEngine {
             .checked_add(range_len)
             .is_none_or(|end| end > len)
         {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "loro: edit content block {block_id} range {range_start}+{range_len} \
                  exceeds content length {len} (unicode scalars)"
             )));
@@ -283,7 +283,7 @@ impl LoroEngine {
         content_text
             .splice(range_start, range_len, replacement)
             .map_err(|e| {
-                AppError::Validation(format!(
+                AppError::validation(format!(
                     "loro: edit content block {block_id} splice failed: {e}"
                 ))
             })?;
@@ -314,7 +314,7 @@ impl LoroEngine {
         block_map
             .insert(FIELD_DELETED_AT, LoroValue::from(deleted_at))
             .map_err(|e| {
-                AppError::Validation(format!(
+                AppError::validation(format!(
                     "loro: delete block {block_id}: set deleted_at: {e}"
                 ))
             })?;
@@ -354,12 +354,12 @@ impl LoroEngine {
         new_position: i64,
     ) -> Result<(), AppError> {
         let node = self.node_for(block_id).ok_or_else(|| {
-            AppError::Validation(format!("loro: move block: block {block_id} not found"))
+            AppError::validation(format!("loro: move block: block {block_id} not found"))
         })?;
         // Stamp the legacy position so later legacy ops can convert against it,
         // then derive the slot it maps to among the target parent's children.
         let meta = self.tree().get_meta(node).map_err(|e| {
-            AppError::Validation(format!("loro: move block {block_id}: get_meta: {e}"))
+            AppError::validation(format!("loro: move block {block_id}: get_meta: {e}"))
         })?;
         self.write_legacy_position(&meta, block_id, new_position)?;
         let target = self.resolve_move_target(block_id, new_parent_id);
@@ -380,7 +380,7 @@ impl LoroEngine {
         index: usize,
     ) -> Result<(), AppError> {
         let node = self.node_for(block_id).ok_or_else(|| {
-            AppError::Validation(format!("loro: move block: block {block_id} not found"))
+            AppError::validation(format!("loro: move block: block {block_id} not found"))
         })?;
         let target = self.resolve_move_target(block_id, new_parent_id);
         // `index` is a live-sibling slot from the frontend; translate to a tree
@@ -469,7 +469,7 @@ impl LoroEngine {
             }
             Err(e) => {
                 self.doc.commit();
-                return Err(AppError::Validation(format!(
+                return Err(AppError::validation(format!(
                     "loro: move block {block_id}: tree.mov_to: {e}"
                 )));
             }
@@ -496,26 +496,26 @@ impl LoroEngine {
             Some(voc) => voc
                 .into_container()
                 .map_err(|_| {
-                    AppError::Validation(format!(
+                    AppError::validation(format!(
                         "loro: set_property block {block_id} props slot is not a container"
                     ))
                 })?
                 .into_map()
                 .map_err(|_| {
-                    AppError::Validation(format!(
+                    AppError::validation(format!(
                         "loro: set_property block {block_id} props is not a LoroMap"
                     ))
                 })?,
             None => props_root
                 .insert_container(block_id, LoroMap::new())
                 .map_err(|e| {
-                    AppError::Validation(format!(
+                    AppError::validation(format!(
                         "loro: set_property: create props map for {block_id}: {e}"
                     ))
                 })?,
         };
         block_props.insert(key, value.to_loro()).map_err(|e| {
-            AppError::Validation(format!(
+            AppError::validation(format!(
                 "loro: set_property block {block_id} key {key}: {e}"
             ))
         })?;
@@ -554,13 +554,13 @@ impl LoroEngine {
         let block_props: LoroMap = voc
             .into_container()
             .map_err(|_| {
-                AppError::Validation(format!(
+                AppError::validation(format!(
                     "loro: delete_property block {block_id} props slot is not a container"
                 ))
             })?
             .into_map()
             .map_err(|_| {
-                AppError::Validation(format!(
+                AppError::validation(format!(
                     "loro: delete_property block {block_id} props is not a LoroMap"
                 ))
             })?;
@@ -569,7 +569,7 @@ impl LoroEngine {
             return Ok(());
         }
         block_props.delete(key).map_err(|e| {
-            AppError::Validation(format!(
+            AppError::validation(format!(
                 "loro: delete_property block {block_id} key {key}: {e}"
             ))
         })?;
@@ -605,7 +605,7 @@ impl LoroEngine {
                 self.rekey_stale_tag_entries(block_id, &tag_map)?;
                 let key = self.tag_map_key_for(tag_id);
                 tag_map.insert(&key, LoroValue::from(tag_id)).map_err(|e| {
-                    AppError::Validation(format!(
+                    AppError::validation(format!(
                         "loro: add_tag block {block_id} tag {tag_id}: insert: {e}"
                     ))
                 })?;
@@ -622,7 +622,7 @@ impl LoroEngine {
                     return Ok(());
                 }
                 block_tags.push(LoroValue::from(tag_id)).map_err(|e| {
-                    AppError::Validation(format!(
+                    AppError::validation(format!(
                         "loro: add_tag block {block_id} tag {tag_id}: push: {e}"
                     ))
                 })?;
@@ -631,13 +631,13 @@ impl LoroEngine {
                 let tag_map = tags_root
                     .insert_container(block_id, LoroMap::new())
                     .map_err(|e| {
-                        AppError::Validation(format!(
+                        AppError::validation(format!(
                             "loro: add_tag: create tags map for {block_id}: {e}"
                         ))
                     })?;
                 let key = self.tag_map_key_for(tag_id);
                 tag_map.insert(&key, LoroValue::from(tag_id)).map_err(|e| {
-                    AppError::Validation(format!(
+                    AppError::validation(format!(
                         "loro: add_tag block {block_id} tag {tag_id}: insert: {e}"
                     ))
                 })?;
@@ -720,13 +720,13 @@ impl LoroEngine {
             tag_map
                 .insert(&new_key, LoroValue::from(tag_id.as_str()))
                 .map_err(|e| {
-                    AppError::Validation(format!(
+                    AppError::validation(format!(
                         "loro: add_tag block {block_id} rekey tag {tag_id} \
                          to {new_key}: {e}"
                     ))
                 })?;
             tag_map.delete(&old_key).map_err(|e| {
-                AppError::Validation(format!(
+                AppError::validation(format!(
                     "loro: add_tag block {block_id} rekey delete stale key \
                      {old_key}: {e}"
                 ))
@@ -767,7 +767,7 @@ impl LoroEngine {
                 });
                 for key in doomed_keys {
                     tag_map.delete(&key).map_err(|e| {
-                        AppError::Validation(format!(
+                        AppError::validation(format!(
                             "loro: remove_tag block {block_id} tag {tag_id} key {key}: {e}"
                         ))
                     })?;
@@ -779,7 +779,7 @@ impl LoroEngine {
                 // front after each delete; indices shift left).
                 while let Some(pos) = list_find_string(&block_tags, tag_id) {
                     block_tags.delete(pos, 1).map_err(|e| {
-                        AppError::Validation(format!(
+                        AppError::validation(format!(
                             "loro: remove_tag block {block_id} tag {tag_id} at {pos}: {e}"
                         ))
                     })?;
@@ -809,11 +809,11 @@ impl LoroEngine {
         let list = tags_root
             .insert_container(block_id, LoroList::new())
             .map_err(|e| {
-                AppError::Validation(format!("loro: seed legacy tag list for {block_id}: {e}"))
+                AppError::validation(format!("loro: seed legacy tag list for {block_id}: {e}"))
             })?;
         for tag_id in tag_ids {
             list.push(LoroValue::from(*tag_id)).map_err(|e| {
-                AppError::Validation(format!("loro: seed legacy tag push {tag_id}: {e}"))
+                AppError::validation(format!("loro: seed legacy tag push {tag_id}: {e}"))
             })?;
         }
         self.doc.commit();
@@ -844,11 +844,11 @@ impl LoroEngine {
             return Ok(());
         };
         let meta = self.tree().get_meta(node).map_err(|e| {
-            AppError::Validation(format!("loro: restore block {block_id}: get_meta: {e}"))
+            AppError::validation(format!("loro: restore block {block_id}: get_meta: {e}"))
         })?;
         meta.insert(FIELD_DELETED_AT, LoroValue::Null)
             .map_err(|e| {
-                AppError::Validation(format!(
+                AppError::validation(format!(
                     "loro: restore block {block_id}: clear deleted_at: {e}"
                 ))
             })?;
@@ -884,7 +884,7 @@ impl LoroEngine {
             // cascade and the post-`import` `rebuild_index` state.
             let subtree_ids = self.collect_subtree_block_ids(node);
             self.tree().delete(node).map_err(|e| {
-                AppError::Validation(format!("loro: purge block {block_id}: tree.delete: {e}"))
+                AppError::validation(format!("loro: purge block {block_id}: tree.delete: {e}"))
             })?;
             for bid in subtree_ids {
                 self.index.remove(&bid);
@@ -894,7 +894,7 @@ impl LoroEngine {
         let props_root: LoroMap = self.doc.get_map(BLOCK_PROPERTIES_ROOT);
         if props_root.get(block_id).is_some() {
             props_root.delete(block_id).map_err(|e| {
-                AppError::Validation(format!(
+                AppError::validation(format!(
                     "loro: purge block {block_id}: block_properties.delete: {e}"
                 ))
             })?;
@@ -902,7 +902,7 @@ impl LoroEngine {
         let tags_root: LoroMap = self.doc.get_map(BLOCK_TAGS_ROOT);
         if tags_root.get(block_id).is_some() {
             tags_root.delete(block_id).map_err(|e| {
-                AppError::Validation(format!(
+                AppError::validation(format!(
                     "loro: purge block {block_id}: block_tags.delete: {e}"
                 ))
             })?;

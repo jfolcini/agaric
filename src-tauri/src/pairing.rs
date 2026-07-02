@@ -303,7 +303,7 @@ pub enum PairingMessage {
 /// - `expected_passphrase` (when `Some`): H-1 — the message's
 ///   `passphrase` must match the passphrase stored in the active
 ///   `pairing_state` slot. A mismatch returns
-///   `AppError::Validation("pairing.passphrase.mismatch")`. This is
+///   `AppError::validation("pairing.passphrase.mismatch")`. This is
 ///   the one place inside the local trust boundary where input from
 ///   outside (the user typing what they read off the QR display) is
 ///   checked, so the error is surfaced with a stable, machine-readable
@@ -348,7 +348,7 @@ pub fn verify_device_exchange(
     if let Some(expected_pass) = expected_passphrase
         && msg_passphrase != expected_pass
     {
-        return Err(crate::error::AppError::Validation(
+        return Err(crate::error::AppError::validation(
             "pairing.passphrase.mismatch".into(),
         ));
     }
@@ -655,7 +655,7 @@ mod tests {
     }
 
     /// H-1: a passphrase mismatch must surface as
-    /// `AppError::Validation("pairing.passphrase.mismatch")` so the
+    /// `AppError::validation("pairing.passphrase.mismatch")` so the
     /// frontend can match on the tag without parsing free-text.
     #[test]
     fn verify_device_exchange_rejects_passphrase_mismatch() {
@@ -667,7 +667,7 @@ mod tests {
         let err = verify_device_exchange(&msg, None, Some("alpha bravo charlie delta"))
             .expect_err("mismatched passphrase must fail");
         match err {
-            AppError::Validation(msg) => assert_eq!(
+            AppError::Validation { message: msg, .. } => assert_eq!(
                 msg, "pairing.passphrase.mismatch",
                 "H-1 error tag must be pairing.passphrase.mismatch"
             ),

@@ -180,13 +180,13 @@ impl QueryCursor {
     fn decode(s: &str) -> Result<Self, AppError> {
         let bytes = URL_SAFE_NO_PAD
             .decode(s)
-            .map_err(|e| AppError::Validation(format!("invalid cursor: {e}")))?;
+            .map_err(|e| AppError::validation(format!("invalid cursor: {e}")))?;
         let json = String::from_utf8(bytes)
-            .map_err(|e| AppError::Validation(format!("invalid cursor UTF-8: {e}")))?;
+            .map_err(|e| AppError::validation(format!("invalid cursor UTF-8: {e}")))?;
         let cursor: QueryCursor = serde_json::from_str(&json)
-            .map_err(|e| AppError::Validation(format!("invalid cursor JSON: {e}")))?;
+            .map_err(|e| AppError::validation(format!("invalid cursor JSON: {e}")))?;
         if cursor.version != CURSOR_VERSION {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "cursor: unsupported version {} (expected {CURSOR_VERSION})",
                 cursor.version
             )));
@@ -244,7 +244,7 @@ fn resolve_sort(
             }
             SortSource::Relevance => {
                 if !has_fulltext {
-                    return Err(AppError::Validation(
+                    return Err(AppError::validation(
                         "InvalidSort: `Relevance` requires a `fulltext` term to rank on"
                             .to_string(),
                     ));
@@ -342,9 +342,10 @@ fn gate_leaf_keys(expr: &FilterExpr) -> Result<(), AppError> {
         FilterExpr::Leaf { primitive } => {
             let key = primitive.allowed_key();
             if !QUERY_ALLOWED_KEYS.contains(key) {
-                return Err(AppError::Validation(format!(
-                    "InvalidFilter: `{key}` is not a valid filter on the advanced-query surface"
-                )));
+                return Err(AppError::validation_coded(
+                    crate::error::ValidationCode::InvalidFilter,
+                    format!("`{key}` is not a valid filter on the advanced-query surface"),
+                ));
             }
             // #1455 — `has-parent-matching` carries a nested FilterExpr (the
             // parent matcher); its leaves must be gated too, or an unsupported
@@ -563,7 +564,7 @@ fn map_fts_error(e: sqlx::Error) -> AppError {
         code_match && prefix_match
     });
     if is_fts5_parse_error {
-        AppError::Validation(format!(
+        AppError::validation(format!(
             "Invalid search query: check for unmatched quotes or special characters. \
              Details: {e}"
         ))
@@ -588,7 +589,7 @@ pub async fn compile_and_run(
     let limit = match request.limit {
         Some(l) if (1..=MAX_LIMIT).contains(&l) => l,
         Some(l) => {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "advanced query limit must be in [1, {MAX_LIMIT}]; got {l}"
             )));
         }
@@ -599,9 +600,9 @@ pub async fn compile_and_run(
     let where_clause = QueryProjection.compile_expr(&request.filter);
     if where_clause.is_unsupported() {
         // Defence in depth — the gate already rejected unsupported keys.
-        return Err(AppError::Validation(
-            "InvalidFilter: filter shape is not supported on the advanced-query surface"
-                .to_string(),
+        return Err(AppError::validation_coded(
+            crate::error::ValidationCode::InvalidFilter,
+            "filter shape is not supported on the advanced-query surface",
         ));
     }
 
@@ -620,7 +621,7 @@ pub async fn compile_and_run(
                 // After trigram/operator filtering nothing remains to match
                 // (e.g. a query of only sub-trigram tokens). Reject rather
                 // than silently returning the whole structural set.
-                return Err(AppError::Validation(
+                return Err(AppError::validation(
                     "Invalid search query: no searchable terms (each term must be \
                      at least 3 characters)"
                         .to_string(),
@@ -691,7 +692,7 @@ pub async fn compile_and_run(
     if let Some(c) = cursor.as_ref()
         && c.values.len() != terms.len()
     {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "cursor: sort-key count does not match this request's sort".to_string(),
         ));
     }
@@ -1272,13 +1273,13 @@ impl GroupCursor {
     fn decode(s: &str) -> Result<Self, AppError> {
         let bytes = URL_SAFE_NO_PAD
             .decode(s)
-            .map_err(|e| AppError::Validation(format!("invalid group cursor: {e}")))?;
+            .map_err(|e| AppError::validation(format!("invalid group cursor: {e}")))?;
         let json = String::from_utf8(bytes)
-            .map_err(|e| AppError::Validation(format!("invalid group cursor UTF-8: {e}")))?;
+            .map_err(|e| AppError::validation(format!("invalid group cursor UTF-8: {e}")))?;
         let cursor: GroupCursor = serde_json::from_str(&json)
-            .map_err(|e| AppError::Validation(format!("invalid group cursor JSON: {e}")))?;
+            .map_err(|e| AppError::validation(format!("invalid group cursor JSON: {e}")))?;
         if cursor.version != CURSOR_VERSION {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "group cursor: unsupported version {} (expected {CURSOR_VERSION})",
                 cursor.version
             )));

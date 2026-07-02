@@ -823,7 +823,7 @@ interface MetaResp {
 function invokePages(
   page: Page,
   args: { sort: string; cursor: string | null; limit: number },
-): Promise<MetaResp | { __error: { kind?: string; message?: string } }> {
+): Promise<MetaResp | { __error: { kind?: string; code?: string; message?: string } }> {
   return page.evaluate(async (a) => {
     const invoke = (
       window as unknown as {
@@ -839,11 +839,11 @@ function invokePages(
         limit: a.limit,
       })) as MetaResp
     } catch (err) {
-      // Surface the AppError wire shape verbatim ({ kind, message }) so the
-      // RequiresRefresh assertion can read it; a thrown value crossing the
-      // page.evaluate boundary otherwise arrives as an opaque Error string.
-      const e = err as { kind?: string; message?: string }
-      return { __error: { kind: e?.kind, message: e?.message } }
+      // Surface the AppError wire shape verbatim ({ kind, message, code })
+      // so the RequiresRefresh assertion can read it; a thrown value crossing
+      // the page.evaluate boundary otherwise arrives as an opaque Error string.
+      const e = err as { kind?: string; code?: string; message?: string }
+      return { __error: { kind: e?.kind, code: e?.code, message: e?.message } }
     }
   }, args)
 }
@@ -884,15 +884,17 @@ test.describe('cursor IPC contract (E12)', () => {
     expect(first.next_cursor).not.toBeNull()
 
     // Replay the default-sort cursor under `most-linked` → discriminator
-    // mismatch → the mock throws the AppError wire shape with the
-    // `RequiresRefresh:` prefix that `withCursorRecovery` keys on.
+    // mismatch → the mock throws the AppError wire shape carrying the
+    // structured `RequiresRefresh` code (#2251) that `withCursorRecovery`
+    // keys on.
     const rejected = (await invokePages(page, {
       sort: 'most-linked',
       cursor: first.next_cursor,
       limit: 50,
-    })) as { __error: { kind?: string; message?: string } }
+    })) as { __error: { kind?: string; code?: string; message?: string } }
     expect(rejected.__error.kind).toBe('validation')
-    expect(rejected.__error.message ?? '').toMatch(/^RequiresRefresh:/)
+    expect(rejected.__error.code).toBe('RequiresRefresh')
+    expect(rejected.__error.message ?? '').toMatch(/cursor sort mismatch/)
   })
 
   test('count chip survives load-more (D6 retention, end-to-end)', async ({ page }) => {

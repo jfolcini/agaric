@@ -68,7 +68,13 @@ export function setupMock(): void {
     // Error injection — E2E tests can force any command to fail
     const injectedError = getInjectedError(cmd)
     if (injectedError !== undefined) {
-      throw new Error(injectedError)
+      // String injections throw a plain Error (non-IPC-shaped failure);
+      // structured AppError injections are thrown raw, mirroring a real
+      // Tauri command rejection (#2251).
+      if (typeof injectedError === 'string') throw new Error(injectedError)
+      // Deliberately the raw `{ kind, message, code? }` wire object, exactly
+      // as Tauri rejects (now a typed AppError, so no lint suppression needed).
+      throw injectedError
     }
     return dispatch(cmd, args)
   })

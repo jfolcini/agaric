@@ -281,7 +281,7 @@ async fn handle_fg_unexpected() {
     let (pool, _dir) = test_pool().await;
     let result = handle_foreground_task(&pool, &MaterializeTask::RebuildTagsCache).await;
     match result {
-        Err(AppError::Validation(msg)) => {
+        Err(AppError::Validation { message: msg, .. }) => {
             assert!(
                 msg.contains("unexpected task in foreground queue"),
                 "validation message should describe the misroute, got: {msg}"
@@ -303,7 +303,7 @@ async fn handle_fg_unexpected_reindex() {
     )
     .await;
     match result {
-        Err(AppError::Validation(msg)) => {
+        Err(AppError::Validation { message: msg, .. }) => {
             assert!(
                 msg.contains("unexpected task in foreground queue"),
                 "validation message should describe the misroute, got: {msg}"
@@ -329,7 +329,7 @@ async fn handle_bg_unexpected_apply() {
     )
     .await;
     match result {
-        Err(AppError::Validation(msg)) => {
+        Err(AppError::Validation { message: msg, .. }) => {
             assert!(
                 msg.contains("unexpected ApplyOp in background queue"),
                 "validation message should describe the misroute, got: {msg}"
@@ -361,7 +361,7 @@ async fn handle_bg_unexpected_apply() {
 //
 // Misrouted variants in either queue used to log at warn and
 // return Ok(()), silently absorbing dispatch bugs. They now return
-// `Err(AppError::Validation(_))` so consumers bump `fg_errors` /
+// `Err(AppError::Validation { .. })` so consumers bump `fg_errors` /
 // `bg_errors` and reviewers see a real signal.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -401,7 +401,7 @@ async fn handle_fg_rebuild_fts_index_returns_validation_err() {
     let (pool, _dir) = test_pool().await;
     let result = handle_foreground_task(&pool, &MaterializeTask::RebuildFtsIndex).await;
     match result {
-        Err(AppError::Validation(msg)) => {
+        Err(AppError::Validation { message: msg, .. }) => {
             assert!(
                 msg.contains("unexpected task in foreground queue"),
                 "validation message should describe the misroute, got: {msg}"
@@ -423,7 +423,7 @@ async fn handle_bg_unexpected_batch_apply_returns_validation_err() {
     let result =
         handle_background_task(&pool, &MaterializeTask::BatchApplyOps(batch), None, None).await;
     match result {
-        Err(AppError::Validation(msg)) => {
+        Err(AppError::Validation { message: msg, .. }) => {
             assert!(
                 msg.contains("unexpected BatchApplyOps in background queue"),
                 "validation message should describe the misroute, got: {msg}"

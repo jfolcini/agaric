@@ -45,7 +45,7 @@ fn validate_reserved_property_value(
     defaults: &[&str],
 ) -> Result<(), AppError> {
     if !def_row_present && !defaults.contains(&value) {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "{key} '{value}' is not in allowed options: {}",
             defaults.join(", ")
         )));
@@ -144,7 +144,7 @@ pub async fn set_property_inner(
         .filter(|b| **b)
         .count();
         if provided != 1 {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "tool '{name}': exactly one of value_text / value_num / value_date / \
                  value_ref / value_bool must be provided (got {provided})"
             )));
@@ -199,7 +199,7 @@ pub async fn set_todo_state_inner(
     if let Some(ref s) = state
         && (s.is_empty() || s.len() > 50)
     {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "Todo state must be 1-50 characters".into(),
         ));
     }
@@ -383,7 +383,7 @@ pub async fn set_todo_state_batch_inner(
     state: Option<String>,
 ) -> Result<i64, AppError> {
     if block_ids.is_empty() {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "block_ids list cannot be empty".into(),
         ));
     }
@@ -391,7 +391,7 @@ pub async fn set_todo_state_batch_inner(
     if let Some(ref s) = state
         && (s.is_empty() || s.len() > 50)
     {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "Todo state must be 1-50 characters".into(),
         ));
     }
@@ -525,7 +525,7 @@ pub async fn set_priority_inner(
     if let Some(ref l) = level
         && (l.is_empty() || l.len() > 50)
     {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "priority must be 1-50 characters".into(),
         ));
     }
@@ -586,7 +586,7 @@ pub async fn set_due_date_inner(
     if let Some(ref d) = date
         && !is_valid_iso_date(d)
     {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "due_date must be YYYY-MM-DD format, got '{d}'"
         )));
     }
@@ -621,7 +621,7 @@ pub async fn set_scheduled_date_inner(
     if let Some(ref d) = date
         && !is_valid_iso_date(d)
     {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "scheduled_date must be YYYY-MM-DD format, got '{d}'"
         )));
     }
@@ -673,7 +673,7 @@ pub async fn delete_property_inner(
     // built-in set MINUS the reserved column keys — i.e. exactly the
     // lifecycle keys.
     if crate::op::is_builtin_property_key(&key) && !crate::op::is_reserved_property_key(&key) {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "cannot delete system-managed property '{key}'"
         )));
     }
@@ -752,7 +752,7 @@ pub async fn create_property_def_inner(
 ) -> Result<PropertyDefinition, AppError> {
     // Validate key: non-empty, max 64 chars, alphanumeric + underscore + hyphen
     if key.is_empty() || key.len() > 64 {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "property definition key must be 1-64 characters".into(),
         ));
     }
@@ -760,7 +760,7 @@ pub async fn create_property_def_inner(
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
     {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "property definition key must contain only alphanumeric, underscore, or hyphen characters".into(),
         ));
     }
@@ -769,7 +769,7 @@ pub async fn create_property_def_inner(
         value_type.as_str(),
         "text" | "number" | "date" | "select" | "ref" | "boolean"
     ) {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "invalid value_type '{value_type}': must be text, number, date, select, ref, or boolean"
         )));
     }
@@ -777,23 +777,23 @@ pub async fn create_property_def_inner(
     if value_type == "select" {
         match &options {
             None => {
-                return Err(AppError::Validation(
+                return Err(AppError::validation(
                     "select-type definitions require an options array".into(),
                 ));
             }
             Some(opts) => {
                 let parsed: Vec<String> = serde_json::from_str(opts).map_err(|_| {
-                    AppError::Validation("options must be a JSON array of strings".into())
+                    AppError::validation("options must be a JSON array of strings".into())
                 })?;
                 if parsed.is_empty() {
-                    return Err(AppError::Validation(
+                    return Err(AppError::validation(
                         "select-type options must not be empty".into(),
                     ));
                 }
             }
         }
     } else if options.is_some() {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "options are only allowed for select-type definitions, not '{value_type}'"
         )));
     }
@@ -923,9 +923,9 @@ pub async fn update_property_def_options_inner(
 ) -> Result<PropertyDefinition, AppError> {
     // Validate options is a non-empty JSON array of strings
     let parsed: Vec<String> = serde_json::from_str(&options)
-        .map_err(|_| AppError::Validation("options must be a JSON array of strings".into()))?;
+        .map_err(|_| AppError::validation("options must be a JSON array of strings".into()))?;
     if parsed.is_empty() {
-        return Err(AppError::Validation("options must not be empty".into()));
+        return Err(AppError::validation("options must not be empty".into()));
     }
 
     // #383: open a BEGIN IMMEDIATE tx so the existence/type check, the orphan
@@ -947,7 +947,7 @@ pub async fn update_property_def_options_inner(
     .ok_or_else(|| AppError::NotFound(format!("property definition '{key}'")))?;
 
     if existing.value_type != "select" {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "cannot update options on '{}'-type definition '{key}'",
             existing.value_type
         )));
@@ -1042,7 +1042,7 @@ pub async fn update_property_def_options_inner(
 #[instrument(skip(pool), err)]
 pub async fn delete_property_def_inner(pool: &SqlitePool, key: String) -> Result<(), AppError> {
     if crate::op::is_builtin_property_key(&key) {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "cannot delete builtin property definition".into(),
         ));
     }
@@ -1059,7 +1059,7 @@ pub async fn delete_property_def_inner(pool: &SqlitePool, key: String) -> Result
             .await?;
 
     if dependent_count > 0 {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "cannot delete property definition '{key}': {dependent_count} block_properties \
              row(s) reference this key. Clear them first via set_property(value=None) on each \
              affected block."
@@ -1095,7 +1095,7 @@ pub async fn get_batch_properties_inner(
     block_ids: Vec<BlockId>,
 ) -> Result<HashMap<String, Vec<PropertyRow>>, AppError> {
     if block_ids.is_empty() {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "block_ids list cannot be empty".into(),
         ));
     }

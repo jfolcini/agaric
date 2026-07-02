@@ -187,7 +187,7 @@ async fn resolve_or_create_journal_page(
     .fetch_optional(&mut **tx)
     .await?;
     if space_ok.is_none() {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "space_id '{space_id}' does not refer to a live space block (is_space = 'true')"
         )));
     }
@@ -397,7 +397,7 @@ pub async fn list_journal_pages_in_range_inner(
     validate_date_format(start_date)?;
     validate_date_format(end_date)?;
     if start_date > end_date {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "start_date must be <= end_date".to_string(),
         ));
     }
@@ -823,7 +823,7 @@ mod tests {
         .expect_err("must reject unknown space_id");
 
         assert!(
-            matches!(err, AppError::Validation(_)),
+            matches!(err, AppError::Validation { .. }),
             "expected Validation error for unknown space_id, got {err:?}"
         );
 
@@ -874,7 +874,7 @@ mod tests {
         let err = get_journal_page_by_date_inner(&pool, "2025/04/15", &space)
             .await
             .expect_err("non-YYYY-MM-DD must be rejected");
-        assert!(matches!(err, AppError::Validation(_)));
+        assert!(matches!(err, AppError::Validation { .. }));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1048,7 +1048,7 @@ mod tests {
         let err = list_journal_pages_in_range_inner(&pool, "2025-05-01", "2025-04-01", &space)
             .await
             .expect_err("inverted range must be rejected");
-        assert!(matches!(err, AppError::Validation(_)));
+        assert!(matches!(err, AppError::Validation { .. }));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1059,6 +1059,6 @@ mod tests {
         let err = list_journal_pages_in_range_inner(&pool, "2025-04-1", "2025-04-30", &space)
             .await
             .expect_err("non-YYYY-MM-DD start must be rejected");
-        assert!(matches!(err, AppError::Validation(_)));
+        assert!(matches!(err, AppError::Validation { .. }));
     }
 }

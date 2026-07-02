@@ -150,7 +150,7 @@ pub async fn create_block_inner_with_space(
 ) -> Result<BlockRow, AppError> {
     if block_type == "page" {
         let SpaceScope::Active(sid) = scope else {
-            return Err(AppError::Validation(
+            return Err(AppError::validation(
                 "page blocks require space_id: \
                  use createPageInSpace or pass the active space's ULID"
                     .to_owned(),
@@ -238,7 +238,7 @@ pub async fn edit_block_inner(
     // over-length payload is rejected without acquiring the IMMEDIATE writer lock
     // or doing the wasted existence fetch (fail fast on the input).
     if to_text.len() > MAX_CONTENT_LENGTH {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "content length {} exceeds maximum {MAX_CONTENT_LENGTH}",
             to_text.len()
         )));
@@ -570,7 +570,7 @@ pub async fn delete_blocks_by_ids_inner(
     block_ids: Vec<BlockId>,
 ) -> Result<i64, AppError> {
     if block_ids.is_empty() {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "block_ids list cannot be empty".into(),
         ));
     }
@@ -878,7 +878,7 @@ pub async fn move_blocks_to_space_inner(
     space_id: String,
 ) -> Result<i64, AppError> {
     if block_ids.is_empty() {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "block_ids list cannot be empty".into(),
         ));
     }
@@ -911,7 +911,7 @@ pub async fn move_blocks_to_space_inner(
     .fetch_optional(&mut **tx)
     .await?;
     if space_ok.is_none() {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "space_id '{space_id}' does not refer to a live space block (is_space = 'true')"
         )));
     }
@@ -1248,7 +1248,7 @@ pub async fn purge_block_inner(
     // chains is acceptable: the cap is preserved either way and the
     // operator gets a clear error on the common case.
     if crate::block_descendants::cascade_depth_saturated(&mut **tx, &block_id).await? {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "block '{block_id}' subtree is too deep to purge (>=99 levels); \
              the recursive cascade would hit the depth-100 cap and leave \
              descendants below depth 100 dangling. Purge in chunks instead.",
@@ -1633,7 +1633,7 @@ pub async fn restore_blocks_by_ids_inner(
     block_ids: Vec<BlockId>,
 ) -> Result<BulkTrashResponse, AppError> {
     if block_ids.is_empty() {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "block_ids list cannot be empty".into(),
         ));
     }
@@ -1813,7 +1813,7 @@ pub async fn purge_blocks_by_ids_inner(
     block_ids: Vec<BlockId>,
 ) -> Result<BulkTrashResponse, AppError> {
     if block_ids.is_empty() {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "block_ids list cannot be empty".into(),
         ));
     }
@@ -1882,7 +1882,7 @@ pub async fn purge_blocks_by_ids_inner(
     .fetch_one(&mut **tx)
     .await?;
     if max_depth.unwrap_or(0) >= 99 {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "a selected block's subtree is too deep to purge (>=99 levels); \
              the recursive cascade would hit the depth-100 cap and leave \
              descendants below depth 100 dangling. Purge in chunks instead."
@@ -2316,7 +2316,7 @@ pub async fn create_blocks_batch_inner(
     specs: Vec<CreateBlockSpec>,
 ) -> Result<Vec<BlockRow>, AppError> {
     if specs.is_empty() {
-        return Err(AppError::Validation("specs list cannot be empty".into()));
+        return Err(AppError::validation("specs list cannot be empty".into()));
     }
     crate::commands::ensure_batch_within_cap("specs", specs.len())?;
 

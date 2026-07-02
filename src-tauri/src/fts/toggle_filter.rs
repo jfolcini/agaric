@@ -52,7 +52,7 @@
 
 use crate::domain::search_types::{MatchOffset, SearchBlockRow};
 use crate::error::AppError;
-use crate::error::validation_code::{INVALID_REGEX, prefixed};
+use crate::error::ValidationCode;
 use crate::pagination::{PageRequest, PageResponse};
 use regex::{Regex, RegexBuilder};
 use sqlx::SqlitePool;
@@ -582,22 +582,22 @@ fn compose_literal_pattern(query: &str, toggles: SearchToggles) -> String {
 
 /// Compile a user-supplied regex pattern through the capped
 /// [`RegexBuilder`] and map errors onto
-/// [`AppError::Validation`] with the typed `InvalidRegex:` prefix.
+/// [`AppError::Validation`] with the structured `InvalidRegex` code.
 pub(crate) fn build_regex(pattern: &str) -> Result<Regex, AppError> {
     if pattern.len() > MAX_PATTERN_LEN {
-        return Err(AppError::Validation(prefixed(
-            INVALID_REGEX,
-            &format!(
+        return Err(AppError::validation_coded(
+            ValidationCode::InvalidRegex,
+            format!(
                 "pattern length {} exceeds cap {MAX_PATTERN_LEN}",
                 pattern.len()
             ),
-        )));
+        ));
     }
     RegexBuilder::new(pattern)
         .size_limit(REGEX_SIZE_LIMIT_BYTES)
         .dfa_size_limit(REGEX_DFA_SIZE_LIMIT_BYTES)
         .build()
-        .map_err(|e| AppError::Validation(prefixed(INVALID_REGEX, &e.to_string())))
+        .map_err(|e| AppError::validation_coded(ValidationCode::InvalidRegex, e.to_string()))
 }
 
 /// Apply a compiled regex to the rows in-place — narrows the candidate
@@ -749,7 +749,7 @@ async fn regex_mode_query(
     // normalisation; this up-front guard bounds the normalise work too.
     // Same byte-length basis and error shape as the FTS path.
     if query.len() > super::search::MAX_QUERY_LEN {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "search query is too long ({} bytes); maximum is {} bytes",
             query.len(),
             super::search::MAX_QUERY_LEN
@@ -1364,8 +1364,8 @@ mod unit_tests {
     fn build_regex_rejects_oversized_pattern() {
         let big = "a".repeat(MAX_PATTERN_LEN + 1);
         match build_regex(&big) {
-            Err(AppError::Validation(msg)) => {
-                assert!(msg.starts_with("InvalidRegex:"), "msg: {msg}");
+            Err(AppError::Validation { code, .. }) => {
+                assert_eq!(code, Some(ValidationCode::InvalidRegex));
             }
             other => panic!("expected Validation, got {other:?}"),
         }
@@ -1375,10 +1375,11 @@ mod unit_tests {
     fn build_regex_surfaces_compile_error_with_prefix() {
         // `*` at the start is invalid in Rust regex.
         match build_regex("*") {
-            Err(AppError::Validation(msg)) => {
-                assert!(
-                    msg.starts_with("InvalidRegex:"),
-                    "expected InvalidRegex prefix, got: {msg}"
+            Err(AppError::Validation { code, .. }) => {
+                assert_eq!(
+                    code,
+                    Some(ValidationCode::InvalidRegex),
+                    "expected InvalidRegex code"
                 );
             }
             other => panic!("expected Validation, got {other:?}"),

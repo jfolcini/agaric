@@ -467,7 +467,7 @@ pub async fn export_page_markdown_inner(
     .await?
     .ok_or_else(|| AppError::NotFound(format!("block '{page_id}'")))?;
     if page.block_type != "page" {
-        return Err(AppError::Validation("not a page".into()));
+        return Err(AppError::validation("not a page".into()));
     }
 
     // 2. Walk the full descendant subtree, cursor-paginated over the
@@ -1136,7 +1136,7 @@ pub async fn import_markdown_with_progress(
     .fetch_optional(&mut **tx)
     .await?;
     if space_ok.is_none() {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "space_id '{space_id}' does not refer to a live space block (is_space = 'true')"
         )));
     }
@@ -1734,7 +1734,7 @@ pub async fn import_markdown_with_progress(
         .await;
         let (new_block, block_op) = match create_result {
             Ok(pair) => pair,
-            Err(AppError::Validation(msg))
+            Err(AppError::Validation { message: msg, .. })
                 if msg.contains("maximum nesting depth")
                     || (msg.contains("content length") && msg.contains("exceeds maximum")) =>
             {

@@ -56,14 +56,14 @@ pub async fn add_attachment_inner(
 ) -> Result<AttachmentRow, AppError> {
     // F-11 validation: size limit
     if size_bytes > MAX_ATTACHMENT_SIZE {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "attachment size {size_bytes} bytes exceeds maximum {MAX_ATTACHMENT_SIZE} bytes (50 MB)"
         )));
     }
 
     // F-11 validation: MIME type allow-list
     if !is_mime_allowed(&mime_type) {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "MIME type '{mime_type}' is not allowed; permitted: image/*, application/pdf, text/*, \
              application/json, application/zip, application/x-tar"
         )));
@@ -113,7 +113,7 @@ pub async fn add_attachment_inner(
     let metadata = tokio::fs::metadata(&full_path).await?;
     let on_disk_len = i64::try_from(metadata.len()).unwrap_or(i64::MAX);
     if on_disk_len != size_bytes {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "attachment size mismatch: expected {size_bytes} bytes, on disk is {} bytes",
             metadata.len()
         )));
@@ -294,12 +294,12 @@ pub async fn add_attachment_with_bytes_inner(
     // Pre-validate size + MIME BEFORE writing anything, so a rejected upload
     // never touches the disk. `add_attachment_inner` re-checks (cheap).
     if size_bytes > MAX_ATTACHMENT_SIZE {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "attachment size {size_bytes} bytes exceeds maximum {MAX_ATTACHMENT_SIZE} bytes (50 MB)"
         )));
     }
     if !is_mime_allowed(&mime_type) {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "MIME type '{mime_type}' is not allowed; permitted: image/*, application/pdf, text/*, \
              application/json, application/zip, application/x-tar"
         )));
@@ -557,7 +557,7 @@ pub async fn rename_attachment_inner(
     let old_filename = row.filename;
 
     if new_filename.is_empty() {
-        return Err(AppError::Validation("filename cannot be empty".into()));
+        return Err(AppError::validation("filename cannot be empty".into()));
     }
 
     let payload = OpPayload::RenameAttachment(crate::op::RenameAttachmentPayload {

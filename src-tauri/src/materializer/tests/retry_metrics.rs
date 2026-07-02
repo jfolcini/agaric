@@ -529,7 +529,7 @@ async fn retry_with_backoff_first_failure_does_not_emit_error_log_when_retry_suc
             async move {
                 let n = attempts.fetch_add(1, AtomicOrdering::Relaxed);
                 if n == 0 {
-                    Err(AppError::Validation("transient WAL contention".into()))
+                    Err(AppError::validation("transient WAL contention".into()))
                 } else {
                     Ok(())
                 }
@@ -600,7 +600,7 @@ async fn retry_with_backoff_emits_error_log_when_all_retries_fail() {
             let attempts = StdArc::clone(&attempts_for_closure);
             async move {
                 attempts.fetch_add(1, AtomicOrdering::Relaxed);
-                Err(AppError::Validation("permanent failure".into()))
+                Err(AppError::validation("permanent failure".into()))
             }
         },
     )

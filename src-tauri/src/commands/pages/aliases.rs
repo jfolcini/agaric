@@ -209,7 +209,7 @@ pub async fn list_page_aliases_by_prefix_inner(
     let effective_limit = match limit {
         Some(l) if (1..=MAX_PAGE_ALIASES_PREFIX).contains(&l) => l,
         Some(l) => {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "list_page_aliases_by_prefix limit must be in [1, {MAX_PAGE_ALIASES_PREFIX}]; got {l}"
             )));
         }

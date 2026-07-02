@@ -2,71 +2,29 @@
  * Phase 2 — frontend-side type narrowing for the Tauri-IPC
  * `AppError` wire shape.
  *
- * The backend's `AppError` (src-tauri/src/error.rs) serialises to
- * `{ kind, message }` via a manual `Serialize` impl. The generated
- * `bindings.ts` types `AppError` as `{ kind: string, message: string }`
- * because the specta-derived schema struct is intentionally open
- * (it's the wire-format contract, not the variant taxonomy).
- *
- * This module narrows that open shape into the actual variant kinds
- * emitted by the manual `Serialize` impl, so consumers can match on
- * `err.kind` with type assistance instead of comparing raw strings
- * inline. Adding a new variant on the backend side requires touching
- * `AppErrorKind` here too — that coupling is intentional and is what
- * keeps the two ends aligned without regenerating `bindings.ts`.
- *
- * Why not regenerate bindings.ts? Two reasons:
- *   1. `bindings.ts` is the auto-generated tauri-specta artifact; the
- *      tauri-bindings-parity prek hook keeps it in sync with the Rust
- *      side, and hand-edits there have to be re-applied on every
- *      `cargo test -- specta_tests --ignored` regeneration.
- *   2. A TS-side narrowing union doesn't need specta enum support
- *      (which is patchy across `#[serde(tag = "kind")]` enum
- *      representations); the wire shape stays whatever specta emits.
+ * #2251 — the backend's `AppError` (src-tauri/src/error.rs) serialises to
+ * `{ kind, message, code? }`, and its specta schema now types `kind` as the
+ * generated `AppErrorKind` string-literal union (and `code` as the
+ * `ValidationCode` union) in `bindings.ts`. The hand-maintained mirror
+ * union that used to live here is gone: the Rust `AppErrorKind` enum is the
+ * single source of truth, `bindings.ts` is its generated projection, and a
+ * typo'd kind comparison (`err.kind === 'cancelation'`) is now a
+ * type-check error instead of a silently-false branch.
  */
 
-import type { AppError } from './bindings'
+import type { AppError, ValidationCode } from './bindings'
+
+// Re-export the generated unions under their canonical names so consumers
+// keep importing error vocabulary from `@/lib/app-error` (the narrowing
+// module) rather than reaching into the generated bindings directly.
+export type { AppError, AppErrorKind, ValidationCode } from './bindings'
 
 /**
- * The exact `kind` literals the manual `AppError` `Serialize` impl
- * emits. Mirror of the `match` arms in `src-tauri/src/error.rs`.
- * Adding a variant here without adding it on the Rust side (or vice
- * versa) is a silent drift bug — keep them aligned.
- *
- * Issue #106 added `pool_busy` (transient back-pressure from the
- * sqlx connection pool — callers should retry) and `conflict`
- * (unique-constraint violation — surface distinctly so the user sees
- * "already exists" rather than a generic DB error toast). `database`
- * stays as the catch-all fallback for any sqlx error that isn't
- * pool-exhaustion or constraint violation.
+ * The IPC error shape. Since #2251 the generated `AppError` already carries
+ * the narrow `kind: AppErrorKind` literal union, so this is a plain alias —
+ * kept because the name is established across consumers and tests.
  */
-export type AppErrorKind =
-  | 'database'
-  | 'migration'
-  | 'io'
-  | 'json'
-  | 'ulid'
-  | 'not_found'
-  | 'pool_busy'
-  | 'conflict'
-  | 'invalid_operation'
-  | 'channel'
-  // #2045 — `sanitize_internal_error` collapses every masked infra failure
-  // (Database/Io/Json/Channel/Internal/Snapshot/Migration) to wire
-  // `kind:"internal"`, deliberately distinct from `invalid_operation` so the
-  // UI can tell a suppressed internal error apart from a validation reject.
-  | 'internal'
-  | 'snapshot'
-  | 'validation'
-  | 'non_reversible'
-  | 'cancelled'
-
-/**
- * Narrowed `AppError` shape. Same fields as the bindings.ts type,
- * but `kind` is a known literal union. Open-ended so a forward-compat
- * variant from the backend doesn't make consumers fail to compile.
- */
-export type TypedAppError = AppError & { kind: AppErrorKind | (string & {}) }
+export type TypedAppError = AppError
 
 /**
  * Predicate: did this error come from the IPC layer? Tauri rejects
@@ -140,6 +98,27 @@ export function isConflict(err: unknown): err is TypedAppError & { kind: 'confli
  */
 export function isDatabaseError(err: unknown): err is TypedAppError & { kind: 'database' } {
   return isAppError(err) && err.kind === 'database'
+}
+
+/**
+ * Was this a business-rule / input validation rejection? #2251 — coded
+ * validation errors additionally carry a structured `code` field
+ * (`ValidationCode` union); use {@link validationCode} to read it.
+ */
+export function isValidation(err: unknown): err is TypedAppError & { kind: 'validation' } {
+  return isAppError(err) && err.kind === 'validation'
+}
+
+/**
+ * The structured validation sub-kind of an IPC error, or `null` when the
+ * value is not a validation `AppError` or carries no code. #2251 — replaces
+ * the old `parseValidationReason` message-prefix regexing: the backend now
+ * ships the code as data, so discrimination is a typed compare
+ * (`validationCode(err) === ValidationCode.InvalidRegex`) with no string
+ * parsing on either side.
+ */
+export function validationCode(err: unknown): ValidationCode | null {
+  return isValidation(err) ? (err.code ?? null) : null
 }
 
 /**

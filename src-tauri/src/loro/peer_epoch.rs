@@ -182,7 +182,7 @@ pub async fn bump_peer_epoch(tx: &mut Transaction<'_, Sqlite>) -> Result<u64, Ap
     .fetch_one(&mut **tx)
     .await?;
     new_value.parse::<u64>().map_err(|e| {
-        AppError::Validation(format!(
+        AppError::validation(format!(
             "loro: peer_epoch bump produced non-u64 value {new_value:?}: {e}"
         ))
     })

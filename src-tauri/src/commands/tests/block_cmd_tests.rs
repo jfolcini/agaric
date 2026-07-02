@@ -234,7 +234,7 @@ async fn create_block_invalid_block_type_returns_validation_error() {
 
     let err = result.unwrap_err();
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "should return Validation error, got: {err:?}"
     );
 }
@@ -333,7 +333,7 @@ async fn create_block_rejects_oversized_content() {
 
     let err = result.unwrap_err();
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "should return Validation error for oversized content, got: {err:?}"
     );
 }
@@ -517,7 +517,7 @@ async fn create_block_rejects_page_without_space_id() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(ref msg))
+        matches!(result, Err(AppError::Validation { message: ref msg, .. })
             if msg.contains("page") && msg.contains("space")),
         "page block without space_id must yield Validation, got {result:?}"
     );
@@ -1125,7 +1125,7 @@ async fn edit_block_rejects_oversized_content() {
 
     let err = result.unwrap_err();
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "should return Validation error for oversized content, got: {err:?}"
     );
 }
@@ -2048,7 +2048,7 @@ async fn restore_blocks_by_ids_empty_input_returns_validation_error() {
 
     let result = restore_blocks_by_ids_inner(&pool, DEV, &mat, vec![]).await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "empty input must return Validation error"
     );
 }
@@ -2073,7 +2073,7 @@ async fn restore_blocks_by_ids_rejects_oversize_list() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "oversize list must reject with Validation, got {result:?}"
     );
 }
@@ -2263,7 +2263,7 @@ async fn purge_blocks_by_ids_empty_input_returns_validation_error() {
 
     let result = purge_blocks_by_ids_inner(&pool, DEV, &mat, vec![]).await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "empty input must return Validation error"
     );
 }
@@ -2403,7 +2403,7 @@ async fn purge_blocks_by_ids_rejects_oversized_batch() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "oversized input must return Validation"
     );
 
@@ -2612,7 +2612,7 @@ async fn list_blocks_rejects_conflicting_filters() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("conflicting filters")),
+        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains("conflicting filters")),
         "parent_id + block_type should be rejected: {result:?}"
     );
 
@@ -2632,7 +2632,7 @@ async fn list_blocks_rejects_conflicting_filters() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("conflicting filters")),
+        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains("conflicting filters")),
         "parent_id + agenda_date should be rejected: {result:?}"
     );
 
@@ -2652,7 +2652,7 @@ async fn list_blocks_rejects_conflicting_filters() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("conflicting filters")),
+        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains("conflicting filters")),
         "three filters should be rejected: {result:?}"
     );
 }
@@ -3123,7 +3123,7 @@ async fn move_block_cycle_grandchild_to_grandparent_returns_error() {
     let result = move_block_inner(&pool, DEV, &mat, "CYC_A".into(), Some("CYC_C".into()), 1).await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "moving A under its grandchild C should detect cycle, got: {result:?}"
     );
 }
@@ -3198,7 +3198,7 @@ async fn move_block_with_deep_subtree_exceeding_max_depth_returns_validation_err
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "moving a deep subtree past MAX_BLOCK_DEPTH must return Validation, got: {result:?}"
     );
 }
@@ -3242,7 +3242,7 @@ async fn move_block_exceeding_max_depth_returns_validation_error() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "moving beyond MAX_BLOCK_DEPTH should return Validation, got: {result:?}"
     );
 }
@@ -3366,7 +3366,7 @@ async fn create_block_exceeding_max_depth_returns_validation_error() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "creating beyond MAX_BLOCK_DEPTH should return Validation, got: {result:?}"
     );
 }
@@ -3428,7 +3428,7 @@ async fn move_block_with_subtree_exceeding_max_depth_returns_validation_error() 
     let result = move_block_inner(&pool, DEV, &mat, "SUB_A".into(), Some(parent.into()), 1).await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "moving subtree that would exceed depth limit should fail, got: {result:?}"
     );
 }
@@ -3947,7 +3947,7 @@ async fn add_attachment_validates_size_limit() {
 
     assert!(result.is_err(), "should reject oversized attachment");
     match result.unwrap_err() {
-        AppError::Validation(msg) => {
+        AppError::Validation { message: msg, .. } => {
             assert!(
                 msg.contains("exceeds maximum"),
                 "error should mention size limit: {msg}"
@@ -3992,7 +3992,7 @@ async fn add_attachment_validates_mime_type() {
 
     assert!(result.is_err(), "should reject disallowed MIME type");
     match result.unwrap_err() {
-        AppError::Validation(msg) => {
+        AppError::Validation { message: msg, .. } => {
             assert!(
                 msg.contains("not allowed"),
                 "error should mention MIME not allowed: {msg}"
@@ -4049,7 +4049,7 @@ async fn add_attachment_size_mismatch_returns_validation_error() {
     .await;
 
     match result {
-        Err(AppError::Validation(msg)) => {
+        Err(AppError::Validation { message: msg, .. }) => {
             assert!(
                 msg.contains("size mismatch") && msg.contains("64") && msg.contains("32"),
                 "error message must report both declared and on-disk sizes: {msg}"
@@ -5380,7 +5380,7 @@ async fn flush_all_drafts_atomic_rollback_on_inner_failure() {
         .await
         .expect_err("oversized draft must propagate AppError::Validation");
     match err {
-        AppError::Validation(_) => {}
+        AppError::Validation { .. } => {}
         other => panic!("expected AppError::Validation, got {other:?}"),
     }
 
@@ -5878,7 +5878,7 @@ async fn delete_blocks_by_ids_rejects_empty_list() {
 
     let result = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![]).await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "empty list must reject with Validation, got {result:?}"
     );
 }
@@ -5901,7 +5901,7 @@ async fn delete_blocks_by_ids_rejects_oversize_list() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "oversize list must reject with Validation, got {result:?}"
     );
 }
@@ -6276,7 +6276,7 @@ async fn move_blocks_to_space_rejects_empty_list() {
 
     let result = move_blocks_to_space_inner(&pool, DEV, &mat, vec![], "MBS5_SPACE".into()).await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "empty block_ids must be rejected, got {result:?}"
     );
 }
@@ -6300,7 +6300,7 @@ async fn move_blocks_to_space_rejects_oversize_list() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "oversize block_ids must be rejected, got {result:?}"
     );
 }
@@ -6325,7 +6325,7 @@ async fn move_blocks_to_space_rejects_non_space_target() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "non-space target must be rejected, got {result:?}"
     );
 
@@ -6439,7 +6439,7 @@ async fn move_blocks_to_space_atomic_rollback_on_inner_failure() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "non-space target must abort the batch with Validation, got {result:?}"
     );
 
@@ -6598,7 +6598,7 @@ async fn create_blocks_batch_atomic_rollback() {
 
     let result = crate::commands::create_blocks_batch_inner(&pool, DEV, &mat, specs).await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "invalid block_type must reject with Validation, got {result:?}"
     );
 
@@ -6634,7 +6634,7 @@ async fn create_blocks_batch_rejects_empty_oversize() {
 
     let empty = crate::commands::create_blocks_batch_inner(&pool, DEV, &mat, vec![]).await;
     assert!(
-        matches!(empty, Err(AppError::Validation(_))),
+        matches!(empty, Err(AppError::Validation { .. })),
         "empty list must reject with Validation, got {empty:?}"
     );
 
@@ -6650,7 +6650,7 @@ async fn create_blocks_batch_rejects_empty_oversize() {
         .collect();
     let result = crate::commands::create_blocks_batch_inner(&pool, DEV, &mat, oversize).await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "oversize list must reject with Validation, got {result:?}"
     );
 }
@@ -6869,7 +6869,7 @@ async fn edit_block_cross_space_content_rejected() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "cross-space content edit must be rejected, got {result:?}"
     );
 }
@@ -6913,7 +6913,7 @@ async fn create_block_cross_space_content_rejected() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "cross-space content on create must be rejected, got {result:?}"
     );
 }
@@ -7137,7 +7137,7 @@ async fn add_attachment_with_bytes_rejects_disallowed_mime_without_writing() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "disallowed MIME must be rejected, got {result:?}"
     );
     assert!(
@@ -7345,7 +7345,7 @@ async fn move_blocks_batch_cycle_rolls_back_whole_tx() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "target inside a moved subtree must be a cycle, got {result:?}"
     );
 
@@ -7410,7 +7410,7 @@ async fn move_blocks_batch_depth_cap_rolls_back() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "over-deep batch move must be a Validation error, got {result:?}"
     );
     // Rolled back: MROOT still at root.
@@ -7431,14 +7431,14 @@ async fn move_blocks_batch_empty_and_oversized_rejected() {
 
     let empty = move_blocks_batch_inner(&pool, DEV, &mat, vec![], None, 0).await;
     assert!(
-        matches!(empty, Err(AppError::Validation(_))),
+        matches!(empty, Err(AppError::Validation { .. })),
         "empty list must be a Validation error, got {empty:?}"
     );
 
     let oversized: Vec<BlockId> = (0..1001).map(|i| format!("X{i:026}").into()).collect();
     let big = move_blocks_batch_inner(&pool, DEV, &mat, oversized, None, 0).await;
     assert!(
-        matches!(big, Err(AppError::Validation(_))),
+        matches!(big, Err(AppError::Validation { .. })),
         "over-cap list must be a Validation error, got {big:?}"
     );
 }

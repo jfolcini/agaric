@@ -73,14 +73,14 @@ pub(crate) fn validate_date_format(s: &str) -> Result<(), AppError> {
         && bytes[5..7].iter().all(u8::is_ascii_digit)
         && bytes[8..10].iter().all(u8::is_ascii_digit);
     if !shape_ok {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "expected YYYY-MM-DD format with calendar-valid date, got '{s}'"
         )));
     }
     chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
         .map(|_| ())
         .map_err(|_| {
-            AppError::Validation(format!(
+            AppError::validation(format!(
                 "expected YYYY-MM-DD format with calendar-valid date, got '{s}'"
             ))
         })
@@ -212,7 +212,7 @@ pub(crate) async fn create_block_in_tx(
     match block_type.as_str() {
         "content" | "tag" | "page" => {}
         _ => {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "unknown block_type '{block_type}': must be 'content', 'tag', or 'page'"
             )));
         }
@@ -227,7 +227,7 @@ pub(crate) async fn create_block_in_tx(
 
     // 1c. Validate content length
     if content.len() > MAX_CONTENT_LENGTH {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "content length {} exceeds maximum {MAX_CONTENT_LENGTH}",
             content.len()
         )));
@@ -272,7 +272,7 @@ pub(crate) async fn create_block_in_tx(
         .await?;
 
         if parent_depth + 1 > MAX_BLOCK_DEPTH {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "maximum nesting depth of {MAX_BLOCK_DEPTH} exceeded"
             )));
         }
@@ -518,7 +518,7 @@ fn validate_property_value(
     if let Some(ref date_str) = payload.value_date
         && !is_valid_iso_date(date_str)
     {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "Invalid date format: '{date_str}'. Expected YYYY-MM-DD."
         )));
     }
@@ -540,13 +540,13 @@ fn validate_property_value(
     //    right native column on `blocks`.
     match payload.key.as_str() {
         "due_date" | "scheduled_date" if payload.value_date.is_none() => {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "Property '{}' requires value_date, not value_text/value_num/value_ref/value_bool.",
                 payload.key
             )));
         }
         "todo_state" | "priority" if payload.value_text.is_none() => {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "Property '{}' requires value_text, not value_date/value_num/value_ref/value_bool.",
                 payload.key
             )));
@@ -585,7 +585,7 @@ fn validate_property_value(
                 } else {
                     "unknown"
                 };
-                return Err(AppError::Validation(format!(
+                return Err(AppError::validation(format!(
                     "Property '{}' expects type '{}', got '{}'.",
                     payload.key, expected_type, actual_type
                 )));
@@ -603,13 +603,13 @@ fn validate_property_value(
             && let Some(ref actual) = payload.value_text
         {
             let allowed: Vec<String> = serde_json::from_str(opts_json).map_err(|e| {
-                AppError::Validation(format!(
+                AppError::validation(format!(
                     "Property '{}' has malformed options JSON: {e}",
                     payload.key
                 ))
             })?;
             if !allowed.iter().any(|a| a == actual) {
-                return Err(AppError::Validation(format!(
+                return Err(AppError::validation(format!(
                     "Property '{}' value '{actual}' is not in allowed options: {}",
                     payload.key,
                     allowed.join(", ")
@@ -739,7 +739,7 @@ pub(crate) async fn set_property_in_tx_with_declaration(
     let existing =
         existing.ok_or_else(|| AppError::NotFound(format!("block '{block_id}' does not exist")))?;
     if existing.deleted_at.is_some() {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "block '{block_id}' has been soft-deleted"
         )));
     }
@@ -771,7 +771,7 @@ pub(crate) async fn set_property_in_tx_with_declaration(
     // `UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?` fan-out.)
     if key == SPACE_PROPERTY_KEY {
         let Some(target) = value_ref.as_deref() else {
-            return Err(AppError::Validation(
+            return Err(AppError::validation(
                 "property 'space' requires a value_ref pointing at a space block".into(),
             ));
         };
@@ -784,7 +784,7 @@ pub(crate) async fn set_property_in_tx_with_declaration(
         .fetch_optional(&mut **tx)
         .await?;
         if space_ok.is_none() {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "space_id '{target}' does not refer to a live, registered space block"
             )));
         }
@@ -898,7 +898,7 @@ mod validate_property_value_tests {
         let err = validate_property_value(&p, Some(&d))
             .expect_err("text decl + number payload must reject");
         match err {
-            AppError::Validation(msg) => assert!(
+            AppError::Validation { message: msg, .. } => assert!(
                 msg.contains("expects type 'text'") && msg.contains("got 'number'"),
                 "unexpected message: {msg}"
             ),
@@ -924,7 +924,7 @@ mod validate_property_value_tests {
         let err = validate_property_value(&p, Some(&d))
             .expect_err("number decl + text payload must reject");
         match err {
-            AppError::Validation(msg) => assert!(
+            AppError::Validation { message: msg, .. } => assert!(
                 msg.contains("expects type 'number'") && msg.contains("got 'text'"),
                 "unexpected message: {msg}"
             ),
@@ -950,7 +950,7 @@ mod validate_property_value_tests {
         let err =
             validate_property_value(&p, Some(&d)).expect_err("malformed value_date must reject");
         match err {
-            AppError::Validation(msg) => assert!(
+            AppError::Validation { message: msg, .. } => assert!(
                 msg.contains("Invalid date format"),
                 "unexpected message: {msg}"
             ),
@@ -976,7 +976,7 @@ mod validate_property_value_tests {
         let err =
             validate_property_value(&p, Some(&d)).expect_err("ref decl + text payload must reject");
         match err {
-            AppError::Validation(msg) => assert!(
+            AppError::Validation { message: msg, .. } => assert!(
                 msg.contains("expects type 'ref'") && msg.contains("got 'text'"),
                 "unexpected message: {msg}"
             ),
@@ -1002,7 +1002,7 @@ mod validate_property_value_tests {
         let err = validate_property_value(&p, Some(&d))
             .expect_err("boolean decl + text payload must reject");
         match err {
-            AppError::Validation(msg) => assert!(
+            AppError::Validation { message: msg, .. } => assert!(
                 msg.contains("expects type 'boolean'") && msg.contains("got 'text'"),
                 "unexpected message: {msg}"
             ),
@@ -1028,7 +1028,7 @@ mod validate_property_value_tests {
         let err = validate_property_value(&p, Some(&d))
             .expect_err("select rejects values not in options");
         match err {
-            AppError::Validation(msg) => assert!(
+            AppError::Validation { message: msg, .. } => assert!(
                 msg.contains("not in allowed options"),
                 "unexpected message: {msg}"
             ),
@@ -1049,7 +1049,7 @@ mod validate_property_value_tests {
         let err = validate_property_value(&p, None)
             .expect_err("due_date requires value_date, not value_text");
         match err {
-            AppError::Validation(msg) => assert!(
+            AppError::Validation { message: msg, .. } => assert!(
                 msg.contains("requires value_date"),
                 "unexpected message: {msg}"
             ),
@@ -1064,7 +1064,7 @@ mod validate_property_value_tests {
         let err = validate_property_value(&p, None)
             .expect_err("todo_state requires value_text, not value_date");
         match err {
-            AppError::Validation(msg) => assert!(
+            AppError::Validation { message: msg, .. } => assert!(
                 msg.contains("requires value_text"),
                 "unexpected message: {msg}"
             ),

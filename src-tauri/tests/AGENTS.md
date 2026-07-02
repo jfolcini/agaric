@@ -109,9 +109,10 @@ let result = edit_block_inner(&pool, DEV, &mat, "NONEXISTENT".into(), "text".int
 assert!(matches!(result, Err(AppError::NotFound(_))),
     "editing nonexistent block must return AppError::NotFound");
 
-// For message checks (typed-error prefix protocol — see commands/AGENTS.md):
+// For typed validation sub-kinds (#2251 — the code is a structured field,
+// NOT a message prefix; `to_string()` is just "Validation error: <reason>"):
 let err = result.unwrap_err();
-assert!(err.to_string().contains("InvalidGlob:"));
+assert_eq!(err.validation_code(), Some(ValidationCode::InvalidGlob));
 ```
 
 ### Assertion style

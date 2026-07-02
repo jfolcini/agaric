@@ -117,11 +117,11 @@ mod tests {
     async fn scoped_dispatch_propagates_handler_error() {
         let ctx = test_ctx();
         let err = scoped_dispatch(&ctx, "boom", |_| async move {
-            Err(AppError::Validation("nope".into()))
+            Err(AppError::validation("nope".into()))
         })
         .await
         .expect_err("handler error must surface");
-        assert!(matches!(err, AppError::Validation(msg) if msg == "nope"));
+        assert!(matches!(err, AppError::Validation { message: msg, .. } if msg == "nope"));
     }
 
     #[test]

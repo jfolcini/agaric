@@ -1,61 +1,91 @@
 use serde::Serialize;
 use thiserror::Error;
 
-/// Stable sub-kind prefixes for [`AppError::Validation`] (#1061).
+/// The stable machine-readable `kind` discriminant [`AppError`] puts on the
+/// IPC wire (#2251).
 ///
-/// `AppError` serialises as an untagged `{ kind, message }` envelope, so a
-/// validation sub-kind that the frontend needs to discriminate (invalid glob,
-/// invalid regex, invalid date filter) is encoded as a leading `"<Prefix>: …"`
-/// token inside the `message` and parsed back out on the frontend.
+/// One unit variant per [`AppError`] variant, serialised (serde
+/// `snake_case`) to the **exact** strings the old hand-written
+/// `match`-of-`&str` in the manual `Serialize` impl emitted — the
+/// `wire_kind_strings_pinned_for_every_variant` test below pins every
+/// variant byte-for-byte against that legacy table, so this is a pure
+/// type-level promotion with zero wire drift.
 ///
-/// Historically these prefixes were hand-spelled as raw literals at every
-/// emit site (`format!("InvalidRegex: …")`) and re-spelled again by the TS
-/// parser/re-emitter, with nothing enforcing they stayed in sync — a typo or
-/// rename on any of the ~triplicated holders silently degraded the inline
-/// validation UX to the generic-error toast.
-///
-/// This module is the **single Rust-side source of truth** for those prefixes.
-/// Every emit site references [`prefixed`] (or one of the `*_PREFIX` consts)
-/// instead of a raw literal. The matching TS-side source of truth lives in
-/// `src/lib/search-query/validation-codes.ts`; the two are pinned to identical
-/// string values by tests on each side (the `pinned_*` Rust tests below and
-/// the TS `validation-codes` test), which is the cross-language contract check.
-///
-/// The wire envelope is unchanged: the prefix is still part of `message`, so
-/// this is purely an internal de-duplication — no `code` field, no specta
-/// binding churn, fully backward-compatible.
-pub mod validation_code {
-    /// Invalid page-name glob filter (`fts::glob_filter`).
-    pub const INVALID_GLOB: &str = "InvalidGlob";
-    /// Invalid user-supplied regex (`fts::toggle_filter::build_regex`).
-    pub const INVALID_REGEX: &str = "InvalidRegex";
-    /// Invalid / unparseable date-filter bound (metadata, pages, backlink).
-    pub const INVALID_DATE_FILTER: &str = "InvalidDateFilter";
-
-    /// Build the `"<code>: <reason>"` message body an `AppError::Validation`
-    /// carries, from one of the `*` consts above and a human reason.
-    ///
-    /// ```
-    /// # use agaric_lib::error::validation_code;
-    /// let msg = validation_code::prefixed(validation_code::INVALID_REGEX, "unclosed group");
-    /// assert_eq!(msg, "InvalidRegex: unclosed group");
-    /// ```
-    #[must_use]
-    pub fn prefixed(code: &str, reason: &str) -> String {
-        format!("{code}: {reason}")
-    }
+/// Because this enum derives `specta::Type` and is referenced by
+/// [`AppErrorSchema`], the generated `bindings.ts` now carries
+/// `kind: AppErrorKind` as a string-literal union instead of the old open
+/// `kind: string` — the frontend's error discrimination
+/// (`isCancellation` / `isPoolBusy` / …) type-checks against it, and the
+/// previous hand-maintained mirror union in `src/lib/app-error.ts` is gone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum AppErrorKind {
+    Database,
+    NotFound,
+    /// [`AppError::PoolTimedOut`] — wire string `"pool_busy"` (kept from the
+    /// original frontend contract; deliberately NOT `pool_timed_out`).
+    PoolBusy,
+    Conflict,
+    Migration,
+    Io,
+    Json,
+    Ulid,
+    InvalidOperation,
+    Channel,
+    Internal,
+    Snapshot,
+    Validation,
+    NonReversible,
+    Cancelled,
 }
 
-/// Helper struct matching the `{ kind, message }` JSON shape that [`AppError`]
-/// serialises to.  Used solely so specta can derive the TypeScript type for
-/// `AppError` — the real serialisation is still handled by the manual
-/// `Serialize` impl below.
+/// Structured sub-kind for [`AppError::Validation`] (#1061, #2251).
+///
+/// Historically these codes were packed into the `message` as a
+/// `"<Code>: <reason>"` prefix, hand-formatted at every Rust emit site and
+/// regex-parsed back out on the frontend
+/// (`src/lib/search-query/validation-codes.ts`), with only tests keeping the
+/// two ends aligned. They are now a real optional `code` field on the wire
+/// envelope (`{ kind: "validation", message, code }`); the frontend
+/// discriminates on `err.code` against the specta-generated string-literal
+/// union, and the `message` carries only the human-readable reason.
+///
+/// Variant names serialise as-is (serde default, PascalCase) — the exact
+/// strings the old prefixes used, pinned by
+/// `validation_code_wire_strings_pinned` below.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+pub enum ValidationCode {
+    /// Invalid page-name glob filter (`fts::glob_filter`).
+    InvalidGlob,
+    /// Invalid user-supplied regex (`fts::toggle_filter::build_regex`).
+    InvalidRegex,
+    /// Invalid / unparseable date-filter bound (metadata, pages, backlink).
+    InvalidDateFilter,
+    /// Filter primitive not allowed / not supported on the queried surface
+    /// (Pages metadata listing, advanced-query engine).
+    InvalidFilter,
+    /// Stale pagination cursor (format/sort mismatch) — the client should
+    /// retry once without a cursor (see `usePageBrowserData`).
+    RequiresRefresh,
+}
+
+/// Helper struct matching the `{ kind, message, code? }` JSON shape that
+/// [`AppError`] serialises to.  Used solely so specta can derive the
+/// TypeScript type for `AppError` — the real serialisation is still handled
+/// by the manual `Serialize` impl below (which the
+/// `schema_matches_manual_serialize_shape` test pins against this schema).
 #[derive(Serialize, specta::Type)]
 #[serde(rename = "AppError")]
 #[allow(dead_code)] // Fields are read by specta's Type derive macro, not directly
 struct AppErrorSchema {
-    kind: String,
+    kind: AppErrorKind,
     message: String,
+    /// Structured validation sub-kind (#2251). Present only on
+    /// `kind: "validation"` errors that carry one; omitted entirely (never
+    /// `null`) otherwise, so every non-coded error keeps the exact legacy
+    /// `{ kind, message }` two-field envelope.
+    #[specta(optional)]
+    code: Option<ValidationCode>,
 }
 
 /// Application-level error type covering all expected failure modes.
@@ -135,8 +165,16 @@ pub enum AppError {
     #[error("Snapshot error: {0}")]
     Snapshot(String),
 
-    #[error("Validation error: {0}")]
-    Validation(String),
+    /// Business-rule / input rejection. `message` is the human-readable
+    /// reason; `code` optionally carries a machine-discriminable
+    /// [`ValidationCode`] sub-kind (#2251 — previously packed into the
+    /// message as a `"<Code>: <reason>"` prefix). Construct via
+    /// [`AppError::validation`] / [`AppError::validation_coded`].
+    #[error("Validation error: {message}")]
+    Validation {
+        code: Option<ValidationCode>,
+        message: String,
+    },
 
     #[error("Non-reversible operation: {op_type} cannot be undone")]
     NonReversible { op_type: String },
@@ -150,6 +188,68 @@ pub enum AppError {
     /// is the expected case, not an error.
     #[error("Cancelled: request was aborted by the client")]
     Cancelled,
+}
+
+impl AppError {
+    /// Plain (uncoded) validation rejection. Takes `String` (not
+    /// `impl Into<String>`) so the hundreds of pre-existing
+    /// `AppError::validation("…".into())` / `AppError::validation(format!(…))`
+    /// call sites keep inferring the conversion target unambiguously.
+    #[must_use]
+    pub fn validation(message: String) -> Self {
+        AppError::Validation {
+            code: None,
+            message,
+        }
+    }
+
+    /// Validation rejection carrying a machine-discriminable
+    /// [`ValidationCode`] sub-kind. `message` must be the human reason
+    /// ONLY — never re-embed the code as a `"<Code>: …"` prefix (#2251
+    /// removed that wire convention; the code travels in the `code` field).
+    #[must_use]
+    pub fn validation_coded(code: ValidationCode, message: impl Into<String>) -> Self {
+        AppError::Validation {
+            code: Some(code),
+            message: message.into(),
+        }
+    }
+
+    /// The structured validation sub-kind, if this is a coded
+    /// [`AppError::Validation`]; `None` for uncoded validation errors and
+    /// every other variant. The Rust-side mirror of the frontend's
+    /// `validationCode(err)` narrowing helper.
+    #[must_use]
+    pub fn validation_code(&self) -> Option<ValidationCode> {
+        match self {
+            AppError::Validation { code, .. } => *code,
+            _ => None,
+        }
+    }
+
+    /// The stable machine-readable wire kind for this error — the single
+    /// source of truth the `Serialize` impl (and any log-triage keyed on
+    /// `kind`) uses.
+    #[must_use]
+    pub fn kind(&self) -> AppErrorKind {
+        match self {
+            AppError::Database(_) => AppErrorKind::Database,
+            AppError::NotFound(_) => AppErrorKind::NotFound,
+            AppError::PoolTimedOut => AppErrorKind::PoolBusy,
+            AppError::Conflict(_) => AppErrorKind::Conflict,
+            AppError::Migration(_) => AppErrorKind::Migration,
+            AppError::Io(_) => AppErrorKind::Io,
+            AppError::Json(_) => AppErrorKind::Json,
+            AppError::Ulid(_) => AppErrorKind::Ulid,
+            AppError::InvalidOperation(_) => AppErrorKind::InvalidOperation,
+            AppError::Channel(_) => AppErrorKind::Channel,
+            AppError::Internal(_) => AppErrorKind::Internal,
+            AppError::Snapshot(_) => AppErrorKind::Snapshot,
+            AppError::Validation { .. } => AppErrorKind::Validation,
+            AppError::NonReversible { .. } => AppErrorKind::NonReversible,
+            AppError::Cancelled => AppErrorKind::Cancelled,
+        }
+    }
 }
 
 /// Manual `From<sqlx::Error>` (issue #106).
@@ -175,7 +275,8 @@ impl From<sqlx::Error> for AppError {
 }
 
 /// Tauri 2 requires command error types to implement `Serialize`.
-/// We serialize as `{ kind, message }` so the frontend can match on `kind`.
+/// We serialize as `{ kind, message }` — plus an optional `code` field on
+/// coded validation errors — so the frontend can match on structured data.
 impl Serialize for AppError {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -183,41 +284,46 @@ impl Serialize for AppError {
     {
         use serde::ser::SerializeStruct;
 
-        let kind = match self {
-            AppError::Database(_) => "database",
-            AppError::NotFound(_) => "not_found",
-            AppError::PoolTimedOut => "pool_busy",
-            AppError::Conflict(_) => "conflict",
-            AppError::Migration(_) => "migration",
-            AppError::Io(_) => "io",
-            AppError::Json(_) => "json",
-            AppError::Ulid(_) => "ulid",
-            AppError::InvalidOperation(_) => "invalid_operation",
-            AppError::Channel(_) => "channel",
-            AppError::Internal(_) => "internal",
-            AppError::Snapshot(_) => "snapshot",
-            AppError::Validation(_) => "validation",
-            AppError::NonReversible { .. } => "non_reversible",
-            AppError::Cancelled => "cancelled",
+        let code = match self {
+            AppError::Validation { code, .. } => *code,
+            _ => None,
         };
 
-        let mut state = serializer.serialize_struct("AppError", 2)?;
-        state.serialize_field("kind", kind)?;
-        // Kept as-is. `self.to_string()` always
-        // allocates the formatted message, but `Serialize` for
-        // `AppError` only fires on the IPC error boundary (cold path),
-        // and serde lacks a "borrowed Display" adapter that would let
-        // us avoid the intermediate `String`. Documented as the
-        // boundary cost of the `AppError` pattern; if `AppError` ever
-        // gains a `Cow<'static, str>` variant the saving is automatic.
-        state.serialize_field("message", &self.to_string())?;
+        // Field count: coded validation errors gain a third `code` field;
+        // every other error keeps the exact legacy two-field envelope
+        // (pinned byte-for-byte by `wire_format_pinned_for_every_variant`).
+        let mut state =
+            serializer.serialize_struct("AppError", if code.is_some() { 3 } else { 2 })?;
+        state.serialize_field("kind", &self.kind())?;
+        // `self.to_string()` always allocates the formatted message, but
+        // `Serialize` for `AppError` only fires on the IPC error boundary
+        // (cold path), and serde lacks a "borrowed Display" adapter that
+        // would let us avoid the intermediate `String`. Documented as the
+        // boundary cost of the `AppError` pattern.
+        //
+        // Coded validation errors ship the raw human reason WITHOUT the
+        // `"Validation error: "` display decoration: the machine part
+        // travels in `code`, and the frontend surfaces `message` verbatim
+        // (inline regex alert, invalid-filter toast) instead of stripping
+        // prefixes back out of a display string.
+        let message = match self {
+            AppError::Validation {
+                code: Some(_),
+                message,
+            } => message.clone(),
+            other => other.to_string(),
+        };
+        state.serialize_field("message", &message)?;
+        if let Some(code) = code {
+            state.serialize_field("code", &code)?;
+        }
         state.end()
     }
 }
 
 /// Forward specta's type introspection to [`AppErrorSchema`] so that the
-/// generated TypeScript type matches the `{ kind, message }` JSON shape
-/// produced by the manual `Serialize` impl above.
+/// generated TypeScript type matches the `{ kind, message, code? }` JSON
+/// shape produced by the manual `Serialize` impl above.
 impl specta::Type for AppError {
     fn definition(types: &mut specta::Types) -> specta::datatype::DataType {
         AppErrorSchema::definition(types)
@@ -259,7 +365,7 @@ mod tests {
 
     #[test]
     fn display_validation_prefixes_message() {
-        let err = AppError::Validation(MSG_VALIDATION.into());
+        let err = AppError::validation(MSG_VALIDATION.into());
         assert_eq!(
             err.to_string(),
             format!("Validation error: {MSG_VALIDATION}")
@@ -358,7 +464,7 @@ mod tests {
                 format!("Internal error: {MSG_INTERNAL}"),
             ),
             (
-                AppError::Validation(MSG_VALIDATION.into()),
+                AppError::validation(MSG_VALIDATION.into()),
                 "validation",
                 format!("Validation error: {MSG_VALIDATION}"),
             ),
@@ -448,6 +554,150 @@ mod tests {
         );
         assert!(obj.contains_key("kind"), "missing 'kind' field");
         assert!(obj.contains_key("message"), "missing 'message' field");
+    }
+
+    #[test]
+    fn serialize_uncoded_validation_keeps_two_field_envelope() {
+        // #2251 wire-compat: a Validation error WITHOUT a code must keep the
+        // exact legacy `{ kind, message }` shape — the `code` field is
+        // omitted (not `null`) so pre-existing JSON is byte-identical.
+        let err = AppError::validation(MSG_VALIDATION.into());
+        let json = serde_json::to_value(&err).unwrap();
+        let obj = json.as_object().expect("object");
+        assert_eq!(obj.len(), 2, "uncoded validation must not gain a field");
+        assert_eq!(json["kind"], "validation");
+        assert_eq!(
+            json["message"],
+            format!("Validation error: {MSG_VALIDATION}"),
+            "uncoded validation message must keep the legacy Display decoration"
+        );
+    }
+
+    #[test]
+    fn serialize_coded_validation_carries_code_and_raw_reason() {
+        // #2251 — coded validation errors promote the old `"<Code>: …"`
+        // message prefix to a structured `code` field. The message carries
+        // ONLY the human reason (no `Validation error:` decoration, no
+        // machine prefix).
+        let err = AppError::validation_coded(ValidationCode::InvalidRegex, "unclosed group");
+        assert_eq!(
+            serde_json::to_string(&err).expect("serialize"),
+            r#"{"kind":"validation","message":"unclosed group","code":"InvalidRegex"}"#,
+        );
+    }
+
+    // --- #2251: wire-format pins (typed AppErrorKind / ValidationCode) ---
+    //
+    // The `kind` discriminant used to be a hand-written `&str` match inside
+    // the manual `Serialize` impl. It is now the `AppErrorKind` enum (so the
+    // specta binding is a string-literal union); these tests pin every
+    // variant's wire string byte-for-byte against the legacy table so the
+    // type-level promotion can never drift the JSON reaching the webview.
+
+    #[test]
+    fn wire_kind_strings_pinned_for_every_variant() {
+        // Exhaustive: one arm per AppErrorKind variant. Adding an AppError
+        // variant without extending this table fails the match exhaustively.
+        let cases: [(AppErrorKind, &str); 15] = [
+            (AppErrorKind::Database, "database"),
+            (AppErrorKind::NotFound, "not_found"),
+            (AppErrorKind::PoolBusy, "pool_busy"),
+            (AppErrorKind::Conflict, "conflict"),
+            (AppErrorKind::Migration, "migration"),
+            (AppErrorKind::Io, "io"),
+            (AppErrorKind::Json, "json"),
+            (AppErrorKind::Ulid, "ulid"),
+            (AppErrorKind::InvalidOperation, "invalid_operation"),
+            (AppErrorKind::Channel, "channel"),
+            (AppErrorKind::Internal, "internal"),
+            (AppErrorKind::Snapshot, "snapshot"),
+            (AppErrorKind::Validation, "validation"),
+            (AppErrorKind::NonReversible, "non_reversible"),
+            (AppErrorKind::Cancelled, "cancelled"),
+        ];
+        for (kind, expected) in cases {
+            assert_eq!(
+                serde_json::to_value(kind).expect("kind serializes"),
+                serde_json::Value::String(expected.into()),
+                "wire string drift for {kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn wire_format_pinned_for_every_variant() {
+        // Full-envelope pin: for every variant, the serialized JSON string
+        // must be IDENTICAL to what the pre-#2251 implementation emitted
+        // (`{"kind":"<legacy kind>","message":"<Display output>"}` with that
+        // exact field order). Coded validation is the ONE deliberate
+        // exception, pinned separately above.
+        let io_err = AppError::Io(std::io::Error::other("disk full"));
+        let json_err = AppError::Json(serde_json::from_str::<()>("{bad").unwrap_err());
+        let migrate_err = AppError::Migration(sqlx::migrate::MigrateError::Execute(
+            sqlx::Error::RowNotFound,
+        ));
+        let db_err = AppError::Database(sqlx::Error::PoolClosed);
+        let cases: Vec<(AppError, &str)> = vec![
+            (db_err, "database"),
+            (AppError::NotFound(MSG_NOT_FOUND.into()), "not_found"),
+            (AppError::PoolTimedOut, "pool_busy"),
+            (
+                AppError::Conflict("UNIQUE constraint failed".into()),
+                "conflict",
+            ),
+            (migrate_err, "migration"),
+            (io_err, "io"),
+            (json_err, "json"),
+            (AppError::Ulid(MSG_ULID.into()), "ulid"),
+            (
+                AppError::InvalidOperation(MSG_INVALID_OP.into()),
+                "invalid_operation",
+            ),
+            (AppError::Channel(MSG_CHANNEL.into()), "channel"),
+            (AppError::Internal(MSG_INTERNAL.into()), "internal"),
+            (AppError::Snapshot(MSG_SNAPSHOT.into()), "snapshot"),
+            (AppError::validation(MSG_VALIDATION.into()), "validation"),
+            (
+                AppError::NonReversible {
+                    op_type: "purge_block".into(),
+                },
+                "non_reversible",
+            ),
+            (AppError::Cancelled, "cancelled"),
+        ];
+        for (err, legacy_kind) in cases {
+            let expected = serde_json::to_string(&serde_json::json!({
+                "kind": legacy_kind,
+                "message": err.to_string(),
+            }))
+            .expect("legacy envelope serializes");
+            assert_eq!(
+                serde_json::to_string(&err).expect("AppError serializes"),
+                expected,
+                "wire envelope drift for {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn validation_code_wire_strings_pinned() {
+        // The exact strings the old `"<Code>: …"` message prefixes spelled —
+        // and the strings the TS `ValidationCode` union in bindings.ts (and
+        // its runtime mirror in validation-codes.ts) discriminates on.
+        let cases: [(ValidationCode, &str); 5] = [
+            (ValidationCode::InvalidGlob, "InvalidGlob"),
+            (ValidationCode::InvalidRegex, "InvalidRegex"),
+            (ValidationCode::InvalidDateFilter, "InvalidDateFilter"),
+            (ValidationCode::InvalidFilter, "InvalidFilter"),
+            (ValidationCode::RequiresRefresh, "RequiresRefresh"),
+        ];
+        for (code, expected) in cases {
+            assert_eq!(
+                serde_json::to_value(code).expect("code serializes"),
+                serde_json::Value::String(expected.into()),
+                "wire string drift for {code:?}"
+            );
+        }
     }
 
     // --- From impls ---
@@ -648,7 +898,7 @@ mod tests {
 
     #[test]
     fn debug_output_includes_inner_message() {
-        let err = AppError::Validation(MSG_VALIDATION.into());
+        let err = AppError::validation(MSG_VALIDATION.into());
         let debug = format!("{err:?}");
         assert!(
             debug.contains(MSG_VALIDATION),
@@ -697,7 +947,7 @@ mod tests {
             AppError::InvalidOperation(MSG_INVALID_OP.into()),
             AppError::Channel(MSG_CHANNEL.into()),
             AppError::Snapshot(MSG_SNAPSHOT.into()),
-            AppError::Validation(MSG_VALIDATION.into()),
+            AppError::validation(MSG_VALIDATION.into()),
             AppError::NonReversible {
                 op_type: "purge_block".into(),
             },

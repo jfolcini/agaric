@@ -124,7 +124,7 @@ async fn set_property_validates_key() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "empty key should return Validation error, got: {result:?}"
     );
 }
@@ -177,7 +177,7 @@ async fn set_property_inner_with_none_caller_context_uses_legacy_message() {
     .expect_err("two value fields must be rejected");
     let msg = err.to_string();
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "expected Validation, got: {err:?}"
     );
     assert!(
@@ -228,7 +228,7 @@ async fn set_property_inner_with_some_caller_context_names_caller() {
     .expect_err("two value fields must be rejected");
     let msg = err.to_string();
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "expected Validation, got: {err:?}"
     );
     for needle in [
@@ -285,7 +285,7 @@ async fn set_property_inner_with_some_caller_context_rejects_zero_values() {
     .expect_err("zero value fields must be rejected when caller_context is Some");
     let msg = err.to_string();
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "expected Validation, got: {err:?}"
     );
     assert!(
@@ -340,7 +340,7 @@ async fn set_property_on_deleted_block_fails() {
     // the command wrapper has always surfaced via `verify_active`),
     // not the old collapsed `NotFound`.
     match result {
-        Err(AppError::Validation(msg)) => assert!(
+        Err(AppError::Validation { message: msg, .. }) => assert!(
             msg.contains("soft-deleted"),
             "setting property on a soft-deleted block must report Validation 'soft-deleted', got: {msg}"
         ),
@@ -529,7 +529,7 @@ async fn delete_property_rejects_lifecycle_builtin_key_658() {
     .await
     .expect_err("deleting a built-in lifecycle key must be rejected");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "expected Validation error, got: {err:?}"
     );
 
@@ -545,7 +545,7 @@ async fn delete_property_rejects_lifecycle_builtin_key_658() {
     let err = delete_property_inner(&pool, DEV, &mat, block.id.as_str().into(), "repeat".into())
         .await
         .expect_err("deleting a repeat-* key must be rejected");
-    assert!(matches!(err, AppError::Validation(_)));
+    assert!(matches!(err, AppError::Validation { .. }));
 
     // Deleting a user-settable property like "effort" still works.
     set_property_inner(
@@ -845,7 +845,7 @@ async fn batch_properties_empty_ids_returns_validation_error() {
     let result = get_batch_properties_inner(&pool, vec![]).await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "empty block_ids list must return Validation error, got: {result:?}"
     );
 }
@@ -1030,7 +1030,7 @@ async fn batch_resolve_empty_ids_returns_validation_error() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "empty ids list must return Validation error, got: {result:?}"
     );
 }
@@ -1362,7 +1362,7 @@ async fn set_todo_state_rejects_too_long_string() {
         set_todo_state_inner(&pool, DEV, &mat, block.id.as_str().into(), Some(long_state)).await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "state over 50 chars should return Validation error, got: {result:?}"
     );
 
@@ -1398,7 +1398,7 @@ async fn set_todo_state_rejects_empty_string() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "empty state should return Validation error, got: {result:?}"
     );
 
@@ -1555,7 +1555,7 @@ async fn set_priority_invalid_returns_validation() {
         set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("5".into())).await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "invalid priority should return Validation error, got: {result:?}"
     );
 
@@ -1653,7 +1653,7 @@ async fn set_due_date_invalid_format_returns_validation() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "invalid date should return Validation error, got: {result:?}"
     );
 
@@ -1769,7 +1769,7 @@ async fn set_property_rejects_invalid_date_format() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("Invalid date format")),
+        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains("Invalid date format")),
         "invalid date string should return Validation error, got: {result:?}"
     );
 
@@ -1811,7 +1811,7 @@ async fn set_property_rejects_out_of_range_date() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("Invalid date format")),
+        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains("Invalid date format")),
         "out-of-range date should return Validation error, got: {result:?}"
     );
 
@@ -1853,7 +1853,7 @@ async fn set_property_rejects_due_date_with_value_text() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("requires value_date")),
+        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains("requires value_date")),
         "due_date with value_text should return Validation error, got: {result:?}"
     );
 
@@ -1895,7 +1895,7 @@ async fn set_property_rejects_todo_state_with_value_date() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("requires value_text")),
+        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains("requires value_text")),
         "todo_state with value_date should return Validation error, got: {result:?}"
     );
 
@@ -2056,7 +2056,7 @@ async fn create_property_def_ref_type_rejects_options() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("options are only allowed for select")),
+        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains("options are only allowed for select")),
         "ref with options should return Validation error, got: {result:?}"
     );
 }
@@ -2103,7 +2103,7 @@ async fn set_property_ref_type_enforces_value_ref() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("expects type")),
+        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains("expects type")),
         "ref def with value_text should fail type check, got: {result:?}"
     );
 
@@ -2260,7 +2260,7 @@ async fn set_todo_state_deleted_block_returns_soft_deleted() {
     .await;
 
     match result {
-        Err(AppError::Validation(msg)) => assert!(
+        Err(AppError::Validation { message: msg, .. }) => assert!(
             msg.contains("soft-deleted"),
             "set_todo_state on a soft-deleted block must report Validation 'soft-deleted', got: {msg}"
         ),
@@ -2301,7 +2301,7 @@ async fn set_priority_deleted_block_returns_soft_deleted() {
         set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("2".into())).await;
 
     match result {
-        Err(AppError::Validation(msg)) => assert!(
+        Err(AppError::Validation { message: msg, .. }) => assert!(
             msg.contains("soft-deleted"),
             "set_priority on a soft-deleted block must report Validation 'soft-deleted', got: {msg}"
         ),
@@ -2348,7 +2348,7 @@ async fn set_due_date_deleted_block_returns_soft_deleted() {
     .await;
 
     match result {
-        Err(AppError::Validation(msg)) => assert!(
+        Err(AppError::Validation { message: msg, .. }) => assert!(
             msg.contains("soft-deleted"),
             "set_due_date on a soft-deleted block must report Validation 'soft-deleted', got: {msg}"
         ),
@@ -2599,7 +2599,7 @@ async fn set_scheduled_date_invalid_format_returns_validation() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "invalid date should return Validation error, got: {result:?}"
     );
 
@@ -4390,7 +4390,7 @@ async fn delete_property_def_rejects_builtin_key() {
     let result = delete_property_def_inner(&pool, "todo_state".into()).await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("builtin")),
+        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains("builtin")),
         "deleting a builtin property key must return Validation error, got: {result:?}"
     );
 }
@@ -4498,7 +4498,7 @@ async fn update_property_def_options_preserves_user_facing_errors_through_saniti
     let sanitized = raw.map_err(sanitize_internal_error);
 
     match sanitized {
-        Err(AppError::Validation(msg)) => {
+        Err(AppError::Validation { message: msg, .. }) => {
             assert!(
                 msg.contains("JSON array"),
                 "Validation message must pass through sanitization unchanged, got: {msg:?}"
@@ -4574,7 +4574,7 @@ async fn delete_property_def_preserves_user_facing_errors_through_sanitize() {
     let raw = delete_property_def_inner(&pool, "todo_state".into()).await;
     let sanitized = raw.map_err(sanitize_internal_error);
     assert!(
-        matches!(sanitized, Err(AppError::Validation(_))),
+        matches!(sanitized, Err(AppError::Validation { .. })),
         "Validation must pass through sanitization unchanged, got: {sanitized:?}"
     );
 }
@@ -4666,7 +4666,7 @@ async fn m26_delete_property_def_rejects_when_block_properties_reference_key() {
 
     let result = delete_property_def_inner(&pool, "importance".into()).await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "delete must return Validation when block_properties reference the key, got: {result:?}"
     );
 
@@ -4742,7 +4742,7 @@ async fn m26_delete_property_def_rejection_message_includes_key_and_count() {
 
     let result = delete_property_def_inner(&pool, "importance".into()).await;
     match result {
-        Err(AppError::Validation(msg)) => {
+        Err(AppError::Validation { message: msg, .. }) => {
             assert!(
                 msg.contains("importance"),
                 "rejection message must name the offending key, got: {msg:?}"
@@ -4837,7 +4837,7 @@ async fn bug20_set_todo_state_rejects_value_not_in_options() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("FROB") && msg.contains("allowed options")),
+        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains("FROB") && msg.contains("allowed options")),
         "setting todo_state to FROB must return Validation with options message, got: {result:?}"
     );
 
@@ -4907,7 +4907,7 @@ async fn bug20_set_property_rejects_select_value_not_in_custom_options() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("angry") && msg.contains("allowed options")),
+        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains("angry") && msg.contains("allowed options")),
         "setting mood to 'angry' must return Validation error referencing allowed options, got: {result:?}"
     );
 
@@ -5059,7 +5059,7 @@ async fn bug20_set_priority_rejects_value_not_in_seeded_options() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("99") && msg.contains("allowed options")),
+        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains("99") && msg.contains("allowed options")),
         "setting priority to 99 via set_property must return Validation with options message, got: {result:?}"
     );
 
@@ -5120,7 +5120,7 @@ async fn m20_set_priority_accepts_user_extended_options() {
     let bad =
         set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("Z".into())).await;
     assert!(
-        matches!(bad, Err(AppError::Validation(ref msg)) if msg.contains('Z') && msg.contains("allowed options")),
+        matches!(bad, Err(AppError::Validation { message: ref msg, .. }) if msg.contains('Z') && msg.contains("allowed options")),
         "value not in user-extended options must still be rejected, got: {bad:?}"
     );
 
@@ -5164,7 +5164,7 @@ async fn m20_set_priority_fallback_when_definition_deleted() {
     let result =
         set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("9".into())).await;
     assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains('9') && msg.contains("allowed options")),
+        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains('9') && msg.contains("allowed options")),
         "without definition row, priority must fall back to built-in defaults and reject unknown values, got: {result:?}"
     );
 
@@ -5221,7 +5221,7 @@ async fn bug20_todo_state_fallback_when_definition_deleted() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("NONSENSE") && msg.contains("TODO")),
+        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains("NONSENSE") && msg.contains("TODO")),
         "without definition row, todo_state must fall back to built-in defaults and reject unknown values, got: {result:?}"
     );
 
@@ -5581,7 +5581,7 @@ async fn set_is_space_to_invalid_value_returns_error_m90() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("nope") && msg.contains("allowed options")),
+        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains("nope") && msg.contains("allowed options")),
         "setting is_space to 'nope' must return Validation with options message, got: {result:?}"
     );
 
@@ -6093,7 +6093,7 @@ async fn set_todo_state_batch_atomic_rollback_on_inner_failure() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "invalid state must reject with Validation, got {result:?}"
     );
 
@@ -6130,7 +6130,7 @@ async fn set_todo_state_batch_rejects_empty_list() {
 
     let result = set_todo_state_batch_inner(&pool, DEV, &mat, vec![], Some("TODO".into())).await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "empty list must reject with Validation, got {result:?}"
     );
 }
@@ -6156,7 +6156,7 @@ async fn set_todo_state_batch_rejects_oversize_list() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "oversize list must reject with Validation, got {result:?}"
     );
 }
@@ -6240,7 +6240,7 @@ async fn set_property_ref_cross_space_rejected() {
     )
     .await;
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "cross-space ref property must be rejected, got {result:?}"
     );
 }
@@ -6381,7 +6381,7 @@ async fn set_property_inner_soft_deleted_block_yields_validation_in_tx() {
     .await
     .expect_err("soft-deleted block must be rejected");
     match err {
-        AppError::Validation(msg) => assert!(
+        AppError::Validation { message: msg, .. } => assert!(
             msg.contains("soft-deleted"),
             "soft-deleted block must report Validation 'soft-deleted', got: {msg}"
         ),
@@ -6431,7 +6431,7 @@ async fn delete_property_inner_soft_deleted_block_yields_validation_in_tx() {
         .await
         .expect_err("soft-deleted block must be rejected");
     match err {
-        AppError::Validation(msg) => assert!(
+        AppError::Validation { message: msg, .. } => assert!(
             msg.contains("soft-deleted"),
             "soft-deleted block must report Validation 'soft-deleted', got: {msg}"
         ),

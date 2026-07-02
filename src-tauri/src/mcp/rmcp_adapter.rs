@@ -381,7 +381,7 @@ fn app_error_to_rmcp(err: &AppError) -> ErrorData {
                 .expect("JSONRPC_RESOURCE_NOT_FOUND fits in i32");
             ErrorData::new(ErrorCode(code), err.to_string(), None)
         }
-        AppError::Validation(_) | AppError::InvalidOperation(_) => {
+        AppError::Validation { .. } | AppError::InvalidOperation(_) => {
             ErrorData::invalid_params(err.to_string(), None)
         }
         _ => {
@@ -913,7 +913,7 @@ mod tests {
             ),
             (
                 "Validation → -32602",
-                AppError::Validation("invalid args".into()),
+                AppError::validation("invalid args".into()),
                 -32602,
                 "Validation error: invalid args",
             ),

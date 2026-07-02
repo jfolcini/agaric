@@ -269,7 +269,7 @@ pub(crate) fn shift_date(date: &str, rule: &str) -> Result<Option<String>, AppEr
                 let Some(next) = shift_date_once(current, interval) else {
                     // Explicit overflow signal instead of
                     // silently returning `Ok(None)` from the parent.
-                    return Err(AppError::Validation(format!(
+                    return Err(AppError::validation(format!(
                         "recurrence ++ arithmetic overflow: original={original} interval={interval}"
                     )));
                 };
@@ -282,7 +282,7 @@ pub(crate) fn shift_date(date: &str, rule: &str) -> Result<Option<String>, AppEr
             if hit_cap {
                 // Cap exhausted without catching up to
                 // today; previously returned a stale past date.
-                return Err(AppError::Validation(format!(
+                return Err(AppError::validation(format!(
                     "recurrence ++ cap exceeded: original={original} interval={interval} today={today}"
                 )));
             }

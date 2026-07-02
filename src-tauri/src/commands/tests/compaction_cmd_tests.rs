@@ -339,7 +339,7 @@ async fn compact_op_log_returns_real_deleted_count_l42() {
 #[tokio::test]
 async fn compact_op_log_cmd_rejects_retention_days_zero() {
     // Regression: retention_days = 0 must be rejected up-front with
-    // AppError::Validation("retention_days.too_small") before any DB work
+    // AppError::validation("retention_days.too_small") before any DB work
     // (otherwise cutoff = now() and the entire op log is purged).
     let (pool, _dir) = test_pool().await;
 
@@ -347,8 +347,8 @@ async fn compact_op_log_cmd_rejects_retention_days_zero() {
 
     let err = result.expect_err("retention_days = 0 should be rejected");
     assert!(
-        matches!(&err, AppError::Validation(msg) if msg == "retention_days.too_small"),
-        "expected AppError::Validation(\"retention_days.too_small\"), got {err:?}"
+        matches!(&err, AppError::Validation { message: msg, .. } if msg == "retention_days.too_small"),
+        "expected AppError::validation(\"retention_days.too_small\"), got {err:?}"
     );
 
     // Belt-and-braces: also reject any value below the floor.
@@ -360,7 +360,7 @@ async fn compact_op_log_cmd_rejects_retention_days_zero() {
     .await;
     let err = result.expect_err("retention_days below floor should be rejected");
     assert!(
-        matches!(&err, AppError::Validation(msg) if msg == "retention_days.too_small"),
-        "expected AppError::Validation(\"retention_days.too_small\"), got {err:?}"
+        matches!(&err, AppError::Validation { message: msg, .. } if msg == "retention_days.too_small"),
+        "expected AppError::validation(\"retention_days.too_small\"), got {err:?}"
     );
 }

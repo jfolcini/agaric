@@ -77,7 +77,9 @@ export function formatErrorForDisplay(err: unknown, opts: FormatErrorOptions = {
   let kind: string | undefined
   let message: string
   if (isAppError(err)) {
-    kind = err.kind
+    // #2251 — coded validation errors carry a structured sub-kind; in debug
+    // mode surface it alongside the kind (`code: validation/InvalidRegex`).
+    kind = err.code != null ? `${err.kind}/${err.code}` : err.kind
     message = err.message
   } else if (err instanceof Error) {
     message = err.message

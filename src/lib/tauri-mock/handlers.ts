@@ -11,6 +11,7 @@
  * diffed against the real backend's command surface in `src/lib/bindings.ts`.
  */
 
+import type { AppError } from '../bindings'
 import { matchesSearchFolded } from '../fold-for-search'
 import { logger } from '../logger'
 import { asciiLowercase, pageGlobFilterMatches } from '../search-query/glob-validate'
@@ -31,6 +32,20 @@ import {
   propertyDefs,
   pushOp,
 } from './seed'
+
+/**
+ * Build an `AppError`-shaped rejection for a mock handler (#2251).
+ *
+ * The value is a real `Error` instance (satisfies the throw-only-`Error`
+ * lint) augmented with the generated `AppError` wire fields, so it narrows
+ * through `isAppError` exactly like a real Tauri rejection. The `AppError`
+ * parameter type pins `kind` (and the optional validation `code`) to the
+ * specta-generated string-literal unions — a typo'd kind or code in a mock
+ * handler is now a type-check error instead of a silently-dead branch.
+ */
+function appErrorRejection(err: AppError): Error & AppError {
+  return Object.assign(new Error(err.message), err)
+}
 
 /**
  * Ref-INCLUSIVE tag set for a block: ATTACHED tags (`block_tags`) ∪ inline tag
@@ -1275,19 +1290,16 @@ export const HANDLERS: Record<string, Handler> = {
         // Cross-sort cursor rejection — mirror the backend's
         // `validate_pages_metadata_cursor`: a cursor minted under one sort
         // carries that sort's `position` discriminator; reusing it after a
-        // sort change is rejected with a `Validation` error whose message
-        // carries the `RequiresRefresh:` prefix the frontend's
+        // sort change is rejected with a `Validation` error carrying the
+        // structured `RequiresRefresh` code (#2251) the frontend's
         // `withCursorRecovery` recognises (drop cursor → refetch page 1).
-        // The thrown value carries the `{ kind, message }` AppError wire
-        // shape (an `Error` instance augmented with `kind`, so it satisfies
-        // both `isAppError` — `'kind' in err && 'message' in err` — and the
-        // `useThrowOnlyError` lint) so `err.kind === 'validation'` narrows.
         const cursorDisc = decoded['position'] as number | undefined
         if (cursorDisc !== sortDiscriminator(sort)) {
-          throw Object.assign(
-            new Error(`RequiresRefresh: cursor sort mismatch (expected ${sort})`),
-            { kind: 'validation' },
-          )
+          throw appErrorRejection({
+            kind: 'validation',
+            code: 'RequiresRefresh',
+            message: `cursor sort mismatch (expected ${sort})`,
+          })
         }
         const idx = matched.findIndex((r) => r.id === (decoded['id'] as string))
         if (idx >= 0) startIdx = idx + 1
@@ -3891,7 +3903,10 @@ export const HANDLERS: Record<string, Handler> = {
     const a = args as { notification?: { title?: unknown } }
     const title = typeof a.notification?.title === 'string' ? a.notification.title : ''
     if (title.trim() === '') {
-      throw { kind: 'validation', message: 'notification title must not be empty' }
+      throw appErrorRejection({
+        kind: 'validation',
+        message: 'notification title must not be empty',
+      })
     }
     return undefined
   },

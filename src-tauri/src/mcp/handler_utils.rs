@@ -53,7 +53,7 @@ pub(crate) fn parse_args<T: serde::de::DeserializeOwned>(
             serde_json::error::Category::Io => "json io",
         };
         tracing::debug!(tool, error = %e, "MCP parse_args failed");
-        AppError::Validation(format!("tool `{tool}`: invalid arguments ({category})"))
+        AppError::validation(format!("tool `{tool}`: invalid arguments ({category})"))
     })
 }
 
@@ -187,12 +187,12 @@ pub(crate) async fn validate_block_in_space(
         // has no owning page) — either a tag block (global, no owning
         // page) or a corrupted page. Refuse: a space-scoped write cannot
         // be authorised against an unscoped target.
-        Some(None) => Err(AppError::Validation(format!(
+        Some(None) => Err(AppError::validation(format!(
             "block '{block_id}' does not belong to any space; \
              cross-space writes are denied"
         ))),
         Some(Some(found)) if found == space_id => Ok(()),
-        Some(Some(found)) => Err(AppError::Validation(format!(
+        Some(Some(found)) => Err(AppError::validation(format!(
             "block '{block_id}' belongs to space '{found}'; \
              cross-space write to space '{space_id}' is denied"
         ))),
@@ -234,7 +234,7 @@ mod tests {
     fn parse_args_missing_required_field_emits_data_shape_message() {
         let err = parse_args::<Probe>("test_tool", json!({})).unwrap_err();
         match err {
-            AppError::Validation(msg) => {
+            AppError::Validation { message: msg, .. } => {
                 assert!(
                     msg.contains("test_tool"),
                     "message must include tool name: {msg}"
@@ -262,7 +262,7 @@ mod tests {
         // serde_json classifies this as `Category::Data`.
         let err = parse_args::<Probe>("test_tool", json!({"required": 42})).unwrap_err();
         match err {
-            AppError::Validation(msg) => {
+            AppError::Validation { message: msg, .. } => {
                 assert!(msg.contains("test_tool"));
                 assert!(msg.contains("data shape mismatch"));
             }
@@ -369,7 +369,7 @@ mod tests {
             .await
             .expect_err("NULL-space target must be denied");
         match err {
-            AppError::Validation(msg) => assert!(
+            AppError::Validation { message: msg, .. } => assert!(
                 msg.contains("does not belong to any space"),
                 "NULL-space rejection message: {msg}"
             ),
@@ -399,7 +399,7 @@ mod tests {
             .await
             .expect_err("cross-space target must be denied");
         match err {
-            AppError::Validation(msg) => assert!(
+            AppError::Validation { message: msg, .. } => assert!(
                 msg.contains(&space_b) && msg.contains("denied"),
                 "different-space rejection message: {msg}"
             ),

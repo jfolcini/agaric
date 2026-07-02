@@ -922,9 +922,10 @@ async fn filter_created_in_range_rejects_unparseable_bound_670() {
         .await
         .expect_err("unparseable `after` must error, not silently widen to all blocks");
     match &err {
-        AppError::Validation(msg) => assert!(
-            msg.starts_with("InvalidDateFilter:"),
-            "expected InvalidDateFilter prefix, got: {msg}"
+        AppError::Validation { code, .. } => assert_eq!(
+            *code,
+            Some(crate::error::ValidationCode::InvalidDateFilter),
+            "expected InvalidDateFilter code"
         ),
         other => panic!("expected Validation error, got {other:?}"),
     }
@@ -937,7 +938,7 @@ async fn filter_created_in_range_rejects_unparseable_bound_670() {
     assert!(
         matches!(
             resolve_filter(&pool, &bad_before, 0).await,
-            Err(AppError::Validation(_))
+            Err(AppError::Validation { .. })
         ),
         "unparseable `before` must error in the resolver path"
     );
@@ -946,7 +947,7 @@ async fn filter_created_in_range_rejects_unparseable_bound_670() {
     assert!(
         matches!(
             compile_backlink_filter(&pool, &bad_after, 0).await,
-            Err(AppError::Validation(_))
+            Err(AppError::Validation { .. })
         ),
         "unparseable bound must error in the compiled path too"
     );
@@ -4376,7 +4377,7 @@ async fn filter_due_date_contains_returns_validation_error() {
         "Contains op should be rejected for DueDate"
     );
     assert!(
-        matches!(result.unwrap_err(), AppError::Validation(_)),
+        matches!(result.unwrap_err(), AppError::Validation { .. }),
         "should return Validation error"
     );
 }

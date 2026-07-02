@@ -113,7 +113,7 @@ async fn f13_empty_block_type_returns_validation_error() {
         create_block_inner(&pool, DEV, &mat, String::new(), "hello".into(), None, None).await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "empty block_type should return Validation error, got: {result:?}"
     );
 }
@@ -141,7 +141,7 @@ async fn f13_disallowed_block_type_string_rejected() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "disallowed block_type should return Validation error, got: {result:?}"
     );
 
@@ -171,7 +171,7 @@ async fn f13_case_sensitive_block_type_returns_validation_error() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "case-variant block_type should return Validation error, got: {result:?}"
     );
 }

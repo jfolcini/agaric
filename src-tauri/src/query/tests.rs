@@ -623,7 +623,7 @@ async fn depth_exceeded_is_rejected() {
     }
     let err = compile_and_run(&pool, req(f)).await.unwrap_err();
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "depth-exceeded must be a Validation error, got {err:?}"
     );
 }
@@ -637,7 +637,7 @@ async fn unsupported_leaf_orphan_is_rejected() {
         .await
         .unwrap_err();
     match err {
-        AppError::Validation(msg) => assert!(
+        AppError::Validation { message: msg, .. } => assert!(
             msg.contains("orphan"),
             "rejection message should name the offending key, got: {msg}"
         ),
@@ -661,7 +661,7 @@ async fn unsupported_leaf_nested_in_and_is_rejected() {
         ],
     };
     let err = compile_and_run(&pool, req(f)).await.unwrap_err();
-    assert!(matches!(err, AppError::Validation(_)));
+    assert!(matches!(err, AppError::Validation { .. }));
 }
 
 #[tokio::test]
@@ -671,14 +671,14 @@ async fn limit_out_of_range_is_rejected() {
     request.limit = Some(0);
     assert!(matches!(
         compile_and_run(&pool, request).await.unwrap_err(),
-        AppError::Validation(_)
+        AppError::Validation { .. }
     ));
 
     let mut request = req(default_filter());
     request.limit = Some(MAX_LIMIT + 1);
     assert!(matches!(
         compile_and_run(&pool, request).await.unwrap_err(),
-        AppError::Validation(_)
+        AppError::Validation { .. }
     ));
 }
 
@@ -736,7 +736,7 @@ async fn cursor_sort_mismatch_is_rejected() {
     };
     assert!(matches!(
         compile_and_run(&pool, resumed).await.unwrap_err(),
-        AppError::Validation(_)
+        AppError::Validation { .. }
     ));
 }
 
@@ -969,7 +969,7 @@ async fn relevance_sort_rejected_without_fulltext() {
     };
     assert!(matches!(
         compile_and_run(&pool, request).await.unwrap_err(),
-        AppError::Validation(_)
+        AppError::Validation { .. }
     ));
 }
 
@@ -1032,7 +1032,7 @@ async fn invalid_fts_query_is_validation_error() {
         .await
         .unwrap_err();
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "an FTS5 parse error must map to Validation, got {err:?}"
     );
 }
@@ -2353,7 +2353,7 @@ async fn has_parent_matching_depth_exceeded_is_rejected() {
     }
     let err = compile_and_run(&pool, req(expr)).await.unwrap_err();
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "deeply-nested has-parent-matching must be rejected by the depth gate, got {err:?}"
     );
 }

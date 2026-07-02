@@ -237,7 +237,7 @@ async fn create_block_invalid_block_type_returns_validation() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "invalid block_type must return AppError::Validation"
     );
     assert!(

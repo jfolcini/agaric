@@ -2360,7 +2360,7 @@ fn validate_rejects_parent_dir_traversal() {
     let dir = TempDir::new().unwrap();
     let result = validate_attachment_fs_path(dir.path(), "../../etc/passwd");
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "`../../etc/passwd` must be rejected, got {result:?}"
     );
 }
@@ -2370,7 +2370,7 @@ fn validate_rejects_single_parent_dir_traversal() {
     let dir = TempDir::new().unwrap();
     let result = validate_attachment_fs_path(dir.path(), "../other_app/data");
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "`../other_app/data` must be rejected, got {result:?}"
     );
 }
@@ -2382,7 +2382,7 @@ fn validate_rejects_parent_dir_in_middle() {
     // can still escape.
     let result = validate_attachment_fs_path(dir.path(), "attachments/../../escape");
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "`..` in the middle must be rejected, got {result:?}"
     );
 }
@@ -2393,7 +2393,7 @@ fn validate_rejects_absolute_path_unix() {
     let dir = TempDir::new().unwrap();
     let result = validate_attachment_fs_path(dir.path(), "/etc/passwd");
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "absolute path `/etc/passwd` must be rejected, got {result:?}"
     );
 }
@@ -2404,7 +2404,7 @@ fn validate_rejects_absolute_path_windows() {
     let dir = TempDir::new().unwrap();
     let result = validate_attachment_fs_path(dir.path(), "C:\\Windows\\System32");
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "absolute Windows path must be rejected, got {result:?}"
     );
 }
@@ -2433,7 +2433,7 @@ fn validate_rejects_empty_fs_path() {
     let dir = TempDir::new().unwrap();
     let result = validate_attachment_fs_path(dir.path(), "");
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "empty path must be rejected, got {result:?}"
     );
 }
@@ -2462,7 +2462,7 @@ fn validate_windows_style_backslashes_on_current_platform() {
     #[cfg(windows)]
     {
         assert!(
-            matches!(result, Err(AppError::Validation(_))),
+            matches!(result, Err(AppError::Validation { .. })),
             "on Windows, backslashes ARE separators so `..\\..\\secrets` \
              must be rejected, got {result:?}"
         );
@@ -2526,7 +2526,7 @@ fn read_attachment_file_rejects_traversal_without_touching_disk() {
 
     let result = read_attachment_file(dir.path(), &traversal);
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "read_attachment_file must reject traversal path `{traversal}`, got {result:?}"
     );
 
@@ -2539,7 +2539,7 @@ fn write_attachment_file_rejects_traversal() {
     let dir = TempDir::new().unwrap();
     let result = write_attachment_file(dir.path(), "../../evil.bin", b"payload");
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "write_attachment_file must reject traversal path, got {result:?}"
     );
 }
@@ -2549,7 +2549,7 @@ fn write_attachment_file_rejects_empty_path() {
     let dir = TempDir::new().unwrap();
     let result = write_attachment_file(dir.path(), "", b"payload");
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "write_attachment_file must reject empty path, got {result:?}"
     );
 }
@@ -2586,7 +2586,7 @@ async fn add_attachment_rejects_traversal_at_command_layer() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "add_attachment must reject traversal fs_path at the command layer, got {result:?}"
     );
 

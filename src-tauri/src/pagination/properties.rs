@@ -115,7 +115,7 @@ pub async fn query_by_property(
     // Reject conflicting value filters at the boundary so both
     // routing branches behave identically wrt the value-filter contract.
     if value_text.is_some() && value_date.is_some() {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "query_by_property: at most one of value_text / value_date may be supplied".to_string(),
         ));
     }
@@ -124,7 +124,7 @@ pub async fn query_by_property(
     // `value_text`. Allowing both would require choosing precedence in
     // SQL; rejecting at the boundary keeps the contract single-shape.
     if !value_text_in.is_empty() && value_text.is_some() {
-        return Err(AppError::Validation(
+        return Err(AppError::validation(
             "query_by_property: value_text_in and value_text are mutually exclusive".to_string(),
         ));
     }
@@ -219,7 +219,7 @@ pub async fn query_by_property(
             "due_date" => "due_date",
             "scheduled_date" => "scheduled_date",
             _ => {
-                return Err(AppError::Validation(format!(
+                return Err(AppError::validation(format!(
                     "query_by_property: reserved key '{key}' has no column routing — \
                      update `is_reserved_property_key` and the match arm in lockstep"
                 )));

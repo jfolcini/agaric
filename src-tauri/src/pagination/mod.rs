@@ -558,11 +558,11 @@ impl Cursor {
     pub(crate) fn decode(s: &str) -> Result<Self, AppError> {
         let bytes = URL_SAFE_NO_PAD
             .decode(s)
-            .map_err(|e| AppError::Validation(format!("invalid cursor: {e}")))?;
+            .map_err(|e| AppError::validation(format!("invalid cursor: {e}")))?;
         let json = String::from_utf8(bytes)
-            .map_err(|e| AppError::Validation(format!("invalid cursor UTF-8: {e}")))?;
+            .map_err(|e| AppError::validation(format!("invalid cursor UTF-8: {e}")))?;
         let value: serde_json::Value = serde_json::from_str(&json)
-            .map_err(|e| AppError::Validation(format!("invalid cursor JSON: {e}")))?;
+            .map_err(|e| AppError::validation(format!("invalid cursor JSON: {e}")))?;
 
         // Read the version slot.  Missing → assume 1 (pre-versioning
         // cursor).  Present-but-malformed → reject as invalid version.
@@ -571,15 +571,15 @@ impl Cursor {
             Some(serde_json::Value::Number(n)) => n
                 .as_u64()
                 .and_then(|v| u8::try_from(v).ok())
-                .ok_or_else(|| AppError::Validation("cursor: invalid version field".to_string()))?,
+                .ok_or_else(|| AppError::validation("cursor: invalid version field".to_string()))?,
             Some(_) => {
-                return Err(AppError::Validation(
+                return Err(AppError::validation(
                     "cursor: invalid version field".to_string(),
                 ));
             }
         };
         if version != CURRENT_CURSOR_VERSION {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "cursor: unsupported version {version} (expected {CURRENT_CURSOR_VERSION})"
             )));
         }
@@ -588,7 +588,7 @@ impl Cursor {
         // silently ignores unknown keys (no `deny_unknown_fields`), so the
         // value can be deserialised in place without stripping `version`.
         serde_json::from_value(value)
-            .map_err(|e| AppError::Validation(format!("invalid cursor JSON: {e}")))
+            .map_err(|e| AppError::validation(format!("invalid cursor JSON: {e}")))
     }
 
     // -------------------------------------------------------------------
@@ -721,7 +721,7 @@ impl PageRequest {
         let limit = match limit {
             Some(l) if (1..=MAX_PAGE_SIZE).contains(&l) => l,
             Some(l) => {
-                return Err(AppError::Validation(format!(
+                return Err(AppError::validation(format!(
                     "pagination limit must be in [1, {MAX_PAGE_SIZE}]; got {l}. \
                      For larger result sets, use cursor pagination."
                 )));

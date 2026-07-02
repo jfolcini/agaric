@@ -1502,7 +1502,7 @@ async fn local_move_is_engine_fresh_and_dense_1257() {
     )
     .await;
     assert!(
-        matches!(cyclic, Err(AppError::Validation(_))),
+        matches!(cyclic, Err(AppError::Validation { .. })),
         "moving PA under its own descendant A1 must be rejected as a cycle; got {cyclic:?}",
     );
 

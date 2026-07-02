@@ -4089,7 +4089,7 @@ async fn undo_rejects_negative_depth() {
         "error should mention undo_depth validation, got: {msg}"
     );
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "error should be Validation variant, got: {err:?}"
     );
 }
@@ -4901,7 +4901,7 @@ async fn redo_rejects_forward_op_ref_659() {
     let result = redo_page_op_inner(&pool, DEV, &mat, DEV.into(), edit_seq).await;
     let err = result.expect_err("redo of a forward op must be rejected (#659)");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "expected Validation, got: {err:?}"
     );
     assert!(

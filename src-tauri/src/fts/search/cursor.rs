@@ -76,7 +76,7 @@ pub async fn search_fts(
     // NFC-normalise + tokenise walk. Mirrors the regex path's
     // `MAX_PATTERN_LEN` guard.
     if query.len() > MAX_QUERY_LEN {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "search query is too long ({} bytes); maximum is {MAX_QUERY_LEN} bytes",
             query.len()
         )));

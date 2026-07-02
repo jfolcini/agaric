@@ -129,7 +129,7 @@ fn position_strategy() -> impl Strategy<Value = i64> {
 //
 // 1. A block must be created (CreateBlock) before any Edit / Delete /
 //    Move / SetProperty against it.  The engine returns
-//    `AppError::Validation("not found")` otherwise — a legitimate
+//    `AppError::validation("not found")` otherwise — a legitimate
 //    "engine refused a malformed input" error, NOT an engine-side
 //    correctness failure.
 // 2. Within a stream, a CreateBlock for a given id must not collide

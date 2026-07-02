@@ -433,7 +433,7 @@ async fn query_by_tags_inner_empty_inputs_returns_empty() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn query_by_tags_inner_rejects_oversized_tag_ids() {
     // #1325: a `tag_ids` array longer than MAX_FILTER_TAG_IDS must be
-    // rejected up-front with AppError::Validation("tag_ids.too_many") BEFORE
+    // rejected up-front with AppError::validation("tag_ids.too_many") BEFORE
     // each element is fanned into a `TagExpr::Tag` node (one dynamic SQL
     // placeholder each) — otherwise the placeholder/bind count scales 1:1
     // with caller input and trips SQLite's parameter limit (a cheap DoS).
@@ -458,8 +458,8 @@ async fn query_by_tags_inner_rejects_oversized_tag_ids() {
     .await
     .expect_err("oversized tag_ids must be rejected");
     assert!(
-        matches!(&err, AppError::Validation(msg) if msg == "tag_ids.too_many"),
-        "expected AppError::Validation(\"tag_ids.too_many\"), got {err:?}"
+        matches!(&err, AppError::Validation { message: msg, .. } if msg == "tag_ids.too_many"),
+        "expected AppError::validation(\"tag_ids.too_many\"), got {err:?}"
     );
 }
 
@@ -650,7 +650,7 @@ async fn query_by_property_empty_key_returns_validation_error() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
+        matches!(result, Err(AppError::Validation { .. })),
         "empty key must return Validation error, got: {result:?}"
     );
 }
@@ -1753,7 +1753,7 @@ async fn query_by_property_value_text_in_rejects_with_value_text() {
     .await
     .expect_err("value_text + value_text_in must be rejected");
     match err {
-        AppError::Validation(msg) => {
+        AppError::Validation { message: msg, .. } => {
             assert!(
                 msg.contains("value_text_in") && msg.contains("value_text"),
                 "validation message must name both inputs; got {msg:?}"
@@ -4069,7 +4069,7 @@ async fn get_blocks_rejects_empty_oversize() {
     let (pool, _dir) = test_pool().await;
     let empty = get_blocks_inner(&pool, vec![]).await;
     assert!(
-        matches!(empty, Err(crate::error::AppError::Validation(_))),
+        matches!(empty, Err(crate::error::AppError::Validation { .. })),
         "empty input must reject with Validation"
     );
 
@@ -4082,7 +4082,7 @@ async fn get_blocks_rejects_empty_oversize() {
     )
     .await;
     assert!(
-        matches!(big, Err(crate::error::AppError::Validation(_))),
+        matches!(big, Err(crate::error::AppError::Validation { .. })),
         "oversize input must reject with Validation"
     );
 }
@@ -4116,7 +4116,7 @@ async fn first_child_for_blocks_rejects_oversize() {
     )
     .await;
     assert!(
-        matches!(big, Err(crate::error::AppError::Validation(_))),
+        matches!(big, Err(crate::error::AppError::Validation { .. })),
         "oversize input must reject with Validation"
     );
 }
@@ -4148,7 +4148,7 @@ async fn batch_resolve_rejects_oversize() {
     )
     .await;
     assert!(
-        matches!(big, Err(crate::error::AppError::Validation(_))),
+        matches!(big, Err(crate::error::AppError::Validation { .. })),
         "oversize input must reject with Validation"
     );
 }
@@ -4178,7 +4178,7 @@ async fn trash_descendant_counts_rejects_oversize() {
         .collect();
     let big = trash_descendant_counts_inner(&pool, oversize).await;
     assert!(
-        matches!(big, Err(crate::error::AppError::Validation(_))),
+        matches!(big, Err(crate::error::AppError::Validation { .. })),
         "oversize input must reject with Validation"
     );
 }
@@ -4414,7 +4414,7 @@ async fn filtered_blocks_query_empty_filters_rejected() {
     .await;
 
     match result {
-        Err(AppError::Validation(msg)) => {
+        Err(AppError::Validation { message: msg, .. }) => {
             assert!(
                 msg.contains("at least one"),
                 "empty-filter validation message should describe the contract; got {msg:?}"

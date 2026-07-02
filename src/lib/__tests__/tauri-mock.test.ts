@@ -3680,8 +3680,9 @@ describe('list_pages_with_metadata — compound filters', () => {
     // discriminator). Reusing an alphabetical-sort cursor under a
     // `most-linked` request mirrors the backend's
     // `validate_pages_metadata_cursor` rejection: an AppError-shaped
-    // `{ kind: 'validation', message: 'RequiresRefresh: …' }` that the
-    // frontend's `withCursorRecovery` recognises (drop cursor → refetch).
+    // `{ kind: 'validation', code: 'RequiresRefresh' }` (#2251 structured
+    // code) that the frontend's `withCursorRecovery` recognises
+    // (drop cursor → refetch).
     const first = invoke('list_pages_with_metadata', {
       filter: { spaceId: 'SPACE_PERSONAL', sort: 'alphabetical', filters: [] },
       cursor: null,
@@ -3700,8 +3701,8 @@ describe('list_pages_with_metadata — compound filters', () => {
     } catch (err) {
       thrown = err
     }
-    expect(thrown).toMatchObject({ kind: 'validation' })
-    expect((thrown as { message: string }).message).toMatch(/^RequiresRefresh:/)
+    expect(thrown).toMatchObject({ kind: 'validation', code: 'RequiresRefresh' })
+    expect((thrown as { message: string }).message).toMatch(/cursor sort mismatch/)
   })
 
   it('accepts a cursor reused under the SAME sort (no false RequiresRefresh)', () => {

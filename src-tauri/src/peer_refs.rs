@@ -127,7 +127,7 @@ pub async fn upsert_peer_ref_with_cert(
     // today), but rejecting a malformed pin keeps the write path from
     // silently storing garbage that the read/pin path would later reject.
     if cert_hash.len() != 64 || !cert_hash.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "invalid cert_hash: expected 64-char hex SHA-256, got {} chars",
             cert_hash.len()
         )));
@@ -862,7 +862,7 @@ mod tests {
                 .await
                 .expect_err("malformed cert_hash must be rejected");
             assert!(
-                matches!(err, AppError::Validation(_)),
+                matches!(err, AppError::Validation { .. }),
                 "expected AppError::Validation for {bad:?}, got {err:?}"
             );
 

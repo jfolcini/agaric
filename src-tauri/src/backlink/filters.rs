@@ -9,7 +9,7 @@ use super::projection::BacklinkProjection;
 use super::types::{BacklinkFilter, CompareOp};
 use super::{FTS_ROW_CAP, SMALL_IN_LIMIT};
 use crate::error::AppError;
-use crate::error::validation_code::{INVALID_DATE_FILTER, prefixed};
+use crate::error::ValidationCode;
 use crate::filters::primitive::{
     DatePredicate, FilterPrimitive, Projection, PropertyPredicate, PropertyValue,
 };
@@ -132,7 +132,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
 > {
     Box::pin(async move {
         if depth > 50 {
-            return Err(AppError::Validation(
+            return Err(AppError::validation(
                 "Filter nesting depth exceeds 50".into(),
             ));
         }
@@ -353,7 +353,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                         "SELECT id FROM blocks WHERE due_date >= ? AND due_date IS NOT NULL AND deleted_at IS NULL"
                     }
                     CompareOp::Contains | CompareOp::StartsWith => {
-                        return Err(AppError::Validation(format!(
+                        return Err(AppError::validation(format!(
                             "DueDate filter does not support {op:?} operator"
                         )));
                     }
@@ -839,7 +839,7 @@ pub(crate) fn compile_backlink_filter<'a>(
 > {
     Box::pin(async move {
         if depth > 50 {
-            return Err(AppError::Validation(
+            return Err(AppError::validation(
                 "Filter nesting depth exceeds 50".into(),
             ));
         }
@@ -906,13 +906,13 @@ pub(crate) fn compile_backlink_filter<'a>(
                         sql: "(b.due_date != ? AND b.due_date IS NOT NULL)".to_string(),
                         binds: vec![FilterBind::Text(value.clone())],
                     }),
-                    CompareOp::Contains | CompareOp::StartsWith => Err(AppError::Validation(
+                    CompareOp::Contains | CompareOp::StartsWith => Err(AppError::validation(
                         format!("DueDate filter does not support {op:?} operator"),
                     )),
                     _ => {
                         let predicate =
                             compare_op_to_date_predicate(op, value).ok_or_else(|| {
-                                AppError::Validation(format!(
+                                AppError::validation(format!(
                                     "DueDate filter does not support {op:?} operator"
                                 ))
                             })?;
@@ -1154,7 +1154,7 @@ async fn fetch_descendants_of(
 /// silently swallowed a malformed bound (`and_then` → `None`), degrading the
 /// range filter to "all blocks" — the opposite of the user's intent. The
 /// metadata date filter (`fts/metadata_filter.rs`) already rejects the same
-/// input loudly with an `InvalidDateFilter:` validation error; this mirrors
+/// input loudly with an `InvalidDateFilter`-coded validation error; this mirrors
 /// that contract. `None` (bound absent) stays `Ok(None)`; only a present,
 /// non-parseable string is an error.
 fn resolve_range_bound(bound: Option<&String>) -> Result<Option<String>, AppError> {
@@ -1162,10 +1162,10 @@ fn resolve_range_bound(bound: Option<&String>) -> Result<Option<String>, AppErro
         None => Ok(None),
         Some(raw) => match parse_iso_to_ms(raw) {
             Some(ms) => Ok(Some(ms_to_ulid_prefix(ms))),
-            None => Err(AppError::Validation(prefixed(
-                INVALID_DATE_FILTER,
-                &format!("expected ISO 8601 date (YYYY-MM-DD or RFC 3339), got '{raw}'"),
-            ))),
+            None => Err(AppError::validation_coded(
+                ValidationCode::InvalidDateFilter,
+                format!("expected ISO 8601 date (YYYY-MM-DD or RFC 3339), got '{raw}'"),
+            )),
         },
     }
 }

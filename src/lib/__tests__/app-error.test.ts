@@ -8,6 +8,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
+import type { AppErrorKind } from '../app-error'
 import {
   isAppError,
   isCancellation,
@@ -15,8 +16,11 @@ import {
   isDatabaseError,
   isNotFound,
   isPoolBusy,
+  isValidation,
   retryOnPoolBusy,
+  validationCode,
 } from '../app-error'
+import { ValidationCode } from '../search-query/validation-codes'
 
 describe('isAppError', () => {
   it('returns true for an IPC-shaped AppError', () => {
@@ -189,5 +193,77 @@ describe('retryOnPoolBusy', () => {
     expect(sleep).toHaveBeenCalledTimes(2)
     expect(sleep).toHaveBeenNthCalledWith(1, 5)
     expect(sleep).toHaveBeenNthCalledWith(2, 25)
+  })
+})
+
+describe('generated AppErrorKind union (#2251)', () => {
+  it('is exhaustively switchable — a new backend variant fails this compile', () => {
+    // Type-level exhaustiveness: the `satisfies never` default arm makes
+    // adding a Rust `AppError` variant (which regenerates the union) a
+    // compile error here until the frontend acknowledges it. Runtime-wise
+    // this just spot-checks a couple of arms.
+    const describeKind = (kind: AppErrorKind): string => {
+      switch (kind) {
+        case 'database':
+        case 'migration':
+        case 'io':
+        case 'json':
+        case 'channel':
+        case 'internal':
+        case 'snapshot': {
+          return 'infra'
+        }
+        case 'ulid':
+        case 'validation':
+        case 'invalid_operation':
+        case 'non_reversible': {
+          return 'rejected'
+        }
+        case 'not_found': {
+          return 'empty'
+        }
+        case 'pool_busy': {
+          return 'retryable'
+        }
+        case 'conflict': {
+          return 'duplicate'
+        }
+        case 'cancelled': {
+          return 'expected'
+        }
+        default: {
+          return kind satisfies never
+        }
+      }
+    }
+    expect(describeKind('pool_busy')).toBe('retryable')
+    expect(describeKind('cancelled')).toBe('expected')
+  })
+})
+
+describe('isValidation / validationCode (#2251 structured sub-kind)', () => {
+  it('narrows validation errors and reads the structured code', () => {
+    const coded = { kind: 'validation', message: 'unclosed group', code: 'InvalidRegex' }
+    expect(isValidation(coded)).toBe(true)
+    expect(validationCode(coded)).toBe(ValidationCode.InvalidRegex)
+  })
+
+  it('returns null for uncoded validation errors', () => {
+    expect(validationCode({ kind: 'validation', message: 'title must not be empty' })).toBeNull()
+    expect(validationCode({ kind: 'validation', message: 'x', code: null })).toBeNull()
+  })
+
+  it('returns null for non-validation kinds and non-AppError values', () => {
+    expect(validationCode({ kind: 'database', message: 'boom' })).toBeNull()
+    expect(validationCode(new Error('InvalidRegex: not parsed from text anymore'))).toBeNull()
+    expect(validationCode(null)).toBeNull()
+    expect(isValidation({ kind: 'conflict', message: 'dup' })).toBe(false)
+  })
+
+  it('discriminates every ValidationCode member as data (roundtrip, no regex)', () => {
+    for (const code of Object.values(ValidationCode)) {
+      const err = { kind: 'validation', message: 'reason text', code }
+      expect(validationCode(err)).toBe(code)
+    }
   })
 })

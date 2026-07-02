@@ -258,7 +258,7 @@ pub async fn project_set_property_to_sql(
             .execute(&mut *conn)
             .await?;
         } else {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "project_set_property_to_sql: unrecognised reserved key '{}'",
                 payload.key,
             )));
@@ -760,7 +760,7 @@ pub async fn project_delete_property_to_sql(
             .execute(&mut *conn)
             .await?;
         } else {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "project_delete_property_to_sql: unrecognised reserved key '{key}'",
             )));
         }
@@ -1363,7 +1363,7 @@ pub async fn reproject_block_deleted_at_from_engine(
                     ms
                 }
                 Err(rfc_err) => {
-                    return Err(AppError::Validation(format!(
+                    return Err(AppError::validation(format!(
                         "engine deleted_at neither epoch-ms ({int_err}) nor \
                          RFC-3339 ({rfc_err}): {ts:?}"
                     )));

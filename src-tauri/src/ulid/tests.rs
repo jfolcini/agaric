@@ -755,7 +755,7 @@ mod verify_active_db {
             .await
             .expect_err("soft-deleted block must be rejected");
         match err {
-            AppError::Validation(msg) => {
+            AppError::Validation { message: msg, .. } => {
                 assert!(
                     msg.contains("soft-deleted"),
                     "error must mention soft-deleted, got: {msg}",

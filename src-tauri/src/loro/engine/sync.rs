@@ -38,11 +38,11 @@ impl LoroEngine {
     /// in that case.
     pub fn export_update_since(&self, since_vv: &[u8]) -> Result<Vec<u8>, AppError> {
         let vv = VersionVector::decode(since_vv).map_err(|e| {
-            AppError::Validation(format!("loro: export_update_since: decode vv: {e}"))
+            AppError::validation(format!("loro: export_update_since: decode vv: {e}"))
         })?;
         self.doc
             .export(ExportMode::updates(&vv))
-            .map_err(|e| AppError::Validation(format!("loro: export_update_since: {e}")))
+            .map_err(|e| AppError::validation(format!("loro: export_update_since: {e}")))
     }
     /// Detect a `(peer, counter)` fork of OUR OWN peer id in an inbound
     /// blob, BEFORE importing it (#792).

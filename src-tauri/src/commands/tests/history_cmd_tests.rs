@@ -248,7 +248,7 @@ async fn test_undo_page_op_inner_rejects_undo_depth_exceeding_max() {
     let result = undo_page_op_inner(&pool, DEV, &mat, "some-page".into(), 1001).await;
 
     assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("undo_depth exceeds maximum of 1000")),
+        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains("undo_depth exceeds maximum of 1000")),
         "should return Validation error for undo_depth > 1000, got: {result:?}"
     );
 }
@@ -846,7 +846,7 @@ async fn find_undo_group_rejects_negative_depth() {
     let (pool, _dir) = test_pool().await;
     let result = find_undo_group_inner(&pool, "any-page", -1, 500).await;
     assert!(
-        matches!(result, Err(AppError::Validation(ref m)) if m.contains("depth")),
+        matches!(result, Err(AppError::Validation { message: ref m, .. }) if m.contains("depth")),
         "expected Validation error for negative depth, got: {result:?}"
     );
 }
@@ -857,7 +857,7 @@ async fn find_undo_group_rejects_negative_window_ms() {
     let (pool, _dir) = test_pool().await;
     let result = find_undo_group_inner(&pool, "any-page", 0, -1).await;
     assert!(
-        matches!(result, Err(AppError::Validation(ref m)) if m.contains("window_ms")),
+        matches!(result, Err(AppError::Validation { message: ref m, .. }) if m.contains("window_ms")),
         "expected Validation error for negative window_ms, got: {result:?}"
     );
 }

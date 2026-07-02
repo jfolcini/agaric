@@ -52,7 +52,7 @@ pub async fn list_pages_inner(
     if let Some(l) = limit
         && !(1..=MCP_PAGE_LIMIT_CAP).contains(&l)
     {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "list_pages limit must be in [1, {MCP_PAGE_LIMIT_CAP}]; got {l}. \
                  For larger result sets, use cursor pagination."
         )));
@@ -139,7 +139,7 @@ pub async fn get_page_inner(
     // frontend's deep-link / journal-nav already handles.
     let page = get_active_block_inner(pool, page_id.into()).await?;
     if page.block_type != "page" {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "block '{page_id}' has block_type '{}', expected 'page'",
             page.block_type
         )));
@@ -159,7 +159,7 @@ pub async fn get_page_inner(
     .fetch_optional(pool)
     .await?;
     if space_match.is_none() {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "page '{page_id}' not in current space '{space_id}'"
         )));
     }
@@ -172,7 +172,7 @@ pub async fn get_page_inner(
     if let Some(l) = limit
         && !(1..=MCP_PAGE_LIMIT_CAP).contains(&l)
     {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "get_page limit must be in [1, {MCP_PAGE_LIMIT_CAP}]; got {l}. \
                  For larger result sets, use cursor pagination."
         )));
@@ -306,7 +306,7 @@ pub async fn get_page_unscoped_inner(
         // legitimate path to soft-deleted rows is the (frontend-only)
         // trash UI.
         get_active_block_inner(pool, page_id.into()).await?;
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "page '{page_id}' has no space property"
         )));
     };
@@ -366,7 +366,7 @@ pub async fn list_all_pages_in_space_inner(
         // #1325: bound the caller-supplied filter array before building any
         // SQL placeholders or binds (count scales 1:1 with `tags.len()`).
         if tags.len() > MAX_FILTER_TAG_IDS {
-            return Err(AppError::Validation("tag_ids.too_many".into()));
+            return Err(AppError::validation("tag_ids.too_many".into()));
         }
 
         // Tag-filter branch: build an `IN (?, ?, ...)` clause inline.  We
@@ -538,7 +538,7 @@ pub async fn load_page_subtree_inner(
     .fetch_optional(pool)
     .await?;
     if space_match.is_none() {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "block '{root_block_id}' not in current space '{space_id}'"
         )));
     }

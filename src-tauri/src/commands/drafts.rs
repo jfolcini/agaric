@@ -55,7 +55,7 @@ pub async fn flush_draft_inner(
     // 2. H-12b: enforce MAX_CONTENT_LENGTH. Returning Err here drops `tx`
     //    without commit, so the row stays — the user can edit it down.
     if content.len() > super::MAX_CONTENT_LENGTH {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::validation(format!(
             "draft content {} exceeds maximum {}",
             content.len(),
             super::MAX_CONTENT_LENGTH,
@@ -213,7 +213,7 @@ pub async fn flush_all_drafts_inner(
         // edit the offender down and retry on next boot. All-or-nothing
         // by design (see doc comment).
         if content.len() > super::MAX_CONTENT_LENGTH {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::validation(format!(
                 "draft content {} exceeds maximum {}",
                 content.len(),
                 super::MAX_CONTENT_LENGTH,
@@ -461,7 +461,7 @@ mod tests_h12 {
             .expect_err("oversized draft must be rejected");
 
         match err {
-            AppError::Validation(msg) => {
+            AppError::Validation { message: msg, .. } => {
                 assert!(
                     msg.contains("draft content") && msg.contains("exceeds maximum"),
                     "validation message must call out draft size: got {msg:?}",

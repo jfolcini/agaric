@@ -295,7 +295,7 @@ async fn list_pages_rejects_unknown_field() {
         .await
         .expect_err("must reject unknown field");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "unknown-field must surface as AppError::Validation (→ -32602), got {err:?}",
     );
 }
@@ -406,7 +406,7 @@ async fn get_page_on_non_page_block_validation_error() {
         .await
         .expect_err("non-page block must error");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "non-page must surface as Validation (→ -32602), got {err:?}",
     );
 }
@@ -458,7 +458,7 @@ async fn search_missing_query_returns_validation() {
         .call_tool("search", json!({"space_id": TEST_SPACE_ID}), &test_ctx())
         .await
         .expect_err("missing query must fail");
-    assert!(matches!(err, AppError::Validation(_)), "got {err:?}");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
 }
 
 // -------------------------------------------------------------------
@@ -511,7 +511,7 @@ async fn limit_validation_rejects_zero_and_above_cap() {
             let args = args_with_limit(&base_args, bad);
             let result = tools.call_tool(tool, args, &test_ctx()).await;
             match result {
-                Err(AppError::Validation(msg)) => {
+                Err(AppError::Validation { message: msg, .. }) => {
                     assert!(
                         msg.contains(tool),
                         "{tool}: error message must name the tool — got {msg:?}",
@@ -545,7 +545,7 @@ async fn limit_validation_accepts_boundary() {
         // placeholder, or a different Validation for an invalid
         // ULID) — only the message pattern is the regression
         // signal here.
-        if let Err(AppError::Validation(msg)) = &result {
+        if let Err(AppError::Validation { message: msg, .. }) = &result {
             assert!(
                 !msg.contains("limit must be in"),
                 "{tool}: limit={cap} (boundary) tripped  validation: {msg}",
@@ -949,7 +949,7 @@ async fn search_filter_unknown_field_rejected() {
         .await
         .expect_err("unknown filter field must fail validation");
     assert!(
-        matches!(err, AppError::Validation(_)),
+        matches!(err, AppError::Validation { .. }),
         "got {err:?} — expected AppError::Validation"
     );
 }
@@ -1095,7 +1095,7 @@ async fn list_backlinks_missing_block_id_validation() {
         .call_tool("list_backlinks", json!({}), &test_ctx())
         .await
         .expect_err("missing block_id");
-    assert!(matches!(err, AppError::Validation(_)), "got {err:?}");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
 }
 
 /// Phase 2 parity test: the post-migration handler builds
@@ -1227,7 +1227,7 @@ async fn list_tags_rejects_unknown_field() {
         .call_tool("list_tags", json!({"prefix": "w"}), &test_ctx())
         .await
         .expect_err("prefix is not a valid arg for list_tags");
-    assert!(matches!(err, AppError::Validation(_)), "got {err:?}");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1294,7 +1294,7 @@ async fn list_property_defs_rejects_unknown_field() {
         .call_tool("list_property_defs", json!({"key": "x"}), &test_ctx())
         .await
         .expect_err("any arg is an error");
-    assert!(matches!(err, AppError::Validation(_)), "got {err:?}");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1328,7 +1328,7 @@ async fn get_agenda_invalid_date_returns_validation() {
         )
         .await
         .expect_err("invalid date");
-    assert!(matches!(err, AppError::Validation(_)), "got {err:?}");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1395,7 +1395,7 @@ async fn journal_for_date_invalid_date_validation() {
         )
         .await
         .expect_err("invalid date");
-    assert!(matches!(err, AppError::Validation(_)), "got {err:?}");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
 }
 
 // -------------------------------------------------------------------
@@ -1468,7 +1468,7 @@ async fn list_spaces_rejects_unknown_field() {
         .call_tool("list_spaces", json!({"bogus": 1}), &test_ctx())
         .await
         .expect_err("must reject unknown field");
-    assert!(matches!(err, AppError::Validation(_)), "got {err:?}");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
 }
 
 /// #633: a soft-deleted space block keeps its registry row (0089
@@ -1584,7 +1584,7 @@ async fn search_rejects_oversized_tag_ids_vector_699() {
         .await
         .expect_err("oversized tag_ids must be rejected");
     match err {
-        AppError::Validation(msg) => {
+        AppError::Validation { message: msg, .. } => {
             assert!(
                 msg.contains("too many filter terms"),
                 "message names the violation: {msg}"
@@ -1622,7 +1622,7 @@ async fn search_rejects_oversized_combined_filter_vectors_699() {
         .await
         .expect_err("combined filter vectors over the budget must be rejected");
     assert!(
-        matches!(err, AppError::Validation(ref msg) if msg.contains("too many filter terms")),
+        matches!(err, AppError::Validation { message: ref msg, .. } if msg.contains("too many filter terms")),
         "got {err:?}",
     );
 }
@@ -1685,7 +1685,7 @@ async fn search_rejects_oversized_query_string_1607() {
         .await
         .expect_err("an over-byte-cap query must be rejected");
     match err {
-        AppError::Validation(msg) => {
+        AppError::Validation { message: msg, .. } => {
             assert!(msg.contains("query"), "message names the dimension: {msg}");
             assert!(
                 msg.contains(&SEARCH_TERM_BYTES_CAP.to_string()),
@@ -1715,7 +1715,7 @@ async fn search_rejects_oversized_page_glob_1607() {
         .await
         .expect_err("an over-byte-cap page glob must be rejected");
     assert!(
-        matches!(err, AppError::Validation(ref msg) if msg.contains("include_page_globs")),
+        matches!(err, AppError::Validation { message: ref msg, .. } if msg.contains("include_page_globs")),
         "got {err:?}",
     );
 }
@@ -1739,7 +1739,7 @@ async fn search_rejects_oversized_property_value_1607() {
         .await
         .expect_err("an over-byte-cap property value must be rejected");
     assert!(
-        matches!(err, AppError::Validation(ref msg) if msg.contains("property_filters value")),
+        matches!(err, AppError::Validation { message: ref msg, .. } if msg.contains("property_filters value")),
         "got {err:?}",
     );
 }
@@ -1766,7 +1766,7 @@ async fn search_rejects_oversized_state_filter_1607() {
         .await
         .expect_err("an over-byte-cap state_filter entry must be rejected");
     assert!(
-        matches!(err, AppError::Validation(ref msg) if msg.contains("state/priority")),
+        matches!(err, AppError::Validation { message: ref msg, .. } if msg.contains("state/priority")),
         "got {err:?}",
     );
 }
@@ -1790,7 +1790,7 @@ async fn search_rejects_oversized_block_type_filter_1607() {
         .await
         .expect_err("an over-byte-cap block_type_filter must be rejected");
     assert!(
-        matches!(err, AppError::Validation(ref msg) if msg.contains("block_type_filter")),
+        matches!(err, AppError::Validation { message: ref msg, .. } if msg.contains("block_type_filter")),
         "got {err:?}",
     );
 }
@@ -1823,7 +1823,7 @@ async fn search_rejects_aggregate_byte_overflow_1607() {
         .await
         .expect_err("combined term bytes over the aggregate cap must be rejected");
     match err {
-        AppError::Validation(msg) => {
+        AppError::Validation { message: msg, .. } => {
             assert!(
                 msg.contains("combined search-term length"),
                 "message names the aggregate violation: {msg}"
@@ -2375,7 +2375,7 @@ async fn inner_list_pages_rejects_bogus_cursor() {
     let err = list_pages_inner(&pool, Some("not-a-real-cursor".to_string()), Some(10))
         .await
         .expect_err("invalid cursor");
-    assert!(matches!(err, AppError::Validation(_)), "got {err:?}");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
