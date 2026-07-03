@@ -1122,6 +1122,193 @@ async fn local_and_sync_apply_project_identical_rows_2250() {
     mat_s.shutdown();
 }
 
+/// #2344/#2325 — LOCAL `edit_block_inner` ≡ REMOTE `apply_op` link-parity.
+///
+/// The EditBlock arm of the #2325 apply-path collapse: `edit_block_inner` now
+/// routes its just-appended op through `apply_op_projected(advance_cursor=false)`
+/// — the SAME entry point the REMOTE/boot-replay path drives via
+/// `apply_op → apply_op_projected(advance_cursor=true)`. Before this, the LOCAL
+/// path deferred the `reindex_block_links` + `inbound_link_count` recompute to
+/// the background `enqueue_edit_background` fan-out while the REMOTE Edit arm did
+/// it in-tx; this test pins that they now converge on ALL link-derived state.
+///
+/// The Stage-2 B5 proptest does NOT cover this: its content strategy never emits
+/// `[[ULID]]` tokens, so `block_links` is always empty and the comparison is
+/// vacuous. Here the edit writes a REAL `[[<page>]]` token so a concrete
+/// `block_links` edge AND a non-zero `pages_cache.inbound_link_count` are
+/// produced, and the two paths are asserted byte-identical on:
+///   * `blocks.content` of the edited block,
+///   * `block_links` (source_id, target_id) — the link edge, and
+///   * the linked page's `pages_cache.inbound_link_count`.
+/// Plus a per-drive `sql_only_fallback::count()` delta of 0 on BOTH sides — the
+/// #891 engine-path discipline: prove the engine path ran, not the SQL-only
+/// fallback (which would make the equivalence a false green).
+///
+/// The link SOURCE (`BA`, owned by page `S2`) is a DIFFERENT page than the link
+/// TARGET (page `S1`) on purpose: the `inbound_link_count` recompute excludes
+/// same-page edges (`src.page_id != pages_cache.page_id`), so a within-page link
+/// would leave the count at 0 and make the assertion vacuous.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_edit_block_link_parity_local_matches_remote_2344() {
+    let s1 = seed_label_to_id("S1"); // link TARGET page
+    let ba = seed_label_to_id("BA"); // link SOURCE content block (owned by S2)
+    // Two pages (S1, S2) + a content block BA under S2. Editing BA to contain
+    // `[[S1]]` creates a cross-page link edge BA -> S1.
+    let seed = [
+        json!({"id": "S1", "block_type": "page", "content": "Target", "parent_id": null, "position": 1}),
+        json!({"id": "S2", "block_type": "page", "content": "Source", "parent_id": null, "position": 2}),
+        json!({"id": "BA", "block_type": "content", "content": "before", "parent_id": "S2", "position": 1}),
+    ];
+    // Content that creates a real `block_links` edge to the S1 page.
+    let edit_text = format!("[[{s1}]]");
+
+    // Reads (runtime queries — no sqlx macro, no `.sqlx` regen needed).
+    async fn block_content(pool: &SqlitePool, id: &str) -> String {
+        sqlx::query_scalar::<_, String>("SELECT content FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    async fn all_block_links(pool: &SqlitePool) -> Vec<(String, String)> {
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT source_id, target_id FROM block_links ORDER BY source_id, target_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+    async fn inbound_link_count(pool: &SqlitePool, page_id: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT inbound_link_count FROM pages_cache WHERE page_id = ?")
+            .bind(page_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    // Seed a `pages_cache` row for the link target so the in-tx
+    // `inbound_link_count` recompute (an UPDATE, not an upsert) has a row to
+    // touch — otherwise the count would be invisible on BOTH sides (vacuous).
+    async fn seed_pages_cache_row(pool: &SqlitePool, page_id: &str) {
+        sqlx::query(
+            "INSERT INTO pages_cache \
+                 (page_id, title, updated_at, inbound_link_count, child_block_count) \
+             VALUES (?, 'Target', 0, 0, 0)",
+        )
+        .bind(page_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    // ── LOCAL command path (edit_block_inner → apply_op_projected(false)) ──
+    let (pool_l, _dir_l) = test_pool().await;
+    let mat_l = test_materializer(&pool_l);
+    let state_l = mat_l.loro_state();
+    for blk in &seed {
+        insert_seed_block(&pool_l, blk).await;
+    }
+    assign_all_to_test_space(&pool_l).await;
+    for blk in &seed {
+        seed_block_into_engine(state_l, blk);
+    }
+    seed_pages_cache_row(&pool_l, &s1).await;
+
+    let fb_l = crate::materializer::sql_only_fallback_count();
+    edit_block_inner(
+        &pool_l,
+        DEV,
+        &mat_l,
+        BlockId::from(ba.as_str()),
+        edit_text.clone(),
+    )
+    .await
+    .expect("local edit_block_inner");
+    settle(&mat_l).await;
+    assert_eq!(
+        crate::materializer::sql_only_fallback_count() - fb_l,
+        0,
+        "LOCAL edit took the SQL-only fallback — not the engine path (#891)",
+    );
+
+    // Capture the exact EditBlock op the LOCAL path emitted so the REMOTE side
+    // replays a byte-identical op.
+    let payload_json: String = sqlx::query_scalar(
+        "SELECT payload FROM op_log WHERE device_id = ? AND op_type = 'edit_block' \
+         ORDER BY seq DESC LIMIT 1",
+    )
+    .bind(DEV)
+    .fetch_one(&pool_l)
+    .await
+    .expect("local edit op must be in op_log");
+    let edit_payload: EditBlockPayload =
+        serde_json::from_str(&payload_json).expect("deserialize EditBlock payload");
+    assert_eq!(
+        edit_payload.block_id.as_str(),
+        ba,
+        "captured the edit op for the edited block",
+    );
+
+    // ── REMOTE / sync path (append_local_op → apply_op → apply_op_projected(true)) ──
+    let (pool_s, _dir_s) = test_pool().await;
+    let mat_s = test_materializer(&pool_s);
+    let state_s = mat_s.loro_state();
+    for blk in &seed {
+        insert_seed_block(&pool_s, blk).await;
+    }
+    assign_all_to_test_space(&pool_s).await;
+    for blk in &seed {
+        seed_block_into_engine(state_s, blk);
+    }
+    seed_pages_cache_row(&pool_s, &s1).await;
+
+    let fb_s = crate::materializer::sql_only_fallback_count();
+    let record_s = crate::op_log::append_local_op(&pool_s, DEV, OpPayload::EditBlock(edit_payload))
+        .await
+        .expect("append sync edit op");
+    // `dispatch_op` runs the foreground ApplyOp (apply_op → apply_op_projected,
+    // advance_cursor=true) + enqueues the background fan-out; `settle` drains it.
+    mat_s.dispatch_op(&record_s).await.expect("dispatch_op");
+    settle(&mat_s).await;
+    assert_eq!(
+        crate::materializer::sql_only_fallback_count() - fb_s,
+        0,
+        "REMOTE edit took the SQL-only fallback — not the engine path (#891)",
+    );
+
+    // ── The two entry points must project the link-derived state identically ──
+    assert_eq!(
+        block_content(&pool_l, &ba).await,
+        block_content(&pool_s, &ba).await,
+        "LOCAL and REMOTE edit must project the block content identically",
+    );
+    let links_l = all_block_links(&pool_l).await;
+    let links_s = all_block_links(&pool_s).await;
+    assert_eq!(
+        links_l, links_s,
+        "block_links (source_id, target_id) diverged LOCAL vs REMOTE (#2344)",
+    );
+    // Non-vacuity: the edit produced exactly the BA -> S1 edge.
+    assert_eq!(
+        links_l,
+        vec![(ba.clone(), s1.clone())],
+        "the edit must create exactly the BA -> S1 link edge",
+    );
+    let inbound_l = inbound_link_count(&pool_l, &s1).await;
+    let inbound_s = inbound_link_count(&pool_s, &s1).await;
+    assert_eq!(
+        inbound_l, inbound_s,
+        "pages_cache.inbound_link_count diverged LOCAL vs REMOTE (#2344)",
+    );
+    // Non-vacuity: the cross-page link bumped the count to 1.
+    assert_eq!(
+        inbound_l, 1,
+        "the cross-page [[S1]] link must set S1's inbound_link_count to 1",
+    );
+
+    mat_l.shutdown();
+    mat_s.shutdown();
+}
+
 // ---------------------------------------------------------------------------
 // #1257 local simple-op engine-freshness conformance.
 //

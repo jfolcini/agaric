@@ -307,29 +307,29 @@ pub async fn edit_block_inner(
     )
     .await?;
 
-    // 4. #1257 route the content write through the SAME engine-apply +
-    // projection the boot-replay / sync `ApplyOp` path uses, IN this CommandTx,
-    // INSTEAD of an inline `UPDATE blocks SET content`. `apply_edit_block_via_loro`
-    // resolves the block's space, applies the edit to the per-space Loro engine
-    // (sync guard, dropped before any `.await`), reads back the merged content,
-    // and `project_edit_block_to_sql` runs the IDENTICAL
-    // `UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL` (the
-    // `deleted_at IS NULL` guard is preserved by the shared projection). We do
-    // NOT call `apply_op_tx` / `advance_apply_cursor`: the apply cursor stays put
-    // on the LOCAL path so boot replay re-applies idempotently (the safety net
-    // while local engine-apply hardens — #1248 / #1257). If the block's space can't be
-    // resolved (#2250: `SpaceUnresolved`, the only remaining sql_only
-    // trigger), the helper internally FALLS BACK to
-    // `apply_edit_block_sql_only`, which runs the same projection with
-    // `content = to_text` — byte-identical to the old inline UPDATE, so the row
-    // is never skipped and we never crash.
-    crate::materializer::apply_edit_block_via_loro(
-        &mut tx,
-        materializer.loro_state(),
-        device_id,
-        &edit_payload,
-    )
-    .await?;
+    // 4. #2344/#2325 route the just-appended `op_record` through the SINGLE
+    // collapsed apply-projection entry point (`apply_op_projected`), IN this
+    // CommandTx, INSTEAD of the direct `apply_edit_block_via_loro` call — the
+    // EditBlock arm of the #2325 apply-path collapse. This is the SAME
+    // engine-apply + SQL projection the boot-replay / sync `ApplyOp` path uses
+    // (via `apply_op_tx`), so the LOCAL and REMOTE edit paths now share one
+    // entry point. `apply_op_projected` re-derives the `EditBlockPayload` from
+    // `op_record.payload` and runs the SAME `apply_edit_block_via_loro`
+    // (resolve space → per-space Loro engine apply → IDENTICAL
+    // `UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL`),
+    // PLUS the in-tx `reindex_block_links` + `inbound_link_count` recompute the
+    // Edit arm of `apply_op_tx` runs (previously deferred to the background
+    // `enqueue_edit_background` fan-out on the LOCAL path). We pass
+    // `advance_cursor = false`: the apply cursor stays put on the LOCAL path so
+    // boot replay re-applies idempotently (the safety net while local
+    // engine-apply hardens — #1257). If the block's space can't be resolved
+    // (#2250: `SpaceUnresolved`), the helper internally FALLS BACK to
+    // `apply_edit_block_sql_only`, so the row is never skipped and we never
+    // crash. `apply_op_projected` borrows `&op_record` here, BEFORE the
+    // `Arc::new(op_record)` move below. The returned `ApplyEffects` is empty for
+    // Edit (LOCAL edit runs no post-commit cohort fan-out), so it is discarded.
+    crate::materializer::apply_op_projected(&mut tx, &op_record, materializer.loro_state(), false)
+        .await?;
 
     // 5. Commit + dispatch edit background cache tasks (fire-and-forget).
     //    The `block_type` hint restricts the rebuild fan-out so content
