@@ -6,8 +6,9 @@
 | **Subagents** | ~14 build/review + 4 plan/design (opus throughout; every change reviewed one tier up, per the exhausted-Fable-credits policy) |
 | **Issues addressed** | #2313 #2320 #2248 (b1) #2250/#2325 (Stage 1+2) #2326 — the maintainer-specified arch set |
 | **PRs merged** | #2339 #2340 #2341 #2342 #2343 #2345 #2346 (7) |
-| **PRs open** | #2347 (#2344 slice 1) |
-| **Follow-ups filed** | #2344 (finish the apply-path collapse for the maintenance-divergent ops) |
+| **#2344 chain** | #2347 (edit) · #2349 (create prereq) · #2353 (create) · #2351 (move prereq) · #2354 (move) · #2352 (delete) · #2350 (CI: sqruff pin) — completes the #2325 collapse |
+| **Also** | #2355 (deps: cmov 0.5.4, RUSTSEC/Dependabot #27) |
+| **Follow-ups remaining** | #2248 b2 (`SpaceId` newtype) + c (`SearchFilter`); #2325 multi-root batch delete + undo/redo are permanent exceptions |
 
 **Summary:** Cleared the maintainer's explicit architecture set (#2326 #2325 #2320 #2313 #2250 #2248) end-to-end. One backend build worker at a time (serial, to avoid OOM/target-lock contention while sharing the machine), frontend fanned out. Every non-trivial change went build → adversarial review (re-ran gates, re-read cited source, ran falsification probes) → full pre-push gate. Also promoted a tacit editor footgun from session-log lore into `AGENTS.md` at the maintainer's request.
 
@@ -21,7 +22,17 @@
 
 **Docs:** promoted the **ProseMirror `instanceof` module-copy footgun** (always-false across module copies; broke the bubble menu) into `AGENTS.md` anti-patterns + `docs/architecture/editor-and-content.md`.
 
-**#2344 slice 1 (open, #2347):** routed LOCAL `edit_block_inner` through `apply_op_projected(false)` so its link reindex + count recompute run in-tx like REMOTE; guarded by a dedicated cross-page link-parity conformance test. Create/Move/Delete slices remain.
+**#2344 — apply-path collapse COMPLETED (follow-on to #2325, same session).** Routed every remaining single-op LOCAL command path through `apply_op_projected`, so LOCAL and REMOTE can no longer silently diverge. Sliced as a chain of small, individually-reviewed PRs:
+
+- **EditBlock** (#2347) — clean swap (link reindex + count recompute now in-tx like REMOTE), cross-page link-parity conformance test.
+- **Create** — needed a prerequisite: **#2349** made `apply_op_tx`'s Create arm stamp `page_id`/`space_id` in-tx *before* the count recompute (previously NULL in-tx → transiently wrong-low counts on the sync path), then the routing swap **#2353** removed the now-redundant LOCAL stamp + recompute.
+- **Move** — prerequisite **#2351** unified the REMOTE Move-arm maintenance (shared `rederive_page_and_space_ids` for page_id+space_id, outbound-target `inbound_link_count`, and the #2200 same-parent-reorder skip); routing swap **#2354** removed the LOCAL copy. **This fixed a latent REMOTE bug**: cross-space moves got *zero* `space_id` maintenance (after #2200 dropped `RebuildPageIds`), leaving stale space attribution, plus stale outbound link counts.
+- **Delete** (#2352) — no prerequisite; the equivalence was already proven by the `delete_restore_local_matches_remote` fixture. The one new wire: the command now runs the post-commit `dispatch_delete_descendants` engine fan-out (LOCAL delete never drove the engine before). Companion: gate the saturation probe on `rows_affected >= 99`.
+- **CI fix #2350** (mid-run): pinned `sqruff@0.38.0` — its unpinned latest (0.39, needs rustc 1.96 vs the 1.95 pin) started reding every PR's lint.
+
+Permanent exceptions (unchanged): undo/redo reverse-SQL and the multi-root combined-cascade batch delete.
+
+**Key insight:** forcing LOCAL≡REMOTE surfaced *real latent REMOTE correctness bugs* (Create's transient wrong-low counts, Move's missing cross-space `space_id` maintenance) — the collapse was a correctness win, not just a refactor. All changes verified convergence-safe: `page_id`/`space_id`/`pages_cache.*` are SQL-derived cache columns, absent from the op-log/engine/sync surface, so unifying *when* they're computed can't cause two-device divergence.
 
 **Lessons learned:**
 1. **A "full collapse" premise can be false for a subset of ops.** #2325's assumption that the LOCAL/REMOTE paths differ only by cursor-advance holds only for `PreOpState::None` ops; create/edit/move/delete legitimately do more/different in-command maintenance. The right move was a partial collapse + a tracked follow-up, not forcing a divergent one.
@@ -29,5 +40,8 @@
 3. **The pre-push hook is path-aware** — a frontend-only diff skips the Rust clippy/nextest stages, so frontend pushes never OOM-contend with a concurrent backend build. Only backend-vs-backend heavy ops need serializing.
 4. **Transient `Connection closed by remote host` push failures** happen after the hook passes; the ref simply didn't land — verify `git ls-remote` and retry (not a hook failure).
 5. **Parity tests can be vacuous by construction** — B5's content strategy never emits `[[ULID]]` tokens, so its `block_links` comparison was always-empty; edit-link parity needed a dedicated fixture with real cross-page link content.
+6. **Server-side "Update branch" (`gh api PUT …/update-branch`) creates a merge commit with no DCO sign-off** → the PR's `dco` check reds. For a squash-merge target it's cosmetic (the squash erases it), but prefer a **local rebase + force-push** for a clean single DCO-signed, up-to-date commit.
+7. **A stacked routing swap can surface a dead re-export only after its sibling merges** — `recompute_pages_cache_counts_for_pages` had two callers (create + move); removing the second (once the first merged into the rebase base) turned the re-export unused → clippy `-D warnings` caught it at push. Rebase onto the sibling before final verification.
+8. **An upstream tool bumping its MSRV reds every PR** — `sqruff` 0.39 needing rustc 1.96 vs the repo's 1.95 pin broke the shared lint job; pin the tool version (a dedicated CI PR off main clears the inherited red for everyone).
 
-**Commit plan:** per-issue PRs (7 merged, #2347 open); this log is the capstone.
+**Commit plan:** per-issue PRs, all merged/merging; the #2344 chain completes the #2325 apply-path collapse. This log is the capstone.
