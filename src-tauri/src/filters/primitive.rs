@@ -374,8 +374,22 @@ pub enum Bind {
 
 // ── Projection trait ─────────────────────────────────────────────────────
 
+/// The canonical row alias every surface's base `SELECT … FROM … <alias>`
+/// binds the block row to (`b`). It is the DEFAULT alias each `compile_*`
+/// leaf emits its column references against. The advanced-query
+/// `has-parent-matching` path is the only caller that supplies a different
+/// alias (`p1`, `p2`, … for successive parent levels) so a compiled sub-
+/// expression references the parent row directly at COMPILE time, instead of
+/// a byte-rewrite of already-emitted SQL (#2320).
+pub(crate) const DEFAULT_ROW_ALIAS: &str = "b";
+
 /// Per-surface compiler. Implementations decide which primitives are
 /// supported and how each compiles to SQL on their schema.
+///
+/// Every `compile_*` leaf takes the row `alias` its column references are
+/// emitted against. Callers pass [`DEFAULT_ROW_ALIAS`] (`b`) for the base
+/// row; the advanced-query parent-matching path passes a per-level parent
+/// alias so the sub-expression is compiled directly onto the parent row.
 pub trait Projection {
     /// Primitive keys this projection's parser accepts. Tokens outside
     /// this set are rejected at parse time with a typed error before
@@ -385,39 +399,61 @@ pub trait Projection {
     where
         Self: Sized;
 
-    fn compile_tag(&self, tag: &str) -> WhereClause;
-    fn compile_tag_or_ref(&self, tag: &str) -> WhereClause;
-    fn compile_child_of(&self, parent: &str) -> WhereClause;
-    fn compile_path_glob(&self, pattern: &str, exclude: bool) -> WhereClause;
-    fn compile_has_property(&self, key: &str, predicate: &PropertyPredicate) -> WhereClause;
-    fn compile_last_edited(&self, spec: &LastEditedSpec) -> WhereClause;
-    fn compile_space(&self, space_id: &str) -> WhereClause;
-    fn compile_priority(&self, values: &[String], is_null: bool, exclude: bool) -> WhereClause;
+    fn compile_tag(&self, tag: &str, alias: &str) -> WhereClause;
+    fn compile_tag_or_ref(&self, tag: &str, alias: &str) -> WhereClause;
+    fn compile_child_of(&self, parent: &str, alias: &str) -> WhereClause;
+    fn compile_path_glob(&self, pattern: &str, exclude: bool, alias: &str) -> WhereClause;
+    fn compile_has_property(
+        &self,
+        key: &str,
+        predicate: &PropertyPredicate,
+        alias: &str,
+    ) -> WhereClause;
+    fn compile_last_edited(&self, spec: &LastEditedSpec, alias: &str) -> WhereClause;
+    fn compile_space(&self, space_id: &str, alias: &str) -> WhereClause;
+    fn compile_priority(
+        &self,
+        values: &[String],
+        is_null: bool,
+        exclude: bool,
+        alias: &str,
+    ) -> WhereClause;
 
     // #1280 — shared metadata primitives; default to `unsupported` so a
     // projection only opts in by overriding (currently `BacklinkProjection`).
-    fn compile_state(&self, _values: &[String], _is_null: bool, _exclude: bool) -> WhereClause {
+    fn compile_state(
+        &self,
+        _values: &[String],
+        _is_null: bool,
+        _exclude: bool,
+        _alias: &str,
+    ) -> WhereClause {
         WhereClause::unsupported()
     }
-    fn compile_block_type(&self, _values: &[String], _exclude: bool) -> WhereClause {
+    fn compile_block_type(&self, _values: &[String], _exclude: bool, _alias: &str) -> WhereClause {
         WhereClause::unsupported()
     }
-    fn compile_due_date(&self, _predicate: &DatePredicate) -> WhereClause {
+    fn compile_due_date(&self, _predicate: &DatePredicate, _alias: &str) -> WhereClause {
         WhereClause::unsupported()
     }
-    fn compile_scheduled(&self, _predicate: &DatePredicate) -> WhereClause {
+    fn compile_scheduled(&self, _predicate: &DatePredicate, _alias: &str) -> WhereClause {
         WhereClause::unsupported()
     }
-    fn compile_created(&self, _after: Option<&str>, _before: Option<&str>) -> WhereClause {
+    fn compile_created(
+        &self,
+        _after: Option<&str>,
+        _before: Option<&str>,
+        _alias: &str,
+    ) -> WhereClause {
         WhereClause::unsupported()
     }
 
     // #1455 relational predicates — default to `unsupported` so a projection
     // only opts in by overriding (currently `QueryProjection`).
-    fn compile_links_to(&self, _target: &str) -> WhereClause {
+    fn compile_links_to(&self, _target: &str, _alias: &str) -> WhereClause {
         WhereClause::unsupported()
     }
-    fn compile_linked_from(&self, _source: &str) -> WhereClause {
+    fn compile_linked_from(&self, _source: &str, _alias: &str) -> WhereClause {
         WhereClause::unsupported()
     }
     /// #1455 — compile `has-parent-matching`. The boxed sub-expression must be
@@ -426,7 +462,11 @@ pub trait Projection {
     /// `unsupported()`; only `QueryProjection` overrides it. The recursion is
     /// bounded by the caller's `FilterExpr::validate_depth` gate, which now
     /// descends into the boxed matcher (#1455).
-    fn compile_has_parent_matching(&self, _matcher: &crate::filters::FilterExpr) -> WhereClause
+    fn compile_has_parent_matching(
+        &self,
+        _matcher: &crate::filters::FilterExpr,
+        _alias: &str,
+    ) -> WhereClause
     where
         Self: Sized,
     {
@@ -434,78 +474,93 @@ pub trait Projection {
     }
 
     // Pages-only — default to `unsupported`.
-    fn compile_orphan(&self) -> WhereClause {
+    fn compile_orphan(&self, _alias: &str) -> WhereClause {
         WhereClause::unsupported()
     }
-    fn compile_stub(&self) -> WhereClause {
+    fn compile_stub(&self, _alias: &str) -> WhereClause {
         WhereClause::unsupported()
     }
-    fn compile_has_no_inbound_links(&self) -> WhereClause {
+    fn compile_has_no_inbound_links(&self, _alias: &str) -> WhereClause {
         WhereClause::unsupported()
     }
 
     // Search-only — default to `unsupported`.
-    fn compile_regex(&self, _pattern: &str) -> WhereClause {
+    fn compile_regex(&self, _pattern: &str, _alias: &str) -> WhereClause {
         WhereClause::unsupported()
     }
-    fn compile_case_sensitive(&self, _enabled: bool) -> WhereClause {
+    fn compile_case_sensitive(&self, _enabled: bool, _alias: &str) -> WhereClause {
         WhereClause::unsupported()
     }
-    fn compile_whole_word(&self, _enabled: bool) -> WhereClause {
+    fn compile_whole_word(&self, _enabled: bool, _alias: &str) -> WhereClause {
         WhereClause::unsupported()
     }
-    fn compile_snippet(&self, _spec: &SnippetSpec) -> WhereClause {
+    fn compile_snippet(&self, _spec: &SnippetSpec, _alias: &str) -> WhereClause {
         WhereClause::unsupported()
     }
 
-    /// Compile a single primitive via the appropriate `compile_*` method.
-    /// Defaulted so per-surface impls just need the `compile_*` overrides.
+    /// Compile a single primitive against the base row alias
+    /// ([`DEFAULT_ROW_ALIAS`], `b`). Defaulted so per-surface impls just need
+    /// the `compile_*` overrides.
     fn compile(&self, p: &FilterPrimitive) -> WhereClause
     where
         Self: Sized,
     {
+        self.compile_on_alias(p, DEFAULT_ROW_ALIAS)
+    }
+
+    /// Compile a single primitive so its column references are emitted against
+    /// `alias` (#2320). This is the alias-parameterised form of [`compile`];
+    /// the advanced-query `has-parent-matching` path calls it with a per-level
+    /// parent alias (`p1`, `p2`, …) so a compiled sub-expression references the
+    /// parent row directly, rather than post-hoc rewriting the emitted SQL.
+    fn compile_on_alias(&self, p: &FilterPrimitive, alias: &str) -> WhereClause
+    where
+        Self: Sized,
+    {
         match p {
-            FilterPrimitive::Tag { tag } => self.compile_tag(tag),
-            FilterPrimitive::TagOrRef { tag } => self.compile_tag_or_ref(tag),
-            FilterPrimitive::ChildOf { parent } => self.compile_child_of(parent),
+            FilterPrimitive::Tag { tag } => self.compile_tag(tag, alias),
+            FilterPrimitive::TagOrRef { tag } => self.compile_tag_or_ref(tag, alias),
+            FilterPrimitive::ChildOf { parent } => self.compile_child_of(parent, alias),
             FilterPrimitive::PathGlob { pattern, exclude } => {
-                self.compile_path_glob(pattern, *exclude)
+                self.compile_path_glob(pattern, *exclude, alias)
             }
             FilterPrimitive::HasProperty { key, predicate } => {
-                self.compile_has_property(key, predicate)
+                self.compile_has_property(key, predicate, alias)
             }
-            FilterPrimitive::LastEdited { spec } => self.compile_last_edited(spec),
-            FilterPrimitive::Space { space_id } => self.compile_space(space_id),
+            FilterPrimitive::LastEdited { spec } => self.compile_last_edited(spec, alias),
+            FilterPrimitive::Space { space_id } => self.compile_space(space_id, alias),
             FilterPrimitive::Priority {
                 values,
                 is_null,
                 exclude,
-            } => self.compile_priority(values, *is_null, *exclude),
+            } => self.compile_priority(values, *is_null, *exclude, alias),
             FilterPrimitive::State {
                 values,
                 is_null,
                 exclude,
-            } => self.compile_state(values, *is_null, *exclude),
+            } => self.compile_state(values, *is_null, *exclude, alias),
             FilterPrimitive::BlockType { values, exclude } => {
-                self.compile_block_type(values, *exclude)
+                self.compile_block_type(values, *exclude, alias)
             }
-            FilterPrimitive::DueDate { predicate } => self.compile_due_date(predicate),
-            FilterPrimitive::Scheduled { predicate } => self.compile_scheduled(predicate),
+            FilterPrimitive::DueDate { predicate } => self.compile_due_date(predicate, alias),
+            FilterPrimitive::Scheduled { predicate } => self.compile_scheduled(predicate, alias),
             FilterPrimitive::Created { after, before } => {
-                self.compile_created(after.as_deref(), before.as_deref())
+                self.compile_created(after.as_deref(), before.as_deref(), alias)
             }
-            FilterPrimitive::LinksTo { target } => self.compile_links_to(target),
-            FilterPrimitive::LinkedFrom { source } => self.compile_linked_from(source),
+            FilterPrimitive::LinksTo { target } => self.compile_links_to(target, alias),
+            FilterPrimitive::LinkedFrom { source } => self.compile_linked_from(source, alias),
             FilterPrimitive::HasParentMatching { matcher } => {
-                self.compile_has_parent_matching(matcher)
+                self.compile_has_parent_matching(matcher, alias)
             }
-            FilterPrimitive::Orphan => self.compile_orphan(),
-            FilterPrimitive::Stub => self.compile_stub(),
-            FilterPrimitive::HasNoInboundLinks => self.compile_has_no_inbound_links(),
-            FilterPrimitive::Regex { pattern } => self.compile_regex(pattern),
-            FilterPrimitive::CaseSensitive { enabled } => self.compile_case_sensitive(*enabled),
-            FilterPrimitive::WholeWord { enabled } => self.compile_whole_word(*enabled),
-            FilterPrimitive::Snippet { spec } => self.compile_snippet(spec),
+            FilterPrimitive::Orphan => self.compile_orphan(alias),
+            FilterPrimitive::Stub => self.compile_stub(alias),
+            FilterPrimitive::HasNoInboundLinks => self.compile_has_no_inbound_links(alias),
+            FilterPrimitive::Regex { pattern } => self.compile_regex(pattern, alias),
+            FilterPrimitive::CaseSensitive { enabled } => {
+                self.compile_case_sensitive(*enabled, alias)
+            }
+            FilterPrimitive::WholeWord { enabled } => self.compile_whole_word(*enabled, alias),
+            FilterPrimitive::Snippet { spec } => self.compile_snippet(spec, alias),
         }
     }
 }
@@ -680,12 +735,17 @@ fn property_value_column(value: &PropertyValue) -> (&'static str, Bind) {
 /// value never spuriously matches (mirrors the backlink `PropertyNum`/
 /// `PropertyDate`/`PropertyText` resolver semantics, which only consider
 /// rows whose value column is non-NULL).
-fn compile_property_compare(key: &str, op: &str, value: &PropertyValue) -> WhereClause {
+fn compile_property_compare(
+    key: &str,
+    op: &str,
+    value: &PropertyValue,
+    alias: &str,
+) -> WhereClause {
     let (col, bind) = property_value_column(value);
     WhereClause::new(
         format!(
             "EXISTS (SELECT 1 FROM block_properties \
-             WHERE block_id = b.id AND key = ? \
+             WHERE block_id = {alias}.id AND key = ? \
                AND {col} IS NOT NULL AND {col} {op} ?)"
         ),
         vec![Bind::Text(key.to_string()), bind],
@@ -696,7 +756,12 @@ fn compile_property_compare(key: &str, op: &str, value: &PropertyValue) -> Where
 /// as `LIKE ? ESCAPE '\'`. On a `Num` value the predicate is meaningless
 /// (a numeric column has no substring), so it short-circuits to `1=0` —
 /// exactly as the backlink `PropertyNum` resolver returns the empty set.
-fn compile_property_like(key: &str, value: &PropertyValue, contains: bool) -> WhereClause {
+fn compile_property_like(
+    key: &str,
+    value: &PropertyValue,
+    contains: bool,
+    alias: &str,
+) -> WhereClause {
     let (col, raw) = match value {
         PropertyValue::Text { value } => ("value_text", value.clone()),
         PropertyValue::Ref { value } => ("value_ref", value.clone()),
@@ -712,7 +777,7 @@ fn compile_property_like(key: &str, value: &PropertyValue, contains: bool) -> Wh
     WhereClause::new(
         format!(
             "EXISTS (SELECT 1 FROM block_properties \
-             WHERE block_id = b.id AND key = ? \
+             WHERE block_id = {alias}.id AND key = ? \
                AND {col} IS NOT NULL AND {col} LIKE ? ESCAPE '\\')"
         ),
         vec![Bind::Text(key.to_string()), Bind::Text(pattern)],
@@ -868,23 +933,28 @@ impl Projection for PagesProjection {
     fn allowed_keys() -> &'static HashSet<&'static str> {
         &PAGES_ALLOWED_KEYS
     }
-    fn compile_tag(&self, tag: &str) -> WhereClause {
+    fn compile_tag(&self, tag: &str, alias: &str) -> WhereClause {
         WhereClause::new(
-            "b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?)",
+            format!("{alias}.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?)"),
             vec![Bind::Text(tag.to_string())],
         )
     }
-    fn compile_tag_or_ref(&self, tag: &str) -> WhereClause {
+    fn compile_tag_or_ref(&self, tag: &str, alias: &str) -> WhereClause {
         WhereClause::new(
-            "b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ? \
-             UNION SELECT source_id FROM block_tag_refs WHERE tag_id = ?)",
+            format!(
+                "{alias}.id IN (SELECT block_id FROM block_tags WHERE tag_id = ? \
+                 UNION SELECT source_id FROM block_tag_refs WHERE tag_id = ?)"
+            ),
             vec![Bind::Text(tag.to_string()), Bind::Text(tag.to_string())],
         )
     }
-    fn compile_child_of(&self, parent: &str) -> WhereClause {
-        WhereClause::new("b.parent_id = ?", vec![Bind::Text(parent.to_string())])
+    fn compile_child_of(&self, parent: &str, alias: &str) -> WhereClause {
+        WhereClause::new(
+            format!("{alias}.parent_id = ?"),
+            vec![Bind::Text(parent.to_string())],
+        )
     }
-    fn compile_path_glob(&self, pattern: &str, exclude: bool) -> WhereClause {
+    fn compile_path_glob(&self, pattern: &str, exclude: bool, alias: &str) -> WhereClause {
         // #1320-A — Pages now uses the SAME `LOWER(title) GLOB ?` dialect as
         // Search (after #1320), so both surfaces share `GLOB` + brace +
         // `[class]` semantics. This is the SINGLE-pattern fragment for ONE
@@ -898,11 +968,16 @@ impl Projection for PagesProjection {
         // alias differs between the two surfaces.
         let op = if exclude { "NOT IN" } else { "IN" };
         WhereClause::new(
-            format!("b.id {op} (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?)"),
+            format!("{alias}.id {op} (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?)"),
             vec![Bind::Text(pattern.to_string())],
         )
     }
-    fn compile_has_property(&self, key: &str, predicate: &PropertyPredicate) -> WhereClause {
+    fn compile_has_property(
+        &self,
+        key: &str,
+        predicate: &PropertyPredicate,
+        alias: &str,
+    ) -> WhereClause {
         // Every valid predicate × value combo compiles; there is no
         // `unsupported()` fallback. Invalid states (Eq/Ne without a value,
         // Exists/NotExists with one) are unrepresentable by construction
@@ -915,11 +990,16 @@ impl Projection for PagesProjection {
         //   property uses it).
         match predicate {
             PropertyPredicate::Exists => WhereClause::new(
-                "EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?)",
+                format!(
+                    "EXISTS (SELECT 1 FROM block_properties WHERE block_id = {alias}.id AND key = ?)"
+                ),
                 vec![Bind::Text(key.to_string())],
             ),
             PropertyPredicate::NotExists => WhereClause::new(
-                "NOT EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?)",
+                format!(
+                    "NOT EXISTS (SELECT 1 FROM block_properties \
+                     WHERE block_id = {alias}.id AND key = ?)"
+                ),
                 vec![Bind::Text(key.to_string())],
             ),
             PropertyPredicate::Eq { value } => {
@@ -927,7 +1007,7 @@ impl Projection for PagesProjection {
                 WhereClause::new(
                     format!(
                         "EXISTS (SELECT 1 FROM block_properties \
-                         WHERE block_id = b.id AND key = ? AND {col} = ?)"
+                         WHERE block_id = {alias}.id AND key = ? AND {col} = ?)"
                     ),
                     vec![Bind::Text(key.to_string()), v],
                 )
@@ -937,20 +1017,22 @@ impl Projection for PagesProjection {
                 WhereClause::new(
                     format!(
                         "NOT EXISTS (SELECT 1 FROM block_properties \
-                         WHERE block_id = b.id AND key = ? AND {col} = ?)"
+                         WHERE block_id = {alias}.id AND key = ? AND {col} = ?)"
                     ),
                     vec![Bind::Text(key.to_string()), v],
                 )
             }
-            PropertyPredicate::Lt { value } => compile_property_compare(key, "<", value),
-            PropertyPredicate::Gt { value } => compile_property_compare(key, ">", value),
-            PropertyPredicate::Lte { value } => compile_property_compare(key, "<=", value),
-            PropertyPredicate::Gte { value } => compile_property_compare(key, ">=", value),
-            PropertyPredicate::Contains { value } => compile_property_like(key, value, true),
-            PropertyPredicate::StartsWith { value } => compile_property_like(key, value, false),
+            PropertyPredicate::Lt { value } => compile_property_compare(key, "<", value, alias),
+            PropertyPredicate::Gt { value } => compile_property_compare(key, ">", value, alias),
+            PropertyPredicate::Lte { value } => compile_property_compare(key, "<=", value, alias),
+            PropertyPredicate::Gte { value } => compile_property_compare(key, ">=", value, alias),
+            PropertyPredicate::Contains { value } => compile_property_like(key, value, true, alias),
+            PropertyPredicate::StartsWith { value } => {
+                compile_property_like(key, value, false, alias)
+            }
         }
     }
-    fn compile_last_edited(&self, spec: &LastEditedSpec) -> WhereClause {
+    fn compile_last_edited(&self, spec: &LastEditedSpec, alias: &str) -> WhereClause {
         // Uses op_log's last-modified-at expression for the page itself
         // (`MAX(op_log.created_at)`). A future phase may swap to a
         // materialised `pages_cache.last_edited_at` column.
@@ -1009,14 +1091,14 @@ impl Projection for PagesProjection {
         match spec {
             LastEditedSpec::Rolling { days } => WhereClause::new(
                 format!(
-                    "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), {EPOCH}) \
+                    "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = {alias}.id), {EPOCH}) \
                      >= (CAST(strftime('%s', 'now', ?) AS INTEGER) * 1000)"
                 ),
                 vec![Bind::Text(format!("-{days} days"))],
             ),
             LastEditedSpec::OlderThan { days } => WhereClause::new(
                 format!(
-                    "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), {EPOCH}) \
+                    "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = {alias}.id), {EPOCH}) \
                      < (CAST(strftime('%s', 'now', ?) AS INTEGER) * 1000)"
                 ),
                 vec![Bind::Text(format!("-{days} days"))],
@@ -1038,8 +1120,8 @@ impl Projection for PagesProjection {
                 });
                 WhereClause::new(
                     format!(
-                        "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), {EPOCH}) \
-                         >= ? AND COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), {EPOCH}) \
+                        "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = {alias}.id), {EPOCH}) \
+                         >= ? AND COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = {alias}.id), {EPOCH}) \
                          <= ?"
                     ),
                     vec![Bind::Int(start_ms), Bind::Int(end_ms)],
@@ -1064,19 +1146,34 @@ impl Projection for PagesProjection {
     /// primitives. Compiling it here keeps the Pages projection a total
     /// implementation of the shared vocabulary. T-B3's `Space` test
     /// asserts this fragment is emitted (not `unsupported()`).
-    fn compile_space(&self, space_id: &str) -> WhereClause {
-        WhereClause::new("b.space_id = ?", vec![Bind::Text(space_id.to_string())])
+    fn compile_space(&self, space_id: &str, alias: &str) -> WhereClause {
+        WhereClause::new(
+            format!("{alias}.space_id = ?"),
+            vec![Bind::Text(space_id.to_string())],
+        )
     }
-    fn compile_priority(&self, values: &[String], is_null: bool, exclude: bool) -> WhereClause {
+    fn compile_priority(
+        &self,
+        values: &[String],
+        is_null: bool,
+        exclude: bool,
+        alias: &str,
+    ) -> WhereClause {
         // Canonical Pages SQL for the `priority:` leaf, byte-shape identical
         // to the LEGACY FTS metadata oracle (`append_text_in_or_null` /
         // `append_text_not_in_or_not_null`, column `b.priority`) so routing
         // the Search metadata path through this projection is a
         // zero-behaviour-change cutover. See `compile_state` for the
         // per-branch INCLUDE/EXCLUDE/is_null rationale (identical shape).
-        in_or_null("b.priority", values, is_null, exclude)
+        in_or_null(&format!("{alias}.priority"), values, is_null, exclude)
     }
-    fn compile_state(&self, values: &[String], is_null: bool, exclude: bool) -> WhereClause {
+    fn compile_state(
+        &self,
+        values: &[String],
+        is_null: bool,
+        exclude: bool,
+        alias: &str,
+    ) -> WhereClause {
         // #1280 — canonical Pages SQL for the `state:` leaf, byte-shape
         // identical to the LEGACY FTS metadata oracle
         // (`fts::metadata_filter::append_text_in_or_null` /
@@ -1101,9 +1198,9 @@ impl Projection for PagesProjection {
         //   OR-join was a tautology that matched every row). With only the
         //   `none` sentinel (no values) → `(col IS NOT NULL)`. Empty values +
         //   `!is_null` emits a no-op `1=1`.
-        in_or_null("b.todo_state", values, is_null, exclude)
+        in_or_null(&format!("{alias}.todo_state"), values, is_null, exclude)
     }
-    fn compile_block_type(&self, values: &[String], exclude: bool) -> WhereClause {
+    fn compile_block_type(&self, values: &[String], exclude: bool, alias: &str) -> WhereClause {
         // #1280 — `b.block_type` is NOT NULL, so there is no `none`/NULL
         // sentinel. Empty `values` degenerates to the identity of the join:
         // an empty INCLUDE matches nothing (`1=0`), an empty EXCLUDE excludes
@@ -1117,17 +1214,22 @@ impl Projection for PagesProjection {
             .join(", ");
         let op = if exclude { "NOT IN" } else { "IN" };
         WhereClause::new(
-            format!("b.block_type {op} ({placeholders})"),
+            format!("{alias}.block_type {op} ({placeholders})"),
             values.iter().cloned().map(Bind::Text).collect(),
         )
     }
-    fn compile_due_date(&self, predicate: &DatePredicate) -> WhereClause {
-        pages_date_predicate(predicate, "b.due_date")
+    fn compile_due_date(&self, predicate: &DatePredicate, alias: &str) -> WhereClause {
+        pages_date_predicate(predicate, &format!("{alias}.due_date"))
     }
-    fn compile_scheduled(&self, predicate: &DatePredicate) -> WhereClause {
-        pages_date_predicate(predicate, "b.scheduled_date")
+    fn compile_scheduled(&self, predicate: &DatePredicate, alias: &str) -> WhereClause {
+        pages_date_predicate(predicate, &format!("{alias}.scheduled_date"))
     }
-    fn compile_created(&self, after: Option<&str>, before: Option<&str>) -> WhereClause {
+    fn compile_created(
+        &self,
+        after: Option<&str>,
+        before: Option<&str>,
+        alias: &str,
+    ) -> WhereClause {
         // #1280 — ULID-prefix range over `b.id`, reusing the SAME
         // `parse_iso_to_ms` + `ms_to_ulid_prefix` conversion as
         // `BacklinkProjection::compile_created` so the two surfaces agree
@@ -1144,14 +1246,14 @@ impl Projection for PagesProjection {
             .and_then(crate::backlink::filters::parse_iso_to_ms)
             .map(crate::backlink::filters::ms_to_ulid_prefix);
 
-        let mut clauses: Vec<&str> = Vec::new();
+        let mut clauses: Vec<String> = Vec::new();
         let mut binds: Vec<Bind> = Vec::new();
         if let Some(lo) = after_prefix {
-            clauses.push("b.id >= ?");
+            clauses.push(format!("{alias}.id >= ?"));
             binds.push(Bind::Text(lo));
         }
         if let Some(hi) = before_prefix {
-            clauses.push("b.id < ?");
+            clauses.push(format!("{alias}.id < ?"));
             binds.push(Bind::Text(hi));
         }
         let sql = if clauses.is_empty() {
@@ -1161,7 +1263,7 @@ impl Projection for PagesProjection {
         };
         WhereClause::new(sql, binds)
     }
-    fn compile_orphan(&self) -> WhereClause {
+    fn compile_orphan(&self, alias: &str) -> WhereClause {
         // Orphan := no inbound block-link edges AND no outbound block-link
         // edges, both scoped page-wide. The inbound side is index-served
         // via the materialised `pc.inbound_link_count`. The outbound side
@@ -1203,24 +1305,26 @@ impl Projection for PagesProjection {
         // `block_links` FK cascades on delete, so an edge to a purged block
         // no longer exists.
         WhereClause::new(
-            "COALESCE(pc.inbound_link_count, 0) = 0 \
-             AND NOT EXISTS ( \
-               SELECT 1 FROM block_links bl \
-               JOIN blocks src ON bl.source_id = src.id \
-               JOIN blocks tgt ON bl.target_id = tgt.id \
-               WHERE src.page_id = b.id AND src.deleted_at IS NULL \
-                 AND tgt.deleted_at IS NULL AND tgt.page_id != b.id \
-             )",
+            format!(
+                "COALESCE(pc.inbound_link_count, 0) = 0 \
+                 AND NOT EXISTS ( \
+                   SELECT 1 FROM block_links bl \
+                   JOIN blocks src ON bl.source_id = src.id \
+                   JOIN blocks tgt ON bl.target_id = tgt.id \
+                   WHERE src.page_id = {alias}.id AND src.deleted_at IS NULL \
+                     AND tgt.deleted_at IS NULL AND tgt.page_id != {alias}.id \
+                 )"
+            ),
             Vec::new(),
         )
     }
-    fn compile_stub(&self) -> WhereClause {
+    fn compile_stub(&self, _alias: &str) -> WhereClause {
         // Stub: a page whose only block is its own title row, i.e. zero
         // non-title descendants. The comparison is served by the
         // materialised `pc.child_block_count` column.
         WhereClause::new("COALESCE(pc.child_block_count, 0) = 0", Vec::new())
     }
-    fn compile_has_no_inbound_links(&self) -> WhereClause {
+    fn compile_has_no_inbound_links(&self, _alias: &str) -> WhereClause {
         // Looser companion to Orphan: zero inbound block-link edges,
         // outbound side ignored. Same materialised column — and same
         // "page OR any non-deleted descendant" semantic, with same-page /
@@ -1240,27 +1344,32 @@ impl Projection for SearchProjection {
     fn allowed_keys() -> &'static HashSet<&'static str> {
         &SEARCH_ALLOWED_KEYS
     }
-    fn compile_tag(&self, tag: &str) -> WhereClause {
+    fn compile_tag(&self, tag: &str, alias: &str) -> WhereClause {
         WhereClause::new(
-            "b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?)",
+            format!("{alias}.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?)"),
             vec![Bind::Text(tag.to_string())],
         )
     }
-    fn compile_tag_or_ref(&self, tag: &str) -> WhereClause {
+    fn compile_tag_or_ref(&self, tag: &str, alias: &str) -> WhereClause {
         // Mirrors `compile_tag`'s `b.id` alias (Search's tag leaf, like Pages,
         // keys on `b.id`); ref-inclusive UNION of attached + inline refs.
         WhereClause::new(
-            "b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ? \
-             UNION SELECT source_id FROM block_tag_refs WHERE tag_id = ?)",
+            format!(
+                "{alias}.id IN (SELECT block_id FROM block_tags WHERE tag_id = ? \
+                 UNION SELECT source_id FROM block_tag_refs WHERE tag_id = ?)"
+            ),
             vec![Bind::Text(tag.to_string()), Bind::Text(tag.to_string())],
         )
     }
-    fn compile_child_of(&self, parent: &str) -> WhereClause {
+    fn compile_child_of(&self, parent: &str, alias: &str) -> WhereClause {
         // Mirrors `compile_tag`'s `b` block alias; `parent_id` is a column on
         // the block row, so the direct-children predicate is identical to Pages.
-        WhereClause::new("b.parent_id = ?", vec![Bind::Text(parent.to_string())])
+        WhereClause::new(
+            format!("{alias}.parent_id = ?"),
+            vec![Bind::Text(parent.to_string())],
+        )
     }
-    fn compile_path_glob(&self, pattern: &str, exclude: bool) -> WhereClause {
+    fn compile_path_glob(&self, pattern: &str, exclude: bool, alias: &str) -> WhereClause {
         // #1320 Search keeps the LEGACY `LOWER(title) GLOB ?`
         // dialect verbatim (NOT the Pages `COLLATE NOCASE LIKE` form), so
         // routing the FTS path-glob filter through `SearchProjection` is a
@@ -1282,23 +1391,36 @@ impl Projection for SearchProjection {
         // different (`COLLATE NOCASE LIKE`) and is NOT touched here.
         let op = if exclude { "NOT IN" } else { "IN" };
         WhereClause::new(
-            format!("b.page_id {op} (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?)"),
+            format!(
+                "{alias}.page_id {op} (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?)"
+            ),
             vec![Bind::Text(pattern.to_string())],
         )
     }
-    fn compile_has_property(&self, key: &str, predicate: &PropertyPredicate) -> WhereClause {
+    fn compile_has_property(
+        &self,
+        key: &str,
+        predicate: &PropertyPredicate,
+        alias: &str,
+    ) -> WhereClause {
         // Identical to PagesProjection for now — the value/op semantics
         // are shared. Per-surface column differences emerge later.
-        PagesProjection.compile_has_property(key, predicate)
+        PagesProjection.compile_has_property(key, predicate, alias)
     }
-    fn compile_last_edited(&self, spec: &LastEditedSpec) -> WhereClause {
-        PagesProjection.compile_last_edited(spec)
+    fn compile_last_edited(&self, spec: &LastEditedSpec, alias: &str) -> WhereClause {
+        PagesProjection.compile_last_edited(spec, alias)
     }
-    fn compile_space(&self, space_id: &str) -> WhereClause {
-        PagesProjection.compile_space(space_id)
+    fn compile_space(&self, space_id: &str, alias: &str) -> WhereClause {
+        PagesProjection.compile_space(space_id, alias)
     }
-    fn compile_priority(&self, values: &[String], is_null: bool, exclude: bool) -> WhereClause {
-        PagesProjection.compile_priority(values, is_null, exclude)
+    fn compile_priority(
+        &self,
+        values: &[String],
+        is_null: bool,
+        exclude: bool,
+        alias: &str,
+    ) -> WhereClause {
+        PagesProjection.compile_priority(values, is_null, exclude, alias)
     }
     // #1280 B2 — the search metadata leaves (`state:` / `block-type:` /
     // `due-date:` / `scheduled:`) DELEGATE to the canonical `PagesProjection`
@@ -1309,19 +1431,25 @@ impl Projection for SearchProjection {
     // alias `b`), so routing the FTS path through these is a zero-behaviour-
     // change cutover. Both projections use the `b` alias, so the fragment is
     // alias-compatible verbatim — no rewrite needed.
-    fn compile_state(&self, values: &[String], is_null: bool, exclude: bool) -> WhereClause {
-        PagesProjection.compile_state(values, is_null, exclude)
+    fn compile_state(
+        &self,
+        values: &[String],
+        is_null: bool,
+        exclude: bool,
+        alias: &str,
+    ) -> WhereClause {
+        PagesProjection.compile_state(values, is_null, exclude, alias)
     }
-    fn compile_block_type(&self, values: &[String], exclude: bool) -> WhereClause {
-        PagesProjection.compile_block_type(values, exclude)
+    fn compile_block_type(&self, values: &[String], exclude: bool, alias: &str) -> WhereClause {
+        PagesProjection.compile_block_type(values, exclude, alias)
     }
-    fn compile_due_date(&self, predicate: &DatePredicate) -> WhereClause {
-        PagesProjection.compile_due_date(predicate)
+    fn compile_due_date(&self, predicate: &DatePredicate, alias: &str) -> WhereClause {
+        PagesProjection.compile_due_date(predicate, alias)
     }
-    fn compile_scheduled(&self, predicate: &DatePredicate) -> WhereClause {
-        PagesProjection.compile_scheduled(predicate)
+    fn compile_scheduled(&self, predicate: &DatePredicate, alias: &str) -> WhereClause {
+        PagesProjection.compile_scheduled(predicate, alias)
     }
-    fn compile_regex(&self, pattern: &str) -> WhereClause {
+    fn compile_regex(&self, pattern: &str, _alias: &str) -> WhereClause {
         // Search uses a post-FTS regex pass: this is wired to the
         // existing `is_regex` path in `fts::search`.
         WhereClause::new(
@@ -1329,13 +1457,13 @@ impl Projection for SearchProjection {
             vec![Bind::Text(pattern.to_string())],
         )
     }
-    fn compile_case_sensitive(&self, enabled: bool) -> WhereClause {
+    fn compile_case_sensitive(&self, enabled: bool, _alias: &str) -> WhereClause {
         WhereClause::new(format!("1=1 /* CASE_SENSITIVE = {enabled} */"), Vec::new())
     }
-    fn compile_whole_word(&self, enabled: bool) -> WhereClause {
+    fn compile_whole_word(&self, enabled: bool, _alias: &str) -> WhereClause {
         WhereClause::new(format!("1=1 /* WHOLE_WORD = {enabled} */"), Vec::new())
     }
-    fn compile_snippet(&self, _spec: &SnippetSpec) -> WhereClause {
+    fn compile_snippet(&self, _spec: &SnippetSpec, _alias: &str) -> WhereClause {
         WhereClause::new("1=1 /* SNIPPET */", Vec::new())
     }
 }
