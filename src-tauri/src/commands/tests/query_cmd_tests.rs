@@ -51,7 +51,7 @@ async fn get_backlinks_returns_linked_blocks() {
 /// predicates. Mirrors today's "default filter + space" callsite shape.
 fn test_space_filter() -> SearchFilter {
     SearchFilter {
-        space_id: Some(TEST_SPACE_ID.into()),
+        scope: SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         ..Default::default()
     }
 }
@@ -193,7 +193,7 @@ async fn search_blocks_with_parent_id_filter() {
         None,
         SearchFilter {
             parent_id: Some("PAGE_A".into()),
-            space_id: Some(TEST_SPACE_ID.into()),
+            scope: SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
             ..Default::default()
         },
         None,
@@ -270,7 +270,7 @@ async fn search_blocks_with_tag_filter() {
         None,
         SearchFilter {
             tag_ids: vec!["TAG_X".into()],
-            space_id: Some(TEST_SPACE_ID.into()),
+            scope: SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
             ..Default::default()
         },
         None,
@@ -293,7 +293,7 @@ async fn search_blocks_with_tag_filter() {
         None,
         SearchFilter {
             tag_ids: vec!["TAG_X".into(), "TAG_Y".into()],
-            space_id: Some(TEST_SPACE_ID.into()),
+            scope: SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
             ..Default::default()
         },
         None,
@@ -360,7 +360,7 @@ async fn search_blocks_without_filters() {
         None,
         SearchFilter {
             tag_ids: vec![],
-            space_id: Some(TEST_SPACE_ID.into()),
+            scope: SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
             ..Default::default()
         },
         None,

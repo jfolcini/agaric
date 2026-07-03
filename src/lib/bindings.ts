@@ -2979,12 +2979,18 @@ export type SearchFilter = {
 	 */
 	tagIds?: string[],
 	/**
-	 *  Restrict to blocks whose owning page lives in this
-	 *  space. Empty string is treated as "no match" by the SQL path
-	 *  (returns an empty page), matching pre-bootstrap callers that
-	 *  pass `''`.
+	 *  Space scope for the search (#2248 group c). Mapped to the FTS layer
+	 *  via [`SpaceScope::as_filter_param`]: `Active(id)` restricts matches to
+	 *  blocks whose owning page lives in that space; `Global` applies no
+	 *  space filter (the deliberate cross-space form). This replaces the
+	 *  prior `space_id: Option<String>` whose `Some("")` silently meant
+	 *  "match nothing" — the un-typed footgun the arch sweep flagged. Every
+	 *  real caller (the FE search wrappers via `requireActiveScope`, and the
+	 *  MCP `search` tool) sends `Active`, so `Global` only arises from an
+	 *  omitted key (the `#[serde(default)]`) and yields today's unscoped
+	 *  behaviour rather than a never-matching empty filter.
 	 */
-	spaceId?: string | null,
+	scope?: SpaceScope,
 	/**
 	 *  Page-name glob include list. Each entry may use
 	 *  SQLite `GLOB` syntax (`*`, `?`, `[...]`) and `{a,b}` brace
@@ -3321,7 +3327,14 @@ export type SpaceRow = {
  *  ([`SpaceScope::validate`]), so this IPC boundary rejects a malformed space
  *  id up front. `Global` and the seeded sentinel spaces are unaffected.
  */
-export type SpaceScope = { kind: "global" } | { kind: "active"; space_id: SpaceId };
+export type SpaceScope = 
+/**
+ *  The unscoped default — no `block_properties.space` filter. Chosen as
+ *  `Default` so a struct field of type `SpaceScope` carrying
+ *  `#[serde(default)]` (e.g. `SearchFilter::scope`) deserialises a
+ *  missing key to the widest, pre-existing "no filter" behaviour.
+ */
+{ kind: "global" } | { kind: "active"; space_id: SpaceId };
 
 /**
  *  Snapshot of materializer + sync observability fields exposed to the

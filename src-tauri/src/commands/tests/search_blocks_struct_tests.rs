@@ -16,6 +16,7 @@
 //!   tool converts them back to `<mark>` / `</mark>`.
 
 use super::super::{MatchOffset, SearchBlockRow, SearchFilter};
+use crate::space::{SpaceId, SpaceScope};
 use crate::ulid::ActiveBlockId;
 use serde_json::json;
 
@@ -34,7 +35,10 @@ fn search_filter_deserialises_from_empty_object_with_defaults() {
         filter.tag_ids.is_empty(),
         "default tag_ids must be empty vec"
     );
-    assert!(filter.space_id.is_none(), "default space_id must be None");
+    assert!(
+        matches!(filter.scope, SpaceScope::Global),
+        "default space_id must be None"
+    );
 }
 
 #[test]
@@ -47,7 +51,7 @@ fn search_filter_deserialises_with_partial_fields() {
     .unwrap();
     assert!(filter.parent_id.is_none());
     assert_eq!(filter.tag_ids, vec!["TAG_A".to_string(), "TAG_B".into()]);
-    assert!(filter.space_id.is_none());
+    assert!(matches!(filter.scope, SpaceScope::Global));
 }
 
 #[test]
@@ -57,7 +61,7 @@ fn search_filter_roundtrip_serialise_deserialise_is_identity() {
     let original = SearchFilter {
         parent_id: Some("PAGE_X".into()),
         tag_ids: vec!["TAG_1".into(), "TAG_2".into()],
-        space_id: Some("01TESTSPACE000000000000001".into()),
+        scope: SpaceScope::Active(SpaceId::from_trusted("01TESTSPACE000000000000001")),
         include_page_globs: vec!["Journal/*".into()],
         exclude_page_globs: vec!["Archive/**".into()],
         //
@@ -73,7 +77,7 @@ fn search_filter_roundtrip_serialise_deserialise_is_identity() {
     let decoded: SearchFilter = serde_json::from_value(json).unwrap();
     assert_eq!(decoded.parent_id, original.parent_id);
     assert_eq!(decoded.tag_ids, original.tag_ids);
-    assert_eq!(decoded.space_id, original.space_id);
+    assert_eq!(decoded.scope, original.scope);
     assert_eq!(decoded.include_page_globs, original.include_page_globs);
     assert_eq!(decoded.exclude_page_globs, original.exclude_page_globs);
     assert_eq!(decoded.case_sensitive, original.case_sensitive);

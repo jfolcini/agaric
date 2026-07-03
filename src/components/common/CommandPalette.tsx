@@ -360,7 +360,10 @@ export function PaletteBody({
       setLoading(false)
       return
     }
-    if (!spaceIsReady) return
+    // #2248 c — a null space means "don't search" (searchBlocksPartitioned
+    // rejects an empty scope). `spaceIsReady` can be true while `currentSpaceId`
+    // is still null, so guard on the id too.
+    if (!spaceIsReady || currentSpaceId == null) return
     if (effectiveQuery.length === 0) {
       // #736 — also invalidate any in-flight search and drop the loading
       // shimmer. Without the bump, the previous keystroke's
@@ -378,7 +381,7 @@ export function PaletteBody({
     const gen = searchGen.next()
     setLoading(true)
 
-    const spaceId = currentSpaceId ?? ''
+    const spaceId = currentSpaceId
 
     const fetchPromise = searchBlocksPartitioned({
       query: effectiveQuery,

@@ -2,6 +2,7 @@ use super::*;
 use crate::db::init_pool;
 use crate::error::AppError;
 use crate::pagination::{Cursor, PageRequest};
+use crate::space::{SpaceId, SpaceScope};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use tempfile::TempDir;
@@ -5407,7 +5408,7 @@ async fn partitioned_empty_query_returns_empty_partitions() {
         10,
         10,
         crate::domain::search_types::SearchFilter {
-            space_id: Some(FTS_SPACE_A_ID.to_string()),
+            scope: SpaceScope::Active(SpaceId::from_trusted(FTS_SPACE_A_ID)),
             ..Default::default()
         },
         None,
@@ -5529,7 +5530,7 @@ async fn partitioned_space_filter_excludes_other_spaces_from_both_partitions() {
         10,
         10,
         crate::domain::search_types::SearchFilter {
-            space_id: Some(FTS_SPACE_A_ID.to_string()),
+            scope: SpaceScope::Active(SpaceId::from_trusted(FTS_SPACE_A_ID)),
             ..Default::default()
         },
         None,
@@ -6076,7 +6077,7 @@ async fn partitioned_all_filters_populated_executes_cleanly() {
     let filter = crate::domain::search_types::SearchFilter {
         parent_id: Some(PT_PAGE_IDS[0].to_string()),
         tag_ids: vec!["01HQTAG000000000000000TAG1".to_string()],
-        space_id: Some(FTS_SPACE_A_ID.to_string()),
+        scope: SpaceScope::Active(SpaceId::from_trusted(FTS_SPACE_A_ID)),
         include_page_globs: vec!["*page*".to_string()],
         exclude_page_globs: vec!["*never*".to_string()],
         case_sensitive: true,
@@ -8076,7 +8077,7 @@ async fn search_empty_space_id_matches_nothing() {
         10,
         10,
         crate::domain::search_types::SearchFilter {
-            space_id: Some(String::new()),
+            scope: SpaceScope::Active(SpaceId::from_trusted("")),
             ..Default::default()
         },
         None,

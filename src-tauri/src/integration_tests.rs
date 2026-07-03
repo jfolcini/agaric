@@ -1769,7 +1769,7 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
         None,
         None,
         crate::commands::SearchFilter {
-            space_id: Some(TEST_SPACE_ID.into()),
+            scope: SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
             ..Default::default()
         },
         None,
@@ -1806,7 +1806,7 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
         None,
         None,
         crate::commands::SearchFilter {
-            space_id: Some(TEST_SPACE_ID.into()),
+            scope: SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
             ..Default::default()
         },
         None,
@@ -1825,7 +1825,7 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
         None,
         None,
         crate::commands::SearchFilter {
-            space_id: Some(TEST_SPACE_ID.into()),
+            scope: SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
             ..Default::default()
         },
         None,

@@ -4,6 +4,7 @@ use crate::commands::{create_block_inner, create_space_inner};
 use crate::db::init_pool;
 use crate::materializer::Materializer;
 use crate::mcp::actor::Actor;
+use crate::space::{SpaceId, SpaceScope};
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -646,7 +647,7 @@ async fn search_snippet_len_truncates_mcp_but_not_fe_path() {
         None,
         Some(SEARCH_RESULT_CAP),
         crate::commands::SearchFilter {
-            space_id: Some(TEST_SPACE_ID.into()),
+            scope: SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
             ..Default::default()
         },
         None,
@@ -2191,7 +2192,7 @@ proptest::proptest! {
                 None,
                 Some(SEARCH_RESULT_CAP),
                 crate::commands::SearchFilter {
-                    space_id: Some(TEST_SPACE_ID.into()),
+                    scope: SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
                     ..Default::default()
                 },
                 None,

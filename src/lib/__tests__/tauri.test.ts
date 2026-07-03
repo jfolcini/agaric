@@ -614,7 +614,8 @@ describe('searchBlocks', () => {
       filter: {
         parentId: null,
         tagIds: [],
-        spaceId: 'TEST_SPACE_01',
+        // #2248 c — the filter carries a `scope: SpaceScope`, not a bare id.
+        scope: { kind: 'active', space_id: 'TEST_SPACE_01' },
         // Additive fields default to empty arrays.
         includePageGlobs: [],
         excludePageGlobs: [],
@@ -671,7 +672,8 @@ describe('searchBlocks', () => {
       filter: {
         parentId: null,
         tagIds: [],
-        spaceId: 'TEST_SPACE_01',
+        // #2248 c — the filter carries a `scope: SpaceScope`, not a bare id.
+        scope: { kind: 'active', space_id: 'TEST_SPACE_01' },
         // Additive fields default to empty arrays.
         includePageGlobs: [],
         excludePageGlobs: [],
@@ -695,12 +697,12 @@ describe('searchBlocks', () => {
     expect(result).toEqual(pageResp)
   })
 
-  it('forwards spaceId verbatim to the binding inside `filter` (Phase 4)', async () => {
+  it('wraps spaceId into an active scope inside `filter` (#2248 c)', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
     await searchBlocks({ query: 'q', spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
     const filter = args['filter'] as Record<string, unknown>
-    expect(filter['spaceId']).toBe('SPACE_42')
+    expect(filter['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
   })
 
   it('marshals parentId and tagIds into the filter struct', async () => {
@@ -718,7 +720,8 @@ describe('searchBlocks', () => {
       filter: {
         parentId: 'PAGE1',
         tagIds: ['TAG1', 'TAG2'],
-        spaceId: 'SPACE_42',
+        // #2248 c — the filter carries a `scope: SpaceScope`, not a bare id.
+        scope: { kind: 'active', space_id: 'SPACE_42' },
         // Additive fields default to empty arrays.
         includePageGlobs: [],
         excludePageGlobs: [],
