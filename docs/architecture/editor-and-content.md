@@ -42,6 +42,8 @@ Five inline pickers share one mechanism (`src/editor/extensions/picker-plugin.ts
 
 **Capture before await.** Every picker captures `insertPos = editor.state.selection.from` BEFORE its async IPC call. After the await, if `insertPos > editor.state.doc.content.size` (the doc shrank), it falls back to inserting at the current cursor. This is the documented contract; missing the guard is a classic stale-position bug.
 
+**Never `instanceof TextSelection` / `NodeSelection` in app code.** `@tiptap/pm/state` can resolve to a *different module copy* than the one a given selection object was constructed from (multiple entry points re-export ProseMirror), so `selection instanceof TextSelection` is silently **always false** even for a genuine text selection. This broke the bubble menu once already. Duck-type on structural properties instead: `'node' in selection` distinguishes a `NodeSelection`; gate text-selection logic on `selection.empty` / `selection.from` / `selection.to`. The same hazard applies to any `instanceof` against a ProseMirror class (`Node`, `Mark`, `Fragment`). Always run the editor e2e (`npx playwright test e2e/*.spec.ts --workers=1`) locally before pushing a bubble-menu / selection change — unit tests mock the editor and miss this.
+
 **Chip deletion.** Pressing `Backspace` immediately after a picker-inserted chip deletes the whole chip atom in one keystroke. The `tag-ref` / `block-link` / `block-ref` node types implement this on `Backspace`. (It does not re-expand to source text: the `@` / `[[` / `((` suggestion plugins only reopen on a user-typed trigger char, so re-inserting text would leave an inert string behind — the user retypes the trigger to open the picker again.)
 
 ## Auto-split on blur
