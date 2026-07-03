@@ -16,6 +16,7 @@ use crate::import;
 use crate::import::{ImportProgressSink, ImportProgressUpdate, ImportResult, VaultFile};
 use crate::materializer::Materializer;
 use crate::pagination::{BlockRow, Cursor, NULL_POSITION_SENTINEL, PageRequest};
+use crate::space::SpaceId;
 use crate::ulid::{BlockId, PageId};
 
 use super::super::*;
@@ -2115,7 +2116,7 @@ pub async fn import_markdown(
     app: tauri::AppHandle,
     content: String,
     filename: Option<String>,
-    space_id: String,
+    space_id: SpaceId,
     // #1925 — referenced vault files' bytes. `None`/omitted ⇒ no attachment
     // ingest (the pre-#1925 behaviour). PR 2 wires the frontend picker to
     // pre-scan + supply only the referenced siblings.
@@ -2124,6 +2125,11 @@ pub async fn import_markdown(
     ctx: State<'_, WriteCtx>,
 ) -> Result<ImportResult, AppError> {
     use tauri::Manager;
+    // b2 (#2248): required-target-space commands take the `SpaceId` newtype at
+    // the wire boundary. The lenient `Deserialize` only uppercases, so reject a
+    // malformed id here rather than letting a never-matching filter reach the
+    // in-transaction space-existence check with an opaque error.
+    space_id.validate_shape()?;
     let app_data_dir = app
         .path()
         .app_data_dir()
@@ -2135,7 +2141,7 @@ pub async fn import_markdown(
         &app_data_dir,
         content,
         filename,
-        space_id,
+        space_id.into_string(),
         vault_files,
         Some(&progress),
     )

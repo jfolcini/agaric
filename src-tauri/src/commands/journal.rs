@@ -9,7 +9,7 @@ use crate::db::{CommandTx, ReadPool, WriteCtx};
 use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::pagination::BlockRow;
-use crate::space::SpaceScope;
+use crate::space::{SpaceId, SpaceScope};
 
 use super::sanitize_internal_error;
 use super::*;
@@ -292,14 +292,19 @@ pub async fn quick_capture_block_inner(
 pub async fn quick_capture_block(
     ctx: State<'_, WriteCtx>,
     content: String,
-    space_id: String,
+    space_id: SpaceId,
 ) -> Result<BlockRow, AppError> {
+    // b2 (#2248): required-target-space commands take the `SpaceId` newtype at
+    // the wire boundary. The lenient `Deserialize` only uppercases, so reject a
+    // malformed id here rather than letting a never-matching filter reach the
+    // space-existence check with an opaque error.
+    space_id.validate_shape()?;
     quick_capture_block_inner(
         ctx.pool(),
         ctx.device_id(),
         ctx.materializer(),
         content,
-        &space_id,
+        space_id.as_str(),
     )
     .await
     .map_err(sanitize_internal_error)
