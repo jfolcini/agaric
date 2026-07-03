@@ -232,10 +232,10 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
         onOpenChange={(open) => {
           if (!open) setDeleteTarget(null)
         }}
-        title={t('property.deleteConfirm')}
-        description={t('property.deleteConfirmDesc')}
-        cancelLabel={t('action.cancel')}
-        actionLabel={t('action.delete')}
+        titleKey="property.deleteConfirm"
+        descriptionKey="property.deleteConfirmDesc"
+        cancelKey="action.cancel"
+        confirmKey="action.delete"
         onConfirm={handleConfirmDelete}
       />
     </div>

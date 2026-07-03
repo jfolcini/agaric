@@ -59,10 +59,11 @@ export function HistoryRevertDialog({
     <ConfirmDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={t('history.revertTitle', { count })}
-      description={t('history.revertDescription', { count })}
-      cancelLabel={t('history.cancelButton')}
-      actionLabel={t('history.revertButton')}
+      titleKey="history.revertTitle"
+      descriptionKey="history.revertDescription"
+      cancelKey="history.cancelButton"
+      confirmKey="history.revertButton"
+      values={{ count }}
       variant="destructive"
       onConfirm={handleAction}
       loading={reverting}

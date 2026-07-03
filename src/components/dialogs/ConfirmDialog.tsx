@@ -9,9 +9,8 @@
  *
  *  - i18n-first: pass `titleKey` / `descriptionKey` / `confirmKey` /
  *    optional `cancelKey` (and optional `values` for interpolation).
- *  - Legacy fallback: pre-resolved `title` / `description` / `actionLabel`
- *    / `cancelLabel` still work (explicit string overrides the key when
- *    both are set).
+ *    Labels are always resolved from i18n keys — there is no pre-resolved
+ *    string escape hatch.
  *  - Async-aware: `onConfirm` may return
  *    `Promise<void>`. The dialog disables both buttons + shows a spinner
  *    on the confirm button while pending, closes via `onOpenChange(false)`
@@ -93,16 +92,6 @@ export interface ConfirmDialogProps {
   /** Values for i18n interpolation (passed to `t()`). */
   values?: Record<string, string | number>
 
-  // ─── Pre-resolved strings (legacy fallback) ────────────────────────────
-  /** Pre-resolved title — overrides `titleKey` when both are set. */
-  title?: string
-  /** Pre-resolved description — overrides `descriptionKey` when both are set. */
-  description?: React.ReactNode
-  /** Pre-resolved confirm label — overrides `confirmKey` when both are set. */
-  actionLabel?: string
-  /** Pre-resolved cancel label — overrides `cancelKey` when both are set. */
-  cancelLabel?: string
-
   // ─── Visual + behavior ────────────────────────────────────────────────
   /** Styles the confirm button. `'destructive'` also flips initial focus to Cancel. */
   variant?: 'default' | 'destructive'
@@ -138,7 +127,6 @@ export interface ConfirmDialogProps {
   actionTestId?: string | undefined
 }
 
-// oxlint-disable-next-line eslint/complexity -- complexity 27 vs max 25. The merge unifies two APIs (i18n keys + pre-resolved strings) + sync/async onConfirm + mobile Sheet + optional secondaryAction; splitting would scatter the dual-path logic.
 export function ConfirmDialog({
   open,
   onOpenChange,
@@ -147,10 +135,6 @@ export function ConfirmDialog({
   confirmKey,
   cancelKey,
   values,
-  title,
-  description,
-  actionLabel,
-  cancelLabel,
   variant,
   onConfirm,
   onCancel,
@@ -170,24 +154,24 @@ export function ConfirmDialog({
   // when the caller actually provided it.
   const tk = useCallback((key: string): string => (values ? t(key, values) : t(key)), [t, values])
 
-  // ─── Resolve labels (explicit string > i18n key > default) ────────────
+  // ─── Resolve labels (i18n key > default) ──────────────────────────────
   // #1612: AlertDialog/Sheet require a non-empty accessible name (axe
-  // aria-dialog-name). Both `title` and `titleKey` are optional, so a caller
-  // omitting both would otherwise ship an empty Title node. Fall back to a
-  // generic i18n "Confirm" string and warn in dev so the omission is caught.
-  const resolvedTitleRaw = title ?? (titleKey ? tk(titleKey) : '')
+  // aria-dialog-name). `titleKey` is optional, so a caller omitting it would
+  // otherwise ship an empty Title node. Fall back to a generic i18n "Confirm"
+  // string and warn in dev so the omission is caught.
+  const resolvedTitleRaw = titleKey ? tk(titleKey) : ''
   const hasTitle = resolvedTitleRaw.trim().length > 0
   if (import.meta.env.DEV && !hasTitle) {
     console.warn(
-      'ConfirmDialog: neither `title` nor `titleKey` resolved to a non-empty ' +
-        'string; falling back to a generic accessible name. Provide a title to ' +
+      'ConfirmDialog: `titleKey` did not resolve to a non-empty string; ' +
+        'falling back to a generic accessible name. Provide a titleKey to ' +
         'avoid an empty aria-dialog-name (a11y) violation.',
     )
   }
   const resolvedTitle = hasTitle ? resolvedTitleRaw : t('dialog.confirm')
-  const resolvedDescription = description ?? (descriptionKey ? tk(descriptionKey) : '')
-  const resolvedCancelLabel = cancelLabel ?? (cancelKey ? t(cancelKey) : t('dialog.cancel'))
-  const resolvedActionLabel = actionLabel ?? (confirmKey ? t(confirmKey) : t('dialog.confirm'))
+  const resolvedDescription = descriptionKey ? tk(descriptionKey) : ''
+  const resolvedCancelLabel = cancelKey ? t(cancelKey) : t('dialog.cancel')
+  const resolvedActionLabel = confirmKey ? t(confirmKey) : t('dialog.confirm')
 
   // ─── Resolve variant + handler ────────────────────────────────────────
   const effectiveVariant = variant ?? 'default'

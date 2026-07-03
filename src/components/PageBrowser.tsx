@@ -651,10 +651,11 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         onOpenChange={(open) => {
           if (!open) setDeleteTarget(null)
         }}
-        title={t('pageBrowser.deletePage')}
-        description={t('pageBrowser.deleteDescription', { name: deleteTarget?.name })}
-        cancelLabel={t('pageBrowser.cancel')}
-        actionLabel={t('pageBrowser.delete')}
+        titleKey="pageBrowser.deletePage"
+        descriptionKey="pageBrowser.deleteDescription"
+        cancelKey="pageBrowser.cancel"
+        confirmKey="pageBrowser.delete"
+        values={{ name: deleteTarget?.name ?? '' }}
         variant="destructive"
         onConfirm={handleConfirmDelete}
       />

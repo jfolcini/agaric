@@ -331,8 +331,9 @@ export function TemplatesView(): React.ReactElement {
         onOpenChange={(open) => {
           if (!open) setPendingRemoval(null)
         }}
-        title={t('templates.removeConfirmTitle')}
-        description={t('templates.removeConfirmDesc', { name: pendingRemoval?.name ?? '' })}
+        titleKey="templates.removeConfirmTitle"
+        descriptionKey="templates.removeConfirmDesc"
+        values={{ name: pendingRemoval?.name ?? '' }}
         onConfirm={() => {
           if (pendingRemoval) {
             handleRemoveTemplate(pendingRemoval.id, pendingRemoval.name)

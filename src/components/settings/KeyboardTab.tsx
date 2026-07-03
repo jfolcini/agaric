@@ -281,9 +281,9 @@ export function KeyboardTab(): React.ReactElement {
       <ConfirmDialog
         open={confirmResetAll}
         onOpenChange={setConfirmResetAll}
-        title={t('keyboard.settings.resetAllTitle')}
-        description={t('keyboard.settings.resetAllConfirm')}
-        actionLabel={t('keyboard.settings.resetAllButton')}
+        titleKey="keyboard.settings.resetAllTitle"
+        descriptionKey="keyboard.settings.resetAllConfirm"
+        confirmKey="keyboard.settings.resetAllButton"
         variant="destructive"
         onConfirm={handleResetAll}
       />

@@ -6,7 +6,6 @@
  */
 
 import type React from 'react'
-import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 
@@ -21,15 +20,14 @@ export function TrashRestoreAllDialog({
   onOpenChange,
   onConfirm,
 }: TrashRestoreAllDialogProps): React.ReactElement {
-  const { t } = useTranslation()
   return (
     <ConfirmDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={t('trash.restoreAllTitle')}
-      description={t('trash.restoreAllDescription')}
-      cancelLabel={t('trash.noButton')}
-      actionLabel={t('trash.restoreButton')}
+      titleKey="trash.restoreAllTitle"
+      descriptionKey="trash.restoreAllDescription"
+      cancelKey="trash.noButton"
+      confirmKey="trash.restoreButton"
       onConfirm={onConfirm}
       className="trash-restore-all-confirm"
     />

@@ -5,7 +5,6 @@
  */
 
 import type React from 'react'
-import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 
@@ -29,18 +28,17 @@ export function TrashEmptyDialog({
   onOpenChange,
   onConfirm,
 }: TrashEmptyDialogProps): React.ReactElement {
-  const { t } = useTranslation()
-  const description = hasMore
-    ? t('trash.emptyTrashDescriptionPaginated', { count: itemCount })
-    : t('trash.emptyTrashDescription', { count: itemCount })
   return (
     <ConfirmDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={t('trash.emptyTrashTitle')}
-      description={description}
-      cancelLabel={t('trash.noButton')}
-      actionLabel={t('trash.yesDeleteButton')}
+      titleKey="trash.emptyTrashTitle"
+      descriptionKey={
+        hasMore ? 'trash.emptyTrashDescriptionPaginated' : 'trash.emptyTrashDescription'
+      }
+      cancelKey="trash.noButton"
+      confirmKey="trash.yesDeleteButton"
+      values={{ count: itemCount }}
       variant="destructive"
       onConfirm={onConfirm}
       className="trash-empty-confirm"

@@ -382,10 +382,10 @@ export function PropertyDefinitionsList(): React.ReactElement {
         onOpenChange={(open) => {
           if (!open) setDeleteTarget(null)
         }}
-        title={t('propertiesView.deleteConfirm')}
-        description={t('propertiesView.deleteDesc')}
-        cancelLabel={t('action.cancel')}
-        actionLabel={t('action.delete')}
+        titleKey="propertiesView.deleteConfirm"
+        descriptionKey="propertiesView.deleteDesc"
+        cancelKey="action.cancel"
+        confirmKey="action.delete"
         onConfirm={handleConfirmDelete}
       />
     </div>

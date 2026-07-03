@@ -121,13 +121,11 @@ export function CompactionCard(): React.ReactElement {
               <ConfirmDialog
                 open={confirmOpen}
                 onOpenChange={setConfirmOpen}
-                title={t('compaction.confirmTitle')}
-                description={t('compaction.confirmDescription', {
-                  count: status.eligible_ops,
-                  days: status.retention_days,
-                })}
-                cancelLabel={t('compaction.cancel')}
-                actionLabel={t('compaction.compactButton')}
+                titleKey="compaction.confirmTitle"
+                descriptionKey="compaction.confirmDescription"
+                cancelKey="compaction.cancel"
+                confirmKey="compaction.compactButton"
+                values={{ count: status.eligible_ops, days: status.retention_days }}
                 variant="destructive"
                 onConfirm={handleCompact}
                 loading={compacting}

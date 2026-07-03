@@ -253,11 +253,10 @@ export function SavedViews({
           if (!open) setDeleteTarget(null)
         }}
         variant="destructive"
-        title={t('advancedQuery.savedViews.delete')}
-        description={t('advancedQuery.savedViews.deleteConfirm', {
-          name: deleteTarget?.name ?? '',
-        })}
-        actionLabel={t('advancedQuery.savedViews.delete')}
+        titleKey="advancedQuery.savedViews.delete"
+        descriptionKey="advancedQuery.savedViews.deleteConfirm"
+        confirmKey="advancedQuery.savedViews.delete"
+        values={{ name: deleteTarget?.name ?? '' }}
         onConfirm={handleDelete}
       />
     </section>

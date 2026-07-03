@@ -6,7 +6,6 @@
  */
 
 import type React from 'react'
-import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 
@@ -23,15 +22,15 @@ export function TrashBatchRestoreDialog({
   onOpenChange,
   onConfirm,
 }: TrashBatchRestoreDialogProps): React.ReactElement {
-  const { t } = useTranslation()
   return (
     <ConfirmDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={t('trash.batchRestoreConfirmTitle', { count: selectedCount })}
-      description={t('trash.batchRestoreConfirmDescription', { count: selectedCount })}
-      cancelLabel={t('trash.noButton')}
-      actionLabel={t('trash.restoreButton')}
+      titleKey="trash.batchRestoreConfirmTitle"
+      descriptionKey="trash.batchRestoreConfirmDescription"
+      cancelKey="trash.noButton"
+      confirmKey="trash.restoreButton"
+      values={{ count: selectedCount }}
       onConfirm={onConfirm}
       className="trash-batch-restore-confirm"
       contentTestId="trash-batch-restore-confirm"

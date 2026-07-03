@@ -68,12 +68,13 @@ export function HistoryRestoreDialog({
     <ConfirmDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={t('history.restoreToTitle', {
+      titleKey="history.restoreToTitle"
+      descriptionKey="history.restoreToDescription"
+      cancelKey="history.cancelButton"
+      confirmKey="history.restoreButton"
+      values={{
         timestamp: restoreTarget ? formatTimestamp(restoreTarget.created_at, 'full') : '',
-      })}
-      description={t('history.restoreToDescription')}
-      cancelLabel={t('history.cancelButton')}
-      actionLabel={t('history.restoreButton')}
+      }}
       variant="destructive"
       onConfirm={handleAction}
       loading={restoring}
