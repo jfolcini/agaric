@@ -976,6 +976,9 @@ describe('LinkedReferences', () => {
     const container = screen.getByRole('group', { name: t('linkedRefs.listLabel') })
     expect(container).toBeInTheDocument()
     expect(container.className).toContain('linked-references-list')
+    // #2294 — the roving container shows a keyboard focus ring, matching its
+    // UnlinkedReferences sibling (was `outline-none`, no visible indication).
+    expect(container.className).toContain('focus-ring-visible')
   })
 
   // 22. calls list_backlinks_grouped with correct params on mount

@@ -399,7 +399,7 @@ export function LinkedReferences({
                 // APG composite alternative: aria-activedescendant on the
                 // focusable container + aria-current on the active row.
                 aria-activedescendant={focusedBlockId ? linkedRowDomId(focusedBlockId) : undefined}
-                className="linked-references-list outline-none"
+                className="linked-references-list focus-ring-visible"
               >
                 <BacklinkGroupRenderer
                   groups={groups}
