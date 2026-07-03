@@ -15,8 +15,8 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
-import { StatusFilterForm } from '@/components/backlink-filter/categories/StatusFilterForm'
-import { StateFilterForm } from '@/components/search/filter-forms/StateFilterForm'
+import { BacklinkStateFilterForm } from '@/components/backlink-filter/categories/BacklinkStateFilterForm'
+import { SearchStateFilterForm } from '@/components/search/filter-forms/SearchStateFilterForm'
 import { t } from '@/lib/i18n'
 
 import { STATE_FILTER_VALUES } from '../forms/stateVocabulary'
@@ -27,12 +27,12 @@ function optionValuesOf(select: HTMLElement): string[] {
 
 describe('state/status vocabulary is a single shared source', () => {
   it('search State and backlink Status offer the identical canonical set', () => {
-    const search = render(<StateFilterForm onAddFilter={() => {}} onBack={() => {}} />)
+    const search = render(<SearchStateFilterForm onAddFilter={() => {}} onBack={() => {}} />)
     const searchSelect = search.getByLabelText(t('search.filterHelper.stateValueLabel'))
     const searchValues = optionValuesOf(searchSelect)
     search.unmount()
 
-    const backlink = render(<StatusFilterForm />)
+    const backlink = render(<BacklinkStateFilterForm />)
     const statusSelect = screen.getByLabelText(t('backlink.statusValueLabel'))
     const statusValues = optionValuesOf(statusSelect)
     backlink.unmount()

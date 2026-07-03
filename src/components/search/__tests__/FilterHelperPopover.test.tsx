@@ -342,7 +342,7 @@ describe('FilterHelperPopover — path filters', () => {
     // `My "Q" Notes/*` would serialise to `path:"My "Q" Notes/*"`, which the
     // tokeniser closes at the `" ` boundary inside the value — the query
     // fragments into chip `My "Q` + free text on re-parse. The DSL has no
-    // escape syntax, so the form rejects the value (mirrors PropFilterForm's
+    // escape syntax, so the form rejects the value (mirrors SearchPropertyFilterForm's
     // #152 rule).
     const user = userEvent.setup()
     const { onAddPathInclude } = renderPopover()

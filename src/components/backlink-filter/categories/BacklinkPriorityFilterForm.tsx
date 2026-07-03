@@ -1,5 +1,5 @@
 /**
- * PriorityFilterForm — priority selector for the `priority` filter
+ * BacklinkPriorityFilterForm — priority selector for the `priority` filter
  * category.  Shortcut for `PropertyText` with key `priority`.
  *
  * Issue #2281 item 10 — the vocabulary is now the same user-configurable
@@ -20,11 +20,13 @@ import { usePriorityLevels } from '@/hooks/usePriorityLevels'
 
 import type { FilterFormHandle } from './types'
 
-export interface PriorityFilterFormProps {
+export interface BacklinkPriorityFilterFormProps {
   ref?: React.Ref<FilterFormHandle>
 }
 
-export function PriorityFilterForm({ ref }: PriorityFilterFormProps): React.ReactElement {
+export function BacklinkPriorityFilterForm({
+  ref,
+}: BacklinkPriorityFilterFormProps): React.ReactElement {
   const { t } = useTranslation()
   const priorityLevels = usePriorityLevels()
 

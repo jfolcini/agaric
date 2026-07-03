@@ -39,14 +39,14 @@ import { logger } from '@/lib/logger'
 import type { FilterToken } from '@/lib/search-query'
 import { listTagsByPrefix, paginationLimit, type TagCacheRow } from '@/lib/tauri'
 
-import { DateFilterForm } from './filter-forms/DateFilterForm'
-import { PriorityFilterForm } from './filter-forms/PriorityFilterForm'
-import { PropFilterForm } from './filter-forms/PropFilterForm'
-import { StateFilterForm } from './filter-forms/StateFilterForm'
+import { SearchDateFilterForm } from './filter-forms/SearchDateFilterForm'
+import { SearchPriorityFilterForm } from './filter-forms/SearchPriorityFilterForm'
+import { SearchPropertyFilterForm } from './filter-forms/SearchPropertyFilterForm'
+import { SearchStateFilterForm } from './filter-forms/SearchStateFilterForm'
 
 /**
  * #718 — a path glob cannot contain a literal `"` (mirrors
- * PropFilterForm's #152 value rule). The serialiser quotes globs with
+ * SearchPropertyFilterForm's #152 value rule). The serialiser quotes globs with
  * whitespace, but the DSL has no escape syntax for `"` inside the
  * quotes, so a glob carrying its own quote characters would not survive
  * the serialise → re-parse round-trip.
@@ -112,7 +112,7 @@ export function FilterHelperPopover({
   const trimmedPath = pathInput.trim()
   const pathValid = isPathGlobValid(trimmedPath)
   // Only surface the error once the field is non-empty (same pattern as
-  // PropFilterForm — don't yell at an empty form).
+  // SearchPropertyFilterForm — don't yell at an empty form).
   const showPathError = trimmedPath !== '' && !pathValid
 
   function reset() {
@@ -209,7 +209,7 @@ export function FilterHelperPopover({
     // #718 — the serialiser wraps a glob containing whitespace in
     // `"..."` and the recogniser strips the quotes on parse, so values
     // like `Meeting Notes/*` round-trip. A literal `"` inside the glob
-    // is rejected (mirrors PropFilterForm's #152 rule): the DSL has no
+    // is rejected (mirrors SearchPropertyFilterForm's #152 rule): the DSL has no
     // escape syntax, so a value like `My "Q" Notes/*` would serialise
     // to `path:"My "Q" Notes/*"` and fragment on re-parse.
     const v = pathInput.trim()
@@ -400,16 +400,16 @@ export function FilterHelperPopover({
           </form>
         )}
         {mode === 'state' && (
-          <StateFilterForm onAddFilter={handleStructuralAdd} onBack={backToMenu} />
+          <SearchStateFilterForm onAddFilter={handleStructuralAdd} onBack={backToMenu} />
         )}
         {mode === 'priority' && (
-          <PriorityFilterForm onAddFilter={handleStructuralAdd} onBack={backToMenu} />
+          <SearchPriorityFilterForm onAddFilter={handleStructuralAdd} onBack={backToMenu} />
         )}
         {(mode === 'due' || mode === 'scheduled') && (
-          <DateFilterForm kind={mode} onAddFilter={handleStructuralAdd} onBack={backToMenu} />
+          <SearchDateFilterForm kind={mode} onAddFilter={handleStructuralAdd} onBack={backToMenu} />
         )}
         {mode === 'prop' && (
-          <PropFilterForm onAddFilter={handleStructuralAdd} onBack={backToMenu} />
+          <SearchPropertyFilterForm onAddFilter={handleStructuralAdd} onBack={backToMenu} />
         )}
       </PopoverContent>
     </Popover>

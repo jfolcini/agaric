@@ -1,43 +1,39 @@
 /**
- * `state:` / `not-state:` builder form.
+ * `priority:` / `not-priority:` builder form.
  *
- * Issue #1647 follow-up — the State vocabulary is now the SINGLE canonical
- * task-state set shared with the backlink "Status" form via
- * `components/filters/forms/stateVocabulary.ts` (value set sourced from
- * `STATE_VALUES`, with translated labels). Emits a `state` or `notState`
- * `FilterToken` with `span: [0, 0]` and closes the popover.
+ * Priority vocabulary is the user-configurable `usePriorityLevels()` set
+ * plus the appended `none` sentinel — mirrors the `priorityValues` memo
+ * in `useAutocompleteSources`, NOT the backlink 1/2/3 shortlist. Emits a
+ * `priority` or `notPriority` `FilterToken` and closes the popover.
  */
 
 import type React from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { FilterValueSelect } from '@/components/filters/forms/FilterValueSelect'
-import {
-  STATE_FILTER_VALUES,
-  useStateFilterOptions,
-} from '@/components/filters/forms/stateVocabulary'
 import { Button } from '@/components/ui/button'
+import { usePriorityLevels } from '@/hooks/usePriorityLevels'
 import type { FilterToken } from '@/lib/search-query'
 
 import { IncludeExcludeToggle } from './IncludeExcludeToggle'
 
-export interface StateFilterFormProps {
+export interface SearchPriorityFilterFormProps {
   onAddFilter: (token: FilterToken) => void
   onBack: () => void
 }
 
-export function StateFilterForm({ onAddFilter, onBack }: StateFilterFormProps): React.ReactElement {
+export function SearchPriorityFilterForm({
+  onAddFilter,
+  onBack,
+}: SearchPriorityFilterFormProps): React.ReactElement {
   const { t } = useTranslation()
-  const stateOptions = useStateFilterOptions()
-  const [value, setValue] = useState<string>(STATE_FILTER_VALUES[0])
+  const priorityLevels = usePriorityLevels()
+  const priorityValues = useMemo(() => [...priorityLevels, 'none'], [priorityLevels])
+  const [value, setValue] = useState<string>(priorityValues[0] ?? 'none')
   const [negate, setNegate] = useState(false)
 
-  // Move focus into the sub-form on open so keyboard users
-  // aren't stranded on document.body when the clicked menu item unmounts.
-  // (Radix's PopoverContent only auto-focuses on the initial open, not on
-  // in-place content swaps, and `autoFocus` is unreliable on the Select
-  // trigger — see FilterHelperPopover.)
+  // Move focus into the sub-form on open (see SearchStateFilterForm).
   const triggerRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     triggerRef.current?.focus()
@@ -45,20 +41,20 @@ export function StateFilterForm({ onAddFilter, onBack }: StateFilterFormProps): 
 
   function submit() {
     const token: FilterToken = negate
-      ? { kind: 'notState', value, span: [0, 0] }
-      : { kind: 'state', value, span: [0, 0] }
+      ? { kind: 'notPriority', value, span: [0, 0] }
+      : { kind: 'priority', value, span: [0, 0] }
     onAddFilter(token)
   }
 
   return (
     <form
-      data-testid="state-filter-form"
+      data-testid="priority-filter-form"
       onSubmit={(e) => {
         e.preventDefault()
         submit()
       }}
     >
-      <div className="text-sm font-medium">{t('search.filterCategory.state')}</div>
+      <div className="text-sm font-medium">{t('search.filterCategory.priority')}</div>
       <div className="mt-2 flex flex-col gap-2">
         <IncludeExcludeToggle
           negate={negate}
@@ -68,11 +64,11 @@ export function StateFilterForm({ onAddFilter, onBack }: StateFilterFormProps): 
           excludeLabel={t('search.filterHelper.exclude')}
         />
         <FilterValueSelect
-          options={stateOptions}
+          options={priorityValues.map((p) => ({ value: p }))}
           value={value}
           onValueChange={setValue}
           triggerRef={triggerRef}
-          ariaLabel={t('search.filterHelper.stateValueLabel')}
+          ariaLabel={t('search.filterHelper.priorityValueLabel')}
         />
       </div>
       <div className="mt-2 flex gap-2 justify-end">

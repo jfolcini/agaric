@@ -1,5 +1,5 @@
 /**
- * StatusFilterForm — todo-status selector for the `status` filter
+ * BacklinkStateFilterForm — todo-status selector for the `status` filter
  * category.  Shortcut for `PropertyText` with key `todo`.
  *
  * Issue #1647 follow-up — the value vocabulary is now the SINGLE canonical
@@ -21,11 +21,11 @@ import { useStateFilterOptions } from '@/components/filters/forms/stateVocabular
 
 import type { FilterFormHandle } from './types'
 
-export interface StatusFilterFormProps {
+export interface BacklinkStateFilterFormProps {
   ref?: React.Ref<FilterFormHandle>
 }
 
-export function StatusFilterForm({ ref }: StatusFilterFormProps): React.ReactElement {
+export function BacklinkStateFilterForm({ ref }: BacklinkStateFilterFormProps): React.ReactElement {
   const { t } = useTranslation()
   const statusOptions = useStateFilterOptions()
   const [statusValue, setStatusValue] = useState('TODO')

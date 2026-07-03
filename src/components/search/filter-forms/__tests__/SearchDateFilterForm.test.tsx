@@ -1,5 +1,5 @@
 /**
- * Tests for DateFilterForm — focus on the #2275 op-mode ISO validation.
+ * Tests for SearchDateFilterForm — focus on the #2275 op-mode ISO validation.
  *
  * The comparison ("op") shape must apply the SAME calendar-aware YYYY-MM-DD
  * check the parser uses before it can emit a `due:`/`scheduled:` token. Gating
@@ -15,14 +15,19 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import { DateFilterForm } from '../DateFilterForm'
+import { SearchDateFilterForm } from '../SearchDateFilterForm'
 
-describe('DateFilterForm — op-mode ISO validation (#2275)', () => {
+describe('SearchDateFilterForm — op-mode ISO validation (#2275)', () => {
   it('keeps Add disabled, shows an error, and emits nothing for an invalid date', async () => {
     const user = userEvent.setup()
     const onAddFilter = vi.fn()
     render(
-      <DateFilterForm kind="due" onAddFilter={onAddFilter} onBack={() => {}} initialShape="op" />,
+      <SearchDateFilterForm
+        kind="due"
+        onAddFilter={onAddFilter}
+        onBack={() => {}}
+        initialShape="op"
+      />,
     )
 
     const dateInput = screen.getByLabelText('Date')
@@ -47,7 +52,7 @@ describe('DateFilterForm — op-mode ISO validation (#2275)', () => {
     const user = userEvent.setup()
     const onAddFilter = vi.fn()
     render(
-      <DateFilterForm
+      <SearchDateFilterForm
         kind="scheduled"
         onAddFilter={onAddFilter}
         onBack={() => {}}

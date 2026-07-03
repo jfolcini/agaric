@@ -24,7 +24,7 @@ import type { FilterToken } from '@/lib/search-query'
 
 import { IncludeExcludeToggle } from './IncludeExcludeToggle'
 
-export interface PropFilterFormProps {
+export interface SearchPropertyFilterFormProps {
   onAddFilter: (token: FilterToken) => void
   onBack: () => void
 }
@@ -44,7 +44,10 @@ function isValueValid(value: string): boolean {
   return !/"/.test(value)
 }
 
-export function PropFilterForm({ onAddFilter, onBack }: PropFilterFormProps): React.ReactElement {
+export function SearchPropertyFilterForm({
+  onAddFilter,
+  onBack,
+}: SearchPropertyFilterFormProps): React.ReactElement {
   const { t } = useTranslation()
   const [key, setKey] = useState('')
   const [value, setValue] = useState('')

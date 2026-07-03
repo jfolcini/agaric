@@ -1,5 +1,5 @@
 /**
- * CR-MINOR — dedicated tests for `<StateFilterForm>`.
+ * CR-MINOR — dedicated tests for `<SearchStateFilterForm>`.
  *
  * Previously covered only transitively via `FilterHelperPopover.test.tsx`.
  * The form builds a `state` / `not-state` `FilterToken` from the SEARCH
@@ -24,7 +24,7 @@ import { axe } from 'vitest-axe'
 import { STATE_FILTER_VALUES } from '@/components/filters/forms/stateVocabulary'
 import { t } from '@/lib/i18n'
 
-import { StateFilterForm } from '../filter-forms/StateFilterForm'
+import { SearchStateFilterForm } from '../filter-forms/SearchStateFilterForm'
 
 function setup(): {
   onAddFilter: ReturnType<typeof vi.fn>
@@ -33,7 +33,7 @@ function setup(): {
 } {
   const onAddFilter = vi.fn()
   const onBack = vi.fn()
-  const { container } = render(<StateFilterForm onAddFilter={onAddFilter} onBack={onBack} />)
+  const { container } = render(<SearchStateFilterForm onAddFilter={onAddFilter} onBack={onBack} />)
   return { onAddFilter, onBack, container }
 }
 
@@ -46,7 +46,7 @@ const backButton = (): HTMLElement =>
 const excludeRadio = (): HTMLElement =>
   screen.getByRole('radio', { name: t('search.filterHelper.exclude') })
 
-describe('StateFilterForm — render', () => {
+describe('SearchStateFilterForm — render', () => {
   it('renders the form scaffold and controls', () => {
     setup()
     expect(screen.getByTestId('state-filter-form')).toBeInTheDocument()
@@ -75,7 +75,7 @@ describe('StateFilterForm — render', () => {
   })
 })
 
-describe('StateFilterForm — interaction', () => {
+describe('SearchStateFilterForm — interaction', () => {
   it('emits a `state` token for the selected value', async () => {
     const user = userEvent.setup()
     const { onAddFilter } = setup()
@@ -109,7 +109,7 @@ describe('StateFilterForm — interaction', () => {
   })
 })
 
-describe('StateFilterForm — a11y', () => {
+describe('SearchStateFilterForm — a11y', () => {
   it('has no axe violations', async () => {
     const { container } = setup()
     expect(await axe(container as any)).toHaveNoViolations()

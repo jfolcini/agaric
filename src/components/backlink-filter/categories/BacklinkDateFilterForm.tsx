@@ -1,5 +1,5 @@
 /**
- * DateFilterForm — `after`/`before` date range for the `date` filter
+ * BacklinkDateFilterForm — `after`/`before` date range for the `date` filter
  * category (CreatedInRange).
  */
 
@@ -11,11 +11,11 @@ import { SearchInput } from '@/components/ui/search-input'
 
 import type { FilterFormHandle } from './types'
 
-export interface DateFilterFormProps {
+export interface BacklinkDateFilterFormProps {
   ref?: React.Ref<FilterFormHandle>
 }
 
-export function DateFilterForm({ ref }: DateFilterFormProps): React.ReactElement {
+export function BacklinkDateFilterForm({ ref }: BacklinkDateFilterFormProps): React.ReactElement {
   const { t } = useTranslation()
   const [dateAfter, setDateAfter] = useState('')
   const [dateBefore, setDateBefore] = useState('')

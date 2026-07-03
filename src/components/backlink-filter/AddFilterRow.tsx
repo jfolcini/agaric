@@ -28,14 +28,14 @@ import {
 import { notify } from '@/lib/notify'
 
 import type { BacklinkFilter } from '../../lib/tauri'
+import { BacklinkDateFilterForm } from './categories/BacklinkDateFilterForm'
+import { BacklinkPriorityFilterForm } from './categories/BacklinkPriorityFilterForm'
+import { BacklinkPropertyFilterForm } from './categories/BacklinkPropertyFilterForm'
+import { BacklinkStateFilterForm } from './categories/BacklinkStateFilterForm'
 import { ContainsFilterForm } from './categories/ContainsFilterForm'
-import { DateFilterForm } from './categories/DateFilterForm'
 import { HasTagFilterForm } from './categories/HasTagFilterForm'
-import { PriorityFilterForm } from './categories/PriorityFilterForm'
 import { PropertyEmptyFilterForm } from './categories/PropertyEmptyFilterForm'
-import { PropertyFilterForm } from './categories/PropertyFilterForm'
 import { PropertySetFilterForm } from './categories/PropertySetFilterForm'
-import { StatusFilterForm } from './categories/StatusFilterForm'
 import { TagPrefixFilterForm } from './categories/TagPrefixFilterForm'
 import { TypeFilterForm } from './categories/TypeFilterForm'
 import type { BuildState, FilterFormHandle } from './categories/types'
@@ -282,11 +282,13 @@ export function AddFilterRow({
       </Select>
 
       {category === 'type' && <TypeFilterForm ref={formRef} />}
-      {category === 'status' && <StatusFilterForm ref={formRef} />}
-      {category === 'priority' && <PriorityFilterForm ref={formRef} />}
+      {category === 'status' && <BacklinkStateFilterForm ref={formRef} />}
+      {category === 'priority' && <BacklinkPriorityFilterForm ref={formRef} />}
       {category === 'contains' && <ContainsFilterForm ref={formRef} />}
-      {category === 'property' && <PropertyFilterForm ref={formRef} propertyKeys={propertyKeys} />}
-      {category === 'date' && <DateFilterForm ref={formRef} />}
+      {category === 'property' && (
+        <BacklinkPropertyFilterForm ref={formRef} propertyKeys={propertyKeys} />
+      )}
+      {category === 'date' && <BacklinkDateFilterForm ref={formRef} />}
       {category === 'property-set' && (
         <PropertySetFilterForm ref={formRef} propertyKeys={propertyKeys} />
       )}

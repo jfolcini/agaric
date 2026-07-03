@@ -1,5 +1,5 @@
 /**
- * Tests for `<PropFilterForm>` round-trip validation.
+ * Tests for `<SearchPropertyFilterForm>` round-trip validation.
  *
  * The prop DSL has no quoting, so a KEY containing whitespace / `=` / `"`,
  * or a VALUE containing whitespace / `"`, would silently corrupt the
@@ -20,12 +20,14 @@ import { axe } from 'vitest-axe'
 
 import { t } from '@/lib/i18n'
 
-import { PropFilterForm } from '../filter-forms/PropFilterForm'
+import { SearchPropertyFilterForm } from '../filter-forms/SearchPropertyFilterForm'
 
 function setup(): { onAddFilter: ReturnType<typeof vi.fn>; container: HTMLElement } {
   const onAddFilter = vi.fn()
   const onBack = vi.fn()
-  const { container } = render(<PropFilterForm onAddFilter={onAddFilter} onBack={onBack} />)
+  const { container } = render(
+    <SearchPropertyFilterForm onAddFilter={onAddFilter} onBack={onBack} />,
+  )
   return { onAddFilter, container }
 }
 
@@ -34,7 +36,7 @@ const valueInput = (): HTMLElement => screen.getByLabelText(t('search.filterHelp
 const addButton = (): HTMLElement =>
   screen.getByRole('button', { name: t('search.filterHelper.add') })
 
-describe('PropFilterForm — round-trip validation', () => {
+describe('SearchPropertyFilterForm — round-trip validation', () => {
   it('rejects a key containing `=` — Add disabled + inline error', async () => {
     const user = userEvent.setup()
     const { onAddFilter } = setup()
