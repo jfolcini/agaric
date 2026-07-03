@@ -314,7 +314,11 @@ jobs:
         # moved off the cargo-install fallback below.
         uses: taiki-e/install-action@9bcaee1dcae34154180f412e2fa69355a7cda9f6 # v2.82.6
         with:
-          tool: cargo-deny,cargo-machete,cargo-audit,sqruff,typos-cli,zizmor,taplo-cli,prek
+          # sqruff pinned: unpinned resolves to latest via cargo-binstall's
+          # from-source fallback, and sqruff >=0.39 requires rustc 1.96 while
+          # this repo pins 1.95.0 (rust-toolchain.toml) — reds the whole lint
+          # job. 0.38.x supports rustc 1.94/1.95. Bump when the rustc pin moves.
+          tool: cargo-deny,cargo-machete,cargo-audit,sqruff@0.38.0,typos-cli,zizmor,taplo-cli,prek
 
       - name: Install sqlx-cli (custom features, cargo fallback)
         # sqlx-cli with the right features set isn't covered by
