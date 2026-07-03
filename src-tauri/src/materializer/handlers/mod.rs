@@ -102,6 +102,11 @@ pub(crate) use apply::{
     collect_delete_cohort, collect_restore_cohort, dispatch_delete_descendants,
     dispatch_restore_ancestors, dispatch_restore_descendants,
 };
+// #2325/#2250: the single collapsed apply-projection entry point. The LOCAL
+// command sites route through this (`advance_cursor = false`) instead of
+// calling `apply_*_via_loro` directly, so the LOCAL and REMOTE paths share one
+// projection function whose only variation is the cursor-advance flag.
+pub(crate) use apply::apply_op_projected;
 // #2128 test-only: surface the LOCAL SQL purge cascade so the inbound-purge
 // parity test can build a local-purge oracle DB (re-exported up through
 // `materializer/mod.rs`).

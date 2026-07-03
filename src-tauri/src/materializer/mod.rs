@@ -50,11 +50,17 @@ pub(crate) use handlers::recompute_pages_cache_counts_for_pages;
 // per-seed in-tx helper (the helper's single-root SQL projection would
 // double-count the multi-root cascade, and a post-cascade call hits dead space
 // resolution — the pre-captured space sidesteps both).
+// #2325/#2250: the AddTag / RemoveTag / SetProperty / DeleteProperty LOCAL
+// command sites no longer call `apply_*_via_loro` directly — they route through
+// `apply_op_projected` — so those four re-exports were dropped from here.
+// `apply_edit_block_via_loro` remains (EditBlock is NOT collapsed — see below).
 pub(crate) use handlers::{
-    apply_add_tag_via_loro, apply_delete_property_via_loro, apply_edit_block_via_loro,
-    apply_remove_tag_via_loro, apply_set_property_via_loro, collect_delete_cohort,
-    collect_restore_cohort, dispatch_delete_descendants, dispatch_restore_descendants,
+    apply_edit_block_via_loro, collect_delete_cohort, collect_restore_cohort,
+    dispatch_delete_descendants, dispatch_restore_descendants,
 };
+// #2325/#2250: the single collapsed apply-projection entry point the LOCAL
+// command sites route through (`advance_cursor = false`).
+pub(crate) use handlers::apply_op_projected;
 #[cfg(test)]
 use handlers::{handle_background_task, handle_foreground_task};
 // #1993: re-exported test-only so command-level tests can drive the GC pass

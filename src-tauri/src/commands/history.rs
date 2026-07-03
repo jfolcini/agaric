@@ -178,6 +178,12 @@ async fn reverse_move_block(
 /// Only handles the subset of op types that can result from `compute_reverse`:
 /// `DeleteBlock`, `RestoreBlock`, `EditBlock`, `MoveBlock`, `AddTag`,
 /// `RemoveTag`, `SetProperty`, `DeleteProperty`, `DeleteAttachment`.
+///
+/// #2325/#2250 — INTENTIONAL EXCEPTION to the single-entry-point apply collapse.
+/// Undo/redo applies the *reverse* effect via bespoke reverse SQL (it is NOT an
+/// op replayed through `apply_op_projected`/`apply_op_tx`); this is a documented,
+/// permanent exception (Stage 3), NOT a site to route through the collapsed
+/// projection. Leave it as reverse SQL.
 pub async fn apply_reverse_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     reverse_payload: &OpPayload,

@@ -576,6 +576,15 @@ pub async fn delete_block_inner(
 /// whole tx aborts with `InvalidOperation` (the safer choice: a
 /// "delete everything but skip the space" outcome would silently
 /// surface as data the user thought they deleted).
+///
+/// #2325/#2250 — INTENTIONAL EXCEPTION to the single-entry-point apply collapse.
+/// The MULTI-ROOT batch delete soft-deletes several roots in ONE combined
+/// cascade CTE (`json_each(?1)` seeds every root at once). It is deliberately
+/// NOT routed through `apply_op_projected` (which projects a single
+/// `DeleteBlock` at a time): fanning it out into N per-root
+/// `apply_op_projected` calls would lose the single-pass combined-cascade
+/// UPDATE. This is a documented, permanent exception (Stage 3) — leave the
+/// combined cascade as-is.
 #[instrument(skip(pool, device_id, materializer, block_ids), err)]
 pub async fn delete_blocks_by_ids_inner(
     pool: &SqlitePool,
@@ -2109,8 +2118,12 @@ pub(crate) async fn delete_property_in_tx(
     // space cannot be resolved the helper internally FALLS BACK to
     // `apply_delete_property_sql_only`, which runs the SAME projection — so the
     // clear is never skipped and we never crash.
-    crate::materializer::apply_delete_property_via_loro(&mut *tx, state, device_id, &del_payload)
-        .await?;
+    // #2325/#2250: route through the collapsed single-entry-point projection
+    // (`advance_cursor = false`, #1257). It re-derives the
+    // `DeletePropertyPayload` from `op_record.payload` and runs the SAME
+    // `apply_delete_property_via_loro` (DeleteProperty is `PreOpState::None`, so
+    // `apply_op_tx`'s count maintenance is a no-op and the effects are empty).
+    crate::materializer::apply_op_projected(&mut *tx, &op_record, state, false).await?;
 
     Ok(op_record)
 }

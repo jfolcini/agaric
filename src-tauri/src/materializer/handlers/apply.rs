@@ -51,67 +51,15 @@ pub(super) async fn apply_op(
     // a `warn!` if slow) instead of mid-tx `busy_timeout` stalls
     // under SQLite's default DEFERRED isolation.
     let mut tx = crate::db::begin_immediate_logged(pool, "materializer_apply_op").await?;
-    // #2200: single-op apply is a "chunk of one" — pass `None` so the derived
-    // maintenance passes (dense reproject, count recompute) run inline, exactly
-    // as before this refactor. Only the batch import path opts into deferral.
-    let effects = apply_op_tx(&mut tx, record, None, state).await?;
-    // #412 / #667 — SINGLE-DEVICE-CURSOR ASSUMPTION (single-op mirror of
-    // the `BatchApplyOps` arm's guard in `task_handlers.rs`).
-    //
-    // `advance_apply_cursor` below moves a SINGLE GLOBAL scalar cursor to
-    // `record.seq`, but `op_log.seq` is a PER-DEVICE counter (PK
-    // `(device_id, seq)`). Advancing the global cursor for an op from one
-    // device is only sound when the entire op_log belongs to that ONE
-    // device — otherwise the cursor jumps past another device's
-    // unmaterialised ops (which sit at `seq <= cursor`) and boot replay
-    // silently drops them. The batch arm `debug_assert!`s the equivalent
-    // within-batch invariant, and boot replay (`recovery::replay`)
-    // hard-errors on a multi-device op_log in ALL builds; this is the
-    // missing single-op counterpart.
-    //
-    // It is a `debug_assert!` (not a release-build `return Err`) on
-    // purpose: multi-device single-op apply is NOT a supported production
-    // path. Multi-device sync is unshipped (the remote-apply path is
-    // test-only and the SyncDaemon is dormant until a peer is paired), and
-    // `apply_op` is reached only via the test-only `dispatch_op` helper
-    // today (see its doc comment). The release-build guard already lives at
-    // boot (`replay.rs` `#412`); this assert exists to catch a test/dev
-    // regression that wires a multi-device single-op apply before the
-    // per-device watermark cursor lands. Remove once that cursor ships.
-    #[cfg(debug_assertions)]
-    {
-        // #2282 — index-backed O(log N) single-device probe. The previous form
-        // ran `COUNT(DISTINCT device_id)`, a FULL op_log scan, on EVERY
-        // single-op apply — O(N) per op, i.e. O(N²) across a bulk apply pass.
-        // The op_log PK `(device_id, seq)` indexes `device_id`, so `MIN`/`MAX`
-        // are first/last index seeks: equal MIN and MAX ⇒ the whole log is one
-        // device (COALESCE handles the empty log — vacuously single-device).
-        // Compile-checked `query_scalar!` (not the runtime fn form) so it stays
-        // schema-validated at build time and carries no #646 dynamic-SQL marker
-        // burden. This keeps the same #412 single-device invariant genuinely
-        // enforced in dev/test — the batch arm asserts the in-batch records
-        // share one device; the single-op equivalent is that the op_log as a
-        // whole is single-device (the property the replay guard enforces in all
-        // builds). (Boot replay itself now batches via `BatchApplyOps`, so the
-        // old per-op O(N²) scan no longer fires on the replay hot path either.)
-        let single_device: bool = sqlx::query_scalar!(
-            r#"SELECT COALESCE(MIN(device_id) = MAX(device_id), 1) AS "single!: bool" FROM op_log"#
-        )
-        .fetch_one(&mut *tx)
-        .await?;
-        debug_assert!(
-            single_device,
-            "apply_op advances a single global apply cursor for device {:?} but \
-             op_log spans multiple devices; the single global cursor cannot \
-             represent per-device watermarks — per-device cursor partitioning is \
-             required (backend audit #412)",
-            record.device_id,
-        );
-    }
-    // C-2b: advance the cursor in the same tx so `apply + cursor` are
-    // atomic. A crash between the apply and the commit rolls both back
-    // together; the cursor never points ahead of materialised state.
-    advance_apply_cursor(&mut tx, record.seq).await?;
+    // #2325/#2250: the single-op REMOTE path and the LOCAL command path now
+    // share ONE projection function, [`apply_op_projected`]. The only
+    // variation is the `advance_cursor` flag: `true` here (the REMOTE /
+    // single-op path advances the global apply cursor in the same tx), `false`
+    // on the LOCAL command sites (they rely on boot-replay idempotency and must
+    // NOT move the cursor — #1257). The single-device `debug_assert!` guard and
+    // the `advance_apply_cursor` call moved INTO that function's
+    // `advance_cursor` branch.
+    let effects = apply_op_projected(&mut tx, record, state, true).await?;
     tx.commit().await?;
 
     // The op itself was engine-applied INSIDE the tx above
@@ -152,6 +100,99 @@ pub(super) async fn apply_op(
     .await;
 
     Ok(())
+}
+
+/// #2325/#2250 — the SINGLE collapsed apply-projection entry point shared by
+/// the single-op REMOTE path ([`apply_op`], `advance_cursor = true`) and the
+/// LOCAL command sites (`advance_cursor = false`).
+///
+/// Before this, the LOCAL command path (`apply_*_via_loro` in a `CommandTx`)
+/// and this single-op REMOTE path (`apply_op_tx` + cursor advance) were two
+/// parallel projection paths that had to be kept byte-identical by hand — the
+/// exact drift hazard #2250 flags. They now differ ONLY in the `advance_cursor`
+/// flag.
+///
+/// Runs the op through [`apply_op_tx`] (engine-apply + SQL projection, with the
+/// derived maintenance passes run inline — `chunk = None`, a "chunk of one")
+/// and, ONLY when `advance_cursor` is set, runs the single-device guard and
+/// advances the global materializer apply cursor to `record.seq` in the SAME
+/// transaction.
+///
+/// # Why `advance_cursor` is a caller flag, not intrinsic
+///
+/// The REMOTE / single-op path advances the cursor so
+/// `materialized_through_seq` tracks applied state. The LOCAL command path
+/// deliberately does NOT (#1257): it leaves the cursor put so boot replay
+/// re-applies every LOCAL op idempotently — the safety net while local
+/// engine-apply hardens.
+///
+/// Returns the [`ApplyEffects`] from `apply_op_tx` UNCHANGED so the caller runs
+/// the post-commit cohort fan-out (restore/delete descendants + ancestors)
+/// AFTER it commits — the LOCAL delete/restore sites consume this instead of
+/// their hand-rolled cohort capture.
+pub(crate) async fn apply_op_projected(
+    tx: &mut sqlx::SqliteConnection,
+    record: &OpRecord,
+    state: &crate::loro::shared::LoroState,
+    advance_cursor: bool,
+) -> Result<ApplyEffects, AppError> {
+    // #2200: pass `None` — single-op / LOCAL apply is a "chunk of one", so the
+    // derived maintenance passes (dense reproject, count recompute) run inline,
+    // exactly as before. Only the batch import path opts into deferral.
+    let effects = apply_op_tx(tx, record, None, state).await?;
+
+    if advance_cursor {
+        // #412 / #667 — SINGLE-DEVICE-CURSOR ASSUMPTION (single-op mirror of
+        // the `BatchApplyOps` arm's guard in `task_handlers.rs`).
+        //
+        // `advance_apply_cursor` below moves a SINGLE GLOBAL scalar cursor to
+        // `record.seq`, but `op_log.seq` is a PER-DEVICE counter (PK
+        // `(device_id, seq)`). Advancing the global cursor for an op from one
+        // device is only sound when the entire op_log belongs to that ONE
+        // device — otherwise the cursor jumps past another device's
+        // unmaterialised ops (which sit at `seq <= cursor`) and boot replay
+        // silently drops them. The batch arm `debug_assert!`s the equivalent
+        // within-batch invariant, and boot replay (`recovery::replay`)
+        // hard-errors on a multi-device op_log in ALL builds; this is the
+        // missing single-op counterpart.
+        //
+        // It is a `debug_assert!` (not a release-build `return Err`) on
+        // purpose: multi-device single-op apply is NOT a supported production
+        // path. Multi-device sync is unshipped (the remote-apply path is
+        // test-only and the SyncDaemon is dormant until a peer is paired), and
+        // the `advance_cursor = true` caller (`apply_op`) is reached only via
+        // the test-only `dispatch_op` helper today. The release-build guard
+        // already lives at boot (`replay.rs` `#412`); this assert exists to
+        // catch a test/dev regression that wires a multi-device single-op apply
+        // before the per-device watermark cursor lands. Remove once that cursor
+        // ships.
+        #[cfg(debug_assertions)]
+        {
+            // #2282 — index-backed O(log N) single-device probe. The op_log PK
+            // `(device_id, seq)` indexes `device_id`, so `MIN`/`MAX` are
+            // first/last index seeks: equal MIN and MAX ⇒ the whole log is one
+            // device (COALESCE handles the empty log — vacuously single-device).
+            let single_device: bool = sqlx::query_scalar!(
+                r#"SELECT COALESCE(MIN(device_id) = MAX(device_id), 1) AS "single!: bool" FROM op_log"#
+            )
+            .fetch_one(&mut *tx)
+            .await?;
+            debug_assert!(
+                single_device,
+                "apply_op_projected advances a single global apply cursor for device {:?} but \
+                 op_log spans multiple devices; the single global cursor cannot \
+                 represent per-device watermarks — per-device cursor partitioning is \
+                 required (backend audit #412)",
+                record.device_id,
+            );
+        }
+        // C-2b: advance the cursor in the same tx so `apply + cursor` are
+        // atomic. A crash before the caller commits rolls both back together;
+        // the cursor never points ahead of materialised state.
+        advance_apply_cursor(tx, record.seq).await?;
+    }
+
+    Ok(effects)
 }
 
 /// Fan out `RestoreBlock` for the full cohort the SQL cascade
@@ -634,7 +675,7 @@ impl ChunkAccumulator {
 /// dead, so we capture the space at the same pre-UPDATE moment as the
 /// cohort itself.
 #[derive(Debug, Default)]
-pub(super) struct ApplyEffects {
+pub(crate) struct ApplyEffects {
     /// Block ids restored by a `RestoreBlock` apply — seed AND every
     /// descendant the SQL CTE walked.  Empty unless the op was
     /// `RestoreBlock`.  Order is whatever SQLite's CTE walk produces
