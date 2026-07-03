@@ -1,5 +1,5 @@
 /**
- * CR-MINOR — dedicated tests for `<DateFilterForm>`.
+ * CR-MINOR — dedicated tests for `<SearchDateFilterForm>`.
  *
  * Previously covered only transitively via `FilterHelperPopover.test.tsx`.
  * The form builds a `due` / `scheduled` `FilterToken` (no not- variant) in
@@ -27,9 +27,12 @@ import { axe } from 'vitest-axe'
 
 import { t } from '@/lib/i18n'
 
-import { DateFilterForm, type DateFilterFormProps } from '../filter-forms/DateFilterForm'
+import {
+  SearchDateFilterForm,
+  type SearchDateFilterFormProps,
+} from '../filter-forms/SearchDateFilterForm'
 
-function setup(kind: DateFilterFormProps['kind'] = 'due'): {
+function setup(kind: SearchDateFilterFormProps['kind'] = 'due'): {
   onAddFilter: ReturnType<typeof vi.fn>
   onBack: ReturnType<typeof vi.fn>
   container: HTMLElement
@@ -37,7 +40,7 @@ function setup(kind: DateFilterFormProps['kind'] = 'due'): {
   const onAddFilter = vi.fn()
   const onBack = vi.fn()
   const { container } = render(
-    <DateFilterForm kind={kind} onAddFilter={onAddFilter} onBack={onBack} />,
+    <SearchDateFilterForm kind={kind} onAddFilter={onAddFilter} onBack={onBack} />,
   )
   return { onAddFilter, onBack, container }
 }
@@ -53,7 +56,7 @@ const addButton = (): HTMLElement =>
 const backButton = (): HTMLElement =>
   screen.getByRole('button', { name: t('search.filterHelper.back') })
 
-describe('DateFilterForm — render', () => {
+describe('SearchDateFilterForm — render', () => {
   it('renders the `due` category label and bucket shape by default', () => {
     setup('due')
     expect(screen.getByTestId('date-filter-form')).toBeInTheDocument()
@@ -69,7 +72,7 @@ describe('DateFilterForm — render', () => {
   })
 })
 
-describe('DateFilterForm — bucket shape', () => {
+describe('SearchDateFilterForm — bucket shape', () => {
   it('emits a `due` named-bucket token for the selected bucket', async () => {
     const user = userEvent.setup()
     const { onAddFilter } = setup('due')
@@ -96,7 +99,7 @@ describe('DateFilterForm — bucket shape', () => {
   })
 })
 
-describe('DateFilterForm — op shape', () => {
+describe('SearchDateFilterForm — op shape', () => {
   it('disables Add until a date is entered', async () => {
     const user = userEvent.setup()
     setup('due')
@@ -121,7 +124,7 @@ describe('DateFilterForm — op shape', () => {
   })
 })
 
-describe('DateFilterForm — Back', () => {
+describe('SearchDateFilterForm — Back', () => {
   it('calls onBack without emitting a token', async () => {
     const user = userEvent.setup()
     const { onBack, onAddFilter } = setup('due')
@@ -131,7 +134,7 @@ describe('DateFilterForm — Back', () => {
   })
 })
 
-describe('DateFilterForm — a11y', () => {
+describe('SearchDateFilterForm — a11y', () => {
   it('has no axe violations in bucket shape', async () => {
     const { container } = setup('due')
     expect(await axe(container as any)).toHaveNoViolations()

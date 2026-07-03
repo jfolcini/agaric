@@ -1,5 +1,5 @@
 /**
- * PropertyFilterForm — typed key/op/value editor for the `property` filter
+ * BacklinkPropertyFilterForm — typed key/op/value editor for the `property` filter
  * category.  Falls back to a free-form key input when no `propertyKeys`
  * are supplied (so unit tests can exercise the unknown-key validation
  * path).
@@ -21,15 +21,15 @@ import {
 import type { CompareOp } from '../../../lib/tauri'
 import type { FilterFormHandle } from './types'
 
-export interface PropertyFilterFormProps {
+export interface BacklinkPropertyFilterFormProps {
   propertyKeys: string[]
   ref?: React.Ref<FilterFormHandle>
 }
 
-export function PropertyFilterForm({
+export function BacklinkPropertyFilterForm({
   propertyKeys,
   ref,
-}: PropertyFilterFormProps): React.ReactElement {
+}: BacklinkPropertyFilterFormProps): React.ReactElement {
   const { t } = useTranslation()
   const [propKey, setPropKey] = useState(propertyKeys[0] ?? '')
   const [propOp, setPropOp] = useState<CompareOp>('Eq')

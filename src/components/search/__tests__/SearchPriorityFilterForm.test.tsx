@@ -1,5 +1,5 @@
 /**
- * CR-MINOR — dedicated tests for `<PriorityFilterForm>`.
+ * CR-MINOR — dedicated tests for `<SearchPriorityFilterForm>`.
  *
  * Previously covered only transitively via `FilterHelperPopover.test.tsx`.
  * The form builds a `priority` / `not-priority` `FilterToken` from the
@@ -24,7 +24,7 @@ import { axe } from 'vitest-axe'
 
 import { t } from '@/lib/i18n'
 
-import { PriorityFilterForm } from '../filter-forms/PriorityFilterForm'
+import { SearchPriorityFilterForm } from '../filter-forms/SearchPriorityFilterForm'
 
 function setup(): {
   onAddFilter: ReturnType<typeof vi.fn>
@@ -33,7 +33,9 @@ function setup(): {
 } {
   const onAddFilter = vi.fn()
   const onBack = vi.fn()
-  const { container } = render(<PriorityFilterForm onAddFilter={onAddFilter} onBack={onBack} />)
+  const { container } = render(
+    <SearchPriorityFilterForm onAddFilter={onAddFilter} onBack={onBack} />,
+  )
   return { onAddFilter, onBack, container }
 }
 
@@ -46,7 +48,7 @@ const backButton = (): HTMLElement =>
 const excludeRadio = (): HTMLElement =>
   screen.getByRole('radio', { name: t('search.filterHelper.exclude') })
 
-describe('PriorityFilterForm — render', () => {
+describe('SearchPriorityFilterForm — render', () => {
   it('renders the form scaffold and controls', () => {
     setup()
     expect(screen.getByTestId('priority-filter-form')).toBeInTheDocument()
@@ -65,7 +67,7 @@ describe('PriorityFilterForm — render', () => {
   })
 })
 
-describe('PriorityFilterForm — interaction', () => {
+describe('SearchPriorityFilterForm — interaction', () => {
   it('emits a `priority` token for the selected value', async () => {
     const user = userEvent.setup()
     const { onAddFilter } = setup()
@@ -99,7 +101,7 @@ describe('PriorityFilterForm — interaction', () => {
   })
 })
 
-describe('PriorityFilterForm — a11y', () => {
+describe('SearchPriorityFilterForm — a11y', () => {
   it('has no axe violations', async () => {
     const { container } = setup()
     expect(await axe(container as any)).toHaveNoViolations()

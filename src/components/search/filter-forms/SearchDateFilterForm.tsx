@@ -31,7 +31,7 @@ import { isIsoDate } from '@/lib/search-query/is-iso-date'
 
 const DATE_OPS: readonly DateOp[] = ['<', '<=', '=', '>=', '>'] as const
 
-export interface DateFilterFormProps {
+export interface SearchDateFilterFormProps {
   /** Which token kind to build — `due` or `scheduled`. */
   kind: 'due' | 'scheduled'
   onAddFilter: (token: FilterToken) => void
@@ -45,19 +45,19 @@ export interface DateFilterFormProps {
   initialShape?: 'bucket' | 'op'
 }
 
-export function DateFilterForm({
+export function SearchDateFilterForm({
   kind,
   onAddFilter,
   onBack,
   initialShape = 'bucket',
-}: DateFilterFormProps): React.ReactElement {
+}: SearchDateFilterFormProps): React.ReactElement {
   const { t } = useTranslation()
   const [shape, setShape] = useState<'bucket' | 'op'>(initialShape)
   const [bucket, setBucket] = useState<NamedDateRange>(DATE_BUCKET_VALUES[0])
   const [op, setOp] = useState<DateOp>('=')
   const [date, setDate] = useState('')
 
-  // Move focus into the sub-form on open (see StateFilterForm).
+  // Move focus into the sub-form on open (see SearchStateFilterForm).
   const shapeRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     shapeRef.current?.focus()
