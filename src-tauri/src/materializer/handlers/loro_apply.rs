@@ -255,6 +255,30 @@ pub(crate) async fn apply_set_property_via_loro(
 ) -> Result<(), AppError> {
     use crate::loro::projection;
 
+    // #2326: `SetProperty(space)` is the moment a page (and its whole block
+    // subtree) acquires a space. Those blocks were created during the no-space
+    // window and projected SQL-only, so they are absent from every engine. We
+    // ALWAYS project the space assignment to SQL first — the projection is
+    // idempotent and carries the #708 registered-space guard plus the
+    // page-group `blocks.space_id` fan-out (or a NULL clear) — and THEN, if the
+    // block now resolves to a space, hydrate its subtree into that space's
+    // engine so subsequent ops on those blocks take the live engine path
+    // instead of the `EngineMissingTarget` fallback. Re-resolving from the
+    // freshly-written `blocks.space_id` naturally skips hydration when the
+    // projection skipped an unregistered space (#708) or when the value cleared
+    // the space (→ NULL). Handling `space` here (before the resolve gate below)
+    // is required: pre-projection the page's `space_id` is still NULL, so
+    // `resolve_block_space` would return `None` and the op would take a
+    // (legitimate but now avoidable) SpaceUnresolved fallback.
+    if p.key == crate::op::SPACE_PROPERTY_KEY {
+        projection::project_set_property_to_sql(conn, p).await?;
+        if let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? {
+            hydrate_page_subtree_into_engine(conn, state, device_id, &p.block_id, &space_id)
+                .await?;
+        }
+        return Ok(());
+    }
+
     let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
         super::sql_only_fallback::record(
             "set_property",
@@ -264,10 +288,11 @@ pub(crate) async fn apply_set_property_via_loro(
     };
 
     // #2250 (#1257 reconciliation): if the block is absent from this space's
-    // engine tree — projected SQL-only during a no-space window (e.g. the #2326
-    // create-then-SetProperty(space) ordering, where the block was created
-    // before its space resolved and so never entered the engine) —
-    // `apply_set_property_typed` would error. Fall back to the authoritative
+    // engine tree — projected SQL-only during a no-space window and never
+    // reconciled into the engine (the #1257 LOCAL-applies / boot-replay-owns
+    // window, or a cross-space case) — `apply_set_property_typed` would error.
+    // (The #2326 create-then-`SetProperty(space)` case is handled by the space
+    // branch above, which hydrates the subtree.) Fall back to the authoritative
     // payload-keyed SQL projection and let boot-replay reconcile the engine.
     // Mirrors the block-absent guard in `apply_edit_block_via_loro` /
     // `apply_delete_block_via_loro` (same `EngineMissingTarget` reason, same
@@ -299,6 +324,198 @@ pub(crate) async fn apply_set_property_via_loro(
     }
 
     projection::project_set_property_to_sql(conn, p).await?;
+    Ok(())
+}
+
+/// #2326: Hydrate a page's whole block subtree into its (now-resolved) space
+/// engine at space-assignment time.
+///
+/// When a page is created before its `SetProperty(space)` (the create-then-
+/// assign ordering, e.g. #2249), every block in its group is projected SQL-only
+/// during the no-space window and never enters any engine — so their later ops
+/// take the `EngineMissingTarget` fallback until a boot-replay reconciles the
+/// engine. This helper closes that window: as soon as the space is assigned we
+/// seed the whole subtree (tree nodes + properties + tags) into the per-space
+/// engine so subsequent ops route through the live engine path.
+///
+/// ## Order & scope
+/// The subtree is read LIVE-only (`deleted_at IS NULL`), parent-before-child
+/// (depth-ordered recursive descent from the page), so every parent is present
+/// in the engine before its children are seeded.
+///
+/// ## Full seed (nodes + properties + tags)
+/// Seeding only tree nodes would zero the `EngineMissingTarget` counter but
+/// leave the exported CRDT missing this subtree's properties/tags — a peer
+/// importing the export would not receive them. We therefore also replay each
+/// block's `block_properties` and `block_tags` rows into the engine. (`space`
+/// and the reserved keys are column-backed in `blocks`, not `block_properties`,
+/// so they never appear here and need no engine property.)
+///
+/// ## Idempotency
+/// Each node is skipped (`read_block(...).is_some()`) if already present, so the
+/// helper is safe under partial prior hydration, re-assignment to the same
+/// space, and a later boot-replay re-applying the original `CreateBlock` ops.
+/// Only *newly-seeded* nodes' parent groups are reprojected, so a re-hydration
+/// is a pure no-op (no SQL writes, no fallback-count change).
+///
+/// ## No sync duplicate-node hazard
+/// These blocks were never in ANY engine export before, so this is their first
+/// CRDT representation — the OPPOSITE of the `reload_registry_from_db` re-seed
+/// warning (which concerns blocks peers already hold).
+///
+/// ## Non-transactional engine mutation
+/// Per the pre-existing engine-vs-SQL contract, the engine seed is not rolled
+/// back if the caller's tx aborts; the seeded nodes are harmless/idempotent and
+/// self-correct on retry. We do NOT try to make it transactional.
+async fn hydrate_page_subtree_into_engine(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
+    page_id: &crate::ulid::BlockId,
+    space_id: &crate::space::SpaceId,
+) -> Result<(), AppError> {
+    use crate::loro::engine::PropertyValue;
+    use crate::loro::projection;
+
+    // 1. Read the whole owning-page group: LIVE rows only, parent-before-child
+    //    (depth-ordered recursive descent from the page). The child ordering key
+    //    is `position` so siblings seed in tree order.
+    //    dynamic-sql: a static `concat!` of the `descendants_cte_active!` macro
+    //    (a `const` recursive-CTE string) and a fixed SELECT — no runtime string
+    //    interpolation. Runtime `query_as` only because the CTE prefix comes
+    //    from the shared macro; mirrors `project_delete_block_to_sql`.
+    #[derive(sqlx::FromRow)]
+    struct SubtreeRow {
+        id: String,
+        block_type: String,
+        content: String,
+        parent_id: Option<String>,
+        // Nullable: the both-`None` create sentinel writes SQL NULL.
+        position: Option<i64>,
+    }
+    let rows: Vec<SubtreeRow> = sqlx::query_as(concat!(
+        crate::descendants_cte_active!(),
+        "SELECT b.id, b.block_type, b.content, b.parent_id, b.position \
+           FROM descendants d \
+           JOIN blocks b ON b.id = d.id \
+          ORDER BY d.depth ASC, b.position ASC",
+    ))
+    .bind(page_id.as_str())
+    .fetch_all(&mut *conn)
+    .await?;
+
+    // 2. Read each node's properties + tags now (async), while we still hold no
+    //    engine guard — the per-space guard is `!Send` and cannot cross an
+    //    `.await`, so all SQL reads must complete before the sync seed scope.
+    struct SeedNode {
+        id: String,
+        block_type: String,
+        content: String,
+        parent_id: Option<String>,
+        position: i64,
+        properties: Vec<(String, PropertyValue)>,
+        tags: Vec<String>,
+    }
+    let mut nodes: Vec<SeedNode> = Vec::with_capacity(rows.len());
+    for SubtreeRow {
+        id,
+        block_type,
+        content,
+        parent_id,
+        position,
+    } in rows
+    {
+        // A NULL `position` (the both-`None` create sentinel) maps to the
+        // engine's append sentinel `i64::MAX`, exactly as the sql_only create
+        // path feeds `apply_create_block`.
+        let position = position.unwrap_or(i64::MAX);
+        let prop_rows = sqlx::query!(
+            r#"SELECT key, value_text, value_num, value_date, value_ref, value_bool
+                 FROM block_properties WHERE block_id = ?"#,
+            id,
+        )
+        .fetch_all(&mut *conn)
+        .await?;
+        // Recover the engine's native `PropertyValue` by the same precedence as
+        // `PropertyValue::from(&SetPropertyPayload)` (text→num→date→ref→bool);
+        // the `exactly_one_value` CHECK guarantees exactly one column is set.
+        let properties = prop_rows
+            .into_iter()
+            .map(|r| {
+                let pv = if let Some(t) = r.value_text {
+                    PropertyValue::Str(t)
+                } else if let Some(n) = r.value_num {
+                    PropertyValue::Num(n)
+                } else if let Some(d) = r.value_date {
+                    PropertyValue::Str(d)
+                } else if let Some(rf) = r.value_ref {
+                    PropertyValue::Str(rf)
+                } else if let Some(b) = r.value_bool {
+                    PropertyValue::Bool(b != 0)
+                } else {
+                    PropertyValue::Null
+                };
+                (r.key, pv)
+            })
+            .collect();
+        let tag_rows = sqlx::query!("SELECT tag_id FROM block_tags WHERE block_id = ?", id)
+            .fetch_all(&mut *conn)
+            .await?;
+        let tags = tag_rows.into_iter().map(|r| r.tag_id).collect();
+        nodes.push(SeedNode {
+            id,
+            block_type,
+            content,
+            parent_id,
+            position,
+            properties,
+            tags,
+        });
+    }
+
+    // 3. Seed into the (lazily-created) engine in ONE synchronous scope. The
+    //    guard is `!Send`, so NO `.await` may run while it is alive. Skip nodes
+    //    already present (idempotent), and record the post-seed sibling order of
+    //    every parent group we actually touched for the dense reprojection.
+    let touched_orders: Vec<Vec<String>> = {
+        let mut guard = state.registry.for_space(space_id, device_id)?;
+        let engine = guard.engine_mut();
+        let mut touched_parents: Vec<Option<String>> = Vec::new();
+        for n in &nodes {
+            if engine.read_block(&n.id)?.is_some() {
+                continue;
+            }
+            engine.apply_create_block(
+                &n.id,
+                &n.block_type,
+                &n.content,
+                n.parent_id.as_deref(),
+                n.position,
+            )?;
+            for (key, value) in &n.properties {
+                engine.apply_set_property_typed(&n.id, key, value)?;
+            }
+            for tag_id in &n.tags {
+                engine.apply_add_tag(&n.id, tag_id)?;
+            }
+            if !touched_parents.contains(&n.parent_id) {
+                touched_parents.push(n.parent_id.clone());
+            }
+        }
+        let mut orders = Vec::with_capacity(touched_parents.len());
+        for parent in &touched_parents {
+            orders.push(engine.children_ordered_block_ids(parent.as_deref())?);
+        }
+        drop(guard);
+        orders
+    };
+
+    // 4. Reproject each touched parent group so the engine's sibling order and
+    //    the SQL dense positions agree (mirrors the create path). Empty on a
+    //    pure re-hydration (nothing newly seeded) ⇒ no writes.
+    for order in &touched_orders {
+        projection::reproject_dense_positions(conn, order).await?;
+    }
     Ok(())
 }
 
