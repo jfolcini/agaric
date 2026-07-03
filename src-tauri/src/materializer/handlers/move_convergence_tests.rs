@@ -594,3 +594,340 @@ async fn move_cycle_rejected_consistently_across_arms() {
         "shared move_would_cycle must NOT flag a legitimate move (C1A already under P1)"
     );
 }
+
+// ---------------------------------------------------------------------------
+// #2344 (PR 1/2) — REMOTE MoveBlock cache maintenance parity with LOCAL.
+//
+// These pin the unified `apply_op_tx` Move-arm maintenance
+// (`maintain_pages_cache_counts_after_op`'s `PreOpState::Move`):
+//   * (fix b) `space_id` is re-derived for the moved subtree via the SHARED
+//     `block_cleanup::rederive_page_and_space_ids` helper — the old
+//     page_id-only reparent did NO `space_id` maintenance, so a cross-space
+//     move left `space_id` stale until the background rebuild ran;
+//   * (fix a) the moved subtree's outbound-link TARGET pages are added to the
+//     recompute set, so their `inbound_link_count` is refreshed in-tx — the
+//     old affected set was only `src ∪ dest`, leaving targets stale;
+//   * (fix c, #2200) a pure same-parent reorder skips ALL maintenance.
+//
+// Each drives a REAL `apply_op_tx` MoveBlock (the REMOTE/sync entry point) and
+// asserts the COMMITTED (in-tx) state WITHOUT running any background settle,
+// then runs the canonical vault-wide rebuilds (the eventual "settle") and
+// asserts the columns are UNCHANGED — i.e. the in-tx maintenance already
+// converged (idempotent, convergence-safe: all touched columns are pure
+// SQL-derived caches, absent from the op-log / engine / sync payload).
+// ---------------------------------------------------------------------------
+
+const SPACE_A: &str = SPACE_ID;
+const SPACE_B: &str = "01ARZ3NDEKTSV4RRFFQ69G5FBW";
+
+/// Insert a block row directly (engine-less: the moves below legitimately take
+/// the SQL-only fallback — cross-space / not-in-engine — but STILL route
+/// through `apply_op_tx`, so the Move-arm maintenance under test runs).
+#[allow(clippy::too_many_arguments)]
+async fn insert_block_row(
+    pool: &SqlitePool,
+    id: &str,
+    block_type: &str,
+    parent: Option<&str>,
+    position: i64,
+    page_id: Option<&str>,
+    space_id: Option<&str>,
+) {
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+         VALUES (?, ?, 'seed', ?, ?, ?, ?)",
+    )
+    .bind(id)
+    .bind(block_type)
+    .bind(parent)
+    .bind(position)
+    .bind(page_id)
+    .bind(space_id)
+    .execute(pool)
+    .await
+    .expect("insert block row");
+}
+
+async fn seed_spaces_registry(pool: &SqlitePool) {
+    // `spaces.id` REFERENCES `blocks.id`, and `blocks.space_id` REFERENCES
+    // `spaces.id`, so the space BLOCK must exist before the registry row.
+    for space in [SPACE_A, SPACE_B] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+                 VALUES (?, 'tag', 'space', NULL, 0)",
+        )
+        .bind(space)
+        .execute(pool)
+        .await
+        .expect("insert space block");
+        sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+            .bind(space)
+            .execute(pool)
+            .await
+            .expect("insert space registry row");
+    }
+}
+
+async fn page_and_space(pool: &SqlitePool, id: &str) -> (Option<String>, Option<String>) {
+    sqlx::query_as::<_, (Option<String>, Option<String>)>(
+        "SELECT page_id, space_id FROM blocks WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .expect("page_and_space")
+}
+
+async fn cache_counts(pool: &SqlitePool, page_id: &str) -> (i64, i64) {
+    sqlx::query_as::<_, (i64, i64)>(
+        "SELECT inbound_link_count, child_block_count FROM pages_cache WHERE page_id = ?",
+    )
+    .bind(page_id)
+    .fetch_one(pool)
+    .await
+    .expect("cache_counts")
+}
+
+/// Append a MoveBlock op and drive it through the real `apply_op_tx` pipeline,
+/// committing. No background settle runs, so the returned committed state is
+/// exactly the in-tx maintenance under test.
+async fn move_via_apply_op_tx(
+    pool: &SqlitePool,
+    state: &crate::loro::shared::LoroState,
+    block_id: &str,
+    new_parent: Option<&str>,
+    new_index: i64,
+) {
+    let mv = OpPayload::MoveBlock(MoveBlockPayload {
+        block_id: BlockId::from_trusted(block_id),
+        new_parent_id: new_parent.map(BlockId::from_trusted),
+        new_position: crate::pagination::index_to_provisional_position(new_index),
+        new_index: Some(new_index),
+    });
+    let record = crate::op_log::append_local_op(pool, DEVICE_ID, mv)
+        .await
+        .expect("append move");
+    let mut tx = pool.begin().await.expect("begin move");
+    super::apply_op_tx(&mut tx, &record, None, state)
+        .await
+        .expect("apply move");
+    tx.commit().await.expect("commit move");
+}
+
+/// The canonical background convergence (the eventual "settle"): vault-wide
+/// `page_id` / `space_id` rebuilds + full `pages_cache` count recompute.
+async fn settle_rebuilds(pool: &SqlitePool) {
+    crate::cache::rebuild_page_ids(pool)
+        .await
+        .expect("rebuild_page_ids");
+    crate::cache::rebuild_space_ids(pool)
+        .await
+        .expect("rebuild_space_ids");
+    crate::cache::rebuild_pages_cache(pool)
+        .await
+        .expect("rebuild_pages_cache");
+    crate::cache::rebuild_pages_cache_counts(pool)
+        .await
+        .expect("rebuild_pages_cache_counts");
+}
+
+/// #2344 (fix b + machinery for fix a): a CROSS-SPACE MoveBlock re-derives the
+/// moved subtree's `space_id` AND `page_id` in-tx and recomputes the affected
+/// pages' counts — the moved subtree links to the destination page, so the
+/// destination page's `inbound_link_count` correctly drops to 0 (the link
+/// became same-page). The `space_id` re-derivation is the load-bearing REMOTE
+/// bug fix: the old page_id-only reparent left `space_id = SPACE_A` stale.
+#[tokio::test]
+async fn remote_apply_op_move_rederives_space_id_and_counts_in_tx_2344() {
+    const PA: &str = "01HZ0000000000000000MVPGAA";
+    const PB: &str = "01HZ0000000000000000MVPGBB";
+    const M: &str = "01HZ0000000000000000MVMMMM";
+    const MC: &str = "01HZ0000000000000000MVMCMC";
+
+    let dir = TempDir::new().expect("tempdir");
+    let pool = init_pool(&dir.path().join("cross_space_move.db"))
+        .await
+        .expect("init_pool");
+    seed_spaces_registry(&pool).await;
+    let state = crate::loro::shared::LoroState::new();
+
+    // Space A: page PA -> content M -> content MC. Space B: page PB.
+    insert_block_row(&pool, PA, "page", None, 0, Some(PA), Some(SPACE_A)).await;
+    insert_block_row(&pool, PB, "page", None, 1, Some(PB), Some(SPACE_B)).await;
+    insert_block_row(&pool, M, "content", Some(PA), 0, Some(PA), Some(SPACE_A)).await;
+    insert_block_row(&pool, MC, "content", Some(M), 0, Some(PA), Some(SPACE_A)).await;
+    // MC links to the destination page PB (a cross-page link before the move).
+    sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(MC)
+        .bind(PB)
+        .execute(&pool)
+        .await
+        .expect("insert block_link MC->PB");
+
+    // Build the pre-move pages_cache: PA owns {M, MC} (2), PB owns {} (0) and
+    // MC's cross-page link into PB gives PB inbound_link_count = 1.
+    settle_rebuilds(&pool).await;
+    assert_eq!(cache_counts(&pool, PA).await, (0, 2), "pre: PA counts");
+    assert_eq!(cache_counts(&pool, PB).await, (1, 0), "pre: PB counts");
+
+    // --- REMOTE cross-space MoveBlock: M (space A) -> under page PB (space B) ---
+    move_via_apply_op_tx(&pool, &state, M, Some(PB), 0).await;
+
+    // (fix b) space_id re-derived to the NEW space for the whole moved subtree
+    // (previously STALE at SPACE_A on REMOTE — no space_id maintenance ran).
+    assert_eq!(
+        page_and_space(&pool, M).await,
+        (Some(PB.to_owned()), Some(SPACE_B.to_owned())),
+        "M page_id/space_id re-derived to destination in-tx"
+    );
+    assert_eq!(
+        page_and_space(&pool, MC).await,
+        (Some(PB.to_owned()), Some(SPACE_B.to_owned())),
+        "MC (descendant) page_id/space_id re-derived to destination in-tx"
+    );
+    // (fix a machinery) counts recomputed in-tx: PA emptied, PB gained the
+    // subtree, and MC's link to PB is now SAME-page so PB.inbound drops to 0.
+    assert_eq!(cache_counts(&pool, PA).await, (0, 0), "post: PA emptied");
+    assert_eq!(
+        cache_counts(&pool, PB).await,
+        (0, 2),
+        "post: PB gains subtree; same-page link no longer counts inbound"
+    );
+
+    // Settle (canonical vault-wide rebuilds) and assert the in-tx state already
+    // converged — nothing changes (idempotent / convergence-safe).
+    settle_rebuilds(&pool).await;
+    assert_eq!(
+        page_and_space(&pool, M).await,
+        (Some(PB.to_owned()), Some(SPACE_B.to_owned())),
+        "M unchanged after settle (in-tx maintenance already converged)"
+    );
+    assert_eq!(
+        page_and_space(&pool, MC).await,
+        (Some(PB.to_owned()), Some(SPACE_B.to_owned())),
+        "MC unchanged after settle"
+    );
+    assert_eq!(
+        cache_counts(&pool, PA).await,
+        (0, 0),
+        "PA unchanged after settle"
+    );
+    assert_eq!(
+        cache_counts(&pool, PB).await,
+        (0, 2),
+        "PB unchanged after settle"
+    );
+}
+
+/// #2344 (fix a, isolated): a move that makes a source block's `page_id` NULL
+/// (move to top level) must refresh its outbound-link TARGET page's
+/// `inbound_link_count`. The target is NEITHER the source page NOR the (null)
+/// destination page, so the OLD REMOTE affected set (`src ∪ dest`) missed it
+/// and left the count STALE — this is the crisp regression guard for the
+/// ported outbound-target UNION term.
+#[tokio::test]
+async fn remote_apply_op_move_to_top_level_refreshes_outbound_target_inbound_2344() {
+    const PA: &str = "01HZ0000000000000000MVPGAA";
+    const PT: &str = "01HZ0000000000000000MVPGTT";
+    const MC: &str = "01HZ0000000000000000MVMCMC";
+
+    let dir = TempDir::new().expect("tempdir");
+    let pool = init_pool(&dir.path().join("toplevel_move.db"))
+        .await
+        .expect("init_pool");
+    seed_spaces_registry(&pool).await;
+    let state = crate::loro::shared::LoroState::new();
+
+    // Page PA owns content MC; separate page PT is MC's link target.
+    insert_block_row(&pool, PA, "page", None, 0, Some(PA), Some(SPACE_A)).await;
+    insert_block_row(&pool, PT, "page", None, 1, Some(PT), Some(SPACE_A)).await;
+    insert_block_row(&pool, MC, "content", Some(PA), 0, Some(PA), Some(SPACE_A)).await;
+    sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(MC)
+        .bind(PT)
+        .execute(&pool)
+        .await
+        .expect("insert block_link MC->PT");
+
+    settle_rebuilds(&pool).await;
+    // PT is a THIRD page (not PA, not the move destination): its inbound count
+    // is 1 (MC links into it from a different page).
+    assert_eq!(cache_counts(&pool, PT).await, (1, 0), "pre: PT inbound = 1");
+
+    // --- REMOTE MoveBlock: MC -> top level (new_parent = None) ---
+    move_via_apply_op_tx(&pool, &state, MC, None, 0).await;
+
+    // MC's page_id is now NULL, so its link into PT no longer has a source
+    // page → PT.inbound_link_count must drop to 0 IN-TX. Under the old
+    // src∪dest affected set PT was never recomputed and stayed stale at 1.
+    // (space_id retains its last value SPACE_A: an orphaned/top-level block
+    // has no owning page to re-derive space from, so the shared rederive
+    // helper — like `rebuild_space_ids` — leaves it authoritative. The
+    // page_id → NULL is what drops PT's inbound.)
+    assert_eq!(
+        page_and_space(&pool, MC).await,
+        (None, Some(SPACE_A.to_owned())),
+        "MC page_id re-derived to NULL in-tx (space_id retained as orphan)"
+    );
+    assert_eq!(
+        cache_counts(&pool, PT).await,
+        (0, 0),
+        "post: outbound-target PT inbound refreshed to 0 (fix a)"
+    );
+
+    // Idempotent with the canonical rebuild.
+    settle_rebuilds(&pool).await;
+    assert_eq!(
+        cache_counts(&pool, PT).await,
+        (0, 0),
+        "PT inbound unchanged after settle"
+    );
+}
+
+/// #2344 (fix c, #2200): a PURE same-parent reorder skips ALL Move-arm
+/// maintenance — `page_id` / `space_id` / counts are provably unchanged, so the
+/// committed state is byte-identical before and after.
+#[tokio::test]
+async fn remote_apply_op_move_same_parent_reorder_skips_maintenance_2344() {
+    const PA: &str = "01HZ0000000000000000MVPGAA";
+    const A: &str = "01HZ0000000000000000MVAAAA";
+    const B: &str = "01HZ0000000000000000MVBBBB";
+
+    let dir = TempDir::new().expect("tempdir");
+    let pool = init_pool(&dir.path().join("reorder_move.db"))
+        .await
+        .expect("init_pool");
+    seed_spaces_registry(&pool).await;
+    let state = crate::loro::shared::LoroState::new();
+
+    // Page PA with two content children A, B (same parent).
+    insert_block_row(&pool, PA, "page", None, 0, Some(PA), Some(SPACE_A)).await;
+    insert_block_row(&pool, A, "content", Some(PA), 0, Some(PA), Some(SPACE_A)).await;
+    insert_block_row(&pool, B, "content", Some(PA), 1, Some(PA), Some(SPACE_A)).await;
+
+    settle_rebuilds(&pool).await;
+    let counts_before = cache_counts(&pool, PA).await;
+    let a_before = page_and_space(&pool, A).await;
+
+    // --- REMOTE same-parent reorder: A stays under PA, moves to slot 1 ---
+    move_via_apply_op_tx(&pool, &state, A, Some(PA), 1).await;
+
+    // The #2200 early-out fired: no re-derive, no count recompute.
+    assert_eq!(
+        page_and_space(&pool, A).await,
+        a_before,
+        "same-parent reorder leaves page_id/space_id unchanged"
+    );
+    assert_eq!(
+        cache_counts(&pool, PA).await,
+        counts_before,
+        "same-parent reorder leaves pages_cache counts unchanged"
+    );
+    // And it agrees with the canonical rebuild (the skip was CORRECT).
+    settle_rebuilds(&pool).await;
+    assert_eq!(
+        cache_counts(&pool, PA).await,
+        counts_before,
+        "counts still match canonical rebuild after a same-parent reorder"
+    );
+}
