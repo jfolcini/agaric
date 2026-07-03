@@ -68,18 +68,22 @@ export function usePropertyDefForEdit(
         } else if (def?.value_type === 'ref') {
           setIsRefProp(true)
           setSelectOptions(null)
-          // Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
-          // fallback is intentional pre-bootstrap behaviour: empty
-          // string forces a no-match SQL filter rather than a runtime
-          // null deref.
-          listBlocks({ blockType: 'page', spaceId: currentSpaceId ?? '' })
-            .then((res) => {
-              if (!stale) setRefPages(res.items)
-            })
-            .catch((err) => {
-              logger.warn('SortableBlock', 'ref page resolution failed', undefined, err)
-              if (!stale) setRefPages([])
-            })
+          // #2248 — `listBlocks` requires an active space; there is no
+          // cross-space listing. With no active space, skip the fetch and
+          // leave the ref-page list empty rather than invoking (which would
+          // throw in `requireActiveScope`).
+          if (!currentSpaceId) {
+            if (!stale) setRefPages([])
+          } else {
+            listBlocks({ blockType: 'page', spaceId: currentSpaceId })
+              .then((res) => {
+                if (!stale) setRefPages(res.items)
+              })
+              .catch((err) => {
+                logger.warn('SortableBlock', 'ref page resolution failed', undefined, err)
+                if (!stale) setRefPages([])
+              })
+          }
         } else {
           setSelectOptions(null)
           setIsRefProp(false)

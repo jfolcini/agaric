@@ -76,11 +76,22 @@ export const commands = {
 	 * 
 	 *  The three agenda knobs (`date`, `date_range`, `source`) are bundled
 	 *  into a single [`AgendaQuery`] to keep this wrapper under the
-	 *  `tauri-specta` 10-arg limit after Phase 2 added `space_id`.
+	 *  `tauri-specta` 10-arg limit after Phase 2 added the space parameter.
 	 *  The hand-written TS wrapper in `src/lib/tauri.ts` keeps the flat
 	 *  public API (accepts `agendaDate` / `agendaDateRange` / `agendaSource`
 	 *  at the top level and marshals them into this struct for the IPC
 	 *  boundary).
+	 * 
+	 *  # Scope (#2248)
+	 * 
+	 *  Takes the canonical [`SpaceScope`] rather than a bare `space_id: String`.
+	 *  Block listing is inherently per-space (each active block belongs to exactly
+	 *  one space) and the old bare-string API had no cross-space mode, so
+	 *  [`SpaceScope::Global`] is rejected via [`SpaceScope::require_active`] instead
+	 *  of silently widening into a cross-space listing. The frontend wrapper keeps a
+	 *  required `spaceId: string` and threads it through `requireActiveScope`, which
+	 *  throws on an empty string, so `Active` is the only shape it can produce and
+	 *  callers must short-circuit locally when there is no active space.
 	 */
 	listBlocks: (parentId: string | null, blockType: string | null, tagId: string | null, agenda: {
 	/**  Single-date agenda lookup (`YYYY-MM-DD`). */
@@ -89,7 +100,7 @@ export const commands = {
 	dateRange: DateRange | null,
 	/**  Optional source filter (`due_date` / `scheduled_date`). */
 	source: string | null,
-} | null, cursor: string | null, limit: number | null, spaceId: string) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("list_blocks", { parentId, blockType, tagId, agenda, cursor, limit, spaceId })),
+} | null, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("list_blocks", { parentId, blockType, tagId, agenda, cursor, limit, scope })),
 	/**
 	 *  Tauri command: paginate soft-deleted blocks. Delegates to [`list_trash_inner`].
 	 * 

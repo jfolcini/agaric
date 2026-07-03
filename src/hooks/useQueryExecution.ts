@@ -102,14 +102,17 @@ export async function fetchBacklinksQuery(
   if (!params['target']) {
     throw new QueryValidationError('Backlinks query requires target:ULID parameter')
   }
-  // Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
-  // fallback is intentional pre-bootstrap behaviour: empty string
-  // forces a no-match SQL filter rather than a runtime null deref.
+  // #2248 — `listBlocks` requires an active space; there is no cross-space
+  // listing. With no active space, return an empty page rather than invoking
+  // (which would throw in `requireActiveScope`).
+  if (!spaceId) {
+    return { items: [], nextCursor: null, hasMore: false }
+  }
   const resp = await listBlocks({
     parentId: params['target'],
     cursor: pageCursor,
     limit: listBlocksLimit(PAGE_SIZE),
-    spaceId: spaceId ?? '',
+    spaceId,
   })
   return { items: resp.items, nextCursor: resp.next_cursor, hasMore: resp.has_more }
 }

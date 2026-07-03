@@ -94,10 +94,10 @@ describe('preload', () => {
     // Should have called list_blocks twice (pagination)
     const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
     expect(listBlocksCalls).toHaveLength(2)
-    // ListBlocks call must forward the spaceId so the
+    // ListBlocks call must forward the active-space scope (#2248) so the
     // backend filters out other-space pages.
     const firstListBlocksArgs = listBlocksCalls[0]?.[1] as Record<string, unknown> | undefined
-    expect(firstListBlocksArgs?.['spaceId']).toBe(TEST_SPACE_ID)
+    expect(firstListBlocksArgs?.['scope']).toEqual({ kind: 'active', space_id: TEST_SPACE_ID })
   })
 
   it('caches more than 200 tags — no MAX_TAGS_PREFIX truncation (#1343)', async () => {

@@ -128,8 +128,10 @@ export function buildTitleMap(resolved: ResolvedBlock[], fallback: string): Map<
  * calling convention: `property:` collapses to a null source, and the
  * optional `cursor` arg is only included when defined.
  *
- * Phase 4 — `listBlocks` requires `spaceId`. Callers thread
- * `currentSpaceId` (or `''` pre-bootstrap) so agenda views are space-scoped.
+ * #2248 — `listBlocks` requires an active space; there is no cross-space
+ * listing. With no active space, resolve to an empty page rather than
+ * invoking (which would throw in `requireActiveScope`). This covers both
+ * agenda call sites (the paginating fetchBlocks loop and the main effect).
  */
 function listBlocksForAgenda(
   date: string,
@@ -138,6 +140,14 @@ function listBlocksForAgenda(
   limit: number,
   spaceId: string,
 ): Promise<PageResponse<BlockRow>> {
+  if (!spaceId) {
+    return Promise.resolve({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+  }
   const effectiveSource = sourceFilter === 'property:' ? null : sourceFilter
   return listBlocks({
     agendaDate: date,
@@ -411,9 +421,8 @@ export function useDuePanelData({
       const myReqId = requestIdRef.current
       setLoading(true)
       try {
-        // Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
-        // fallback is intentional pre-bootstrap behaviour: empty string
-        // forces a no-match SQL filter rather than a runtime null deref.
+        // #2248 — `listBlocksForAgenda` returns an empty page when there is
+        // no active space (no cross-space listing).
         const resp = await listBlocksForAgenda(date, sourceFilter, cursor, 50, currentSpaceId ?? '')
         if (myReqId !== requestIdRef.current) return
         const nonEmptyItems = applySourceFilter(resp.items, date, sourceFilter)
@@ -466,7 +475,8 @@ export function useDuePanelData({
     let cancelled = false
     const doFetch = async () => {
       try {
-        // Phase 4 — `?? ''` is the pre-bootstrap no-match fallback.
+        // #2248 — `listBlocksForAgenda` returns an empty page when there is
+        // no active space (no cross-space listing).
         const resp = await listBlocksForAgenda(
           date,
           sourceFilter,

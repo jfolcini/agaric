@@ -349,7 +349,7 @@ describe('purgeBlock', () => {
 describe('listBlocks', () => {
   const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
-  it('invokes list_blocks with all nulls + the required spaceId', async () => {
+  it('invokes list_blocks with all nulls + the required active scope', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
 
     const result = await listBlocks({ spaceId: 'TEST_SPACE_01' })
@@ -362,7 +362,8 @@ describe('listBlocks', () => {
       agenda: null,
       cursor: null,
       limit: null,
-      spaceId: 'TEST_SPACE_01',
+      // #2248 — spaceId is wrapped into an active SpaceScope via requireActiveScope.
+      scope: { kind: 'active', space_id: 'TEST_SPACE_01' },
     })
     expect(result).toEqual(emptyPage)
   })
@@ -406,7 +407,7 @@ describe('listBlocks', () => {
       },
       cursor: 'cursor123',
       limit: 25,
-      spaceId: 'TEST_SPACE_01',
+      scope: { kind: 'active', space_id: 'TEST_SPACE_01' },
     })
     expect(result).toEqual(pageResp)
   })
@@ -424,17 +425,24 @@ describe('listBlocks', () => {
     expect(args['agenda']).toBeNull()
     expect(args['cursor']).toBeNull()
     expect(args['limit']).toBeNull()
-    // Phase 4 — `spaceId` is required and forwarded as-is.
-    expect(args['spaceId']).toBe('TEST_SPACE_01')
+    // #2248 — `spaceId` is wrapped into an active SpaceScope.
+    expect(args['scope']).toEqual({ kind: 'active', space_id: 'TEST_SPACE_01' })
     // blockType should be the value we passed
     expect(args['blockType']).toBe('page')
   })
 
-  it('forwards spaceId verbatim to the binding (Phase 4)', async () => {
+  it('wraps spaceId into an active SpaceScope on the wire (#2248)', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
     await listBlocks({ spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['spaceId']).toBe('SPACE_42')
+    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
+  })
+
+  it('throws (requireActiveScope) on an empty spaceId without dispatching (#2248)', async () => {
+    // There is no cross-space block listing: callers must short-circuit
+    // locally when there is no active space rather than passing `''`.
+    await expect(listBlocks({ spaceId: '' })).rejects.toThrow('empty space id')
+    expect(mockedInvoke).not.toHaveBeenCalled()
   })
 })
 

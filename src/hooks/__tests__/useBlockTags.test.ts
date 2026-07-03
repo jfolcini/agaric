@@ -76,6 +76,8 @@ describe('useBlockTags allTags', () => {
       has_more: false,
       total_count: null,
     }
+    // #2248 — an active space is required; seed one so the mount fetch fires.
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return tagBlocks
       if (cmd === 'list_tags_for_block') return []
@@ -100,11 +102,29 @@ describe('useBlockTags allTags', () => {
       agenda: null,
       cursor: null,
       limit: null,
-      // Phase 4 — `useBlockTags` threads `currentSpaceId` (null
-      // in this test fixture, no space seeded) and the wrapper falls
-      // back to `''` per the pre-bootstrap convention.
-      spaceId: '',
+      // #2248 — `useBlockTags` threads `currentSpaceId` through
+      // `requireActiveScope` into an active SpaceScope.
+      scope: { kind: 'active', space_id: 'SPACE_1' },
     })
+  })
+
+  it('short-circuits to an empty tag list without invoking when there is no active space (#2248)', async () => {
+    // No space seeded (currentSpaceId is null). `listBlocks` has no
+    // cross-space form, so the hook must NOT dispatch and must render empty.
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_tags_for_block') return []
+      return emptyPage
+    })
+
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    expect(result.current.allTags).toEqual([])
+    const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
+    expect(listBlocksCalls).toHaveLength(0)
   })
 
   it('shows toast error when loading tags fails', async () => {
@@ -916,7 +936,7 @@ describe('useBlockTags staleness guards (#1518)', () => {
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'list_inherited_tags_for_block') return []
       if (cmd === 'list_blocks') {
-        const spaceId = (args as { spaceId: string }).spaceId
+        const spaceId = (args as { scope: { space_id: string } }).scope.space_id
         if (spaceId === 'SPACE_OLD') return oldPending
         return newTags
       }
@@ -966,7 +986,7 @@ describe('useBlockTags staleness guards (#1518)', () => {
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'list_inherited_tags_for_block') return []
       if (cmd === 'list_blocks') {
-        const spaceId = (args as { spaceId: string }).spaceId
+        const spaceId = (args as { scope: { space_id: string } }).scope.space_id
         // The FIRST SPACE_A fetch is gated so it can resolve last (stale).
         if (spaceId === 'SPACE_A' && resolveStaleA === null) {
           return new Promise<typeof emptyPage>((resolve) => {

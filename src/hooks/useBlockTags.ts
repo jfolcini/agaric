@@ -61,9 +61,9 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
   const [loading, setLoading] = useState(false)
 
   // Load all available tags for the active space.
-  // Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
-  // fallback is intentional pre-bootstrap behaviour: empty string
-  // forces a no-match SQL filter rather than a runtime null deref.
+  // #2248 — `listBlocks` requires an active space; there is no cross-space
+  // listing. With no active space, short-circuit to an empty tag list rather
+  // than invoking (which would throw in `requireActiveScope`).
   useEffect(() => {
     // #1518 — guard against a stale space's tag list resolving last and
     // clobbering the active space (cross-space leak). `cancelled` covers
@@ -73,7 +73,11 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
     // live store).
     let cancelled = false
     const capturedSpaceId = currentSpaceId
-    listBlocks({ blockType: 'tag', spaceId: capturedSpaceId ?? '' })
+    if (!capturedSpaceId) {
+      setAllTags([])
+      return
+    }
+    listBlocks({ blockType: 'tag', spaceId: capturedSpaceId })
       .then((resp) => {
         if (cancelled) return
         if (useSpaceStore.getState().currentSpaceId !== capturedSpaceId) return

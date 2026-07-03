@@ -77,12 +77,11 @@ describe(' Phase 4 — space scoping integration', () => {
 
     // First fetch should have been issued under SPACE_A. The hook calls
     // `listBlocks` (for agenda) and `queryByProperty` (for projected
-    // overdue / upcoming) — both must carry `SPACE_A`. `listBlocks`
-    // takes the legacy `spaceId: string` (required); `queryByProperty`
-    // Takes a `scope: SpaceScope` post- Phase 3.
+    // overdue / upcoming) — both must carry `SPACE_A`. #2248 — `list_blocks`
+    // now takes a `scope: SpaceScope` (required-active) at the IPC boundary.
     await waitFor(() => {
       const args = lastInvokeArgs('list_blocks')
-      expect(args['spaceId']).toBe('SPACE_A')
+      expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_A' })
     })
 
     // Now switch space — a fresh fetch must go out under SPACE_B.
@@ -98,7 +97,7 @@ describe(' Phase 4 — space scoping integration', () => {
 
     await waitFor(() => {
       const args = lastInvokeArgs('list_blocks')
-      expect(args['spaceId']).toBe('SPACE_B')
+      expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_B' })
     })
   })
 

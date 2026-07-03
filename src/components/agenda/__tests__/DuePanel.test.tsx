@@ -90,6 +90,7 @@ import { makeBlock } from '@/__tests__/fixtures'
 import { DuePanel } from '@/components/agenda/DuePanel'
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
+import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
 const mockedListBlocks = vi.mocked(listBlocks)
@@ -108,6 +109,9 @@ const emptyResponse = {
 beforeEach(() => {
   vi.clearAllMocks()
   clearProjectedCache()
+  // #2248 — the agenda fetch (`listBlocksForAgenda`) requires an active space
+  // and short-circuits to empty otherwise; seed one so `listBlocks` runs.
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
   mockedListBlocks.mockResolvedValue(emptyResponse)
   mockedBatchResolve.mockResolvedValue([])
   mockedListProjectedAgenda.mockResolvedValue({

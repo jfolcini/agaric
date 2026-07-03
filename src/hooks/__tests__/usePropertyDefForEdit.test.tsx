@@ -21,6 +21,7 @@ vi.mock('../../lib/logger', () => ({
 }))
 
 import type { BlockRow } from '../../lib/tauri'
+import { useSpaceStore } from '../../stores/space'
 import { usePropertyDefForEdit } from '../usePropertyDefForEdit'
 
 function makePage(id: string, content: string): BlockRow {
@@ -41,6 +42,9 @@ function makePage(id: string, content: string): BlockRow {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // #2248 — reset the active space between tests (the ref-page fetch is
+  // gated on it now).
+  useSpaceStore.setState({ currentSpaceId: null })
   // Single-key PK lookup; default mock returns null
   // (no def for the requested key).
   mockGetPropertyDef.mockResolvedValue(null)
@@ -83,6 +87,8 @@ describe('usePropertyDefForEdit', () => {
   })
 
   it('loads ref pages when value_type is ref', async () => {
+    // #2248 — the ref-page fetch requires an active space.
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
     mockGetPropertyDef.mockResolvedValue({
       key: 'related',
       value_type: 'ref',
@@ -106,9 +112,28 @@ describe('usePropertyDefForEdit', () => {
       expect(result.current.refPages).toHaveLength(2)
     })
     expect(result.current.selectOptions).toBeNull()
-    // Phase 4 — `listBlocks` requires `spaceId`; `''` is the
-    // pre-bootstrap fallback when no space is seeded in the test.
-    expect(mockListBlocks).toHaveBeenCalledWith({ blockType: 'page', spaceId: '' })
+    // #2248 — the active space is forwarded to `listBlocks` (wrapped into an
+    // active SpaceScope inside the wrapper).
+    expect(mockListBlocks).toHaveBeenCalledWith({ blockType: 'page', spaceId: 'SPACE_1' })
+  })
+
+  it('skips the ref-page fetch and leaves refPages empty when there is no active space (#2248)', async () => {
+    // No active space seeded. `listBlocks` has no cross-space form, so the
+    // hook must NOT call it and must leave the ref-page list empty.
+    mockGetPropertyDef.mockResolvedValue({
+      key: 'related',
+      value_type: 'ref',
+      options: null,
+      created_at: '2025-01-01T00:00:00Z',
+    })
+
+    const { result } = renderHook(() => usePropertyDefForEdit({ key: 'related', value: '' }))
+
+    await waitFor(() => {
+      expect(result.current.isRefProp).toBe(true)
+    })
+    expect(result.current.refPages).toEqual([])
+    expect(mockListBlocks).not.toHaveBeenCalled()
   })
 
   it('logs a warning and clears state when getPropertyDef rejects', async () => {
