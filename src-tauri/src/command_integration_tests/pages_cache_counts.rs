@@ -219,6 +219,92 @@ async fn local_move_updates_both_pages_child_counts() {
     );
 }
 
+/// #2344 — moving a block that carries an inline `[[B]]` link INTO page B via
+/// the LOCAL move path must refresh page B's `inbound_link_count` to 0: once the
+/// linking block's `page_id` follows it onto B, the edge is a same-page link and
+/// no longer counts as inbound. This pins that the MoveBlock slice's routing
+/// swap (`move_block_in_tx` → `apply_op_projected`) preserves the `page_id`
+/// rederive + affected-page `inbound_link_count` recompute — the `child_block_count`
+/// dimension is covered by `local_move_updates_both_pages_child_counts`; this
+/// closes the `inbound_link_count` + `page_id` follow-through dimension on the
+/// LOCAL move path (previously only asserted on the REMOTE `ApplyOp` path).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_move_into_linked_page_refreshes_inbound_count() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Two pages: A (holds the linker) and B (the link target).
+    let a = create_block_inner(&pool, DEV, &mat, "page".into(), "A".into(), None, Some(1))
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let b = create_block_inner(&pool, DEV, &mat, "page".into(), "B".into(), None, Some(2))
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // A content child under A. The inbound edge is registered on EDIT (link
+    // extraction runs on edit, not create), so create plain then edit in `[[B]]`.
+    let linker = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "see me".into(),
+        Some(a.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        linker.id.clone(),
+        format!("see [[{}]]", b.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Linker sits on A, links B → cross-page edge → B.inbound_link_count == 1.
+    let (b_in0, _b_ch0) = read_counts(&pool, b.id.as_str()).await;
+    assert_eq!(
+        b_in0, 1,
+        "B.inbound_link_count must be 1 while the linker sits on a DIFFERENT page (A)"
+    );
+
+    // Move the linker OFF A and INTO B (slot 0 under B) via the LOCAL move path.
+    move_block_inner(&pool, DEV, &mat, linker.id.clone(), Some(b.id.clone()), 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // The moved block's page_id followed it to B (rederived in-tx by the Move arm).
+    let moved_page: Option<String> = sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = ?")
+        .bind(linker.id.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        moved_page.as_deref(),
+        Some(b.id.as_str()),
+        "the moved linker's page_id must follow it to B after the LOCAL move"
+    );
+
+    // Now the linker is ON B: the `[[B]]` edge is a same-page link and must NOT
+    // count as inbound, so B.inbound_link_count must drop to 0. The Move arm's
+    // affected-page recompute (B ∈ new-owning-page ∪ outbound-target set) does
+    // this in-tx; a swap that dropped the recompute would leave it stale at 1.
+    let (b_in1, _b_ch1) = read_counts(&pool, b.id.as_str()).await;
+    assert_eq!(
+        b_in1, 0,
+        "B.inbound_link_count must drop to 0 after the linker moves ONTO B \
+         (same-page link no longer counts) — LOCAL move path refreshes it in-tx"
+    );
+}
+
 /// #417 (c) — deleting a block that carries an inline `[[ULID]]` link must
 /// decrement the target page's `inbound_link_count` via the LOCAL delete
 /// path, with NO full-table `RebuildPagesCache` count pass.

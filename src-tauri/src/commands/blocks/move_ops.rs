@@ -73,8 +73,9 @@ pub async fn move_block_inner(
 /// `commit_and_dispatch` drains every enqueued op in FIFO order.
 ///
 /// Called back-to-back within one tx, each invocation reads the state the
-/// PREVIOUS move committed in-tx (`apply_move_block_via_loro` writes the engine
-/// + SQL synchronously), which is exactly what preserves the #774 slot
+/// PREVIOUS move committed in-tx (`apply_op_projected` writes the engine + SQL
+/// AND runs the inline count/page-id maintenance synchronously — `chunk = None`),
+/// which is exactly what preserves the #774 slot
 /// semantics for a batch: parking block[k] at slot `start+k` drops block[k+1]
 /// at `start+k+1` immediately after it. Any `?` propagation rolls the WHOLE
 /// transaction back (nothing moved) because the caller never reaches commit.
@@ -117,9 +118,9 @@ async fn move_block_in_tx(
     // is a transient optimistic rank the materializer reprojects, so a caller can
     // no longer push a block into the synthetic sentinel tail bucket.)
     let new_parent_block_id = new_parent_id.as_ref().map(|s| BlockId::from_trusted(s));
-    // #1257 keep the typed `MoveBlockPayload` so the command path can both
-    // append it to the op_log AND drive `apply_move_block_via_loro` in-tx
-    // (`create_payload`). The op-log carries an owned
+    // #1257 keep the typed `MoveBlockPayload` so the command path can append it
+    // to the op_log; `apply_op_projected` then re-derives the payload from the
+    // appended `op_record` to drive the in-tx move. The op-log carries an owned
     // `OpPayload::MoveBlock(move_payload.clone())`.
     let move_payload = MoveBlockPayload {
         block_id: BlockId::from_trusted(&block_id),
@@ -232,135 +233,49 @@ async fn move_block_in_tx(
     )
     .await?;
 
-    // #417: capture the moved block's OLD owning page BEFORE the move
-    // re-derives `page_id`. The affected-page set for a move is
-    //   { old owning page } ∪ { new owning page } ∪
-    //   { outbound target pages of the moved subtree }
-    // — `child_block_count` changes on both the old and new owners, and
-    // `inbound_link_count` changes on the link targets only if the moved
-    // subtree crossed into / out of those targets' own page (a same-page
-    // link does not count; the canonical recompute applies that rule).
-    // Recompute runs AFTER the move + `page_id` reprojection below so the
-    // subqueries see the new ownership.
-    let old_owning_page: Option<String> =
-        sqlx::query_scalar::<_, Option<String>>("SELECT page_id FROM blocks WHERE id = ?")
-            .bind(&block_id)
-            .fetch_optional(&mut ***tx)
-            .await?
-            .flatten();
-
-    // #2200 (Tier-2 reorder early-out): capture the moved block's OLD
-    // `parent_id` BEFORE `apply_move_block_via_loro` overwrites it. A move that
-    // keeps the block under the SAME parent is a pure sibling reorder — only
-    // ranks change; the affected pages and their descendant COUNTS are provably
-    // unchanged (the subtree stays under the same parent, hence the same owning
-    // page, and no block enters/leaves any page). We use this below to SKIP the
-    // affected-pages CTE + `recompute_pages_cache_counts_for_pages` on the
-    // hottest move gesture (drag-reorder).
-    let old_parent_id: Option<String> =
-        sqlx::query_scalar::<_, Option<String>>("SELECT parent_id FROM blocks WHERE id = ?")
-            .bind(&block_id)
-            .fetch_optional(&mut ***tx)
-            .await?
-            .flatten();
-    let same_parent_reorder = old_parent_id == new_parent_id;
-
-    // 5. #1257 route the move through the SAME engine-apply + dense-rank
-    //    reprojection the boot-replay / sync `ApplyOp` path uses, IN this
-    //    CommandTx, INSTEAD of the inline provisional `UPDATE blocks SET
-    //    parent_id, position`. `apply_move_block_via_loro`:
-    //      1. resolves the block's space,
-    //      2. applies the move to the per-space Loro engine (sync guard, dropped
-    //         before any `.await`), reads back the engine `BlockSnapshot` plus the
-    //         authoritative pre/post sibling orders,
-    //      3. `project_move_block_to_sql` UPDATEs the row's `parent_id` +
-    //         engine-dense `position`,
-    //      4. `reproject_dense_positions` re-ranks BOTH the source (old parent)
-    //         and target (new parent) sibling groups so the SQL `position`
-    //         matches the engine's fractional tree order in each (a same-parent
-    //         reorder reprojects the single shared group once), and
-    //      5. runs `recompute_subtree_inheritance` for the moved subtree.
-    //    The op-log append above is unchanged, and the cycle/TOCTOU/depth checks
-    //    above still gate this user-driven move (the helper's own cycle probe
-    //    no-op-warns; the command must surface the error, which we already did).
-    //    We deliberately do NOT call the full `apply_op_tx` wrapper /
-    //    `advance_apply_cursor`: the apply cursor (`materialized_through_seq`)
-    //    must stay put on the LOCAL path so boot replay re-applies these ops
-    //    idempotently (engine apply is idempotent; the projection UPDATEs are by
-    //    construction) — the intended safety net while local engine-apply hardens
-    //    (#1248 / #1257). If the block's space can't be resolved (#2250:
-    //    `SpaceUnresolved`, the only remaining sql_only trigger), the
-    //    helper internally FALLS BACK to `apply_move_block_sql_only`, which writes
-    //    the provisional rank (`index_to_provisional_position`) + `parent_id` — so
-    //    the row is never skipped and we never crash. This mirrors the
-    //    engine-absent handling the sync `ApplyOp` path already relies on, and
-    //    preserves the #1323 convergence (parent_id updated either way; position
-    //    dense on the engine path, provisional on the fallback).
-    crate::materializer::apply_move_block_via_loro(&mut *tx, state, device_id, &move_payload)
-        .await?;
-
-    // #664: recompute `page_id` AND `space_id` for the moved subtree,
-    // synchronously. The async `RebuildPageIds` task chains
-    // `rebuild_space_ids`, but callers read space-scoped lists right after
-    // commit, so both columns must be re-derived in-tx here. Shared helper
-    // (the single source of truth for this chain) lives in
-    // `crate::commands::block_cleanup`.
-    crate::commands::block_cleanup::rederive_page_and_space_ids(&mut *tx, &block_id).await?;
-
-    // #1392: tag-inheritance recompute for the moved subtree is now owned by
-    // `apply_move_block_via_loro` (step 5 above) — and by its engine-absent
-    // `apply_move_block_sql_only` fallback — so BOTH arms already recompute
-    // `block_tag_inherited`. The former explicit call here (left over from the
-    // pre-#1257-route-through inline path) was a redundant second subtree walk
-    // on every move; dropped. `local_move_inheritance_both_arms_1392` pins that
-    // both arms keep the inheritance correct without it.
-
-    // #417: refresh `pages_cache` counts for the affected pages WITHOUT the
-    // full-table pass. Set = old owning page ∪ new owning page ∪ outbound
-    // target pages of the moved subtree (resolved against the just-updated
-    // `page_id` + `block_links`). Bounded by the same depth-100 subtree CTE
-    // and indexed `block_links` join.
-    //
-    // #2200 (Tier-2 reorder early-out): SKIP this entire block on a
-    // same-parent reorder. When `old_parent_id == new_parent_id` the subtree
-    // stays under the same parent — hence the same owning page — and no block
-    // crosses into/out of any page, so `child_block_count` /
-    // `inbound_link_count` for every page are unchanged. Only sibling ranks
-    // moved, and those were already reprojected by `apply_move_block_via_loro`
-    // (step 5) above. The op-log append + engine dispatch + `page_id`/`space_id`
-    // rederive all still ran; we elide ONLY the provably-unchanged COUNT
-    // recompute (the affected-pages CTE + `recompute_pages_cache_counts_for_pages`).
-    if !same_parent_reorder {
-        use std::collections::HashSet;
-        let mut affected: HashSet<String> = HashSet::new();
-        if let Some(p) = old_owning_page {
-            affected.insert(p);
-        }
-        // New owning page + outbound target pages of the moved subtree.
-        // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
-        let rows = sqlx::query_scalar::<_, String>(
-            "WITH RECURSIVE subtree(id, depth) AS ( \
-                 SELECT id, 0 FROM blocks WHERE id = ?1 \
-                 UNION ALL \
-                 SELECT b.id, s.depth + 1 FROM blocks b \
-                 JOIN subtree s ON b.parent_id = s.id \
-                 WHERE b.deleted_at IS NULL AND s.depth < 100 \
-             ) \
-             SELECT DISTINCT page_id FROM blocks \
-                 WHERE id IN (SELECT id FROM subtree) AND page_id IS NOT NULL \
-             UNION \
-             SELECT DISTINCT b.page_id FROM block_links bl \
-                 JOIN blocks b ON b.id = bl.target_id \
-                 WHERE bl.source_id IN (SELECT id FROM subtree) \
-                   AND b.page_id IS NOT NULL",
-        )
-        .bind(&block_id)
-        .fetch_all(&mut ***tx)
-        .await?;
-        affected.extend(rows);
-        let affected: Vec<String> = affected.into_iter().collect();
-        crate::materializer::recompute_pages_cache_counts_for_pages(&mut *tx, &affected).await?;
-    }
+    // 5. #2344/#2325 route the just-appended `op_record` through the SINGLE
+    //    collapsed apply-projection entry point (`apply_op_projected`), IN this
+    //    CommandTx, INSTEAD of the direct `apply_move_block_via_loro` call plus
+    //    the hand-rolled LOCAL maintenance that used to follow it — the MoveBlock
+    //    arm of the #2325 apply-path collapse, the FINAL single-op slice. This is
+    //    the SAME engine-apply + SQL projection the boot-replay / sync `ApplyOp`
+    //    path uses (via `apply_op_tx`'s MoveBlock arm), so the LOCAL and REMOTE
+    //    move paths now share one entry point. `apply_op_projected` re-derives the
+    //    `MoveBlockPayload` from `op_record.payload` and runs the SAME
+    //    `apply_move_block_via_loro` (resolve space → per-space Loro engine apply →
+    //    `project_move_block_to_sql` parent_id/position write →
+    //    `reproject_dense_positions` of both sibling groups →
+    //    `recompute_subtree_inheritance` for the moved subtree), PLUS — via
+    //    `PreOpState::Move` in `maintain_pages_cache_counts_after_op` (#2351) —
+    //    ALL of the LOCAL maintenance that used to live inline here:
+    //      * the shared `rederive_page_and_space_ids` (page_id AND space_id for
+    //        the moved subtree, #664),
+    //      * the IDENTICAL affected-pages CTE (old owning page ∪ the moved
+    //        subtree's page ids ∪ its outbound-target pages, #417) fed to
+    //        `recompute_pages_cache_counts_for_pages`, and
+    //      * the #2200 same-parent reorder early-out (skip ALL count maintenance
+    //        when `old_parent_id == new_parent_id`).
+    //    The maintain step captures `old_parent_id` / `src_page` PRE-projection
+    //    itself, so the former LOCAL captures + `same_parent_reorder` gate are now
+    //    redundant and removed. Because `apply_op_projected` passes `chunk = None`
+    //    (a "chunk of one"), that maintenance runs INLINE per-op — synchronously,
+    //    before this call returns — which preserves the #774 in-tx slot semantics
+    //    the batch path (`move_blocks_batch_inner`) relies on. We pass
+    //    `advance_cursor = false`: the apply cursor (`materialized_through_seq`)
+    //    stays put on the LOCAL path so boot replay re-applies these ops
+    //    idempotently — the intended safety net while local engine-apply hardens
+    //    (#1248 / #1257). The op-log append above is unchanged, and the
+    //    cycle/TOCTOU/depth checks above still gate this user-driven move (the
+    //    helper's own cycle probe no-op-warns; the command already surfaced the
+    //    error). If the block's space can't be resolved (#2250: `SpaceUnresolved`,
+    //    the only remaining sql_only trigger), the helper internally FALLS BACK to
+    //    `apply_move_block_sql_only` (provisional rank + `parent_id`), so the row
+    //    is never skipped and we never crash — preserving #1323 convergence.
+    //    `apply_op_projected` borrows `&op_record` here, BEFORE the
+    //    `enqueue_background(op_record)` move below. The returned `ApplyEffects`
+    //    is empty for Move (LOCAL move runs no post-commit cohort fan-out), so it
+    //    is discarded.
+    crate::materializer::apply_op_projected(&mut *tx, &op_record, state, false).await?;
 
     // 6. Enqueue the op for background dispatch. The CALLER's single
     //    `commit_and_dispatch` drains every enqueued op in FIFO order (one op
