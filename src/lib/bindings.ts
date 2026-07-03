@@ -43,7 +43,7 @@ export const commands = {
 	 *  Delegates to [`move_blocks_to_space_inner`]. Returns the number of
 	 *  blocks actually moved.
 	 */
-	moveBlocksToSpace: (blockIds: BlockId[], spaceId: string) => typedError<number, AppError>(__TAURI_INVOKE("move_blocks_to_space", { blockIds, spaceId })),
+	moveBlocksToSpace: (blockIds: BlockId[], spaceId: SpaceId) => typedError<number, AppError>(__TAURI_INVOKE("move_blocks_to_space", { blockIds, spaceId })),
 	/**  Tauri command: restore a soft-deleted block. Delegates to [`restore_block_inner`]. */
 	restoreBlock: (blockId: BlockId, deletedAtRef: number) => typedError<RestoreResponse, AppError>(__TAURI_INVOKE("restore_block", { blockId, deletedAtRef })),
 	/**  Tauri command: permanently purge a soft-deleted block. Delegates to [`purge_block_inner`]. */
@@ -539,7 +539,7 @@ export const commands = {
 	 *  `Channel<ImportProgressUpdate>` (mirroring `start_sync`); sends are
 	 *  best-effort, so a dropped channel never aborts the import.
 	 */
-	importMarkdown: (content: string, filename: string | null, spaceId: string, vaultFiles: VaultFile[] | null, progress: Channel<ImportProgressUpdate>) => typedError<ImportResult, AppError>(__TAURI_INVOKE("import_markdown", { content, filename, spaceId, vaultFiles, progress })),
+	importMarkdown: (content: string, filename: string | null, spaceId: SpaceId, vaultFiles: VaultFile[] | null, progress: Channel<ImportProgressUpdate>) => typedError<ImportResult, AppError>(__TAURI_INVOKE("import_markdown", { content, filename, spaceId, vaultFiles, progress })),
 	/**  Tauri command: add an attachment to a block. Delegates to [`add_attachment_inner`]. */
 	addAttachment: (blockId: BlockId, filename: string, mimeType: string, sizeBytes: number, fsPath: string) => typedError<AttachmentRow, AppError>(__TAURI_INVOKE("add_attachment", { blockId, filename, mimeType, sizeBytes, fsPath })),
 	/**
@@ -827,7 +827,7 @@ export const commands = {
 	 *  FTS indexing) are dispatched inside `_inner` via `CommandTx` — the
 	 *  wrapper only needs to thread `materializer` through.
 	 */
-	createPageInSpace: (parentId: string | null, content: string, spaceId: string) => typedError<string, AppError>(__TAURI_INVOKE("create_page_in_space", { parentId, content, spaceId })),
+	createPageInSpace: (parentId: string | null, content: string, spaceId: SpaceId) => typedError<string, AppError>(__TAURI_INVOKE("create_page_in_space", { parentId, content, spaceId })),
 	/**
 	 *  Tauri command wrapper around [`create_space_inner`].
 	 * 
@@ -841,7 +841,7 @@ export const commands = {
 	 *  Tauri command: quick-capture a single content block onto today's
 	 *  journal page in `space_id`. Delegates to [`quick_capture_block_inner`].
 	 */
-	quickCaptureBlock: (content: string, spaceId: string) => typedError<BlockRow, AppError>(__TAURI_INVOKE("quick_capture_block", { content, spaceId })),
+	quickCaptureBlock: (content: string, spaceId: SpaceId) => typedError<BlockRow, AppError>(__TAURI_INVOKE("quick_capture_block", { content, spaceId })),
 	/**
 	 *  Tauri command: look up a journal page by date. Delegates to
 	 *  [`get_journal_page_by_date_inner`].

@@ -12,7 +12,7 @@ use super::super::*;
 // `crate::domain::block_ops` layer. The `*_inner` wrappers below (which own
 // the transaction + post-commit dispatch) stay here and call into domain.
 use crate::domain::block_ops::{create_block_in_tx, set_property_in_tx};
-use crate::space::SpaceScope;
+use crate::space::{SpaceId, SpaceScope};
 
 /// #2268: minimum number of rows a single-root cascade UPDATE must touch before
 /// the depth-saturation probe (`cascade_depth_saturated`, a full
@@ -1007,14 +1007,19 @@ pub async fn move_blocks_to_space_inner(
 pub async fn move_blocks_to_space(
     ctx: State<'_, WriteCtx>,
     block_ids: Vec<BlockId>,
-    space_id: String,
+    space_id: SpaceId,
 ) -> Result<i64, AppError> {
+    // b2 (#2248): required-target-space commands take the `SpaceId` newtype at
+    // the wire boundary. The lenient `Deserialize` only uppercases, so reject a
+    // malformed id here rather than letting a never-matching filter reach the
+    // space-existence check with an opaque error.
+    space_id.validate_shape()?;
     move_blocks_to_space_inner(
         ctx.pool(),
         ctx.device_id(),
         ctx.materializer(),
         block_ids,
-        space_id,
+        space_id.into_string(),
     )
     .await
     .map_err(sanitize_internal_error)

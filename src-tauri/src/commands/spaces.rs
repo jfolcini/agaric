@@ -29,6 +29,7 @@ use crate::commands::{create_block_in_tx, set_property_in_tx};
 use crate::db::{CommandTx, ReadPool, WriteCtx};
 use crate::error::AppError;
 use crate::materializer::Materializer;
+use crate::space::SpaceId;
 use crate::ulid::BlockId;
 
 use super::sanitize_internal_error;
@@ -308,15 +309,20 @@ pub async fn create_page_in_space(
     ctx: State<'_, WriteCtx>,
     parent_id: Option<String>,
     content: String,
-    space_id: String,
+    space_id: SpaceId,
 ) -> Result<String, AppError> {
+    // b2 (#2248): required-target-space commands take the `SpaceId` newtype at
+    // the wire boundary. The lenient `Deserialize` only uppercases, so reject a
+    // malformed id here rather than letting a never-matching filter reach the
+    // TOCTOU space-existence check with an opaque error.
+    space_id.validate_shape()?;
     let id = create_page_in_space_inner(
         ctx.pool(),
         ctx.device_id(),
         ctx.materializer(),
         parent_id,
         content,
-        space_id,
+        space_id.into_string(),
     )
     .await
     .map_err(sanitize_internal_error)?;
