@@ -92,7 +92,7 @@ impl Projection for BacklinkProjection {
         &BACKLINK_ALLOWED_KEYS
     }
 
-    fn compile_tag(&self, tag: &str) -> WhereClause {
+    fn compile_tag(&self, tag: &str, _alias: &str) -> WhereClause {
         // Tag is a hybrid leaf on the backlink surface (pre-resolved id
         // set), never routed here; emit a defined-but-unused fragment that
         // matches the shared shape so `compile` stays total.
@@ -102,7 +102,7 @@ impl Projection for BacklinkProjection {
         )
     }
 
-    fn compile_tag_or_ref(&self, tag: &str) -> WhereClause {
+    fn compile_tag_or_ref(&self, tag: &str, _alias: &str) -> WhereClause {
         // Like `compile_tag`, the ref-inclusive tag leaf is never routed to
         // the backlink surface; emit the defined-but-unused shared
         // UNION fragment so `compile` stays total.
@@ -113,18 +113,23 @@ impl Projection for BacklinkProjection {
         )
     }
 
-    fn compile_child_of(&self, parent: &str) -> WhereClause {
+    fn compile_child_of(&self, parent: &str, _alias: &str) -> WhereClause {
         // Direct-children leaf is never routed to the backlink surface; emit
         // the defined-but-unused shared `b.parent_id = ?` fragment so `compile`
         // stays total.
         WhereClause::new("b.parent_id = ?", vec![Bind::Text(parent.to_string())])
     }
 
-    fn compile_path_glob(&self, _pattern: &str, _exclude: bool) -> WhereClause {
+    fn compile_path_glob(&self, _pattern: &str, _exclude: bool, _alias: &str) -> WhereClause {
         WhereClause::unsupported()
     }
 
-    fn compile_has_property(&self, key: &str, predicate: &PropertyPredicate) -> WhereClause {
+    fn compile_has_property(
+        &self,
+        key: &str,
+        predicate: &PropertyPredicate,
+        _alias: &str,
+    ) -> WhereClause {
         // Byte-identical to the backlink `PropertyText`/`Num`/`Date` +
         // `PropertyIsSet`/`IsEmpty` leaves (the `bp` alias, the
         // `bp.{col} IS NOT NULL` guard, the `<>` for `Ne`).
@@ -157,15 +162,22 @@ impl Projection for BacklinkProjection {
     fn compile_last_edited(
         &self,
         _spec: &crate::filters::primitive::LastEditedSpec,
+        _alias: &str,
     ) -> WhereClause {
         WhereClause::unsupported()
     }
 
-    fn compile_space(&self, _space_id: &str) -> WhereClause {
+    fn compile_space(&self, _space_id: &str, _alias: &str) -> WhereClause {
         WhereClause::unsupported()
     }
 
-    fn compile_priority(&self, values: &[String], is_null: bool, exclude: bool) -> WhereClause {
+    fn compile_priority(
+        &self,
+        values: &[String],
+        is_null: bool,
+        exclude: bool,
+        _alias: &str,
+    ) -> WhereClause {
         // The routed backlink `Priority{level}` leaf is exactly
         // `{ values: [level], is_null: false, exclude: false }` → the legacy
         // `b.priority = ?` with one text bind. The multi-value / is_null /
@@ -198,7 +210,13 @@ impl Projection for BacklinkProjection {
         WhereClause::new(sql, values.iter().cloned().map(Bind::Text).collect())
     }
 
-    fn compile_state(&self, values: &[String], is_null: bool, exclude: bool) -> WhereClause {
+    fn compile_state(
+        &self,
+        values: &[String],
+        is_null: bool,
+        exclude: bool,
+        _alias: &str,
+    ) -> WhereClause {
         // The routed backlink `TodoState{state}` leaf is exactly
         // `{ values: [state], is_null: false, exclude: false }` → the legacy
         // `b.todo_state = ?` with one text bind. The multi-value / is_null /
@@ -231,7 +249,7 @@ impl Projection for BacklinkProjection {
         WhereClause::new(sql, values.iter().cloned().map(Bind::Text).collect())
     }
 
-    fn compile_block_type(&self, values: &[String], exclude: bool) -> WhereClause {
+    fn compile_block_type(&self, values: &[String], exclude: bool, _alias: &str) -> WhereClause {
         // Routed backlink `BlockType{block_type}` leaf is
         // `{ values: [block_type], exclude: false }` → byte-identical
         // `b.block_type = ?`.
@@ -253,15 +271,20 @@ impl Projection for BacklinkProjection {
         WhereClause::new(sql, values.iter().cloned().map(Bind::Text).collect())
     }
 
-    fn compile_due_date(&self, predicate: &DatePredicate) -> WhereClause {
+    fn compile_due_date(&self, predicate: &DatePredicate, _alias: &str) -> WhereClause {
         due_or_scheduled(predicate, "due_date")
     }
 
-    fn compile_scheduled(&self, predicate: &DatePredicate) -> WhereClause {
+    fn compile_scheduled(&self, predicate: &DatePredicate, _alias: &str) -> WhereClause {
         due_or_scheduled(predicate, "scheduled_date")
     }
 
-    fn compile_created(&self, after: Option<&str>, before: Option<&str>) -> WhereClause {
+    fn compile_created(
+        &self,
+        after: Option<&str>,
+        before: Option<&str>,
+        _alias: &str,
+    ) -> WhereClause {
         // Byte-identical to the backlink `CreatedInRange` leaf: each present
         // bound is parsed to ms → `ms_to_ulid_prefix` → compared against
         // `b.id` (`>= lo`, `< hi`). A malformed-but-present bound is the

@@ -650,7 +650,11 @@ fn compile_pages_filters(
                 if i > 0 {
                     frag.push_str(joiner);
                 }
-                let inner = proj.compile_path_glob(pat, *exclude);
+                let inner = proj.compile_path_glob(
+                    pat,
+                    *exclude,
+                    crate::filters::primitive::DEFAULT_ROW_ALIAS,
+                );
                 frag.push_str(&inner.sql);
                 frag_binds.extend(inner.binds);
             }
