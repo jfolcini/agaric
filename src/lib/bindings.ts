@@ -2979,15 +2979,16 @@ export type SearchFilter = {
 	 */
 	tagIds?: string[],
 	/**
-	 *  Space scope for the search (#2248 group c). `Active(id)` restricts
-	 *  matches to blocks whose owning page lives in that space; `Global`
-	 *  applies no space filter. Every real caller (the FE search surfaces
-	 *  and the MCP `search` tool) is space-scoped, so the two search
-	 *  commands reject `Global` via `SpaceScope::require_active()` — this
-	 *  replaces the prior `Option<String>` where a missing/empty id
-	 *  silently meant "match nothing" (the `''`=no-match footgun). Missing
-	 *  key deserialises to `Global` (rejected downstream) rather than a
-	 *  never-matching empty filter.
+	 *  Space scope for the search (#2248 group c). Mapped to the FTS layer
+	 *  via [`SpaceScope::as_filter_param`]: `Active(id)` restricts matches to
+	 *  blocks whose owning page lives in that space; `Global` applies no
+	 *  space filter (the deliberate cross-space form). This replaces the
+	 *  prior `space_id: Option<String>` whose `Some("")` silently meant
+	 *  "match nothing" — the un-typed footgun the arch sweep flagged. Every
+	 *  real caller (the FE search wrappers via `requireActiveScope`, and the
+	 *  MCP `search` tool) sends `Active`, so `Global` only arises from an
+	 *  omitted key (the `#[serde(default)]`) and yields today's unscoped
+	 *  behaviour rather than a never-matching empty filter.
 	 */
 	scope?: SpaceScope,
 	/**
