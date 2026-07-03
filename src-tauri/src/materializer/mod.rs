@@ -31,12 +31,11 @@ pub(crate) use handlers::purge_block_sql_cascade;
 // #1257 re-export the simple-op engine helpers so the LOCAL command paths
 // (edit_block / set_property / delete_property / add_tag / remove_tag) can route
 // through the engine IN-TRANSACTION without advancing the apply cursor.
-// #1257 re-export the engine-move-+-dense-reprojection helper so the
-// LOCAL move_block command core (`commands::blocks::move_ops::move_block_inner`)
-// can route a move through the engine IN-TRANSACTION (dense-reprojecting both
-// the source and target sibling groups) without advancing the apply cursor.
-pub(crate) use handlers::apply_move_block_via_loro;
-pub(crate) use handlers::recompute_pages_cache_counts_for_pages;
+// #2344: MoveBlock joined the collapse — `move_block_in_tx` now routes through
+// `apply_op_projected` (the FINAL single-op slice), so the
+// `apply_move_block_via_loro` re-export was likewise dropped (the Move arm of
+// `apply_op_tx` and the convergence/reproject proptests still reach the helper
+// via its own module path within `handlers`).
 // #1257 re-export the cohort collectors + the post-commit descendant
 // fan-out so the LOCAL delete / restore command paths (`commands::blocks::crud`)
 // PRE-CAPTURE each root's subtree cohort + space BEFORE the SQL soft-delete (a
