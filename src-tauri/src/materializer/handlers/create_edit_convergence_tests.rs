@@ -454,6 +454,21 @@ async fn run_fallback_arm() -> (Vec<ShapeRow>, Option<i64>, Option<i64>, Option<
     )
     .await
     .expect("create index-only");
+    // #2344: mirror the engine arm's in-tx maintain-step stamp for a NON-PAGE
+    // block. In production the sql_only fallback runs INSIDE `apply_op_tx`, so
+    // `maintain_pages_cache_counts_after_op` stamps the new content block's
+    // page_id/space_id right after the projection (which itself still writes
+    // NULL — verified by the dedicated sql_only projection unit tests). This
+    // direct-call fallback arm bypasses `apply_op_tx`, so we stamp identically
+    // here to keep the cross-arm page_id comparison apples-to-apples (as the
+    // normal child above already does).
+    sqlx::query("UPDATE blocks SET page_id = ?, space_id = ? WHERE id = ?")
+        .bind(PAGE_ID)
+        .bind(SPACE_ID)
+        .bind(INDEX_ONLY_ID)
+        .execute(&pool)
+        .await
+        .expect("stamp index-only");
 
     // (4) EditBlock on the normal child.
     apply_edit_block_sql_only(
@@ -495,18 +510,23 @@ async fn create_edit_sql_only_fallback_converges_with_engine_arm() {
     // --- Absolute expected rows (pin the shape down, not just cross-arm equal) ---
     // ids sort lexicographically: ...CRIDXO < ...CRNORM < ...CRNPAG
     let expected: Vec<ShapeRow> = vec![
-        // index-only child of PARENT
+        // index-only child of PARENT. #2344: page_id == PAGE_ID — the in-tx
+        // maintain step now stamps a non-page block's owning page_id right after
+        // the projection (which itself still writes NULL — proven by the
+        // dedicated sql_only projection unit tests). The engine arm gets this via
+        // `apply_op_tx`; the fallback arm mirrors it manually (see run_fallback_arm).
         (
             INDEX_ONLY_ID.to_string(),
             "content".to_string(),
             "index-only".to_string(),
             Some(PARENT_ID.to_string()),
-            None, // non-page ⇒ page_id NULL (deferred task fills it)
+            Some(PAGE_ID.to_string()),
         ),
-        // normal child of PARENT, EDITED content. page_id == PAGE_ID is the
-        // test's scaffolding stamp (applied identically in both arms — see the
-        // fallback arm); the CREATE projection itself writes NULL page_id for a
-        // content block, which the index-only child above verifies.
+        // normal child of PARENT, EDITED content. page_id == PAGE_ID: the CREATE
+        // projection writes NULL for a content block, and both the scaffolding
+        // stamp and (as of #2344) the in-tx maintain step fill it to the owning
+        // page — the dedicated sql_only projection unit tests verify the NULL
+        // projection contract directly.
         (
             NORMAL_CHILD_ID.to_string(),
             "content".to_string(),

@@ -1021,18 +1021,31 @@ async fn local_and_sync_apply_project_identical_rows_2250() {
         json!({"id": "BB", "block_type": "content", "content": "B", "parent_id": "S1", "position": 2}),
     ];
 
-    // The four columns `apply_*_via_loro` projects directly (background cache
-    // rebuilds own space_id/page_id, whose timing differs, so they are out of
-    // scope for a projection-equivalence check).
+    // The columns both entry points must project identically post-`settle()`.
+    // `page_id`/`space_id` are now INCLUDED: the SYNC `apply_op_tx` Create arm
+    // stamps them in-tx (mirroring LOCAL `create_block_in_tx`), and the deferred
+    // cache rebuilds are idempotent backstops that converge on the same value —
+    // so a fully-settled LOCAL and SYNC create must agree on them too. This is
+    // the LOCAL==REMOTE create-parity proof.
     async fn projected_row(
         pool: &SqlitePool,
         id: &str,
-    ) -> (String, String, Option<String>, Option<i64>) {
-        sqlx::query_as("SELECT content, block_type, parent_id, position FROM blocks WHERE id = ?")
-            .bind(id)
-            .fetch_one(pool)
-            .await
-            .unwrap()
+    ) -> (
+        String,
+        String,
+        Option<String>,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+    ) {
+        sqlx::query_as(
+            "SELECT content, block_type, parent_id, position, page_id, space_id \
+             FROM blocks WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
     }
 
     // ── LOCAL command path ────────────────────────────────────────────────
@@ -1307,6 +1320,115 @@ async fn local_edit_block_link_parity_local_matches_remote_2344() {
 
     mat_l.shutdown();
     mat_s.shutdown();
+}
+/// #2344 prereq — a REMOTE `ApplyOp` CreateBlock of a content block that links
+/// `[[<PAGE>]]` must stamp the new block's `page_id`/`space_id` AND leave the
+/// linked page's `pages_cache.inbound_link_count` correct IN-TX — i.e. already
+/// right after the foreground apply, BEFORE any background settle drains the
+/// deferred `SetBlockPageId` / `ReindexBlockLinks` / count-rebuild backstops.
+///
+/// This pins that `apply_op_tx`'s Create arm stamps a non-page block's
+/// `page_id`/`space_id` BEFORE the count recompute (which keys on
+/// `blocks.page_id`), closing the transiently-wrong-low window: the inbound
+/// recompute's source-side filter is `src.page_id IS NOT NULL AND src.page_id !=
+/// pages_cache.page_id`, so an unstamped (NULL) source `page_id` would EXCLUDE
+/// the new edge and leave the target's `inbound_link_count` at 0 until the async
+/// `SetBlockPageId` task caught up. With the in-tx stamp it is 1 immediately.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_apply_op_create_stamps_page_id_and_inbound_in_tx_2344() {
+    let src = seed_label_to_id("SRC");
+    let tgt = seed_label_to_id("TGT");
+    let seed = [
+        json!({"id": "SRC", "block_type": "page", "content": "Source", "parent_id": null, "position": 1}),
+        json!({"id": "TGT", "block_type": "page", "content": "Target", "parent_id": null, "position": 2}),
+    ];
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+    // Give the seeded pages their own `page_id` (self) and a `pages_cache` row so
+    // the in-tx inbound recompute has a target row to UPDATE and the link token
+    // resolves to a page.
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    crate::cache::rebuild_pages_cache(&pool).await.unwrap();
+
+    // A fresh content block under SRC whose content links `[[TGT]]`.
+    let new_id = BlockId::from(seed_label_to_id("NEW").as_str());
+    let payload = CreateBlockPayload {
+        block_id: new_id.clone(),
+        block_type: "content".into(),
+        parent_id: Some(BlockId::from(src.as_str())),
+        position: None,
+        index: Some(0),
+        content: format!("see [[{tgt}]]"),
+    };
+    let record = crate::op_log::append_local_op(&pool, DEV, OpPayload::CreateBlock(payload))
+        .await
+        .expect("append remote create op");
+    mat.enqueue_foreground(crate::materializer::MaterializeTask::ApplyOp(
+        std::sync::Arc::new(record),
+    ))
+    .await
+    .expect("enqueue ApplyOp");
+    // Run ONLY the foreground apply (`apply_op_tx`); do NOT settle yet, so the
+    // deferred background backstops have not run — this is the in-tx window.
+    mat.flush_foreground().await.expect("flush foreground");
+
+    // (a) The new block's page_id/space_id are stamped in-tx (not left NULL).
+    let new_id_str = new_id.clone().into_string();
+    let (page_id, space_id): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT page_id, space_id FROM blocks WHERE id = ?")
+            .bind(&new_id_str)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        page_id.as_deref(),
+        Some(src.as_str()),
+        "REMOTE apply_op_tx must stamp the new block's page_id to its owning page \
+         IN-TX (not leave it NULL until the async SetBlockPageId backstop)",
+    );
+    assert!(
+        space_id.is_some(),
+        "REMOTE apply_op_tx must stamp the new block's space_id IN-TX",
+    );
+
+    // (b) The linked page's inbound_link_count is already correct in-tx — the
+    // wrong-low window is closed.
+    let tgt_inbound: i64 =
+        sqlx::query_scalar("SELECT inbound_link_count FROM pages_cache WHERE page_id = ?")
+            .bind(tgt.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        tgt_inbound, 1,
+        "TGT.inbound_link_count must be 1 IN-TX (before any background settle): the \
+         Create arm stamps the source block's page_id BEFORE the recompute whose \
+         src.page_id filter would otherwise exclude the just-created NULL-page edge",
+    );
+
+    // The background backstops are idempotent: a full settle leaves it at 1.
+    settle(&mat).await;
+    let tgt_inbound_after: i64 =
+        sqlx::query_scalar("SELECT inbound_link_count FROM pages_cache WHERE page_id = ?")
+            .bind(tgt.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        tgt_inbound_after, 1,
+        "settle must be idempotent — the async backstops converge on the same count",
+    );
+
+    mat.shutdown();
 }
 
 // ---------------------------------------------------------------------------

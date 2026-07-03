@@ -350,6 +350,23 @@ pub(super) async fn maintain_pages_cache_counts_after_op(
             // row here so the recompute UPDATE below has a target row.
             // Determine the owning page.
             let owning_page = resolve_owning_page(conn, block_id, parent_id.as_deref()).await?;
+            // Non-page blocks: stamp page_id/space_id in-tx (mirrors create_block_in_tx
+            // and the deferred SetBlockPageId task) so the count recompute below — which
+            // keys on blocks.page_id — is correct-in-tx instead of transiently wrong-low.
+            if block_type != "page"
+                && let Some(op) = owning_page.as_deref()
+            {
+                sqlx::query!(
+                    "UPDATE blocks SET page_id = ?, \
+                         space_id = (SELECT space_id FROM blocks WHERE id = ?) \
+                     WHERE id = ?",
+                    op,
+                    op,
+                    block_id,
+                )
+                .execute(&mut *conn)
+                .await?;
+            }
             if block_type == "page" {
                 // INSERT the pages_cache row if missing so the
                 // `UPDATE` below sees a target. Title = content
