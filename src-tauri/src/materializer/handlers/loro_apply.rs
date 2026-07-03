@@ -263,18 +263,39 @@ pub(crate) async fn apply_set_property_via_loro(
         return apply_set_property_sql_only(conn, p.clone()).await;
     };
 
-    {
+    // #2250 (#1257 reconciliation): if the block is absent from this space's
+    // engine tree — projected SQL-only during a no-space window (e.g. the #2326
+    // create-then-SetProperty(space) ordering, where the block was created
+    // before its space resolved and so never entered the engine) —
+    // `apply_set_property_typed` would error. Fall back to the authoritative
+    // payload-keyed SQL projection and let boot-replay reconcile the engine.
+    // Mirrors the block-absent guard in `apply_edit_block_via_loro` /
+    // `apply_delete_block_via_loro` (same `EngineMissingTarget` reason, same
+    // `record` call, same sql_only path).
+    let engine_applied = {
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
-        // Store the value with its native type so the engine is
-        // type-lossless (`value_num`→`Num`, `value_bool`→`Bool`); text/date/ref
-        // are all strings, disambiguated at the SQL projection by
-        // `property_definitions.value_type`. No typed field set ⇒ explicit
-        // clear (`Null`). The typed SQL columns are still written from the
-        // payload directly by `project_set_property_to_sql` below.
-        let value = crate::loro::engine::PropertyValue::from(p);
-        engine.apply_set_property_typed(p.block_id.as_str(), &p.key, &value)?;
-        drop(guard);
+        if engine.read_block(p.block_id.as_str())?.is_none() {
+            false
+        } else {
+            // Store the value with its native type so the engine is
+            // type-lossless (`value_num`→`Num`, `value_bool`→`Bool`); text/date/ref
+            // are all strings, disambiguated at the SQL projection by
+            // `property_definitions.value_type`. No typed field set ⇒ explicit
+            // clear (`Null`). The typed SQL columns are still written from the
+            // payload directly by `project_set_property_to_sql` below.
+            let value = crate::loro::engine::PropertyValue::from(p);
+            engine.apply_set_property_typed(p.block_id.as_str(), &p.key, &value)?;
+            drop(guard);
+            true
+        }
+    };
+    if !engine_applied {
+        super::sql_only_fallback::record(
+            "set_property",
+            super::sql_only_fallback::SqlOnlyFallbackReason::EngineMissingTarget,
+        );
+        return apply_set_property_sql_only(conn, p.clone()).await;
     }
 
     projection::project_set_property_to_sql(conn, p).await?;

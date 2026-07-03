@@ -2,28 +2,42 @@
 //!
 //! The engine-routed apply handlers in [`super::loro_apply`]
 //! (`apply_*_via_loro`) early-return into the `apply_*_sql_only`
-//! projection fallbacks when
-//! [`crate::space::resolve_block_space`] misses (the block's space
-//! cannot be resolved — orphan block, no `space` ancestor, pre-spaces
-//! row, fresh page-create with no SetProperty(space) yet).
+//! projection fallbacks for exactly TWO legitimate, intentionally-soft
+//! reasons (see [`SqlOnlyFallbackReason`] for the per-variant detail and
+//! `docs/architecture/sql-only-convergence.md` for the full design):
 //!
-//! #2249/#2250: this is now the ONLY fallback trigger. The old
-//! `EngineUninit` arm ("the process-global registry was never
-//! initialised" — i.e. test scaffolding that skipped
+//! 1. [`SqlOnlyFallbackReason::SpaceUnresolved`] —
+//!    [`crate::space::resolve_block_space`] misses, so the op has no
+//!    per-space engine to route to (orphan block, no `space` ancestor,
+//!    pre-spaces row, or a fresh page-create with no `SetProperty(space)`
+//!    yet).
+//! 2. [`SqlOnlyFallbackReason::EngineMissingTarget`] — the space
+//!    resolved, but the block (or a MoveBlock's target parent) is absent
+//!    from that space's engine tree, so a single-space engine mutation
+//!    cannot represent the op (the #1257 reconciliation window, or a
+//!    cross-space move). SQL is authoritative and boot-replay reconciles
+//!    the engine.
+//!
+//! Both are **soft fallbacks, not errors**: each records here and takes
+//! the SQL projection instead of propagating an `Err`. They are
+//! load-bearing — the #2326 create-then-`SetProperty(space)` ordering
+//! depends on `EngineMissingTarget` staying soft — so neither must be
+//! promoted to a hard error / `debug_assert!`.
+//!
+//! #2249/#2250: the old `EngineUninit` arm ("the process-global registry
+//! was never initialised" — i.e. test scaffolding that skipped
 //! `install_for_test`) was deleted when engine state moved from a
 //! `OnceLock` global to an explicit `&LoroState` parameter threaded
 //! down the apply path: an uninitialised engine is unrepresentable, so
 //! tests can no longer silently exercise the SQL-only projection while
 //! believing they cover the production engine path (the false-drift
-//! class behind #891).
+//! class behind #891). It must NOT come back.
 //!
-//! **In production this arm should be unreachable** — space resolution
-//! succeeds on every well-formed op. A fallback here is a silent bug.
 //! This module makes each fallback *observable* without changing any
 //! control flow: a process-global counter (incremented at every
 //! fallback site) plus a debug log. A nonzero [`count`] in production
-//! signals an unexpected space-resolution miss that warrants
-//! investigation.
+//! signals an unexpected fallback that warrants investigation (both
+//! reasons are unreachable on a well-formed, fully-reconciled op log).
 //!
 //! The log uses `debug!` (not `warn!`): the SQL-only path is still the
 //! expected route for the many materializer / recovery / sync_daemon
@@ -35,6 +49,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Why an `apply_*_via_loro` handler fell back to its `apply_*_sql_only`
 /// path. See the module docs.
+///
+/// Both variants are **intentional soft fallbacks, not errors**: the
+/// handler records the reason and projects through the SQL-only path
+/// rather than propagating an `Err`. They are load-bearing (see
+/// `docs/architecture/sql-only-convergence.md`) and must NOT be promoted
+/// to a hard error / `debug_assert!`.
 ///
 /// #2249/#2250: `EngineUninit` is GONE. Engine state is threaded into
 /// every `apply_*_via_loro` handler as a required `&LoroState`
@@ -49,7 +69,9 @@ pub(crate) enum SqlOnlyFallbackReason {
     /// `crate::space::resolve_block_space(...)` returned `None` — the
     /// block's space could not be resolved (orphan block, no `space`
     /// ancestor, pre-spaces row, or a fresh page-create with no
-    /// `SetProperty(space)` yet).
+    /// `SetProperty(space)` yet). A soft fallback: the op still projects
+    /// to SQL, and space resolution succeeds on a well-formed op once its
+    /// `SetProperty(space)` has been applied.
     SpaceUnresolved,
     /// The op's space resolved, but the block it targets — or a related
     /// block the engine op requires (a MoveBlock's target parent) — is
