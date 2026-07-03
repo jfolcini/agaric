@@ -302,81 +302,48 @@ pub(crate) async fn create_block_in_tx(
     )
     .await?;
 
-    // Compute page_id: if this block IS a page, page_id = self.
-    // Otherwise, inherit from parent's page_id (or parent itself if parent is a page).
-    let page_id: Option<String> = if block_type == "page" {
-        Some(block_id.as_str().to_string())
-    } else if let Some(ref pid) = parent_id {
-        // Look up parent's page_id. If parent is a page, use parent's id.
+    // #2344/#2325 route the just-appended `op_record` through the SINGLE
+    // collapsed apply-projection entry point (`apply_op_projected`), IN this
+    // transaction, INSTEAD of the direct `apply_create_block_via_loro` call —
+    // the CreateBlock arm of the #2325 apply-path collapse. This is the SAME
+    // engine-apply + SQL projection the boot-replay / sync `ApplyOp` path uses
+    // (via `apply_op_tx`), so the LOCAL and REMOTE create paths now share one
+    // entry point. `apply_op_projected` re-derives the `CreateBlockPayload` from
+    // `op_record.payload` and runs the SAME `apply_create_block_via_loro`
+    // (resolve space → per-space Loro engine apply → `project_create_block_to_sql`
+    // INSERT of the engine's dense rank → `reproject_dense_positions` +
+    // `inherit_parent_tags`), PLUS the in-tx maintenance the Create arm of
+    // `apply_op_tx` runs via `maintain_pages_cache_counts_after_op`: the #2349
+    // non-page `page_id`/`space_id` stamp AND the owning-page `pages_cache`
+    // count recompute + `reindex_block_links`. Those two used to be duplicated
+    // inline on this LOCAL path (the old (a) re-stamp UPDATE and (d) count
+    // recompute) and are now REMOVED as redundant — #2349 proved LOCAL and
+    // REMOTE create commit identical state (the `..._identical_rows_2250` pin
+    // now compares page_id/space_id too). We pass `advance_cursor = false`: the
+    // apply cursor (`materialized_through_seq`) stays put on the LOCAL path so
+    // boot replay re-applies idempotently (#1248 / #1257). If the block's space
+    // can't be resolved (#2250: `SpaceUnresolved` — e.g. a brand-new top-level
+    // page before its `SetProperty(space)`), the helper internally FALLS BACK
+    // to the SQL-only projection, so the row is never skipped and we never
+    // crash. `apply_op_tx` does NOT run the LOCAL-only bare-append sentinel
+    // fixup or the cross-space ref validation, so both stay below.
+    // `apply_op_projected` borrows `&op_record` here (it is returned to the
+    // caller unmoved, for commit + dispatch). Create runs no post-commit cohort
+    // fan-out, so the returned `ApplyEffects` is empty and discarded.
+    // #2200: the LOCAL create path is a "chunk of one" — `apply_op_projected`
+    // passes `None` so the dense-position reprojection + count recompute run
+    // inline here, exactly as before (deferral is a batch-import-only
+    // optimisation).
+    crate::materializer::apply_op_projected(&mut *tx, &op_record, state, false).await?;
 
-        sqlx::query_scalar!(
-            "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END FROM blocks WHERE id = ?",
-            pid
-        )
-        .fetch_optional(&mut **tx)
-        .await?
-        .flatten()
-    } else {
-        None
-    };
-
-    // #1257 route the create through the SAME engine-apply + dense-rank
-    // projection the boot-replay / sync `ApplyOp` path uses, IN this CommandTx,
-    // INSTEAD of an inline provisional INSERT. `apply_create_block_via_loro`:
-    //   1. resolves the block's space (parent for content, self for pages),
-    //   2. applies the create to the per-space Loro engine (sync guard, dropped
-    //      before any `.await`), reads back the engine `BlockSnapshot`,
-    //   3. `project_create_block_to_sql` INSERTs the row (engine's dense rank),
-    //   4. `reproject_dense_positions` re-ranks the WHOLE sibling group so the
-    //      SQL `position` matches the engine's fractional tree order, and
-    //   5. runs `inherit_parent_tags` for the new block.
-    // The op-log append above is unchanged. We deliberately do NOT call the
-    // full `apply_op_tx` wrapper / `advance_apply_cursor`: the apply cursor
-    // (`materialized_through_seq`) must stay put on the LOCAL path so boot
-    // replay re-applies these ops idempotently (`project_create_block_to_sql`
-    // is `INSERT OR IGNORE`; engine apply is idempotent) — the intended safety
-    // net while local engine-apply hardens (#1248 / #1257). If the block's space can't
-    // be resolved (#2250: `SpaceUnresolved` — e.g. a brand-new top-level
-    // page before its `SetProperty(space)` — the only remaining sql_only
-    // trigger), the helper internally FALLS BACK to the SQL-only
-    // projection, which writes the provisional rank — so the row is never
-    // skipped and we never crash. This mirrors the engine-absent handling the
-    // sync `ApplyOp` path already relies on.
-    // #2200: the LOCAL create path is a "chunk of one" — pass `None` so the
-    // dense-position reprojection runs inline here, exactly as before (deferral
-    // is a batch-import-only optimisation).
-    crate::materializer::apply_create_block_via_loro(
-        &mut *tx,
-        state,
-        device_id,
-        &create_payload,
-        None,
-    )
-    .await?;
-
-    // #533 / #1324: `project_create_block_to_sql` INSERTs `space_id = NULL` and
-    // only stamps `page_id` for PAGE blocks (a deferred `SetBlockPageId` task
-    // fills non-page `page_id` later). The LOCAL command path historically
-    // stamped both synchronously so a committed block is never transiently
-    // space-less / page-less and the post-INSERT cross-space validator (below)
-    // can resolve the new block's space. Re-stamp them here for parity:
-    //   - `page_id` ← the inherited owning page (no-op for a page, already self),
-    //   - `space_id` ← the owning page's space (NULL for a brand-new top-level
-    //     page with no `page_id` row yet — set immediately after by the
-    //     `set_property(space)` op in `create_page_in_space_inner`, exactly as
-    //     the old inline subquery resolved).
+    // #2344: the `page_id`/`space_id` in-tx re-stamp that used to live here (old
+    // step (a)) is now performed by the routed `apply_op_projected` maintenance
+    // step — the #2349 `PreOpState::Create` arm of
+    // `maintain_pages_cache_counts_after_op` runs the IDENTICAL
+    // `UPDATE blocks SET page_id = ?, space_id = (SELECT space_id ...)` for
+    // non-page blocks, shared with the REMOTE `ApplyOp` path. The redundant
+    // LOCAL copy is gone; `block_id_str` is retained for the fixups below.
     let block_id_str = block_id.as_str();
-    sqlx::query!(
-        "UPDATE blocks \
-            SET page_id = ?, \
-                space_id = (SELECT space_id FROM blocks WHERE id = ?) \
-         WHERE id = ?",
-        page_id,
-        page_id,
-        block_id_str,
-    )
-    .execute(&mut **tx)
-    .await?;
 
     // #1257 ENGINE-ABSENT bare-append position parity. When the engine
     // path engages, `reproject_dense_positions` gives every sibling a concrete
@@ -424,37 +391,25 @@ pub(crate) async fn create_block_in_tx(
     )
     .await?;
 
-    // #417/#432: keep the owning page's `pages_cache.child_block_count`
-    // correct on the LOCAL command path. Unlike the sync `ApplyOp` path —
-    // which runs `maintain_pages_cache_counts_after_op` inside `apply_op_tx`
-    // — a content/tag create here only enqueues a per-block background
-    // fan-out (FTS, tag refs, page_ids) and NEVER a full `RebuildPagesCache`,
-    // so without this in-tx recompute the owning page's child count would
-    // stay stale until an unrelated edit (or a manual rebuild, which #432
-    // separately fixed). We reuse the materializer's single-source-of-truth
-    // `recompute_pages_cache_counts_for_pages` keyed on the block's already-
-    // computed `page_id` rather than duplicating the count SQL. A `page`
-    // create's own `pages_cache` row is created by the background
-    // `RebuildPagesCache` task, so this recompute is a no-op for it (the
-    // row doesn't exist yet in-tx) — exactly as on the ApplyOp path, where
-    // page creates rely on the rebuild for their row.
-    if block_type != "page"
-        && let Some(owning_page) = page_id.clone()
-    {
-        crate::materializer::recompute_pages_cache_counts_for_pages(&mut *tx, &[owning_page])
-            .await?;
-    }
+    // #2344: the owning-page `pages_cache` count recompute that used to run here
+    // (old step (d)) is now performed by the routed `apply_op_projected`
+    // maintenance step — the `recompute_pages_cache_counts_for_pages` at the
+    // tail of `maintain_pages_cache_counts_after_op` (chunk = None → inline),
+    // shared with the REMOTE `ApplyOp` path. The redundant LOCAL copy is gone.
 
-    // #1257 the engine projected the authoritative DENSE position; read
-    // it back so the returned `BlockRow` reflects the persisted rank rather
-    // than the old provisional value. (The engine-absent fallback wrote the
+    // #1257/#2344 the engine projected the authoritative DENSE position and the
+    // routed maintenance step stamped the owning `page_id`; read BOTH back so
+    // the returned `BlockRow` reflects the persisted, committed values rather
+    // than a locally-recomputed guess. (The engine-absent fallback wrote the
     // provisional rank here instead — either way this is the committed row.)
-    let position = sqlx::query_scalar!(
-        r#"SELECT position as "position: i64" FROM blocks WHERE id = ?"#,
+    let projected = sqlx::query!(
+        r#"SELECT position as "position: i64", page_id as "page_id: crate::ulid::BlockId" FROM blocks WHERE id = ?"#,
         block_id_str,
     )
     .fetch_one(&mut **tx)
     .await?;
+    let position = projected.position;
+    let page_id = projected.page_id;
 
     // Return block + op record; caller is responsible for commit + dispatch.
     Ok((
@@ -469,7 +424,7 @@ pub(crate) async fn create_block_in_tx(
             priority: None,
             due_date: None,
             scheduled_date: None,
-            page_id: page_id.map(|s| BlockId::from_trusted(&s)),
+            page_id,
         },
         op_record,
     ))

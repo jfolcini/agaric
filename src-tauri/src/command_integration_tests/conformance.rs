@@ -2960,3 +2960,192 @@ async fn batched_move_undo_group_redo_undo_roundtrip_engine_2274() {
     );
     mat.shutdown();
 }
+
+/// #2344/#2325 — LOCAL `create_block_inner` ≡ REMOTE `apply_op` link-parity.
+///
+/// The CreateBlock arm of the #2325 apply-path collapse: `create_block_in_tx`
+/// now routes its just-appended op through
+/// `apply_op_projected(advance_cursor=false)` — the SAME entry point the
+/// REMOTE/boot-replay path drives via `apply_op → apply_op_projected(true)`.
+/// Before this, the LOCAL create wrote the `page_id`/`space_id` stamp + count
+/// recompute inline and deferred `reindex_block_links` to the background
+/// fan-out; the REMOTE Create arm (post-#2349) does all three in-tx. This test
+/// pins that they now converge on ALL link-derived state through ONE shared
+/// helper.
+///
+/// The `..._identical_rows_2250` pin already compares content/type/parent/
+/// position/page_id/space_id, but its created block has NO `[[ULID]]` content,
+/// so `block_links` / `inbound_link_count` parity is vacuous there. Here the
+/// new block carries a REAL cross-page `[[<page>]]` token so a concrete
+/// `block_links` edge AND a non-zero `pages_cache.inbound_link_count` are
+/// produced, and the two paths are asserted byte-identical on:
+///   * `blocks.content` of the new block,
+///   * `block_links` (source_id, target_id) — the link edge, and
+///   * the linked page's `pages_cache.inbound_link_count`.
+/// Plus a per-drive `sql_only_fallback_count()` delta of 0 on BOTH sides — the
+/// #891 engine-path discipline: prove the engine path ran, not the SQL-only
+/// fallback (which would make the equivalence a false green).
+///
+/// The link SOURCE (the new block, owned by page `S2`) is a DIFFERENT page than
+/// the link TARGET (page `S1`) on purpose: the `inbound_link_count` recompute
+/// excludes same-page edges (`src.page_id != pages_cache.page_id`), so a
+/// within-page link would leave the count at 0 and make the assertion vacuous.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_create_block_link_parity_local_matches_remote_2344() {
+    let s1 = seed_label_to_id("S1"); // link TARGET page
+    let s2 = seed_label_to_id("S2"); // link SOURCE page (owns the new block)
+    let seed = [
+        json!({"id": "S1", "block_type": "page", "content": "Target", "parent_id": null, "position": 1}),
+        json!({"id": "S2", "block_type": "page", "content": "Source", "parent_id": null, "position": 2}),
+    ];
+    // The new block's content creates a real cross-page `block_links` edge to S1.
+    let create_text = format!("see [[{s1}]]");
+
+    // Reads (runtime queries — no sqlx macro, no `.sqlx` regen needed).
+    async fn block_content(pool: &SqlitePool, id: &str) -> String {
+        sqlx::query_scalar::<_, String>("SELECT content FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    async fn all_block_links(pool: &SqlitePool) -> Vec<(String, String)> {
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT source_id, target_id FROM block_links ORDER BY source_id, target_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+    async fn inbound_link_count(pool: &SqlitePool, page_id: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT inbound_link_count FROM pages_cache WHERE page_id = ?")
+            .bind(page_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    // Seed both pages' `page_id` (self) + `pages_cache` rows so the in-tx
+    // inbound recompute has a target row to UPDATE and the link token resolves
+    // to a page.
+    async fn prime(pool: &SqlitePool) {
+        crate::cache::rebuild_page_ids(pool).await.unwrap();
+        crate::cache::rebuild_pages_cache(pool).await.unwrap();
+    }
+
+    // ── LOCAL command path (create_block_inner → apply_op_projected(false)) ──
+    let (pool_l, _dir_l) = test_pool().await;
+    let mat_l = test_materializer(&pool_l);
+    let state_l = mat_l.loro_state();
+    for blk in &seed {
+        insert_seed_block(&pool_l, blk).await;
+    }
+    assign_all_to_test_space(&pool_l).await;
+    for blk in &seed {
+        seed_block_into_engine(state_l, blk);
+    }
+    prime(&pool_l).await;
+
+    let fb_l = crate::materializer::sql_only_fallback_count();
+    let created = create_block_inner(
+        &pool_l,
+        DEV,
+        &mat_l,
+        "content".into(),
+        create_text.clone(),
+        Some(BlockId::from(s2.as_str())),
+        Some(0),
+    )
+    .await
+    .expect("local create_block_inner");
+    settle(&mat_l).await;
+    assert_eq!(
+        crate::materializer::sql_only_fallback_count() - fb_l,
+        0,
+        "LOCAL create took the SQL-only fallback — not the engine path (#891)",
+    );
+    let new_id = created.id.clone().into_string();
+    // The routed maintenance step stamped the new block's owning page in-tx.
+    assert_eq!(
+        created.page_id.as_ref().map(BlockId::as_str),
+        Some(s2.as_str()),
+        "LOCAL create's returned BlockRow.page_id must be the owning page S2",
+    );
+
+    // Capture the exact CreateBlock op the LOCAL path emitted so the REMOTE side
+    // replays a byte-identical op (same block_id / index).
+    let payload_json: String = sqlx::query_scalar(
+        "SELECT payload FROM op_log WHERE device_id = ? AND op_type = 'create_block' \
+         ORDER BY seq DESC LIMIT 1",
+    )
+    .bind(DEV)
+    .fetch_one(&pool_l)
+    .await
+    .expect("local create op must be in op_log");
+    let payload: CreateBlockPayload =
+        serde_json::from_str(&payload_json).expect("deserialize CreateBlock payload");
+    assert_eq!(
+        payload.block_id.as_str(),
+        new_id,
+        "captured the create op for the freshly-created block",
+    );
+
+    // ── REMOTE / sync path (append_local_op → apply_op → apply_op_projected(true)) ──
+    let (pool_s, _dir_s) = test_pool().await;
+    let mat_s = test_materializer(&pool_s);
+    let state_s = mat_s.loro_state();
+    for blk in &seed {
+        insert_seed_block(&pool_s, blk).await;
+    }
+    assign_all_to_test_space(&pool_s).await;
+    for blk in &seed {
+        seed_block_into_engine(state_s, blk);
+    }
+    prime(&pool_s).await;
+
+    let fb_s = crate::materializer::sql_only_fallback_count();
+    let record_s = crate::op_log::append_local_op(&pool_s, DEV, OpPayload::CreateBlock(payload))
+        .await
+        .expect("append sync create op");
+    // `dispatch_op` runs the foreground ApplyOp (apply_op → apply_op_projected,
+    // advance_cursor=true) + enqueues the background fan-out; `settle` drains it.
+    mat_s.dispatch_op(&record_s).await.expect("dispatch_op");
+    settle(&mat_s).await;
+    assert_eq!(
+        crate::materializer::sql_only_fallback_count() - fb_s,
+        0,
+        "REMOTE create took the SQL-only fallback — not the engine path (#891)",
+    );
+
+    // ── The two entry points must project the link-derived state identically ──
+    assert_eq!(
+        block_content(&pool_l, &new_id).await,
+        block_content(&pool_s, &new_id).await,
+        "LOCAL and REMOTE create must project the block content identically",
+    );
+    let links_l = all_block_links(&pool_l).await;
+    let links_s = all_block_links(&pool_s).await;
+    assert_eq!(
+        links_l, links_s,
+        "block_links (source_id, target_id) diverged LOCAL vs REMOTE (#2344)",
+    );
+    // Non-vacuity: the create produced exactly the NEW -> S1 edge.
+    assert_eq!(
+        links_l,
+        vec![(new_id.clone(), s1.clone())],
+        "the create must produce exactly the new-block -> S1 link edge",
+    );
+    let inbound_l = inbound_link_count(&pool_l, &s1).await;
+    let inbound_s = inbound_link_count(&pool_s, &s1).await;
+    assert_eq!(
+        inbound_l, inbound_s,
+        "pages_cache.inbound_link_count diverged LOCAL vs REMOTE (#2344)",
+    );
+    // Non-vacuity: the cross-page link bumped the count to 1.
+    assert_eq!(
+        inbound_l, 1,
+        "the cross-page [[S1]] link must set S1's inbound_link_count to 1",
+    );
+
+    mat_l.shutdown();
+    mat_s.shutdown();
+}
