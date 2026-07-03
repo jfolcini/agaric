@@ -483,29 +483,87 @@ pub(super) async fn maintain_pages_cache_counts_after_op(
         // snapshot (the eager pre-cascade walk that populated it was pure waste
         // once the recompute moved off this foreground tx).
         PreOpState::Purge => {}
-        PreOpState::Move { block_id, src_page } => {
-            // E4: a MoveBlock CAN alter `page_id`. `commands/blocks/move_ops.rs`
-            // recomputes `page_id` for the moved block + its descendants on a
-            // cross-page reparent, so the source page loses children and the
-            // destination page gains them. The earlier "MoveBlock never alters
-            // page_id" assumption was false and left both pages'
-            // `child_block_count` stale until an unrelated op touched each one.
-            //
-            // The materializer's own MoveBlock projection
-            // (`apply_move_block_via_loro` → `project_move_block_to_sql`) only
-            // writes `parent_id`/`position`; it defers the `page_id` recompute
-            // to the background `RebuildPageIds` task. The page-wide count
-            // recompute below keys on `blocks.page_id`, so we mirror
-            // `move_ops.rs` and update the moved subtree's `page_id` HERE
-            // (bounded, depth-capped) before recomputing — that keeps the
-            // in-tx recompute correct without waiting for `RebuildPageIds`,
-            // and is idempotent with it.
-            let dest_page = reparent_moved_subtree_page_id(conn, block_id).await?;
-            if let Some(src) = src_page {
-                affected.insert(src.clone());
-            }
-            if let Some(dest) = dest_page {
-                affected.insert(dest);
+        PreOpState::Move {
+            block_id,
+            src_page,
+            old_parent_id,
+        } => {
+            // #2200 (Tier-2 reorder early-out): read the post-projection parent
+            // and skip ALL maintenance on a pure same-parent reorder. When the
+            // block stays under the same parent it stays under the same owning
+            // page AND space, so no `page_id`/`space_id` changes and no block
+            // crosses a page boundary — `child_block_count` /
+            // `inbound_link_count` are provably unchanged (committed state
+            // identical). This mirrors `move_ops.rs`'s `same_parent_reorder`
+            // guard and now also benefits the REMOTE/sync apply path, which
+            // previously always re-derived + recomputed on a reorder.
+            let new_parent_id: Option<String> =
+                sqlx::query_scalar!("SELECT parent_id FROM blocks WHERE id = ?", block_id)
+                    .fetch_optional(&mut *conn)
+                    .await?
+                    .flatten();
+            if old_parent_id.as_deref() != new_parent_id.as_deref() {
+                // E4: a MoveBlock CAN alter `page_id` AND `space_id`.
+                // `commands/blocks/move_ops.rs` re-derives BOTH for the moved
+                // block + its descendants on a cross-page/cross-space reparent,
+                // so the source page loses children and the destination page
+                // gains them, and space-scoped reads see the new membership.
+                //
+                // The materializer's own MoveBlock projection
+                // (`apply_move_block_via_loro` → `project_move_block_to_sql`)
+                // only writes `parent_id`/`position`; it defers BOTH the
+                // `page_id` and `space_id` re-derivation to the background
+                // `RebuildPageIds` / `rebuild_space_ids` tasks. The page-wide
+                // count recompute below keys on `blocks.page_id`, and
+                // space-scoped reads key on `blocks.space_id`, so we re-derive
+                // both HERE via the SHARED helper (single source of truth with
+                // `move_ops.rs`, bounded/depth-capped) before recomputing —
+                // that keeps the in-tx committed state correct without waiting
+                // for the background rebuilds, and is idempotent with them.
+                //
+                // This also fixes a latent REMOTE bug: the previous
+                // page_id-only reparent did NO `space_id` maintenance, so a
+                // cross-space move left `space_id` stale until the background
+                // rebuild ran.
+                crate::commands::block_cleanup::rederive_page_and_space_ids(conn, block_id).await?;
+                // Old owning page loses the moved subtree's descendants.
+                if let Some(src) = src_page {
+                    affected.insert(src.clone());
+                }
+                // Affected pages = the moved subtree's page ids (incl. the
+                // destination page, now stamped by the rederive above) ∪ the
+                // outbound-target pages of the moved subtree (a linked page's
+                // `inbound_link_count` changes when the linking subtree crosses
+                // into/out of that page). Ported verbatim from `move_ops.rs`;
+                // the outbound-target term fixes a latent REMOTE bug where a
+                // move that changed a source block's `page_id` (e.g. a move to
+                // top level) left its link targets' `inbound_link_count` stale
+                // (the old affected set was only src ∪ dest).
+                // depth<100: DESCENDANT_DEPTH_CAP (see block_descendants).
+                // dynamic-sql: genuinely-dynamic reuse of move_ops.rs's
+                // subtree ∪ outbound-target affected-page CTE (runtime form
+                // mirrors that site so REMOTE and LOCAL compute the identical
+                // set); single bound column, no user input interpolated.
+                let rows = sqlx::query_scalar::<_, String>(
+                    "WITH RECURSIVE subtree(id, depth) AS ( \
+                         SELECT id, 0 FROM blocks WHERE id = ?1 \
+                         UNION ALL \
+                         SELECT b.id, s.depth + 1 FROM blocks b \
+                         JOIN subtree s ON b.parent_id = s.id \
+                         WHERE b.deleted_at IS NULL AND s.depth < 100 \
+                     ) \
+                     SELECT DISTINCT page_id FROM blocks \
+                     WHERE id IN (SELECT id FROM subtree) AND page_id IS NOT NULL \
+                     UNION \
+                     SELECT DISTINCT b.page_id FROM block_links bl \
+                     JOIN blocks b ON b.id = bl.target_id \
+                     WHERE bl.source_id IN (SELECT id FROM subtree) \
+                       AND b.page_id IS NOT NULL",
+                )
+                .bind(block_id)
+                .fetch_all(&mut *conn)
+                .await?;
+                affected.extend(rows);
             }
         }
         // No-ops for count maintenance: tag / property / attachment ops
@@ -527,101 +585,6 @@ pub(super) async fn maintain_pages_cache_counts_after_op(
         recompute_pages_cache_counts_for_pages(conn, &v).await?;
     }
     Ok(())
-}
-
-/// E4: recompute `blocks.page_id` for a just-moved block and its
-/// descendants, mirroring `commands/blocks/move_ops.rs`, and return the
-/// block's new owning page id (the destination page) for count-refresh.
-///
-/// The materializer's MoveBlock projection only writes
-/// `parent_id`/`position`; the canonical full `page_id` rebuild is the
-/// background `RebuildPageIds` task. But the page-wide count recompute in
-/// `maintain_pages_cache_counts_after_op` keys on `blocks.page_id`, so we
-/// reproduce the bounded subtree update here (depth-capped per invariant
-/// #9) so the in-tx recompute reflects the new page membership without
-/// waiting for `RebuildPageIds`. Running both is idempotent — they
-/// converge on the same `page_id` for the subtree.
-///
-/// Returns the moved block's destination page (its own id when the moved
-/// block is itself a page; the parent's owning page otherwise; `None`
-/// when the block was moved to the top level / has no page ancestor).
-pub(super) async fn reparent_moved_subtree_page_id(
-    conn: &mut sqlx::SqliteConnection,
-    block_id: &str,
-) -> Result<Option<String>, AppError> {
-    // The block's current parent_id reflects the post-projection move.
-    let row = sqlx::query!(
-        "SELECT block_type, parent_id FROM blocks WHERE id = ?",
-        block_id
-    )
-    .fetch_optional(&mut *conn)
-    .await?;
-    let Some((block_type, parent_id)) = row.map(|r| (r.block_type, r.parent_id)) else {
-        // Block vanished (e.g. concurrent purge); nothing to recompute.
-        return Ok(None);
-    };
-
-    // Destination page derived from the NEW parent: a page parent owns
-    // itself; any other parent contributes its own `page_id`. No parent
-    // → top-level → no owning page (page_id NULL). Mirrors `move_ops.rs`.
-    let new_page_id: Option<String> = if let Some(pid) = &parent_id {
-        sqlx::query_scalar!(
-            "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END \
-             AS \"v?\" FROM blocks WHERE id = ?",
-            pid,
-        )
-        .fetch_optional(&mut *conn)
-        .await?
-        .flatten()
-    } else {
-        None
-    };
-
-    let is_page = block_type == "page";
-    // Pages always own themselves regardless of parent; content/other
-    // blocks inherit the destination page id.
-    let effective_page_id = if is_page {
-        Some(block_id.to_owned())
-    } else {
-        new_page_id.clone()
-    };
-
-    // Update the moved block itself (pages keep page_id = self).
-    if !is_page {
-        let new_page_id_ref = new_page_id.as_deref();
-        sqlx::query!(
-            "UPDATE blocks SET page_id = ? WHERE id = ?",
-            new_page_id_ref,
-            block_id,
-        )
-        .execute(&mut *conn)
-        .await?;
-    }
-
-    // Update all non-page descendants to inherit the moved block's page
-    // id. Recursive CTE bounds `depth < 100` (invariant #9) and filters
-    // `deleted_at IS NULL` in both members so soft-deleted conflict
-    // copies don't leak into the walk. Mirrors `move_ops.rs`.
-    let effective_page_id_ref = effective_page_id.as_deref();
-    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
-    sqlx::query!(
-        "WITH RECURSIVE descendants(id, depth) AS ( \
-             SELECT b.id, 0 FROM blocks b \
-             WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
-             UNION ALL \
-             SELECT b.id, d.depth + 1 FROM blocks b \
-             JOIN descendants d ON b.parent_id = d.id \
-             WHERE b.deleted_at IS NULL AND d.depth < 100 \
-         ) \
-         UPDATE blocks SET page_id = ?2 \
-         WHERE id IN (SELECT id FROM descendants) AND block_type != 'page'",
-        block_id,
-        effective_page_id_ref,
-    )
-    .execute(&mut *conn)
-    .await?;
-
-    Ok(effective_page_id)
 }
 
 /// Walk `blocks.parent_id` from `block_id` and return the page-typed
@@ -851,5 +814,11 @@ pub(super) enum PreOpState {
     Move {
         block_id: String,
         src_page: Option<String>,
+        /// #2200: the moved block's `parent_id` BEFORE the projection
+        /// reparented it. The count hook compares it against the
+        /// post-projection parent to skip all maintenance on a pure
+        /// same-parent reorder (subtree stays under the same owning
+        /// page/space → committed state provably unchanged).
+        old_parent_id: Option<String>,
     },
 }

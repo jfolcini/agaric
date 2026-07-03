@@ -862,9 +862,24 @@ pub(super) async fn apply_op_tx(
                     .fetch_optional(&mut *conn)
                     .await?
                     .flatten();
+            // #2200 (Tier-2 reorder early-out): capture the moved block's OLD
+            // `parent_id` BEFORE the projection reparents it, so the count hook
+            // can detect a pure same-parent reorder. On a reorder the subtree
+            // stays under the same parent — hence the same owning page AND
+            // space — so `page_id`/`space_id`/counts are provably unchanged and
+            // the whole maintenance block is skipped. This ports move_ops.rs's
+            // `same_parent_reorder` early-out into the shared REMOTE path.
+            let old_parent_id = sqlx::query_scalar!(
+                "SELECT parent_id FROM blocks WHERE id = ?",
+                move_block_id_str
+            )
+            .fetch_optional(&mut *conn)
+            .await?
+            .flatten();
             pre_state = PreOpState::Move {
                 block_id: p.block_id.as_str().to_owned(),
                 src_page,
+                old_parent_id,
             };
             apply_move_block_via_loro(conn, state, &record.device_id, &p).await?;
         }
