@@ -24,6 +24,7 @@ import { axe } from 'vitest-axe'
 
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { t } from '@/lib/i18n'
+import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 
 import { useNavigationStore } from '../../stores/navigation'
 import { type PageRef, useRecentPagesStore } from '../../stores/recent-pages'
@@ -2410,6 +2411,99 @@ describe('SearchPanel', () => {
 
       const results = await axe(container as any)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  // #2313 — the `priority:` vocabulary is user-configurable and hydrates
+  // asynchronously on boot (`listPropertyDefs` → `setPriorityLevels`). A query
+  // parsed in that pre-load window against the default `['1','2','3']` levels
+  // must re-parse when the real levels arrive, so a custom `priority:P0` chip
+  // stops being spuriously "invalid" (and its filter is no longer dropped from
+  // the projection) without the user re-typing.
+  describe('priority vocabulary hydration race (#2313)', () => {
+    beforeEach(() => {
+      // Start every case from the boot default so `P0` is initially unknown.
+      __resetPriorityLevelsForTests()
+    })
+    afterEach(() => {
+      // Don't leak custom levels into unrelated suites.
+      __resetPriorityLevelsForTests()
+    })
+
+    // The live chip bar is a projection of `parse(query)`. This helper reads the
+    // single rendered pill so both phases assert against the SAME chip.
+    const priorityPill = (container: HTMLElement): Element | null =>
+      container.querySelector('[data-slot="filter-pill"]')
+
+    it('marks an unknown custom priority level invalid before hydration', async () => {
+      mockedInvoke.mockResolvedValue(emptyPage)
+      const user = userEvent.setup()
+      const { container } = render(<SearchPanel />)
+
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+      await user.type(input, 'priority:P0')
+
+      await waitFor(() => {
+        expect(priorityPill(container)).not.toBeNull()
+      })
+      const pill = priorityPill(container)
+      // `P0` is not one of the default `['1','2','3']` levels → invalid chip.
+      expect(pill?.textContent).toContain('priority:P0')
+      expect(pill).toHaveAttribute('aria-invalid', 'true')
+    })
+
+    it('re-parses the pending priority: token as valid when the vocabulary hydrates after mount', async () => {
+      mockedInvoke.mockResolvedValue(emptyPage)
+      const user = userEvent.setup()
+      const { container } = render(<SearchPanel />)
+
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+      await user.type(input, 'priority:P0')
+
+      // Pre-load window: spurious invalid chip (the bug's symptom).
+      await waitFor(() => {
+        expect(priorityPill(container)).toHaveAttribute('aria-invalid', 'true')
+      })
+
+      // Boot `listPropertyDefs` load completes and hydrates custom levels.
+      act(() => {
+        setPriorityLevels(['P0', 'P1', 'P2'])
+      })
+
+      // The SAME token re-parses as valid — no re-typing — because the AST memo
+      // is keyed on the priority vocabulary snapshot.
+      await waitFor(() => {
+        expect(priorityPill(container)).not.toHaveAttribute('aria-invalid')
+      })
+      expect(priorityPill(container)?.textContent).toContain('priority:P0')
+    })
+
+    it('keeps a token invalid after hydration when it is absent from the real levels', async () => {
+      // Guards against the re-parse blanket-accepting: hydration must re-validate
+      // against the NEW vocabulary, not simply clear every invalid chip. `banana`
+      // is in neither the default nor the hydrated levels, so it stays invalid.
+      mockedInvoke.mockResolvedValue(emptyPage)
+      const user = userEvent.setup()
+      const { container } = render(<SearchPanel />)
+
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+      await user.type(input, 'priority:banana')
+
+      await waitFor(() => {
+        expect(priorityPill(container)).toHaveAttribute('aria-invalid', 'true')
+      })
+
+      act(() => {
+        setPriorityLevels(['P0', 'P1', 'P2'])
+      })
+
+      // Re-parse ran (proven by the valid-token test above) but `banana` is still
+      // out of vocabulary, so the chip must remain invalid.
+      await waitFor(() => {
+        expect(priorityPill(container)).not.toBeNull()
+      })
+      expect(priorityPill(container)).toHaveAttribute('aria-invalid', 'true')
+      expect(priorityPill(container)?.textContent).toContain('priority:banana')
     })
   })
 })
