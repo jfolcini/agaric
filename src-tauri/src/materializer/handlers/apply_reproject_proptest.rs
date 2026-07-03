@@ -1,4 +1,4 @@
-//! #1683 — B2/B3/B4 property tests over the materializer apply / reproject
+//! #1683 — B2/B3/B4/B5 property tests over the materializer apply / reproject
 //! pipeline (op-log entry → engine apply → `project_*_to_sql` →
 //! `reproject_dense_positions`).
 //!
@@ -42,6 +42,11 @@
 //!   snapshots through the production inbound-sync path (`apply_remote` +
 //!   `reproject_dense_positions`), and end with identical SQL `parent_id` /
 //!   `position` / `block_links` for every block.
+//! * **B5 (LOCAL == REMOTE apply parity):** the Stage-1 safety net for the
+//!   #2325/#2250 apply-path collapse — the SAME op chain driven through the
+//!   LOCAL command path (`apply_*_via_loro` called directly) and the REMOTE
+//!   dispatcher (`apply_op_tx`) yields byte-identical `blocks` /
+//!   `block_properties` / `block_links` SQL state.
 
 use crate::db::init_pool;
 use crate::loro::projection::reproject_dense_positions;
@@ -67,6 +72,9 @@ use super::sql_only_fallback;
 const B2_CASES: u32 = 48;
 const B3_CASES: u32 = 32;
 const B4_CASES: u32 = 32;
+/// B5 (LOCAL-vs-REMOTE apply parity) drives the same chain twice per case, so
+/// keep the budget in line with B3.
+const B5_CASES: u32 = 32;
 
 /// Short op chains: a handful of ops already exercises create / edit / move /
 /// property interleavings and keeps shrunk counter-examples small.
@@ -271,6 +279,87 @@ impl ChainDriver {
                 .expect("stamp created block space");
         }
     }
+
+    /// Drive `payload` through the LOCAL command path: call the matching
+    /// `apply_*_via_loro` helper DIRECTLY inside a tx — exactly as the command
+    /// handlers do inside their `CommandTx` — instead of dispatching through
+    /// `apply_op_tx`, and deliberately WITHOUT advancing the apply cursor
+    /// (#1257). The op is still appended to the op_log (as the LOCAL path does
+    /// in production) so both drivers see an identical log, but the projection
+    /// is driven by the direct helper call. The post-create space stamp is
+    /// identical to [`ChainDriver::drive`], so the two entry points resolve
+    /// spaces the same way and any divergence must come from the apply path
+    /// itself.
+    async fn drive_local(
+        &mut self,
+        pool: &SqlitePool,
+        state: &crate::loro::shared::LoroState,
+        payload: OpPayload,
+    ) {
+        use super::loro_apply;
+
+        let created: Option<(String, String)> = match &payload {
+            OpPayload::CreateBlock(c) => Some((
+                c.block_id.as_str().to_owned(),
+                c.parent_id
+                    .as_ref()
+                    .map_or_else(|| PAGE_ID.to_owned(), |p| p.as_str().to_owned()),
+            )),
+            _ => None,
+        };
+
+        // Append for parity with the REMOTE driver (keeps the op_log identical);
+        // the LOCAL path does not consult the cursor and does not advance it.
+        append_local_op(pool, &self.device_id, payload.clone())
+            .await
+            .expect("append op");
+
+        let mut tx = pool.begin().await.expect("begin apply");
+        // prepare_chain retains only these five op kinds, mirroring the command
+        // handlers that call the via_loro helpers directly on the LOCAL path.
+        match &payload {
+            OpPayload::CreateBlock(p) => {
+                loro_apply::apply_create_block_via_loro(&mut tx, state, &self.device_id, p, None)
+                    .await
+                    .expect("local create_block");
+            }
+            OpPayload::EditBlock(p) => {
+                loro_apply::apply_edit_block_via_loro(&mut tx, state, &self.device_id, p)
+                    .await
+                    .expect("local edit_block");
+            }
+            OpPayload::MoveBlock(p) => {
+                loro_apply::apply_move_block_via_loro(&mut tx, state, &self.device_id, p)
+                    .await
+                    .expect("local move_block");
+            }
+            OpPayload::SetProperty(p) => {
+                loro_apply::apply_set_property_via_loro(&mut tx, state, &self.device_id, p)
+                    .await
+                    .expect("local set_property");
+            }
+            OpPayload::DeleteProperty(p) => {
+                loro_apply::apply_delete_property_via_loro(&mut tx, state, &self.device_id, p)
+                    .await
+                    .expect("local delete_property");
+            }
+            other => panic!("drive_local: op not retained by prepare_chain: {other:?}"),
+        }
+        tx.commit().await.expect("commit apply");
+
+        if let Some((id, parent)) = created {
+            // Same post-create space stamp as `drive` (see its comment).
+            // dynamic-sql: test-only harness seed/readback (not a production query path)
+            sqlx::query("UPDATE blocks SET parent_id = ?, page_id = ?, space_id = ? WHERE id = ?")
+                .bind(&parent)
+                .bind(PAGE_ID)
+                .bind(SPACE_ID)
+                .bind(&id)
+                .execute(pool)
+                .await
+                .expect("stamp created block space");
+        }
+    }
 }
 
 /// Read every block's `(parent_id, position)`, excluding the synthetic space
@@ -296,6 +385,72 @@ async fn read_block_links(pool: &SqlitePool) -> Vec<(String, String)> {
     .fetch_all(pool)
     .await
     .expect("read block_links")
+}
+
+/// Read every block's full materialized shape (excluding the synthetic space
+/// row), ordered by id — used by B5 to compare tree + position + content +
+/// soft-delete state across the LOCAL and REMOTE apply paths.
+#[allow(clippy::type_complexity)]
+async fn read_blocks_full(
+    pool: &SqlitePool,
+) -> Vec<(
+    String,
+    Option<String>,
+    Option<i64>,
+    Option<String>,
+    Option<i64>,
+)> {
+    // dynamic-sql: test-only harness seed/readback (not a production query path)
+    sqlx::query_as::<
+        _,
+        (
+            String,
+            Option<String>,
+            Option<i64>,
+            Option<String>,
+            Option<i64>,
+        ),
+    >(
+        "SELECT id, parent_id, position, content, deleted_at FROM blocks \
+         WHERE id <> ? ORDER BY id",
+    )
+    .bind(SPACE_ID)
+    .fetch_all(pool)
+    .await
+    .expect("read blocks full")
+}
+
+/// Read every `block_properties` row (typed columns), ordered — used by B5 to
+/// compare property projection across the LOCAL and REMOTE apply paths.
+#[allow(clippy::type_complexity)]
+async fn read_block_properties(
+    pool: &SqlitePool,
+) -> Vec<(
+    String,
+    String,
+    Option<String>,
+    Option<f64>,
+    Option<String>,
+    Option<String>,
+)> {
+    // dynamic-sql: test-only harness seed/readback (not a production query path)
+    sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            Option<String>,
+            Option<f64>,
+            Option<String>,
+            Option<String>,
+        ),
+    >(
+        "SELECT block_id, key, value_text, value_num, value_date, value_ref \
+         FROM block_properties ORDER BY block_id, key",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("read block_properties")
 }
 
 /// The distinct set of parent groups present in SQL (including the NULL/root
@@ -686,5 +841,106 @@ async fn reproject_all_groups(pool: &SqlitePool, registry: &LoroEngineRegistry, 
                 .await
                 .expect("reproject_dense_positions");
         }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: B5_CASES, .. ProptestConfig::default() })]
+
+    /// **B5 — LOCAL command path == REMOTE (`apply_op_tx`) path.** The Stage-1
+    /// safety net for the #2325/#2250 apply-path collapse. Every mutating op is
+    /// projected to SQL through two entry points that MUST stay byte-identical:
+    ///
+    /// * the **LOCAL** command path calls `apply_*_via_loro` directly inside a
+    ///   `CommandTx` and deliberately does NOT advance the apply cursor (#1257);
+    /// * the **REMOTE** / boot-replay path (`apply_op_tx`) dispatches by op_type
+    ///   (deserializing an `OpRecord`), advances the cursor, and does
+    ///   count-maintenance / cohort capture around the SAME helpers.
+    ///
+    /// This drives the SAME resolved op chain through BOTH entry points on TWO
+    /// independently-seeded pools + freshly-cleared engines (the B3 pattern),
+    /// then asserts the projected `blocks` (id / parent_id / position / content
+    /// / deleted_at), `block_properties`, and `block_links` rows are identical.
+    /// Today both entry points funnel into the same `apply_*_via_loro` helpers,
+    /// so this pins that equivalence; when Stage 2 collapses the two paths into
+    /// one `advance_cursor: bool` function, any accidental divergence (a
+    /// cursor/count side-effect leaking into the projection, or a mis-mapped
+    /// dispatch arm) fails here. It is not always-true: it round-trips each op
+    /// through JSON serialize→deserialize→string-dispatch on the REMOTE side vs
+    /// a typed direct call on the LOCAL side, on separate engines/DBs, and
+    /// compares the full materialized state. The per-drive fallback-count guards
+    /// assert BOTH paths ran on the engine, not the SQL-only fallback (the #891
+    /// false-green trap), so the equivalence is genuinely exercised.
+    #[test]
+    fn b5_local_command_path_matches_remote_apply_op_tx(
+        sketches in op_chain_strategy(CHAIN_LEN),
+    ) {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async {
+            let state = &crate::loro::shared::LoroState::new();
+
+            // Resolve the chain ONCE so both entry points replay the IDENTICAL
+            // payloads (same block ULIDs). `resolve_chain` mints a fresh ULID
+            // pool per call, so resolving twice would make the comparison
+            // meaningless.
+            let payloads = prepare_chain(resolve_chain(&sketches));
+
+            // --- REMOTE path: dispatch via `apply_op_tx`. ---
+            state.registry.clear();
+            let (pool_remote, _dir_r) = fresh_pool("b5-remote").await;
+            seed_space_row(&pool_remote).await;
+            seed_page_via_engine(&pool_remote, state, HARNESS_DEVICE).await;
+
+            let fb_remote = sql_only_fallback::count();
+            let mut driver_r = ChainDriver::new(HARNESS_DEVICE);
+            for payload in payloads.clone() {
+                driver_r.drive(&pool_remote, state, payload).await;
+            }
+            prop_assert_eq!(
+                sql_only_fallback::count() - fb_remote,
+                0,
+                "B5 REMOTE (apply_op_tx) drive took the SQL-only fallback — not the engine path"
+            );
+            let remote_blocks = read_blocks_full(&pool_remote).await;
+            let remote_props = read_block_properties(&pool_remote).await;
+            let remote_links = read_block_links(&pool_remote).await;
+
+            // --- LOCAL path: call `apply_*_via_loro` directly. ---
+            state.registry.clear();
+            let (pool_local, _dir_l) = fresh_pool("b5-local").await;
+            seed_space_row(&pool_local).await;
+            seed_page_via_engine(&pool_local, state, HARNESS_DEVICE).await;
+
+            let fb_local = sql_only_fallback::count();
+            let mut driver_l = ChainDriver::new(HARNESS_DEVICE);
+            for payload in payloads {
+                driver_l.drive_local(&pool_local, state, payload).await;
+            }
+            prop_assert_eq!(
+                sql_only_fallback::count() - fb_local,
+                0,
+                "B5 LOCAL command path drive took the SQL-only fallback — not the engine path"
+            );
+            let local_blocks = read_blocks_full(&pool_local).await;
+            let local_props = read_block_properties(&pool_local).await;
+            let local_links = read_block_links(&pool_local).await;
+
+            prop_assert_eq!(
+                local_blocks,
+                remote_blocks,
+                "LOCAL vs REMOTE apply diverged on blocks (parent/position/content/deleted_at)"
+            );
+            prop_assert_eq!(
+                local_props,
+                remote_props,
+                "LOCAL vs REMOTE apply diverged on block_properties"
+            );
+            prop_assert_eq!(
+                local_links,
+                remote_links,
+                "LOCAL vs REMOTE apply diverged on block_links"
+            );
+            Ok(())
+        })?;
     }
 }
