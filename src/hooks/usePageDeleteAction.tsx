@@ -44,10 +44,12 @@ import { deleteBlock, restoreBlocksByIds } from '@/lib/tauri'
 
 /** Locked-in copy slots a caller can override per-invocation. */
 export interface PageDeleteConfirmCopy {
-  /** Dialog title. Default: `t('pageHeader.deletePageTitle')`. */
-  title?: string
-  /** Dialog body. Default: `t('pageHeader.deletePageDescription')`. */
-  description?: string
+  /** Dialog title i18n key. Default: `pageHeader.deletePageTitle`. */
+  titleKey?: string
+  /** Dialog body i18n key. Default: `pageHeader.deletePageDescription`. */
+  descriptionKey?: string
+  /** Values for interpolating the title/description keys via `t()`. */
+  values?: Record<string, string | number>
 }
 
 export interface RequestDeleteOptions {
@@ -66,6 +68,9 @@ export interface RequestDeleteOptions {
    */
   onFailed?: (pageId: string, error: unknown) => void
 }
+
+/** Stable empty-values default so the confirm dialog memo doesn't rebuild each render. */
+const EMPTY_VALUES: Record<string, string | number> = {}
 
 interface DeleteTarget {
   id: string
@@ -155,23 +160,25 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
     if (!open) setTarget(null)
   }, [])
 
-  const dialogTitle = target?.copy.title ?? t('pageHeader.deletePageTitle')
-  const dialogDescription = target?.copy.description ?? t('pageHeader.deletePageDescription')
+  const dialogTitleKey = target?.copy.titleKey ?? 'pageHeader.deletePageTitle'
+  const dialogDescriptionKey = target?.copy.descriptionKey ?? 'pageHeader.deletePageDescription'
+  const dialogValues = target?.copy.values ?? EMPTY_VALUES
 
   const confirmDialog = useMemo(
     () => (
       <ConfirmDialog
         open={target != null}
         onOpenChange={handleOpenChange}
-        title={dialogTitle}
-        description={dialogDescription}
-        actionLabel={t('pageHeader.deletePage')}
-        cancelLabel={t('pageHeader.cancel')}
+        titleKey={dialogTitleKey}
+        descriptionKey={dialogDescriptionKey}
+        confirmKey="pageHeader.deletePage"
+        cancelKey="pageHeader.cancel"
+        values={dialogValues}
         variant="destructive"
         onConfirm={handleConfirm}
       />
     ),
-    [dialogDescription, dialogTitle, handleConfirm, handleOpenChange, target, t],
+    [dialogDescriptionKey, dialogTitleKey, dialogValues, handleConfirm, handleOpenChange, target],
   )
 
   return {

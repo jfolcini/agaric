@@ -357,11 +357,10 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
         onOpenChange={(open) => {
           if (!open) setPendingSessionRevert(null)
         }}
-        title={t('agentAccess.revertSession.confirmTitle')}
-        description={t('agentAccess.revertSession.confirmDescription', {
-          count: pendingSessionRevert?.ops.length ?? 0,
-        })}
-        actionLabel={t('agentAccess.revertSession.confirmAction')}
+        titleKey="agentAccess.revertSession.confirmTitle"
+        descriptionKey="agentAccess.revertSession.confirmDescription"
+        confirmKey="agentAccess.revertSession.confirmAction"
+        values={{ count: pendingSessionRevert?.ops.length ?? 0 }}
         variant="destructive"
         onConfirm={() => void confirmRevertSession()}
       />

@@ -29,12 +29,11 @@ export function UnpairConfirmDialog({
     <ConfirmDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={t('device.unpairConfirmTitle')}
-      description={t('device.unpairConfirmDescription', {
-        deviceName: deviceName ?? t('device.pairedDevice'),
-      })}
-      cancelLabel={t('action.cancel')}
-      actionLabel={t('device.unpairConfirmAction')}
+      titleKey="device.unpairConfirmTitle"
+      descriptionKey="device.unpairConfirmDescription"
+      cancelKey="action.cancel"
+      confirmKey="device.unpairConfirmAction"
+      values={{ deviceName: deviceName ?? t('device.pairedDevice') }}
       variant="destructive"
       onConfirm={onConfirm}
       className={className}

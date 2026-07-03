@@ -28,6 +28,15 @@ vi.mock('@/hooks/useIsMobile', () => ({
 
 const mockedUseIsMobile = vi.mocked(useIsMobile)
 
+// Shared i18n keys + their resolved strings (the real catalog is loaded via
+// test-setup). ConfirmDialog now resolves every label from an i18n key, so
+// tests drive it through keys instead of pre-resolved strings.
+const TITLE_KEY = 'device.unpairConfirmTitle'
+const TITLE_TEXT = 'Unpair device?'
+const DESC_KEY = 'device.unpairConfirmDescription'
+const DESC_TEXT =
+  'This removes the pairing. Your notes and sync history remain on this device. You can pair again later to resume syncing.'
+
 beforeEach(() => {
   vi.clearAllMocks()
   // Default to the desktop path so existing test bodies keep their semantics.
@@ -38,18 +47,18 @@ describe('ConfirmDialog', () => {
   const defaultProps = {
     open: true,
     onOpenChange: vi.fn(),
-    title: 'Confirm action?',
-    description: 'This will do something important.',
-    cancelLabel: 'Cancel',
-    actionLabel: 'Confirm',
+    titleKey: TITLE_KEY,
+    descriptionKey: DESC_KEY,
+    cancelKey: 'dialog.cancel',
+    confirmKey: 'dialog.confirm',
     onConfirm: vi.fn(),
   }
 
   it('renders title, description, and buttons', () => {
     render(<ConfirmDialog {...defaultProps} />)
 
-    expect(screen.getByText('Confirm action?')).toBeInTheDocument()
-    expect(screen.getByText('This will do something important.')).toBeInTheDocument()
+    expect(screen.getByText(TITLE_TEXT)).toBeInTheDocument()
+    expect(screen.getByText(DESC_TEXT)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Cancel/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Confirm/ })).toBeInTheDocument()
   })
@@ -114,8 +123,8 @@ describe('ConfirmDialog', () => {
       <ConfirmDialog
         open
         onOpenChange={vi.fn()}
-        title="Test"
-        description="Desc"
+        titleKey={TITLE_KEY}
+        descriptionKey={DESC_KEY}
         onConfirm={vi.fn()}
       />,
     )
@@ -125,16 +134,22 @@ describe('ConfirmDialog', () => {
   })
 
   it('uses custom labels when provided', () => {
-    render(<ConfirmDialog {...defaultProps} cancelLabel="No thanks" actionLabel="Yes, delete" />)
+    render(
+      <ConfirmDialog
+        {...defaultProps}
+        cancelKey="pairing.confirmCloseKeep"
+        confirmKey="device.unpairConfirmAction"
+      />,
+    )
 
-    expect(screen.getByRole('button', { name: /No thanks/ })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Yes, delete/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Keep pairing/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Yes, unpair/ })).toBeInTheDocument()
   })
 
   it('does not render when open is false', () => {
     render(<ConfirmDialog {...defaultProps} open={false} />)
 
-    expect(screen.queryByText('Confirm action?')).not.toBeInTheDocument()
+    expect(screen.queryByText(TITLE_TEXT)).not.toBeInTheDocument()
   })
 
   it('applies className to the dialog content', () => {
@@ -334,10 +349,10 @@ describe('ConfirmDialog', () => {
     const mobileProps = {
       open: true,
       onOpenChange: vi.fn(),
-      title: 'Confirm action?',
-      description: 'This will do something important.',
-      cancelLabel: 'Cancel',
-      actionLabel: 'Confirm',
+      titleKey: TITLE_KEY,
+      descriptionKey: DESC_KEY,
+      cancelKey: 'dialog.cancel',
+      confirmKey: 'dialog.confirm',
       onConfirm: vi.fn(),
     }
 
@@ -364,8 +379,8 @@ describe('ConfirmDialog', () => {
     it('renders title, description, and both buttons', () => {
       render(<ConfirmDialog {...mobileProps} />)
 
-      expect(screen.getByText('Confirm action?')).toBeInTheDocument()
-      expect(screen.getByText('This will do something important.')).toBeInTheDocument()
+      expect(screen.getByText(TITLE_TEXT)).toBeInTheDocument()
+      expect(screen.getByText(DESC_TEXT)).toBeInTheDocument()
       expect(screen.getByRole('button', { name: /Cancel/ })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: /Confirm/ })).toBeInTheDocument()
     })
@@ -710,23 +725,6 @@ describe('ConfirmDialog', () => {
       })
     })
 
-    it('explicit `title` overrides `titleKey` when both are set', () => {
-      render(
-        <ConfirmDialog
-          open
-          onOpenChange={vi.fn()}
-          titleKey="pairing.confirmCloseTitle"
-          title="Custom override"
-          descriptionKey="pairing.confirmCloseDescription"
-          confirmKey="pairing.confirmCloseAction"
-          onConfirm={vi.fn()}
-        />,
-      )
-
-      expect(screen.getByText('Custom override')).toBeInTheDocument()
-      expect(screen.queryByText(TITLE)).not.toBeInTheDocument()
-    })
-
     it('reflex Enter on open dismisses without firing onConfirm', async () => {
       const user = userEvent.setup()
       const onConfirm = vi.fn()
@@ -761,10 +759,10 @@ describe('ConfirmDialog', () => {
     const props = {
       open: true,
       onOpenChange: vi.fn(),
-      title: 'Disconnect calendar?',
-      description: 'Choose how to disconnect.',
-      actionLabel: 'Delete calendar',
-      cancelLabel: 'Cancel',
+      titleKey: TITLE_KEY,
+      descriptionKey: DESC_KEY,
+      confirmKey: 'device.unpairConfirmAction',
+      cancelKey: 'dialog.cancel',
     }
 
     it('renders the secondary button between Cancel and Confirm', () => {
@@ -784,7 +782,7 @@ describe('ConfirmDialog', () => {
 
       expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Keep calendar' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Delete calendar' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Yes, unpair' })).toBeInTheDocument()
       expect(screen.getByTestId('secondary')).toBeInTheDocument()
     })
 
@@ -870,18 +868,13 @@ describe('ConfirmDialog', () => {
 
   // ─── #1612: empty accessible name fallback ───────────────────────────────────
   //
-  // Both `title` and `titleKey` are optional. A caller omitting both must still
-  // get a dialog with a non-empty accessible name (axe aria-dialog-name).
+  // `titleKey` is optional. A caller omitting it must still get a dialog with a
+  // non-empty accessible name (axe aria-dialog-name).
 
   describe('accessible name fallback (#1612)', () => {
-    it('renders a non-empty accessible name when neither title nor titleKey is given', () => {
+    it('renders a non-empty accessible name when titleKey is omitted', () => {
       render(
-        <ConfirmDialog
-          open
-          onOpenChange={vi.fn()}
-          onConfirm={vi.fn()}
-          description="Something will happen."
-        />,
+        <ConfirmDialog open onOpenChange={vi.fn()} onConfirm={vi.fn()} descriptionKey={DESC_KEY} />,
       )
 
       const dialog = screen.getByRole('alertdialog')
@@ -893,12 +886,7 @@ describe('ConfirmDialog', () => {
 
     it('passes axe with no title/titleKey (no aria-dialog-name violation)', async () => {
       const { container } = render(
-        <ConfirmDialog
-          open
-          onOpenChange={vi.fn()}
-          onConfirm={vi.fn()}
-          description="Something will happen."
-        />,
+        <ConfirmDialog open onOpenChange={vi.fn()} onConfirm={vi.fn()} descriptionKey={DESC_KEY} />,
       )
 
       await waitFor(
@@ -910,46 +898,25 @@ describe('ConfirmDialog', () => {
       )
     })
 
-    it('still honors an explicit title over the fallback', () => {
+    it('renders the resolved titleKey as the accessible name', () => {
       render(
         <ConfirmDialog
           open
           onOpenChange={vi.fn()}
           onConfirm={vi.fn()}
-          title="Real title"
-          description="Desc"
+          titleKey={TITLE_KEY}
+          descriptionKey={DESC_KEY}
         />,
       )
 
-      expect(screen.getByRole('alertdialog')).toHaveAccessibleName('Real title')
-    })
-
-    it('falls back when an explicit title is whitespace-only (trimmed empty)', () => {
-      render(
-        <ConfirmDialog
-          open
-          onOpenChange={vi.fn()}
-          onConfirm={vi.fn()}
-          title="   "
-          description="Desc"
-        />,
-      )
-
-      // A whitespace-only title is not a usable accessible name; the trim()
-      // check must treat it as empty and fall back to dialog.confirm.
-      expect(screen.getByRole('alertdialog')).toHaveAccessibleName('Confirm')
+      expect(screen.getByRole('alertdialog')).toHaveAccessibleName(TITLE_TEXT)
     })
 
     it('warns in dev when no usable title is provided (gated on import.meta.env.DEV)', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
       render(
-        <ConfirmDialog
-          open
-          onOpenChange={vi.fn()}
-          onConfirm={vi.fn()}
-          description="Something will happen."
-        />,
+        <ConfirmDialog open onOpenChange={vi.fn()} onConfirm={vi.fn()} descriptionKey={DESC_KEY} />,
       )
 
       // Vitest runs with import.meta.env.DEV === true, so the dev-only guard
@@ -968,8 +935,8 @@ describe('ConfirmDialog', () => {
           open
           onOpenChange={vi.fn()}
           onConfirm={vi.fn()}
-          title="Real title"
-          description="Desc"
+          titleKey={TITLE_KEY}
+          descriptionKey={DESC_KEY}
         />,
       )
 

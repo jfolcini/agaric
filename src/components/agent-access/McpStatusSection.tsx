@@ -185,9 +185,9 @@ export function McpStatusSection({
         onOpenChange={(open) => {
           if (!open) setConfirmOpen(false)
         }}
-        title={t(confirmDisconnectTitleKey)}
-        description={t(confirmDisconnectDescriptionKey)}
-        actionLabel={t(confirmDisconnectActionKey)}
+        titleKey={confirmDisconnectTitleKey}
+        descriptionKey={confirmDisconnectDescriptionKey}
+        confirmKey={confirmDisconnectActionKey}
         variant="destructive"
         onConfirm={() => {
           setConfirmOpen(false)

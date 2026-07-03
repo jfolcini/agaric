@@ -6,7 +6,6 @@
  */
 
 import type React from 'react'
-import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 
@@ -23,15 +22,15 @@ export function TrashBatchPurgeDialog({
   onOpenChange,
   onConfirm,
 }: TrashBatchPurgeDialogProps): React.ReactElement {
-  const { t } = useTranslation()
   return (
     <ConfirmDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={t('trash.batchPurgeTitle', { count: selectedCount })}
-      description={t('trash.batchPurgeDescription', { count: selectedCount })}
-      cancelLabel={t('trash.noButton')}
-      actionLabel={t('trash.yesDeleteButton')}
+      titleKey="trash.batchPurgeTitle"
+      descriptionKey="trash.batchPurgeDescription"
+      cancelKey="trash.noButton"
+      confirmKey="trash.yesDeleteButton"
+      values={{ count: selectedCount }}
       variant="destructive"
       onConfirm={onConfirm}
       className="trash-batch-purge-confirm"

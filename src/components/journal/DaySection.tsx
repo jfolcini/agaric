@@ -133,12 +133,13 @@ function DaySectionInner({
     (pageId: string) => {
       requestDelete(pageId, entry.displayDate, {
         confirmCopy: {
-          title: t('journal.deleteDayTitle', { date: entry.displayDate }),
-          description: t('journal.deleteDayDescription'),
+          titleKey: 'journal.deleteDayTitle',
+          descriptionKey: 'journal.deleteDayDescription',
+          values: { date: entry.displayDate },
         },
       })
     },
-    [entry.displayDate, requestDelete, t],
+    [entry.displayDate, requestDelete],
   )
 
   // Lazy-mount the BlockTree only when (a) the caller opted in via

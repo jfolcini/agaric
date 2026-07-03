@@ -5,7 +5,6 @@
  */
 
 import type React from 'react'
-import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 
@@ -20,15 +19,14 @@ export function TrashPurgeDialog({
   onOpenChange,
   onConfirm,
 }: TrashPurgeDialogProps): React.ReactElement {
-  const { t } = useTranslation()
   return (
     <ConfirmDialog
       open={!!blockId}
       onOpenChange={onOpenChange}
-      title={t('trash.permanentlyDeleteTitle')}
-      description={t('trash.permanentlyDeleteDescription')}
-      cancelLabel={t('trash.noButton')}
-      actionLabel={t('trash.yesDeleteButton')}
+      titleKey="trash.permanentlyDeleteTitle"
+      descriptionKey="trash.permanentlyDeleteDescription"
+      cancelKey="trash.noButton"
+      confirmKey="trash.yesDeleteButton"
       variant="destructive"
       onConfirm={() => {
         if (blockId) onConfirm(blockId)

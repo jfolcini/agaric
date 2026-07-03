@@ -24,7 +24,6 @@
  */
 
 import type React from 'react'
-import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 
@@ -52,15 +51,14 @@ export function NoPeersDialog({
   onOpenChange,
   onOpenSettings,
 }: NoPeersDialogProps): React.ReactElement {
-  const { t } = useTranslation()
   return (
     <ConfirmDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={t('sync.noPeersTitle')}
-      description={t('sync.noPeersBody')}
-      cancelLabel={t('sync.noPeersCancel')}
-      actionLabel={t('sync.noPeersCta')}
+      titleKey="sync.noPeersTitle"
+      descriptionKey="sync.noPeersBody"
+      cancelKey="sync.noPeersCancel"
+      confirmKey="sync.noPeersCta"
       onConfirm={onOpenSettings}
       contentTestId="no-peers-dialog"
       cancelTestId="no-peers-dialog-cancel"

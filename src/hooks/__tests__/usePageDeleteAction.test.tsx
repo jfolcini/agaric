@@ -68,8 +68,9 @@ describe('usePageDeleteAction', () => {
     act(() => {
       handle.api.requestDelete('PAGE_1', 'Sun, Jun 15, 2025', {
         confirmCopy: {
-          title: 'Delete the note for Sun, Jun 15, 2025?',
-          description: 'This moves the day note to Trash.',
+          titleKey: 'journal.deleteDayTitle',
+          descriptionKey: 'journal.deleteDayDescription',
+          values: { date: 'Sun, Jun 15, 2025' },
         },
       })
     })
@@ -77,7 +78,11 @@ describe('usePageDeleteAction', () => {
     expect(
       await screen.findByRole('heading', { name: /Delete the note for Sun, Jun 15, 2025\?/i }),
     ).toBeInTheDocument()
-    expect(screen.getByText('This moves the day note to Trash.')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        "This moves the day's note (and its blocks) to Trash. You can restore it from Trash or with Undo.",
+      ),
+    ).toBeInTheDocument()
   })
 
   it('confirm runs delete_block + fires success toast with Undo action', async () => {
