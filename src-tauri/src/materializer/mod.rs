@@ -53,10 +53,13 @@ pub(crate) use handlers::recompute_pages_cache_counts_for_pages;
 // #2325/#2250: the AddTag / RemoveTag / SetProperty / DeleteProperty LOCAL
 // command sites no longer call `apply_*_via_loro` directly — they route through
 // `apply_op_projected` — so those four re-exports were dropped from here.
-// `apply_edit_block_via_loro` remains (EditBlock is NOT collapsed — see below).
+// #2344: EditBlock joined the collapse — `edit_block_inner` now routes through
+// `apply_op_projected` too, so the `apply_edit_block_via_loro` re-export was
+// likewise dropped (the Edit arm of `apply_op_tx` and the convergence proptest
+// still reach the helper via its own module path within `handlers`).
 pub(crate) use handlers::{
-    apply_edit_block_via_loro, collect_delete_cohort, collect_restore_cohort,
-    dispatch_delete_descendants, dispatch_restore_descendants,
+    collect_delete_cohort, collect_restore_cohort, dispatch_delete_descendants,
+    dispatch_restore_descendants,
 };
 // #2325/#2250: the single collapsed apply-projection entry point the LOCAL
 // command sites route through (`advance_cursor = false`).
