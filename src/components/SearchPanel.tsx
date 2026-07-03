@@ -44,6 +44,7 @@ import { addFilter, parse, removeFilterAt, serialize } from '@/lib/search-query'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { useLocalStoragePreference } from '../hooks/useLocalStoragePreference'
 import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
+import { usePriorityLevels } from '../hooks/usePriorityLevels'
 import { recordPathHistory } from '../lib/path-history'
 import { useSpaceStore } from '../stores/space'
 import { useCommandPaletteStore } from '../stores/useCommandPaletteStore'
@@ -193,8 +194,20 @@ export function SearchPanel(): React.ReactElement {
   // The query string is the canonical filter state. The AST is
   // derived state recomputed on every keystroke. The debounced query is also
   // parsed so the IPC sees the filters that match the rendered chips.
-  const ast = useMemo(() => parse(query), [query])
-  const debouncedAst = useMemo(() => parse(debouncedQuery), [debouncedQuery])
+  //
+  // #2313 — the priority vocabulary is user-configurable and hydrates
+  // asynchronously on boot (`listPropertyDefs` → `setPriorityLevels`). `parse()`
+  // validates `priority:` tokens against the LIVE levels via
+  // `getPriorityLevels()`, so `priorityLevels` is a parse INPUT even though the
+  // memo body never reads it directly. Subscribing here and listing the snapshot
+  // as a dependency re-parses both ASTs the instant the real levels arrive —
+  // otherwise a `priority:P0` typed in the pre-hydration window stays a stale
+  // "invalid" chip and its filter is silently dropped from the IPC projection.
+  const priorityLevels = usePriorityLevels()
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- priorityLevels is not read in the body but IS a parse input (parse() validates priority: against getPriorityLevels()); its identity change on hydration must re-parse (#2313)
+  const ast = useMemo(() => parse(query), [query, priorityLevels])
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- see the `ast` memo above: priorityLevels keys the re-parse when the vocabulary hydrates (#2313)
+  const debouncedAst = useMemo(() => parse(debouncedQuery), [debouncedQuery, priorityLevels])
 
   const debounced = useDebouncedCallback((value: string) => {
     setTyping(false)
