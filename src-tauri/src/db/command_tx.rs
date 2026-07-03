@@ -563,4 +563,103 @@ mod tests {
         // Reaching here ⇒ no panic. The queued record was discarded, never
         // dispatched.
     }
+
+    /// A DELETE that FAILS mid-transaction must roll back the ENTIRE
+    /// `CommandTx` — including any op-log row appended earlier in the same
+    /// transaction. This mirrors the real write-path command shape: append
+    /// the op record, then mutate projected state; if that mutation errors
+    /// the caller `?`-returns, the `CommandTx` drops uncommitted, and NOTHING
+    /// (neither the op-log append nor the failed delete) may persist.
+    ///
+    /// The failure is induced with a `BEFORE DELETE` trigger that
+    /// `RAISE(ABORT, …)` — a deterministic "delete fails" that does not
+    /// depend on any particular production schema constraint (a poisoned
+    /// transaction). We assert the op-log append is visible *inside* its own
+    /// transaction (so the row genuinely reached the DB) and is *gone* after
+    /// the rollback (so the append did not leak).
+    #[tokio::test]
+    async fn delete_failure_rolls_back_op_log_append() {
+        use crate::db::init_pool;
+        use tempfile::TempDir;
+
+        const DEV: &str = "rollback-dev";
+        const SEQ: i64 = 42;
+
+        let dir = TempDir::new().unwrap();
+        let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+
+        // Arrange an undeletable row: any DELETE against it aborts.
+        sqlx::query("CREATE TABLE undeletable (id INTEGER PRIMARY KEY)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO undeletable (id) VALUES (1)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TRIGGER undeletable_guard BEFORE DELETE ON undeletable \
+             BEGIN SELECT RAISE(ABORT, 'deletes forbidden'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Act: within ONE CommandTx, append an op-log row, then attempt the
+        // forbidden delete. The `?` operator bubbles the delete error out of
+        // the async block, dropping the CommandTx uncommitted — exactly what
+        // a real command does when a projected-state write fails.
+        let result: Result<(), sqlx::Error> = async {
+            let mut tx = CommandTx::begin_immediate(&pool, "test_delete_rollback").await?;
+
+            sqlx::query(
+                "INSERT INTO op_log (seq, device_id, op_type, payload, created_at, hash) \
+                 VALUES (?, ?, 'CreateBlock', '{}', '0', 'deadbeef')",
+            )
+            .bind(SEQ)
+            .bind(DEV)
+            .execute(&mut **tx)
+            .await?;
+
+            // The append IS visible inside its own still-open transaction:
+            // the row really was written, so a later disappearance can only
+            // be the rollback (not a silently-skipped insert).
+            let in_tx: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM op_log WHERE device_id = ? AND seq = ?")
+                    .bind(DEV)
+                    .bind(SEQ)
+                    .fetch_one(&mut **tx)
+                    .await?;
+            assert_eq!(in_tx, 1, "op-log append must be visible within its own tx");
+
+            // This delete aborts via the trigger; `?` returns Err and drops
+            // `tx` WITHOUT committing.
+            sqlx::query("DELETE FROM undeletable WHERE id = 1")
+                .execute(&mut **tx)
+                .await?;
+
+            tx.commit_without_dispatch().await?;
+            Ok(())
+        }
+        .await;
+
+        assert!(
+            result.is_err(),
+            "the forbidden delete must surface an error, forcing rollback"
+        );
+
+        // Assert: the transaction rolled back, so the earlier op-log append
+        // did NOT persist.
+        let persisted: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM op_log WHERE device_id = ? AND seq = ?")
+                .bind(DEV)
+                .bind(SEQ)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            persisted, 0,
+            "a failed delete must roll back the op-log append (nothing persists)"
+        );
+    }
 }
