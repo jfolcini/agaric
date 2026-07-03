@@ -348,11 +348,22 @@ pub async fn batch_resolve_inner(
 ///
 /// The three agenda knobs (`date`, `date_range`, `source`) are bundled
 /// into a single [`AgendaQuery`] to keep this wrapper under the
-/// `tauri-specta` 10-arg limit after Phase 2 added `space_id`.
+/// `tauri-specta` 10-arg limit after Phase 2 added the space parameter.
 /// The hand-written TS wrapper in `src/lib/tauri.ts` keeps the flat
 /// public API (accepts `agendaDate` / `agendaDateRange` / `agendaSource`
 /// at the top level and marshals them into this struct for the IPC
 /// boundary).
+///
+/// # Scope (#2248)
+///
+/// Takes the canonical [`SpaceScope`] rather than a bare `space_id: String`.
+/// Block listing is inherently per-space (each active block belongs to exactly
+/// one space) and the old bare-string API had no cross-space mode, so
+/// [`SpaceScope::Global`] is rejected via [`SpaceScope::require_active`] instead
+/// of silently widening into a cross-space listing. The frontend wrapper keeps a
+/// required `spaceId: string` and threads it through `requireActiveScope`, which
+/// throws on an empty string, so `Active` is the only shape it can produce and
+/// callers must short-circuit locally when there is no active space.
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
@@ -364,8 +375,9 @@ pub async fn list_blocks(
     agenda: Option<AgendaQuery>,
     cursor: Option<String>,
     limit: Option<i64>,
-    space_id: String,
+    scope: SpaceScope,
 ) -> Result<PageResponse<BlockRow>, AppError> {
+    let space_id = scope.require_active()?.as_str().to_owned();
     let (agenda_date, agenda_date_start, agenda_date_end, agenda_source) = match agenda {
         Some(a) => (
             a.date,

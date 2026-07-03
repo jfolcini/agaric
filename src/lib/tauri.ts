@@ -479,12 +479,14 @@ export async function getBlocks(ids: string[]): Promise<BlockRow[]> {
  * Rust `AgendaQuery` struct so the Tauri command stays under the
  * `tauri-specta` 10-arg limit after Phase 2 added `spaceId`.
  *
- * `spaceId` (Phase 4) — required. The backend filters results to
- * blocks whose owning page carries `space = <spaceId>`. Callers must
- * resolve the active `currentSpaceId` (from `useSpaceStore`) before
- * invoking; pre-bootstrap callers should pass `''` (empty string), which
- * the backend treats as a no-match (returns an empty page) rather than
- * crashing on a runtime null deref.
+ * `spaceId` (#2248) — required. The backend filters results to
+ * blocks whose owning page carries `space = <spaceId>`. It is wrapped into
+ * the canonical `{ kind: 'active', space_id }` via `requireActiveScope`,
+ * which throws on an empty string. There is intentionally no cross-space
+ * (`global`) block listing, so callers with no active space must NOT invoke
+ * this: short-circuit locally on a falsy `currentSpaceId` and render an empty
+ * result. Passing `''` throws loudly (rather than the old silent empty-page
+ * no-match) instead of leaking across spaces.
  */
 export async function listBlocks(params: {
   parentId?: string | undefined
@@ -514,7 +516,7 @@ export async function listBlocks(params: {
       agenda,
       params.cursor ?? null,
       params.limit ?? null,
-      params.spaceId,
+      requireActiveScope(params.spaceId),
     ),
   )
 }

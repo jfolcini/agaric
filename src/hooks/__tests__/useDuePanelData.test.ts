@@ -55,6 +55,7 @@ import { notify } from '@/lib/notify'
 import { makeBlock } from '../../__tests__/fixtures'
 import { logger } from '../../lib/logger'
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../../lib/tauri'
+import { useSpaceStore } from '../../stores/space'
 import { useBlockPropertyEvents } from '../useBlockPropertyEvents'
 import { clearProjectedCache, extractUlidRefs, useDuePanelData } from '../useDuePanelData'
 
@@ -77,6 +78,10 @@ beforeEach(() => {
   localStorage.clear()
   clearProjectedCache()
   mockInvalidationKey = 0
+  // #2248 — the agenda fetch requires an active space (`listBlocksForAgenda`
+  // short-circuits to empty otherwise). Seed one so the existing fetch tests
+  // exercise the real listBlocks path.
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
   mockedListBlocks.mockResolvedValue(emptyResponse)
   mockedBatchResolve.mockResolvedValue([])
   mockedListProjectedAgenda.mockResolvedValue({
@@ -115,6 +120,26 @@ describe('useDuePanelData', () => {
     expect(mockedListBlocks).toHaveBeenCalledWith(
       expect.objectContaining({ agendaDate: '2025-06-15' }),
     )
+  })
+
+  it('renders no blocks without calling listBlocks when there is no active space (#2248)', async () => {
+    // `listBlocks` has no cross-space form; with no active space the agenda
+    // fetch short-circuits to empty rather than dispatching.
+    useSpaceStore.setState({ currentSpaceId: null })
+    mockedListBlocks.mockResolvedValue({
+      items: [makeBlock({ id: 'B1' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+    expect(result.current.blocks).toHaveLength(0)
+    expect(mockedListBlocks).not.toHaveBeenCalled()
   })
 
   it('returns loading=true during fetch', async () => {

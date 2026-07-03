@@ -554,12 +554,16 @@ describe('fetchBacklinksQuery', () => {
       total_count: null,
     })
 
-    const result = await fetchBacklinksQuery({ target: 'TARGET1' })
+    // #2248 — a backlinks fetch requires an active space; pass one so it dispatches.
+    const result = await fetchBacklinksQuery({ target: 'TARGET1' }, undefined, 'SPACE_1')
 
     expect(result.items).toHaveLength(1)
     expect(mockedInvoke).toHaveBeenCalledWith(
       'list_blocks',
-      expect.objectContaining({ parentId: 'TARGET1' }),
+      expect.objectContaining({
+        parentId: 'TARGET1',
+        scope: { kind: 'active', space_id: 'SPACE_1' },
+      }),
     )
   })
 
@@ -571,10 +575,21 @@ describe('fetchBacklinksQuery', () => {
     expect(mockedInvoke).not.toHaveBeenCalled()
   })
 
+  it('short-circuits to an empty result without dispatching when there is no active space (#2248)', async () => {
+    // `listBlocks` has no cross-space form, so a backlinks fetch with no active
+    // space must return empty rather than invoking (which would throw).
+    const result = await fetchBacklinksQuery({ target: 'TARGET1' })
+
+    expect(result).toEqual({ items: [], nextCursor: null, hasMore: false })
+    expect(mockedInvoke).not.toHaveBeenCalled()
+  })
+
   it('propagates backend rejection', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('list_blocks failed'))
 
-    await expect(fetchBacklinksQuery({ target: 'T1' })).rejects.toThrow('list_blocks failed')
+    await expect(fetchBacklinksQuery({ target: 'T1' }, undefined, 'SPACE_1')).rejects.toThrow(
+      'list_blocks failed',
+    )
   })
 })
 
@@ -757,16 +772,24 @@ describe('dispatchQuery', () => {
       total_count: null,
     })
 
-    await dispatchQuery({
-      type: 'backlinks',
-      params: { target: 'T1' },
-      propertyFilters: [],
-      tagFilters: [],
-    })
+    await dispatchQuery(
+      {
+        type: 'backlinks',
+        params: { target: 'T1' },
+        propertyFilters: [],
+        tagFilters: [],
+      },
+      // #2248 — backlinks routing requires an active space to dispatch.
+      undefined,
+      'SPACE_1',
+    )
 
     expect(mockedInvoke).toHaveBeenCalledWith(
       'list_blocks',
-      expect.objectContaining({ parentId: 'T1' }),
+      expect.objectContaining({
+        parentId: 'T1',
+        scope: { kind: 'active', space_id: 'SPACE_1' },
+      }),
     )
   })
 

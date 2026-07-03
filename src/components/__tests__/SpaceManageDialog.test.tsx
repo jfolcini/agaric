@@ -760,8 +760,9 @@ describe('SpaceManageDialog', () => {
 
     // Each space.id appears exactly once in the listBlocks call args
     // — proves dedup is keyed on space.id, not just call count.
+    // #2248 — `list_blocks` carries the active-space scope at the IPC boundary.
     const listBlocksSpaceIds = listBlocksCalls.map(
-      ([, args]) => (args as { spaceId: string }).spaceId,
+      ([, args]) => (args as { scope: { space_id: string } }).scope.space_id,
     )
     expect(new Set(listBlocksSpaceIds)).toEqual(new Set([PERSONAL.id, WORK.id, 'SPACE_3']))
 

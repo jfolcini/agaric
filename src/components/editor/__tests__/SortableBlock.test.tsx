@@ -259,6 +259,7 @@ import userEvent from '@testing-library/user-event'
 import { TestBlockActionsOverride } from '@/components/__tests__/_test-utils/TestBlockActionsOverride'
 import { SortableBlock } from '@/components/editor/SortableBlock'
 import { useBlockStore } from '@/stores/blocks'
+import { useSpaceStore } from '@/stores/space'
 
 // #2222: `dispatchBlockEvent` no longer broadcasts a legacy document
 // CustomEvent (the broadcast had zero production listeners; the focus-keyed
@@ -3345,6 +3346,10 @@ describe('SortableBlock ref property picker', () => {
     vi.clearAllMocks()
     mockUseSortable.mockReturnValue(makeSortable())
     mockSetProperty.mockResolvedValue({})
+    // #2248 — the ref-page fetch (`usePropertyDefForEdit`) requires an active
+    // space and short-circuits to an empty list otherwise; seed one so
+    // `listBlocks` runs and the page picker populates.
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
   })
 
   it('ref property shows page picker instead of text input', async () => {
@@ -3799,6 +3804,9 @@ describe('SortableBlock error paths', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockUseSortable.mockReturnValue(makeSortable())
+    // #2248 — seed an active space so the ref-page fetch actually calls
+    // `listBlocks` (and can exercise its rejection path).
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
   })
 
   // SortableBlock no longer fires
@@ -3884,10 +3892,9 @@ describe('SortableBlock error paths', () => {
       expect(screen.getByTestId('ref-picker')).toBeInTheDocument()
     })
 
-    // listBlocks was called and rejected — refPages falls back to [].
-    // Phase 4 — `listBlocks` requires `spaceId`; `''` is the
-    // pre-bootstrap fallback when no space is seeded in the test.
-    expect(mockListBlocks).toHaveBeenCalledWith({ blockType: 'page', spaceId: '' })
+    // listBlocks was called (active space seeded) and rejected — refPages
+    // falls back to [].
+    expect(mockListBlocks).toHaveBeenCalledWith({ blockType: 'page', spaceId: 'SPACE_1' })
 
     // Ref picker shows "No pages found" because refPages is empty
     expect(screen.getByTestId('ref-no-results')).toBeInTheDocument()
