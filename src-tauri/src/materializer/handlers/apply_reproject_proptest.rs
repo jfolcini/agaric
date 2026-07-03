@@ -51,8 +51,8 @@
 use crate::db::init_pool;
 use crate::loro::projection::reproject_dense_positions;
 use crate::loro::registry::LoroEngineRegistry;
-use crate::op::OpPayload;
-use crate::op_log::append_local_op;
+use crate::op::{CreateBlockPayload, DeleteBlockPayload, OpPayload, RestoreBlockPayload};
+use crate::op_log::{OpRecord, append_local_op};
 use crate::proptest_db_harness::{HARNESS_DEVICE, op_chain_strategy, resolve_chain};
 use crate::space::SpaceId;
 use crate::sync_protocol::loro_sync::{ApplyOutcome, apply_remote, prepare_outgoing_for_pool};
@@ -64,8 +64,11 @@ use std::collections::BTreeMap;
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
-use super::apply_op_tx;
 use super::sql_only_fallback;
+use super::{
+    apply_op_projected, apply_op_tx, dispatch_delete_descendants, dispatch_restore_ancestors,
+    dispatch_restore_descendants,
+};
 
 /// Low case counts keep the suite fast (the apply pipeline is DB-bound). Bump
 /// locally via `PROPTEST_CASES` for a deeper search.
@@ -84,6 +87,10 @@ const CHAIN_LEN: std::ops::RangeInclusive<usize> = 1..=14;
 /// harness chain so `resolve_block_space` succeeds and the engine path engages.
 const SPACE_ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const PAGE_ID: &str = "01HZ0000000000000000001683";
+/// #2325/#2250 B5 tag coverage: the single real `tag` block every remapped
+/// `AddTag`/`RemoveTag` edge points at (satisfies `block_tags.tag_id REFERENCES
+/// blocks(id)`). Same 26-char ULID shape as `tag_convergence_tests::TAG_ID`.
+const TAG_ID: &str = "01HZ0000000000000000TAGTAG";
 
 async fn fresh_pool(name: &str) -> (SqlitePool, TempDir) {
     let dir = TempDir::new().unwrap();
@@ -174,18 +181,26 @@ async fn seed_page_via_engine(
 ///   as block ids, so a tag edge can reference a pool id that was never created.
 ///   The op-log accepts it; the materializer rejects it
 ///   (`block_tags.tag_id REFERENCES blocks(id)`, an FK violation). Tags do not
-///   affect `parent_id` / `position` / `block_links`.
+///   affect `parent_id` / `position` / `block_links`, so the B2/B3/B4 sibling-
+///   order + link assertions do not need them — and a tag block seeded under
+///   [`PAGE_ID`] would pollute B2's full-SQL-child-list-vs-engine-order check.
+///   **#2325/#2250:** the B5 LOCAL-vs-REMOTE parity property DOES now cover
+///   tags — it uses [`prepare_chain_b5`] instead, which RETAINS the tag ops and
+///   remaps their `tag_id` to the seeded [`TAG_ID`].
 /// * `DeleteBlock` / `RestoreBlock` — soft-delete + restore in this synthetic
 ///   single-page setup repeatedly drops to the SQL-only fallback: a restore's
 ///   space resolves via the block's own (deleted, space-unresolvable) row or a
 ///   cascade-orphaned anchor, and the harness mints `RestoreBlock` with a
 ///   placeholder `deleted_at_ref = 0` that no-ops the SQL un-delete. Tombstone /
-///   cohort-ref lifecycle is its own concern (covered by the dedicated
-///   `delete_restore_convergence_tests`); excluding it here keeps EVERY op on
-///   the engine path so the dense-rank / convergence assertions stay honest.
-///   With both dropped, every block stays live for the whole chain, so the
-///   harness `ChainModel`'s validity (which assumed them) is not violated by
-///   their removal.
+///   cohort-ref lifecycle is its own concern — the harness cannot mint a valid
+///   runtime `deleted_at_ref`, so delete/restore LOCAL-vs-REMOTE parity is
+///   covered by the dedicated fixture test
+///   [`delete_restore_local_matches_remote`] (which captures the REAL
+///   `deleted_at` a `DeleteBlock` stamps and feeds it back to the restore),
+///   NOT by this proptest. Excluding it here keeps EVERY op on the engine path
+///   so the dense-rank / convergence assertions stay honest. With both dropped,
+///   every block stays live for the whole chain, so the harness `ChainModel`'s
+///   validity (which assumed them) is not violated by their removal.
 fn prepare_chain(payloads: Vec<OpPayload>) -> Vec<OpPayload> {
     payloads
         .into_iter()
@@ -210,6 +225,70 @@ fn prepare_chain(payloads: Vec<OpPayload>) -> Vec<OpPayload> {
             other => other,
         })
         .collect()
+}
+
+/// #2325/#2250 — B5-only variant of [`prepare_chain`] that RETAINS
+/// `AddTag`/`RemoveTag` so the LOCAL-vs-REMOTE parity property covers the tag
+/// projection + inheritance fan-out.
+///
+/// Each tag edge's `tag_id` is remapped to the seeded [`TAG_ID`] (the harness
+/// draws `tag_id` from the block-id pool, so an un-remapped edge would
+/// FK-violate `block_tags.tag_id`). The tagged `block_id` is left untouched —
+/// the harness always targets a live block (`ChainModel::live_ids()`), and by
+/// the time an `AddTag` runs that block is stamped with `page_id`/`space_id`
+/// (both drivers stamp on create), so `resolve_block_space` succeeds and the tag
+/// stays on the ENGINE path (no `sql_only` fallback). `DeleteBlock`/
+/// `RestoreBlock` are still dropped for the same reason as [`prepare_chain`]
+/// (the harness cannot mint a valid `deleted_at_ref`); B5 asserts a zero
+/// `sql_only_fallback` delta, so a stray fallback would fail the property.
+fn prepare_chain_b5(payloads: Vec<OpPayload>) -> Vec<OpPayload> {
+    payloads
+        .into_iter()
+        .filter(|p| !matches!(p, OpPayload::DeleteBlock(_) | OpPayload::RestoreBlock(_)))
+        .map(|p| match p {
+            OpPayload::CreateBlock(mut c) if c.parent_id.is_none() => {
+                c.parent_id = Some(BlockId::from_trusted(PAGE_ID));
+                OpPayload::CreateBlock(c)
+            }
+            OpPayload::MoveBlock(mut m) if m.new_parent_id.is_none() => {
+                m.new_parent_id = Some(BlockId::from_trusted(PAGE_ID));
+                OpPayload::MoveBlock(m)
+            }
+            OpPayload::AddTag(mut a) => {
+                a.tag_id = BlockId::from_trusted(TAG_ID);
+                OpPayload::AddTag(a)
+            }
+            OpPayload::RemoveTag(mut r) => {
+                r.tag_id = BlockId::from_trusted(TAG_ID);
+                OpPayload::RemoveTag(r)
+            }
+            other => other,
+        })
+        .collect()
+}
+
+/// #2325/#2250 — seed the single real `tag` block ([`TAG_ID`]) into `pool`'s
+/// SQL so B5's remapped `AddTag`/`RemoveTag` edges satisfy the
+/// `block_tags.tag_id REFERENCES blocks(id)` FK.
+///
+/// SQL-only on purpose: the engine's `apply_add_tag` stores the tag id as a
+/// plain value in the TAGGED block's tag-map slot (it does NOT require the tag
+/// to be a tree node — see `LoroEngine::apply_add_tag`), so no engine seed is
+/// needed, and keeping the tag OUT of the engine tree also keeps it out of
+/// `PAGE_ID`'s child-order reprojection. Seeded IDENTICALLY into both B5 pools,
+/// so it is symmetric in the LOCAL-vs-REMOTE comparison. Parent/page NULL so it
+/// never appears as a sibling of the chain's `PAGE_ID` children.
+async fn seed_tag(pool: &SqlitePool) {
+    // dynamic-sql: test-only harness seed/readback (not a production query path)
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'tag', 'tag', NULL, 0, NULL, ?)",
+    )
+    .bind(TAG_ID)
+    .bind(SPACE_ID)
+    .execute(pool)
+    .await
+    .expect("seed TAG_ID row");
 }
 
 /// Drives a prepared op chain through the production engine apply path.
@@ -343,7 +422,23 @@ impl ChainDriver {
                     .await
                     .expect("local delete_property");
             }
-            other => panic!("drive_local: op not retained by prepare_chain: {other:?}"),
+            // #2325/#2250: the LOCAL AddTag/RemoveTag command path IS a bare
+            // `apply_*_via_loro` call (now routed via `apply_op_projected`,
+            // which for these `PreOpState::None` ops is exactly the via_loro
+            // call + a no-op cursor/maintenance step), so driving the bare
+            // helper here faithfully models it. Retained only by
+            // `prepare_chain_b5`.
+            OpPayload::AddTag(p) => {
+                loro_apply::apply_add_tag_via_loro(&mut tx, state, &self.device_id, p)
+                    .await
+                    .expect("local add_tag");
+            }
+            OpPayload::RemoveTag(p) => {
+                loro_apply::apply_remove_tag_via_loro(&mut tx, state, &self.device_id, p)
+                    .await
+                    .expect("local remove_tag");
+            }
+            other => panic!("drive_local: op not retained by prepare_chain_b5: {other:?}"),
         }
         tx.commit().await.expect("commit apply");
 
@@ -385,6 +480,33 @@ async fn read_block_links(pool: &SqlitePool) -> Vec<(String, String)> {
     .fetch_all(pool)
     .await
     .expect("read block_links")
+}
+
+/// #2325/#2250 — read every `block_tags` edge, ordered. Used by B5 to compare
+/// direct tag projection across the LOCAL and REMOTE apply paths.
+async fn read_block_tags(pool: &SqlitePool) -> Vec<(String, String)> {
+    // dynamic-sql: test-only harness seed/readback (not a production query path)
+    sqlx::query_as::<_, (String, String)>(
+        "SELECT block_id, tag_id FROM block_tags ORDER BY block_id, tag_id",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("read block_tags")
+}
+
+/// #2325/#2250 — read every `block_tag_inherited` row (the tag-inheritance
+/// fan-out that propagates a parent's tag onto its descendant subtree),
+/// ordered. Used by B5 to compare the inheritance fan-out across the LOCAL and
+/// REMOTE apply paths.
+async fn read_block_tag_inherited(pool: &SqlitePool) -> Vec<(String, String, String)> {
+    // dynamic-sql: test-only harness seed/readback (not a production query path)
+    sqlx::query_as::<_, (String, String, String)>(
+        "SELECT block_id, tag_id, inherited_from FROM block_tag_inherited \
+         ORDER BY block_id, tag_id, inherited_from",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("read block_tag_inherited")
 }
 
 /// Read every block's full materialized shape (excluding the synthetic space
@@ -883,13 +1005,17 @@ proptest! {
             // payloads (same block ULIDs). `resolve_chain` mints a fresh ULID
             // pool per call, so resolving twice would make the comparison
             // meaningless.
-            let payloads = prepare_chain(resolve_chain(&sketches));
+            // #2325/#2250: `prepare_chain_b5` RETAINS AddTag/RemoveTag (remapped
+            // to the seeded TAG_ID) so this property covers the tag projection +
+            // inheritance fan-out too.
+            let payloads = prepare_chain_b5(resolve_chain(&sketches));
 
             // --- REMOTE path: dispatch via `apply_op_tx`. ---
             state.registry.clear();
             let (pool_remote, _dir_r) = fresh_pool("b5-remote").await;
             seed_space_row(&pool_remote).await;
             seed_page_via_engine(&pool_remote, state, HARNESS_DEVICE).await;
+            seed_tag(&pool_remote).await;
 
             let fb_remote = sql_only_fallback::count();
             let mut driver_r = ChainDriver::new(HARNESS_DEVICE);
@@ -904,12 +1030,15 @@ proptest! {
             let remote_blocks = read_blocks_full(&pool_remote).await;
             let remote_props = read_block_properties(&pool_remote).await;
             let remote_links = read_block_links(&pool_remote).await;
+            let remote_tags = read_block_tags(&pool_remote).await;
+            let remote_tag_inherited = read_block_tag_inherited(&pool_remote).await;
 
             // --- LOCAL path: call `apply_*_via_loro` directly. ---
             state.registry.clear();
             let (pool_local, _dir_l) = fresh_pool("b5-local").await;
             seed_space_row(&pool_local).await;
             seed_page_via_engine(&pool_local, state, HARNESS_DEVICE).await;
+            seed_tag(&pool_local).await;
 
             let fb_local = sql_only_fallback::count();
             let mut driver_l = ChainDriver::new(HARNESS_DEVICE);
@@ -924,6 +1053,8 @@ proptest! {
             let local_blocks = read_blocks_full(&pool_local).await;
             let local_props = read_block_properties(&pool_local).await;
             let local_links = read_block_links(&pool_local).await;
+            let local_tags = read_block_tags(&pool_local).await;
+            let local_tag_inherited = read_block_tag_inherited(&pool_local).await;
 
             prop_assert_eq!(
                 local_blocks,
@@ -940,7 +1071,372 @@ proptest! {
                 remote_links,
                 "LOCAL vs REMOTE apply diverged on block_links"
             );
+            // #2325/#2250: tag projection (`block_tags`) + the inheritance
+            // fan-out (`block_tag_inherited`, which propagates a parent's tag to
+            // its descendant subtree) must be byte-identical between the LOCAL
+            // command path and the REMOTE `apply_op_tx` path.
+            prop_assert_eq!(
+                local_tags,
+                remote_tags,
+                "LOCAL vs REMOTE apply diverged on block_tags"
+            );
+            prop_assert_eq!(
+                local_tag_inherited,
+                remote_tag_inherited,
+                "LOCAL vs REMOTE apply diverged on block_tag_inherited (tag inheritance fan-out)"
+            );
             Ok(())
         })?;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #2325/#2250 — delete/restore LOCAL-vs-REMOTE parity fixture.
+// ---------------------------------------------------------------------------
+
+/// A `read_blocks_full` row: `(id, parent_id, position, content, deleted_at)`.
+type BlockFullRow = (
+    String,
+    Option<String>,
+    Option<i64>,
+    Option<String>,
+    Option<i64>,
+);
+
+/// One drive's observed outcome, captured for cross-drive comparison.
+struct DeleteRestoreObs {
+    name: String,
+    blocks: Vec<BlockFullRow>,
+    links: Vec<(String, String)>,
+    /// `ApplyEffects` the DeleteBlock apply returned (sorted for comparison).
+    del_cohort: Vec<String>,
+    del_space: Option<String>,
+    /// `ApplyEffects` the RestoreBlock apply returned (sorted).
+    restored_cohort: Vec<String>,
+    restored_ancestors: Vec<String>,
+    /// `blocks.deleted_at` for PARENT/CHILD BETWEEN the delete and the restore.
+    post_delete_parent: Option<i64>,
+    post_delete_child: Option<i64>,
+    /// `blocks.deleted_at` for PARENT/CHILD AFTER the restore.
+    post_restore_parent: Option<i64>,
+    post_restore_child: Option<i64>,
+    /// `sql_only_fallback::count()` delta across the delete+restore region.
+    fallback_delta: u64,
+    /// `materializer_apply_cursor.materialized_through_seq` after both ops.
+    cursor: i64,
+}
+
+/// Build a synthetic [`OpRecord`] (the delete/restore ops are minted directly,
+/// not appended to the op_log — `apply_op_projected` only reads the record's
+/// fields, and a fixed `created_at` makes the stamped `deleted_at` deterministic
+/// across the two independent drives).
+fn synth_record(
+    op_type: &str,
+    payload: String,
+    seq: i64,
+    created_at: i64,
+    block_id: &str,
+) -> OpRecord {
+    OpRecord {
+        device_id: HARNESS_DEVICE.to_owned(),
+        seq,
+        parent_seqs: None,
+        hash: String::new(),
+        op_type: op_type.to_owned(),
+        payload,
+        created_at,
+        block_id: Some(block_id.to_owned()),
+    }
+}
+
+async fn deleted_at_of(pool: &SqlitePool, id: &str) -> Option<i64> {
+    // dynamic-sql: test-only harness readback (not a production query path)
+    sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .expect("read deleted_at")
+}
+
+/// Seed a PAGE -> PARENT -> CHILD hierarchy (identically on an independent pool)
+/// and drive `DeleteBlock(PARENT)` then `RestoreBlock(PARENT, <real deleted_at>)`
+/// through [`apply_op_projected`] with the given `advance_cursor`, running the
+/// returned [`ApplyEffects`] fan-out on the engine exactly as `apply_op` does.
+async fn run_delete_restore(
+    state: &crate::loro::shared::LoroState,
+    name: &str,
+    parent_id: &str,
+    child_id: &str,
+    delete_ts: i64,
+    advance_cursor: bool,
+) -> DeleteRestoreObs {
+    state.registry.clear();
+    let (pool, _dir) = fresh_pool(name).await;
+    seed_space_row(&pool).await;
+    seed_page_via_engine(&pool, state, HARNESS_DEVICE).await;
+
+    // PAGE -> PARENT -> CHILD through the production create path (append +
+    // `apply_op_tx` + post-create stamp), identical on both pools. CHILD carries
+    // a wiki-link to PAGE so `block_links` is non-empty (a real edge to compare).
+    let mut driver = ChainDriver::new(HARNESS_DEVICE);
+    driver
+        .drive(
+            &pool,
+            state,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::from_trusted(parent_id),
+                block_type: "content".to_owned(),
+                parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+                position: Some(0),
+                index: None,
+                content: String::new(),
+            }),
+        )
+        .await;
+    driver
+        .drive(
+            &pool,
+            state,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::from_trusted(child_id),
+                block_type: "content".to_owned(),
+                parent_id: Some(BlockId::from_trusted(parent_id)),
+                position: Some(0),
+                index: None,
+                content: format!("[[{PAGE_ID}]]"),
+            }),
+        )
+        .await;
+
+    // Measured AFTER the creates, so only the delete+restore region counts.
+    let fallback_before = sql_only_fallback::count();
+
+    // --- DeleteBlock(PARENT) through the collapsed entry point. ---
+    let del_record = synth_record(
+        "delete_block",
+        serde_json::to_string(&DeleteBlockPayload {
+            block_id: BlockId::from_trusted(parent_id),
+        })
+        .unwrap(),
+        3,
+        delete_ts,
+        parent_id,
+    );
+    let mut tx = pool.begin().await.expect("begin delete");
+    let del_effects = apply_op_projected(&mut tx, &del_record, state, advance_cursor)
+        .await
+        .expect("delete apply_op_projected");
+    tx.commit().await.expect("commit delete");
+    // Cohort fan-out onto the engine (mirrors `apply_op`'s post-commit step).
+    dispatch_delete_descendants(
+        &del_record,
+        &del_effects.deleted_cohort,
+        del_effects.delete_space_id.as_ref(),
+        state,
+    )
+    .await;
+
+    let post_delete_parent = deleted_at_of(&pool, parent_id).await;
+    let post_delete_child = deleted_at_of(&pool, child_id).await;
+    // The REAL deleted_at the cascade stamped (== the delete op's created_at),
+    // fed back as the restore guard.
+    let stamped = post_delete_parent.expect("PARENT must be soft-deleted by DeleteBlock");
+
+    // --- RestoreBlock(PARENT, <real deleted_at>) through the collapsed entry point. ---
+    let restore_record = synth_record(
+        "restore_block",
+        serde_json::to_string(&RestoreBlockPayload {
+            block_id: BlockId::from_trusted(parent_id),
+            deleted_at_ref: stamped,
+        })
+        .unwrap(),
+        4,
+        delete_ts + 1,
+        parent_id,
+    );
+    let mut tx = pool.begin().await.expect("begin restore");
+    let restore_effects = apply_op_projected(&mut tx, &restore_record, state, advance_cursor)
+        .await
+        .expect("restore apply_op_projected");
+    tx.commit().await.expect("commit restore");
+    dispatch_restore_descendants(
+        &pool,
+        &restore_record,
+        &restore_effects.restored_cohort,
+        state,
+    )
+    .await;
+    dispatch_restore_ancestors(
+        &pool,
+        &restore_record,
+        &restore_effects.restored_ancestors,
+        state,
+    )
+    .await;
+
+    let post_restore_parent = deleted_at_of(&pool, parent_id).await;
+    let post_restore_child = deleted_at_of(&pool, child_id).await;
+
+    let fallback_delta = sql_only_fallback::count() - fallback_before;
+    // dynamic-sql: test-only harness readback (not a production query path)
+    let cursor: i64 = sqlx::query_scalar(
+        "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("read apply cursor");
+
+    let sort = |mut v: Vec<String>| {
+        v.sort();
+        v
+    };
+
+    DeleteRestoreObs {
+        name: name.to_owned(),
+        blocks: read_blocks_full(&pool).await,
+        links: read_block_links(&pool).await,
+        del_cohort: sort(del_effects.deleted_cohort),
+        del_space: del_effects
+            .delete_space_id
+            .as_ref()
+            .map(|s| s.as_str().to_owned()),
+        restored_cohort: sort(restore_effects.restored_cohort),
+        restored_ancestors: sort(restore_effects.restored_ancestors),
+        post_delete_parent,
+        post_delete_child,
+        post_restore_parent,
+        post_restore_child,
+        fallback_delta,
+        cursor,
+    }
+}
+
+/// #2325/#2250 — the delete/restore half of the LOCAL-vs-REMOTE collapse guard
+/// (the B5 proptest cannot mint a valid runtime `deleted_at_ref`, so this
+/// fixture owns delete/restore parity). Drives an identical PAGE->PARENT->CHILD
+/// tree through `apply_op_projected` on two independently-seeded pools+engines —
+/// `advance_cursor = true` (REMOTE/single-op) on one, `false` (LOCAL, #1257) on
+/// the other, running the returned `ApplyEffects` cohort fan-out on both — and
+/// asserts:
+///   * identical `blocks` (incl. the `deleted_at` cascade over CHILD) +
+///     `block_links`,
+///   * identical returned effects (delete cohort/space, restore cohort/ancestors),
+///   * ZERO `sql_only_fallback` delta (delete/restore stay on the engine path),
+///   * the cursor advanced ONLY on the `advance_cursor = true` drive, and
+///   * the EXPLICIT expected cascade (PARENT+CHILD deleted, then both cleared) on
+///     BOTH drives — so it is a correctness test, not merely cross-drive equality.
+#[tokio::test]
+async fn delete_restore_local_matches_remote() {
+    // 26-char digit-only ULIDs for a PAGE -> PARENT -> CHILD tree.
+    const PARENT_ID: &str = "01HZ0000000000000000002222";
+    const CHILD_ID: &str = "01HZ0000000000000000003333";
+    // Fixed delete-op `created_at`: BOTH pools stamp the SAME `deleted_at`, so
+    // the deleted_at cascade is byte-comparable across the two drives.
+    const DELETE_TS: i64 = 1_900_000_000_000;
+
+    let state = &crate::loro::shared::LoroState::new();
+    let remote = run_delete_restore(state, "dr-remote", PARENT_ID, CHILD_ID, DELETE_TS, true).await;
+    let local = run_delete_restore(state, "dr-local", PARENT_ID, CHILD_ID, DELETE_TS, false).await;
+
+    // The collapse invariant: the ONLY permitted difference between the REMOTE
+    // (advance_cursor=true) and LOCAL (advance_cursor=false) drives is the apply
+    // cursor. Materialized SQL + returned effects must be byte-identical.
+    assert_eq!(
+        local.blocks, remote.blocks,
+        "blocks (incl. deleted_at cascade) diverged LOCAL vs REMOTE"
+    );
+    assert_eq!(
+        local.links, remote.links,
+        "block_links diverged LOCAL vs REMOTE"
+    );
+    assert_eq!(
+        local.del_cohort, remote.del_cohort,
+        "DeleteBlock cohort diverged LOCAL vs REMOTE"
+    );
+    assert_eq!(
+        local.del_space, remote.del_space,
+        "DeleteBlock space diverged LOCAL vs REMOTE"
+    );
+    assert_eq!(
+        local.restored_cohort, remote.restored_cohort,
+        "RestoreBlock cohort diverged LOCAL vs REMOTE"
+    );
+    assert_eq!(
+        local.restored_ancestors, remote.restored_ancestors,
+        "RestoreBlock ancestors diverged LOCAL vs REMOTE"
+    );
+
+    // Neither drive may touch the sql_only fallback — delete/restore must stay on
+    // the engine path (the whole point of the collapse; the #891 failure mode).
+    assert_eq!(
+        remote.fallback_delta, 0,
+        "REMOTE delete/restore took an sql_only fallback"
+    );
+    assert_eq!(
+        local.fallback_delta, 0,
+        "LOCAL delete/restore took an sql_only fallback"
+    );
+
+    // The cursor is the ONE thing that differs: REMOTE advances to the restore
+    // seq (4); LOCAL leaves it at the migration seed (0) so boot replay stays
+    // idempotent (#1257).
+    assert_eq!(
+        remote.cursor, 4,
+        "REMOTE (advance_cursor=true) must advance the apply cursor"
+    );
+    assert_eq!(
+        local.cursor, 0,
+        "LOCAL (advance_cursor=false) must NOT advance the apply cursor"
+    );
+
+    // Non-vacuity: the effects carried the WHOLE PARENT+CHILD cohort and a
+    // resolved space; no ancestor was deleted so the restored-ancestor set is
+    // empty.
+    let mut expected_cohort = vec![PARENT_ID.to_owned(), CHILD_ID.to_owned()];
+    expected_cohort.sort();
+    assert_eq!(
+        remote.del_cohort, expected_cohort,
+        "delete cohort must be exactly {{PARENT, CHILD}}"
+    );
+    assert_eq!(
+        remote.restored_cohort, expected_cohort,
+        "restore cohort must be exactly {{PARENT, CHILD}}"
+    );
+    assert!(
+        remote.restored_ancestors.is_empty(),
+        "no ancestor was deleted, so none restored"
+    );
+    assert_eq!(
+        remote.del_space.as_deref(),
+        Some(SPACE_ID),
+        "delete space must resolve to SPACE_ID"
+    );
+
+    // Explicit EXPECTED cascade on BOTH drives (correctness, not just equality):
+    // DeleteBlock(PARENT) soft-deletes PARENT *and* CHILD; RestoreBlock clears
+    // both.
+    for obs in [&remote, &local] {
+        assert_eq!(
+            obs.post_delete_parent,
+            Some(DELETE_TS),
+            "{}: PARENT must be soft-deleted",
+            obs.name
+        );
+        assert_eq!(
+            obs.post_delete_child,
+            Some(DELETE_TS),
+            "{}: CHILD must cascade-soft-delete",
+            obs.name
+        );
+        assert_eq!(
+            obs.post_restore_parent, None,
+            "{}: PARENT must be restored",
+            obs.name
+        );
+        assert_eq!(
+            obs.post_restore_child, None,
+            "{}: CHILD must cascade-restore",
+            obs.name
+        );
     }
 }

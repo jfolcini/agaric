@@ -335,11 +335,13 @@ async fn apply_tag_to_block_resolved(
     // remaining sql_only trigger), the helper FALLS BACK to
     // `apply_add_tag_sql_only`, which runs the SAME projection + inheritance — so
     // the association is never skipped and we never crash.
-    let add_payload = AddTagPayload {
-        block_id: BlockId::from_trusted(block_id),
-        tag_id: BlockId::from_trusted(tag_id),
-    };
-    crate::materializer::apply_add_tag_via_loro(tx, state, device_id, &add_payload).await?;
+    // #2325/#2250: route through the collapsed single-entry-point projection
+    // (`advance_cursor = false` — the LOCAL path leaves the apply cursor put so
+    // boot replay stays idempotent, #1257). `apply_op_projected` re-derives the
+    // `AddTagPayload` from `op_record.payload` and runs the SAME
+    // `apply_add_tag_via_loro` (AddTag carries no post-commit cohort fan-out, so
+    // the returned `ApplyEffects` is empty and discarded).
+    crate::materializer::apply_op_projected(tx, &op_record, state, false).await?;
 
     Ok(Some(op_record))
 }
@@ -429,13 +431,13 @@ pub async fn remove_tag_inner(
     // helper FALLS BACK to `apply_remove_tag_sql_only`,
     // which runs the SAME projection + cleanup — so the removal is never skipped
     // and we never crash.
-    crate::materializer::apply_remove_tag_via_loro(
-        &mut tx,
-        materializer.loro_state(),
-        device_id,
-        &remove_payload,
-    )
-    .await?;
+    // #2325/#2250: route through the collapsed single-entry-point projection
+    // (`advance_cursor = false`, #1257). It re-derives the `RemoveTagPayload`
+    // from `op_record.payload` and runs the SAME `apply_remove_tag_via_loro`;
+    // RemoveTag carries no post-commit cohort fan-out, so the returned
+    // `ApplyEffects` is empty and discarded.
+    crate::materializer::apply_op_projected(&mut tx, &op_record, materializer.loro_state(), false)
+        .await?;
 
     // 5. Commit + dispatch background cache tasks (fire-and-forget).
     tx.enqueue_background(op_record);

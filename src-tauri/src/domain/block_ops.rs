@@ -816,8 +816,12 @@ pub(crate) async fn set_property_in_tx_with_declaration(
     // to `apply_set_property_sql_only`, which runs the SAME projection — so the
     // row is never skipped and we never crash. The up-front `space`-registration
     // Validation above is preserved regardless.
-    crate::materializer::apply_set_property_via_loro(&mut *tx, state, device_id, &prop_payload)
-        .await?;
+    // #2325/#2250: route through the collapsed single-entry-point projection
+    // (`advance_cursor = false`, #1257). It re-derives the `SetPropertyPayload`
+    // from `op_record.payload` and runs the SAME `apply_set_property_via_loro`
+    // (SetProperty is `PreOpState::None`, so `apply_op_tx`'s count maintenance
+    // is a no-op and the returned `ApplyEffects` is empty).
+    crate::materializer::apply_op_projected(&mut *tx, &op_record, state, false).await?;
 
     // Return block + op record; caller is responsible for commit + dispatch.
     Ok((

@@ -838,13 +838,13 @@ async fn delete_property_core(
     // `SpaceUnresolved`, the only remaining sql_only trigger), the helper FALLS
     // BACK to `apply_delete_property_sql_only`, which runs the SAME projection —
     // so the clear is never skipped and we never crash.
-    crate::materializer::apply_delete_property_via_loro(
-        &mut tx,
-        materializer.loro_state(),
-        device_id,
-        &del_payload,
-    )
-    .await?;
+    // #2325/#2250: route through the collapsed single-entry-point projection
+    // (`advance_cursor = false`, #1257). It re-derives the
+    // `DeletePropertyPayload` from `op_record.payload` and runs the SAME
+    // `apply_delete_property_via_loro` (DeleteProperty is `PreOpState::None`, so
+    // `apply_op_tx`'s count maintenance is a no-op and the effects are empty).
+    crate::materializer::apply_op_projected(&mut tx, &op_record, materializer.loro_state(), false)
+        .await?;
 
     // 5. Dispatch background cache tasks after commit (fire-and-forget).
     tx.enqueue_background(Arc::new(op_record));
