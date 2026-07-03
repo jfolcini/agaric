@@ -573,7 +573,7 @@ pub async fn project_delete_block_to_sql(
     block_id: &str,
     deleted_at: i64,
 ) -> Result<(), AppError> {
-    sqlx::query(concat!(
+    let result = sqlx::query(concat!(
         crate::descendants_cte_active!(),
         "UPDATE blocks SET deleted_at = ? \
          WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
@@ -583,12 +583,22 @@ pub async fn project_delete_block_to_sql(
     .execute(&mut *conn)
     .await?;
     // #1582: surface deep-tree truncation on the op-replay / sql_only
-    // paths. The command path (`delete_block_inner`) already emits this
-    // warn, but this projection — driven by both the via-loro op-replay
-    // arm and the engine-less `sql_only` fallback — did not, so a >100-deep
-    // tree silently dropped its sub-cap descendants here with no breadcrumb.
+    // paths. The command path (`delete_block_inner`) routes through here
+    // too now (#2344), so this is the single place the warn lives for the
+    // via-loro command/op-replay arm AND the engine-less `sql_only` fallback,
+    // covering a >100-deep tree that silently dropped its sub-cap descendants.
     // Detection only; the depth-100 cap itself is unchanged (invariant #9).
-    if crate::block_descendants::cascade_depth_saturated(&mut *conn, block_id).await? {
+    //
+    // #2268 (perf): gate the full `WITH RECURSIVE ... MAX(depth)` re-walk
+    // behind the cascade's affected-row count so the common small delete pays
+    // ZERO extra walks — a >=99-level truncation implies `rows_affected >= 99`
+    // (see `SATURATION_PROBE_MIN_ROWS`). Previously the command path applied
+    // this gate; routing through the projection would have run the probe
+    // UNCONDITIONALLY on every delete, so re-apply the gate here to avoid a
+    // per-delete regression (also benefits the sql_only/replay callers).
+    if result.rows_affected() >= crate::block_descendants::SATURATION_PROBE_MIN_ROWS
+        && crate::block_descendants::cascade_depth_saturated(&mut *conn, block_id).await?
+    {
         tracing::warn!(
             block_id = %block_id,
             op = "delete_block",

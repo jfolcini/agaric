@@ -241,6 +241,23 @@ pub const ANCESTORS_CTE_STANDARD: &str = ancestors_cte_standard!();
 /// String form of [`ancestors_cte_active`]. See [`DESCENDANTS_CTE_STANDARD`].
 pub const ANCESTORS_CTE_ACTIVE: &str = ancestors_cte_active!();
 
+/// Minimum cascade affected-row count that can imply the depth-100 cap
+/// fired, and therefore the threshold above which a [`cascade_depth_saturated`]
+/// probe is worth paying for (#2268).
+///
+/// A `descendants_cte_active!()` cascade can only reach depth `d` by newly
+/// soft-deleting the whole `d+1`-node chain down to it (its recursive arm
+/// requires every ancestor to be `deleted_at IS NULL`, so it cannot skip a
+/// level). Hence a `>= 99`-level truncation implies the cascade UPDATE touched
+/// `>= 99` rows. Below this threshold the saturation probe cannot fire, so
+/// callers gate the (full `WITH RECURSIVE ... MAX(depth)`) re-walk behind it —
+/// the common small delete pays ZERO extra walks, only a pathologically large
+/// delete pays for the authoritative check. Lives here so the delete-cascade
+/// projection (`project_delete_block_to_sql`, driven by both the via-loro
+/// command/op-replay arm and the `sql_only` fallback) has one gate; the restore
+/// path keeps its own equal constant in `commands::blocks::crud`.
+pub const SATURATION_PROBE_MIN_ROWS: u64 = 99;
+
 /// Did the depth-100 cap on the recursive descendants walk
 /// actually fire for this `root_id`?
 ///

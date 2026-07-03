@@ -1431,6 +1431,145 @@ async fn remote_apply_op_create_stamps_page_id_and_inbound_in_tx_2344() {
     mat.shutdown();
 }
 
+/// #2344 — command-level LOCAL `DeleteBlock` cascade + engine-fan-out
+/// correctness, proving the REAL command path (not just the
+/// `apply_op_projected`-direct fixture).
+///
+/// Drives the REAL `delete_block_inner` (now routed through
+/// `apply_op_projected(false)` — the DeleteBlock arm of the #2325 collapse) on a
+/// PAGE(S1) -> PARENT(BP) -> CHILD(BC) tree, deleting the PARENT so the cascade
+/// has a genuine descendant to fan out. The CHILD's content holds a `[[S1]]`
+/// page link (fidelity — a linked, deleted subtree). Asserts, WITHOUT any boot
+/// replay:
+///   (a) the WHOLE deleted cohort (seed BP + descendant BC) carries
+///       `deleted_at == DeleteResponse.deleted_at` (the cascade ran under ONE
+///       cohort id), while the un-targeted page S1 stays alive;
+///   (b) `DeleteResponse.descendants_affected` == the cohort size (2) — the seed
+///       IS counted, so it equals the old cascade UPDATE's `rows_affected()`;
+///   (c) the per-space ENGINE received the DESCENDANT delete: `read_deleted(BC)`
+///       AND `read_deleted(BP)` are `true` while `read_deleted(S1)` is `false`.
+///       The in-tx engine apply (`apply_delete_block_via_loro`) reaches only the
+///       SEED, so a still-live BC in the engine would mean the post-commit
+///       `dispatch_delete_descendants` fan-out never ran — this is the direct
+///       proof of the NEW wire;
+///   (d) a subsequent `restore_block_inner(BP, deleted_at)` restores the WHOLE
+///       cohort (both BP and BC back to `deleted_at IS NULL`), proving the
+///       `deleted_at` cohort id is preserved end-to-end through the routed path;
+///   (e) the delete took ZERO `sql_only_fallback` — it ran the engine path, not
+///       the SQL-only fallback (#891 discipline), so none of the above is a
+///       false green.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_delete_block_cohort_engine_fanout_2344() {
+    let s1 = seed_label_to_id("S1"); // PAGE — owning page + link target (NOT deleted)
+    let bp = seed_label_to_id("BP"); // PARENT content block under S1 (delete root)
+    let bc = seed_label_to_id("BC"); // CHILD content block under BP, links [[S1]]
+    let seed = [
+        json!({"id": "S1", "block_type": "page", "content": "Page", "parent_id": null, "position": 1}),
+        json!({"id": "BP", "block_type": "content", "content": "parent", "parent_id": "S1", "position": 1}),
+        json!({"id": "BC", "block_type": "content", "content": format!("[[{s1}]]"), "parent_id": "BP", "position": 1}),
+    ];
+
+    // Runtime reads (no sqlx macro → no `.sqlx` regen).
+    async fn deleted_at_of(pool: &SqlitePool, id: &str) -> Option<i64> {
+        sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+
+    // ── REAL LOCAL command: delete the PARENT (cascades onto the CHILD) ──
+    let fb_before = crate::materializer::sql_only_fallback_count();
+    let resp = delete_block_inner(&pool, DEV, &mat, BlockId::from(bp.as_str()))
+        .await
+        .expect("local delete_block_inner");
+    settle(&mat).await;
+
+    // (e) engine path, not the SQL-only fallback.
+    assert_eq!(
+        crate::materializer::sql_only_fallback_count() - fb_before,
+        0,
+        "LOCAL delete took the SQL-only fallback — not the engine path (#891)",
+    );
+
+    // (b) descendants_affected counts the seed (BP) + descendant (BC) = 2.
+    assert_eq!(
+        resp.descendants_affected, 2,
+        "descendants_affected must equal the cohort size (seed BP + descendant BC)",
+    );
+
+    // (a) the whole cohort shares ONE cohort id == DeleteResponse.deleted_at;
+    // the un-targeted page stays alive.
+    let now = resp.deleted_at;
+    assert_eq!(
+        deleted_at_of(&pool, &bp).await,
+        Some(now),
+        "seed BP must be soft-deleted with deleted_at == now",
+    );
+    assert_eq!(
+        deleted_at_of(&pool, &bc).await,
+        Some(now),
+        "descendant BC must be soft-deleted with the SAME cohort id as the seed",
+    );
+    assert_eq!(
+        deleted_at_of(&pool, &s1).await,
+        None,
+        "the un-targeted owning page S1 must remain alive",
+    );
+
+    // (c) the per-space engine received the DESCENDANT delete — the direct proof
+    // that `dispatch_delete_descendants` fanned the cohort onto the engine
+    // post-commit (the in-tx apply reached only the seed BP).
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        let engine = guard.engine_mut();
+        assert!(
+            engine.read_deleted(&bc).expect("engine read_deleted(BC)"),
+            "descendant BC still alive in the engine — dispatch_delete_descendants \
+             fan-out did not run on the LOCAL command path (#2344)",
+        );
+        assert!(
+            engine.read_deleted(&bp).expect("engine read_deleted(BP)"),
+            "seed BP not deleted in the engine",
+        );
+        assert!(
+            !engine.read_deleted(&s1).expect("engine read_deleted(S1)"),
+            "owning page S1 must stay alive in the engine (non-vacuity)",
+        );
+        drop(guard);
+    }
+
+    // (d) restore by the preserved cohort id un-deletes the WHOLE cohort.
+    restore_block_inner(&pool, DEV, &mat, BlockId::from(bp.as_str()), now)
+        .await
+        .expect("local restore_block_inner");
+    settle(&mat).await;
+    assert_eq!(
+        deleted_at_of(&pool, &bp).await,
+        None,
+        "restore must un-delete the seed BP (cohort id preserved)",
+    );
+    assert_eq!(
+        deleted_at_of(&pool, &bc).await,
+        None,
+        "restore must un-delete the descendant BC (whole cohort restored)",
+    );
+
+    mat.shutdown();
+}
+
 // ---------------------------------------------------------------------------
 // #1257 local simple-op engine-freshness conformance.
 //

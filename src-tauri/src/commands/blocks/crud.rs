@@ -466,50 +466,36 @@ pub async fn delete_block_inner(
     // Append to op_log within transaction
     let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
 
-    // Cascade soft-delete within same transaction.
-    //
-    // `descendants_cte_active!()` filters `deleted_at IS NULL` in the
-    // recursive member — already-deleted subtrees must keep their
-    // original `deleted_at` timestamp. The shared CTE lives in
-    // `crate::block_descendants`.
-    let result = sqlx::query(concat!(
-        crate::descendants_cte_active!(),
-        "UPDATE blocks SET deleted_at = ? \
-         WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
-    ))
-    .bind(&block_id)
-    .bind(now)
-    .execute(&mut **tx)
+    // #2344/#2325 route the just-appended `op_record` through the SINGLE
+    // collapsed apply-projection entry point (`apply_op_projected`), IN this
+    // CommandTx, INSTEAD of the hand-rolled `descendants_cte_active!()` cascade
+    // UPDATE — the DeleteBlock arm of the #2325 apply-path collapse. This runs
+    // the SAME engine-apply + SQL projection the boot-replay / sync `ApplyOp`
+    // path uses (via `apply_op_tx`'s DeleteBlock arm): the seed's per-space
+    // Loro `apply_delete_block`, the IDENTICAL `project_delete_block_to_sql`
+    // cascade (stamping `deleted_at = op_record.created_at = now` on the seed
+    // AND every active descendant via `descendants_cte_active!()`), and the
+    // `remove_subtree_inherited` tag sweep — all previously hand-rolled here.
+    // `apply_op_projected` re-derives the `DeleteBlockPayload` from
+    // `op_record.payload`. We pass `advance_cursor = false`: the apply cursor
+    // stays put on the LOCAL path so boot replay re-applies idempotently (the
+    // #1257 safety net). If the block's space can't be resolved (#2250), the
+    // helper internally FALLS BACK to `apply_delete_block_sql_only` (same
+    // cascade + sweep), so the row is never skipped and we never crash.
+    // `apply_op_projected` borrows `&op_record` here, BEFORE the `Arc::new`
+    // move below. The returned `ApplyEffects` carries the pre-UPDATE
+    // `deleted_cohort` (seed + descendants) and the pre-UPDATE `delete_space_id`
+    // for the post-commit engine fan-out below. The #1582/#2268 depth-cap
+    // saturation warn that used to live here now runs (still gated on the
+    // cascade's affected-row count >= SATURATION_PROBE_MIN_ROWS) inside
+    // `project_delete_block_to_sql`, so it also covers the sql_only/replay paths.
+    let effects = crate::materializer::apply_op_projected(
+        &mut tx,
+        &op_record,
+        materializer.loro_state(),
+        false,
+    )
     .await?;
-
-    // Warn when the cascade walk hit the depth-100 cap so
-    // an operator has a breadcrumb if a pathological tree silently
-    // truncated the soft-delete. The cap itself is preserved (invariant
-    // #9); we only ADD detection + surfacing here.
-    //
-    // #2268 (perf): the saturation probe is a full `WITH RECURSIVE ...
-    // MAX(depth)` re-walk of the subtree the cascade UPDATE above just walked,
-    // in the user-blocking write tx, purely to warn in the ~never-hit
-    // >=99-level case. Gate it behind a cheap threshold so the common case does
-    // ZERO extra walks: the active-CTE cascade can only reach depth `d` by
-    // newly soft-deleting the whole `d+1`-node chain to it (its recursive arm
-    // requires every ancestor to be `deleted_at IS NULL`, so it cannot skip a
-    // level), hence a >=99-level truncation implies `rows_affected >= 99`.
-    // Below the threshold the probe cannot fire; only a pathologically large
-    // delete pays for the authoritative `cascade_depth_saturated` check.
-    if result.rows_affected() >= SATURATION_PROBE_MIN_ROWS
-        && crate::block_descendants::cascade_depth_saturated(&mut **tx, &block_id).await?
-    {
-        tracing::warn!(
-            block_id = %block_id,
-            op = "delete_block",
-            "cascade-depth cap reached (>=99 levels); descendants \
-             below depth 100 were not soft-deleted. Tree is pathologically deep.",
-        );
-    }
-
-    // P-4: Remove inherited entries for soft-deleted subtree
-    crate::tag_inheritance::remove_subtree_inherited(&mut tx, &block_id).await?;
 
     // #2042: `pages_cache.{child_block_count,inbound_link_count}` for the pages
     // this subtree owned / linked into are recomputed by the background
@@ -523,13 +509,39 @@ pub async fn delete_block_inner(
     // Commit + fire-and-forget background cache dispatch. #2037 pt2: thread
     // the block's type so the materializer narrows the rebuild fan-out for a
     // content-block delete (the page/tag-scoped caches can't change).
-    tx.enqueue_lifecycle_background(Arc::new(op_record), block_type);
+    //
+    // Wrap once in `Arc` so the dispatch queue borrows the record by refcount
+    // (atomic increment) rather than deep-cloning the owned `String` payloads,
+    // AND the post-commit cohort fan-out below can still reference it.
+    let op_record = Arc::new(op_record);
+    tx.enqueue_lifecycle_background(Arc::clone(&op_record), block_type);
     tx.commit_and_dispatch(materializer).await?;
+
+    // #2344 NEW post-commit engine cohort fan-out — the LOCAL counterpart of
+    // the `dispatch_delete_descendants` call `apply_op` runs after ITS commit.
+    // The in-tx engine apply above (`apply_delete_block_via_loro`) reached only
+    // the SEED; the per-space Loro `apply_delete_block` is per-block-id, so the
+    // DESCENDANT deletes never reach the engine without this fan-out (SQL would
+    // report them deleted while the engine still shows them alive). Drives the
+    // captured cohort (seed + descendants) onto the per-space engine using the
+    // space id captured PRE-UPDATE (post-delete `resolve_block_space` returns
+    // None for the now-tombstoned rows). Infallible / log-only, mirroring
+    // `apply_op`'s call shape exactly (args, await, no `?`).
+    crate::materializer::dispatch_delete_descendants(
+        &op_record,
+        &effects.deleted_cohort,
+        effects.delete_space_id.as_ref(),
+        materializer.loro_state(),
+    )
+    .await;
 
     Ok(DeleteResponse {
         block_id,
         deleted_at: now,
-        descendants_affected: result.rows_affected(),
+        // The cohort INCLUDES the seed (depth-0 anchor of `collect_delete_cohort`'s
+        // active CTE), so its length equals the old cascade UPDATE's
+        // `rows_affected()` exactly — the same set of rows the UPDATE touched.
+        descendants_affected: effects.deleted_cohort.len() as u64,
     })
 }
 
