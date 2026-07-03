@@ -129,10 +129,12 @@ export function useSearchResults({
       traceInteraction(
         INTERACTIONS.SEARCH,
         () =>
-          // Phase 4 — `searchBlocks` requires `spaceId`. The `?? ''`
-          // fallback is intentional pre-bootstrap behaviour: empty string forces
-          // a no-match SQL filter (returning empty results) rather than a runtime
-          // null deref.
+          // #2248 c — `searchBlocks` is space-scoped and rejects an empty
+          // space (`requireActiveScope` throws). The `enabled` guard below
+          // holds the query until `currentSpaceId != null`, so the `?? ''`
+          // fallback is only a type-level defensive default that can never be
+          // reached — a null space now means "don't search" (query stays
+          // disabled), not "match nothing".
           searchBlocks(
             {
               query: debouncedAst.freeText,
@@ -181,6 +183,7 @@ export function useSearchResults({
     // unfiltered flash, replaced when resolution settles).
     enabled:
       spaceIsReady &&
+      currentSpaceId != null &&
       !tagResolutionPending &&
       (debouncedAst.freeText.length > 0 || debouncedAst.filters.length > 0),
     // E2E-2 — do NOT pass `onError`; SearchPanel discriminates the

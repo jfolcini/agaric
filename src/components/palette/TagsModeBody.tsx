@@ -59,7 +59,10 @@ export function TagsModeBody({
   }, [filter, debounced])
 
   useEffect(() => {
-    if (!spaceIsReady) return
+    // #2248 c — a null space now means "don't search" (searchBlocks rejects an
+    // empty scope). `spaceIsReady` can be true while `currentSpaceId` is still
+    // null (zero-space / list_spaces-failure state), so guard on the id too.
+    if (!spaceIsReady || currentSpaceId == null) return
     const gen = tagsGen.next()
     setLoading(true)
     // #2110 (M4) — trace the palette tag-lookup interaction. The invoke is
@@ -70,7 +73,7 @@ export function TagsModeBody({
         query: debouncedQuery,
         blockTypeFilter: 'tag',
         limit: searchBlocksLimit(TAGS_QUERY_LIMIT),
-        spaceId: currentSpaceId ?? '',
+        spaceId: currentSpaceId,
       }),
     )
       .then((resp) => {

@@ -818,8 +818,9 @@ pub(super) fn search_filter_to_primitives(filter: &SearchFilter) -> Vec<FilterPr
         });
     }
 
-    // Space — only when a non-empty space id is present.
-    if let Some(sid) = filter.space_id.as_deref()
+    // Space — only when the scope is `Active` (a non-empty space id).
+    // `Global` yields `None` and pushes no `Space` primitive.
+    if let Some(sid) = filter.scope.as_filter_param()
         && !sid.is_empty()
     {
         out.push(FilterPrimitive::Space {
@@ -833,6 +834,7 @@ pub(super) fn search_filter_to_primitives(filter: &SearchFilter) -> Vec<FilterPr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::space::{SpaceId, SpaceScope};
 
     const FTS_PREFIX: &str = "\n           AND ";
     const TOGGLE_PREFIX: &str = "\n             AND ";
@@ -1199,7 +1201,7 @@ mod tests {
 
         let filter = SearchFilter {
             tag_ids: vec!["TAGA".into(), "TAGB".into()],
-            space_id: Some("01SPACE0001".into()),
+            scope: SpaceScope::Active(SpaceId::from_trusted("01SPACE0001")),
             property_filters: vec![
                 SearchPropertyFilter {
                     key: "kind".into(),
@@ -1259,7 +1261,7 @@ mod tests {
         assert!(search_filter_to_primitives(&none).is_empty());
 
         let empty = SearchFilter {
-            space_id: Some(String::new()),
+            scope: SpaceScope::Active(SpaceId::from_trusted("")),
             ..Default::default()
         };
         assert!(

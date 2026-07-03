@@ -201,10 +201,15 @@ impl PartialEq<SpaceId> for &str {
 /// same adjacently-tagged shape and then runs the lightweight ULID-shape check
 /// ([`SpaceScope::validate`]), so this IPC boundary rejects a malformed space
 /// id up front. `Global` and the seeded sentinel spaces are unaffected.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(tag = "kind", content = "space_id")]
 pub enum SpaceScope {
+    /// The unscoped default — no `block_properties.space` filter. Chosen as
+    /// `Default` so a struct field of type `SpaceScope` carrying
+    /// `#[serde(default)]` (e.g. `SearchFilter::scope`) deserialises a
+    /// missing key to the widest, pre-existing "no filter" behaviour.
     #[serde(rename = "global")]
+    #[default]
     Global,
     #[serde(rename = "active")]
     Active(SpaceId),

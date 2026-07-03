@@ -28,6 +28,7 @@ use super::common::{
 use crate::commands::{MatchOffset, SearchFilter, search_blocks_inner};
 use crate::error::AppError;
 use crate::fts::rebuild_fts_index;
+use crate::space::{SpaceId, SpaceScope};
 
 /// Helper: build a default `SearchFilter` scoped to the test space, with
 /// the toggle flags applied per `case_sensitive` / `whole_word` /
@@ -36,7 +37,7 @@ fn filter_with(case_sensitive: bool, whole_word: bool, is_regex: bool) -> Search
     SearchFilter {
         parent_id: None,
         tag_ids: vec![],
-        space_id: Some(TEST_SPACE_ID.into()),
+        scope: SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         include_page_globs: vec![],
         exclude_page_globs: vec![],
         case_sensitive,

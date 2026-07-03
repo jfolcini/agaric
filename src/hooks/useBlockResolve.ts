@@ -136,10 +136,11 @@ async function searchPagesViaCache(q: string, pagesListRef: PagesListRef): Promi
  * Phase 2 — the FTS call is scoped to the current space.
  */
 async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise<PickerItem[]> {
-  // Phase 4 — `searchBlocks` requires `spaceId`. The `?? ''`
-  // fallback is intentional pre-bootstrap behaviour (see
-  // `searchPagesViaCache` for the rationale).
-  const spaceId = useSpaceStore.getState().currentSpaceId ?? ''
+  // #2248 c — `searchBlocks` is space-scoped and rejects an empty scope. No
+  // active space ⇒ nothing to search; short-circuit to empty rather than send
+  // a `''` that used to mean "match nothing" but now throws.
+  const spaceId = useSpaceStore.getState().currentSpaceId
+  if (spaceId == null) return []
   const resp = await searchBlocks({ query: q, limit: searchBlocksLimit(20), spaceId })
   const matches = resp.items
     .filter((b) => b.block_type === 'page')
@@ -434,10 +435,11 @@ export function useBlockResolve(): UseBlockResolveReturn {
       const q = query.replace(/\)+$/, '').trim()
       if (q.length < 2) return []
 
-      // Phase 4 — `searchBlocks` requires `spaceId`. The `?? ''`
-      // fallback is intentional pre-bootstrap behaviour: empty string
-      // forces a no-match SQL filter rather than a runtime null deref.
-      const spaceId = useSpaceStore.getState().currentSpaceId ?? ''
+      // #2248 c — `searchBlocks` is space-scoped and rejects an empty scope.
+      // No active space ⇒ nothing to search; short-circuit to empty rather
+      // than send a `''` that used to mean "match nothing" but now throws.
+      const spaceId = useSpaceStore.getState().currentSpaceId
+      if (spaceId == null) return []
       const resp = await searchBlocks({ query: q, limit: searchBlocksLimit(20), spaceId })
       // Show parent page title as breadcrumb when available.
       // Compose against current space so a foreign-space

@@ -970,7 +970,7 @@ export async function searchBlocks(
       commands.searchBlocks(params.query, params.cursor ?? null, params.limit ?? null, {
         parentId: params.parentId ?? null,
         tagIds: params.tagIds ?? [],
-        spaceId: params.spaceId,
+        scope: requireActiveScope(params.spaceId),
         includePageGlobs: params.includePageGlobs ?? [],
         excludePageGlobs: params.excludePageGlobs ?? [],
         caseSensitive: params.caseSensitive ?? false,
@@ -1027,7 +1027,7 @@ export async function searchBlocksPartitioned(params: {
     await commands.searchBlocksPartitioned(params.query, params.pageLimit, params.blockLimit, {
       parentId: params.parentId ?? null,
       tagIds: params.tagIds ?? [],
-      spaceId: params.spaceId,
+      scope: requireActiveScope(params.spaceId),
       includePageGlobs: params.includePageGlobs ?? [],
       excludePageGlobs: params.excludePageGlobs ?? [],
       caseSensitive: params.caseSensitive ?? false,

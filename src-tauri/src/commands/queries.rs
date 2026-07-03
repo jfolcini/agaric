@@ -251,13 +251,18 @@ pub async fn search_blocks_inner(
     // shared helper so the cursor and partitioned paths stay in lockstep.
     let prepared = prepare_search_filter(&filter)?;
 
+    // #2248 c — the space filter now rides on `SearchFilter::scope`.
+    // `Active(id)` scopes to that space; `Global` maps to `None` (unscoped).
+    // The FE wrappers (`requireActiveScope`) and the MCP `search` tool only
+    // ever send `Active`, so `Global` here is the deliberate cross-space form,
+    // not a `''`=no-match footgun.
     fts::search_with_toggles(
         pool,
         &query,
         &page,
         filter.parent_id.as_deref(),
         tag_ids_slice,
-        filter.space_id.as_deref(),
+        filter.scope.as_filter_param(),
         &prepared.include_globs,
         &prepared.exclude_globs,
         prepared.toggles,
@@ -740,6 +745,9 @@ pub async fn search_blocks_partitioned_inner(
     // helper (same path the cursor `search_blocks_inner` uses).
     let prepared = prepare_search_filter(&filter)?;
 
+    // #2248 c — space filter rides on `scope`; `Global` → `None` (unscoped),
+    // mirroring `search_blocks_inner`.
+    //
     // `search_with_toggles_partitioned` runs the two
     // scans in parallel under `tokio::try_join!` and returns each
     // partition's `has_more` from a `limit + 1` probe. No further
@@ -751,7 +759,7 @@ pub async fn search_blocks_partitioned_inner(
         block_limit,
         filter.parent_id.as_deref(),
         tag_ids_slice,
-        filter.space_id.as_deref(),
+        filter.scope.as_filter_param(),
         &prepared.include_globs,
         &prepared.exclude_globs,
         prepared.toggles,

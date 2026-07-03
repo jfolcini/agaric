@@ -971,7 +971,13 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
         crate::commands::SearchFilter {
             parent_id,
             tag_ids: tag_ids.unwrap_or_default(),
-            space_id: Some(normalize_ulid_arg(&args.space_id)),
+            // #2248 c — `SearchFilter` now carries a `SpaceScope`. The MCP
+            // `search` tool is always space-scoped, so wrap the (required)
+            // normalized arg as `Active`. `from_trusted` preserves the prior
+            // pass-through contract: a non-ULID / empty arg becomes an
+            // `Active` id that simply matches nothing downstream, rather than
+            // erroring at construction.
+            scope: SpaceScope::Active(SpaceId::from_trusted(&normalize_ulid_arg(&args.space_id))),
             include_page_globs: f.include_page_globs,
             exclude_page_globs: f.exclude_page_globs,
             case_sensitive: f.case_sensitive,

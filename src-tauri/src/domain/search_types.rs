@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::filters::primitive::LastEditedSpec;
+use crate::space::SpaceScope;
 
 /// Date-filter shape used by [`SearchFilter::due_filter`] /
 /// [`SearchFilter::scheduled_filter`].
@@ -154,12 +155,18 @@ pub struct SearchFilter {
     /// (`ALL` semantics — see `fts::search_fts`).
     #[serde(default)]
     pub tag_ids: Vec<String>,
-    /// Restrict to blocks whose owning page lives in this
-    /// space. Empty string is treated as "no match" by the SQL path
-    /// (returns an empty page), matching pre-bootstrap callers that
-    /// pass `''`.
+    /// Space scope for the search (#2248 group c). Mapped to the FTS layer
+    /// via [`SpaceScope::as_filter_param`]: `Active(id)` restricts matches to
+    /// blocks whose owning page lives in that space; `Global` applies no
+    /// space filter (the deliberate cross-space form). This replaces the
+    /// prior `space_id: Option<String>` whose `Some("")` silently meant
+    /// "match nothing" — the un-typed footgun the arch sweep flagged. Every
+    /// real caller (the FE search wrappers via `requireActiveScope`, and the
+    /// MCP `search` tool) sends `Active`, so `Global` only arises from an
+    /// omitted key (the `#[serde(default)]`) and yields today's unscoped
+    /// behaviour rather than a never-matching empty filter.
     #[serde(default)]
-    pub space_id: Option<String>,
+    pub scope: SpaceScope,
     /// Page-name glob include list. Each entry may use
     /// SQLite `GLOB` syntax (`*`, `?`, `[...]`) and `{a,b}` brace
     /// expansion. Bare tokens are wrapped with `*…*` for a
