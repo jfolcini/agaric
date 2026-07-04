@@ -2358,36 +2358,135 @@ async fn has_parent_matching_depth_exceeded_is_rejected() {
     );
 }
 
-/// #2039: the LastEdited derived-table query
-/// (`SELECT block_id, MAX(created_at) FROM op_log GROUP BY block_id`) must be
-/// served by the composite `idx_op_log_block_created` index (migration 0095) —
-/// an index-only per-block MAX from the right edge — instead of a full op_log
-/// scan plus a temp B-tree GROUP BY sort that grows with the whole op_log.
+/// #2304: the FLAT search path's `LastEdited` sort key must be a per-candidate
+/// correlated seek on the composite `op_log(block_id, created_at)` index
+/// (`idx_op_log_block_created`, migration 0095) — the SAME expression in the
+/// SELECT projection, ORDER BY, and keyset WHERE — NOT the pre-aggregated
+/// `LEFT JOIN (SELECT block_id, MAX(created_at) … GROUP BY block_id)` it used
+/// before. That derived table MATERIALIZEs the WHOLE op_log (all ~500k rows)
+/// once per statement regardless of how selective the candidate WHERE is
+/// (~100ms vs ~0.3ms on a 100-block candidate set) — the same cliff #2269
+/// reverted in the grouped path (`grouped_date_bucket_key_is_correlated_index_seek_2269`).
+///
+/// This pins the flat statement's shape against the REAL correlated expression
+/// the engine now emits (see `resolve_sort` / `SortJoins` in `engine.rs`): a
+/// correlated `SEARCH` on the composite index, and NO `MATERIALIZE` node nor a
+/// standalone full `SCAN op_log`.
 #[tokio::test]
-async fn last_edited_group_by_uses_block_created_index_2039() {
+async fn flat_last_edited_sort_is_correlated_index_seek_2304() {
     let (pool, _dir) = test_pool().await;
+    // Seed the base fixture (SPACE + spaces registry + B1..B4).
+    seed(&pool).await;
+    // Add more content blocks so the candidate set is a real multi-block set.
+    for i in 5..25u32 {
+        insert_block(
+            &pool,
+            &format!("01B{i:022}"),
+            Some(SPACE),
+            "content",
+            Some("TODO"),
+            None,
+            Some(i as i64),
+        )
+        .await;
+    }
 
-    let plan_rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(
+    // Deep per-block op_log history: ~40 rows per block across all blocks so
+    // the per-candidate `MAX(created_at)` aggregates over a real index range
+    // (not a single-row short-circuit). Chunked multi-row INSERTs stay well
+    // under SQLite's ~999-bound-param cap (4 bound cols/row → 160 params/chunk).
+    let block_ids: Vec<String> = (5..25u32)
+        .map(|i| format!("01B{i:022}"))
+        .chain(
+            [
+                "01B1000000000000000000000",
+                "01B2000000000000000000000",
+                "01B3000000000000000000000",
+                "01B4000000000000000000000",
+            ]
+            .iter()
+            .map(|s| s.to_string()),
+        )
+        .collect();
+    let mut seq: i64 = 0;
+    let depth = 40i64;
+    let mut batch: Vec<(i64, String, i64, String)> = Vec::new(); // (seq, hash, created_at_ms, block_id)
+    for bid in &block_ids {
+        for d in 0..depth {
+            seq += 1;
+            // Spread timestamps so MAX picks a non-trivial latest row.
+            batch.push((
+                seq,
+                format!("h{seq}"),
+                1_700_000_000_000 + seq * 1000 + d,
+                bid.clone(),
+            ));
+        }
+    }
+    for chunk in batch.chunks(40) {
+        let mut sql = String::from(
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) VALUES ",
+        );
+        let placeholders: Vec<&str> = chunk
+            .iter()
+            .map(|_| "('dev', ?, ?, 'edit', '{}', ?, ?)")
+            .collect();
+        sql.push_str(&placeholders.join(", "));
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
+        for (s, h, ca, bid) in chunk {
+            q = q.bind(s).bind(h).bind(ca).bind(bid);
+        }
+        q.execute(&pool).await.unwrap();
+    }
+
+    // A representative of the REAL flat-search statement the engine emits for a
+    // `LastEdited DESC` sort with a selective filter: the correlated
+    // last_edited expression appears in ALL THREE positions — the SELECT
+    // projection, the keyset WHERE, and the ORDER BY — exactly as
+    // `compile_and_run` composes it. If any position regressed to the
+    // pre-aggregated derived-table join, a MATERIALIZE / full SCAN op_log node
+    // would appear.
+    const LE: &str = "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), 0)";
+    let sql = format!(
         "EXPLAIN QUERY PLAN \
-         SELECT block_id, MAX(created_at) AS max_ca FROM op_log GROUP BY block_id",
-    ))
-    .fetch_all(&pool)
-    .await
-    .unwrap();
-
+         SELECT b.id, {LE} AS __last_edited \
+         FROM blocks b \
+         WHERE b.space_id = '{SPACE}' AND b.deleted_at IS NULL AND b.todo_state = 'TODO' \
+           AND {LE} <= 9999999999999 \
+         ORDER BY {LE} DESC, b.id DESC \
+         LIMIT 51"
+    );
+    let plan_rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
+        .fetch_all(&pool)
+        .await
+        .unwrap();
     let plan = plan_rows
         .iter()
         .map(|(_, _, _, d)| d.as_str())
         .collect::<Vec<_>>()
         .join("\n");
+    eprintln!("[EXPLAIN flat LastEdited]\n{plan}");
+    let lower = plan.to_lowercase();
 
+    // Correlated index SEARCH on op_log keyed by the block_id composite index
+    // (case-insensitive token check — SQLite may reword SCAN/SEARCH/COVERING
+    // across patch versions, but the access must be an index SEARCH on op_log
+    // and the index must be one of the block_id-keyed op_log indexes).
     assert!(
-        plan.contains("idx_op_log_block_created"),
-        "LastEdited GROUP BY must use idx_op_log_block_created; plan was:\n{plan}"
+        lower.contains("search op_log") && lower.contains("idx_op_log_block"),
+        "flat LastEdited sort key must be a correlated op_log index SEARCH keyed on \
+         block_id (idx_op_log_block*); plan was:\n{plan}"
     );
+    // The derived-table form would MATERIALIZE the whole op_log aggregate...
     assert!(
-        !plan.contains("USE TEMP B-TREE FOR GROUP BY"),
-        "composite index must satisfy the GROUP BY ordering (no temp b-tree sort); plan was:\n{plan}"
+        !lower.contains("materialize"),
+        "flat LastEdited sort key must not materialise an op_log-wide aggregate; plan was:\n{plan}"
+    );
+    // ...and would show up as a standalone full SCAN of op_log (as opposed to
+    // the per-candidate index SEARCH). A correlated seek never full-scans op_log.
+    assert!(
+        !lower.contains("scan op_log"),
+        "flat LastEdited sort key must not full-SCAN op_log (correlated seek only); plan was:\n{plan}"
     );
 }
 
@@ -2396,9 +2495,10 @@ async fn last_edited_group_by_uses_block_created_index_2039() {
 /// pre-aggregated `LEFT JOIN (… GROUP BY block_id)`, which SQLite MATERIALIZEs
 /// over the WHOLE op_log per statement regardless of how selective the WHERE
 /// is (measured ~300× slower for a filtered candidate set on a 500k-row
-/// op_log). The 2039 test above pins the flat sort join's derived-table shape;
-/// this one pins the grouped statement's shape: a correlated `SEARCH` on the
-/// composite index and NO `MATERIALIZE` node.
+/// op_log). The flat path pins the same correlated shape in
+/// `flat_last_edited_sort_is_correlated_index_seek_2304` (#2304); this one pins
+/// the grouped statement's shape: a correlated `SEARCH` on the composite index
+/// and NO `MATERIALIZE` node.
 #[tokio::test]
 async fn grouped_date_bucket_key_is_correlated_index_seek_2269() {
     let (pool, _dir) = test_pool().await;
