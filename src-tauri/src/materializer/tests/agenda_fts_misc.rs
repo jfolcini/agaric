@@ -184,6 +184,132 @@ async fn dispatch_create_block_enqueues_projected_agenda_cache() {
     );
 }
 
+// ======================================================================
+// #2196: MoveBlock makes projected_agenda_cache authoritative on a
+// template-status flip. Moving a repeating block INTO a template page must
+// rebuild the cache so the block's stale projections are dropped — the cache
+// itself is correct, not merely masked by the read-path `NOT EXISTS(template)`
+// subquery. Before the fix the MoveBlock dispatch arm enqueued no
+// projected-agenda rebuild, leaving a stale row behind.
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_block_into_template_page_rebuilds_projected_agenda_cache() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // A due_date near "today" so the daily-repeating block projects at least
+    // one occurrence within the cache's 365-day horizon (the task handler
+    // rebuilds against `chrono::Local::now()`).
+    let due = chrono::Local::now()
+        .date_naive()
+        .format("%Y-%m-%d")
+        .to_string();
+
+    // Normal source page (page_id = self, per the 0073 page-id invariant).
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, page_id) \
+         VALUES ('MV_SRC_PAGE', 'page', 'src', 'MV_SRC_PAGE')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    // Template destination page: carries a `template` property row, which is
+    // exactly what excludes its owned repeating blocks from the projected
+    // agenda cache (`cache/projected_agenda.rs` NOT EXISTS(template) guard).
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, page_id) \
+         VALUES ('MV_TPL_PAGE', 'page', 'tpl', 'MV_TPL_PAGE')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_bool) \
+         VALUES ('MV_TPL_PAGE', 'template', 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // A repeating block, initially owned by the NON-template source page.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, due_date) \
+         VALUES ('MV_REP_1', 'content', 'daily standup', 'MV_SRC_PAGE', 'MV_SRC_PAGE', ?)",
+    )
+    .bind(&due)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) \
+         VALUES ('MV_REP_1', 'repeat', 'daily')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Build the cache while the block lives on a normal page → it IS present.
+    crate::cache::rebuild_projected_agenda_cache(&pool)
+        .await
+        .unwrap();
+    let before: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM projected_agenda_cache WHERE block_id = 'MV_REP_1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        before > 0,
+        "a repeating block on a normal page must populate the projected agenda \
+         cache before the move (got {before} rows)"
+    );
+
+    // Apply the DB effect of the move: the foreground move command already
+    // reparents the block and re-derives its `page_id` in-tx BEFORE dispatch.
+    // The cache is now STALE — it still lists MV_REP_1 even though its owning
+    // page is a template.
+    sqlx::query(
+        "UPDATE blocks SET parent_id = 'MV_TPL_PAGE', page_id = 'MV_TPL_PAGE' \
+         WHERE id = 'MV_REP_1'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Dispatch the move op and drain the background queue. With the #2196 fix
+    // the MoveBlock arm enqueues RebuildProjectedAgendaCache, which recomputes
+    // the cache against the corrected DB state and drops the now
+    // template-owned block. Without the fix, no projected rebuild is enqueued
+    // and the stale row survives.
+    let mv = make_op_record(
+        &pool,
+        OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: BlockId::test_id("MV_REP_1"),
+            new_parent_id: Some(BlockId::test_id("MV_TPL_PAGE")),
+            new_position: 0,
+            new_index: Some(0),
+        }),
+    )
+    .await;
+    mat.dispatch_background(&mv).unwrap();
+    mat.flush_background().await.unwrap();
+
+    let after: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM projected_agenda_cache WHERE block_id = 'MV_REP_1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        after, 0,
+        "#2196: after moving a repeating block INTO a template page, \
+         projected_agenda_cache must no longer contain its stale rows — the \
+         cache itself is authoritative, not just the read-path template \
+         subquery (got {after} rows)"
+    );
+}
+
 // Barrier race — tasks after a barrier in the same batch must
 // complete before the barrier signals the caller.
 // ======================================================================
