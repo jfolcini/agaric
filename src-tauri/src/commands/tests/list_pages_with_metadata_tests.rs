@@ -773,7 +773,7 @@ async fn legacy_cursor_without_discriminator_returns_requires_refresh() {
     seed_page(&pool, "01PAGE000000000000000000A1", "A").await;
 
     // A cursor lacking the position-slot discriminator (e.g. one
-    // Emitted by `list_blocks` or a pre- client) must be
+    // Emitted by `list_blocks` or a pre-existing client) must be
     // rejected with RequiresRefresh.
     use base64::Engine;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -1485,7 +1485,7 @@ async fn most_content_query_plan_uses_pages_cache_not_blocks_subquery() {
     // (`last_modified_at` over op_log, plus the four `has_*` EXISTS flags
     // over block_tags / blocks). What the materialised-count contract forbids
     // is the *sort key* `child_block_count` being recomputed via a
-    // Correlated `COUNT(*) FROM blocks` aggregate (the pre- shape).
+    // Correlated `COUNT(*) FROM blocks` aggregate (the pre-existing shape).
     // So we pin the correlated-subquery COUNT to exactly the known metadata
     // aggregates (5): last_modified_at + has_tags + has_todo + has_scheduled
     // + has_due. If a regression reverts the sort key to a per-row count, a

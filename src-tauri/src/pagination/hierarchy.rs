@@ -97,7 +97,7 @@ pub async fn list_children(
 /// `b.page_id`; migration 0066 dropped the old `COALESCE(page_id, id)`
 /// form for sargability, 0073's `page_id_self_for_pages` CHECK makes the
 /// fallback unnecessary) carries `space = ?space_id` are returned. `None`
-/// Keeps the pre- behaviour (no filter). See
+/// Keeps the pre-existing behaviour (no filter). See
 /// [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`] for the shared
 /// SQL fragment definition.
 ///

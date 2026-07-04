@@ -34,7 +34,7 @@
 //! The canonical is `#[cfg(test)]` only — production code continues
 //! to inline the fragment at every call site. When the fragment
 //! changes (e.g., to add a `OR space_id IS NULL` clause for
-//! pre- compat), update [`SPACE_FILTER_CANONICAL`] here, run
+//! pre-spaces compat), update [`SPACE_FILTER_CANONICAL`] here, run
 //! the parity test, and update each drifted site the test names.
 //!
 //! ## What's NOT in scope

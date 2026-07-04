@@ -2026,7 +2026,7 @@ async fn count_backlinks_batch_large_input_beyond_sqlite_param_limit() {
 // from each space, and asserts:
 //   - Active(A) sees only the A-source backlink.
 //   - Active(B) sees only the B-source backlink.
-// Global counts both (parity with the pre- behaviour).
+// Global counts both (parity with the pre-existing behaviour).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_backlinks_batch_active_scope() {
     let (pool, _dir) = test_pool().await;

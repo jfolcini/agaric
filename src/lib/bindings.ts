@@ -2905,7 +2905,7 @@ export type RestoreToOpResult = {
  * 
  *  Appends `match_offsets: Vec<MatchOffset>` for the
  *  regex/whole-word offset rendering path; `#[serde(default)]` keeps
- *  The wire shape additive (pre- frontends see an empty array
+ *  The wire shape additive (pre-existing frontends see an empty array
  *  from absent payloads and fall through to the snippet path).
  * 
  *  [`snippet`]: https://www.sqlite.org/fts5.html#the_snippet_function
@@ -3014,7 +3014,7 @@ export type SearchFilter = {
 	 *  is `case_sensitive 0`, so the candidate set is still
 	 *  case-insensitive; this toggle forces the post-filter even when
 	 *  the other toggles are off (documented cost). `#[serde(default)]`
-	 *  Keeps the wire shape additive — pre- frontends omit the
+	 *  Keeps the wire shape additive — pre-existing frontends omit the
 	 *  field and observe today's behaviour unchanged.
 	 */
 	caseSensitive?: boolean,
@@ -3091,7 +3091,7 @@ export type SearchFilter = {
 	 *  NOT IN (...)` (#2019), and alone it emits `todo_state IS NOT
 	 *  NULL`. A custom state literally called `"none"` is treated as
 	 *  the sentinel — documented in `docs/SEARCH.md`. Empty list = no
-	 *  Filter (preserves pre- wire compat).
+	 *  Filter (preserves pre-existing wire compat).
 	 */
 	excludedStateFilter?: string[],
 	/**

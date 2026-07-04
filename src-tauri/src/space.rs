@@ -5,7 +5,7 @@
 //! type.
 //!
 //! [`SpaceScope::Global`] applies no `block_properties.space` filter at the
-//! SQL level — results span every space (pre- behaviour, plus journal
+//! SQL level — results span every space (pre-spaces behaviour, plus journal
 //! / settings views that intentionally span all spaces).
 //! [`SpaceScope::Active`] restricts results to blocks belonging to the
 //! wrapped [`SpaceId`].
@@ -323,7 +323,7 @@ impl SpaceScope {
 ///   itself soft-deleted. This is the case for (a) tag blocks not yet
 ///   assigned to a space, (b) space blocks themselves (they ARE the
 ///   space; their `space_id` is NULL — they don't point at themselves),
-///   (c) pre- blocks that haven't been migrated to a space yet
+///   (c) pre-spaces blocks that haven't been migrated to a space yet
 ///   (rare; bootstrap fast-path normally covers this), (d) the block
 ///   being soft-deleted (`deleted_at IS NOT NULL`).
 /// - `Err(AppError::Database)` — DB error (rare; would propagate

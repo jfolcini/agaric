@@ -9,7 +9,7 @@
  *  - setPriorityLevels is a no-op when the new array equals the current one.
  *  - Subscribers fire on change and stop firing after unsubscribe.
  *  - A throwing listener does not block other listeners (logger.warn fires).
- * PriorityRank matches the pre- constants for default levels.
+ * PriorityRank matches the pre-existing constants for default levels.
  *  - getPriorityCycle returns `[null, ...levels]`.
  */
 

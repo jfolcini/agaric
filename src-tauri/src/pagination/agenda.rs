@@ -17,7 +17,7 @@ use crate::error::AppError;
 ///
 /// `space_id` — when `Some`, restricts the result set to blocks
 /// whose owning page (`b.page_id`) carries `space = ?space_id`.
-/// `None` keeps the pre- behaviour (no filter). See
+/// `None` keeps the pre-existing behaviour (no filter). See
 /// [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`] for the shared
 /// SQL fragment definition.
 pub async fn list_agenda(

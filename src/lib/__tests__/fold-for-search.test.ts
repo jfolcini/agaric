@@ -91,7 +91,7 @@ describe('foldForSearch', () => {
 })
 
 describe('matchesSearchFolded', () => {
-  describe('ASCII parity with the pre- behaviour', () => {
+  describe('ASCII parity with the pre-existing behaviour', () => {
     it('matches case-insensitively for ASCII substrings', () => {
       expect(matchesSearchFolded('Projects', 'projects')).toBe(true)
       expect(matchesSearchFolded('Projects', 'PROJECTS')).toBe(true)

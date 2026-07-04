@@ -11,7 +11,7 @@ use crate::error::AppError;
 ///
 /// `space_id` — when `Some`, restricts the result set to
 /// source blocks whose owning page (`b.page_id`)
-/// Carries `space = ?space_id`. `None` keeps the pre- behaviour
+/// Carries `space = ?space_id`. `None` keeps the pre-existing behaviour
 /// (no filter). See [`crate::space_filter_clause`] for the shared SQL
 /// fragment definition.
 ///

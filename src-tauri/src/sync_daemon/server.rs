@@ -485,7 +485,7 @@ async fn handle_incoming_sync_inner(
     // heads (typically after compaction). Offer our most recent
     // snapshot as an alternative path. If `log_snapshots` is empty
     // (e.g. no compaction has run yet) we simply close the session,
-    // Matching pre- behavior.
+    // Matching pre-existing behavior.
     if matches!(orch.session().state, SyncState::ResetRequired) {
         let remote_id = orch.session().remote_device_id.clone();
         match super::snapshot_transfer::try_offer_snapshot_catchup(

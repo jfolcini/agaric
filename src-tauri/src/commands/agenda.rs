@@ -636,7 +636,7 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
         // The helper itself silently skips on parse failure; doing the
         // validation here preserves the original ops-log signal
         // (the cache-rebuild path never had this warn — it stays silent
-        // There, matching pre- behaviour).
+        // There, matching pre-existing behaviour).
         let validate_source = |date: Option<&str>, source: &'static str| -> Option<String> {
             let s = date?;
             if chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok() {

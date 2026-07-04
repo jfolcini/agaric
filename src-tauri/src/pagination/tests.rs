@@ -3193,7 +3193,7 @@ async fn list_block_history_no_filter_returns_all() {
 }
 
 /// Cursor pagination must remain consistent under an
-/// Active `op_type_filter`. The pre- anti-pattern was: 50-row
+/// Active `op_type_filter`. The pre-existing anti-pattern was: 50-row
 /// cursor page returned, FE drops the non-matching rows, page appears
 /// empty even though `next_cursor` is set. With the SQL-level filter,
 /// a small cursor `limit` over a sparsely-matching dataset must still

@@ -293,7 +293,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       // `tree-page` rows share the per-density leaf height (the
       // virtualizer's `measureElement` ref handler corrects to the
       // actual height when descendants expand the wrapper). The
-      // `regular` value (44 px) matches the pre- fixed height,
+      // `regular` value (44 px) matches the pre-existing fixed height,
       // so flag-off behaviour stays byte-identical.
       return DENSITY_ROW_HEIGHT[density]
     },

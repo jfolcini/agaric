@@ -249,7 +249,7 @@ export function SpaceManageDialog({
   //
   // Errors deliberately do *not* poison the cache: the key is removed
   // from the in-flight set so the next render (e.g. after a re-open)
-  // Retries — same observable behaviour as the pre- row-local
+  // Retries — same observable behaviour as the pre-existing row-local
   // probes that re-fired on every mount.
   const [emptinessBySpace, setEmptinessBySpace] = useState<Record<string, boolean>>({})
   const [journalTemplateBySpace, setJournalTemplateBySpace] = useState<Record<string, string>>({})

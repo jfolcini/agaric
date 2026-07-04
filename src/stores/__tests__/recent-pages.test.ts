@@ -562,7 +562,7 @@ describe('useRecentPagesStore', () => {
       expect(localStorage.getItem('recent_pages:space-1')).toBeNull()
     })
 
-    it('folds the pre- unscoped `recent_pages` key into the __legacy__ slot', () => {
+    it('folds the pre-per-space unscoped `recent_pages` key into the __legacy__ slot', () => {
       localStorage.setItem(
         'recent_pages',
         JSON.stringify([{ id: 'OLD', title: 'Old', visitedAt: '2024-01-01T00:00:00.000Z' }]),

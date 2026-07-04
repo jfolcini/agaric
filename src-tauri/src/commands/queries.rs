@@ -502,7 +502,7 @@ pub async fn list_unlinked_references_inner(
 /// `crate::backlink::query::eval_backlink_query`). Without this clause
 /// a page in space A could surface a non-zero badge count whose source
 /// blocks live in space B — backlinks the user can't actually see.
-/// [`SpaceScope::Global`] preserves the pre- unscoped count.
+/// [`SpaceScope::Global`] preserves the pre-spaces unscoped count.
 ///
 /// # Errors
 ///
