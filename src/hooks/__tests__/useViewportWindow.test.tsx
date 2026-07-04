@@ -13,14 +13,14 @@
  *   3. A block scrolled OUT drops from the window; a block scrolled back IN
  *      re-enters and resolves lazily.
  *
- * The lazy-resolution / scoped-payload assertions compose `useViewportWindow`
- * with `useBlockPropertiesBatch`, the real downstream batch hook, and assert
- * the actual IPC payload (`getBatchProperties` args — the tauri-lib IPC
- * boundary) carries only the windowed ids, then that revealing a hidden block
- * fires a fresh IPC with the expanded set.
+ * The lazy-resolution / scoped-payload assertions feed `useViewportWindow`'s
+ * output into the single page-wide `BatchPropertiesProvider` (#2288, the real
+ * downstream batch owner) and assert the actual IPC payload (`getBatchProperties`
+ * args — the tauri-lib IPC boundary) carries only the windowed ids, then that
+ * revealing a hidden block fires a fresh IPC with the expanded set.
  */
 
-import { act, renderHook, waitFor } from '@testing-library/react'
+import { act, render, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../lib/tauri', () => ({
@@ -32,11 +32,31 @@ vi.mock('../../lib/logger', () => ({
 }))
 
 import { getBatchProperties } from '../../lib/tauri'
-import { useBlockPropertiesBatch } from '../useBlockPropertiesBatch'
+import { BatchPropertiesProvider } from '../useBatchProperties'
 import type { ViewportObserver } from '../useViewportObserver'
 import { useViewportWindow } from '../useViewportWindow'
 
 const mockedGetBatchProperties = vi.mocked(getBatchProperties)
+
+/**
+ * Drives the real production path (#2288): `useViewportWindow` narrows the
+ * block list, the windowed ids feed the single page-wide
+ * `BatchPropertiesProvider`, and the provider owns the `getBatchProperties`
+ * IPC (payload scoping + the id-signature refetch guard). This mirrors how
+ * BlockTree now wires windowing to the batch fetch.
+ */
+function WindowedBatchHarness({
+  viewport,
+  blocks,
+}: {
+  viewport: ViewportObserver
+  blocks: Array<{ id: string }>
+}) {
+  const windowed = useViewportWindow(viewport, blocks)
+  return (
+    <BatchPropertiesProvider blockIds={windowed.map((b) => b.id)}>{null}</BatchPropertiesProvider>
+  )
+}
 
 /**
  * A controllable fake `ViewportObserver` mirroring the real one's ref-backed
@@ -157,10 +177,7 @@ describe('useViewportWindow → batch IPC payload scoping (#1268)', () => {
     // B and D are off-screen; only A and C are in the viewport window.
     const { viewport } = makeFakeViewport(['B', 'D'])
 
-    renderHook(() => {
-      const windowed = useViewportWindow(viewport, blocks)
-      return useBlockPropertiesBatch(windowed)
-    })
+    render(<WindowedBatchHarness viewport={viewport} blocks={blocks} />)
 
     await waitFor(() => {
       expect(mockedGetBatchProperties).toHaveBeenCalled()
@@ -179,10 +196,7 @@ describe('useViewportWindow → batch IPC payload scoping (#1268)', () => {
     // Start with B and D off-screen.
     const { viewport, flip } = makeFakeViewport(['B', 'D'])
 
-    renderHook(() => {
-      const windowed = useViewportWindow(viewport, blocks)
-      return useBlockPropertiesBatch(windowed)
-    })
+    render(<WindowedBatchHarness viewport={viewport} blocks={blocks} />)
 
     await waitFor(() => {
       expect(mockedGetBatchProperties).toHaveBeenLastCalledWith(['A', 'C'])
@@ -203,10 +217,7 @@ describe('useViewportWindow → batch IPC payload scoping (#1268)', () => {
     const blocks = [{ id: 'A' }, { id: 'B' }]
     const { viewport, flip } = makeFakeViewport([])
 
-    renderHook(() => {
-      const windowed = useViewportWindow(viewport, blocks)
-      return useBlockPropertiesBatch(windowed)
-    })
+    render(<WindowedBatchHarness viewport={viewport} blocks={blocks} />)
 
     await waitFor(() => {
       expect(mockedGetBatchProperties).toHaveBeenCalledTimes(1)
