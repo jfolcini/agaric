@@ -83,7 +83,6 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof BlockListRende
     onContainerPointerDown: noop,
     hasChildrenSet: new Set<string>(),
     collapsedIds: new Set<string>(),
-    blockProperties: {},
     ...overrides,
   }
 }
