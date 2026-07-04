@@ -903,6 +903,21 @@ fn invalidations_for_op(
             // block's *current* source page, so the old page's stale rows
             // would survive; the full page-link roll-up is the correct fix.
             tasks.push(MaterializeTask::RebuildPageLinkCache);
+            // #2196: a reparent can flip the moved subtree's owning page
+            // between template and non-template. `projected_agenda_cache`
+            // deliberately EXCLUDES repeating blocks whose `page_id` owns a
+            // `template` property (`cache/projected_agenda.rs`, the
+            // `NOT EXISTS(… key='template' …)` guard). Moving a repeating
+            // block INTO a template page must drop its projections from the
+            // cache, and moving one OUT must (re)add them — otherwise the
+            // cache diverges from truth and only the read-path's mirror
+            // `NOT EXISTS(template)` subquery keeps the visible result
+            // correct. Enqueue the rebuild unconditionally on a structural
+            // move (mirroring the sibling agenda arms): a move is exactly the
+            // event that can change the owning page's template status, and a
+            // correct-but-slightly-broader rebuild is safer than a narrow
+            // "did template status change?" check.
+            tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
         }
         // #1260: attachment ops fan out no cache invalidations. These are
         // explicit empty arms (not a catch-all) so the no-`#[non_exhaustive]`
@@ -1743,6 +1758,10 @@ mod tests {
                 "RebuildTagInheritanceCache",
                 "RebuildPagesCache",
                 "RebuildPageLinkCache",
+                // #2196: a move can flip the owning page's template status,
+                // so the projected-agenda cache must be rebuilt to stay
+                // authoritative (it excludes template-page repeating blocks).
+                "RebuildProjectedAgendaCache",
             ],
         );
         // #2200 sentinel: the whole-vault page-id rebuild is dropped — the
