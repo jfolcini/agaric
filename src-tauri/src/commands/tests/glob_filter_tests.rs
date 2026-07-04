@@ -323,7 +323,7 @@ async fn legacy_tag_and_filter_still_works() {
     // must not change the behaviour of an unrelated filter.
     let (pool, _dir) = pool().await;
     seed_corpus(&pool).await;
-    // Use empty tag_ids — the pre- default; should return all
+    // Use empty tag_ids — the pre-existing default; should return all
     // alpha hits without filtering.
     let resp = search_blocks_inner(
         &pool,

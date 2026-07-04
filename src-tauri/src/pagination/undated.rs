@@ -8,7 +8,7 @@ use sqlx::SqlitePool;
 ///
 /// When `space_id` is `Some`, only blocks whose owning page
 /// (`b.page_id`) carries `space = ?space_id` are returned.
-/// `None` keeps the pre- behaviour (no filter). See
+/// `None` keeps the pre-existing behaviour (no filter). See
 /// [`crate::space_filter_clause`] for the shared SQL fragment definition.
 pub async fn list_undated_tasks(
     pool: &SqlitePool,

@@ -44,7 +44,7 @@ fn filter_with(case_sensitive: bool, whole_word: bool, is_regex: bool) -> Search
         whole_word,
         is_regex,
         // Toggle tests don't exercise block-type filtering;
-        // `None` preserves the pre- candidate set semantics.
+        // `None` preserves the pre-existing candidate set semantics.
         block_type_filter: None,
         // Toggle tests don't exercise metadata filters either;
         // Defaults preserve the pre- "no metadata filter" shape.

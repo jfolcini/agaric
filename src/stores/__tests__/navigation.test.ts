@@ -1056,7 +1056,7 @@ describe('useNavigationStore', () => {
     })
 
     it('navigation v1→v2 migrate strips tab fields from legacy persisted blob', () => {
-      // Simulate a pre- user who had tabs persisted under the
+      // Simulate a pre-split user who had tabs persisted under the
       // navigation key. The v2 migrate function drops them — users get a
       // fresh tab list on first post-split boot (documented one-time UX
       // cost; tabs.ts starts empty since `agaric:tabs` is not set).

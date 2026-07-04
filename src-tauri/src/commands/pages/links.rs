@@ -35,7 +35,7 @@ const GRAPH_EDGE_WARN_THRESHOLD: usize = 50_000;
 /// `space = ?space_id`. This is the policy enforcement point for
 /// "no live links between spaces, ever" in the graph view: an edge
 /// crossing space boundaries must not surface in either space's
-/// Graph. [`SpaceScope::Global`] keeps the pre- cross-space
+/// Graph. [`SpaceScope::Global`] keeps the pre-spaces cross-space
 /// behaviour for callers that span every space.
 ///
 /// `tag_ids` — when `Some(non-empty)`, restricts

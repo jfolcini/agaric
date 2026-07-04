@@ -165,7 +165,7 @@ fn snapshot_covers_remote_heads(
 /// once the main message loop exits with `state == ResetRequired`.
 /// Returns [`OfferOutcome::NoSnapshot`] when `log_snapshots` has no
 /// complete row — in that case the caller should close the session
-/// (matching pre- behavior).
+/// (matching pre-existing behavior).
 #[tracing::instrument(skip_all, err)]
 pub(crate) async fn try_offer_snapshot_catchup(
     conn: &mut SyncConnection,

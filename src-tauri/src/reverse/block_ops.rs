@@ -62,7 +62,7 @@ pub async fn reverse_edit_block(
     // DIFFERENT ancestor that the live edit had already superseded.
     //
     // Fall back to the timestamp-ordered `find_prior_text` only when:
-    // * `prev_edit` is `None` (e.g. pre- ops, or the first edit after
+    // * `prev_edit` is `None` (e.g. pre-existing ops, or the first edit after
     //     a create where the pointer was not recorded), or
     //   * the pointed-at op is missing (e.g. removed by op-log compaction) —
     //     the timestamp scan is the best remaining reconstruction.

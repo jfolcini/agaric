@@ -2956,7 +2956,7 @@ async fn resolve_page_by_alias_active_scope_excludes_other_spaces() {
          (cross-space leak fix)"
     );
 
-    // SpaceScope::Global: the unscoped path keeps pre- behaviour
+    // SpaceScope::Global: the unscoped path keeps pre-existing behaviour
     // — both aliases still resolve, regardless of which space the page
     // lives in. Confirms the filter is opt-in and does not regress the
     // MCP / agent paths that span every space.

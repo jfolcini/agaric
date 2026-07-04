@@ -194,7 +194,7 @@ struct SearchArgs {
     space_id: String,
     /// Optional structured filter set mirroring the
     /// `SearchFilter` user-facing surface. Omitted = the agent runs a
-    /// Query-string-only search (the pre- contract). When
+    /// Query-string-only search (the pre-existing contract). When
     /// present, the handler maps each field 1:1 onto the underlying
     /// `SearchFilter` and dispatches as the Tauri command path does.
     /// Inline filter syntax (`tag:` / `state:` / `prop:`…) is NOT
@@ -952,7 +952,7 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
         .map(|v| v.iter().map(|s| normalize_ulid_arg(s)).collect());
     // Fold the optional structured `filter` arg into the
     // `SearchFilter` passed to `search_blocks_inner`. Omitting `filter`
-    // Preserves the pre- contract (no metadata / glob / toggle
+    // Preserves the pre-existing contract (no metadata / glob / toggle
     // Filters applied). `space_id` is always required and
     // comes from the top-level arg; `parent_id` / `tag_ids` likewise
     // stay at the top level to keep the existing wire contract
