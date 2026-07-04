@@ -1,28 +1,43 @@
 /**
- * useBlockPropertiesBatch — batch-fetches per-block "extra" properties
+ * useBlockPropertiesBatch — derives the per-block "extra" property map
  * (everything except `todo_state`, `priority`, `due_date`,
- * `scheduled_date`) for the currently-loaded block list.
+ * `scheduled_date`) for the row UI from the shared
+ * `BatchPropertiesProvider` (see `useBatchProperties`).
  *
- * Returns a `{ blockId: { key, value }[] }` map keyed by block id.
+ * #2288: this hook USED to fire its own page-wide `getBatchProperties`
+ * IPC over the windowed block ids — the exact same batch the
+ * `BatchPropertiesProvider` already issues for image-property and
+ * dependency-indicator consumers. That double-batched the identical
+ * data with divergent invalidation. It now reads the raw
+ * `PropertyRow[]` the provider already fetched and reshapes it into the
+ * `{ blockId: { key, value }[] }` map the row UI wants. There is a
+ * SINGLE page-wide batch (the provider's) and this hook is a pure
+ * projection of it — so it MUST be called inside a
+ * `BatchPropertiesProvider`. Outside one (`useBatchProperties()` →
+ * `null`, e.g. isolated unit renders) it returns an empty map.
+ *
+ * Because it now sources data from the provider it also inherits the
+ * provider's stronger invalidation: the row chips refresh on every
+ * `block:properties-changed` event and on space switch (the provider's
+ * `invalidationKey`), not only when the set of block ids changes.
+ *
  * Built-in fields are filtered out because they already render via the
  * dedicated badges (TodoToggle, PriorityBadge, DueChip, ScheduleChip).
  * Empty values are dropped so the row UI doesn't render empty rows.
- * Extracted from BlockTree.tsx for.
  *
- * Identity invariants (PEND/perf): the effect re-fires only when the
- * *set of block ids* changes, not on every fresh `blocks` array — a
- * drag-drop / indent in the page store creates a new outer array even
- * when the same ids are present, and re-issuing the IPC on every move
- * would defeat `SortableBlockWrapper`'s `React.memo` and re-render the
- * whole tree. After the IPC resolves, per-block arrays are reused by
- * reference when their content is unchanged so memo short-circuits
- * survive a no-op refetch.
+ * Identity invariants (PEND/perf): the derived map keeps prior per-block
+ * array references when their content is unchanged so downstream
+ * `React.memo` short-circuits (`SortableBlockWrapper`) survive a no-op
+ * refetch. A drag-drop / indent in the page store reallocates the outer
+ * `blocks` array with the SAME ids; because the provider keys its fetch
+ * on id membership it does NOT refetch on such a move, so the raw rows
+ * (and therefore this projection) stay reference-stable.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useRef } from 'react'
 
-import { logger } from '../lib/logger'
-import { getBatchProperties } from '../lib/tauri'
+import type { PropertyRow } from '../lib/tauri'
+import { useBatchProperties } from './useBatchProperties'
 
 const BUILTIN_PROPERTY_KEYS: ReadonlySet<string> = new Set([
   'todo_state',
@@ -35,8 +50,9 @@ export type BlockPropertiesMap = Record<string, Array<{ key: string; value: stri
 
 /**
  * True iff two `{ key, value }` arrays are element-wise equal. Used to
- * keep prior array references stable when an IPC refetch returns the
- * same data — critical for downstream `React.memo` short-circuits.
+ * keep prior array references stable when the underlying batch refetches
+ * and returns the same data — critical for downstream `React.memo`
+ * short-circuits.
  *
  * Only handles the `{key, value}` shape this hook produces; we never
  * insert `undefined` elements, so a null-element guard is unnecessary.
@@ -59,91 +75,79 @@ function arraysShallowEqual(
   return true
 }
 
-export function useBlockPropertiesBatch(blocks: Array<{ id: string }>): BlockPropertiesMap {
-  const [blockProperties, setBlockProperties] = useState<BlockPropertiesMap>({})
+/**
+ * Reshape a block's raw `PropertyRow[]` into the row-UI `{ key, value }[]`
+ * shape: drop the built-in badge fields, flatten the typed value columns
+ * (text → date → num), and drop empty values.
+ */
+function mapRows(rows: readonly PropertyRow[]): Array<{ key: string; value: string }> {
+  return rows
+    .filter((p) => !BUILTIN_PROPERTY_KEYS.has(p.key))
+    .map((p) => ({
+      key: p.key,
+      value: p.value_text ?? p.value_date ?? (p.value_num != null ? String(p.value_num) : '') ?? '',
+    }))
+    .filter((p) => p.value !== '')
+}
 
-  // Derive both the stable signature AND the id list inside the same
-  // memo. The effect depends on `idSignature` (which only changes when
-  // the set/order of ids changes — NOT when the outer `blocks` array
-  // is reallocated with the same ids by the page store's
-  // reorder/indent/dedent path); it reads `ids` to drive the IPC.
-  // ` ` (NUL) is used as the separator so the join is unambiguous
-  // for any conceivable id string — not just the ULIDs this codebase
-  // uses today.
+export function useBlockPropertiesBatch(blocks: Array<{ id: string }>): BlockPropertiesMap {
+  const batch = useBatchProperties()
+  // The provider's `get` identity changes iff its underlying map is
+  // rebuilt — i.e. on a (re)fetch. It stays stable across drag/reorder
+  // (no refetch), so keying the projection on it re-derives exactly when
+  // fresh data lands and never in between.
+  const get = batch?.get
+
+  // Derive both the stable id signature AND the id list in one memo. The
+  // NUL separator makes the join unambiguous for any id string.
   const { idSignature, ids } = useMemo(() => {
     const blockIds = blocks.map((b) => b.id)
-    return { idSignature: blockIds.join(' '), ids: blockIds }
+    return { idSignature: blockIds.join('\0'), ids: blockIds }
   }, [blocks])
 
-  useEffect(() => {
-    if (ids.length === 0) {
-      // Drop any prior payload when the visible set empties (e.g. page
-      // unmounts mid-fetch) so consumers don't render stale chips.
-      setBlockProperties((prev) => (Object.keys(prev).length === 0 ? prev : {}))
-      return
-    }
-    let cancelled = false
-    getBatchProperties(ids)
-      .then((result) => {
-        if (cancelled) return
-        // The IPC contract says `Record<string, PropertyRow[]>`. Any
-        // other shape is a backend bug (or a test fixture that hasn't
-        // mocked this command); surface it via the logger and treat
-        // it as empty rather than crashing the render or silently
-        // hiding the regression.
-        if (result == null || typeof result !== 'object' || Array.isArray(result)) {
-          logger.warn('BlockTree', 'get_batch_properties returned an unexpected payload shape', {
-            actual: typeof result,
-          })
-          return
-        }
-        const record = result as Record<string, unknown>
-        setBlockProperties((prev) => {
-          const next: BlockPropertiesMap = {}
-          let changed = Object.keys(prev).length !== Object.keys(record).length
-          for (const [blockId, props] of Object.entries(record)) {
-            if (!Array.isArray(props)) {
-              logger.warn(
-                'BlockTree',
-                'get_batch_properties returned a non-array value for a block',
-                { blockId, actual: typeof props },
-              )
-              continue
-            }
-            const mapped = props
-              .filter((p) => !BUILTIN_PROPERTY_KEYS.has(p.key))
-              .map((p) => ({
-                key: p.key,
-                value:
-                  p.value_text ??
-                  p.value_date ??
-                  (p.value_num != null ? String(p.value_num) : '') ??
-                  '',
-              }))
-              .filter((p) => p.value !== '')
-            // Reuse the prior array reference if the content is identical
-            // — keeps `properties` prop stable across renders so
-            // `SortableBlockWrapper`'s `React.memo` can short-circuit.
-            const prior = prev[blockId]
-            if (arraysShallowEqual(prior, mapped)) {
-              if (prior !== undefined) next[blockId] = prior
-            } else {
-              next[blockId] = mapped
-              changed = true
-            }
-          }
-          return changed ? next : prev
-        })
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return
-        logger.warn('BlockTree', 'Failed to load batch properties for blocks', undefined, err)
-      })
-    return () => {
-      cancelled = true
-    }
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- ids/ids.length are read inside the effect; ids is recomputed in the same memo as idSignature (the listed dep) so it changes iff the signature changes. A fresh array identity each render would defeat the signature-keyed refetch.
-  }, [idSignature])
+  // Holds the previously-returned map so we can reuse per-block array
+  // references (and the whole-map reference) across re-derivations.
+  const prevRef = useRef<BlockPropertiesMap>({})
 
-  return blockProperties
+  return useMemo(() => {
+    const prev = prevRef.current
+    const next: BlockPropertiesMap = {}
+    let changed = false
+
+    for (const id of ids) {
+      const rows = get?.(id)
+      // Block not present in the batch yet (initial fetch pending or the
+      // backend returned no row bucket for it) — leave it out of the map,
+      // mirroring the previous IPC-record iteration which only produced
+      // entries for blocks the batch returned.
+      if (rows == null) continue
+      const mapped = mapRows(rows)
+      const prior = prev[id]
+      if (arraysShallowEqual(prior, mapped)) {
+        // Content unchanged — reuse the prior array reference so
+        // `SortableBlockWrapper`'s `React.memo` can short-circuit.
+        if (prior !== undefined) next[id] = prior
+      } else {
+        next[id] = mapped
+        changed = true
+      }
+    }
+
+    // A block that had an entry before but is now gone (dropped from the
+    // window, or the backend no longer returns rows for it) counts as a
+    // change even though the loop above only ever ADDS keys.
+    if (!changed) {
+      for (const key of Object.keys(prev)) {
+        if (!(key in next)) {
+          changed = true
+          break
+        }
+      }
+    }
+
+    const result = changed ? next : prev
+    prevRef.current = result
+    return result
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- `ids` is read inside but recomputed in the same memo as `idSignature` (the listed dep) so it changes iff the signature changes; a fresh array identity each render would defeat the signature-keyed projection. `get` re-derives the projection whenever the shared batch refetches.
+  }, [idSignature, get])
 }

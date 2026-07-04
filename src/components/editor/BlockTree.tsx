@@ -5,7 +5,6 @@
  * - useBlockCollapse — collapse/expand state
  * - useBlockZoom — zoom navigation + breadcrumbs
  * - useBlockLinkResolve — `[[ULID]]` cache scan + batch resolve
- * - useBlockPropertiesBatch — per-block extra-property fetch
  * - useBlockNavigateToLink — `handleNavigate` + `handleNavigateRef`
  * - useBlockFlush — editor flush + split + checkbox/todo persistence
  * - useBlockAutoCreateFirstBlock — H-9 first-block-on-empty-page effect
@@ -63,7 +62,6 @@ import { useBlockLinkResolve } from '@/hooks/useBlockLinkResolve'
 import { useBlockMultiSelect } from '@/hooks/useBlockMultiSelect'
 import { useBlockNavigateToLink } from '@/hooks/useBlockNavigateToLink'
 import { useBlockProperties } from '@/hooks/useBlockProperties'
-import { useBlockPropertiesBatch } from '@/hooks/useBlockPropertiesBatch'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useBlockResolve } from '@/hooks/useBlockResolve'
 import { BlockResolversProvider } from '@/hooks/useBlockResolvers'
@@ -518,11 +516,11 @@ export function BlockTree({
   // page; a row scrolled into view enters `windowedBlocks` and resolves then.
   useBlockLinkResolve(windowedBlocks)
 
-  // Per-block "extra" properties (everything except the four built-in
-  // todo/priority/due/scheduled fields) for the row-rendering UI. #1268 —
-  // windowed to the viewport so a single edit no longer re-issues a
-  // batch-properties IPC for every block on the page.
-  const blockProperties = useBlockPropertiesBatch(windowedBlocks)
+  // #2288 — the per-block "extra" properties for the row UI are now derived
+  // from the single page-wide `BatchPropertiesProvider` batch (mounted below),
+  // inside `BlockListRenderer`, instead of a SECOND identical
+  // `getBatchProperties` IPC issued here. See BlockListRenderer /
+  // useBlockPropertiesBatch.
 
   // ── Editor flush callback (split + checkbox/todo persistence) ──────
   const handleFlush = useBlockFlush({
@@ -1021,7 +1019,6 @@ export function BlockTree({
                 onContainerPointerDown={handleContainerPointerDown}
                 hasChildrenSet={hasChildrenSet}
                 collapsedIds={collapsedIds}
-                blockProperties={blockProperties}
               />
             </BlockResolversProvider>
           </BlockActionsProvider>
