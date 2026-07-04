@@ -1,6 +1,6 @@
 import type React from 'react'
 
-import type { TextNode } from '../../../editor/types'
+import type { LinkMark, TextNode } from '../../../editor/types'
 import { i18n } from '../../../lib/i18n'
 import { openUrl } from '../../../lib/open-url'
 import { isAllowedUrl } from '../../../lib/url-validation'
@@ -60,7 +60,53 @@ function renderExternalLink(
 
 /** Apply bold / italic / code / strike / highlight / underline / link marks to a text node, innermost-out. */
 function applyTextMarks(node: TextNode, ctx: RenderContext, key: string): React.ReactNode {
-  const linkMark = node.marks?.find((m) => m.type === 'link')
+  // Perf (#2201) — single pass over `node.marks`: collect the mark-presence
+  // flags and the (first) link mark in ONE scan rather than ~7 independent
+  // `find`/`some` array searches. The wrapping order below is fixed and
+  // independent of the marks' array order, so the output is byte-identical to
+  // the previous per-mark scans. `linkMark` keeps first-match semantics
+  // (matching the old `.find`) by only assigning when still unset.
+  let linkMark: LinkMark | undefined
+  let hasCode = false
+  let hasStrike = false
+  let hasHighlight = false
+  let hasItalic = false
+  let hasBold = false
+  let hasUnderline = false
+  if (node.marks) {
+    for (const m of node.marks) {
+      switch (m.type) {
+        case 'link': {
+          if (linkMark === undefined) linkMark = m
+          break
+        }
+        case 'code': {
+          hasCode = true
+          break
+        }
+        case 'strike': {
+          hasStrike = true
+          break
+        }
+        case 'highlight': {
+          hasHighlight = true
+          break
+        }
+        case 'italic': {
+          hasItalic = true
+          break
+        }
+        case 'bold': {
+          hasBold = true
+          break
+        }
+        case 'underline': {
+          hasUnderline = true
+          break
+        }
+      }
+    }
+  }
   // Text marks (code/strike/highlight/italic/bold/underline) wrap the
   // visible label only. The external-link element is applied LAST, around
   // the already-marked label, so its trailing ↗ glyph and sr-only
@@ -68,17 +114,17 @@ function applyTextMarks(node: TextNode, ctx: RenderContext, key: string): React.
   // or `code`-styled link must not cross/monospace the icon). See #1737.
   let content: React.ReactNode = node.text
 
-  if (node.marks?.some((m) => m.type === 'code') === true) {
+  if (hasCode) {
     content = (
       <code className="bg-muted rounded px-1 py-0.5 text-[0.85em] font-mono">{content}</code>
     )
   }
   // #211 P0-2 — strike and highlight previously had no static-render branch,
   // so the marks were silently invisible once a block rendered statically.
-  if (node.marks?.some((m) => m.type === 'strike') === true) {
+  if (hasStrike) {
     content = <s>{content}</s>
   }
-  if (node.marks?.some((m) => m.type === 'highlight') === true) {
+  if (hasHighlight) {
     // #1096 — the user-highlight (highlighter-pen) semantic now routes
     // through the fully-themed `--highlight` amber token (`bg-highlight`)
     // instead of raw `bg-yellow-*` literals. The editor `<mark>`
@@ -88,15 +134,15 @@ function applyTextMarks(node: TextNode, ctx: RenderContext, key: string): React.
     // uses `--accent` (`.search-result-mark`); the split is intentional.
     content = <mark className="bg-highlight rounded px-0.5">{content}</mark>
   }
-  if (node.marks?.some((m) => m.type === 'italic') === true) {
+  if (hasItalic) {
     content = <em>{content}</em>
   }
-  if (node.marks?.some((m) => m.type === 'bold') === true) {
+  if (hasBold) {
     content = <strong>{content}</strong>
   }
   // #211 P2-5 — underline is the outermost mark (mirrors the serializer's
   // `<u>…</u>` wrapping), so apply it last.
-  if (node.marks?.some((m) => m.type === 'underline') === true) {
+  if (hasUnderline) {
     content = <u>{content}</u>
   }
 
@@ -105,7 +151,7 @@ function applyTextMarks(node: TextNode, ctx: RenderContext, key: string): React.
   // import / peer sync, so a `javascript:`/`data:` href can reach stored
   // content. Render those as plain marked text rather than a clickable link
   // that would hand the href to `openUrl`.
-  if (linkMark && linkMark.type === 'link' && isAllowedUrl(linkMark.attrs.href)) {
+  if (linkMark && isAllowedUrl(linkMark.attrs.href)) {
     content = renderExternalLink(content, linkMark.attrs.href, ctx, `${key}-link`)
   }
 
