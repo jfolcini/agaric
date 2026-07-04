@@ -91,7 +91,40 @@ export const HIGHLIGHT_MAX_LENGTH = 30_000
 // The cached HAST is treated as immutable: `hastChildrenToReact` only reads it.
 
 const HIGHLIGHT_CACHE_MAX = 300
-const highlightCache = new Map<string, HastRootNode | null>()
+
+/**
+ * Byte ceiling for the highlight cache (#2289). The entry cap alone
+ * (`HIGHLIGHT_CACHE_MAX`) bounds the *count* of entries but not their *size*:
+ * each entry may hold the HAST tree for a code block up to
+ * `HIGHLIGHT_MAX_LENGTH` (30 000) chars, so 300 large entries could
+ * theoretically accumulate tens of MB of retained tree nodes.
+ *
+ * We add a second, byte-based bound. The per-entry cost is estimated by a cheap
+ * PROXY computed at write time: the source `code` string's `.length`. That is a
+ * lower bound on — and correlates with — the produced HAST size (every source
+ * char reappears in some text node, plus per-token element overhead) and needs
+ * no tree walk. The proxy is stored per entry so eviction can subtract it
+ * without recomputing.
+ *
+ * The value below is a conservative SAFETY CEILING, not a measured optimum:
+ * ~4 MB of accumulated proxy-bytes. Because the proxy under-counts the true HAST
+ * footprint (element wrappers, class strings, per-object overhead), real
+ * retained memory is a small multiple of this — the point is a hard upper bound
+ * in the low-single-digit-MB range regardless of individual entry sizes, which
+ * the count cap alone cannot guarantee.
+ */
+const HIGHLIGHT_CACHE_MAX_BYTES = 4 * 1024 * 1024
+
+interface HighlightCacheEntry {
+  readonly tree: HastRootNode | null
+  /** Cheap proxy for this entry's memory cost: the source `code.length`. */
+  readonly bytes: number
+}
+
+const highlightCache = new Map<string, HighlightCacheEntry>()
+// Running sum of every live entry's `bytes` proxy. Kept in lock-step with the
+// map on every insert / eviction / recency-refresh / clear.
+let cacheBytes = 0
 
 function highlightCacheKey(code: string, language: string): string {
   // NUL separator can't appear in a language identifier, so the join is
@@ -108,21 +141,56 @@ function highlightCacheKey(code: string, language: string): string {
  * `undefined` when the block has never been highlighted (a miss). We never
  * store `undefined`, so `undefined` unambiguously means "not cached".
  */
-function peekHighlightCache(code: string, language: string): HastRootNode | null | undefined {
+// Exported for tests (byte-budget assertions drive the cache directly). Safe to
+// call in production too; the render path already uses it.
+export function peekHighlightCache(
+  code: string,
+  language: string,
+): HastRootNode | null | undefined {
   const k = highlightCacheKey(code, language)
-  return highlightCache.has(k) ? highlightCache.get(k) : undefined
+  const entry = highlightCache.get(k)
+  return entry === undefined ? undefined : entry.tree
 }
 
-function writeHighlightCache(code: string, language: string, tree: HastRootNode | null): void {
+// Exported for tests (see peekHighlightCache note).
+export function writeHighlightCache(
+  code: string,
+  language: string,
+  tree: HastRootNode | null,
+): void {
   const k = highlightCacheKey(code, language)
-  if (!highlightCache.has(k) && highlightCache.size >= HIGHLIGHT_CACHE_MAX) {
-    // `Map` preserves insertion order, so the first key is the oldest.
-    const oldest = highlightCache.keys().next().value
-    if (oldest !== undefined) highlightCache.delete(oldest)
+  // Cheap write-time proxy for this entry's cost — see HIGHLIGHT_CACHE_MAX_BYTES.
+  // Used consistently for highlighted AND "known plain" (null) entries.
+  const newBytes = code.length
+
+  // Recency refresh: if the key already exists, drop it (and its byte cost)
+  // first so the re-insert below moves it to the most-recent position and the
+  // accounting reflects only the new estimate.
+  const existing = highlightCache.get(k)
+  if (existing !== undefined) {
+    cacheBytes -= existing.bytes
+    highlightCache.delete(k)
   }
-  // delete + set refreshes recency (moves the key to the most-recent position).
-  highlightCache.delete(k)
-  highlightCache.set(k, tree)
+
+  // Evict oldest entries (Map insertion order = oldest first) until BOTH bounds
+  // admit the newcomer: entry count < cap AND accumulated bytes + newBytes <=
+  // byte ceiling. Guard on a non-empty map so a single entry larger than the
+  // whole byte budget is still admitted, and we never loop forever on an empty
+  // map.
+  while (
+    highlightCache.size > 0 &&
+    (highlightCache.size >= HIGHLIGHT_CACHE_MAX ||
+      cacheBytes + newBytes > HIGHLIGHT_CACHE_MAX_BYTES)
+  ) {
+    const oldestKey = highlightCache.keys().next().value
+    if (oldestKey === undefined) break
+    const oldest = highlightCache.get(oldestKey)
+    if (oldest !== undefined) cacheBytes -= oldest.bytes
+    highlightCache.delete(oldestKey)
+  }
+
+  highlightCache.set(k, { tree, bytes: newBytes })
+  cacheBytes += newBytes
 }
 
 /**
@@ -132,6 +200,15 @@ function writeHighlightCache(code: string, language: string, tree: HastRootNode 
  */
 export function clearHighlightCache(): void {
   highlightCache.clear()
+  cacheBytes = 0
+}
+
+/**
+ * TEST-ONLY accessor for the cache accounting so byte-budget eviction can be
+ * asserted without reaching into module internals. Not used in production.
+ */
+export function __highlightCacheStats(): { entries: number; bytes: number } {
+  return { entries: highlightCache.size, bytes: cacheBytes }
 }
 
 /**

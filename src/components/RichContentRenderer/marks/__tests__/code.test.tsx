@@ -15,7 +15,14 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import type { CodeBlockNode } from '../../../../editor/types'
-import { clearHighlightCache, HIGHLIGHT_MAX_LENGTH, renderCodeBlock } from '../code'
+import {
+  __highlightCacheStats,
+  clearHighlightCache,
+  HIGHLIGHT_MAX_LENGTH,
+  peekHighlightCache,
+  renderCodeBlock,
+  writeHighlightCache,
+} from '../code'
 
 function codeBlock(text: string, language: string | null = null): CodeBlockNode {
   return {
@@ -207,5 +214,84 @@ describe('renderCodeBlock — deferred highlighting + output cache (#2271)', () 
 
     const second = render(<>{renderCodeBlock(block, 'k2')}</>)
     expect(hljsSpans(second.container)).toHaveLength(0)
+  })
+})
+
+describe('highlight cache byte budget (#2289)', () => {
+  // Mirrors HIGHLIGHT_CACHE_MAX_BYTES / HIGHLIGHT_CACHE_MAX in ../code (kept in
+  // sync deliberately — the cache is bounded by BOTH). These tests drive the
+  // cache directly with "known plain" (null) entries whose byte proxy is just
+  // `code.length`, so we can control accumulated bytes precisely.
+  const BUDGET_BYTES = 4 * 1024 * 1024
+  const ENTRY_CAP = 300
+
+  it('evicts by byte budget before the entry cap when entries are large', () => {
+    // ~1 MB per entry → a handful blow past the ~4 MB byte ceiling with far
+    // fewer than 300 entries, so ONLY the byte bound can be doing the eviction.
+    const bigLen = 1_000_000
+    const bodies = Array.from({ length: 8 }, (_, i) => `${i}:${'x'.repeat(bigLen)}`)
+
+    for (const body of bodies) writeHighlightCache(body, 'plaintext', null)
+
+    const { entries, bytes } = __highlightCacheStats()
+    // Byte-based eviction fired: far fewer than the entry cap are retained.
+    expect(entries).toBeLessThan(ENTRY_CAP)
+    expect(entries).toBeLessThanOrEqual(4)
+    // Accumulated proxy-bytes never exceed the ceiling.
+    expect(bytes).toBeLessThanOrEqual(BUDGET_BYTES)
+
+    // Oldest inserted entry was evicted; the newest survives (LRU order).
+    expect(peekHighlightCache(bodies.at(0) ?? '', 'plaintext')).toBeUndefined()
+    expect(peekHighlightCache(bodies.at(-1) ?? '', 'plaintext')).not.toBeUndefined()
+  })
+
+  it('always admits a single entry even if it alone exceeds the budget', () => {
+    const huge = 'y'.repeat(BUDGET_BYTES + 1000)
+    writeHighlightCache(huge, 'plaintext', null)
+
+    const { entries, bytes } = __highlightCacheStats()
+    expect(entries).toBe(1)
+    expect(bytes).toBe(huge.length) // over budget, but the lone entry is kept
+    expect(peekHighlightCache(huge, 'plaintext')).not.toBeUndefined()
+  })
+
+  it('enforces the entry cap independently when entries are tiny', () => {
+    // Tiny entries: total bytes stay far under the byte budget, so ONLY the
+    // count cap can bound the cache.
+    for (let i = 0; i < ENTRY_CAP + 25; i++) {
+      writeHighlightCache(`snippet-${i}`, 'plaintext', null)
+    }
+
+    const { entries, bytes } = __highlightCacheStats()
+    expect(entries).toBe(ENTRY_CAP)
+    expect(bytes).toBeLessThan(BUDGET_BYTES)
+
+    // Oldest evicted, newest retained.
+    expect(peekHighlightCache('snippet-0', 'plaintext')).toBeUndefined()
+    expect(peekHighlightCache(`snippet-${ENTRY_CAP + 24}`, 'plaintext')).not.toBeUndefined()
+  })
+
+  it('keeps byte accounting correct across a recency refresh (no double count)', () => {
+    const body = 'z'.repeat(500)
+    writeHighlightCache(body, 'plaintext', null)
+    expect(__highlightCacheStats()).toEqual({ entries: 1, bytes: 500 })
+
+    // Re-writing the identical (code, language) refreshes recency only; bytes
+    // must not accumulate.
+    writeHighlightCache(body, 'plaintext', null)
+    expect(__highlightCacheStats()).toEqual({ entries: 1, bytes: 500 })
+  })
+
+  it('clearHighlightCache() resets both entry and byte accounting', () => {
+    writeHighlightCache('a'.repeat(1000), 'plaintext', null)
+    writeHighlightCache('b'.repeat(2000), 'plaintext', null)
+    expect(__highlightCacheStats()).toEqual({ entries: 2, bytes: 3000 })
+
+    clearHighlightCache()
+    expect(__highlightCacheStats()).toEqual({ entries: 0, bytes: 0 })
+
+    // Fresh inserts start from zero.
+    writeHighlightCache('c'.repeat(42), 'plaintext', null)
+    expect(__highlightCacheStats()).toEqual({ entries: 1, bytes: 42 })
   })
 })
