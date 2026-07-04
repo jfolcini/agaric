@@ -83,20 +83,26 @@ struct SortTerm {
 /// SELECT projection, the ORDER BY, and the keyset WHERE — instead of being
 /// re-evaluated as a correlated subquery in each of those positions.
 ///
-/// Both joins are 1:1 with `blocks b` (`pages_cache.page_id` is the PRIMARY
-/// KEY; the `op_log` join is pre-aggregated `GROUP BY block_id`), so they
-/// never fan out rows and preserve the exact match cardinality.
+/// The remaining join is 1:1 with `blocks b` (`pages_cache.page_id` is the
+/// PRIMARY KEY), so it never fans out rows and preserves the exact match
+/// cardinality.
+///
+/// The `LastEdited` sort key is deliberately NOT expressed as a join. It uses
+/// the correlated form `COALESCE((SELECT MAX(created_at) FROM op_log WHERE
+/// block_id = b.id), 0)` in all three positions instead. The former
+/// pre-aggregated `LEFT JOIN (SELECT block_id, MAX(created_at) … GROUP BY
+/// block_id)` MATERIALIZEs the WHOLE op_log (all ~500k rows) once per
+/// statement regardless of how selective the candidate WHERE is (~100ms vs
+/// ~0.3ms for a 100-block candidate set) — the same cliff #2269 reverted in
+/// the grouped path (`commands/pages/metadata.rs`). The correlated subquery
+/// instead seeks the `op_log(block_id, created_at)` composite index
+/// (`idx_op_log_block_created`) once per candidate.
 #[derive(Default, Clone, Copy)]
 struct SortJoins {
     /// `LEFT JOIN pages_cache pc ON pc.page_id = b.id` — needed for a Title
     /// sort. Exposes `pc.title` (NULL when no page row, identical to the old
     /// `(SELECT title FROM pages_cache WHERE page_id = b.id)`).
     title: bool,
-    /// `LEFT JOIN (SELECT block_id, MAX(created_at) AS max_ca FROM op_log
-    /// GROUP BY block_id) le ON le.block_id = b.id` — needed for a LastEdited
-    /// sort. `COALESCE(le.max_ca, 0)` is identical to the old
-    /// `COALESCE((SELECT MAX(created_at) ...), 0)`.
-    last_edited: bool,
 }
 
 impl SortJoins {
@@ -107,12 +113,6 @@ impl SortJoins {
         let mut out = String::new();
         if self.title {
             out.push_str(" LEFT JOIN pages_cache pc ON pc.page_id = b.id");
-        }
-        if self.last_edited {
-            out.push_str(
-                " LEFT JOIN (SELECT block_id, MAX(created_at) AS max_ca \
-                 FROM op_log GROUP BY block_id) le ON le.block_id = b.id",
-            );
         }
         out
     }
@@ -218,16 +218,17 @@ fn resolve_sort(
                 let (expr, column) = match name {
                     // ULID id == creation order.
                     SortColumn::Created => ("b.id", CursorKind::Id),
-                    // Materialised once via the pre-aggregated op_log LEFT JOIN
-                    // (`SortJoins::last_edited`); `COALESCE(le.max_ca, 0)` is
-                    // identical to the former correlated
-                    // `COALESCE((SELECT MAX(created_at) ... ), 0)` but is
-                    // evaluated a single time per row rather than re-run in the
-                    // SELECT, ORDER BY, and keyset WHERE.
-                    SortColumn::LastEdited => {
-                        joins.last_edited = true;
-                        ("COALESCE(le.max_ca, 0)", CursorKind::LastEditedMs)
-                    }
+                    // Correlated per-candidate seek on the composite
+                    // `op_log(block_id, created_at)` index — the SAME
+                    // expression in the SELECT projection, ORDER BY, and keyset
+                    // WHERE. NOT a pre-aggregated derived-table join: that form
+                    // MATERIALIZEs the whole op_log per statement regardless of
+                    // candidate selectivity (~100ms vs ~0.3ms on a 100-block
+                    // set), the #2269 cliff reverted in the grouped path.
+                    SortColumn::LastEdited => (
+                        "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), 0)",
+                        CursorKind::LastEditedMs,
+                    ),
                     SortColumn::Position => ("b.position", CursorKind::Position),
                     SortColumn::Priority => ("b.priority", CursorKind::Priority),
                     // Materialised once via the pages_cache LEFT JOIN
@@ -796,17 +797,13 @@ pub async fn compile_and_run(
         "CAST(NULL AS REAL)"
     };
 
-    // When a sort materialises a correlated key via a LEFT JOIN, project the
-    // joined column (computed once per row) instead of re-emitting the
-    // correlated subquery in the SELECT list. When the corresponding sort is
-    // absent the join isn't present, so the subquery form is retained — but
-    // then the expression appears only here (SELECT), never in ORDER BY or the
-    // keyset WHERE, so there is no per-row duplication to eliminate.
-    let last_edited_select = if sort_joins.last_edited {
-        "COALESCE(le.max_ca, 0)"
-    } else {
-        "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), 0)"
-    };
+    // `last_edited` is always the correlated per-candidate seek on
+    // `op_log(block_id, created_at)` — the SAME expression the `LastEdited`
+    // sort emits in ORDER BY and the keyset WHERE (see `SortJoins`). The
+    // pre-aggregated derived-table join was removed (#2304): it MATERIALIZEd
+    // the whole op_log per statement regardless of candidate selectivity.
+    let last_edited_select =
+        "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), 0)";
     let title_select = if sort_joins.title {
         "pc.title"
     } else {
