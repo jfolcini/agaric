@@ -310,7 +310,7 @@ dirs = { version = "6.0.0", default-features = false }
 # include the `transport-async-rw` server transport via the `server`
 # feature; the `client` feature is added so the end-to-end tests can
 # drive a real rmcp client over an in-memory `tokio::io::duplex` pair.
-rmcp = { version = "1.7", features = ["client"] }
+rmcp = { version = "2.0", features = ["client"] }
 
 # Phase 1 — Loro CRDT runtime. Hard dep as of Phase 3 day-9
 # (the `loro-shadow` feature gate retired); the engine is the only
