@@ -5455,3 +5455,283 @@ async fn undo_page_group_enumeration_matches_find_undo_group_differential() {
     );
     mat.shutdown();
 }
+
+// ======================================================================
+// AUDIT REPRO (temporary) — reverse-move boundary violations
+// ======================================================================
+
+/// Repro 1: reverting an old move op after the prior parent was reparented
+/// under the moved block installs a parent_id CYCLE in SQL.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn audit_repro_revert_move_installs_parent_cycle() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let (page_id, _children) = create_page_with_children(&pool, &mat).await;
+
+    // A under page, B under A
+    let a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "A".into(),
+        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(3),
+    )
+    .await
+    .unwrap();
+    let b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "B".into(),
+        Some(a.id.clone()),
+        Some(0),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Op M: move B out to the page root
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b.id.clone(),
+        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        0,
+    )
+    .await
+    .unwrap();
+    // capture M's op ref
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
+    let m = ops
+        .iter()
+        .filter(|o| o.op_type == "move_block")
+        .last()
+        .unwrap();
+    let m_seq = m.seq;
+
+    // Now move A under B (valid: B is no longer inside A)
+    move_block_inner(&pool, DEV, &mat, a.id.clone(), Some(b.id.clone()), 0)
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Revert op M alone (History view arbitrary-selection revert)
+    let res = revert_ops_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![OpRef {
+            device_id: DEV.into(),
+            seq: m_seq,
+        }],
+    )
+    .await;
+    eprintln!("revert result: {res:?}");
+
+    let a_parent: Option<String> = sqlx::query_scalar("SELECT parent_id FROM blocks WHERE id = ?")
+        .bind(a.id.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let b_parent: Option<String> = sqlx::query_scalar("SELECT parent_id FROM blocks WHERE id = ?")
+        .bind(b.id.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    eprintln!(
+        "A.parent = {a_parent:?}, B.parent = {b_parent:?}, A={}, B={}",
+        a.id.as_str(),
+        b.id.as_str()
+    );
+    assert!(
+        !(a_parent.as_deref() == Some(b.id.as_str()) && b_parent.as_deref() == Some(a.id.as_str())),
+        "CYCLE INSTALLED: A.parent=B and B.parent=A"
+    );
+    mat.shutdown();
+}
+
+/// Repro 2: reverting a move after the prior parent was soft-deleted leaves a
+/// LIVE block parented under a tombstone (invisible orphan).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn audit_repro_revert_move_under_tombstoned_parent() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let (page_id, _children) = create_page_with_children(&pool, &mat).await;
+
+    let a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "A".into(),
+        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(3),
+    )
+    .await
+    .unwrap();
+    let c = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "C".into(),
+        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(3),
+    )
+    .await
+    .unwrap();
+    let b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "B".into(),
+        Some(a.id.clone()),
+        Some(0),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Op M: move B from A to C
+    move_block_inner(&pool, DEV, &mat, b.id.clone(), Some(c.id.clone()), 0)
+        .await
+        .unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
+    let m_seq = ops
+        .iter()
+        .filter(|o| o.op_type == "move_block")
+        .last()
+        .unwrap()
+        .seq;
+
+    // Delete A (trash)
+    delete_block_inner(&pool, DEV, &mat, a.id.clone())
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Revert op M alone
+    let res = revert_ops_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![OpRef {
+            device_id: DEV.into(),
+            seq: m_seq,
+        }],
+    )
+    .await;
+    eprintln!("revert result: {res:?}");
+
+    let (b_parent, b_deleted): (Option<String>, Option<i64>) =
+        sqlx::query_as("SELECT parent_id, deleted_at FROM blocks WHERE id = ?")
+            .bind(b.id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let a_deleted: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(a.id.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    eprintln!("B.parent = {b_parent:?}, B.deleted = {b_deleted:?}, A.deleted = {a_deleted:?}");
+    assert!(
+        !(b_deleted.is_none() && a_deleted.is_some() && b_parent.as_deref() == Some(a.id.as_str())),
+        "LIVE ORPHAN: live B parented under tombstoned A"
+    );
+    mat.shutdown();
+}
+
+/// Repro 3: reverting an old delete (via History/ActivityFeed) after the
+/// parent was separately deleted restores the block live under a tombstoned
+/// ancestor (the #1884 upward restore is missing on the reverse path).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn audit_repro_revert_delete_under_tombstoned_ancestor() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let (page_id, _children) = create_page_with_children(&pool, &mat).await;
+
+    let a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "A".into(),
+        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(3),
+    )
+    .await
+    .unwrap();
+    let b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "B".into(),
+        Some(a.id.clone()),
+        Some(0),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Op D1: delete B; then delete A (separate cohort, skips already-deleted B)
+    delete_block_inner(&pool, DEV, &mat, b.id.clone())
+        .await
+        .unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
+    let d1_seq = ops
+        .iter()
+        .filter(|o| o.op_type == "delete_block")
+        .last()
+        .unwrap()
+        .seq;
+    delete_block_inner(&pool, DEV, &mat, a.id.clone())
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Revert D1 alone
+    let res = revert_ops_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![OpRef {
+            device_id: DEV.into(),
+            seq: d1_seq,
+        }],
+    )
+    .await;
+    eprintln!("revert result: {res:?}");
+
+    let b_deleted: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(b.id.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let a_deleted: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(a.id.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    eprintln!("B.deleted = {b_deleted:?}, A.deleted = {a_deleted:?}");
+    assert!(
+        !(b_deleted.is_none() && a_deleted.is_some()),
+        "LIVE-UNDER-TOMBSTONE: B restored live while ancestor A stays deleted"
+    );
+    mat.shutdown();
+}
