@@ -22,13 +22,16 @@ pub const MIN_RETENTION_DAYS: u64 = 7;
 
 /// A link between two pages (for graph visualization).
 ///
-/// Both endpoints are [`ActiveBlockId`] — `list_page_links_inner` filters
-/// deleted_at IS NULL` on both source and target
-/// Pages (lift of invariant #9 into the type system).
+/// Both endpoints decode via [`crate::ulid::UlidInline`] — a heap-free
+/// inline ULID (#2371) that avoids the per-edge `String` allocations of
+/// the hot `list_page_links_inner` bulk-decode path. Liveness is still
+/// guaranteed by the SQL itself, which filters `src_deleted = 0`,
+/// `tgt_deleted = 0` and `tgt_is_page = 1` on both source and target
+/// Pages (invariant #9 enforced in the query rather than the type).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, sqlx::FromRow, specta::Type)]
 pub struct PageLink {
-    pub source_id: crate::ulid::ActiveBlockId,
-    pub target_id: crate::ulid::ActiveBlockId,
+    pub source_id: crate::ulid::UlidInline,
+    pub target_id: crate::ulid::UlidInline,
     pub ref_count: i64,
 }
 

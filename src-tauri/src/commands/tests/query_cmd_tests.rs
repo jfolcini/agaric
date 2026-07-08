@@ -3657,7 +3657,7 @@ async fn list_page_links_returns_only_current_space_edges_feat3p4() {
     .unwrap();
     let edges_a: std::collections::HashSet<(String, String)> = scoped_a
         .iter()
-        .map(|l| (l.source_id.clone().into(), l.target_id.clone().into()))
+        .map(|l| (l.source_id.into(), l.target_id.into()))
         .collect();
     assert_eq!(
         edges_a,
