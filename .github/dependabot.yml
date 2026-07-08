@@ -40,6 +40,20 @@ updates:
     labels:
       - dependencies
       - github-actions
+    groups:
+      # codeql-action's init / analyze / upload-sarif sub-actions refuse to
+      # mix versions within one workflow run ("Loaded a configuration file
+      # for version 'X', but running version 'Y'"), so split bumps fail
+      # their own PR CI (#2377 / #2378). Bump them as one PR. Majors are
+      # included on purpose: a version skew breaks CI either way, so even
+      # a major must move all sub-actions at once.
+      codeql-action:
+        patterns:
+          - github/codeql-action*
+        update-types:
+          - major
+          - minor
+          - patch
 
   # ─── npm (frontend) ────────────────────────────────────────────────
   #
