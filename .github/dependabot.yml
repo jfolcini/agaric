@@ -26,7 +26,9 @@ version: 2
 # bumps fall outside every `groups:` entry below (groups default to
 # `update-types: [minor, patch]` unless explicitly opened up), so each
 # major lands as its own individual PR for the maintainer to review —
-# which is what we want for breaking-change risk.
+# which is what we want for breaking-change risk. Sole exception:
+# `codeql-action` below opts majors in, because its sub-actions must
+# move in lockstep at every bump level (see that group's comment).
 
 updates:
   - package-ecosystem: github-actions
