@@ -55,7 +55,7 @@ test('pdfjs v6 worker + API render the vendored worker without version mismatch'
 
   // API version must equal the vendored worker version (else getDocument would
   // have rejected before we got here).
-  expect(result.version).toBe('6.0.227')
+  expect(result.version).toBe('6.1.200')
   expect(result.numPages).toBe(1)
   expect(result.w).toBeGreaterThan(0)
   expect(result.h).toBeGreaterThan(0)
