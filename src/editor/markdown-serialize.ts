@@ -511,29 +511,59 @@ function serializeParagraph(node: ParagraphNode, onUnknownNode?: (type: string) 
   }
 
   const groups = groupByLink(node.content)
-  let result = ''
 
-  for (const group of groups) {
-    if (group.href !== null) {
-      // Serialize inner content with link marks stripped, then wrap
-      const stripped = group.nodes.map(stripLinkMark)
-      // Lossless round-trip for autolinks (#1441): a link whose RAW visible
-      // text is exactly its href and which the importer would re-autolink in
-      // full is emitted as the bare URL, so an imported `https://x.com`
-      // survives round-tripping instead of bloating to `[url](url)`. We compare
-      // the raw text (not the escaped `inner`, which defuses the URL) and
-      // require the span to be a single plain text node (no other marks).
-      const rawText = linkSpanPlainText(stripped)
-      if (rawText !== null && rawText === group.href && isAutolinkableUrl(group.href)) {
-        result = defuseImageSeam(result, group.href)
+  // #2385: a bare-URL autolink emission is only unambiguous when re-scanning
+  // it in its final surroundings consumes exactly the href again. When the
+  // NEXT emitted text begins with URL-body characters (`)`, `#`, `[`, …),
+  // `scanBareUrl` glues it into the href on reparse — e.g. a bare
+  // `https://x.com` followed by literal `)#[[ULID]]` reparses as one long
+  // link, so the second serialize escapes what the first left raw and
+  // idempotence breaks. Emit first, then validate every bare emission with
+  // the parser's own scanner (the oracle — no heuristic drift) and demote
+  // gluing ones to the explicit `[url](url)` form. Demotion only ever shrinks
+  // the bare set, so the retry loop terminates; the common safe followers
+  // (space, end-of-text, sentence punctuation the scanner trims back off)
+  // keep the compact bare form.
+  const forceBracketed = new Set<number>()
+  let result = ''
+  for (let retry = true; retry; ) {
+    retry = false
+    result = ''
+    const bareEmits: Array<{ index: number; start: number; href: string }> = []
+    for (const [index, group] of groups.entries()) {
+      if (group.href !== null) {
+        // Serialize inner content with link marks stripped, then wrap
+        const stripped = group.nodes.map(stripLinkMark)
+        // Lossless round-trip for autolinks (#1441): a link whose RAW visible
+        // text is exactly its href and which the importer would re-autolink in
+        // full is emitted as the bare URL, so an imported `https://x.com`
+        // survives round-tripping instead of bloating to `[url](url)`. We compare
+        // the raw text (not the escaped `inner`, which defuses the URL) and
+        // require the span to be a single plain text node (no other marks).
+        const rawText = linkSpanPlainText(stripped)
+        if (
+          !forceBracketed.has(index) &&
+          rawText !== null &&
+          rawText === group.href &&
+          isAutolinkableUrl(group.href)
+        ) {
+          result = defuseImageSeam(result, group.href)
+          bareEmits.push({ index, start: result.length - group.href.length, href: group.href })
+        } else {
+          const inner = serializeInlineNodes(stripped, onUnknownNode)
+          // A link group leads with `[`, so a literal `!` ending the previous
+          // group would reparse as an image (#1434) — defuse the seam.
+          result = defuseImageSeam(result, `[${inner}](${escapeUrl(group.href)})`)
+        }
       } else {
-        const inner = serializeInlineNodes(stripped, onUnknownNode)
-        // A link group leads with `[`, so a literal `!` ending the previous
-        // group would reparse as an image (#1434) — defuse the seam.
-        result = defuseImageSeam(result, `[${inner}](${escapeUrl(group.href)})`)
+        result = defuseImageSeam(result, serializeInlineNodes(group.nodes, onUnknownNode))
       }
-    } else {
-      result = defuseImageSeam(result, serializeInlineNodes(group.nodes, onUnknownNode))
+    }
+    for (const emit of bareEmits) {
+      if (scanBareUrl(result, emit.start) !== emit.start + emit.href.length) {
+        forceBracketed.add(emit.index)
+        retry = true
+      }
     }
   }
 

@@ -1380,6 +1380,61 @@ describe('external links', () => {
       )
     })
 
+    it('demotes a bare autolink to [url](url) when the following text would glue into the href (#2385)', () => {
+      // `)`, `#` and `[` are legal URL-body characters, so a bare
+      // `https://example.com` immediately followed by `)#[[ULID]]` reparses
+      // as one long link — the emission must fall back to the explicit form.
+      expect(
+        serialize(
+          doc(
+            paragraph(
+              linked('https://example.com', 'https://example.com'),
+              text(')#'),
+              blockLink('00000000000000000000000000'),
+            ),
+          ),
+        ),
+      ).toBe('[https\\://example.com](https://example.com))#[[00000000000000000000000000]]')
+    })
+
+    it('demotes a bare autolink directly abutting a block_link token (#2385)', () => {
+      // `[[…]]` glues onto a bare URL (only the trailing `]]` would be
+      // trimmed back off, leaving `[[ULID` inside the href).
+      expect(
+        serialize(
+          doc(
+            paragraph(
+              linked('https://example.com', 'https://example.com'),
+              blockLink('00000000000000000000000000'),
+            ),
+          ),
+        ),
+      ).toBe('[https\\://example.com](https://example.com)[[00000000000000000000000000]]')
+    })
+
+    it('keeps the bare form for safe followers: space, end-of-text, trimmed punctuation (#2385)', () => {
+      expect(
+        serialize(doc(paragraph(linked('https://example.com', 'https://example.com'), text(' x')))),
+      ).toBe('https://example.com x')
+      // A trailing `.` is trimmed back off the href by the scanner, so the
+      // bare form still reparses to exactly the same link — no bloat.
+      expect(
+        serialize(doc(paragraph(linked('https://example.com', 'https://example.com'), text('.')))),
+      ).toBe('https://example.com.')
+    })
+
+    it('fast-check #2385 counterexample round-trips idempotently', () => {
+      // Seed -210416962 counterexample from the property test: the first
+      // serialize used to emit `…(https://example.com)#[[ULID]]`, whose
+      // reparse glued `)#[[ULID` into the autolink href, so the second
+      // serialize escaped the orphaned `]]`.
+      const input = '\\\\\\[link](https://example.com)\\#[[00000000000000000000000000]]'
+      const once = serialize(parse(input))
+      const twice = serialize(parse(once))
+      expect(twice).toBe(once)
+      expect(parse(twice)).toEqual(parse(once))
+    })
+
     it('does NOT autolink a bare URL that lives in PLAIN (unlinked) text (#1441)', () => {
       // No link mark → must round-trip as literal text, defused so the next
       // parse does not autolink it (scheme colon escaped as `\:`).
