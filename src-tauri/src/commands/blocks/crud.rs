@@ -339,6 +339,12 @@ pub async fn edit_block_inner(
     //    the record by refcount (atomic increment) rather than
     //    deep-cloning the owned `String` payloads.
     let op_record = Arc::new(op_record);
+    // #2397 LOAD-BEARING: the background `ReindexBlockLinks` task this enqueues is
+    // the SOLE writer of the `page_link_cache` `(source_page, target_page,
+    // edge_count)` rollup (via `reindex_page_link_cache_for_block`). The in-tx
+    // `apply_op_projected` above maintains `block_links` + `inbound_link_count`,
+    // but NOT that page-level rollup — so this enqueue must NOT be pruned as
+    // redundant. Pinned by `local_edit_page_link_cache_converges_local_matches_remote_2397`.
     tx.enqueue_edit_background(Arc::clone(&op_record), block_type.clone());
     tx.commit_and_dispatch(materializer).await?;
 

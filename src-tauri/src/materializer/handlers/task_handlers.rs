@@ -308,6 +308,13 @@ pub(crate) async fn handle_background_task(
             .await
         }
         MaterializeTask::ReindexBlockLinks { block_id } => {
+            // #2397 LOAD-BEARING: this task is the SOLE writer of the
+            // `page_link_cache` rollup (`reindex_page_link_cache_for_block`
+            // below). The in-tx `apply_op_projected` covers `block_links` +
+            // `inbound_link_count` but NOT this page-level rollup, so the
+            // background enqueue that reaches here must not be dropped as
+            // redundant. Option A keeps `page_link_cache` eventually-consistent.
+            //
             // SQL-review §H-2: after the per-block `block_links` diff is
             // written, roll up to the page-level `page_link_cache` so
             // `list_page_links_inner` can read from a precomputed
