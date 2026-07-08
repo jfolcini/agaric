@@ -1321,6 +1321,307 @@ async fn local_edit_block_link_parity_local_matches_remote_2344() {
     mat_l.shutdown();
     mat_s.shutdown();
 }
+
+/// #2344/#2325 — LOCAL `move_block_inner` ≡ REMOTE `apply_op` move-parity.
+///
+/// The MoveBlock arm of the #2325 apply-path collapse: `move_block_in_tx` now
+/// routes its just-appended op through `apply_op_projected(advance_cursor=false)`
+/// — the SAME entry point the REMOTE/boot-replay path drives via
+/// `apply_op → apply_op_projected(advance_cursor=true)`. This test pins that the
+/// two entry points converge on ALL move-derived state: `parent_id`/`position`,
+/// the `page_id`/`space_id` re-stamp, and the page-keyed `child_block_count` /
+/// `inbound_link_count` recompute.
+///
+/// The setup is a genuinely non-vacuous CROSS-PAGE move. Two pages S1/S2 and a
+/// two-block subtree under S1: parent `P` (owned by S1) and leaf `L` (under P)
+/// whose content is `[[S2]]`. Because L is on page S1 pre-move, the L -> S2 edge
+/// is a CROSS-page link, so S2's `pages_cache.inbound_link_count` starts at 1
+/// (the recompute's `src.page_id != pages_cache.page_id` filter keeps it). We
+/// then move P (and its subtree L) UNDER S2: `rederive_page_and_space_ids`
+/// re-stamps P/L from page S1 to page S2, so the L -> S2 edge becomes a
+/// SAME-page link — which the same filter now EXCLUDES — and the recompute
+/// drops S2's inbound to 0. The 1 -> 0 transition is asserted on the LOCAL pool
+/// BEFORE the move (proving the pre-state) and 0 on BOTH pools after.
+///
+/// What the 1 -> 0 signal actually guards: skipping `rederive_page_and_space_ids`
+/// (so L keeps page_id S1, stays cross-page) leaves S2 inbound at 1 and trips
+/// the assertion — this pin catches a dropped/wrong page-id re-stamp on either
+/// entry point. It does NOT isolate the affected-set's *outbound-target* branch:
+/// on a cross->same move the destination page IS the link target, so S2 already
+/// enters the recompute set as the moved subtree's new owning page; the
+/// outbound-target term is only uniquely load-bearing for a move-to-top-level
+/// (page_id -> NULL) case, which a separate fixture would need to pin.
+///
+/// Both sides carry a per-drive `sql_only_fallback::count()` delta of 0 — the
+/// #891 engine-path discipline: prove the engine move path ran, not the SQL-only
+/// fallback (which would make the equivalence a false green).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_move_block_parity_local_matches_remote_2344() {
+    let s1 = seed_label_to_id("S1"); // page the subtree STARTS on
+    let s2 = seed_label_to_id("S2"); // page the subtree moves TO (and link target)
+    let p = seed_label_to_id("P"); // moved parent (under S1)
+    let l = seed_label_to_id("L"); // moved leaf (under P), links [[S2]]
+    // Two pages + a P -> L subtree under S1. L's content links S2 cross-page.
+    let seed = [
+        json!({"id": "S1", "block_type": "page", "content": "Page One", "parent_id": null, "position": 1}),
+        json!({"id": "S2", "block_type": "page", "content": "Page Two", "parent_id": null, "position": 2}),
+        json!({"id": "P", "block_type": "content", "content": "parent", "parent_id": "S1", "position": 1}),
+        json!({"id": "L", "block_type": "content", "content": "before", "parent_id": "P", "position": 1}),
+    ];
+    // The cross-page link L -> S2, established via a real edit so `block_links`
+    // AND `inbound_link_count` are populated exactly as production would.
+    let link_text = format!("[[{s2}]]");
+
+    // Reads (runtime queries — no sqlx macro, no `.sqlx` regen needed).
+    async fn block_row(
+        pool: &SqlitePool,
+        id: &str,
+    ) -> (Option<String>, Option<i64>, Option<String>, Option<String>) {
+        sqlx::query_as::<_, (Option<String>, Option<i64>, Option<String>, Option<String>)>(
+            "SELECT parent_id, position, page_id, space_id FROM blocks WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+    async fn all_block_links(pool: &SqlitePool) -> Vec<(String, String)> {
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT source_id, target_id FROM block_links ORDER BY source_id, target_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+    async fn inbound_link_count(pool: &SqlitePool, page_id: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT inbound_link_count FROM pages_cache WHERE page_id = ?")
+            .bind(page_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    async fn child_block_count(pool: &SqlitePool, page_id: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT child_block_count FROM pages_cache WHERE page_id = ?")
+            .bind(page_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    // Seed a `pages_cache` row so the in-tx count recompute (an UPDATE, not an
+    // upsert — see `recompute_pages_cache_counts_for_pages`) has a row to touch.
+    async fn seed_pages_cache_row(pool: &SqlitePool, page_id: &str, title: &str) {
+        sqlx::query(
+            "INSERT INTO pages_cache \
+                 (page_id, title, updated_at, inbound_link_count, child_block_count) \
+             VALUES (?, ?, 0, 0, 0)",
+        )
+        .bind(page_id)
+        .bind(title)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    // Seed each pool identically: SQL rows + engine tree + space stamp + the
+    // cross-page link established through a real edit + the two pages_cache rows.
+    async fn seed_pool(
+        pool: &SqlitePool,
+        mat: &Materializer,
+        seed: &[Value; 4],
+        s1: &str,
+        s2: &str,
+        l: &str,
+        link_text: &str,
+    ) {
+        let state = mat.loro_state();
+        for blk in seed {
+            insert_seed_block(pool, blk).await;
+        }
+        // L is two levels deep (L -> P -> S1); `insert_seed_block` stamps a
+        // non-page block's `page_id` from its DIRECT parent (P), so pin L's
+        // owning page to S1 (its nearest ancestor page) BEFORE the space
+        // derivation runs, so L resolves into the test space (engine path, not
+        // the SpaceUnresolved SQL-only fallback) and starts on page S1.
+        sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
+            .bind(s1)
+            .bind(l)
+            .execute(pool)
+            .await
+            .unwrap();
+        assign_all_to_test_space(pool).await;
+        for blk in seed {
+            seed_block_into_engine(state, blk);
+        }
+        seed_pages_cache_row(pool, s1, "Page One").await;
+        seed_pages_cache_row(pool, s2, "Page Two").await;
+        // Establish the L -> S2 cross-page link through the real edit path so
+        // `block_links` and S2's `inbound_link_count` are populated in-tx.
+        edit_block_inner(pool, DEV, mat, BlockId::from(l), link_text.to_owned())
+            .await
+            .expect("seed edit: establish L -> S2 link");
+        settle(mat).await;
+    }
+
+    // ── LOCAL command path (move_block_inner → apply_op_projected(false)) ──
+    let (pool_l, _dir_l) = test_pool().await;
+    let mat_l = test_materializer(&pool_l);
+    seed_pool(&pool_l, &mat_l, &seed, &s1, &s2, &l, &link_text).await;
+
+    // Pre-move non-vacuity: the cross-page L -> S2 link put S2's inbound at 1,
+    // and P still owns page S1. These are the values the move must FLIP.
+    assert_eq!(
+        inbound_link_count(&pool_l, &s2).await,
+        1,
+        "pre-move: cross-page [[S2]] link must set S2's inbound_link_count to 1",
+    );
+    assert_eq!(
+        block_row(&pool_l, &p).await.2.as_deref(),
+        Some(s1.as_str()),
+        "pre-move: P must own page S1 before the move re-stamps it to S2",
+    );
+
+    let fb_l = crate::materializer::sql_only_fallback_count();
+    crate::commands::blocks::move_ops::move_block_inner(
+        &pool_l,
+        DEV,
+        &mat_l,
+        BlockId::from(p.as_str()),
+        Some(BlockId::from(s2.as_str())),
+        0,
+    )
+    .await
+    .expect("local move_block_inner");
+    settle(&mat_l).await;
+    assert_eq!(
+        crate::materializer::sql_only_fallback_count() - fb_l,
+        0,
+        "LOCAL move took the SQL-only fallback — not the engine path (#891)",
+    );
+
+    // Capture the exact MoveBlock op the LOCAL path emitted so REMOTE replays a
+    // byte-identical op.
+    let payload_json: String = sqlx::query_scalar(
+        "SELECT payload FROM op_log WHERE device_id = ? AND op_type = 'move_block' \
+         ORDER BY seq DESC LIMIT 1",
+    )
+    .bind(DEV)
+    .fetch_one(&pool_l)
+    .await
+    .expect("local move op must be in op_log");
+    let move_payload: MoveBlockPayload =
+        serde_json::from_str(&payload_json).expect("deserialize MoveBlock payload");
+    assert_eq!(
+        move_payload.block_id.as_str(),
+        p,
+        "captured the move op for the moved block",
+    );
+
+    // ── REMOTE / sync path (append_local_op → apply_op → apply_op_projected(true)) ──
+    let (pool_s, _dir_s) = test_pool().await;
+    let mat_s = test_materializer(&pool_s);
+    seed_pool(&pool_s, &mat_s, &seed, &s1, &s2, &l, &link_text).await;
+
+    let fb_s = crate::materializer::sql_only_fallback_count();
+    let record_s = crate::op_log::append_local_op(&pool_s, DEV, OpPayload::MoveBlock(move_payload))
+        .await
+        .expect("append sync move op");
+    mat_s.dispatch_op(&record_s).await.expect("dispatch_op");
+    settle(&mat_s).await;
+    assert_eq!(
+        crate::materializer::sql_only_fallback_count() - fb_s,
+        0,
+        "REMOTE move took the SQL-only fallback — not the engine path (#891)",
+    );
+
+    // ── The two entry points must project the move-derived state identically ──
+    // 1. Both moved blocks' (parent_id, position, page_id, space_id).
+    for id in [&p, &l] {
+        assert_eq!(
+            block_row(&pool_l, id).await,
+            block_row(&pool_s, id).await,
+            "moved block row (parent/position/page/space) diverged LOCAL vs REMOTE (#2344)",
+        );
+    }
+    // 2. child_block_count of S1 and S2.
+    assert_eq!(
+        child_block_count(&pool_l, &s1).await,
+        child_block_count(&pool_s, &s1).await,
+        "S1 child_block_count diverged LOCAL vs REMOTE (#2344)",
+    );
+    assert_eq!(
+        child_block_count(&pool_l, &s2).await,
+        child_block_count(&pool_s, &s2).await,
+        "S2 child_block_count diverged LOCAL vs REMOTE (#2344)",
+    );
+    // 3. inbound_link_count of S2.
+    assert_eq!(
+        inbound_link_count(&pool_l, &s2).await,
+        inbound_link_count(&pool_s, &s2).await,
+        "S2 inbound_link_count diverged LOCAL vs REMOTE (#2344)",
+    );
+    // 4. block_links (all rows, ordered), and non-vacuity that the L -> S2 edge
+    //    survived the move.
+    let links_l = all_block_links(&pool_l).await;
+    let links_s = all_block_links(&pool_s).await;
+    assert_eq!(
+        links_l, links_s,
+        "block_links diverged LOCAL vs REMOTE (#2344)",
+    );
+    assert_eq!(
+        links_l,
+        vec![(l.clone(), s2.clone())],
+        "the L -> S2 link edge must survive the move",
+    );
+
+    // 5. Non-vacuity of the move maintenance (the whole point).
+    // P re-stamped its owning page S1 -> S2; L moved along, so its page is S2 too.
+    assert_eq!(
+        block_row(&pool_l, &p).await.2.as_deref(),
+        Some(s2.as_str()),
+        "LOCAL: P's page_id must be re-stamped S1 -> S2 by the move",
+    );
+    assert_eq!(
+        block_row(&pool_s, &p).await.2.as_deref(),
+        Some(s2.as_str()),
+        "REMOTE: P's page_id must be re-stamped S1 -> S2 by the move",
+    );
+    assert_eq!(
+        block_row(&pool_l, &l).await.2.as_deref(),
+        Some(s2.as_str()),
+        "LOCAL: L's page_id must follow the subtree onto S2",
+    );
+    assert_eq!(
+        block_row(&pool_s, &l).await.2.as_deref(),
+        Some(s2.as_str()),
+        "REMOTE: L's page_id must follow the subtree onto S2",
+    );
+    // Pre-move S2 inbound was 1 (cross-page L -> S2); the move re-stamps L onto
+    // page S2 (same-page, excluded by the recompute filter), so a correct
+    // page-id re-stamp + recompute drops it to 0 — skipping the re-stamp would
+    // leave L cross-page and S2 inbound at 1, diverging.
+    assert_eq!(
+        inbound_link_count(&pool_l, &s2).await,
+        0,
+        "LOCAL: cross-page L -> S2 became same-page; S2 inbound must drop 1 -> 0",
+    );
+    assert_eq!(
+        inbound_link_count(&pool_s, &s2).await,
+        0,
+        "REMOTE: cross-page L -> S2 became same-page; S2 inbound must drop 1 -> 0",
+    );
+    // S1 shed the subtree (P left) and S2 gained it (P + L arrived).
+    assert_eq!(
+        child_block_count(&pool_l, &s1).await,
+        0,
+        "LOCAL: S1 child_block_count must drop to 0 after P's subtree leaves",
+    );
+    assert!(
+        child_block_count(&pool_l, &s2).await > 0,
+        "LOCAL: S2 child_block_count must rise above 0 after P's subtree arrives",
+    );
+
+    mat_l.shutdown();
+    mat_s.shutdown();
+}
 /// #2344 prereq — a REMOTE `ApplyOp` CreateBlock of a content block that links
 /// `[[<PAGE>]]` must stamp the new block's `page_id`/`space_id` AND leave the
 /// linked page's `pages_cache.inbound_link_count` correct IN-TX — i.e. already
