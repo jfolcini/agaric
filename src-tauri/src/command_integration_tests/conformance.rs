@@ -1622,6 +1622,186 @@ async fn local_move_block_parity_local_matches_remote_2344() {
     mat_l.shutdown();
     mat_s.shutdown();
 }
+
+/// #2397 — pins the **Option A** contract for the denormalised
+/// `page_link_cache` `(source_page_id, target_page_id, edge_count)` rollup read
+/// by `list_page_links_inner`.
+///
+/// Unlike `block_links` + `pages_cache.inbound_link_count` — which #2344 made
+/// the in-tx `apply_op_projected` maintain synchronously — the `page_link_cache`
+/// rollup is written by the BACKGROUND `ReindexBlockLinks` task alone (via
+/// `cache::page_links::reindex_page_link_cache_for_block`, enqueued from
+/// `edit_block_inner`). Option A keeps it eventually-consistent: it is NOT fresh
+/// after the foreground edit, only after the background drain (`settle`).
+///
+/// This test edits a content block `BA` (owned by page `S2`) to contain a real
+/// `[[S1]]` token, so the rollup should gain exactly the cross-page edge
+/// `(source_page=S2, target_page=S1, edge_count=1)` — `BA` rolls up to its
+/// owning page `S2`. It asserts:
+///   * pre-edit non-vacuity: no `(S2, S1)` row exists on LOCAL before the edit;
+///   * post-`settle` the `(S2, S1, 1)` row is present on LOCAL;
+///   * the REMOTE replay of the captured op converges to the SAME rows;
+///   * both sides equal exactly `[(S2, S1, 1)]` (the one cross-page edge);
+///   * per-drive `sql_only_fallback` delta 0 on BOTH sides (engine path, #891).
+///
+/// The `ReindexBlockLinks` task is the SOLE writer of `page_link_cache`, so this
+/// guards against that background enqueue being dropped as "redundant" now that
+/// the in-tx apply covers the other link-derived caches (#2397).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_edit_page_link_cache_converges_local_matches_remote_2397() {
+    let s1 = seed_label_to_id("S1"); // link TARGET page
+    let s2 = seed_label_to_id("S2"); // link SOURCE page (owns BA)
+    let ba = seed_label_to_id("BA"); // link SOURCE content block (owned by S2)
+    // Same seed as the #2344 edit pin: two pages (S1, S2) + a content block BA
+    // under S2. Editing BA to contain `[[S1]]` creates a cross-page link edge
+    // BA -> S1, which rolls up to the page-level edge S2 -> S1.
+    let seed = [
+        json!({"id": "S1", "block_type": "page", "content": "Target", "parent_id": null, "position": 1}),
+        json!({"id": "S2", "block_type": "page", "content": "Source", "parent_id": null, "position": 2}),
+        json!({"id": "BA", "block_type": "content", "content": "before", "parent_id": "S2", "position": 1}),
+    ];
+    let edit_text = format!("[[{s1}]]");
+
+    // Reader for the denormalised page-level rollup (runtime query — no sqlx
+    // macro, no `.sqlx` regen needed).
+    async fn page_link_rows(pool: &SqlitePool) -> Vec<(String, String, i64)> {
+        sqlx::query_as::<_, (String, String, i64)>(
+            "SELECT source_page_id, target_page_id, edge_count FROM page_link_cache \
+             ORDER BY source_page_id, target_page_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+    // Seed `pages_cache` rows for both pages so the in-tx count recompute has
+    // rows to touch — mirrors the #2344 edit pin (which seeds S1); S2 is the
+    // source page for the rollup and is seeded here for symmetry.
+    async fn seed_pages_cache_row(pool: &SqlitePool, page_id: &str) {
+        sqlx::query(
+            "INSERT INTO pages_cache \
+                 (page_id, title, updated_at, inbound_link_count, child_block_count) \
+             VALUES (?, 'Page', 0, 0, 0)",
+        )
+        .bind(page_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    // ── LOCAL command path (edit_block_inner → apply_op_projected(false)) ──
+    let (pool_l, _dir_l) = test_pool().await;
+    let mat_l = test_materializer(&pool_l);
+    let state_l = mat_l.loro_state();
+    for blk in &seed {
+        insert_seed_block(&pool_l, blk).await;
+    }
+    assign_all_to_test_space(&pool_l).await;
+    for blk in &seed {
+        seed_block_into_engine(state_l, blk);
+    }
+    seed_pages_cache_row(&pool_l, &s1).await;
+    seed_pages_cache_row(&pool_l, &s2).await;
+
+    // Pre-state non-vacuity: no (S2, S1) rollup row exists before the edit.
+    let pre_rows = page_link_rows(&pool_l).await;
+    assert!(
+        !pre_rows
+            .iter()
+            .any(|(src, tgt, _)| src == &s2 && tgt == &s1),
+        "pre-edit: no (S2, S1) page_link_cache row must exist (non-vacuity)",
+    );
+
+    let fb_l = crate::materializer::sql_only_fallback_count();
+    edit_block_inner(
+        &pool_l,
+        DEV,
+        &mat_l,
+        BlockId::from(ba.as_str()),
+        edit_text.clone(),
+    )
+    .await
+    .expect("local edit_block_inner");
+    // Option A: `page_link_cache` is written by the BACKGROUND `ReindexBlockLinks`
+    // task, so it is intentionally NOT guaranteed fresh here — only after
+    // `settle` drains the background work. Pre-settle freshness is deliberately
+    // not asserted (it would be racy).
+    settle(&mat_l).await;
+    assert_eq!(
+        crate::materializer::sql_only_fallback_count() - fb_l,
+        0,
+        "LOCAL edit took the SQL-only fallback — not the engine path (#891)",
+    );
+    // After the background drain the rollup edge is present.
+    let rows_l = page_link_rows(&pool_l).await;
+    assert!(
+        rows_l
+            .iter()
+            .any(|(src, tgt, cnt)| src == &s2 && tgt == &s1 && *cnt == 1),
+        "post-settle LOCAL: (S2, S1, 1) page_link_cache row must be present; got {rows_l:?}",
+    );
+
+    // Capture the exact EditBlock op the LOCAL path emitted so the REMOTE side
+    // replays a byte-identical op.
+    let payload_json: String = sqlx::query_scalar(
+        "SELECT payload FROM op_log WHERE device_id = ? AND op_type = 'edit_block' \
+         ORDER BY seq DESC LIMIT 1",
+    )
+    .bind(DEV)
+    .fetch_one(&pool_l)
+    .await
+    .expect("local edit op must be in op_log");
+    let edit_payload: EditBlockPayload =
+        serde_json::from_str(&payload_json).expect("deserialize EditBlock payload");
+    assert_eq!(
+        edit_payload.block_id.as_str(),
+        ba,
+        "captured the edit op for the edited block",
+    );
+
+    // ── REMOTE / sync path (append_local_op → apply_op → apply_op_projected(true)) ──
+    let (pool_s, _dir_s) = test_pool().await;
+    let mat_s = test_materializer(&pool_s);
+    let state_s = mat_s.loro_state();
+    for blk in &seed {
+        insert_seed_block(&pool_s, blk).await;
+    }
+    assign_all_to_test_space(&pool_s).await;
+    for blk in &seed {
+        seed_block_into_engine(state_s, blk);
+    }
+    seed_pages_cache_row(&pool_s, &s1).await;
+    seed_pages_cache_row(&pool_s, &s2).await;
+
+    let fb_s = crate::materializer::sql_only_fallback_count();
+    let record_s = crate::op_log::append_local_op(&pool_s, DEV, OpPayload::EditBlock(edit_payload))
+        .await
+        .expect("append sync edit op");
+    mat_s.dispatch_op(&record_s).await.expect("dispatch_op");
+    settle(&mat_s).await;
+    assert_eq!(
+        crate::materializer::sql_only_fallback_count() - fb_s,
+        0,
+        "REMOTE edit took the SQL-only fallback — not the engine path (#891)",
+    );
+
+    // ── Convergence: both entry points converge (after background drain) to the
+    //    identical `page_link_cache` rollup ──
+    let rows_l = page_link_rows(&pool_l).await;
+    let rows_s = page_link_rows(&pool_s).await;
+    assert_eq!(
+        rows_l, rows_s,
+        "page_link_cache diverged LOCAL vs REMOTE after settle (#2397)",
+    );
+    // Non-vacuity: exactly the one cross-page edge S2 -> S1 with edge_count 1.
+    assert_eq!(
+        rows_l,
+        vec![(s2.clone(), s1.clone(), 1)],
+        "the edit must produce exactly the S2 -> S1 page_link_cache edge (count 1)",
+    );
+
+    mat_l.shutdown();
+    mat_s.shutdown();
+}
 /// #2344 prereq — a REMOTE `ApplyOp` CreateBlock of a content block that links
 /// `[[<PAGE>]]` must stamp the new block's `page_id`/`space_id` AND leave the
 /// linked page's `pages_cache.inbound_link_count` correct IN-TX — i.e. already
