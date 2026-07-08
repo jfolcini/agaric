@@ -703,6 +703,41 @@ fn active_block_id_partial_eq_against_str() {
     assert_ne!(id, FIXTURE_ULID_OTHER);
 }
 
+// ============================================================================
+// UlidInline (#2371)
+// ============================================================================
+
+#[test]
+fn ulid_inline_roundtrips_full_and_short_ids() {
+    let full = UlidInline::try_from_str(FIXTURE_ULID).unwrap();
+    assert_eq!(full.as_str(), FIXTURE_ULID);
+
+    let short = UlidInline::try_from_str("AB").unwrap();
+    assert_eq!(short.as_str(), "AB");
+}
+
+#[test]
+fn ulid_inline_serialize_matches_active_block_id() {
+    let inline = UlidInline::try_from_str(FIXTURE_ULID).unwrap();
+    let active = ActiveBlockId::from_trusted_active(FIXTURE_ULID);
+    assert_eq!(
+        serde_json::to_string(&inline).unwrap(),
+        serde_json::to_string(&active).unwrap(),
+        "UlidInline must serialise to the identical bare-string JSON as ActiveBlockId",
+    );
+}
+
+#[test]
+fn ulid_inline_rejects_over_capacity_without_panic() {
+    // 27 chars — one over the 26-byte inline capacity.
+    let too_long = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0";
+    assert_eq!(too_long.len(), 27);
+    assert!(
+        UlidInline::try_from_str(too_long).is_err(),
+        "try_from_str must return Err (not panic/truncate) on > 26 bytes",
+    );
+}
+
 // --- verify_active: DB-backed ---
 
 mod verify_active_db {

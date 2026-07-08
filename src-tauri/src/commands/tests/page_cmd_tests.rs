@@ -3731,7 +3731,7 @@ async fn list_page_links_inner_global_matches_legacy_none_pend18() {
         .unwrap();
     let global_edges: std::collections::HashSet<(String, String)> = global
         .iter()
-        .map(|l| (l.source_id.clone().into(), l.target_id.clone().into()))
+        .map(|l| (l.source_id.into(), l.target_id.into()))
         .collect();
     assert_eq!(
         global_edges.len(),

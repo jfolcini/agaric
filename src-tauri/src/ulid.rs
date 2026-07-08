@@ -370,6 +370,159 @@ impl From<ActiveBlockId> for BlockId {
     }
 }
 
+/// Inline, heap-free ULID for the hot bulk-decode path (#2371).
+///
+/// `list_page_links_inner` decodes both endpoints of every page-link edge;
+/// with [`ActiveBlockId`] each edge minted two heap [`String`] allocations
+/// (~600K per call at scale). `UlidInline` stores the id in a fixed
+/// `[u8; 26]` stack buffer instead, so decoding an edge allocates nothing.
+///
+/// **Wire / sqlx parity with [`ActiveBlockId`]:** `serde` serialises the
+/// bare id string and `sqlx::Type`/`Decode` are transparent over `&str`, so
+/// the JSON and SQLite representations are byte-identical to `ActiveBlockId`;
+/// `specta::Type` forwards to `ActiveBlockId` so the generated TypeScript is
+/// unchanged (`source_id: ActiveBlockId`).
+///
+/// **Capacity:** holds any id ≤ 26 bytes — every block id (real ULIDs are
+/// exactly 26 Crockford base32 chars; synthetic test ids are shorter) fits.
+/// `Decode` returns a clean error on any value > 26 bytes rather than
+/// panicking or truncating.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct UlidInline {
+    buf: [u8; 26],
+    len: u8,
+}
+
+impl UlidInline {
+    /// Build from a string, erroring (never panicking / truncating) if it
+    /// exceeds the 26-byte inline capacity.
+    fn try_from_str(s: &str) -> Result<Self, String> {
+        let bytes = s.as_bytes();
+        if bytes.len() > 26 {
+            return Err(format!(
+                "UlidInline capacity is 26 bytes, got {} ({s:?})",
+                bytes.len()
+            ));
+        }
+        let mut buf = [0u8; 26];
+        buf[..bytes.len()].copy_from_slice(bytes);
+        // `bytes.len() <= 26` (checked above), so the u8 cast is lossless.
+        #[allow(clippy::cast_possible_truncation)]
+        let len = bytes.len() as u8;
+        Ok(Self { buf, len })
+    }
+
+    /// Borrow the id as a string slice.
+    pub fn as_str(&self) -> &str {
+        // SAFE revalidation: the buffer was filled from a `&str` in
+        // `try_from_str`, so this is always valid UTF-8 and `expect` never
+        // fires. The ≤ 26-byte revalidation cost is negligible and lets us
+        // avoid `unsafe` (the repo's prek hook disallows an unsafe allowlist).
+        std::str::from_utf8(&self.buf[..self.len as usize])
+            .expect("UlidInline holds UTF-8 by construction")
+    }
+}
+
+impl fmt::Debug for UlidInline {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl fmt::Display for UlidInline {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl AsRef<str> for UlidInline {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl From<UlidInline> for String {
+    fn from(id: UlidInline) -> Self {
+        id.as_str().to_owned()
+    }
+}
+
+impl PartialEq<&str> for UlidInline {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<str> for UlidInline {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<String> for UlidInline {
+    fn eq(&self, other: &String) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl PartialEq<UlidInline> for String {
+    fn eq(&self, other: &UlidInline) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl PartialEq<UlidInline> for str {
+    fn eq(&self, other: &UlidInline) -> bool {
+        self == other.as_str()
+    }
+}
+
+impl PartialEq<UlidInline> for &str {
+    fn eq(&self, other: &UlidInline) -> bool {
+        *self == other.as_str()
+    }
+}
+
+impl serde::Serialize for UlidInline {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl specta::Type for UlidInline {
+    fn definition(types: &mut specta::Types) -> specta::datatype::DataType {
+        // Forward to `ActiveBlockId` so `bindings.ts` stays byte-identical
+        // (the field is still emitted as `ActiveBlockId`).
+        crate::ulid::ActiveBlockId::definition(types)
+    }
+}
+
+impl sqlx::Type<sqlx::Sqlite> for UlidInline {
+    fn type_info() -> <sqlx::Sqlite as sqlx::Database>::TypeInfo {
+        <&str as sqlx::Type<sqlx::Sqlite>>::type_info()
+    }
+
+    fn compatible(ty: &<sqlx::Sqlite as sqlx::Database>::TypeInfo) -> bool {
+        <&str as sqlx::Type<sqlx::Sqlite>>::compatible(ty)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Sqlite> for UlidInline {
+    fn decode(
+        value: <sqlx::Sqlite as sqlx::Database>::ValueRef<'r>,
+    ) -> Result<Self, sqlx::error::BoxDynError> {
+        // Borrow from the result buffer (no heap) then stack-copy into the
+        // inline buffer. No uppercasing — the transparent `sqlx` decode
+        // matches `ActiveBlockId`, and `page_link_cache` stores canonical
+        // uppercase ids already.
+        let s = <&str as sqlx::Decode<sqlx::Sqlite>>::decode(value)?;
+        UlidInline::try_from_str(s).map_err(Into::into)
+    }
+}
+
 /// Verify that a [`BlockId`] refers to an active block — i.e., a row
 /// exists in `blocks` with deleted_at IS NULL`.
 ///

@@ -184,8 +184,8 @@ pub async fn list_page_links_inner_split(
              WHERE space_id = ?1
          )
          SELECT
-            plc.source_page_id AS "source_id!: crate::ulid::ActiveBlockId",
-            plc.target_page_id AS "target_id!: crate::ulid::ActiveBlockId",
+            plc.source_page_id AS "source_id!: crate::ulid::UlidInline",
+            plc.target_page_id AS "target_id!: crate::ulid::UlidInline",
             plc.edge_count AS "ref_count!: i64"
          FROM page_link_cache plc
          WHERE plc.source_page_id != plc.target_page_id
