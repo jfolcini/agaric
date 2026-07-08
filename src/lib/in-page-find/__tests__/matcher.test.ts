@@ -362,14 +362,16 @@ describe('regex ReDoS / catastrophic-backtracking guard (#2030)', () => {
       { kind: 'regex' }
     >
 
-    const startedAt = Date.now()
+    // `timedOut` deterministically proves the guard fired and aborted the walk
+    // at a node boundary rather than scanning all 50 nodes — that IS the
+    // "no hang" guarantee. A raw `Date.now()` wall-clock ceiling was removed
+    // here: it could not distinguish a guarded run (~few ms) from an unguarded
+    // one (~hundreds of ms) — only this assertion does — so its lone failure
+    // mode was a >1 s stall on a loaded CI runner (a flake with no diagnostic
+    // value). A genuine hang is still caught by the ambient test timeout.
     const result = walkSync(nodes, compiled, { timeBudgetMs: 1 })
-    const elapsed = Date.now() - startedAt
 
     expect(result.timedOut).toBe(true)
-    // Budget 1 ms + at most one in-flight (capped, ~few-ms) exec. A generous
-    // ceiling that still proves the abort fired rather than running 50 nodes.
-    expect(elapsed).toBeLessThan(1000)
   })
 })
 
