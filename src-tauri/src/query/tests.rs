@@ -2386,7 +2386,7 @@ async fn flat_last_edited_sort_is_correlated_index_seek_2304() {
             "content",
             Some("TODO"),
             None,
-            Some(i as i64),
+            Some(i64::from(i)),
         )
         .await;
     }
@@ -2405,7 +2405,7 @@ async fn flat_last_edited_sort_is_correlated_index_seek_2304() {
                 "01B4000000000000000000000",
             ]
             .iter()
-            .map(|s| s.to_string()),
+            .map(ToString::to_string),
         )
         .collect();
     let mut seq: i64 = 0;
