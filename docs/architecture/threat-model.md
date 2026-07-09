@@ -132,7 +132,7 @@ The boundaries above are the *control* surfaces. The list below is the *attack* 
 
 **Network listeners.**
 
-- Sync daemon TCP listener (`src-tauri/src/sync_daemon/orchestrator.rs`, `server.rs`). Binds on a configured port on each non-loopback interface; rustls + mTLS terminates the channel. mDNS / multicast service advertisement attaches to the same lifecycle (see `discovery.rs`, with the Android multicast-lock JNI carve-out in [`android_multicast.rs`](../../src-tauri/src/sync_daemon/android_multicast.rs)).
+- Sync daemon TCP listener (`src-tauri/src/sync_daemon/session_supervisor.rs`, `server.rs`). Binds on a configured port on each non-loopback interface; rustls + mTLS terminates the channel. mDNS / multicast service advertisement attaches to the same lifecycle (see `discovery.rs`, with the Android multicast-lock JNI carve-out in [`android_multicast.rs`](../../src-tauri/src/sync_daemon/android_multicast.rs)).
 - MCP UDS socket — a Unix domain socket under the app data directory (`src-tauri/src/commands/mcp.rs`). RO and RW variants; gated by a marker file in the app data directory; not a TCP listener. File-mode is the trust boundary.
 
 **File paths.**

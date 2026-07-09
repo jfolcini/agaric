@@ -16,11 +16,11 @@ propose new behavior. The canonical source is the code, primarily:
   `SyncState`.
 - `src-tauri/src/sync_protocol/loro_sync_types.rs` — the `LoroSyncMessage`
   payload and `LORO_SYNC_PROTOCOL_VERSION`.
-- `src-tauri/src/sync_protocol/orchestrator.rs` — the per-session
+- `src-tauri/src/sync_protocol/session_state_machine.rs` — the per-session
   `SyncOrchestrator` state machine.
 - `src-tauri/src/sync_protocol/loro_sync.rs` — `prepare_outgoing` /
   `apply_remote` and the version-vector reachability check.
-- `src-tauri/src/sync_daemon/orchestrator.rs` — the initiator-side session
+- `src-tauri/src/sync_daemon/session_supervisor.rs` — the initiator-side session
   driver (`run_sync_session`).
 - `src-tauri/src/sync_daemon/server.rs` — the responder-side session driver
   (`handle_incoming_sync`).
@@ -185,7 +185,7 @@ check to fail loudly on a stale snapshot (see the path in
 ## State machine
 
 The per-session state machine is `SyncOrchestrator`
-(`src-tauri/src/sync_protocol/orchestrator.rs`); its phase enum is
+(`src-tauri/src/sync_protocol/session_state_machine.rs`); its phase enum is
 `SyncState` (`src-tauri/src/sync_protocol/types.rs`).
 
 `SyncState` variants: `Idle`, `ExchangingHeads`, `StreamingOps`,
@@ -239,7 +239,7 @@ of `SyncOrchestrator::handle_message`. Notable rules:
   file-transfer variants pass state validation but are rejected by the
   dispatch body — they are handled by the daemon-layer sub-flows, never the
   orchestrator. Implementation detail in
-  `src-tauri/src/sync_protocol/orchestrator.rs`.
+  `src-tauri/src/sync_protocol/session_state_machine.rs`.
 
 The surrounding daemon (`src-tauri/src/sync_daemon`) owns everything outside
 the per-session machine: discovery, scheduling, per-peer locking, connection
@@ -249,7 +249,7 @@ and post-`Complete` sub-flows.
 ## Handshake sequence
 
 The initiator side is driven by `run_sync_session`
-(`sync_daemon/orchestrator.rs`); the responder side by `handle_incoming_sync`
+(`sync_daemon/session_supervisor.rs`); the responder side by `handle_incoming_sync`
 (`sync_daemon/server.rs`). Both share the same exchange-until-terminal loop
 with a `HANDSHAKE_TIMEOUT` per `handle_message` call.
 
@@ -387,7 +387,7 @@ How peers compare and request missing ops:
   `peer_vv = Some(vv)` to emit an incremental `Update`. It falls back to
   `peer_vv = None` (full `Snapshot`) only for a space the initiator didn't
   advertise — one it lacks, or an older peer that sent no VVs
-  (`src-tauri/src/sync_protocol/orchestrator.rs`, `loro_sync.rs`).
+  (`src-tauri/src/sync_protocol/session_state_machine.rs`, `loro_sync.rs`).
 - **Receiver** (`loro_sync::apply_remote`): for an `Update`, before any
   engine import it reads the local engine's current version vector
   (`version_vector()`) and runs `classify_from_vv_reachability` against the
