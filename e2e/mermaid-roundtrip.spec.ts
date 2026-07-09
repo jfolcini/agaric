@@ -54,27 +54,36 @@ test.describe('Mermaid diagram round-trip (#1438)', () => {
     await langInput.fill('mermaid')
     await page.getByTestId('use-custom-language').click()
 
-    // The node view renders the diagram (SVG) while editing.
+    // #2449 (audit finding 45): with the caret INSIDE the block, the node
+    // view opens in SOURCE mode — keystrokes must land in visible text, never
+    // in a display:none <pre> behind the rendered diagram. The old behavior
+    // (diagram shown while editing) was exactly the invisible-typing hazard.
     const nodeView = page.locator('[data-testid="mermaid-node-view"]')
     await expect(nodeView).toBeVisible()
-    await expect(nodeView.locator('[data-testid="mermaid-diagram"] svg')).toBeVisible({
-      timeout: 10_000,
-    })
-
-    // The raw-source toggle swaps to the editable source and back.
     const toggle = nodeView.getByTestId('mermaid-toggle-source')
     await expect(toggle).toBeVisible()
-    await toggle.click()
-    // Toggle flips to "source" mode: button reflects it, diagram is hidden, and
-    // the editable source becomes visible carrying the Mermaid text.
     await expect(toggle).toHaveAttribute('aria-pressed', 'true')
     await expect(nodeView.getByTestId('mermaid-rendered')).toBeHidden()
     await expect(nodeView.locator('pre.mermaid-source')).toBeVisible()
     await expect(nodeView.locator('pre.mermaid-source')).toContainText('graph TD')
-    // Toggle back to the diagram.
+
+    // Manually toggling back shows the rendered diagram even while the caret
+    // stays inside (the selection flip is transition-triggered, so the user's
+    // explicit choice sticks until the selection re-enters the node).
     await toggle.click()
     await expect(toggle).toHaveAttribute('aria-pressed', 'false')
-    await expect(nodeView.locator('[data-testid="mermaid-diagram"] svg')).toBeVisible()
+    await expect(nodeView.locator('[data-testid="mermaid-diagram"] svg')).toBeVisible({
+      timeout: 10_000,
+    })
+
+    // And toggling to source again still carries the editable text.
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    await expect(nodeView.locator('pre.mermaid-source')).toBeVisible()
+    await expect(nodeView.locator('pre.mermaid-source')).toContainText('graph TD')
+    // Leave the node view in diagram mode before the blur/round-trip leg.
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false')
 
     // Commit by moving focus to another block (the natural blur+flush path —
     // Enter inside a code block inserts a newline rather than saving). The
