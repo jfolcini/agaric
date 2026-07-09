@@ -29,11 +29,6 @@
 
 use super::metadata_filter::{DatePredicate as MetaDatePredicate, MetadataPredicates};
 use crate::domain::search_types::{DateOp, SearchPropertyFilter};
-// `SearchFilter` is only referenced by the test-only `search_filter_to_primitives`
-// oracle below, so the import is gated to avoid an unused-import warning in
-// production builds.
-#[cfg(test)]
-use crate::domain::search_types::SearchFilter;
 use crate::filters::SqlFragment;
 use crate::filters::primitive::{
     Bind, DatePredicate, FilterPrimitive, LastEditedSpec, Projection, PropertyPredicate,
@@ -239,8 +234,9 @@ impl StructuralFilterBuilder {
     ///
     /// This is the single splice point through which the
     /// [`SearchProjection`]-routed subset (currently `Space` only — see
-    /// `search_filter_to_primitives` / `fts_fetch_rows`) enters the
-    /// dynamic FTS WHERE clause. The projection emits bare `?`; this method
+    /// [`add_space_via_projection`](Self::add_space_via_projection) /
+    /// `fts_fetch_rows`) enters the dynamic FTS WHERE clause. The projection
+    /// emits bare `?`; this method
     /// is the only place that maps them onto the builder's `?N` slots, so
     /// the placeholder/bind invariant the builder guarantees still holds.
     ///
@@ -275,8 +271,8 @@ impl StructuralFilterBuilder {
     /// Only `Space` is routed here: the legacy Tag (`COUNT(DISTINCT)`
     /// ALL-semantics) and property (`prop:` four-column OR) fragments are
     /// NOT byte-identical to their `SearchProjection` counterparts and stay
-    /// on the legacy path — see `search_filter_to_primitives` and the
-    /// `projection_space_parity` test for the proof.
+    /// on the legacy path — see the `projection_space_parity` test for the
+    /// proof.
     pub(super) fn add_space_via_projection(&mut self, prefix: &str, space_id: Option<&str>) {
         let Some(sid) = space_id else { return };
         let prims = vec![FilterPrimitive::Space {
@@ -451,13 +447,12 @@ impl StructuralFilterBuilder {
 
     /// #1280 B2 — `block-type:` equality filter routed through
     /// [`SearchProjection`] (`compile_block_type` → canonical A2
-    /// `PagesProjection` SQL). Replaces the legacy inline `add_block_type`
-    /// fragment (`b.block_type = ?N`). The routed SQL SHAPE differs
+    /// `PagesProjection` SQL). Replaces the legacy inline `b.block_type = ?N`
+    /// fragment. The routed SQL SHAPE differs
     /// (`b.block_type IN (?)` vs `b.block_type = ?`) but is RESULT-EQUIVALENT
-    /// for the single-value filter the FTS surface passes. `None` is a no-op
-    /// (mirrors `add_block_type`); the projection's empty-include `1=0` is
-    /// never reached because we only compile a primitive when a value is
-    /// present.
+    /// for the single-value filter the FTS surface passes. `None` is a no-op;
+    /// the projection's empty-include `1=0` is never reached because we only
+    /// compile a primitive when a value is present.
     pub(super) fn add_block_type_via_projection(&mut self, prefix: &str, block_type: Option<&str>) {
         let Some(bt) = block_type else { return };
         let prim = FilterPrimitive::BlockType {
@@ -620,23 +615,6 @@ impl StructuralFilterBuilder {
         }
     }
 
-    /// `AND b.block_type = ?N` when `Some`.
-    ///
-    /// #1280 B2 — production callers were cut over to
-    /// [`add_block_type_via_projection`](Self::add_block_type_via_projection)
-    /// (canonical A2 `SearchProjection` SQL). This legacy single-value `= ?`
-    /// fragment is retained for the byte-shape snapshot tests that pin it as
-    /// the result-equivalence oracle; it has no non-test callers.
-    #[cfg(test)]
-    pub(super) fn add_block_type(&mut self, prefix: &str, block_type: Option<&str>) {
-        if let Some(bt) = block_type {
-            let i = self.next_param;
-            self.sql.push_str(&format!("{prefix}b.block_type = ?{i}"));
-            self.next_param += 1;
-            self.binds.push(ScalarBind::Str(bt.to_string()));
-        }
-    }
-
     /// `AND b.id < ?N` keyset cursor predicate when `Some`.
     pub(super) fn add_after_id(&mut self, prefix: &str, after_id: Option<&str>) {
         if let Some(aid) = after_id {
@@ -650,8 +628,9 @@ impl StructuralFilterBuilder {
     /// Splice the metadata predicates into the fragment by compiling each
     /// leaf through [`SearchProjection`], recording each bind in declaration
     /// order. The relative position of this call vs
-    /// `add_block_type` (test-only oracle) differs between the FTS
-    /// and the toggle builders — the caller drives that order.
+    /// [`add_block_type_via_projection`](Self::add_block_type_via_projection)
+    /// differs between the FTS and the toggle builders — the caller drives
+    /// that order.
     pub(super) fn add_metadata(&mut self, metadata: &MetadataPredicates, alias: &str) {
         // #1280 B2 / #properties-typed-always — EVERY metadata leaf (`state:` /
         // `priority:` / `due-date:` / `scheduled:` / `last-edited:` and now
@@ -760,81 +739,9 @@ impl StructuralFilterBuilder {
     }
 }
 
-/// #1320 lift the genuinely-shared filter subset (`Tag`,
-/// `HasProperty`, `Space`) from the flat [`SearchFilter`] into
-/// [`FilterPrimitive`]s, so they can be compiled through
-/// [`SearchProjection`] (the cross-surface filter compiler) instead of the
-/// bespoke inline FTS fragments.
-///
-/// **Scope (zero-behaviour-change contract):** this lifts ONLY the shared
-/// subset. Path globs, metadata (state / priority / due / scheduled),
-/// `block_type`, the toggle filters, and the FTS `MATCH` query itself are
-/// left entirely on the legacy path — they diverge from the projection and
-/// Are out of scope for.
-///
-/// **Mapping:**
-/// - `tag_ids` → one [`FilterPrimitive::Tag`] per tag (ALL/AND semantics:
-///   the caller AND-joins, so every tag must be present).
-/// - `property_filters` (includes) with a non-empty `value` →
-///   [`FilterPrimitive::HasProperty`] with `Eq { Text }`; with an empty
-///   `value` → `Exists` (key-presence-only).
-/// - `space_id` (non-empty) → [`FilterPrimitive::Space`].
-///
-/// **Status:** this adapter is now TEST-ONLY documentation of the
-/// shared-subset lift; production no longer calls it. Each routed leaf now
-/// has its own dedicated `add_*_via_projection` splice in
-/// [`StructuralFilterBuilder`] (`Space`, `Tag`, and — since
-/// #properties-typed-always — property via
-/// [`add_property_via_projection`](StructuralFilterBuilder::add_property_via_projection)).
-/// NOTE: the property branch here hardcodes the untyped `Eq { Text }` lift;
-/// the PRODUCTION property path infers the typed `PropertyValue`
-/// (`infer_property_value`) instead — this adapter is not the production
-/// property router and is kept only so its test pins the lift ordering.
-#[cfg(test)]
-pub(super) fn search_filter_to_primitives(filter: &SearchFilter) -> Vec<FilterPrimitive> {
-    use crate::filters::primitive::{PropertyPredicate, PropertyValue};
-
-    let mut out = Vec::new();
-
-    // Tags — one primitive per tag (ALL / AND semantics on AND-join).
-    for tag in &filter.tag_ids {
-        out.push(FilterPrimitive::Tag { tag: tag.clone() });
-    }
-
-    // Property includes — text-eq, or key-presence (Exists) when empty.
-    for pf in &filter.property_filters {
-        let predicate = if pf.value.is_empty() {
-            PropertyPredicate::Exists
-        } else {
-            PropertyPredicate::Eq {
-                value: PropertyValue::Text {
-                    value: pf.value.clone(),
-                },
-            }
-        };
-        out.push(FilterPrimitive::HasProperty {
-            key: pf.key.clone(),
-            predicate,
-        });
-    }
-
-    // Space — only when the scope is `Active` (a non-empty space id).
-    // `Global` yields `None` and pushes no `Space` primitive.
-    if let Some(sid) = filter.scope.as_filter_param()
-        && !sid.is_empty()
-    {
-        out.push(FilterPrimitive::Space {
-            space_id: sid.to_string(),
-        });
-    }
-
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::space::{SpaceId, SpaceScope};
 
     const FTS_PREFIX: &str = "\n           AND ";
     const TOGGLE_PREFIX: &str = "\n             AND ";
@@ -1191,85 +1098,6 @@ mod tests {
         out
     }
 
-    /// The adapter lifts ONLY the shared subset (Tag / HasProperty / Space)
-    /// and nothing else (globs, metadata, toggles, block_type, the MATCH
-    /// query). Order: tags, then property includes, then space.
-    #[test]
-    fn adapter_lifts_only_shared_subset() {
-        use crate::domain::search_types::{SearchFilter, SearchPropertyFilter};
-        use crate::filters::primitive::{FilterPrimitive, PropertyPredicate, PropertyValue};
-
-        let filter = SearchFilter {
-            tag_ids: vec!["TAGA".into(), "TAGB".into()],
-            scope: SpaceScope::Active(SpaceId::from_trusted("01SPACE0001")),
-            property_filters: vec![
-                SearchPropertyFilter {
-                    key: "kind".into(),
-                    value: "note".into(),
-                },
-                SearchPropertyFilter {
-                    key: "archived".into(),
-                    value: String::new(),
-                },
-            ],
-            // Everything below must be IGNORED by the adapter.
-            include_page_globs: vec!["Proj/*".into()],
-            exclude_page_globs: vec!["Trash/*".into()],
-            state_filter: vec!["DONE".into()],
-            priority_filter: vec!["A".into()],
-            block_type_filter: Some("page".into()),
-            is_regex: true,
-            case_sensitive: true,
-            whole_word: true,
-            parent_id: Some("blk".into()),
-            ..Default::default()
-        };
-
-        let prims = search_filter_to_primitives(&filter);
-        assert_eq!(
-            prims,
-            vec![
-                FilterPrimitive::Tag { tag: "TAGA".into() },
-                FilterPrimitive::Tag { tag: "TAGB".into() },
-                FilterPrimitive::HasProperty {
-                    key: "kind".into(),
-                    predicate: PropertyPredicate::Eq {
-                        value: PropertyValue::Text {
-                            value: "note".into()
-                        },
-                    },
-                },
-                FilterPrimitive::HasProperty {
-                    key: "archived".into(),
-                    predicate: PropertyPredicate::Exists,
-                },
-                FilterPrimitive::Space {
-                    space_id: "01SPACE0001".into(),
-                },
-            ],
-            "adapter must lift exactly the shared subset, in order, and nothing else"
-        );
-    }
-
-    /// An empty / `None` space id produces no `Space` primitive (matches the
-    /// SQL path's "empty string ⇒ no space primitive" treatment).
-    #[test]
-    fn adapter_skips_empty_space() {
-        use crate::domain::search_types::SearchFilter;
-
-        let none = SearchFilter::default();
-        assert!(search_filter_to_primitives(&none).is_empty());
-
-        let empty = SearchFilter {
-            scope: SpaceScope::Active(SpaceId::from_trusted("")),
-            ..Default::default()
-        };
-        assert!(
-            search_filter_to_primitives(&empty).is_empty(),
-            "empty space id must not yield a Space primitive"
-        );
-    }
-
     #[test]
     fn space_inner_is_indent_independent() {
         // Both builders must produce the SAME sub-select body — only the
@@ -1285,8 +1113,8 @@ mod tests {
     #[test]
     fn block_type_and_after_id_fragments() {
         let mut fb = StructuralFilterBuilder::new(3);
-        fb.add_block_type(TOGGLE_PREFIX, Some("page"));
-        assert_eq!(fb.sql(), "\n             AND b.block_type = ?3");
+        fb.add_block_type_via_projection(TOGGLE_PREFIX, Some("page"));
+        assert_eq!(fb.sql(), "\n             AND b.block_type IN (?3)");
         fb.add_after_id(TOGGLE_PREFIX, Some("cursor"));
         assert!(fb.sql().ends_with("\n             AND b.id < ?4"));
         assert_eq!(fb.next_param(), 5);
@@ -1493,7 +1321,7 @@ mod tests {
         fb.add_tags_via_projection(TOGGLE_PREFIX, &["T".to_string()]); // ?2
         fb.add_space(TOGGLE_PREFIX, Some("s")); // ?3
         fb.add_page_globs_via_projection(TOGGLE_PREFIX, false, &["*g*".to_string()]); // ?4
-        fb.add_block_type(TOGGLE_PREFIX, Some("page")); // ?5
+        fb.add_block_type_via_projection(TOGGLE_PREFIX, Some("page")); // ?5
         assert_eq!(fb.next_param(), 6);
         // parent(1) + tags_via_projection(1 tag) + space(1) + glob(1)
         // + block_type(1) = 5 recorded binds.

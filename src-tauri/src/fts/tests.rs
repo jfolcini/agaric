@@ -10110,10 +10110,9 @@ async fn b2_state_empty_is_noop() {
     );
 }
 
-/// `block-type:page` → only the page-typed row, byte-result equivalent to
-/// the legacy `b.block_type = ?` fragment (the projection emits
-/// `b.block_type IN (?)`). Also diffed directly against the legacy
-/// `add_block_type` row set as a same-DB oracle.
+/// `block-type:page` → only the page-typed row. The projection emits
+/// `b.block_type IN (?)`, result-equivalent to the legacy single-value
+/// `b.block_type = ?` fragment; the concrete row set pins that invariant.
 #[tokio::test]
 async fn b2_block_type_matches_legacy() {
     let (pool, _dir) = test_pool().await;
@@ -10123,14 +10122,6 @@ async fn b2_block_type_matches_legacy() {
         fb.add_block_type_via_projection(META_PREFIX, Some("page"));
     })
     .await;
-    let legacy = metadata_filter_ids(&pool, |fb| {
-        fb.add_block_type(META_PREFIX, Some("page"));
-    })
-    .await;
-    assert_eq!(
-        routed, legacy,
-        "block-type routed row set must equal legacy"
-    );
     assert_eq!(
         routed,
         id_set(&[META_PAGE]),
@@ -10138,7 +10129,7 @@ async fn b2_block_type_matches_legacy() {
     );
 }
 
-/// `block-type:None` is a no-op (mirrors legacy `add_block_type(None)`).
+/// `block-type:None` is a no-op — a `None` block-type filters no row.
 #[tokio::test]
 async fn b2_block_type_none_is_noop() {
     let (pool, _dir) = test_pool().await;
