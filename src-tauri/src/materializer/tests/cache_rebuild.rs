@@ -100,7 +100,9 @@ async fn enqueue_inbound_sync_rebuilds_refreshes_derived_caches() {
     mat.enqueue_inbound_sync_rebuilds(&changed, &[])
         .await
         .expect("enqueue inbound sync rebuilds");
-    mat.flush_background().await.expect("flush background");
+    // #2291: the 8 global rebuilds are now trailing-debounced; pump them
+    // (and drain the FTS tasks enqueued inline) so the caches converge.
+    mat.flush_inbound_rebuild_debounce().await;
 
     let tag_rows: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM tags_cache WHERE tag_id = 'SYNC_TAG_1'")
@@ -172,7 +174,8 @@ async fn enqueue_inbound_sync_rebuilds_purge_only_import_still_fans_out() {
     mat.enqueue_inbound_sync_rebuilds(&[], &purged)
         .await
         .expect("enqueue inbound sync rebuilds");
-    mat.flush_background().await.expect("flush background");
+    // #2291: pump the trailing-debounced global fan-out.
+    mat.flush_inbound_rebuild_debounce().await;
 
     let tag_rows: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM tags_cache WHERE tag_id = 'PURGE_TAG_1'")
@@ -221,7 +224,8 @@ async fn enqueue_inbound_sync_rebuilds_skips_tag_inheritance_but_rebuilds_page_i
     mat.enqueue_inbound_sync_rebuilds(&changed, &[])
         .await
         .expect("enqueue inbound sync rebuilds");
-    mat.flush_background().await.expect("flush background");
+    // #2291: pump the trailing-debounced global fan-out.
+    mat.flush_inbound_rebuild_debounce().await;
 
     let child_page_id: Option<String> =
         sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = 'INH_CHILD_1'")
@@ -245,6 +249,133 @@ async fn enqueue_inbound_sync_rebuilds_skips_tag_inheritance_but_rebuilds_page_i
         inherited_rows, 0,
         "the inbound fan-out must not rebuild block_tag_inherited — \
          import_and_project already refreshed it synchronously (scoped)"
+    );
+}
+
+/// #2291 test helper: read the test-only fan-out fire counter.
+fn debounce_fires(mat: &Materializer) -> u64 {
+    mat.inbound_rebuild_debounce
+        .fanout_fires
+        .load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// #2291 test helper: yield enough scheduler turns for the debounce loop to
+/// react to a fresh arm or an already-advanced timer (register its
+/// `sleep_until`, or wake → fire → re-park). Time is driven explicitly with
+/// `tokio::time::advance`, so this only needs to hand the runtime turns, not
+/// advance the clock.
+async fn settle() {
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+}
+
+/// #2291 test helper: arm the debounce via a purge-only inbound import
+/// (`changed` empty → no FTS side-tasks), isolating the global fan-out
+/// signal, then settle so the loop registers/recomputes its deadline.
+async fn arm_debounce(mat: &Materializer, purged: &[crate::ulid::BlockId]) {
+    mat.enqueue_inbound_sync_rebuilds(&[], purged)
+        .await
+        .expect("arm inbound rebuild debounce");
+    settle().await;
+}
+
+/// #2291: a burst of inbound imports arriving within the trailing
+/// `INBOUND_REBUILD_DEBOUNCE` window must collapse to EXACTLY ONE run of the
+/// 8 global rebuilds (not one per import). Observed via the test-only
+/// `fanout_fires` counter the debounce loop bumps on each fire.
+///
+/// Virtual time is driven with `tokio::time::pause()` + `advance()` (the
+/// pool/materializer are built under real time first, since `start_paused`
+/// auto-advance would fast-forward over sqlx's real-I/O acquire timeout).
+#[tokio::test]
+async fn inbound_rebuild_debounce_coalesces_burst_to_single_fanout() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    tokio::time::pause();
+    let purged = [crate::ulid::BlockId::test_id("GONE_1")];
+
+    // Arm 5 times, each 50ms apart — all within the 300ms debounce window.
+    for _ in 0..5 {
+        arm_debounce(&mat, &purged).await;
+        tokio::time::advance(std::time::Duration::from_millis(50)).await;
+        settle().await;
+    }
+    assert_eq!(
+        debounce_fires(&mat),
+        0,
+        "no fan-out may fire while the trailing window keeps being reset"
+    );
+
+    // Let the trailing window elapse from the last arm.
+    tokio::time::advance(std::time::Duration::from_millis(400)).await;
+    settle().await;
+    assert_eq!(
+        debounce_fires(&mat),
+        1,
+        "a burst of 5 arms within the debounce window must collapse to ONE fan-out"
+    );
+}
+
+/// #2291: a single inbound import arms the debounce, and the fan-out fires
+/// exactly once after the trailing window elapses.
+#[tokio::test]
+async fn inbound_rebuild_debounce_trailing_fire() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    tokio::time::pause();
+    let purged = [crate::ulid::BlockId::test_id("GONE_2")];
+
+    arm_debounce(&mat, &purged).await;
+    assert_eq!(
+        debounce_fires(&mat),
+        0,
+        "the fan-out must not fire synchronously with the arm"
+    );
+
+    tokio::time::advance(std::time::Duration::from_millis(400)).await;
+    settle().await;
+    assert_eq!(
+        debounce_fires(&mat),
+        1,
+        "one arm must fire exactly one trailing fan-out"
+    );
+}
+
+/// #2291: a sustained stream of imports each arriving *within* the debounce
+/// window (so the trailing deadline never elapses) must still fire by the
+/// `INBOUND_REBUILD_MAX_WAIT` cap measured from the first arm — the fan-out
+/// can never be starved forever.
+#[tokio::test]
+async fn inbound_rebuild_debounce_max_wait_cap_fires_despite_continuous_arming() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    tokio::time::pause();
+    let purged = [crate::ulid::BlockId::test_id("GONE_3")];
+
+    // Arm every 250ms — under the 300ms DEBOUNCE — so the trailing window
+    // is perpetually reset. Arm for ~1s first (< the 2s MAX_WAIT) and
+    // confirm nothing has fired: only the cap can break the stalemate.
+    for _ in 0..4 {
+        arm_debounce(&mat, &purged).await;
+        tokio::time::advance(std::time::Duration::from_millis(250)).await;
+        settle().await;
+    }
+    assert_eq!(
+        debounce_fires(&mat),
+        0,
+        "before MAX_WAIT, continuous sub-DEBOUNCE arming must NOT fire"
+    );
+
+    // Keep arming past MAX_WAIT (total virtual time > 2s from the first arm).
+    for _ in 0..6 {
+        arm_debounce(&mat, &purged).await;
+        tokio::time::advance(std::time::Duration::from_millis(250)).await;
+        settle().await;
+    }
+    assert!(
+        debounce_fires(&mat) >= 1,
+        "the MAX_WAIT cap must force a fan-out even while arming continues"
     );
 }
 

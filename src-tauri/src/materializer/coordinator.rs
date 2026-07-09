@@ -11,16 +11,18 @@ use crate::lifecycle::LifecycleHooks;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-// `AtomicU32` and `Notify` back only the test-only `BlockCountTestHooks`
-// sidecar (#1059); importing them unconditionally would be an
-// unused-import warning in production builds.
+// `AtomicU32` backs only the test-only `BlockCountTestHooks` sidecar
+// (#1059); importing it unconditionally would be an unused-import warning
+// in production builds. (`Notify` is now an unconditional production import
+// for the #2291 inbound-rebuild debounce.)
 #[cfg(test)]
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex, OnceLock};
-#[cfg(test)]
+use std::time::Duration;
 use tokio::sync::Notify;
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
+use tokio::time::Instant;
 
 /// #385: minimum interval between `SELECT COUNT(*) FROM op_log` refreshes
 /// backing [`StatusInfo::total_ops_in_log`]. The Status view polls
@@ -29,6 +31,78 @@ use tokio::task::JoinSet;
 /// making the steady-state poll path O(1). `total_ops_in_log` is a
 /// best-effort diagnostics figure, so up-to-60s staleness is acceptable.
 pub(super) const OP_LOG_COUNT_CACHE_TTL_MS: u64 = 60_000;
+
+/// #2291: trailing-debounce quiet-period for the inbound-sync cache-rebuild
+/// fan-out — how long after the LAST inbound import the debounce loop waits
+/// before firing the 8 global rebuilds. Collapses a typing-cadence burst of
+/// inbound deltas (an active co-edit streams updates every few hundred ms)
+/// into a single fan-out.
+///
+/// Together with [`INBOUND_REBUILD_MAX_WAIT`] these bounds cap
+/// cache-staleness LATENCY. The derived caches the fan-out rebuilds are
+/// ALREADY refreshed asynchronously on the background queue, so this only
+/// defers when a background rebuild is *enqueued* — never a foreground read
+/// path. The honest cost: during a sustained co-edit, derived-cache-backed
+/// views (tag usage counts, page lists, agenda) can lag a remote edit by up
+/// to ~`DEBOUNCE + MAX_WAIT` (~2.3s) plus queue drain before the rebuild
+/// runs — an explicitly accepted tradeoff (#2291), since these caches are
+/// eventually-consistent by design. What it buys is turning ~8 O(vault)
+/// scans *per import* into 8 scans *per burst*.
+pub(super) const INBOUND_REBUILD_DEBOUNCE: Duration = Duration::from_millis(300);
+/// #2291: hard cap, measured from the FIRST inbound import of a burst, on
+/// how long the fan-out can be deferred. A sustained stream of imports each
+/// arriving within [`INBOUND_REBUILD_DEBOUNCE`] of the previous one would
+/// otherwise slide the trailing deadline forward forever; this bound
+/// guarantees the fan-out still fires (bounding cache staleness — see
+/// [`INBOUND_REBUILD_DEBOUNCE`] for why the latency is imperceptible).
+pub(super) const INBOUND_REBUILD_MAX_WAIT: Duration = Duration::from_secs(2);
+
+/// #2291: shared trailing-debounce state that coalesces the inbound-sync
+/// cache-rebuild fan-out (the 8 argument-less global full-vault rebuilds in
+/// `INBOUND_SYNC_CACHE_REBUILD_TASKS`).
+///
+/// Each inbound import drain ARMS this instead of fanning out inline
+/// ([`Materializer::arm_inbound_rebuild_debounce`]); the single driver task
+/// [`Materializer::inbound_rebuild_debounce_loop`] waits out the quiet
+/// period (capped by max-wait) and fires the fan-out exactly once per burst.
+/// Correctness rests on every one of those 8 tasks being idempotent and
+/// reading current SQL state (a full rebuild), so one fire after a burst
+/// settles covers every coalesced import.
+#[derive(Default)]
+pub(super) struct InboundRebuildDebounce {
+    /// `std::sync::Mutex` (never held across an `.await` — the loop
+    /// snapshots under it and drops it before sleeping).
+    pub(super) state: Mutex<DebounceState>,
+    /// Woken by each arm so the loop recomputes its fire deadline. A
+    /// `notify_one` that races ahead of the loop's `notified()` leaves a
+    /// stored permit, so an arm can never be lost.
+    pub(super) notify: Notify,
+    /// #2291 test-only: number of times the loop has fired the 8-task
+    /// fan-out. Lets the coalesce / trailing-fire / max-wait tests assert a
+    /// burst collapses to exactly one fan-out without observing cache state.
+    /// Production never reads this.
+    #[cfg(test)]
+    pub(super) fanout_fires: std::sync::atomic::AtomicU64,
+}
+
+/// #2291: the mutable half of [`InboundRebuildDebounce`].
+///
+/// `armed` is true while a fan-out is pending. `first_request` anchors the
+/// [`INBOUND_REBUILD_MAX_WAIT`] cap (burst start); `last_request` anchors
+/// the [`INBOUND_REBUILD_DEBOUNCE`] trailing window (most recent import).
+#[derive(Default)]
+pub(super) struct DebounceState {
+    pub(super) armed: bool,
+    pub(super) first_request: Option<Instant>,
+    pub(super) last_request: Option<Instant>,
+    /// #2291: monotonic arm counter. The loop snapshots it and, after
+    /// firing, disarms ONLY if it is unchanged. This is an EXACT ABA guard —
+    /// unlike comparing `last_request` `Instant`s, it is robust to two arms
+    /// sharing one timestamp (a coarse monotonic clock, or the paused test
+    /// clock with no `advance` between fire and arm), which would otherwise
+    /// wrongly disarm and drop the second arm's pending fire.
+    pub(super) seq: u64,
+}
 
 #[derive(Clone)]
 pub struct Materializer {
@@ -81,6 +155,14 @@ pub struct Materializer {
     /// [`Self::loro_state`]; the queue consumers thread a clone into
     /// `apply_op` / `apply_op_tx`.
     pub(super) loro: Arc<crate::loro::shared::LoroState>,
+    /// #2291: shared trailing-debounce state coalescing the inbound-sync
+    /// cache-rebuild fan-out. Armed by
+    /// [`Self::arm_inbound_rebuild_debounce`] on each inbound import drain;
+    /// the single driver task [`Self::inbound_rebuild_debounce_loop`]
+    /// (spawned in [`Self::build`]) waits out the quiet period and fires the
+    /// 8 global rebuilds exactly once per burst. See
+    /// [`InboundRebuildDebounce`].
+    pub(super) inbound_rebuild_debounce: Arc<InboundRebuildDebounce>,
     /// Tracks every tokio task spawned via [`Self::spawn_task`] so
     /// [`Self::shutdown`] can call `abort_all()` on them. Without this,
     /// long-running futures (e.g. an FTS rebuild taking many seconds)
@@ -264,7 +346,11 @@ impl Materializer {
         #[cfg(test)]
         let block_count_test_hooks = BlockCountTestHooks::new();
         let app_data_dir: Arc<OnceLock<PathBuf>> = Arc::new(OnceLock::new());
-        // JoinSet must exist before the four `spawn_task` calls
+        // #2291: shared trailing-debounce state for the inbound-sync
+        // cache-rebuild fan-out; the driver task is spawned after `Self` is
+        // built (it needs a `Materializer` clone for the enqueue path).
+        let inbound_rebuild_debounce = Arc::new(InboundRebuildDebounce::default());
+        // JoinSet must exist before the `spawn_task` calls
         // below so every task we spawn is registered for abort-on-shutdown.
         let tasks: Arc<Mutex<JoinSet<()>>> = Arc::new(Mutex::new(JoinSet::new()));
         {
@@ -342,7 +428,7 @@ impl Materializer {
         bg_tx_cell
             .set(bg_tx)
             .expect("freshly-constructed OnceLock cannot already be set");
-        Self {
+        let mat = Self {
             fg_tx: fg_tx_cell,
             bg_tx: bg_tx_cell,
             shutdown_flag,
@@ -353,8 +439,23 @@ impl Materializer {
             block_count_test_hooks,
             app_data_dir,
             loro,
+            inbound_rebuild_debounce,
             tasks,
-        }
+        };
+        // #2291: spawn the trailing-debounce driver for the inbound-sync
+        // cache-rebuild fan-out. It holds a `Materializer` clone so it can
+        // reuse the exact `try_enqueue_background` fire path; the clone
+        // shares the same `tasks` JoinSet, so abort-on-shutdown covers it.
+        //
+        // Teardown note: because this loop retains a full `Materializer`
+        // clone (and thus the `fg_tx`/`bg_tx` sender `Arc`s) for its
+        // lifetime, the consumers can no longer be torn down purely by
+        // dropping all user-held clones (which would close the channels and
+        // let `recv()` return `None`). Teardown therefore relies on
+        // `shutdown()`'s `abort_all()` — consistent with the existing
+        // abort-on-shutdown contract, not a new requirement.
+        Self::spawn_task(&mat.tasks, Self::inbound_rebuild_debounce_loop(mat.clone()));
+        mat
     }
 
     /// #2249 — the per-space Loro engine state this materializer applies

@@ -1,6 +1,6 @@
 //! Dispatch methods for routing ops to the appropriate materializer queues.
 
-use super::coordinator::Materializer;
+use super::coordinator::{INBOUND_REBUILD_DEBOUNCE, INBOUND_REBUILD_MAX_WAIT, Materializer};
 use super::{CreateBlockHint, MaterializeTask, TagOpHint};
 use crate::error::AppError;
 use crate::op::OpType;
@@ -9,6 +9,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use tokio::sync::mpsc;
+use tokio::time::Instant;
 
 /// Shared shape of [`Materializer::fg_sender`] /
 /// [`Materializer::bg_sender`].
@@ -460,9 +461,15 @@ impl Materializer {
         if changed_blocks.is_empty() && purged_blocks.is_empty() {
             return Ok(());
         }
-        for task in INBOUND_SYNC_CACHE_REBUILD_TASKS {
-            self.try_enqueue_background(task.clone())?;
-        }
+        // #2291: instead of fanning out the 8 global full-vault rebuilds on
+        // EVERY inbound drain (~8 O(vault) scans per import), ARM a trailing
+        // debounce. The driver loop fires the identical
+        // `INBOUND_SYNC_CACHE_REBUILD_TASKS` set exactly once after a burst
+        // settles (bounded by max-wait). Each of those 8 tasks is
+        // argument-less and reads current SQL state, so one fire covers
+        // every coalesced import. The FTS path below is UNCHANGED — it is
+        // already changed-set-driven (O(changed), not O(vault)).
+        self.arm_inbound_rebuild_debounce();
         // FTS is not in `FULL_CACHE_REBUILD_TASKS` (local edits reindex
         // per-block via `UpdateFtsBlock`). #421: drive FTS from the exact
         // `changed_blocks` set `apply_remote` already computed, instead of
@@ -493,6 +500,186 @@ impl Materializer {
             }
         }
         Ok(())
+    }
+
+    /// #2291: arm the inbound-sync cache-rebuild trailing debounce instead
+    /// of fanning out the 8 global rebuilds inline.
+    ///
+    /// Records the request time (extending the trailing quiet-window) and,
+    /// on the FIRST arm of an otherwise-idle burst, the burst start
+    /// (anchoring the max-wait cap), then wakes the debounce loop. The loop
+    /// fires [`INBOUND_SYNC_CACHE_REBUILD_TASKS`] exactly once after the
+    /// burst settles (or `INBOUND_REBUILD_MAX_WAIT` elapses). The lock is
+    /// held only for the three field writes — never across an `.await`.
+    fn arm_inbound_rebuild_debounce(&self) {
+        let now = Instant::now();
+        {
+            let mut st = self
+                .inbound_rebuild_debounce
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            st.last_request = Some(now);
+            st.seq = st.seq.wrapping_add(1);
+            if !st.armed {
+                st.armed = true;
+                st.first_request = Some(now);
+            }
+        }
+        // `notify_one` stores a permit if the loop is not currently parked
+        // in `notified()`, so a wake is never lost against a racing loop
+        // iteration.
+        self.inbound_rebuild_debounce.notify.notify_one();
+    }
+
+    /// #2291: enqueue the 8 global inbound-sync cache rebuilds — the exact
+    /// same set/order and `try_enqueue_background` path the pre-debounce
+    /// inline fan-out used. Called once per settled burst by
+    /// [`Self::inbound_rebuild_debounce_loop`].
+    ///
+    /// Runs from a spawned loop with no caller to propagate to, so an
+    /// enqueue error (only reachable as a `Channel` closed at shutdown) is
+    /// warned rather than returned; every task is argument-less and
+    /// idempotent, so a missed fire self-heals on the next inbound sync or
+    /// local edit.
+    fn fire_inbound_rebuild_fanout(&self) {
+        for task in INBOUND_SYNC_CACHE_REBUILD_TASKS {
+            if let Err(e) = self.try_enqueue_background(task.clone()) {
+                tracing::warn!(
+                    error = %e,
+                    "failed to enqueue inbound-sync cache rebuild (debounce fire)"
+                );
+            }
+        }
+    }
+
+    /// #2291: trailing-debounce driver for the inbound-sync cache-rebuild
+    /// fan-out. Spawned once from [`Self::build`]; runs until
+    /// [`Self::shutdown_flag`] is set.
+    ///
+    /// Each iteration snapshots the armed instants under the state
+    /// `std::sync::Mutex` (dropped BEFORE any `.await`), then either:
+    ///   - parks on `notify` when idle (nothing armed);
+    ///   - fires the 8 global rebuilds and disarms when the deadline has
+    ///     passed; or
+    ///   - sleeps until the deadline, racing a fresh arm (`notify`) so a
+    ///     newer request recomputes the deadline on the next iteration.
+    ///
+    /// `fire_at = min(last_request + DEBOUNCE, first_request + MAX_WAIT)`:
+    /// the trailing quiet-period, hard-capped by the max-wait measured from
+    /// the burst start so a sustained sub-`DEBOUNCE` stream can never starve
+    /// the fan-out.
+    ///
+    /// Time is [`tokio::time::Instant`] throughout (not `std::time`) so the
+    /// whole debounce honours `tokio::time::pause()` / `advance()` under
+    /// test; in production its `now()` is the same monotonic clock.
+    ///
+    /// Shutdown tradeoff: a rebuild still pending in the debounce window
+    /// (≤ `DEBOUNCE + MAX_WAIT` ≈ 2.3s) when the process dies is DROPPED, not
+    /// persisted. Production never calls `shutdown()` — it exits abruptly
+    /// (see lib.rs's "abrupt exit is correct" philosophy + the Loro snapshot
+    /// persist on `RunEvent::Exit`) — so this is really "process death in the
+    /// window". The gap is pre-existing (tasks already in the bg channel are
+    /// equally lost on abrupt exit); the debounce only WIDENS it from
+    /// queue-drain-ms to ≤2.3s. It re-converges on the next inbound sync
+    /// carrying a NON-EMPTY changeset, or the next local edit touching the
+    /// cache. CAVEAT: an empty echo re-sync hits the #2264 short-circuit in
+    /// `enqueue_inbound_sync_rebuilds` and does NOT re-arm, so a read-only
+    /// device that only ever receives empty echoes would stay stale until a
+    /// non-empty delta arrives. Accepted for a sub-2s deferred, idempotent
+    /// full rebuild rather than paying retry-queue persistence.
+    pub(super) async fn inbound_rebuild_debounce_loop(mat: Materializer) {
+        let debounce = Arc::clone(&mat.inbound_rebuild_debounce);
+        loop {
+            if mat.shutdown_flag.load(Ordering::Acquire) {
+                break;
+            }
+            // Snapshot the armed instants under the lock, then DROP it
+            // before any `.await` (never hold the state Mutex across await).
+            let snapshot = {
+                let st = debounce
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if st.armed {
+                    Some((
+                        st.first_request
+                            .expect("armed debounce always has a first_request"),
+                        st.last_request
+                            .expect("armed debounce always has a last_request"),
+                        st.seq,
+                    ))
+                } else {
+                    None
+                }
+            };
+            let Some((first, last, snap_seq)) = snapshot else {
+                // Idle: park until an arm wakes us.
+                debounce.notify.notified().await;
+                continue;
+            };
+            let fire_at = std::cmp::min(
+                last + INBOUND_REBUILD_DEBOUNCE,
+                first + INBOUND_REBUILD_MAX_WAIT,
+            );
+            if Instant::now() >= fire_at {
+                mat.fire_inbound_rebuild_fanout();
+                #[cfg(test)]
+                debounce.fanout_fires.fetch_add(1, Ordering::Relaxed);
+                // Disarm — but only if no newer arm landed between our
+                // snapshot and now. Compare the monotonic `seq` (exact, and
+                // robust to two arms sharing a timestamp — see `DebounceState`)
+                // rather than the `last_request` `Instant`. If it advanced, a
+                // request arrived after the snapshot: re-anchor a fresh window
+                // at that newer request (so max-wait is measured from it, not
+                // the just-fired burst) and loop so it still fires.
+                let mut st = debounce
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if st.seq == snap_seq {
+                    st.armed = false;
+                    st.first_request = None;
+                    st.last_request = None;
+                } else {
+                    st.first_request = st.last_request;
+                }
+            } else {
+                // Wait out the remaining window; wake early on a fresh arm
+                // so the next iteration recomputes `fire_at`.
+                tokio::select! {
+                    () = tokio::time::sleep_until(fire_at) => {}
+                    () = debounce.notify.notified() => {}
+                }
+            }
+        }
+    }
+
+    /// #2291 test-only: synchronously fire any pending inbound-sync rebuild
+    /// fan-out and drain the background queue, so debounce-agnostic cache
+    /// tests (which enqueue an inbound rebuild then assert the resulting
+    /// global cache state) stay deterministic without waiting out the
+    /// real-time trailing window. Disarms under the lock first, then fires
+    /// the identical 8-task set; a redundant later loop-fire is harmless
+    /// (idempotent + batch-deduped).
+    #[cfg(test)]
+    pub(super) async fn flush_inbound_rebuild_debounce(&self) {
+        {
+            let mut st = self
+                .inbound_rebuild_debounce
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            st.armed = false;
+            st.first_request = None;
+            st.last_request = None;
+        }
+        self.fire_inbound_rebuild_fanout();
+        // Surface a drain failure here (not as a confusing downstream
+        // cache-count assertion) — this is a test-only helper.
+        self.flush_background()
+            .await
+            .expect("flush_background in flush_inbound_rebuild_debounce");
     }
 
     /// Enqueue a foreground `ApplyOp` and the matching background fan-out
