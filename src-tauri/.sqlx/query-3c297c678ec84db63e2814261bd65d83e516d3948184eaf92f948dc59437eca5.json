@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, space_id, bytes FROM loro_sync_inbox WHERE id > ? ORDER BY id ASC LIMIT ?",
+  "query": "SELECT id, space_id, bytes, purged_ids FROM loro_sync_inbox WHERE id > ? ORDER BY id ASC LIMIT ?",
   "describe": {
     "columns": [
       {
@@ -35,6 +35,17 @@
             "name": "bytes"
           }
         }
+      },
+      {
+        "name": "purged_ids",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "loro_sync_inbox",
+            "name": "purged_ids"
+          }
+        }
       }
     ],
     "parameters": {
@@ -43,8 +54,9 @@
     "nullable": [
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "88ed928f76956e6b08a91b954344e05d76a400b0504f0aff51a6e7c2ae0eb840"
+  "hash": "3c297c678ec84db63e2814261bd65d83e516d3948184eaf92f948dc59437eca5"
 }
