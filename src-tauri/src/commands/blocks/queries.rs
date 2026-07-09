@@ -346,47 +346,47 @@ pub async fn batch_resolve_inner(
 
 /// Tauri command: list blocks with filtering and pagination. Delegates to [`list_blocks_inner`].
 ///
-/// The three agenda knobs (`date`, `date_range`, `source`) are bundled
-/// into a single [`AgendaQuery`] to keep this wrapper under the
-/// `tauri-specta` 10-arg limit after Phase 2 added the space parameter.
-/// The hand-written TS wrapper in `src/lib/tauri.ts` keeps the flat
-/// public API (accepts `agendaDate` / `agendaDateRange` / `agendaSource`
-/// at the top level and marshals them into this struct for the IPC
-/// boundary).
+/// Takes a single [`ListBlocksRequest`] — the intentional per-command IPC
+/// request DTO (#2277 item 7). All `list_blocks` query params (including
+/// the agenda knobs `date` / `date_range` / `source`) live together as
+/// fields of the request; the grouping reflects the request, not the
+/// `tauri-specta` 10-arg transport limit, and a new filter is added as a
+/// field there. The hand-written TS wrapper in `src/lib/tauri.ts` keeps
+/// its flat public API and builds the request only at the IPC boundary.
 ///
 /// # Scope (#2248)
 ///
-/// Takes the canonical [`SpaceScope`] rather than a bare `space_id: String`.
-/// Block listing is inherently per-space (each active block belongs to exactly
-/// one space) and the old bare-string API had no cross-space mode, so
-/// [`SpaceScope::Global`] is rejected via [`SpaceScope::require_active`] instead
-/// of silently widening into a cross-space listing. The frontend wrapper keeps a
-/// required `spaceId: string` and threads it through `requireActiveScope`, which
-/// throws on an empty string, so `Active` is the only shape it can produce and
-/// callers must short-circuit locally when there is no active space.
+/// The orthogonal [`SpaceScope`] stays a separate argument rather than a
+/// request field. Block listing is inherently per-space (each active block
+/// belongs to exactly one space) and the old bare-string API had no
+/// cross-space mode, so [`SpaceScope::Global`] is rejected via
+/// [`SpaceScope::require_active`] instead of silently widening into a
+/// cross-space listing. The frontend wrapper keeps a required
+/// `spaceId: string` and threads it through `requireActiveScope`, which
+/// throws on an empty string, so `Active` is the only shape it can produce
+/// and callers must short-circuit locally when there is no active space.
 #[tauri::command]
 #[specta::specta]
-#[allow(clippy::too_many_arguments)]
 pub async fn list_blocks(
     pool: State<'_, ReadPool>,
-    parent_id: Option<BlockId>,
-    block_type: Option<String>,
-    tag_id: Option<String>,
-    agenda: Option<AgendaQuery>,
-    cursor: Option<String>,
-    limit: Option<i64>,
+    request: ListBlocksRequest,
     scope: SpaceScope,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let space_id = scope.require_active()?.as_str().to_owned();
-    let (agenda_date, agenda_date_start, agenda_date_end, agenda_source) = match agenda {
-        Some(a) => (
-            a.date,
-            a.date_range.as_ref().map(|r| r.start.clone()),
-            a.date_range.as_ref().map(|r| r.end.clone()),
-            a.source,
-        ),
-        None => (None, None, None, None),
-    };
+    let ListBlocksRequest {
+        parent_id,
+        block_type,
+        tag_id,
+        date,
+        date_range,
+        source,
+        cursor,
+        limit,
+    } = request;
+    let agenda_date = date;
+    let agenda_date_start = date_range.as_ref().map(|r| r.start.clone());
+    let agenda_date_end = date_range.as_ref().map(|r| r.end.clone());
+    let agenda_source = source;
     let resp = list_blocks_inner(
         &pool.0,
         parent_id,

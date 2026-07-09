@@ -126,14 +126,21 @@ describe('SavedViews', () => {
 
     expect(await screen.findByText('My view')).toBeInTheDocument()
     expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
-      key: VIEW_TYPE_KEY,
-      valueText: QUERY_VIEW_MARKER,
-      valueDate: null,
-      operator: null,
-      cursor: null,
-      limit: 50,
+      request: {
+        key: VIEW_TYPE_KEY,
+        valueText: QUERY_VIEW_MARKER,
+        valueDate: null,
+        operator: null,
+        cursor: null,
+        limit: 50,
+        excludeParentId: null,
+        contentNonEmpty: null,
+        blockType: null,
+        valueTextIn: null,
+        valueDateRange: null,
+        excludeTodoStates: null,
+      },
       scope: { kind: 'active', space_id: SPACE_ID },
-      extraFilters: null,
     })
   })
 

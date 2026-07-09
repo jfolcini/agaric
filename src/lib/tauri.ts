@@ -475,9 +475,10 @@ export async function getBlocks(ids: string[]): Promise<BlockRow[]> {
  *
  * The public TypeScript shape keeps the agenda knobs (`agendaDate`,
  * `agendaDateRange`, `agendaSource`) as three top-level fields for
- * backward compatibility. On the IPC boundary they are bundled into the
- * Rust `AgendaQuery` struct so the Tauri command stays under the
- * `tauri-specta` 10-arg limit after Phase 2 added `spaceId`.
+ * backward compatibility. On the IPC boundary all query params are
+ * marshalled into the single Rust `ListBlocksRequest` DTO (#2277 item 7) —
+ * the intentional per-command IPC request type. The `spaceId`-derived
+ * `SpaceScope` stays a separate argument.
  *
  * `spaceId` (#2248) — required. The backend filters results to
  * blocks whose owning page carries `space = <spaceId>`. It is wrapped into
@@ -499,26 +500,17 @@ export async function listBlocks(params: {
   limit?: SafeLimit | undefined
   spaceId: string
 }): Promise<PageResponse<BlockRow>> {
-  const hasAgenda =
-    params.agendaDate != null || params.agendaDateRange != null || params.agendaSource != null
-  const agenda = hasAgenda
-    ? {
-        date: params.agendaDate ?? null,
-        dateRange: params.agendaDateRange ?? null,
-        source: params.agendaSource ?? null,
-      }
-    : null
-  return unwrap(
-    await commands.listBlocks(
-      params.parentId ?? null,
-      params.blockType ?? null,
-      params.tagId ?? null,
-      agenda,
-      params.cursor ?? null,
-      params.limit ?? null,
-      requireActiveScope(params.spaceId),
-    ),
-  )
+  const request = {
+    parentId: params.parentId ?? null,
+    blockType: params.blockType ?? null,
+    tagId: params.tagId ?? null,
+    date: params.agendaDate ?? null,
+    dateRange: params.agendaDateRange ?? null,
+    source: params.agendaSource ?? null,
+    cursor: params.cursor ?? null,
+    limit: params.limit ?? null,
+  }
+  return unwrap(await commands.listBlocks(request, requireActiveScope(params.spaceId)))
 }
 
 /**
@@ -1468,9 +1460,10 @@ export async function listUnfinishedTasks(params: {
  *    `value_date` (or the matching reserved column for
  *    `due_date` / `scheduled_date`).
  *
- * On the IPC boundary the five push-down knobs are bundled into the
- * Rust `ExtraQueryFilters` struct so the Tauri command stays under the
- * `tauri-specta` 10-arg limit. The flat public API is preserved here.
+ * On the IPC boundary all query params are marshalled into the single
+ * Rust `QueryByPropertyRequest` DTO (#2277 item 7) — the intentional
+ * per-command IPC request type. The flat public API is preserved here; the
+ * `spaceId`-derived `SpaceScope` stays a separate argument.
  */
 export async function queryByProperty(params: {
   key: string
@@ -1487,35 +1480,21 @@ export async function queryByProperty(params: {
   valueDateRange?: [string, string] | undefined
   excludeTodoStates?: string[] | undefined
 }): Promise<PageResponse<BlockRow>> {
-  const hasExtra =
-    params.excludeParentId !== undefined ||
-    params.contentNonEmpty !== undefined ||
-    params.blockType !== undefined ||
-    params.valueTextIn !== undefined ||
-    params.valueDateRange !== undefined ||
-    params.excludeTodoStates !== undefined
-  const extraFilters = hasExtra
-    ? {
-        excludeParentId: params.excludeParentId ?? null,
-        contentNonEmpty: params.contentNonEmpty ?? null,
-        blockType: params.blockType ?? null,
-        valueTextIn: params.valueTextIn ?? null,
-        valueDateRange: params.valueDateRange ?? null,
-        excludeTodoStates: params.excludeTodoStates ?? null,
-      }
-    : null
-  return unwrap(
-    await commands.queryByProperty(
-      params.key,
-      params.valueText ?? null,
-      params.valueDate ?? null,
-      params.operator ?? null,
-      params.cursor ?? null,
-      params.limit ?? null,
-      toSpaceScope(params.spaceId),
-      extraFilters,
-    ),
-  )
+  const request = {
+    key: params.key,
+    valueText: params.valueText ?? null,
+    valueDate: params.valueDate ?? null,
+    operator: params.operator ?? null,
+    cursor: params.cursor ?? null,
+    limit: params.limit ?? null,
+    excludeParentId: params.excludeParentId ?? null,
+    contentNonEmpty: params.contentNonEmpty ?? null,
+    blockType: params.blockType ?? null,
+    valueTextIn: params.valueTextIn ?? null,
+    valueDateRange: params.valueDateRange ?? null,
+    excludeTodoStates: params.excludeTodoStates ?? null,
+  }
+  return unwrap(await commands.queryByProperty(request, toSpaceScope(params.spaceId)))
 }
 
 /** Per-call property predicate accepted by [`filteredBlocksQuery`].

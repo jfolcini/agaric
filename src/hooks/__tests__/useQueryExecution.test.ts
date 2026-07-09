@@ -510,7 +510,10 @@ describe('fetchPropertyQuery', () => {
     expect(result.hasMore).toBe(false)
     expect(mockedInvoke).toHaveBeenCalledWith(
       'query_by_property',
-      expect.objectContaining({ key: 'priority', valueText: '1' }),
+      // #2277 item 7 — query params nest under `request`.
+      expect.objectContaining({
+        request: expect.objectContaining({ key: 'priority', valueText: '1' }),
+      }),
     )
   })
 
@@ -526,7 +529,9 @@ describe('fetchPropertyQuery', () => {
 
     expect(mockedInvoke).toHaveBeenCalledWith(
       'query_by_property',
-      expect.objectContaining({ key: 'due_date', valueDate: '2025-06-15' }),
+      expect.objectContaining({
+        request: expect.objectContaining({ key: 'due_date', valueDate: '2025-06-15' }),
+      }),
     )
   })
 
@@ -560,8 +565,9 @@ describe('fetchBacklinksQuery', () => {
     expect(result.items).toHaveLength(1)
     expect(mockedInvoke).toHaveBeenCalledWith(
       'list_blocks',
+      // #2277 item 7 — query params nest under `request`; `scope` stays separate.
       expect.objectContaining({
-        parentId: 'TARGET1',
+        request: expect.objectContaining({ parentId: 'TARGET1' }),
         scope: { kind: 'active', space_id: 'SPACE_1' },
       }),
     )
@@ -787,7 +793,7 @@ describe('dispatchQuery', () => {
     expect(mockedInvoke).toHaveBeenCalledWith(
       'list_blocks',
       expect.objectContaining({
-        parentId: 'T1',
+        request: expect.objectContaining({ parentId: 'T1' }),
         scope: { kind: 'active', space_id: 'SPACE_1' },
       }),
     )

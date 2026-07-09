@@ -1051,23 +1051,27 @@ const HANDLERS_TYPED = {
 
   list_blocks: (args) => {
     const a = args as Record<string, unknown>
+    // #2277 item 7 — every list_blocks query param now nests under the
+    // single `request` DTO (the agenda knobs flatten in as `date` /
+    // `dateRange` / `source`); `scope` stays a separate top-level arg.
+    const req = (a['request'] as Record<string, unknown>) ?? a
     let items: Record<string, unknown>[] = [...blocks.values()].filter(
       (b) => !(b['deleted_at'] as string | null),
     )
-    if (a['blockType']) items = items.filter((b) => b['block_type'] === a['blockType'])
-    if (a['parentId']) items = items.filter((b) => b['parent_id'] === a['parentId'])
+    if (req['blockType']) items = items.filter((b) => b['block_type'] === req['blockType'])
+    if (req['parentId']) items = items.filter((b) => b['parent_id'] === req['parentId'])
     // Tag filtering
-    if (a['tagId']) {
-      const tagId = a['tagId'] as string
+    if (req['tagId']) {
+      const tagId = req['tagId'] as string
       items = items.filter((b) => {
         const tags = blockTags.get(b['id'] as string)
         return tags?.has(tagId) ?? false
       })
     }
     // Agenda date filtering — matches blocks by due_date or scheduled_date
-    if (a['agendaDate']) {
-      const dateStr = a['agendaDate'] as string
-      const source = (a['agendaSource'] as string | null) ?? null
+    if (req['date']) {
+      const dateStr = req['date'] as string
+      const source = (req['source'] as string | null) ?? null
       if (source === 'column:due_date') {
         items = items.filter((b) => b['due_date'] === dateStr)
       } else if (source === 'column:scheduled_date') {
@@ -1077,9 +1081,9 @@ const HANDLERS_TYPED = {
       }
     }
     // Agenda date range filtering — for weekly/monthly views
-    if (a['agendaDateRange']) {
-      const range = a['agendaDateRange'] as { start: string; end: string }
-      const source = (a['agendaSource'] as string | null) ?? null
+    if (req['dateRange']) {
+      const range = req['dateRange'] as { start: string; end: string }
+      const source = (req['source'] as string | null) ?? null
       items = items.filter((b) => {
         const due = b['due_date'] as string | null
         const sched = b['scheduled_date'] as string | null
@@ -2487,29 +2491,31 @@ const HANDLERS_TYPED = {
 
   query_by_property: (args) => {
     const a = args as Record<string, unknown>
-    const key = a['key'] as string
-    const valueText = (a['valueText'] as string | null) ?? null
-    const valueDate = (a['valueDate'] as string | null) ?? null
+    // #2277 item 7 — every query_by_property param (key/value/operator,
+    // pagination, and the push-down filters) now nests under the single
+    // `request` DTO; `scope` stays a separate top-level arg.
+    const req = (a['request'] as Record<string, unknown>) ?? a
+    const key = req['key'] as string
+    const valueText = (req['valueText'] as string | null) ?? null
+    const valueDate = (req['valueDate'] as string | null) ?? null
     // Honour `scope: SpaceScope` (mirrors
     // `query_by_property_inner`). Active scope drops rows whose owning
     // page is not stamped with `space = ?spaceId`. Global passes through.
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
-    // / Tier 3.4 — push-down filters bundled into
-    // `extraFilters` on the IPC boundary. Mirror the backend
-    // semantics so FE tests can observe the filter going through.
+    // Push-down filters, now flat fields of the `request` DTO. Mirror the
+    // backend semantics so FE tests can observe the filter going through.
     //   - `excludeParentId` skips rows whose `parent_id` matches.
     //   - `contentNonEmpty` drops null/empty/whitespace-only content.
-    //   - `blockType` (Tier 3.4) restricts to a single block_type.
-    //   - `valueTextIn` (Tier 3.4) is set-membership over value_text;
+    //   - `blockType` restricts to a single block_type.
+    //   - `valueTextIn` is set-membership over value_text;
     //     mutually exclusive with `valueText`.
-    //   - `valueDateRange` (Tier 3.4) is half-open `[from, to)`.
-    const extra = (a['extraFilters'] as Record<string, unknown> | null) ?? null
-    const excludeParentId = ((extra?.['excludeParentId'] as string | null) ?? null) as string | null
-    const contentNonEmpty = Boolean(extra?.['contentNonEmpty'])
-    const blockType = ((extra?.['blockType'] as string | null) ?? null) as string | null
-    const valueTextIn = ((extra?.['valueTextIn'] as string[] | null) ?? null) as string[] | null
-    const valueDateRange = ((extra?.['valueDateRange'] as [string, string] | null) ?? null) as
+    //   - `valueDateRange` is half-open `[from, to)`.
+    const excludeParentId = ((req['excludeParentId'] as string | null) ?? null) as string | null
+    const contentNonEmpty = Boolean(req['contentNonEmpty'])
+    const blockType = ((req['blockType'] as string | null) ?? null) as string | null
+    const valueTextIn = ((req['valueTextIn'] as string[] | null) ?? null) as string[] | null
+    const valueDateRange = ((req['valueDateRange'] as [string, string] | null) ?? null) as
       | [string, string]
       | null
     // Some well-known "properties" live on the block row itself in the seed
