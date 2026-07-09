@@ -71,8 +71,11 @@ const mockEditor = {
 let mockActiveBlockId: string | null = null
 /** Value that mock unmount() returns (simulates editor content). */
 let mockUnmountReturn: string | null = null
+/** Value that mock getMarkdown() returns (simulates the live editor doc). */
+let mockGetMarkdownReturn: string | null = null
 const mockMount = vi.fn()
 const mockUnmount = vi.fn(() => mockUnmountReturn)
+const mockGetMarkdown = vi.fn(() => mockGetMarkdownReturn)
 
 vi.mock('@/editor/use-roving-editor', () => ({
   useRovingEditor: (opts: {
@@ -93,6 +96,7 @@ vi.mock('@/editor/use-roving-editor', () => ({
       editor: useMockEditor ? mockEditor : null,
       mount: mockMount,
       unmount: mockUnmount,
+      getMarkdown: mockGetMarkdown,
       activeBlockId: mockActiveBlockId,
     }
   },
@@ -149,6 +153,15 @@ vi.mock('@/hooks/useViewportObserver', () => ({
 // referentially stable across an edit that re-allocates `blocks`.
 let capturedOnSelect: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
 
+// Capture the whole actions bag so tests can drive context-menu actions
+// (Turn into / Duplicate) exactly as SortableBlock's menu would.
+let capturedBlockActions:
+  | {
+      onTurnInto?: (blockId: string, blockType: string) => void | Promise<void>
+      onDuplicate?: (blockId: string) => void
+    }
+  | undefined
+
 // Minimal mock for SortableBlock — production SortableBlock pulls action
 // callbacks from `useBlockActions()`, so the mock does the same to mirror
 // The real component's wiring.
@@ -165,6 +178,7 @@ vi.mock('../SortableBlock', async () => {
     }) => {
       const actions = useBlockActions()
       capturedOnSelect = actions.onSelect
+      capturedBlockActions = actions as typeof capturedBlockActions
       const onToggleCollapse = actions.onToggleCollapse
       const onToggleTodo = actions.onToggleTodo
       const onTogglePriority = actions.onTogglePriority
@@ -351,12 +365,14 @@ beforeEach(() => {
   capturedOnSlashCommand = undefined
   capturedBlockKeyboardOpts = undefined
   capturedOnSelect = undefined
+  capturedBlockActions = undefined
   capturedQuerySave = undefined
   capturedQueryOpen = false
   mockCalendarOnSelect = undefined
   useMockEditor = false
   mockActiveBlockId = null
   mockUnmountReturn = null
+  mockGetMarkdownReturn = null
   pageStore = createPageBlockStore('PAGE_1')
   pageStore.setState({ blocks: [], loading: false })
   useBlockStore.setState({
@@ -4238,6 +4254,48 @@ describe('BlockTree handleMergeWithPrev', () => {
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
   })
 
+  it('reverts the merge edit and keeps the source block when the delete IPC fails (store remove never rejects)', async () => {
+    const tree = [makeBlock({ id: 'A', content: 'Alpha' }), makeBlock({ id: 'B', content: 'Beta' })]
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'B' })
+
+    // pageStore.remove CATCHES a failed delete_block internally (logs +
+    // toasts) and resolves void — it never rejects. Without the verifying
+    // wrapper the merge would report success, leaving 'Beta' duplicated in
+    // both blocks with no revert.
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'delete_block') throw new Error('test: delete_block rejected')
+      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
+      return {}
+    })
+
+    renderBlockTree()
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.['onMergeWithPrev']).toBeDefined()
+    })
+
+    await act(async () => {
+      ;(capturedBlockKeyboardOpts?.['onMergeWithPrev'] as () => void)?.()
+    })
+
+    // The merge edit committed…
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'A',
+        toText: 'AlphaBeta',
+      })
+    })
+    // …then the failed remove was detected (block still in the store) and the
+    // hook's revert-edit path fired.
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'A', toText: 'Alpha' })
+    })
+    // The source block was never dropped from the store.
+    expect(pageStore.getState().blocksById.has('B')).toBe(true)
+    // No merge success: focus stays where it was.
+    expect(useBlockStore.getState().focusedBlockId).toBe('B')
+  })
+
   it('merge on first block is a no-op', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Only block' })]
     pageStore.setState({ blocks: tree, loading: false })
@@ -4264,6 +4322,107 @@ describe('BlockTree handleMergeWithPrev', () => {
 
     expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
+  })
+})
+
+// =========================================================================
+// Turn-into / Duplicate on a DIRTY focused block — the context menu opens
+// without flushing (its data-editor-portal suppresses the blur persist), so
+// the store content lags live typing. Both actions must flush the mounted
+// editor before reading store content; Turn-into must also remount so the
+// conversion is visible and the next blur can't silently overwrite it.
+// =========================================================================
+
+describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
+      if (cmd === 'list_all_pages_in_space') return []
+      return {}
+    })
+  })
+
+  it('Turn into converts the LIVE editor content and remounts with the converted content', async () => {
+    // Store lags: persisted 'hello', live editor holds 'hello world'.
+    pageStore.setState({ blocks: [makeBlock({ id: 'b1', content: 'hello' })], loading: false })
+    useBlockStore.setState({ focusedBlockId: 'b1' })
+    mockActiveBlockId = 'b1'
+    mockUnmountReturn = 'hello world' // flush captures the live doc
+
+    renderBlockTree()
+    await waitFor(() => {
+      expect(capturedBlockActions?.onTurnInto).toBeDefined()
+    })
+
+    await act(async () => {
+      await capturedBlockActions?.onTurnInto?.('b1', 'h1')
+    })
+
+    // The conversion is computed from the flushed LIVE text, not the stale
+    // store snapshot ('# hello').
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'b1',
+        toText: '# hello world',
+      })
+    })
+    // The editor is remounted with the converted content so the conversion is
+    // visible and its blur baseline can't re-persist the pre-conversion doc.
+    expect(mockMount).toHaveBeenCalledWith('b1', '# hello world')
+  })
+
+  it('Turn into on a non-focused block keeps the store read (no flush, no remount)', async () => {
+    pageStore.setState({
+      blocks: [makeBlock({ id: 'b1', content: 'hello' }), makeBlock({ id: 'b2', content: 'x' })],
+      loading: false,
+    })
+    useBlockStore.setState({ focusedBlockId: 'b2' })
+    mockActiveBlockId = 'b2'
+
+    renderBlockTree()
+    await waitFor(() => {
+      expect(capturedBlockActions?.onTurnInto).toBeDefined()
+    })
+
+    await act(async () => {
+      await capturedBlockActions?.onTurnInto?.('b1', 'h1')
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'b1', toText: '# hello' })
+    })
+    // The mounted editor (on b2) is untouched.
+    expect(mockUnmount).not.toHaveBeenCalled()
+    expect(mockMount).not.toHaveBeenCalledWith('b1', expect.anything())
+  })
+
+  it('Duplicate copies the LIVE editor content of the focused block', async () => {
+    pageStore.setState({ blocks: [makeBlock({ id: 'b1', content: 'draft' })], loading: false })
+    useBlockStore.setState({ focusedBlockId: 'b1' })
+    mockActiveBlockId = 'b1'
+    mockUnmountReturn = 'draft v2' // flush captures the live doc
+    mockGetMarkdownReturn = 'draft v2'
+
+    renderBlockTree()
+    await waitFor(() => {
+      expect(capturedBlockActions?.onDuplicate).toBeDefined()
+    })
+
+    await act(async () => {
+      capturedBlockActions?.onDuplicate?.('b1')
+    })
+
+    // The duplicate is created from the flushed live content, not the stale
+    // store snapshot 'draft'.
+    await waitFor(() => {
+      const call = mockedInvoke.mock.calls.find((c) => c[0] === 'create_blocks_batch')
+      expect(call).toBeDefined()
+      expect(JSON.stringify(call?.[1])).toContain('draft v2')
+      expect(JSON.stringify(call?.[1])).not.toContain('"draft"')
+    })
+    // The original stays open for editing (capture → flush → remount).
+    expect(mockMount).toHaveBeenCalledWith('b1', 'draft v2')
   })
 })
 

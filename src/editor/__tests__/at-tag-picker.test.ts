@@ -415,7 +415,7 @@ describe('AtTagPicker suggestion command chain', () => {
     vi.resetModules()
   })
 
-  it('isCreate path chains insertContent(" ") after onCreate resolves', async () => {
+  it('isCreate path deletes the trigger synchronously, then inserts token + space after onCreate resolves', async () => {
     let capturedCommand:
       | ((ctx: { editor: unknown; range: { from: number; to: number }; props: unknown }) => void)
       | undefined
@@ -444,12 +444,8 @@ describe('AtTagPicker suggestion command chain', () => {
         calls.push(`deleteRange:${r.from}-${r.to}`)
         return chainProxy
       },
-      insertTagRef: (id: string) => {
-        calls.push(`insertTagRef:${id}`)
-        return chainProxy
-      },
-      insertContent: (c: unknown) => {
-        calls.push(`insertContent:${JSON.stringify(c)}`)
+      insertContentAt: (pos: number, content: unknown) => {
+        calls.push(`insertContentAt:${pos}:${JSON.stringify(content)}`)
         return chainProxy
       },
       run: () => {
@@ -457,7 +453,13 @@ describe('AtTagPicker suggestion command chain', () => {
         return true
       },
     }
-    const mockEditor = { chain: () => chainProxy }
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: { doc: { textBetween: () => '@newTag' } },
+      on: vi.fn(),
+      off: vi.fn(),
+      isDestroyed: false,
+    }
 
     capturedCommand?.({
       editor: mockEditor,
@@ -465,14 +467,21 @@ describe('AtTagPicker suggestion command chain', () => {
       props: { id: 'PLACEHOLDER', label: 'newTag', isCreate: true },
     })
 
-    await vi.waitFor(() => expect(onCreate).toHaveBeenCalled())
-    await vi.waitFor(() => expect(calls).toContain('run'))
+    // The trigger range is deleted SYNCHRONOUSLY — before the create IPC
+    // resolves — so the Suggestion match breaks, the popup closes, and a
+    // second Enter/click cannot double-fire the create.
+    expect(calls).toEqual(['focus', 'deleteRange:9-14', 'run'])
 
-    expect(calls).toEqual([
+    await vi.waitFor(() => expect(onCreate).toHaveBeenCalledWith('newTag'))
+    await vi.waitFor(() => expect(calls.length).toBeGreaterThan(3))
+
+    // Token + trailing space land at the captured (tracked) position.
+    expect(calls.slice(3)).toEqual([
       'focus',
-      'deleteRange:9-14',
-      'insertTagRef:NEW_TAG_ULID',
-      'insertContent:" "',
+      `insertContentAt:9:${JSON.stringify([
+        { type: 'tag_ref', attrs: { id: 'NEW_TAG_ULID' } },
+        { type: 'text', text: ' ' },
+      ])}`,
       'run',
     ])
 

@@ -17,7 +17,13 @@
  * this file.
  */
 
-import { isAutolinkableUrl, scanBareUrl, underscoreRunFlank, WORD_CHAR_RE } from './markdown-common'
+import {
+  isAutolinkableUrl,
+  scanBareUrl,
+  ULID_RE,
+  underscoreRunFlank,
+  WORD_CHAR_RE,
+} from './markdown-common'
 import type {
   BlockLevelNode,
   BlockquoteNode,
@@ -116,6 +122,12 @@ function escapeContextChar(s: string, i: number): string | null {
   }
   // `#` before `[` could be confused with tag_ref `#[ULID]` — escape the `#`.
   if (ch === '#' && s[i + 1] === '[') return '\\#'
+  // `((` + uppercase ULID + `))` is byte-identical to a live block_ref token —
+  // a LITERAL occurrence in text would resurrect as a block_ref node on every
+  // reparse. Escape the opening `(` (the parser decodes `\(` back to `(`),
+  // mirroring the `#`+`[` tag_ref guard above; `[[ULID]]` text is already
+  // covered by ALWAYS_ESCAPE's `[`.
+  if (ch === '(' && opensBlockRefToken(s, i)) return '\\('
   // `!` before `[` is the image discriminator (#1434): `![…](…)` parses as an
   // image, so a LITERAL `!` preceding a `[` must be escaped or it turns `!` +
   // a literal `[…]` into an image on reparse. (`\!` decodes back to `!`, so the
@@ -123,6 +135,16 @@ function escapeContextChar(s: string, i: number): string | null {
   // cross-NODE case is defused at the node join in `serializeInlineNodes`.
   if (ch === '!' && s[i + 1] === '[') return '\\!'
   return null
+}
+
+/** Whether `s[i]` opens a literal `((ULID))` block_ref token shape. */
+function opensBlockRefToken(s: string, i: number): boolean {
+  return (
+    s[i + 1] === '(' &&
+    s[i + 28] === ')' &&
+    s[i + 29] === ')' &&
+    ULID_RE.test(s.slice(i + 2, i + 28))
+  )
 }
 
 function escapeText(s: string): string {
@@ -282,16 +304,19 @@ function escapeUrl(url: string): string {
 
 /**
  * Escape the alt text of an `![alt](url)` image (#1434). The alt is an opaque
- * string (not parsed for marks on the way back in), so only the chars that would
- * break the `![…]` label shape on reparse are escaped: a literal `\` is doubled
- * (so it does not consume the next char as an escape on parse) and a literal `]`
- * is backslash-escaped (so it does not close the alt label early). `scanEscape`
- * / `scanBalancedClose` honour both, so the alt round-trips exactly.
+ * string (not parsed for marks on the way back in), so only the chars that
+ * would break the `![…]` label shape on reparse are escaped: a literal `\` is
+ * doubled (so it does not consume the next char as an escape on parse), a
+ * literal `]` would close the alt label early, and a literal `[` would open a
+ * nesting level in `scanBalancedClose` that an UNBALANCED alt (e.g. alt `[`)
+ * never closes — degrading the whole image to garbled text. All three are
+ * backslash-escaped; `scanBalancedClose` honours `\x` pairs and
+ * `unescapeImageAlt` decodes them, so the alt round-trips exactly.
  */
 function escapeImageAlt(alt: string): string {
   let out = ''
   for (const ch of alt) {
-    if (ch === '\\' || ch === ']') out += `\\${ch}`
+    if (ch === '\\' || ch === ']' || ch === '[') out += `\\${ch}`
     else out += ch
   }
   return out
@@ -332,6 +357,38 @@ function serializeInlineCode(text: string): string {
     text.endsWith('`') ||
     ((text.startsWith(' ') || text.endsWith(' ')) && text.trim() !== '')
   return needsPad ? `${fence} ${text} ${fence}` : `${fence}${text}${fence}`
+}
+
+/**
+ * Sanitize inline-math LaTeX for `$…$` emission. The parser's open/close
+ * rules reject exactly three shapes the raw MathNodeView source input can
+ * produce, each of which silently truncated or degraded the node on reparse:
+ *
+ *  - edge whitespace (`$ x$` fails the open rule, `$x $` the close rule) —
+ *    trimmed;
+ *  - an interior unescaped `$` (`$a$b$` closes at the interior `$`) — escaped
+ *    to `\$`, which the parser keeps verbatim inside a span (so an already-
+ *    escaped `\$` is copied through unchanged and the pass is idempotent);
+ *  - a dangling final `\` (would escape the closing `$` away) — doubled;
+ *  - a leading digit (`$0…` reads as currency under the open rule, so the
+ *    span could never reparse) — the latex is wrapped in `{…}`, a KaTeX
+ *    grouping no-op that renders identically.
+ */
+function sanitizeInlineMathLatex(latex: string): string {
+  const trimmed = latex.trim()
+  let out = ''
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i] as string
+    if (ch === '\\') {
+      // Copy `\x` pairs verbatim; double a dangling final `\`.
+      out += i + 1 < trimmed.length ? ch + (trimmed[i + 1] as string) : '\\\\'
+      i++
+      continue
+    }
+    out += ch === '$' ? '\\$' : ch
+  }
+  const first = out[0] ?? ''
+  return first >= '0' && first <= '9' ? `{${out}}` : out
 }
 
 /**
@@ -396,11 +453,15 @@ function serializeInlineChild(
   if (child.type === 'block_ref') {
     return serializeInlineAtom(`((${child.attrs.id}))`, activeMarks)
   }
-  // Inline math (#1437): emit the raw LaTeX wrapped in `$…$`. The LaTeX is not
-  // escaped (it is verbatim math source, taken raw by the parser between the
-  // delimiters); a math node never carries text marks, so it behaves as an atom.
+  // Inline math (#1437): emit the LaTeX wrapped in `$…$`, sanitized so the
+  // emitted token always re-parses as the same math span (edge whitespace,
+  // interior `$` and a dangling `\` would otherwise truncate or degrade the
+  // node — see sanitizeInlineMathLatex). Whitespace-only LaTeX has no
+  // parseable inline form (`$$` is the block fence) and emits nothing. A math
+  // node never carries text marks, so it behaves as an atom.
   if (child.type === 'math_inline') {
-    return serializeInlineAtom(`$${child.attrs.latex}$`, activeMarks)
+    const latex = sanitizeInlineMathLatex(child.attrs.latex)
+    return serializeInlineAtom(latex === '' ? '' : `$${latex}$`, activeMarks)
   }
   // Image (#1434): emit `![alt](url)`. The alt is escaped for the chars that
   // could break the `![…](…)` shape on reparse (`\` and `]`); the URL reuses the
@@ -439,36 +500,98 @@ function serializeInlineNodes(
 ): string {
   let result = ''
   const activeMarks = new Set<string>()
+  let prevTail: SeamTail = 'text'
 
   for (const child of nodes) {
     const piece = serializeInlineChild(child, activeMarks, onUnknownNode)
-    // Cross-node image-discriminator guard (#1434): if the running output ends
-    // with a LITERAL `!` and the next node serializes to a `[`-leading token
-    // (a link group never reaches here, but a `block_link` `[[ULID]]` does), the
-    // concatenation `!` + `[…` would reparse as an image. `escapeText` already
-    // handles `![` within a single text node; this defuses the seam between
-    // nodes. A trailing `\!` (already escaped) ends in `!` too but is preceded
-    // by a backslash, so it is left alone.
-    result = defuseImageSeam(result, piece)
+    // Cross-node seam guards (#1434 image discriminator, #1437 `$` seams):
+    // `escapeText` decides per NODE, so meaning-changing char pairs that only
+    // exist across the join are defused here — see joinInlinePieces.
+    result = joinInlinePieces(result, piece, prevTail)
+    if (piece !== '') prevTail = child.type === 'math_inline' ? 'math' : 'text'
   }
 
-  // Close any remaining open marks
-  result += emitCloseAll(activeMarks)
+  // Close any remaining open marks — through the seam guard too: a node-final
+  // literal `$` followed by a closing delimiter (`</u>`, `**`, …) is exactly
+  // the shape the math OPEN rule accepts across the join.
+  result = joinInlinePieces(result, emitCloseAll(activeMarks), prevTail)
 
   return result
 }
 
 /**
- * Append `piece` to `result`, escaping a trailing literal `!` on `result` when
- * `piece` starts with `[` so the seam cannot reparse as an `![…](…)` image
- * (#1434). A `!` already part of a `\!` escape (preceded by an odd backslash
- * run) is left untouched.
+ * What the previously appended piece's tail means for `$` seam decisions:
+ *  - `'math'` — it ends with a math atom's closing `$`, which must stay bare
+ *    (escaping it would destroy the math) but is invalidated by an immediately
+ *    following digit (the parser's currency closer rule);
+ *  - `'url'`  — it is a bare-URL autolink emission whose trailing chars belong
+ *    to the href; gluing is handled by the #2385 revalidation loop, never by
+ *    escaping into the href;
+ *  - `'text'` — anything else: a trailing unescaped `$` is a literal dollar.
  */
-function defuseImageSeam(result: string, piece: string): string {
+type SeamTail = 'text' | 'math' | 'url'
+
+/**
+ * Append `piece` to `result`, defusing cross-piece seams that would change
+ * meaning on reparse:
+ *
+ *  - a literal `!` + a `[`-leading piece would reparse as an `![…](…)` image
+ *    (#1434) — the `!` is escaped;
+ *  - a literal trailing `$` (unescaped because it was node-final, where
+ *    `dollarOpensMath` cannot see the neighbour) + a piece whose first char
+ *    satisfies the math OPEN rule would let a later `$` on the assembled line
+ *    close a bogus math span (#1437) — the `$` is escaped;
+ *  - a math atom's closing `$` + a digit-leading piece would un-math the atom
+ *    on reparse (currency closer rule) — the digit is escaped instead (`\5`
+ *    decodes back to `5`).
+ *
+ * A `!`/`$` already part of an escape (odd backslash run before it) is left
+ * untouched.
+ */
+function joinInlinePieces(result: string, piece: string, prevTail: SeamTail): string {
+  if (piece === '') return result
   if (result.endsWith('!') && piece.startsWith('[') && !endsWithEscapedBang(result)) {
     return `${result.slice(0, -1)}\\!${piece}`
   }
+  const first = piece[0] as string
+  if (prevTail === 'math' && first >= '0' && first <= '9') {
+    return `${result}\\${piece}`
+  }
+  if (
+    prevTail === 'text' &&
+    endsWithUnescapedDollar(result) &&
+    first !== ' ' &&
+    first !== '\t' &&
+    !(first >= '0' && first <= '9')
+  ) {
+    return `${result.slice(0, -1)}\\$${piece}`
+  }
   return result + piece
+}
+
+/** Whether `result` ends with an unescaped `$` (even backslash run before it). */
+function endsWithUnescapedDollar(result: string): boolean {
+  if (!result.endsWith('$')) return false
+  let n = 0
+  let i = result.length - 2
+  while (i >= 0 && result[i] === '\\') {
+    n++
+    i--
+  }
+  return n % 2 === 0
+}
+
+/**
+ * Seam tail of a plain (unlinked) node group: `'math'` when its last node is a
+ * math atom that actually emitted a token (whitespace-only latex emits
+ * nothing, leaving whatever came before it as the real tail — treated as
+ * `'text'`, the conservative default).
+ */
+function groupTail(nodes: readonly InlineNode[]): SeamTail {
+  const last = nodes.at(-1)
+  return last?.type === 'math_inline' && sanitizeInlineMathLatex(last.attrs.latex) !== ''
+    ? 'math'
+    : 'text'
 }
 
 /** Whether `result` ends with a `\!` escape (odd run of backslashes before the `!`). */
@@ -529,6 +652,7 @@ function serializeParagraph(node: ParagraphNode, onUnknownNode?: (type: string) 
   for (let retry = true; retry; ) {
     retry = false
     result = ''
+    let prevTail: SeamTail = 'text'
     const bareEmits: Array<{ index: number; start: number; href: string }> = []
     for (const [index, group] of groups.entries()) {
       if (group.href !== null) {
@@ -547,16 +671,21 @@ function serializeParagraph(node: ParagraphNode, onUnknownNode?: (type: string) 
           rawText === group.href &&
           isAutolinkableUrl(group.href)
         ) {
-          result = defuseImageSeam(result, group.href)
+          result = joinInlinePieces(result, group.href, prevTail)
           bareEmits.push({ index, start: result.length - group.href.length, href: group.href })
+          prevTail = 'url'
         } else {
           const inner = serializeInlineNodes(stripped, onUnknownNode)
           // A link group leads with `[`, so a literal `!` ending the previous
-          // group would reparse as an image (#1434) — defuse the seam.
-          result = defuseImageSeam(result, `[${inner}](${escapeUrl(group.href)})`)
+          // group would reparse as an image (#1434), and a trailing literal `$`
+          // could close a bogus math span across the seam — defuse both.
+          result = joinInlinePieces(result, `[${inner}](${escapeUrl(group.href)})`, prevTail)
+          prevTail = 'text'
         }
       } else {
-        result = defuseImageSeam(result, serializeInlineNodes(group.nodes, onUnknownNode))
+        const piece = serializeInlineNodes(group.nodes, onUnknownNode)
+        result = joinInlinePieces(result, piece, prevTail)
+        if (piece !== '') prevTail = groupTail(group.nodes)
       }
     }
     for (const emit of bareEmits) {
@@ -593,6 +722,10 @@ function serializeParagraph(node: ParagraphNode, onUnknownNode?: (type: string) 
     .replace(/^>( |$)/, '\\>$1')
   // The task prefix (#1435) is prepended AFTER block-marker escaping so the
   // leading-`-` escape only sees the user text, never our own `- [ ] ` marker.
+  // Content that serializes to NOTHING (e.g. a whitespace-only math atom) gets
+  // the same canonical `- [ ]` (no trailing space) as the empty-content case,
+  // so the emitted form matches what its reparse re-serializes to.
+  if (taskPrefix && escaped === '') return taskPrefix.trimEnd()
   return taskPrefix + escaped
 }
 
@@ -664,6 +797,21 @@ function escapeCellPipes(text: string): string {
   return out
 }
 
+/**
+ * Replace each hardBreak atom in a table-cell paragraph with a single space
+ * (markdown cells are single-line — see the call site in serializeTable).
+ * Node-level so downstream escaping sees the real neighbour: e.g. a cell of
+ * `text('$') + hardBreak` must emit `$` (space follows, no math risk), not an
+ * escaped `\$` keyed on a hardBreak token that the cell then strips.
+ */
+function degradeCellHardBreaks(p: ParagraphNode): ParagraphNode {
+  if (!p.content || !p.content.some((n) => n.type === 'hardBreak')) return p
+  return {
+    ...p,
+    content: p.content.map((n) => (n.type === 'hardBreak' ? { type: 'text', text: ' ' } : n)),
+  }
+}
+
 function serializeTable(node: TableNode, onUnknownNode?: (type: string) => void): string {
   if (!node.content || node.content.length === 0) return ''
   const rows = node.content
@@ -691,7 +839,14 @@ function serializeTable(node: TableNode, onUnknownNode?: (type: string) => void)
           cell.content && cell.content.length > 0
             ? escapeCellPipes(
                 cell.content
-                  .map((p) => serializeParagraph(p as ParagraphNode, onUnknownNode))
+                  // A table row must stay a single line: a hardBreak inside a
+                  // cell paragraph would embed its `\`+newline token in the
+                  // row, splitting it and destroying the whole table on
+                  // reparse. Degrade the break to a single space — the same
+                  // policy as the multi-paragraph join below. Done at the
+                  // NODE level (not on the emitted string) so the escape/seam
+                  // decisions see the space the cell will actually contain.
+                  .map((p) => serializeParagraph(degradeCellHardBreaks(p), onUnknownNode))
                   .join(' ')
                   .trim(),
               )

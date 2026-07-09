@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useBlockStore } from '../blocks'
+import { useNavigationStore } from '../navigation'
+import { useTabsStore } from '../tabs'
 
 describe('useBlockStore', () => {
   beforeEach(() => {
@@ -140,6 +142,80 @@ describe('useBlockStore', () => {
       useBlockStore.getState().selectAll(['A', 'B', 'C'])
       useBlockStore.getState().setFocused('A')
       expect(useBlockStore.getState().selectedBlockIds).toEqual([])
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Selection is page-scoped: navigating away must clear it (finding 34).
+  //
+  // `selectedBlockIds` is a GLOBAL array while blocks render per-page; nothing
+  // in the navigation path cleared it, so ids selected on page A survived a
+  // navigation to page B — the batch toolbar showed a stale count and a batch
+  // delete hit invisible blocks on another page.
+  // ---------------------------------------------------------------------------
+  describe('selection cleared on page navigation (finding 34)', () => {
+    beforeEach(() => {
+      useNavigationStore.setState({ currentView: 'page-editor' })
+      useTabsStore.setState({
+        tabs: [{ id: '0', pageStack: [{ pageId: 'PAGE_A', title: 'Page A' }], label: 'Page A' }],
+        activeTabIndex: 0,
+      })
+      useBlockStore.getState().clearSelected()
+    })
+
+    it('clears the multi-selection when the active page changes', () => {
+      useBlockStore.getState().toggleSelected('A1')
+      useBlockStore.getState().toggleSelected('A2')
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['A1', 'A2'])
+
+      useTabsStore.getState().navigateToPage('PAGE_B', 'Page B')
+
+      expect(useBlockStore.getState().selectedBlockIds).toEqual([])
+    })
+
+    it('clears the selection (and keyboard anchor) when the view changes away from the page editor', () => {
+      useBlockStore.setState({
+        selectedBlockIds: ['A1', 'A2'],
+        selectionAnchorId: 'A1',
+        selectionFocusId: 'A2',
+      })
+
+      useNavigationStore.getState().setView('search')
+
+      expect(useBlockStore.getState().selectedBlockIds).toEqual([])
+      expect(useBlockStore.getState().selectionAnchorId).toBeNull()
+      expect(useBlockStore.getState().selectionFocusId).toBeNull()
+    })
+
+    it('clears the selection when navigating back up the page stack', () => {
+      useTabsStore.setState({
+        tabs: [
+          {
+            id: '0',
+            pageStack: [
+              { pageId: 'PAGE_A', title: 'Page A' },
+              { pageId: 'PAGE_B', title: 'Page B' },
+            ],
+            label: 'Page B',
+          },
+        ],
+        activeTabIndex: 0,
+      })
+      useBlockStore.getState().toggleSelected('B1')
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['B1'])
+
+      useTabsStore.getState().goBack()
+
+      expect(useBlockStore.getState().selectedBlockIds).toEqual([])
+    })
+
+    it('keeps the selection across unrelated navigation-store changes on the same page', () => {
+      useBlockStore.getState().toggleSelected('A1')
+
+      // Same view, same page — only the transient scroll-target changed.
+      useNavigationStore.getState().setSelectedBlockId('A1')
+
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['A1'])
     })
   })
 

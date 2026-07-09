@@ -1,5 +1,6 @@
 import { renderHook } from '@testing-library/react'
 import { Editor } from '@tiptap/core'
+import Blockquote from '@tiptap/extension-blockquote'
 import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
 import Document from '@tiptap/extension-document'
 import { BulletList } from '@tiptap/extension-list'
@@ -1695,5 +1696,122 @@ describe('useBlockKeyboard — cleanup on a destroyed editor (#1017)', () => {
     offSpy.mockRestore()
     editor.destroy()
     element.remove()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// atStart/atEnd must be STRUCTURAL, not numeric. Inside a blockquote/callout/
+// list doc the first text position is 2+ (extra opening tokens), so the old
+// `from <= 1` / `to >= docSize - 1` probes were permanently false: Backspace
+// at the visual start never merged (ProseMirror lifted the paragraph out of
+// the quote instead) and boundary arrows never navigated — a keyboard
+// dead-end at the first/last block.
+// ---------------------------------------------------------------------------
+describe('structural atStart/atEnd — nested first/last nodes (blockquote / list)', () => {
+  function makeNestedEditor(content: object): { editor: Editor; cleanup: () => void } {
+    const element = document.createElement('div')
+    document.body.append(element)
+    const editor = new Editor({
+      element,
+      extensions: [Document, Paragraph, Text, Blockquote, BulletList, ListItem],
+      content,
+    })
+    return {
+      editor,
+      cleanup: () => {
+        editor.destroy()
+        element.remove()
+      },
+    }
+  }
+
+  const quoteDoc = {
+    type: 'doc',
+    content: [
+      {
+        type: 'blockquote',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'quoted text' }] }],
+      },
+    ],
+  }
+
+  it('Backspace at the visual start of a blockquote doc calls onMergeWithPrev', () => {
+    const { editor, cleanup } = makeNestedEditor(quoteDoc)
+    try {
+      editor.commands.setTextSelection(2) // first text position (doc > blockquote > paragraph)
+      const cbs = makeCallbacks()
+      const event = makeEvent('Backspace')
+      handleBlockKeyDown(event, editor, cbs)
+      expect(cbs._calls['onMergeWithPrev']).toBe(1)
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('ArrowUp at the visual start of a blockquote doc calls onFlush + onFocusPrev', () => {
+    const { editor, cleanup } = makeNestedEditor(quoteDoc)
+    try {
+      editor.commands.setTextSelection(2)
+      const cbs = makeCallbacks()
+      handleBlockKeyDown(makeEvent('ArrowUp'), editor, cbs)
+      expect(cbs._calls['onFlush']).toBe(1)
+      expect(cbs._calls['onFocusPrev']).toBe(1)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('ArrowDown at the visual end of a blockquote doc calls onFlush + onFocusNext', () => {
+    const { editor, cleanup } = makeNestedEditor(quoteDoc)
+    try {
+      // Last text position: doc(15) − blockquote close(1) − paragraph close(1).
+      editor.commands.setTextSelection(editor.state.doc.content.size - 2)
+      const cbs = makeCallbacks()
+      handleBlockKeyDown(makeEvent('ArrowDown'), editor, cbs)
+      expect(cbs._calls['onFlush']).toBe(1)
+      expect(cbs._calls['onFocusNext']).toBe(1)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('Backspace mid-quote does NOT merge (structural check does not over-fire)', () => {
+    const { editor, cleanup } = makeNestedEditor(quoteDoc)
+    try {
+      editor.commands.setTextSelection(5)
+      const cbs = makeCallbacks()
+      const event = makeEvent('Backspace')
+      handleBlockKeyDown(event, editor, cbs)
+      expect(cbs._calls['onMergeWithPrev']).toBeUndefined()
+      expect(event.preventDefault).not.toHaveBeenCalled()
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('Backspace at the visual start of a bullet-list doc calls onMergeWithPrev', () => {
+    const { editor, cleanup } = makeNestedEditor({
+      type: 'doc',
+      content: [
+        {
+          type: 'bulletList',
+          content: [
+            {
+              type: 'listItem',
+              content: [{ type: 'paragraph', content: [{ type: 'text', text: 'item' }] }],
+            },
+          ],
+        },
+      ],
+    })
+    try {
+      editor.commands.setTextSelection(3) // doc > bulletList > listItem > paragraph
+      const cbs = makeCallbacks()
+      handleBlockKeyDown(makeEvent('Backspace'), editor, cbs)
+      expect(cbs._calls['onMergeWithPrev']).toBe(1)
+    } finally {
+      cleanup()
+    }
   })
 })

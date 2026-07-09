@@ -16,7 +16,18 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { deleteDraft, saveDraft } from '@/lib/tauri'
+
+import { useDraftAutosave } from '../useDraftAutosave'
 import { EDITOR_PORTAL_SELECTOR, useEditorBlur } from '../useEditorBlur'
+
+// Only used by the findings-2/48 integration tests (real useDraftAutosave
+// composed with useEditorBlur); the useEditorBlur unit tests never reach IPC.
+vi.mock('@/lib/tauri', () => ({
+  saveDraft: vi.fn(() => Promise.resolve()),
+  flushDraft: vi.fn(() => Promise.resolve()),
+  deleteDraft: vi.fn(() => Promise.resolve()),
+}))
 
 /**
  * Historical overlay class/attribute selectors. Pre--L-3 these were
@@ -703,7 +714,9 @@ describe('useEditorBlur', () => {
   describe('call ordering', () => {
     it('calls edit before setFocused(null) so store is updated before unmount', () => {
       const callOrder: string[] = []
-      const mockEdit = vi.fn(() => callOrder.push('edit'))
+      const mockEdit = vi.fn(() => {
+        callOrder.push('edit')
+      })
       const mockSetFocused = vi.fn(() => callOrder.push('setFocused'))
       const mockUnmount = vi.fn<() => string | null>(() => 'updated text')
 
@@ -732,7 +745,9 @@ describe('useEditorBlur', () => {
 
     it('calls splitBlock before setFocused(null) when content has newlines', () => {
       const callOrder: string[] = []
-      const mockSplitBlock = vi.fn(() => callOrder.push('splitBlock'))
+      const mockSplitBlock = vi.fn(() => {
+        callOrder.push('splitBlock')
+      })
       const mockSetFocused = vi.fn(() => callOrder.push('setFocused'))
       const mockUnmount = vi.fn(() => 'line1\nline2')
 
@@ -1171,6 +1186,203 @@ describe('useEditorBlur', () => {
       expect(mockSetFocused).toHaveBeenCalledWith(null)
 
       sidebar.remove()
+    })
+  })
+
+  // -- Findings 2/48: failed blur save must not destroy the draft row ------
+
+  describe('findings 2/48 — save outcome gates the draft discard', () => {
+    const flushMicrotasks = async () => {
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+    }
+
+    it('forwards the edit outcome and the saved content to discardDraft', () => {
+      const editOutcome = Promise.resolve(false)
+      const mockEdit = vi.fn(() => editOutcome)
+      const mockDiscardDraft = vi.fn()
+
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: vi.fn<() => string | null>(() => 'updated text'),
+      })
+
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: mockEdit,
+          splitBlock: vi.fn(),
+          setFocused: vi.fn(),
+          discardDraft: mockDiscardDraft,
+        }),
+      )
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent())
+      })
+
+      expect(mockDiscardDraft).toHaveBeenCalledWith(editOutcome, 'updated text')
+    })
+
+    it('forwards the Step 3 early-persist outcome on the #1062 skip path', () => {
+      const editOutcome = Promise.resolve(false)
+      const mockEdit = vi.fn(() => editOutcome)
+      const mockDiscardDraft = vi.fn()
+
+      // Fresh block: Step 3 early-persists, Step 5's unmount returns the
+      // identical content so the duplicate edit() is skipped — the discard
+      // must still be gated on the ONE edit that actually ran.
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        originalMarkdown: '',
+        getMarkdown: vi.fn(() => 'typed text'),
+        unmount: vi.fn<() => string | null>(() => 'typed text'),
+      })
+
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: mockEdit,
+          splitBlock: vi.fn(),
+          setFocused: vi.fn(),
+          discardDraft: mockDiscardDraft,
+        }),
+      )
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent())
+      })
+
+      expect(mockEdit).toHaveBeenCalledTimes(1)
+      expect(mockDiscardDraft).toHaveBeenCalledWith(editOutcome, 'typed text')
+    })
+
+    it('forwards the splitBlock outcome on the split path', () => {
+      mockShouldSplitOnBlur.mockReturnValue(true)
+      const splitOutcome = Promise.resolve()
+      const mockSplitBlock = vi.fn(() => splitOutcome)
+      const mockDiscardDraft = vi.fn()
+
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: vi.fn<() => string | null>(() => 'line1\nline2'),
+      })
+
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: vi.fn(),
+          splitBlock: mockSplitBlock,
+          setFocused: vi.fn(),
+          discardDraft: mockDiscardDraft,
+        }),
+      )
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent())
+      })
+
+      expect(mockDiscardDraft).toHaveBeenCalledWith(splitOutcome, 'line1\nline2')
+    })
+
+    it('passes no outcome when content is unchanged (stale-draft cleanup stays eager)', () => {
+      const mockDiscardDraft = vi.fn()
+
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: vi.fn<() => string | null>(() => null),
+      })
+
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: vi.fn(),
+          splitBlock: vi.fn(),
+          setFocused: vi.fn(),
+          discardDraft: mockDiscardDraft,
+        }),
+      )
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent())
+      })
+
+      expect(mockDiscardDraft).toHaveBeenCalledWith(undefined, undefined)
+    })
+
+    /**
+     * End-to-end regression for the content-loss window: real
+     * `useDraftAutosave` composed with `useEditorBlur`, edit IPC failing
+     * (resolves false — the store contract; it never rejects). Pre-fix the
+     * blur discarded the draft row while the edit was in flight, so the
+     * failed save left the typed paragraph recoverable NOWHERE.
+     */
+    it('edit resolving false keeps the draft row and re-saves the typed text (integration)', async () => {
+      const mockEdit = vi.fn(() => Promise.resolve(false))
+
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: vi.fn<() => string | null>(() => 'typed paragraph'),
+      })
+
+      const { result } = renderHook(() => {
+        const { discardDraft } = useDraftAutosave('B1', 'typed paragraph')
+        return useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: mockEdit,
+          splitBlock: vi.fn(),
+          setFocused: vi.fn(),
+          discardDraft,
+        })
+      })
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent())
+      })
+      await flushMicrotasks()
+
+      // The draft row — the boot-time flush_all_drafts recovery net — must
+      // survive the failed save, and the failed content is re-saved so the
+      // row exists even when no 2s debounce tick ever landed.
+      expect(vi.mocked(deleteDraft)).not.toHaveBeenCalled()
+      expect(vi.mocked(saveDraft)).toHaveBeenCalledWith('B1', 'typed paragraph')
+    })
+
+    it('edit resolving true deletes the draft row (integration)', async () => {
+      const mockEdit = vi.fn(() => Promise.resolve(true))
+
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: vi.fn<() => string | null>(() => 'typed paragraph'),
+      })
+
+      const { result } = renderHook(() => {
+        const { discardDraft } = useDraftAutosave('B1', 'typed paragraph')
+        return useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: mockEdit,
+          splitBlock: vi.fn(),
+          setFocused: vi.fn(),
+          discardDraft,
+        })
+      })
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent())
+      })
+      await flushMicrotasks()
+
+      expect(vi.mocked(deleteDraft)).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(deleteDraft)).toHaveBeenCalledWith('B1')
     })
   })
 })

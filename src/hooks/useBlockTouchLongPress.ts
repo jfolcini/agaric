@@ -62,12 +62,29 @@ export function useBlockTouchLongPress({
 
   const handleTouchStart = useCallback(
     (e: React.TouchEvent) => {
+      // A second touchstart before touchend (two-finger scroll / pinch) must
+      // cancel any pending timer FIRST — assigning a new timer below would
+      // otherwise orphan it (uncancellable, fires mid-scroll) — and a
+      // multi-touch gesture is never a context-menu long-press, so bail.
+      clearLongPress()
+      if (e.touches.length > 1) return
       const touch = e.touches[0]
       if (!touch) return
-      const target = e.target as HTMLElement
+      const target = e.target as HTMLElement | null
+      // Inside the mounted editor's contenteditable the NATIVE long-press owns
+      // the gesture (word selection / caret placement — the touch route to the
+      // selection bubble menu). Hijacking it wiped the user's selection via
+      // `removeAllRanges()` and popped the block menu over the text mid-edit.
+      if (
+        target &&
+        typeof target.closest === 'function' &&
+        target.closest('.ProseMirror, [contenteditable="true"]')
+      ) {
+        return
+      }
       touchStartPos.current = { x: touch.clientX, y: touch.clientY }
       touchStartEvent.current = e
-      longPressTimer.current = setTimeout(() => {
+      const timer = setTimeout(() => {
         // #926 f2 (precedence guard 2/2): the lazy re-check. If a drag activated
         // between touchstart and now (250 ms < 400 ms), the drag wins — bail
         // without opening the menu. The eager cancel (`clearLongPress` on
@@ -85,7 +102,7 @@ export function useBlockTouchLongPress({
           if (typeof window !== 'undefined') {
             window.getSelection?.()?.removeAllRanges()
           }
-          const linkEl = target.closest('.external-link') as
+          const linkEl = target?.closest('.external-link') as
             | HTMLAnchorElement
             | HTMLSpanElement
             | null
@@ -94,11 +111,16 @@ export function useBlockTouchLongPress({
             : undefined
           openContextMenu(touch.clientX, touch.clientY, linkUrl)
         }
-        longPressTimer.current = null
-        touchStartEvent.current = null
+        // Null the refs only while they still reference THIS timer — an
+        // orphaned callback must not discard a newer pending timer's handle.
+        if (longPressTimer.current === timer) {
+          longPressTimer.current = null
+          touchStartEvent.current = null
+        }
       }, LONG_PRESS_DELAY)
+      longPressTimer.current = timer
     },
-    [openContextMenu, isDraggingRef],
+    [openContextMenu, isDraggingRef, clearLongPress],
   )
 
   const handleTouchEnd = useCallback(() => {

@@ -12,10 +12,12 @@
 import { Extension, InputRule } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 
-import { logger } from '@/lib/logger'
-
 import type { PickerItem } from '../SuggestionList'
-import { createPickerPlugin, resolveAndInsertPickerToken } from './picker-plugin'
+import {
+  createPickerPlugin,
+  createPickerTokenFromCommand,
+  resolveAndInsertPickerToken,
+} from './picker-plugin'
 
 export const blockLinkPickerPluginKey = new PluginKey('blockLinkPicker')
 
@@ -150,26 +152,18 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
         command: ({ editor, range, props }) => {
           const item = props as PickerItem
           if (item.isCreate && extensionOptions.onCreate) {
-            extensionOptions
-              .onCreate(item.label)
-              .then((newId) => {
-                if (editor.isDestroyed) return
-                editor
-                  .chain()
-                  .focus()
-                  .deleteRange(range)
-                  .insertBlockLink(newId)
-                  .insertContent(' ')
-                  .run()
-              })
-              .catch((err) => {
-                logger.error(
-                  'BlockLinkPicker',
-                  'Failed to create page for block link',
-                  undefined,
-                  err,
-                )
-              })
+            // Shared create path: deletes the trigger range synchronously
+            // (closing the popup and the double-create window) and tracks
+            // the insertion offset across the async create IPC.
+            createPickerTokenFromCommand({
+              editor,
+              range,
+              label: item.label,
+              onCreate: extensionOptions.onCreate,
+              tokenFor: (id) => ({ type: 'block_link', attrs: { id } }),
+              loggerComponent: 'BlockLinkPicker',
+              errorMessage: 'Failed to create page for block link',
+            })
           } else {
             editor
               .chain()

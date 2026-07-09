@@ -13,6 +13,7 @@
  * Zero external dependencies. Moved verbatim from the original monolith.
  */
 
+import { ULID_RE } from '../markdown-common'
 import type {
   BlockLevelNode,
   BlockLinkNode,
@@ -27,7 +28,9 @@ import type {
 
 // -- Constants ----------------------------------------------------------------
 
-export const ULID_RE = /^[0-9A-Z]{26}$/
+// Canonical home moved to `markdown-common.ts` (the serializer needs it too);
+// re-exported here so the vocab surface is unchanged.
+export { ULID_RE } from '../markdown-common'
 export const MAX_LINK_SCAN = 10_000
 export const CALLOUT_RE = /^\[!(\w+)\]\s?(.*)/i
 /**
@@ -225,17 +228,17 @@ export function unescapeUrl(url: string): string {
 }
 
 /**
- * Unescape an image alt label (#1434): decode the `\]` and `\\` escapes that
- * `escapeImageAlt` emits, mirroring it exactly so an alt containing `]` or `\`
- * round-trips. Other backslash sequences are left verbatim (the serializer only
- * ever emits these two).
+ * Unescape an image alt label (#1434): decode the `\[`, `\]` and `\\` escapes
+ * that `escapeImageAlt` emits, mirroring it exactly so an alt containing `[`,
+ * `]` or `\` round-trips. Other backslash sequences are left verbatim (the
+ * serializer only ever emits these three).
  */
 export function unescapeImageAlt(alt: string): string {
   let out = ''
   for (let i = 0; i < alt.length; i++) {
     const ch = alt[i]
     const next = alt[i + 1]
-    if (ch === '\\' && (next === ']' || next === '\\')) {
+    if (ch === '\\' && (next === ']' || next === '[' || next === '\\')) {
       out += next
       i++
       continue

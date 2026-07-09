@@ -89,6 +89,45 @@ describe('convertBlockContent', () => {
   })
 })
 
+describe('convertBlockContent — multi-line content is never dropped', () => {
+  // Multi-line code blocks are the normal case: Enter inside a fence inserts
+  // newlines (#725), so Turn-into must not truncate to the first line.
+  const fencedMulti = '```\nline1\nline2\nline3\n```'
+
+  it('preserves every inner line when unwrapping a multi-line code block to a paragraph', () => {
+    expect(convertBlockContent(fencedMulti, 'paragraph')).toBe('line1\nline2\nline3')
+  })
+
+  it('re-marks only the first line for headings and lists, keeping the rest', () => {
+    expect(convertBlockContent(fencedMulti, 'h2')).toBe('## line1\nline2\nline3')
+    expect(convertBlockContent(fencedMulti, 'numbered-list')).toBe('1. line1\nline2\nline3')
+    expect(convertBlockContent(fencedMulti, 'bullet-list')).toBe('- line1\nline2\nline3')
+  })
+
+  it('marks every line when converting to quote/callout so the whole block stays quoted', () => {
+    expect(convertBlockContent(fencedMulti, 'quote')).toBe('> line1\n> line2\n> line3')
+    expect(convertBlockContent(fencedMulti, 'callout')).toBe('> [!INFO] line1\n> line2\n> line3')
+  })
+
+  it('preserves a multi-line table verbatim when converting to paragraph', () => {
+    const table = '| a | b |\n| - | - |\n| 1 | 2 |'
+    expect(convertBlockContent(table, 'paragraph')).toBe(table)
+  })
+
+  it('preserves a multi-line math block when converting to paragraph', () => {
+    expect(convertBlockContent('$$\nx^2\n$$', 'paragraph')).toBe('$$\nx^2\n$$')
+  })
+
+  it('strips the per-line quote markers when converting a multi-line quote/callout', () => {
+    expect(convertBlockContent('> l1\n> l2', 'paragraph')).toBe('l1\nl2')
+    expect(convertBlockContent('> [!INFO] title\n> body', 'h1')).toBe('# title\nbody')
+  })
+
+  it('keeps every line (markers stripped) when wrapping multi-line content in a code fence', () => {
+    expect(convertBlockContent('> l1\n> l2', 'code')).toBe('```\nl1\nl2\n```')
+  })
+})
+
 describe('turnIdToBlockType', () => {
   it('maps valid turn- ids to block-type tokens', () => {
     expect(turnIdToBlockType('turn-paragraph')).toBe('paragraph')

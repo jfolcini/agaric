@@ -11,10 +11,12 @@
 import { Extension, InputRule } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 
-import { logger } from '@/lib/logger'
-
 import type { PickerItem } from '../SuggestionList'
-import { createPickerPlugin, resolveAndInsertPickerToken } from './picker-plugin'
+import {
+  createPickerPlugin,
+  createPickerTokenFromCommand,
+  resolveAndInsertPickerToken,
+} from './picker-plugin'
 
 export const atTagPickerPluginKey = new PluginKey('atTagPicker')
 
@@ -96,21 +98,18 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
         command: ({ editor, range, props }) => {
           const item = props as PickerItem
           if (item.isCreate && extensionOptions.onCreate) {
-            extensionOptions
-              .onCreate(item.label)
-              .then((newId) => {
-                if (editor.isDestroyed) return
-                editor
-                  .chain()
-                  .focus()
-                  .deleteRange(range)
-                  .insertTagRef(newId)
-                  .insertContent(' ')
-                  .run()
-              })
-              .catch((err) => {
-                logger.error('AtTagPicker', 'Failed to create tag', undefined, err)
-              })
+            // Shared create path: deletes the trigger range synchronously
+            // (closing the popup and the double-create window) and tracks
+            // the insertion offset across the async create IPC.
+            createPickerTokenFromCommand({
+              editor,
+              range,
+              label: item.label,
+              onCreate: extensionOptions.onCreate,
+              tokenFor: (id) => ({ type: 'tag_ref', attrs: { id } }),
+              loggerComponent: 'AtTagPicker',
+              errorMessage: 'Failed to create tag',
+            })
           } else {
             editor.chain().focus().deleteRange(range).insertTagRef(item.id).insertContent(' ').run()
           }

@@ -7,6 +7,8 @@
  */
 
 import type { Editor } from '@tiptap/core'
+import type { Node as PMNode } from '@tiptap/pm/model'
+import { Selection } from '@tiptap/pm/state'
 import { useCallback, useEffect } from 'react'
 
 import { isTabIndentEnabled } from '../lib/editor-preferences'
@@ -111,7 +113,43 @@ export interface BlockKeyboardCallbacks {
 /** Minimal editor shape needed by the key handler (for testability). */
 export interface EditorState {
   selection: { from: number; to: number; empty: boolean }
-  doc: { content: { size: number } }
+  doc: {
+    content: { size: number }
+    /**
+     * Present on a real ProseMirror doc; plain test doubles may omit it, in
+     * which case the boundary checks fall back to the legacy numeric probes.
+     */
+    resolve?: (pos: number) => unknown
+  }
+}
+
+/**
+ * Structural doc-boundary probes. The old numeric checks (`from <= 1`,
+ * `to >= docSize - 1`) are only correct when the doc's first/last child is a
+ * flat textblock: inside a blockquote/callout/list the first text position is
+ * 2+ (extra opening tokens), so both flags were permanently false — Backspace
+ * at the visual start never merged and boundary arrows never navigated (a
+ * keyboard dead-end at the first block). On a real PM doc, compare against
+ * `Selection.atStart/atEnd` (the first/last selectable position, duck-typed
+ * via `doc.resolve` — never `instanceof`, see the anti-pattern note in
+ * AGENTS.md). Test doubles without `resolve` keep the numeric fallback.
+ */
+function isAtDocStart(state: EditorState): boolean {
+  const { from, empty } = state.selection
+  if (!empty) return false
+  if (typeof state.doc.resolve === 'function') {
+    return Selection.atStart(state.doc as unknown as PMNode).from === from
+  }
+  return from <= 1
+}
+
+function isAtDocEnd(state: EditorState): boolean {
+  const { to, empty } = state.selection
+  if (!empty) return false
+  if (typeof state.doc.resolve === 'function') {
+    return Selection.atEnd(state.doc as unknown as PMNode).to === to
+  }
+  return to >= state.doc.content.size - 1
 }
 
 export interface EditorLike {
@@ -137,11 +175,9 @@ export function handleBlockKeyDown(
   editor: EditorLike,
   callbacks: BlockKeyboardCallbacks,
 ): void {
-  const { from, to, empty: selectionEmpty } = editor.state.selection
-  const docSize = editor.state.doc.content.size
   const ctx: KeyContext = {
-    atStart: from <= 1 && selectionEmpty,
-    atEnd: to >= docSize - 1 && selectionEmpty,
+    atStart: isAtDocStart(editor.state),
+    atEnd: isAtDocEnd(editor.state),
     isEmpty: editor.isEmpty,
     // #725 — node-type guards: inside a code block or table, Enter must
     // insert a newline/paragraph (ProseMirror's newlineInCode / splitBlock)
@@ -538,8 +574,9 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       // (newline in the fence, paragraph/cell edits) — same #725 guard as keydown.
       if ((editor.isActive?.('codeBlock') ?? false) || (editor.isActive?.('table') ?? false)) return
 
-      const { from, empty } = editor.state.selection
-      const atStart = from <= 1 && empty
+      // Structural boundary probe — same fix as the keydown path (see
+      // isAtDocStart): `from <= 1` never held inside blockquote/list docs.
+      const atStart = isAtDocStart(editor.state)
 
       if (it === 'insertParagraph') {
         // #2276 — inside a list item, defer to ProseMirror's splitListItem so a

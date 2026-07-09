@@ -23,6 +23,7 @@ import type React from 'react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
@@ -66,10 +67,7 @@ export function FormatMenu({ editor }: FormatMenuProps): React.ReactElement {
                 aria-label={t(btn.label)}
                 aria-pressed={active}
                 className={cn(active && toolbarActiveClass)}
-                onPointerDown={(e) => {
-                  e.preventDefault()
-                  btn.action()
-                }}
+                {...toolbarPressHandlers(btn.action)}
               >
                 <btn.icon className="h-3.5 w-3.5" />
               </Button>

@@ -30,6 +30,7 @@ import { useTranslation } from 'react-i18next'
 
 import { CalloutTypeSelector } from '@/components/editor-toolbar/CalloutTypeSelector'
 import { CodeLanguageSelector } from '@/components/editor-toolbar/CodeLanguageSelector'
+import { toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { dispatchBlockEvent } from '@/lib/block-events'
@@ -108,11 +109,10 @@ export function TurnIntoMenu({ editor, onClose }: TurnIntoMenuProps): React.Reac
               variant="ghost"
               size="sm"
               className={cn(rowClass, active && toolbarActiveClass)}
-              onPointerDown={(e) => {
-                e.preventDefault()
+              {...toolbarPressHandlers(() => {
                 dispatchBlockEvent('TURN_INTO_BLOCK', { type: opt.blockType })
                 onClose()
-              }}
+              })}
             >
               <opt.icon className="h-3.5 w-3.5 mr-2" />
               <span>{t(turnIntoTypeKey(opt.blockType))}</span>
@@ -125,11 +125,10 @@ export function TurnIntoMenu({ editor, onClose }: TurnIntoMenuProps): React.Reac
           size="sm"
           aria-label={t('toolbar.divider')}
           className={rowClass}
-          onPointerDown={(e) => {
-            e.preventDefault()
+          {...toolbarPressHandlers(() => {
             dispatchBlockEvent('INSERT_DIVIDER')
             onClose()
-          }}
+          })}
         >
           <Minus className="h-3.5 w-3.5 mr-2" />
           <span>{t('toolbar.divider')}</span>

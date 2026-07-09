@@ -25,6 +25,8 @@ import {
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
+
 import { Button } from './ui/button'
 import { Separator } from './ui/separator'
 
@@ -111,11 +113,10 @@ export function TableOpsSelector({ editor, onClose }: TableOpsSelectorProps): Re
                   : 'justify-start text-sm gap-2'
               }
               data-testid={`table-op-${op.id}`}
-              onPointerDown={(e) => {
-                e.preventDefault()
+              {...toolbarPressHandlers(() => {
                 op.run(editor)
                 onClose()
-              }}
+              })}
             >
               <Icon className="h-4 w-4 shrink-0" />
               {t(op.labelKey)}

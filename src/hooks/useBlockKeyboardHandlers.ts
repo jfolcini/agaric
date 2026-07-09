@@ -6,6 +6,7 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
 import { parse } from '../editor/markdown-serializer'
+import type { DocNode } from '../editor/types'
 import { pmEndOfFirstBlock } from '../editor/types'
 import type { DeleteBlockOpts } from '../editor/use-block-keyboard'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
@@ -96,6 +97,33 @@ export function stripLeadingBlockMarker(content: string): string {
 function joinMergedContent(prevContent: string, currentContent: string): string {
   if (prevContent === '') return currentContent
   return prevContent + stripLeadingBlockMarker(currentContent)
+}
+
+/**
+ * Node types a Backspace-at-start merge must NOT textually join into. The
+ * merge stores `prevContent + currentContent`; when the previous block's
+ * markdown ENDS in one of these verbatim constructs, the appended raw text
+ * corrupts the construct instead of joining after it:
+ *   - code fence: '```js\ncode\n```' + 'text' leaves the fence unclosed
+ *     ('```text' fails the closing-fence regex), swallowing the text into the
+ *     code block — and the next serialize canonicalizes the corruption.
+ *   - math block: '$$\nE=mc^2\n$$' + 'text' degrades to plain paragraphs.
+ *   - divider: '---' + 'text' re-parses as the paragraph '---text'.
+ *   - table: the appended text breaks the last row's shape.
+ * The #725 keyboard guard only inspects the CURRENT editor's node type, so a
+ * plain paragraph merging INTO one of these still reached the join.
+ */
+const VERBATIM_MERGE_TARGET_TYPES = new Set(['codeBlock', 'table', 'math_block', 'horizontalRule'])
+
+/**
+ * True when the previous block's parsed markdown ends in a verbatim construct
+ * (see {@link VERBATIM_MERGE_TARGET_TYPES}). The merge handlers treat this as
+ * a no-op join — keep both blocks, only move the caret (Logseq behaviour
+ * against code blocks) — because there is no safe textual concatenation.
+ */
+function endsInVerbatimBlock(prevDoc: DocNode): boolean {
+  const last = prevDoc.content?.at(-1)
+  return last != null && VERBATIM_MERGE_TARGET_TYPES.has(last.type)
 }
 
 /**
@@ -243,6 +271,10 @@ export function useBlockKeyboardHandlers({
     (opts?: DeleteBlockOpts) => {
       if (!focusedBlockId) return
       if (deleteInProgress.current) return
+      // An in-flight merge has already unmounted the roving editor (its doc is
+      // empty), so an autorepeat Backspace routes here for the very block the
+      // merge is removing — bail instead of racing a second remove().
+      if (mergeInProgress.current) return
       if (collapsedVisible.length <= 1) {
         notify.error(t('blockTree.cannotDeleteLastBlock'))
         return
@@ -250,9 +282,21 @@ export function useBlockKeyboardHandlers({
       deleteInProgress.current = true
       const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
       rovingEditorRef.current.unmount()
-      remove(focusedBlockId).finally(() => {
-        deleteInProgress.current = false
-      })
+      remove(focusedBlockId)
+        .catch((err: unknown) => {
+          // The store toasts its own delete failure; this catch exists for the
+          // BlockTree verifying wrapper (which THROWS when the block is still
+          // present after remove) so the rejection doesn't go unhandled.
+          logger.warn(
+            'useBlockKeyboardHandlers',
+            'Failed to delete block',
+            { blockId: focusedBlockId },
+            err,
+          )
+        })
+        .finally(() => {
+          deleteInProgress.current = false
+        })
       announce(t('announce.blockDeleted'))
       if (idx > 0) {
         const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
@@ -388,8 +432,40 @@ export function useBlockKeyboardHandlers({
        */
       reparentChildren?: () => Promise<void>
     }): Promise<boolean> => {
+      // Best-effort revert of the merge edit after a reparent/remove failure.
+      // The store's edit resolves `false` on failure (it never rejects and
+      // toasts its own save error), so honor both failure signals here.
+      const revertEdit = async (): Promise<void> => {
+        let reverted = false
+        try {
+          reverted = await edit(params.prevBlockId, params.prevContent)
+        } catch (revertErr) {
+          logger.warn(
+            'useBlockKeyboardHandlers',
+            'Failed to revert edit after merge failure',
+            {
+              blockId: params.prevBlockId,
+            },
+            revertErr,
+          )
+          return
+        }
+        if (!reverted) {
+          logger.warn('useBlockKeyboardHandlers', 'Failed to revert edit after merge failure', {
+            blockId: params.prevBlockId,
+          })
+        }
+      }
       try {
-        await edit(params.prevBlockId, params.mergedContent)
+        // Store contract (#730 family): pageStore.edit RESOLVES `false` on
+        // failure (it rolls its optimistic write back and toasts internally)
+        // — it NEVER rejects. The boolean is the production failure signal;
+        // ignoring it let a failed merge-edit fall through to remove() and
+        // permanently delete the source block whose merged content was never
+        // saved. Route a false resolution into the shared failure path.
+        if (!(await edit(params.prevBlockId, params.mergedContent))) {
+          throw new Error('edit resolved false (store rolled the merge edit back)')
+        }
       } catch (err) {
         logger.error(
           'useBlockKeyboardHandlers',
@@ -419,16 +495,7 @@ export function useBlockKeyboardHandlers({
             },
             err,
           )
-          await edit(params.prevBlockId, params.prevContent).catch((revertErr: unknown) => {
-            logger.warn(
-              'useBlockKeyboardHandlers',
-              'Failed to revert edit after merge failure',
-              {
-                blockId: params.prevBlockId,
-              },
-              revertErr,
-            )
-          })
+          await revertEdit()
           params.onRemoveFailureCleanup()
           notify.error(t('blockTree.mergeBlocksFailed'))
           return false
@@ -446,16 +513,7 @@ export function useBlockKeyboardHandlers({
           err,
         )
         // Revert the edit to avoid partial state (merged content in prev + original in current)
-        await edit(params.prevBlockId, params.prevContent).catch((revertErr: unknown) => {
-          logger.warn(
-            'useBlockKeyboardHandlers',
-            'Failed to revert edit after merge failure',
-            {
-              blockId: params.prevBlockId,
-            },
-            revertErr,
-          )
-        })
+        await revertEdit()
         params.onRemoveFailureCleanup()
         notify.error(t('blockTree.mergeBlocksFailed'))
         return false
@@ -467,104 +525,58 @@ export function useBlockKeyboardHandlers({
 
   const handleMergeWithPrev = useCallback(async () => {
     if (!focusedBlockId) return
+    // Re-entrancy guard: the merge unmounts the roving editor (emptying its
+    // doc) and then awaits IPC, so an autorepeat/double Backspace in that
+    // window would route through the Backspace-on-empty rule into
+    // handleDeleteBlock and race a second remove() against the in-flight
+    // merge (cascade-deleting the source subtree). Mirror deleteInProgress.
+    if (mergeInProgress.current) return
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
     if (idx <= 0) return
 
     const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
-
-    const currentContent = rovingEditorRef.current.unmount() ?? collapsedVisible[idx]?.content ?? ''
     const prevContent = prevBlock.content ?? ''
-
-    // #921 f2 — neutralize a leading block-marker so the joined-in text doesn't
-    // re-parse as a list item / heading / blockquote on the previous block.
-    const mergedContent = joinMergedContent(prevContent, currentContent)
     const prevDoc = parse(prevContent)
-    const joinPoint = pmEndOfFirstBlock(prevDoc)
 
-    // #1342 — if the merged-away block has children, reparent them onto the
-    // merge target before it is removed (otherwise the backend cascade soft-
-    // deletes the whole subtree). Plan from the FULL flat tree, not the
-    // collapsed/visible projection.
-    const reparent = planChildReparent(blocks, focusedBlockId, prevBlock.id)
-
-    const remount = () => rovingEditorRef.current.mount(focusedBlockId, currentContent)
-    const ok = await mergeBlocksAndHandle({
-      prevBlockId: prevBlock.id,
-      removeBlockId: focusedBlockId,
-      prevContent,
-      mergedContent,
-      editLogMessage: 'Failed to merge blocks (edit step)',
-      editLogBlockId: prevBlock.id,
-      removeLogMessage: 'Failed to merge blocks (remove step)',
-      removeLogBlockId: focusedBlockId,
-      onEditFailureCleanup: remount,
-      onRemoveFailureCleanup: remount,
-      ...(reparent && {
-        reparentChildren: () => moveBlocks(reparent.childIds, prevBlock.id, reparent.newIndex),
-      }),
-    })
-    if (!ok) return
-
-    setFocused(prevBlock.id)
-    rovingEditorRef.current.mount(prevBlock.id, mergedContent)
-
-    // #976 f22 — capture the merge TARGET so the deferred cursor placement can
-    // verify the editor is still mounted on that block when the timer fires. If
-    // the user arrow-navigates before the 0ms callback runs, `handleFocusNext/
-    // Prev` remounts the roving editor onto a DIFFERENT block (updating
-    // `activeBlockId`), and a blind `setTextSelection` would land the caret in
-    // the wrong block. Guard on `activeBlockId === targetBlockId` — the same
-    // deterministic check `useEditorBlur` uses — so a stale timer is a no-op.
-    const targetBlockId = prevBlock.id
-    if (pendingMergeSelectionRef.current !== null) {
-      window.clearTimeout(pendingMergeSelectionRef.current)
+    // No safe textual join into a verbatim prev block (code fence / table /
+    // math / divider — see endsInVerbatimBlock): persist the current block's
+    // typing and just move the caret to the end of the previous block,
+    // keeping both blocks intact.
+    if (endsInVerbatimBlock(prevDoc)) {
+      handleFlush()
+      setFocused(prevBlock.id)
+      rovingEditorRef.current.mount(prevBlock.id, prevContent, { cursorPlacement: 'end' })
+      return
     }
-    pendingMergeSelectionRef.current = window.setTimeout(() => {
-      pendingMergeSelectionRef.current = null
-      const editor = rovingEditorRef.current.editor
-      if (editor && rovingEditorRef.current.activeBlockId === targetBlockId) {
-        const pmPos = Math.min(joinPoint, editor.state.doc.content.size - 1)
-        editor.commands.setTextSelection(pmPos)
-      }
-    }, 0)
-  }, [focusedBlockId, collapsedVisible, blocks, moveBlocks, mergeBlocksAndHandle, setFocused])
 
-  const handleMergeById = useCallback(
-    async (blockId: string) => {
-      const idx = collapsedVisible.findIndex((b) => b.id === blockId)
-      if (idx <= 0) return
+    mergeInProgress.current = true
+    try {
+      const currentContent =
+        rovingEditorRef.current.unmount() ?? collapsedVisible[idx]?.content ?? ''
 
-      const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
-
-      const editorContent = focusedBlockId === blockId ? rovingEditorRef.current.unmount() : null
-      const currentContent = editorContent ?? collapsedVisible[idx]?.content ?? ''
-      const prevContent = prevBlock.content ?? ''
-
-      // #921 f2 — see handleMergeWithPrev: strip a leading block-marker so the
-      // joined-in text stays inline instead of forming a new construct.
+      // #921 f2 — neutralize a leading block-marker so the joined-in text doesn't
+      // re-parse as a list item / heading / blockquote on the previous block.
       const mergedContent = joinMergedContent(prevContent, currentContent)
+      const joinPoint = pmEndOfFirstBlock(prevDoc)
 
-      const remountIfNeeded = () => {
-        if (editorContent !== null) {
-          rovingEditorRef.current.mount(blockId, currentContent)
-        }
-      }
+      // #1342 — if the merged-away block has children, reparent them onto the
+      // merge target before it is removed (otherwise the backend cascade soft-
+      // deletes the whole subtree). Plan from the FULL flat tree, not the
+      // collapsed/visible projection.
+      const reparent = planChildReparent(blocks, focusedBlockId, prevBlock.id)
 
-      // #1342 — reparent the merged-away block's children onto the merge
-      // target before removal (see handleMergeWithPrev).
-      const reparent = planChildReparent(blocks, blockId, prevBlock.id)
-
+      const remount = () => rovingEditorRef.current.mount(focusedBlockId, currentContent)
       const ok = await mergeBlocksAndHandle({
         prevBlockId: prevBlock.id,
-        removeBlockId: blockId,
+        removeBlockId: focusedBlockId,
         prevContent,
         mergedContent,
-        editLogMessage: 'Failed to merge blocks by ID (edit step)',
-        editLogBlockId: blockId,
-        removeLogMessage: 'Failed to merge blocks by ID (remove step)',
-        removeLogBlockId: blockId,
-        onEditFailureCleanup: remountIfNeeded,
-        onRemoveFailureCleanup: remountIfNeeded,
+        editLogMessage: 'Failed to merge blocks (edit step)',
+        editLogBlockId: prevBlock.id,
+        removeLogMessage: 'Failed to merge blocks (remove step)',
+        removeLogBlockId: focusedBlockId,
+        onEditFailureCleanup: remount,
+        onRemoveFailureCleanup: remount,
         ...(reparent && {
           reparentChildren: () => moveBlocks(reparent.childIds, prevBlock.id, reparent.newIndex),
         }),
@@ -573,6 +585,94 @@ export function useBlockKeyboardHandlers({
 
       setFocused(prevBlock.id)
       rovingEditorRef.current.mount(prevBlock.id, mergedContent)
+
+      // #976 f22 — capture the merge TARGET so the deferred cursor placement can
+      // verify the editor is still mounted on that block when the timer fires. If
+      // the user arrow-navigates before the 0ms callback runs, `handleFocusNext/
+      // Prev` remounts the roving editor onto a DIFFERENT block (updating
+      // `activeBlockId`), and a blind `setTextSelection` would land the caret in
+      // the wrong block. Guard on `activeBlockId === targetBlockId` — the same
+      // deterministic check `useEditorBlur` uses — so a stale timer is a no-op.
+      const targetBlockId = prevBlock.id
+      if (pendingMergeSelectionRef.current !== null) {
+        window.clearTimeout(pendingMergeSelectionRef.current)
+      }
+      pendingMergeSelectionRef.current = window.setTimeout(() => {
+        pendingMergeSelectionRef.current = null
+        const editor = rovingEditorRef.current.editor
+        if (editor && rovingEditorRef.current.activeBlockId === targetBlockId) {
+          const pmPos = Math.min(joinPoint, editor.state.doc.content.size - 1)
+          editor.commands.setTextSelection(pmPos)
+        }
+      }, 0)
+    } finally {
+      mergeInProgress.current = false
+    }
+  }, [
+    focusedBlockId,
+    collapsedVisible,
+    blocks,
+    moveBlocks,
+    mergeBlocksAndHandle,
+    setFocused,
+    handleFlush,
+  ])
+
+  const handleMergeById = useCallback(
+    async (blockId: string) => {
+      // Re-entrancy guard shared with handleMergeWithPrev (see comment there).
+      if (mergeInProgress.current) return
+      const idx = collapsedVisible.findIndex((b) => b.id === blockId)
+      if (idx <= 0) return
+
+      const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
+      const prevContent = prevBlock.content ?? ''
+
+      // No safe textual join into a verbatim prev block (see
+      // handleMergeWithPrev) — the context-menu merge is simply a no-op.
+      if (endsInVerbatimBlock(parse(prevContent))) return
+
+      mergeInProgress.current = true
+      try {
+        const editorContent = focusedBlockId === blockId ? rovingEditorRef.current.unmount() : null
+        const currentContent = editorContent ?? collapsedVisible[idx]?.content ?? ''
+
+        // #921 f2 — see handleMergeWithPrev: strip a leading block-marker so the
+        // joined-in text stays inline instead of forming a new construct.
+        const mergedContent = joinMergedContent(prevContent, currentContent)
+
+        const remountIfNeeded = () => {
+          if (editorContent !== null) {
+            rovingEditorRef.current.mount(blockId, currentContent)
+          }
+        }
+
+        // #1342 — reparent the merged-away block's children onto the merge
+        // target before removal (see handleMergeWithPrev).
+        const reparent = planChildReparent(blocks, blockId, prevBlock.id)
+
+        const ok = await mergeBlocksAndHandle({
+          prevBlockId: prevBlock.id,
+          removeBlockId: blockId,
+          prevContent,
+          mergedContent,
+          editLogMessage: 'Failed to merge blocks by ID (edit step)',
+          editLogBlockId: blockId,
+          removeLogMessage: 'Failed to merge blocks by ID (remove step)',
+          removeLogBlockId: blockId,
+          onEditFailureCleanup: remountIfNeeded,
+          onRemoveFailureCleanup: remountIfNeeded,
+          ...(reparent && {
+            reparentChildren: () => moveBlocks(reparent.childIds, prevBlock.id, reparent.newIndex),
+          }),
+        })
+        if (!ok) return
+
+        setFocused(prevBlock.id)
+        rovingEditorRef.current.mount(prevBlock.id, mergedContent)
+      } finally {
+        mergeInProgress.current = false
+      }
     },
     [collapsedVisible, blocks, moveBlocks, focusedBlockId, mergeBlocksAndHandle, setFocused],
   )
@@ -583,8 +683,25 @@ export function useBlockKeyboardHandlers({
   // Re-entrancy guard: prevents rapid Enter presses from creating duplicate blocks.
   const enterSaveInProgress = useRef(false)
 
+  // Re-entrancy guard for merges: handleMergeWithPrev/handleMergeById unmount
+  // the roving editor (resetting its doc to empty) BEFORE awaiting the edit
+  // IPC, so an autorepeat Backspace in that window matches the
+  // Backspace-on-empty rule and an Enter matches the create rule — both on
+  // the block that is being merged away. handleDeleteBlock/handleEnterSave
+  // honor this flag so no concurrent structural op races the merge.
+  const mergeInProgress = useRef(false)
+
   const handleEnterSave = useCallback(async () => {
     if (!focusedBlockId) return
+    // An in-flight merge has unmounted the editor; splitAtCaret on the emptied
+    // doc would take the legacy path and create a stray sibling under the
+    // block being merged away. Drop the Enter until the merge settles.
+    if (mergeInProgress.current) {
+      logger.warn('useBlockKeyboardHandlers', 'Enter press dropped — merge still in progress', {
+        blockId: focusedBlockId,
+      })
+      return
+    }
     if (enterSaveInProgress.current) {
       logger.warn(
         'useBlockKeyboardHandlers',
@@ -609,7 +726,15 @@ export function useBlockKeyboardHandlers({
       const split = rovingEditorRef.current.splitAtCaret?.() ?? null
       if (split && split.after !== '') {
         rovingEditorRef.current.unmount()
-        await edit(focusedBlockId, split.before)
+        // #730 family — edit() RESOLVES false on failure (the store rolled the
+        // optimistic write back and toasted); it never rejects. Abort the
+        // split BEFORE creating anything, restoring the full unsplit content,
+        // so a failed before-caret save can't fork the block into stale text
+        // plus an orphan after-text sibling (mirrors splitBlock's #730 guard).
+        if (!(await edit(focusedBlockId, split.before))) {
+          rovingEditorRef.current.mount(focusedBlockId, savedContent)
+          return
+        }
         const newBlockId = await createBelow(focusedBlockId, split.after)
         if (newBlockId) {
           // NOT added to justCreatedBlockIds: the new block carries real

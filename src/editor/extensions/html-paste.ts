@@ -31,6 +31,7 @@
  */
 
 import { Extension } from '@tiptap/core'
+import { Fragment, Slice } from '@tiptap/pm/model'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 
@@ -189,9 +190,11 @@ function insertInlineMarkdown(view: EditorView, markdown: string): void {
     return
   }
   try {
-    const fragmentJson = { type: 'paragraph', content: inlineNodes }
-    const pmNode = schema.nodeFromJSON(fragmentJson)
-    const tr = view.state.tr.replaceSelectionWith(pmNode, false)
+    // Splice the INLINE nodes into the current textblock as an open slice.
+    // Wrapping them in a paragraph NODE (replaceSelectionWith) would split the
+    // parent textblock in three instead of inserting at the caret.
+    const fragment = Fragment.from(inlineNodes.map((node) => schema.nodeFromJSON(node)))
+    const tr = view.state.tr.replaceSelection(new Slice(fragment, 0, 0))
     view.dispatch(tr)
   } catch (err) {
     logger.warn('htmlPaste', 'inline insert failed; falling back to text', undefined, err)
@@ -217,6 +220,11 @@ export const HtmlPaste = Extension.create({
         key: htmlPastePluginKey,
         props: {
           handlePaste: (view, event) => {
+            // Inside a code textblock the paste must stay literal: let
+            // ProseMirror's default code-context paste insert the text/plain
+            // payload into the fence (guard convention: math.ts, query-hint.ts).
+            if (view.state.selection.$from.parent.type.spec.code) return false
+
             const html = event.clipboardData?.getData('text/html')
             // No usable HTML → fall through to task-paste / external-link /
             // the default plain-text path unchanged (no regressions).

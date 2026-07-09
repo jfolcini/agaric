@@ -192,10 +192,25 @@ const mockGetPropertyDef = vi.fn().mockResolvedValue(null)
 const mockListBlocks = vi
   .fn()
   .mockResolvedValue({ items: [], next_cursor: null, has_more: false, total_count: null })
+// Finding 42 — the swipe-delete toast's Undo now pins the specific delete op:
+// it reads the page history, undoes at the delete's depth, verifies the
+// reversed ref, and rolls a mis-undo back. These mocks drive that flow.
+const mockListPageHistory = vi
+  .fn()
+  .mockResolvedValue({ items: [], next_cursor: null, has_more: false, total_count: null })
+const mockUndoPageOp = vi.fn()
+const mockRedoPageOp = vi.fn()
+// The per-page store's `load()` (invoked after a successful targeted undo)
+// resolves an empty subtree so the refresh is a no-op in these tests.
+const mockLoadPageSubtree = vi.fn().mockResolvedValue({ blocks: [] })
 vi.mock('@/lib/tauri', () => ({
   setProperty: (...args: unknown[]) => mockSetProperty(...args),
   getPropertyDef: (...args: unknown[]) => mockGetPropertyDef(...args),
   listBlocks: (...args: unknown[]) => mockListBlocks(...args),
+  listPageHistory: (...args: unknown[]) => mockListPageHistory(...args),
+  undoPageOp: (...args: unknown[]) => mockUndoPageOp(...args),
+  redoPageOp: (...args: unknown[]) => mockRedoPageOp(...args),
+  loadPageSubtree: (...args: unknown[]) => mockLoadPageSubtree(...args),
 }))
 
 // Mock sonner toast
@@ -259,6 +274,7 @@ import userEvent from '@testing-library/user-event'
 import { TestBlockActionsOverride } from '@/components/__tests__/_test-utils/TestBlockActionsOverride'
 import { SortableBlock } from '@/components/editor/SortableBlock'
 import { useBlockStore } from '@/stores/blocks'
+import { PageBlockStoreProvider } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
 
 // #2222: `dispatchBlockEvent` no longer broadcasts a legacy document
@@ -2186,6 +2202,141 @@ describe('SortableBlock drag cancels long-press', () => {
 // =========================================================================
 // Due date chip tests (#565)
 // =========================================================================
+
+// =========================================================================
+// Touch gesture arbitration (findings 33 / 35): once a dnd drag or a fired
+// long-press CLAIMS the in-progress touch, the row must stop feeding the
+// swipe recognizer — otherwise releasing a horizontal drag (or a post-menu
+// drag) also fires indent/outdent/swipe-delete on the same block.
+// =========================================================================
+
+describe('SortableBlock touch gesture arbitration (findings 33/35)', () => {
+  const swipeOnTouchStart = vi.fn()
+  const swipeOnTouchMove = vi.fn()
+  const swipeOnTouchEnd = vi.fn()
+  const swipeReset = vi.fn()
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.useFakeTimers()
+    // Stable handler spies (the default mock mints fresh fns per render,
+    // which would drop calls across re-renders).
+    mockUseBlockSwipeActions.mockImplementation((..._args: unknown[]) => ({
+      translateX: 0,
+      isRevealed: false,
+      thresholdCrossed: false,
+      gestureIntent: null as 'indent' | 'outdent' | 'delete' | null,
+      handlers: {
+        onTouchStart: swipeOnTouchStart,
+        onTouchMove: swipeOnTouchMove,
+        onTouchEnd: swipeOnTouchEnd,
+      },
+      reset: swipeReset,
+    }))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function renderRow() {
+    // Build a FRESH element per (re)render — reusing one element reference
+    // would let React bail out before `useSortable` is re-read, so the
+    // isDragging flip below would never reach the component.
+    const actions = { onDelete: vi.fn(), onIndent: vi.fn(), onDedent: vi.fn() }
+    // A fresh rovingEditor per element breaks `React.memo` so the flipped
+    // `useSortable` mock is actually re-read on rerender (mirrors the #116
+    // drag-cancels-long-press tests).
+    const makeUi = () => (
+      <TestBlockActionsOverride actions={actions}>
+        <SortableBlock
+          blockId="BLOCK_G"
+          content="gesture test"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>
+    )
+    const view = render(makeUi())
+    const wrapper = view.container.querySelector('.sortable-block') as HTMLElement
+    return { ...view, makeUi, wrapper }
+  }
+
+  it('feeds the swipe recognizer normally while no drag or long-press has claimed the touch', () => {
+    mockUseSortable.mockReturnValue(makeSortable())
+    const { wrapper } = renderRow()
+
+    fireEvent.touchStart(wrapper, { touches: [{ clientX: 100, clientY: 100 }] })
+    fireEvent.touchMove(wrapper, { touches: [{ clientX: 130, clientY: 100 }] })
+    fireEvent.touchEnd(wrapper)
+
+    expect(swipeOnTouchStart).toHaveBeenCalledOnce()
+    expect(swipeOnTouchMove).toHaveBeenCalledOnce()
+    expect(swipeOnTouchEnd).toHaveBeenCalledOnce()
+  })
+
+  it('finding 33: a dnd drag activation disarms the swipe recognizer for the rest of the touch', () => {
+    mockUseSortable.mockReturnValue({ ...makeSortable(), isDragging: false })
+    const { wrapper, rerender, makeUi } = renderRow()
+
+    // Touch lands on the drag activator and holds 250ms — dnd-kit activates.
+    fireEvent.touchStart(wrapper, { touches: [{ clientX: 100, clientY: 100 }] })
+    expect(swipeOnTouchStart).toHaveBeenCalledOnce()
+
+    mockUseSortable.mockReturnValue({ ...makeSortable(), isDragging: true })
+    rerender(makeUi())
+
+    // The drag claimed the gesture: its visual swipe state is reset …
+    expect(swipeReset).toHaveBeenCalled()
+
+    // … and the horizontal drag + release never reach the swipe recognizer,
+    // so no indent/outdent/delete can fire on top of the drop.
+    fireEvent.touchMove(wrapper, { touches: [{ clientX: 36, clientY: 100 }] })
+    fireEvent.touchEnd(wrapper)
+    expect(swipeOnTouchMove).not.toHaveBeenCalled()
+    expect(swipeOnTouchEnd).not.toHaveBeenCalled()
+  })
+
+  it('finding 35: a fired long-press claims the gesture — post-menu drags never reach the swipe recognizer', () => {
+    mockUseSortable.mockReturnValue(makeSortable())
+    const { wrapper } = renderRow()
+
+    fireEvent.touchStart(wrapper, { touches: [{ clientX: 100, clientY: 100 }] })
+    act(() => {
+      vi.advanceTimersByTime(400)
+    })
+    // The context menu opened at the finger …
+    expect(screen.getByTestId('block-context-menu')).toBeInTheDocument()
+
+    // … so a continued horizontal drag (press-then-drag expectation) must not
+    // arm/dispatch the swipe bands behind the open menu.
+    fireEvent.touchMove(wrapper, { touches: [{ clientX: 170, clientY: 100 }] })
+    fireEvent.touchEnd(wrapper)
+    expect(swipeOnTouchMove).not.toHaveBeenCalled()
+    expect(swipeOnTouchEnd).not.toHaveBeenCalled()
+  })
+
+  it('a claimed gesture does not poison the NEXT touch — a fresh touch feeds the recognizer again', () => {
+    mockUseSortable.mockReturnValue(makeSortable())
+    const { wrapper } = renderRow()
+
+    // Gesture 1: long-press fires and claims.
+    fireEvent.touchStart(wrapper, { touches: [{ clientX: 100, clientY: 100 }] })
+    act(() => {
+      vi.advanceTimersByTime(400)
+    })
+    fireEvent.touchEnd(wrapper)
+    swipeOnTouchMove.mockClear()
+    swipeOnTouchEnd.mockClear()
+
+    // Gesture 2: a plain swipe must work again.
+    fireEvent.touchStart(wrapper, { touches: [{ clientX: 100, clientY: 100 }] })
+    fireEvent.touchMove(wrapper, { touches: [{ clientX: 60, clientY: 100 }] })
+    fireEvent.touchEnd(wrapper)
+    expect(swipeOnTouchMove).toHaveBeenCalledOnce()
+    expect(swipeOnTouchEnd).toHaveBeenCalledOnce()
+  })
+})
 
 describe('SortableBlock due date chip', () => {
   beforeEach(() => {
@@ -4594,6 +4745,185 @@ describe('SortableBlock swipe-to-delete undo toast (#927 f7)', () => {
 
     expect(mockNotify).not.toHaveBeenCalled()
     expect(mockPerformActivePageUndo).not.toHaveBeenCalled()
+  })
+})
+
+// ── Finding 42: the swipe-delete toast Undo must target the DELETE op ────
+//
+// Tapping the toast first blurs a dirty editor, whose flush lands a fresh
+// edit_block op ON TOP of the delete. The old positional depth-0 group undo
+// (`performActivePageUndo`) then reversed the user's typed edit (or grouped
+// the edit + delete and reverted both). The fix pins the undo to the delete
+// op: locate it in the page history, undo at ITS depth, verify the reversed
+// ref, and roll a mis-undo back before probing one deeper.
+describe('SortableBlock swipe-delete toast Undo pins the delete op (finding 42)', () => {
+  const DELETE_REF = { device_id: 'dev-1', seq: 5 }
+
+  function historyEntry(opType: string, blockId: string, ref: { device_id: string; seq: number }) {
+    return {
+      device_id: ref.device_id,
+      seq: ref.seq,
+      op_type: opType,
+      payload: JSON.stringify({ block_id: blockId }),
+      created_at: 1000 + ref.seq,
+    }
+  }
+
+  function historyPage(items: unknown[]) {
+    return { items, next_cursor: null, has_more: false, total_count: null }
+  }
+
+  function undoResult(reversedRef: { device_id: string; seq: number }, reversedType: string) {
+    return {
+      reversed_op: reversedRef,
+      reversed_op_type: reversedType,
+      new_op_ref: { device_id: 'dev-1', seq: reversedRef.seq + 100 },
+      new_op_type: 'restore_block',
+      is_redo: false,
+    }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+    mockUseBlockSwipeActions.mockImplementation((..._args: unknown[]) => ({
+      translateX: 0,
+      isRevealed: false,
+      thresholdCrossed: false,
+      gestureIntent: null as 'indent' | 'outdent' | 'delete' | null,
+      handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
+      reset: vi.fn(),
+    }))
+    mockLoadPageSubtree.mockResolvedValue({ blocks: [] })
+  })
+
+  /** Render inside a page store (pageId PAGE_1) and tap the toast's Undo. */
+  function renderAndSwipeDelete(): { tapUndo: () => void; onDelete: ReturnType<typeof vi.fn> } {
+    const onDelete = vi.fn()
+    render(
+      <PageBlockStoreProvider pageId="PAGE_1">
+        <TestBlockActionsOverride actions={{ onDelete }}>
+          <SortableBlock
+            blockId="BLOCK_SWIPE"
+            content="swipe test"
+            isFocused={false}
+            rovingEditor={makeRovingEditor()}
+          />
+        </TestBlockActionsOverride>
+      </PageBlockStoreProvider>,
+    )
+    const swipeDelete = mockUseBlockSwipeActions.mock.calls.at(-1)?.[0] as () => void
+    act(() => {
+      swipeDelete()
+    })
+    const opts = mockNotify.mock.calls[0]?.[1] as { action: { onClick: () => void } }
+    expect(typeof opts?.action?.onClick).toBe('function')
+    return { tapUndo: opts.action.onClick, onDelete }
+  }
+
+  it('undoes at the delete op depth when a tap-time flush landed an edit on top (NOT depth 0)', async () => {
+    // Newest-first page history at tap time: the tap's own blur-flush edit of
+    // ANOTHER block sits above the delete.
+    mockListPageHistory.mockResolvedValue(
+      historyPage([
+        historyEntry('edit_block', 'BLOCK_EDITED', { device_id: 'dev-1', seq: 6 }),
+        historyEntry('delete_block', 'BLOCK_SWIPE', DELETE_REF),
+      ]),
+    )
+    mockUndoPageOp.mockResolvedValue(undoResult(DELETE_REF, 'delete_block'))
+
+    const { tapUndo } = renderAndSwipeDelete()
+    await act(async () => {
+      tapUndo()
+    })
+
+    await waitFor(() => {
+      expect(mockUndoPageOp).toHaveBeenCalledWith({ pageId: 'PAGE_1', undoDepth: 1 })
+    })
+    expect(mockUndoPageOp).toHaveBeenCalledTimes(1)
+    // The old positional depth-0 group undo must NOT run.
+    expect(mockPerformActivePageUndo).not.toHaveBeenCalled()
+    expect(mockRedoPageOp).not.toHaveBeenCalled()
+  })
+
+  it('undoes at depth 0 when the delete is still the newest op', async () => {
+    mockListPageHistory.mockResolvedValue(
+      historyPage([historyEntry('delete_block', 'BLOCK_SWIPE', DELETE_REF)]),
+    )
+    mockUndoPageOp.mockResolvedValue(undoResult(DELETE_REF, 'delete_block'))
+
+    const { tapUndo } = renderAndSwipeDelete()
+    await act(async () => {
+      tapUndo()
+    })
+
+    await waitFor(() => {
+      expect(mockUndoPageOp).toHaveBeenCalledWith({ pageId: 'PAGE_1', undoDepth: 0 })
+    })
+    expect(mockRedoPageOp).not.toHaveBeenCalled()
+  })
+
+  it('rolls a mis-undo back (redo) and probes one deeper when the undo reversed a racing edit', async () => {
+    // The history read raced the tap's flush: the edit is NOT visible yet, so
+    // the delete looks like depth 0 …
+    mockListPageHistory.mockResolvedValue(
+      historyPage([historyEntry('delete_block', 'BLOCK_SWIPE', DELETE_REF)]),
+    )
+    // … but by the time the undo transaction runs, the edit committed on top:
+    // depth 0 reverses the EDIT, not the delete.
+    const editRef = { device_id: 'dev-1', seq: 6 }
+    const misUndo = undoResult(editRef, 'edit_block')
+    mockUndoPageOp
+      .mockResolvedValueOnce(misUndo)
+      .mockResolvedValueOnce(undoResult(DELETE_REF, 'delete_block'))
+    mockRedoPageOp.mockResolvedValue(undoResult(editRef, 'edit_block'))
+
+    const { tapUndo } = renderAndSwipeDelete()
+    await act(async () => {
+      tapUndo()
+    })
+
+    await waitFor(() => {
+      expect(mockUndoPageOp).toHaveBeenCalledTimes(2)
+    })
+    // The wrong undo was rolled back by reversing ITS reverse op…
+    expect(mockRedoPageOp).toHaveBeenCalledWith({
+      undoDeviceId: misUndo.new_op_ref.device_id,
+      undoSeq: misUndo.new_op_ref.seq,
+    })
+    // …then the delete was re-targeted one deeper.
+    expect(mockUndoPageOp).toHaveBeenLastCalledWith({ pageId: 'PAGE_1', undoDepth: 1 })
+  })
+
+  it('surfaces an error (and does not undo) when the delete op cannot be found', async () => {
+    mockListPageHistory.mockResolvedValue(
+      historyPage([historyEntry('edit_block', 'BLOCK_OTHER', { device_id: 'dev-1', seq: 9 })]),
+    )
+
+    const { tapUndo } = renderAndSwipeDelete()
+    await act(async () => {
+      tapUndo()
+    })
+
+    await waitFor(() => {
+      expect(mockNotify.error).toHaveBeenCalled()
+    })
+    expect(mockUndoPageOp).not.toHaveBeenCalled()
+    expect(mockPerformActivePageUndo).not.toHaveBeenCalled()
+  })
+
+  it('surfaces an error when the history read rejects (IPC failure path)', async () => {
+    mockListPageHistory.mockRejectedValue(new Error('backend down'))
+
+    const { tapUndo } = renderAndSwipeDelete()
+    await act(async () => {
+      tapUndo()
+    })
+
+    await waitFor(() => {
+      expect(mockNotify.error).toHaveBeenCalled()
+    })
+    expect(mockUndoPageOp).not.toHaveBeenCalled()
   })
 })
 

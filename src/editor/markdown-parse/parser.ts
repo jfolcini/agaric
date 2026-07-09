@@ -67,12 +67,31 @@ import {
 // -- External link parsing ----------------------------------------------------
 
 /**
+ * Parse a link's display text into INLINE nodes. Display text is inline-only
+ * content, but it used to be parsed through the shared `parse()` — so text
+ * that happens to look like a BLOCK production (`[>](url)`, `[# x](url)`, …)
+ * came back as a blockquote/heading whose block children were then blindly
+ * cast to inline nodes, corrupting the doc (the link silently vanished or its
+ * marker text was eaten on the next serialize). Parse with `parseLine`
+ * directly so block productions can never fire, keeping the `parse()` depth
+ * cap (nested-link display text) by falling back to the callers' literal
+ * plain-text path (`undefined`) once the cap is exceeded.
+ */
+function parseLinkDisplayText(
+  displayText: string,
+  depth: number,
+): readonly InlineNode[] | undefined {
+  if (depth + 1 > MAX_PARSE_DEPTH) return undefined
+  return parseLine(displayText, depth + 1)
+}
+
+/**
  * Consume a matched external link and return InlineNode[] with link marks applied.
  * Parses inner display text recursively for bold/italic/code/tokens.
  *
- * `depth` tracks the current recursion depth in `parse()` — it is incremented
- * when delegating to `parse(match.displayText, depth + 1)` so pathological
- * nested-link inputs cannot blow the stack.
+ * `depth` tracks the current recursion depth — incremented when delegating to
+ * `parseLinkDisplayText` so pathological nested-link inputs cannot blow the
+ * stack.
  */
 function consumeExternalLink(
   s: Scanner,
@@ -91,8 +110,7 @@ function consumeExternalLink(
   // suppressed at the render sink (RichContentRenderer/marks/text.tsx).
   if (!isAllowedUrl(href)) {
     const text = match.displayText.length === 0 ? href : match.displayText
-    const inner = parse(text, depth + 1)
-    const innerNodes = inner.content?.[0]?.content as readonly InlineNode[] | undefined
+    const innerNodes = parseLinkDisplayText(text, depth)
     if (!innerNodes || innerNodes.length === 0) {
       return [
         outerMarks.length > 0
@@ -121,8 +139,7 @@ function consumeExternalLink(
   }
 
   // Parse inner display text (handles bold/italic/code/tokens)
-  const innerDoc = parse(match.displayText, depth + 1)
-  const innerContent = innerDoc.content?.[0]?.content as readonly InlineNode[] | undefined
+  const innerContent = parseLinkDisplayText(match.displayText, depth)
 
   if (!innerContent || innerContent.length === 0) {
     const marks = [...outerMarks, linkMark]
@@ -280,13 +297,18 @@ export function parseHeading(
   const headingMatch = line.match(/^(#{1,6}) (.*)$/)
   if (!headingMatch) return null
   const level = headingMatch[1]?.length as number
-  const content = headingMatch[2] as string
-  const inlineNodes = parseLine(content, depth)
+  // A hardBreak inside a heading serializes as an odd trailing backslash run
+  // with the continuation on the next line (#710-5). Consume those
+  // continuations into the heading's inline content — mirroring parseParagraph
+  // and collectListItem — so Shift+Enter inside a heading round-trips as ONE
+  // heading instead of splitting the block and leaving a literal stray `\`.
+  const { textLines, next } = collectHardBreakContinuations(lines, headingMatch[2] as string, i + 1)
+  const inlineNodes = parseHardBreakLines(textLines, depth)
   const block: HeadingNode =
     inlineNodes.length === 0
       ? { type: 'heading', attrs: { level } }
       : { type: 'heading', attrs: { level }, content: inlineNodes }
-  return { blocks: [block], consumed: 1 }
+  return { blocks: [block], consumed: next - i }
 }
 
 /** Table: consecutive lines starting with `|`. First non-separator row is the header. */
@@ -418,6 +440,29 @@ function parseHardBreakLines(textLines: readonly string[], depth: number): Inlin
 }
 
 /**
+ * Consume hard-break continuation lines into a block's single paragraph: while
+ * the current last text line ends in an odd trailing backslash run (the
+ * serializer's hardBreak token, #710-5), the next line belongs to the SAME
+ * paragraph. Shared by `parseHeading`, `parseTask` and `collectListItem` so
+ * every single-paragraph block production honours the same continuation rule
+ * as `parseParagraph`. Returns the paragraph's text lines and the index just
+ * past the consumed continuations.
+ */
+function collectHardBreakContinuations(
+  lines: readonly string[],
+  first: string,
+  start: number,
+): { textLines: string[]; next: number } {
+  const textLines = [first]
+  let j = start
+  while (j < lines.length && trailingBackslashRun(textLines.at(-1) as string) % 2 === 1) {
+    textLines.push(lines[j] as string)
+    j++
+  }
+  return { textLines, next: j }
+}
+
+/**
  * Collect the lines belonging to one list item that begins at `lines[start]`:
  * the marker line, any hard-break continuation lines (each preceding line
  * ending in an odd trailing backslash run — #1885), plus all subsequent
@@ -434,16 +479,16 @@ function collectListItem(
 ): { textLines: string[]; nested: string[]; next: number } | null {
   const itemMatch = (lines[start] as string).match(markerRe)
   if (!itemMatch) return null
-  const textLines = [(itemMatch[textGroup] ?? '') as string]
-  let j = start + 1
   // A hard break inside the item's paragraph serializes as an odd trailing
   // backslash run with the continuation on the next (unindented) line. Consume
   // those continuations into the item's paragraph so the hard break survives the
   // round-trip, exactly as `parseParagraph` does for top-level paragraphs.
-  while (j < lines.length && trailingBackslashRun(textLines.at(-1) as string) % 2 === 1) {
-    textLines.push(lines[j] as string)
-    j++
-  }
+  const { textLines, next } = collectHardBreakContinuations(
+    lines,
+    (itemMatch[textGroup] ?? '') as string,
+    start + 1,
+  )
+  let j = next
   const nestedRaw: string[] = []
   while (j < lines.length && leadingIndent(lines[j] as string) > 0) {
     nestedRaw.push(lines[j] as string)
@@ -483,6 +528,26 @@ export function parseOrderedList(
   return { blocks: [block], consumed }
 }
 
+/**
+ * Build a (possibly task) paragraph, attaching `content` / `attrs.todoState`
+ * only when present (`exactOptionalPropertyTypes`-safe). Shared by `parseTask`
+ * and `buildListItem` so a task paragraph is constructed identically at the
+ * top level and nested inside a list item.
+ */
+function buildTaskParagraph(
+  inlineContent: InlineNode[],
+  todoState: TodoState | undefined,
+): ParagraphNode {
+  if (todoState) {
+    return inlineContent.length === 0
+      ? { type: 'paragraph', attrs: { todoState } }
+      : { type: 'paragraph', attrs: { todoState }, content: inlineContent }
+  }
+  return inlineContent.length === 0
+    ? { type: 'paragraph' }
+    : { type: 'paragraph', content: inlineContent }
+}
+
 export function parseTask(
   lines: readonly string[],
   i: number,
@@ -491,13 +556,18 @@ export function parseTask(
   const match = (lines[i] as string).match(TASK_ITEM_RE)
   if (!match) return null
   const todoState = TASK_MARKER_TO_STATE[match[1] as string] as TodoState
-  const text = (match[2] ?? '') as string
-  const inlineContent = parseLine(text, depth)
-  const block: ParagraphNode =
-    inlineContent.length === 0
-      ? { type: 'paragraph', attrs: { todoState } }
-      : { type: 'paragraph', attrs: { todoState }, content: inlineContent }
-  return { blocks: [block], consumed: 1 }
+  // A hardBreak inside the task's paragraph serializes as an odd trailing
+  // backslash run (#710-5). Consume the continuation lines — mirroring
+  // parseParagraph — so Shift+Enter inside a task neither splits the block nor
+  // drops the continuation out of todo scope.
+  const { textLines, next } = collectHardBreakContinuations(
+    lines,
+    (match[2] ?? '') as string,
+    i + 1,
+  )
+  const inlineContent = parseHardBreakLines(textLines, depth)
+  const block = buildTaskParagraph(inlineContent, todoState)
+  return { blocks: [block], consumed: next - i }
 }
 
 export function parseBulletList(
@@ -534,11 +604,21 @@ export function parseBulletList(
  * an item round-trip through serialize→parse instead of being dropped (#2213).
  */
 function buildListItem(itemTextLines: string[], nested: string[], depth: number): ListItemNode {
-  const inlineContent = parseHardBreakLines(itemTextLines, depth)
-  const paragraph: ParagraphNode =
-    inlineContent.length === 0
-      ? { type: 'paragraph' }
-      : { type: 'paragraph', content: inlineContent }
+  // A task paragraph as the item's LEADING paragraph serializes as the item
+  // marker followed by the task marker (`- - [ ] text`). Fold the task marker
+  // back into `attrs.todoState` so that shape round-trips instead of degrading
+  // to literal `- [ ] ` text (losing the checkbox state). Unambiguous: literal
+  // `- [ ]…` TEXT in an item paragraph is escaped by the serializer
+  // (`\- \[ \]…`) and can never match TASK_ITEM_RE here.
+  const taskMatch = (itemTextLines[0] as string).match(TASK_ITEM_RE)
+  const textLines = taskMatch
+    ? [(taskMatch[2] ?? '') as string, ...itemTextLines.slice(1)]
+    : itemTextLines
+  const todoState = taskMatch
+    ? (TASK_MARKER_TO_STATE[taskMatch[1] as string] as TodoState)
+    : undefined
+  const inlineContent = parseHardBreakLines(textLines, depth)
+  const paragraph = buildTaskParagraph(inlineContent, todoState)
   if (nested.length === 0) {
     return { type: 'listItem', content: [paragraph] }
   }
@@ -776,6 +856,16 @@ function isEscapableChar(ch: string): boolean {
     // (#710-1, #710-4) — escapeText emits `\_` / `\|` and this accepts them.
     ch === '_' ||
     ch === '|' ||
+    // `(` is escapable so literal `((ULID))` TEXT round-trips as text
+    // (serialized `\((ULID))`) instead of resurrecting as a live block_ref —
+    // the serializer escapes the opening paren of a would-be ref token,
+    // mirroring the `#`+`[` tag_ref guard (escaping asymmetry fix).
+    ch === '(' ||
+    // Digits are escapable so the serializer can defuse the seam between a
+    // math_inline atom and immediately following digit text: `$x$5` re-parses
+    // as literal text (the currency closer rule rejects a `$` followed by a
+    // digit), while `$x$\5` keeps the math atom and `\5` decodes back to `5`.
+    (ch >= '0' && ch <= '9') ||
     // `.` is escapable so a paragraph beginning with `N. ` round-trips as
     // text (serialized `N\. `) instead of re-parsing as an ordered list.
     ch === '.' ||

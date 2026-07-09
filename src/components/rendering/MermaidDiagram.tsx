@@ -35,6 +35,12 @@ function initializeMermaid(isDark: boolean): void {
     // make the XSS protection a hard, visible invariant rather than an implicit
     // default that a future config tweak could silently regress.
     securityLevel: 'strict',
+    // Without this, every failed render APPENDS a full-width "Syntax error"
+    // SVG div to document.body and throws before cleaning it up — one leaked,
+    // visible artifact per failure (per keystroke while editing, since each
+    // remount gets a fresh renderId). This component renders its own inline
+    // error state, so mermaid's error diagram must be suppressed entirely.
+    suppressErrorRendering: true,
     theme: isDark ? 'dark' : 'default',
   })
 }

@@ -50,14 +50,112 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { usePropertyDefForEdit } from '@/hooks/usePropertyDefForEdit'
 import { performActivePageUndo } from '@/hooks/useUndoShortcuts'
+import { announce } from '@/lib/announcer'
 import { detectBlockType } from '@/lib/block-type-convert'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
+import { t as translate } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { paginationLimit } from '@/lib/safe-limit'
+import { listPageHistory, redoPageOp, undoPageOp } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
-import { usePageBlockStoreOptional } from '@/stores/page-blocks'
+import { getPageStore, usePageBlockStoreOptional } from '@/stores/page-blocks'
+import { useUndoStore } from '@/stores/undo'
 
 /** Pixels of left padding per depth level. */
 export const INDENT_WIDTH = 24
+
+/**
+ * How far back the swipe-delete toast's Undo scans the page history for its
+ * delete op. The delete is the newest op at swipe time; only ops landing in
+ * the toast's 5s window (typically the tap's own blur-flush edit) can sit
+ * above it, so a small window is plenty.
+ */
+const SWIPE_UNDO_HISTORY_SCAN = 50
+
+/** Best-effort `block_id` from an op-log payload JSON string. */
+function historyEntryBlockId(payload: string): string | null {
+  try {
+    const parsed = JSON.parse(payload) as Record<string, unknown>
+    return typeof parsed['block_id'] === 'string' ? parsed['block_id'] : null
+  } catch {
+    return null
+  }
+}
+
+function notifySwipeUndoFailed(): void {
+  notify.error(translate('undo.undoFailedMessage'))
+  announce(translate('announce.undoFailed'))
+}
+
+/**
+ * Toast-Undo for a swipe-delete, pinned to THAT delete op (finding 42).
+ *
+ * The tap on the toast first blurs any dirty roving editor, whose flush lands
+ * a fresh `edit_block` op ON TOP of the delete — a positional depth-0 group
+ * undo (`performActivePageUndo`) would then reverse the user's typed edit (or
+ * group the flush-edit with the delete and revert BOTH). Instead: locate the
+ * block's newest `delete_block` op in the page history, undo at ITS depth,
+ * and verify the reversed ref. When the undo reverses something else (the
+ * history read raced the tap's in-flight flush), roll the mis-undo back via
+ * `redoPageOp` and probe one deeper — the race can only shift the delete by
+ * the single op the same tap appended. Anything else fails loudly.
+ */
+async function undoSwipeDelete(pageId: string, blockId: string): Promise<void> {
+  try {
+    const history = await listPageHistory({
+      pageId,
+      limit: paginationLimit(SWIPE_UNDO_HISTORY_SCAN),
+    })
+    const index = history.items.findIndex(
+      (entry) => entry.op_type === 'delete_block' && historyEntryBlockId(entry.payload) === blockId,
+    )
+    const target = index >= 0 ? history.items[index] : undefined
+    if (!target) {
+      logger.warn('SortableBlock', 'swipe-delete undo: delete op not found in page history', {
+        pageId,
+        blockId,
+      })
+      notifySwipeUndoFailed()
+      return
+    }
+
+    for (const depth of [index, index + 1]) {
+      const result = await undoPageOp({ pageId, undoDepth: depth })
+      if (
+        result.reversed_op.device_id === target.device_id &&
+        result.reversed_op.seq === target.seq
+      ) {
+        // The undo bypassed the undo store's positional bookkeeping — treat it
+        // as a new action so stale depth/redo anchors can't target shifted ops.
+        useUndoStore.getState().onNewAction(pageId)
+        notify(
+          translate('undo.op.deleteBlock', { defaultValue: translate('undo.undoneMessage') }),
+          {
+            duration: 1500,
+          },
+        )
+        announce(translate('announce.undone'))
+        await getPageStore(pageId)?.getState().load()
+        return
+      }
+      // Wrong op reversed — roll the mis-undo back (reverse ITS reverse op)
+      // before probing one deeper.
+      await redoPageOp({
+        undoDeviceId: result.new_op_ref.device_id,
+        undoSeq: result.new_op_ref.seq,
+      })
+    }
+    logger.warn('SortableBlock', 'swipe-delete undo: could not pin the delete op', {
+      pageId,
+      blockId,
+    })
+    notifySwipeUndoFailed()
+  } catch (err) {
+    logger.error('SortableBlock', 'swipe-delete undo failed', { pageId, blockId }, err)
+    notifySwipeUndoFailed()
+  }
+}
 
 /**
  * The mobile swipe-gesture affordances (delete backdrop, indent/outdent
@@ -581,15 +679,28 @@ function SortableBlockInner({
   // can read the current value without capturing a stale boolean.
   const isDraggingRef = useRef(false)
 
-  const { handleTouchStart, handleTouchEnd, handleTouchMove, handleContextMenu, clearLongPress } =
-    useBlockTouchLongPress({ openContextMenu, isDraggingRef })
+  // Findings 33/35 — per-touch gesture arbitration. Once a dnd drag activates
+  // (33) or a fired long-press opens the context menu (35), that gesture
+  // CLAIMS the rest of the touch: the row stops feeding the swipe recognizer,
+  // so releasing a horizontal drag (or a post-menu drag) can no longer ALSO
+  // fire indent/outdent/swipe-delete on the same block. Reset by the next
+  // fresh single-finger touchstart.
+  const touchGestureClaimedRef = useRef(false)
+
+  // Id of the page this block belongs to (the per-page store's root). Used by
+  // the swipe-delete toast Undo to pin the undo to THIS page's op log. Empty /
+  // null outside a provider (isolated renders) — the toast then falls back.
+  const pageId = usePageBlockStoreOptional((s) => s.rootParentId)
 
   // ── Swipe-to-delete (mobile only) ─────────────────────────────
   // #927 f7: a 200 px left-swipe deletes immediately — best on mobile, where
   // a blocking confirm dialog is worse — but that makes a silent 200 px drag
   // destructive. Surface a Gmail-style "Undo" toast as the recoverability net.
-  // Its action replays the SAME page-op undo the keyboard Ctrl+Z uses
-  // (`performActivePageUndo`), so the gesture is fully reversible.
+  // Finding 42: the toast's Undo is pinned to the delete op it promises to
+  // reverse (`undoSwipeDelete`) — a positional depth-0 undo could instead
+  // revert the edit op that the tap's own editor blur-flush lands on top of
+  // the delete. Outside a page store (no pageId) it falls back to the shared
+  // active-page undo the keyboard Ctrl+Z uses.
   const handleSwipeDelete = useCallback(() => {
     if (!onDelete) return
     onDelete(blockId)
@@ -598,11 +709,15 @@ function SortableBlockInner({
       action: {
         label: t('action.undo'),
         onClick: () => {
-          void performActivePageUndo()
+          if (pageId) {
+            void undoSwipeDelete(pageId, blockId)
+          } else {
+            void performActivePageUndo()
+          }
         },
       },
     })
-  }, [onDelete, blockId, t])
+  }, [onDelete, blockId, t, pageId])
 
   const {
     translateX: swipeTranslateX,
@@ -621,6 +736,23 @@ function SortableBlockInner({
     onOutdent: onDedent ? () => onDedent(blockId) : undefined,
   })
 
+  // Finding 35 — a fired long-press (or native contextmenu) claims the
+  // in-progress touch so a continued drag can't outdent/indent/delete the
+  // block behind the open menu. The claim must live HERE (checked by the
+  // composed row handlers below): swipe arming happens in moves AFTER the
+  // menu opens, so resetting the recognizer once at menu-open is not enough.
+  const openContextMenuClaimingGesture = useCallback(
+    (x: number, y: number, linkUrl?: string) => {
+      touchGestureClaimedRef.current = true
+      swipeReset()
+      openContextMenu(x, y, linkUrl)
+    },
+    [openContextMenu, swipeReset],
+  )
+
+  const { handleTouchStart, handleTouchEnd, handleTouchMove, handleContextMenu, clearLongPress } =
+    useBlockTouchLongPress({ openContextMenu: openContextMenuClaimingGesture, isDraggingRef })
+
   const isTouchDevice = useIsTouch()
   // #1349: stable id for the sr-only swipe-gesture description (per block).
   const swipeRowDescId = `swipe-row-desc-${blockId}`
@@ -629,8 +761,14 @@ function SortableBlockInner({
     isDraggingRef.current = isDragging
     if (isDragging) {
       clearLongPress()
+      // Finding 33 — the dnd drag claims the in-progress touch gesture. The
+      // touch stream keeps targeting this row for the whole drag, so without
+      // the claim the swipe recognizer armed on the drag's horizontal moves
+      // and its release ALSO fired indent/outdent/delete on the moved block.
+      touchGestureClaimedRef.current = true
+      swipeReset()
     }
-  }, [isDragging, clearLongPress])
+  }, [isDragging, clearLongPress, swipeReset])
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -675,16 +813,25 @@ function SortableBlockInner({
         isDragging && 'outline-dashed outline-1 outline-border rounded-sm',
       )}
       onTouchStart={(e) => {
+        // A fresh single-finger touch starts an unclaimed gesture. A second
+        // finger landing mid-gesture must NOT un-claim it, and a touchstart
+        // during an active drag keeps the drag's claim.
+        if (e.touches.length === 1 && !isDraggingRef.current) {
+          touchGestureClaimedRef.current = false
+        }
         handleTouchStart(e)
         swipeHandlers.onTouchStart(e)
       }}
       onTouchEnd={() => {
         handleTouchEnd()
-        swipeHandlers.onTouchEnd()
+        // Findings 33/35 — a drag or fired long-press claimed this touch: its
+        // release must not dispatch the swipe bands (indent/outdent/delete).
+        if (!touchGestureClaimedRef.current) swipeHandlers.onTouchEnd()
       }}
       onTouchMove={(e) => {
         handleTouchMove(e)
-        swipeHandlers.onTouchMove(e)
+        // Findings 33/35 — post-claim moves must not (re-)arm the recognizer.
+        if (!touchGestureClaimedRef.current) swipeHandlers.onTouchMove(e)
       }}
       onContextMenu={handleContextMenu}
     >

@@ -77,6 +77,29 @@ export const Tip = ({
 Tip.displayName = 'Tip'
 
 /**
+ * Pointer + keyboard activation handlers for toolbar/menu buttons whose
+ * action must run on `pointerdown` (with preventDefault, so the editor keeps
+ * focus through the press). Only the primary button activates — right/middle
+ * click stay inert — and the `click` fallback runs the action solely for
+ * keyboard-generated clicks (Enter/Space dispatch a click with
+ * `detail === 0`), so pointer presses never double-fire.
+ */
+export function toolbarPressHandlers(
+  action: () => void,
+): Pick<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onPointerDown' | 'onClick'> {
+  return {
+    onPointerDown: (e) => {
+      if (e.button !== 0) return
+      e.preventDefault()
+      action()
+    },
+    onClick: (e) => {
+      if (e.detail === 0) action()
+    },
+  }
+}
+
+/**
  * Render a config-driven button. In `inline` and `sentinel` modes the
  * button is icon-only (matches the existing toolbar). In `overflow`
  * mode the button widens into a list row with icon + label, matching
@@ -107,11 +130,10 @@ export function renderConfigButton(
           'justify-start text-sm w-full [@media(pointer:coarse)]:min-h-11',
           isActive && toolbarActiveClass,
         )}
-        onPointerDown={(e) => {
-          e.preventDefault()
+        {...toolbarPressHandlers(() => {
           btn.action()
           onAfterAction?.()
-        }}
+        })}
       >
         <btn.icon className="h-3.5 w-3.5 mr-2" />
         <span>{t(btn.label)}</span>
@@ -128,10 +150,7 @@ export function renderConfigButton(
         aria-pressed={btn.activeKey ? isActive : undefined}
         disabled={disabled}
         className={cn(isActive && toolbarActiveClass)}
-        onPointerDown={(e) => {
-          e.preventDefault()
-          btn.action()
-        }}
+        {...toolbarPressHandlers(btn.action)}
       >
         <btn.icon className="h-3.5 w-3.5" />
       </Button>

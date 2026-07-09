@@ -18,6 +18,7 @@ import type { StoreApi } from 'zustand'
 
 import { serializeBlockSubtree } from '../lib/block-clipboard'
 import { readText, writeText } from '../lib/clipboard'
+import { t } from '../lib/i18n'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
 import {
   clearTreeInteractionIfHolder,
@@ -25,6 +26,7 @@ import {
   markTreeInteracted,
 } from '../lib/last-interacted-tree'
 import { logger } from '../lib/logger'
+import { notify } from '../lib/notify'
 import { computeSelectionRoots } from '../lib/tree-utils'
 import { useBlockStore } from '../stores/blocks'
 import type { PageBlockState } from '../stores/page-blocks'
@@ -275,18 +277,25 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
         )
         if (markdown.length === 0) return
         e.preventDefault()
-        void writeText(markdown).catch((err) =>
-          logger.warn('block-clipboard', 'copy writeText failed', undefined, err),
-        )
-        if (isCut) {
-          // Remove only the selection ROOTS — `remove()` cascades each subtree,
-          // so a nested selected descendant travels with its ancestor and must
-          // NOT be deleted independently (avoids a redundant IPC on an
-          // already-cascaded id). `clearSelected` resets the now-stale set.
-          const roots = computeSelectionRoots(state.blocks, ownedSelected)
-          for (const id of roots) void state.remove(id)
-          clearSelected()
-        }
+        // Cut removal is gated on the clipboard write RESOLVING: deleting the
+        // blocks before the content reached the clipboard would be silent
+        // destruction (and a later paste would insert stale clipboard data).
+        void writeText(markdown)
+          .then(() => {
+            if (!isCut) return
+            // Remove only the selection ROOTS — `remove()` cascades each
+            // subtree, so a nested selected descendant travels with its
+            // ancestor and must NOT be deleted independently (avoids a
+            // redundant IPC on an already-cascaded id). `clearSelected`
+            // resets the now-stale set.
+            const roots = computeSelectionRoots(state.blocks, ownedSelected)
+            for (const id of roots) void state.remove(id)
+            clearSelected()
+          })
+          .catch((err) => {
+            logger.warn('block-clipboard', 'copy writeText failed', undefined, err)
+            notify.error(t('palette.copyFailed'))
+          })
         return
       }
 
@@ -301,7 +310,12 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
           if (text.length === 0) return
           return state.pasteBlocks(anchorId, text)
         })
-        .catch((err) => logger.warn('block-clipboard', 'paste readText failed', undefined, err))
+        .catch((err) => {
+          // `pasteBlocks` toasts its own failures; this catch fires only when
+          // the clipboard read itself rejects — surface it, don't swallow.
+          logger.warn('block-clipboard', 'paste readText failed', undefined, err)
+          notify.error(t('error.pasteBlocksFailed'))
+        })
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)

@@ -738,7 +738,7 @@ describe('BlockLinkPicker suggestion command chain', () => {
     vi.resetModules()
   })
 
-  it('isCreate path invokes insertContent(" ") after onCreate resolves', async () => {
+  it('isCreate path deletes the trigger synchronously, then inserts token + space after onCreate resolves', async () => {
     let capturedCommand:
       | ((ctx: { editor: unknown; range: { from: number; to: number }; props: unknown }) => void)
       | undefined
@@ -767,12 +767,8 @@ describe('BlockLinkPicker suggestion command chain', () => {
         calls.push(`deleteRange:${r.from}-${r.to}`)
         return chainProxy
       },
-      insertBlockLink: (id: string) => {
-        calls.push(`insertBlockLink:${id}`)
-        return chainProxy
-      },
-      insertContent: (c: unknown) => {
-        calls.push(`insertContent:${JSON.stringify(c)}`)
+      insertContentAt: (pos: number, content: unknown) => {
+        calls.push(`insertContentAt:${pos}:${JSON.stringify(content)}`)
         return chainProxy
       },
       run: () => {
@@ -780,7 +776,13 @@ describe('BlockLinkPicker suggestion command chain', () => {
         return true
       },
     }
-    const mockEditor = { chain: () => chainProxy }
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: { doc: { textBetween: () => '[[Create me' } },
+      on: vi.fn(),
+      off: vi.fn(),
+      isDestroyed: false,
+    }
 
     capturedCommand?.({
       editor: mockEditor,
@@ -788,14 +790,21 @@ describe('BlockLinkPicker suggestion command chain', () => {
       props: { id: 'PLACEHOLDER', label: 'Create me', isCreate: true },
     })
 
-    await vi.waitFor(() => expect(onCreate).toHaveBeenCalled())
-    await vi.waitFor(() => expect(calls).toContain('run'))
+    // The trigger range is deleted SYNCHRONOUSLY — before the create IPC
+    // resolves — so the Suggestion match breaks, the popup closes, and a
+    // second Enter/click cannot double-fire the create.
+    expect(calls).toEqual(['focus', 'deleteRange:5-10', 'run'])
 
-    expect(calls).toEqual([
+    await vi.waitFor(() => expect(onCreate).toHaveBeenCalledWith('Create me'))
+    await vi.waitFor(() => expect(calls.length).toBeGreaterThan(3))
+
+    // Token + trailing space land at the captured (tracked) position.
+    expect(calls.slice(3)).toEqual([
       'focus',
-      'deleteRange:5-10',
-      'insertBlockLink:CREATED_ULID',
-      'insertContent:" "',
+      `insertContentAt:5:${JSON.stringify([
+        { type: 'block_link', attrs: { id: 'CREATED_ULID' } },
+        { type: 'text', text: ' ' },
+      ])}`,
       'run',
     ])
 

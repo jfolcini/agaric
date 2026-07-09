@@ -13,7 +13,7 @@
  * and `mermaid` is mocked exactly as MermaidDiagram's own tests do.
  */
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('mermaid', () => ({
@@ -41,18 +41,64 @@ const mockedRender = vi.mocked(mermaid.render)
 
 const { MermaidCodeBlockView } = await import('../MermaidCodeBlockView')
 
+interface MockEditorOptions {
+  /** Absolute PM position of the code block (what `getPos()` returns). */
+  pos?: number
+  /** The code block's nodeSize (what `doc.nodeAt(pos)` reports). */
+  nodeSize?: number
+  /** Current editor selection. Defaults to far outside the node. */
+  selection?: { from: number; to: number }
+}
+
+/**
+ * Minimal TipTap Editor stand-in for the selection-tracking effect: exposes
+ * `state.selection`, `state.doc.nodeAt`, and `on`/`off` for
+ * `selectionUpdate`. `fireSelectionUpdate` invokes the registered handlers
+ * the way a real editor does after a transaction.
+ */
+function makeMockEditor(opts: MockEditorOptions = {}) {
+  const { pos = 0, nodeSize = 20 } = opts
+  const listeners = new Set<() => void>()
+  const editor = {
+    state: {
+      selection: opts.selection ?? { from: 1000, to: 1000 },
+      doc: { nodeAt: (p: number) => (p === pos ? { nodeSize } : null) },
+    },
+    on: (event: string, fn: () => void) => {
+      if (event === 'selectionUpdate') listeners.add(fn)
+    },
+    off: (event: string, fn: () => void) => {
+      if (event === 'selectionUpdate') listeners.delete(fn)
+    },
+  }
+  const fireSelectionUpdate = (selection: { from: number; to: number }) => {
+    editor.state.selection = selection
+    for (const fn of listeners) fn()
+  }
+  return { editor, listeners, fireSelectionUpdate, pos }
+}
+
 /** Build a minimal NodeViewProps stand-in carrying a code-block node. */
 function makeProps(
   language: string | null,
   text: string,
-): React.ComponentProps<typeof MermaidCodeBlockView> {
+  editorOpts: MockEditorOptions = {},
+): React.ComponentProps<typeof MermaidCodeBlockView> & {
+  __mock: ReturnType<typeof makeMockEditor>
+} {
+  const mock = makeMockEditor(editorOpts)
   return {
     node: {
       attrs: { language },
       textContent: text,
     },
+    editor: mock.editor,
+    getPos: () => mock.pos,
+    __mock: mock,
     // The remaining NodeViewProps fields are unused by the component.
-  } as unknown as React.ComponentProps<typeof MermaidCodeBlockView>
+  } as unknown as React.ComponentProps<typeof MermaidCodeBlockView> & {
+    __mock: ReturnType<typeof makeMockEditor>
+  }
 }
 
 describe('MermaidCodeBlockView (#1438)', () => {
@@ -135,6 +181,79 @@ describe('MermaidCodeBlockView (#1438)', () => {
     expect(mockedRender).not.toHaveBeenCalled()
     expect(screen.queryByTestId('mermaid-diagram')).not.toBeInTheDocument()
     expect(screen.getByTestId('mermaid-rendered').textContent).toContain('Empty diagram')
+  })
+
+  // Finding 45 — with the diagram shown, the ProseMirror-managed source sits
+  // in a display:none <pre>. When the selection is inside the code block
+  // (creating one via ```mermaid, or clicking a static mermaid block to focus
+  // it), keystrokes route into invisible text: characters are swallowed,
+  // Enter silently inserts hidden newlines, and Ctrl+A + typing destroys the
+  // stored diagram. The view must switch to source mode whenever the editor
+  // selection enters the node.
+  describe('auto-switches to source mode when the selection is inside the node (finding 45)', () => {
+    it('shows the source when the node view mounts with the selection inside the code block', () => {
+      mockedRender.mockResolvedValue({
+        svg: '<svg></svg>',
+        diagramType: 'flowchart',
+        bindFunctions: vi.fn(),
+      })
+
+      // Node spans [0, 20); caret at 5 is inside its text.
+      render(
+        <MermaidCodeBlockView
+          {...makeProps('mermaid', 'graph TD; A-->B;', {
+            pos: 0,
+            nodeSize: 20,
+            selection: { from: 5, to: 5 },
+          })}
+        />,
+      )
+
+      expect(screen.getByTestId('node-view-content').closest('pre')).not.toHaveAttribute('hidden')
+      expect(screen.getByTestId('mermaid-rendered')).toHaveAttribute('hidden')
+    })
+
+    it('flips to source mode when a selectionUpdate moves the caret into the code block', async () => {
+      mockedRender.mockResolvedValue({
+        svg: '<svg></svg>',
+        diagramType: 'flowchart',
+        bindFunctions: vi.fn(),
+      })
+
+      const props = makeProps('mermaid', 'graph TD; A-->B;', {
+        pos: 0,
+        nodeSize: 20,
+        selection: { from: 1000, to: 1000 },
+      })
+      render(<MermaidCodeBlockView {...props} />)
+
+      // Selection outside → the diagram stays the default presentation.
+      expect(screen.getByTestId('mermaid-rendered')).not.toHaveAttribute('hidden')
+      expect(screen.getByTestId('node-view-content').closest('pre')).toHaveAttribute('hidden')
+
+      act(() => {
+        props.__mock.fireSelectionUpdate({ from: 3, to: 3 })
+      })
+
+      await waitFor(() => {
+        expect(screen.getByTestId('node-view-content').closest('pre')).not.toHaveAttribute('hidden')
+      })
+      expect(screen.getByTestId('mermaid-rendered')).toHaveAttribute('hidden')
+    })
+
+    it('unregisters its selectionUpdate listener on unmount', () => {
+      mockedRender.mockResolvedValue({
+        svg: '<svg></svg>',
+        diagramType: 'flowchart',
+        bindFunctions: vi.fn(),
+      })
+
+      const props = makeProps('mermaid', 'graph TD; A-->B;')
+      const { unmount } = render(<MermaidCodeBlockView {...props} />)
+      expect(props.__mock.listeners.size).toBe(1)
+      unmount()
+      expect(props.__mock.listeners.size).toBe(0)
+    })
   })
 
   it('renders a standard editable code block (no diagram) for a non-mermaid language', () => {

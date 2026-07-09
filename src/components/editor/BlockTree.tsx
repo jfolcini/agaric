@@ -397,48 +397,6 @@ export function BlockTree({
     await load()
   }
 
-  // #264 — "Turn into" from the block context-menu. Converts the right-clicked
-  // / long-pressed block (which may differ from the focused block) to the
-  // chosen type by rewriting its markdown content via the shared
-  // `convertBlockContent` helper — the same conversion the `/turn` slash
-  // command runs, so the logic is not duplicated.
-  const handleTurnInto = useCallback(
-    async (blockId: string, blockType: BlockTypeToken) => {
-      const current = pageStore.getState().blocksById.get(blockId)
-      if (!current) return
-      try {
-        await editBlock(blockId, convertBlockContent(current.content ?? '', blockType))
-        await load()
-      } catch (err) {
-        logger.error('BlockTree', 'Failed to convert block', { blockId, blockType }, err)
-        notify.error(t('slash.turnIntoFailed'))
-      }
-    },
-    [pageStore, load, t],
-  )
-
-  // #976 (item 13) — Duplicate a block + its subtree, inserting the copy
-  // immediately after the original at the same depth. This reuses the existing
-  // copy/paste-outline store ops (`serializeBlockSubtree` → `pasteBlocks`)
-  // rather than introducing a new clone op: serialize just this block's subtree
-  // to indented markdown, then paste it anchored on the original (paste inserts
-  // after the anchor at the anchor's depth). No new store op is required.
-  const handleDuplicate = useCallback(
-    async (blockId: string) => {
-      const state = pageStore.getState()
-      if (!state.blocksById.has(blockId)) return
-      const markdown = serializeBlockSubtree(state.blocks, [blockId])
-      if (markdown.length === 0) return
-      try {
-        await state.pasteBlocks(blockId, markdown)
-      } catch (err) {
-        logger.error('BlockTree', 'Failed to duplicate block', { blockId }, err)
-        notify.error(t('blockTree.duplicateFailed'))
-      }
-    },
-    [pageStore, t],
-  )
-
   // ── Slash commands hook ────────────────────────────────────────────
   const {
     handleSlashCommand,
@@ -535,6 +493,71 @@ export function BlockTree({
   // (`handleFlush` — read lazily by `useBlockNavigateToLink` via
   // `dispatch.flushRef` — is registered via `dispatch.on('flush', …)` below
   // and synced post-commit by the dispatch hook, #752/#1019.)
+
+  // #264 — "Turn into" from the block context-menu. Converts the right-clicked
+  // / long-pressed block (which may differ from the focused block) to the
+  // chosen type by rewriting its markdown content via the shared
+  // `convertBlockContent` helper — the same conversion the `/turn` slash
+  // command runs, so the logic is not duplicated.
+  const handleTurnInto = useCallback(
+    async (blockId: string, blockType: BlockTypeToken) => {
+      // The context menu opens without flushing (its data-editor-portal
+      // suppresses the blur persist), so the STORE content of a focused block
+      // can lag live typing. Flush the mounted editor first so the conversion
+      // reads the live text, and REMOUNT with the converted content after —
+      // otherwise the still-mounted editor keeps the pre-conversion doc
+      // invisible on screen and its next blur silently overwrites the
+      // conversion. Mirrors the toolbar path (useBlockTreeEventListeners
+      // onTurnInto → readCurrentContent + applyContentEdit).
+      const isLive = rovingEditorRef.current?.activeBlockId === blockId
+      if (isLive) handleFlush()
+      const current = pageStore.getState().blocksById.get(blockId)
+      if (!current) return
+      const newContent = convertBlockContent(current.content ?? '', blockType)
+      try {
+        await editBlock(blockId, newContent)
+        if (isLive) rovingEditorRef.current?.mount(blockId, newContent)
+        await load()
+      } catch (err) {
+        logger.error('BlockTree', 'Failed to convert block', { blockId, blockType }, err)
+        notify.error(t('slash.turnIntoFailed'))
+      }
+    },
+    [pageStore, load, handleFlush, t],
+  )
+
+  // #976 (item 13) — Duplicate a block + its subtree, inserting the copy
+  // immediately after the original at the same depth. This reuses the existing
+  // copy/paste-outline store ops (`serializeBlockSubtree` → `pasteBlocks`)
+  // rather than introducing a new clone op: serialize just this block's subtree
+  // to indented markdown, then paste it anchored on the original (paste inserts
+  // after the anchor at the anchor's depth). No new store op is required.
+  const handleDuplicate = useCallback(
+    async (blockId: string) => {
+      // Same staleness seam as handleTurnInto: the duplicate chord and the
+      // context-menu row fire with the editor still mounted, so serializing
+      // the store snapshot would copy stale content. Capture → flush →
+      // remount (the handleIndent pattern) so the copy carries the live text
+      // and the original stays open for editing.
+      const re = rovingEditorRef.current
+      if (re?.activeBlockId === blockId) {
+        const live = re.getMarkdown?.() ?? ''
+        handleFlush()
+        re.mount(blockId, live)
+      }
+      const state = pageStore.getState()
+      if (!state.blocksById.has(blockId)) return
+      const markdown = serializeBlockSubtree(state.blocks, [blockId])
+      if (markdown.length === 0) return
+      try {
+        await state.pasteBlocks(blockId, markdown)
+      } catch (err) {
+        logger.error('BlockTree', 'Failed to duplicate block', { blockId }, err)
+        notify.error(t('blockTree.duplicateFailed'))
+      }
+    },
+    [pageStore, handleFlush, t],
+  )
 
   // ── Scroll container ref (for auto-scroll during drag) ──────────────
   const scrollContainerRef = useRef<HTMLElement | null>(null)
@@ -664,7 +687,21 @@ export function BlockTree({
     rovingEditor,
     setFocused,
     handleFlush,
-    remove,
+    // The store's `remove` swallows its own errors (it logs + toasts and
+    // resolves void, never rejects), so a failed delete_block would let the
+    // merge handlers report success and leave the merged text duplicated in
+    // both blocks — their remove-failure revert path could never fire. Same
+    // seam as the `moveBlocks` wrapper below: verify the block actually left
+    // the store and THROW if not, so the hook's failure paths are live.
+    remove: useCallback(
+      async (id: string) => {
+        await remove(id)
+        if (pageStore.getState().blocksById.has(id)) {
+          throw new Error('remove incomplete: block still present after delete')
+        }
+      },
+      [remove, pageStore],
+    ),
     // #1342 — the merge handlers reparent a merged-away block's children onto
     // the merge target BEFORE removing the source, so the backend delete
     // cascade can't soft-delete the subtree. But `moveBlocks` swallows its own

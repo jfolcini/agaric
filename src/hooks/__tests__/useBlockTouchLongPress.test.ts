@@ -627,6 +627,170 @@ describe('useBlockTouchLongPress', () => {
     unmount()
   })
 
+  // ── Finding 36: long-press inside the mounted editor must NOT be hijacked ──
+  // The roving TipTap editor is the only contenteditable in the tree. A
+  // stationary long-press on its text is the native word-select gesture (and
+  // the touch route to the selection bubble menu); arming the 400ms timer there
+  // wiped the selection via removeAllRanges and popped the block menu over the
+  // text mid-editing.
+  describe('touches inside the mounted editor (finding 36)', () => {
+    it('does not open the context menu for a long-press inside a .ProseMirror contenteditable', () => {
+      const openContextMenu = vi.fn()
+      const isDraggingRef = { current: false }
+
+      const { result, unmount } = renderHook(() =>
+        useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
+      )
+
+      // The mounted editor: <div class="ProseMirror" contenteditable="true">…
+      const editorEl = document.createElement('div')
+      editorEl.classList.add('ProseMirror')
+      editorEl.setAttribute('contenteditable', 'true')
+      const word = document.createElement('span')
+      editorEl.append(word)
+      document.body.append(editorEl)
+
+      // removeAllRanges spy — the hijack's destructive side effect.
+      const removeAllRanges = vi.fn()
+      const getSelectionSpy = vi
+        .spyOn(window, 'getSelection')
+        .mockReturnValue({ removeAllRanges } as unknown as Selection)
+
+      act(() => {
+        result.current.handleTouchStart({
+          touches: [{ clientX: 100, clientY: 200 }],
+          target: word,
+        } as unknown as React.TouchEvent)
+      })
+
+      act(() => {
+        vi.advanceTimersByTime(LONG_PRESS_DELAY)
+      })
+
+      expect(openContextMenu).not.toHaveBeenCalled()
+      expect(removeAllRanges).not.toHaveBeenCalled()
+
+      getSelectionSpy.mockRestore()
+      document.body.removeChild(editorEl)
+      unmount()
+    })
+
+    it('still opens the context menu for a long-press on a static (non-editable) block body', () => {
+      const openContextMenu = vi.fn()
+      const isDraggingRef = { current: false }
+
+      const { result, unmount } = renderHook(() =>
+        useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
+      )
+
+      const staticBody = document.createElement('div')
+      document.body.append(staticBody)
+
+      act(() => {
+        result.current.handleTouchStart({
+          touches: [{ clientX: 10, clientY: 20 }],
+          target: staticBody,
+        } as unknown as React.TouchEvent)
+      })
+      act(() => {
+        vi.advanceTimersByTime(LONG_PRESS_DELAY)
+      })
+
+      expect(openContextMenu).toHaveBeenCalledOnce()
+
+      document.body.removeChild(staticBody)
+      unmount()
+    })
+  })
+
+  // ── Finding 38: a second touchstart before touchend must not orphan the
+  // pending timer. Two fingers landing on the same row is a scroll/pinch,
+  // never a context-menu press.
+  describe('multi-touch (finding 38)', () => {
+    it('does not open the menu when a two-finger scroll follows two touchstarts', () => {
+      const openContextMenu = vi.fn()
+      const isDraggingRef = { current: false }
+
+      const { result, unmount } = renderHook(() =>
+        useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
+      )
+
+      // Finger 1 lands, arming timer T1.
+      act(() => {
+        result.current.handleTouchStart({
+          touches: [{ clientX: 100, clientY: 100 }],
+        } as unknown as React.TouchEvent)
+      })
+      // Finger 2 lands before finger 1 lifts — a second touchstart on the same
+      // row. Pre-fix this overwrote the timer ref WITHOUT cancelling T1.
+      act(() => {
+        result.current.handleTouchStart({
+          touches: [
+            { clientX: 100, clientY: 100 },
+            { clientX: 140, clientY: 100 },
+          ],
+        } as unknown as React.TouchEvent)
+      })
+      // The two-finger scroll moves past the cancel threshold.
+      act(() => {
+        result.current.handleTouchMove({
+          touches: [
+            { clientX: 100, clientY: 130 },
+            { clientX: 140, clientY: 130 },
+          ],
+        } as unknown as React.TouchEvent)
+      })
+
+      act(() => {
+        vi.advanceTimersByTime(LONG_PRESS_DELAY)
+      })
+
+      // Pre-fix: orphaned T1 fired here and opened the menu mid-scroll.
+      expect(openContextMenu).not.toHaveBeenCalled()
+
+      unmount()
+    })
+
+    it('does not open the menu (even once) for two stationary fingers', () => {
+      const openContextMenu = vi.fn()
+      const isDraggingRef = { current: false }
+
+      const { result, unmount } = renderHook(() =>
+        useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
+      )
+
+      const div = document.createElement('div')
+      document.body.append(div)
+
+      act(() => {
+        result.current.handleTouchStart({
+          touches: [{ clientX: 100, clientY: 100 }],
+          target: div,
+        } as unknown as React.TouchEvent)
+      })
+      act(() => {
+        result.current.handleTouchStart({
+          touches: [
+            { clientX: 100, clientY: 100 },
+            { clientX: 140, clientY: 100 },
+          ],
+          target: div,
+        } as unknown as React.TouchEvent)
+      })
+
+      act(() => {
+        vi.advanceTimersByTime(LONG_PRESS_DELAY * 2)
+      })
+
+      // Pre-fix BOTH timers fired (T1 orphaned, T2 pending) — the menu opened
+      // twice. A multi-touch gesture must never open it at all.
+      expect(openContextMenu).not.toHaveBeenCalled()
+
+      document.body.removeChild(div)
+      unmount()
+    })
+  })
+
   it('silently swallows preventDefault failures (passive listener safety)', () => {
     const openContextMenu = vi.fn()
     const isDraggingRef = { current: false }

@@ -556,6 +556,273 @@ describe('useDraftAutosave', () => {
     })
   })
 
+  // Findings 2/48 — blur-path save failure must NOT destroy the draft row.
+  // Pre-fix, `discardDraft()` fired `deleteDraft` immediately, concurrently
+  // with the un-awaited `edit_block` IPC; when that IPC failed the store
+  // rolled back AND the draft row (the boot-time `flush_all_drafts` recovery
+  // net) was already gone — the typed text survived nowhere. The discard now
+  // accepts the save's outcome promise (`edit` resolves `false` on failure,
+  // it never rejects) and only deletes the row once the save succeeded.
+  describe('findings 2/48 — draft deletion gated on save outcome', () => {
+    it('deletes the draft only AFTER the save outcome resolves true', async () => {
+      const { result } = renderHook(() => useDraftAutosave('BLOCK_1', 'typed paragraph'))
+
+      let resolveOutcome: (ok: boolean) => void = () => {}
+      const outcome = new Promise<boolean>((resolve) => {
+        resolveOutcome = resolve
+      })
+
+      act(() => {
+        result.current.discardDraft(outcome, 'typed paragraph')
+      })
+
+      // The row must survive while the edit IPC is still in flight.
+      expect(mockedDeleteDraft).not.toHaveBeenCalled()
+
+      await act(async () => {
+        resolveOutcome(true)
+      })
+      await flushMicrotasks()
+
+      expect(mockedDeleteDraft).toHaveBeenCalledTimes(1)
+      expect(mockedDeleteDraft).toHaveBeenCalledWith('BLOCK_1')
+    })
+
+    it('keeps the draft row and re-saves the failed content when the save resolves false', async () => {
+      const { result } = renderHook(() => useDraftAutosave('BLOCK_1', 'typed paragraph'))
+      mockedSaveDraft.mockClear()
+
+      act(() => {
+        result.current.discardDraft(Promise.resolve(false), 'typed paragraph')
+      })
+      await flushMicrotasks()
+
+      // Failed save: the draft row is the last surviving copy of the text —
+      // it must NOT be deleted, and the exact failed content is re-saved so
+      // recovery works even when no debounce tick ever wrote a row.
+      expect(mockedDeleteDraft).not.toHaveBeenCalled()
+      expect(mockedSaveDraft).toHaveBeenCalledTimes(1)
+      expect(mockedSaveDraft).toHaveBeenCalledWith('BLOCK_1', 'typed paragraph')
+    })
+
+    it('treats a rejected save outcome as a failure (keeps the row)', async () => {
+      const { result } = renderHook(() => useDraftAutosave('BLOCK_1', 'typed paragraph'))
+      mockedSaveDraft.mockClear()
+
+      act(() => {
+        result.current.discardDraft(Promise.reject(new Error('escaped')), 'typed paragraph')
+      })
+      await flushMicrotasks()
+
+      expect(mockedDeleteDraft).not.toHaveBeenCalled()
+      expect(mockedSaveDraft).toHaveBeenCalledWith('BLOCK_1', 'typed paragraph')
+    })
+
+    it('still cancels the pending debounced save synchronously', () => {
+      const { result } = renderHook(() => useDraftAutosave('BLOCK_1', 'typed paragraph'))
+
+      act(() => {
+        result.current.discardDraft(Promise.resolve(true), 'typed paragraph')
+      })
+      act(() => {
+        vi.advanceTimersByTime(3000)
+      })
+
+      // The debounced saveDraft was cancelled at discard time even though the
+      // deleteDraft itself is deferred until the outcome settles.
+      expect(mockedSaveDraft).not.toHaveBeenCalled()
+    })
+
+    it('skips the deferred deleteDraft when a newer save superseded the discard', async () => {
+      const { result, rerender } = renderHook(
+        ({ blockId, content }) => useDraftAutosave(blockId, content),
+        { initialProps: { blockId: 'BLOCK_1', content: 'first text' } },
+      )
+
+      let resolveOutcome: (ok: boolean) => void = () => {}
+      const outcome = new Promise<boolean>((resolve) => {
+        resolveOutcome = resolve
+      })
+      act(() => {
+        result.current.discardDraft(outcome, 'first text')
+      })
+
+      // User refocuses the same block and types; the fresh debounced save
+      // writes a NEW draft row that the late deleteDraft must not destroy.
+      rerender({ blockId: 'BLOCK_1', content: 'newer text' })
+      act(() => {
+        vi.advanceTimersByTime(2000)
+      })
+      expect(mockedSaveDraft).toHaveBeenCalledWith('BLOCK_1', 'newer text')
+
+      await act(async () => {
+        resolveOutcome(true)
+      })
+      await flushMicrotasks()
+
+      expect(mockedDeleteDraft).not.toHaveBeenCalled()
+    })
+
+    it('discardDraft with no outcome keeps the synchronous delete (legacy paths)', () => {
+      const { result } = renderHook(() => useDraftAutosave('BLOCK_1', 'content'))
+
+      act(() => {
+        result.current.discardDraft()
+      })
+
+      expect(mockedDeleteDraft).toHaveBeenCalledTimes(1)
+      expect(mockedDeleteDraft).toHaveBeenCalledWith('BLOCK_1')
+    })
+  })
+
+  // Finding 3 — the debounced row is the ONLY crash/kill safety net, but a
+  // trailing debounce means it is missing (continuous typing) or ~2s stale
+  // when the OS backgrounds-then-kills the webview or the window closes.
+  describe('finding 3 — background/close flush of the live content', () => {
+    afterEach(() => {
+      Object.defineProperty(document, 'visibilityState', {
+        value: 'visible',
+        configurable: true,
+      })
+    })
+
+    function setVisibility(state: 'hidden' | 'visible') {
+      Object.defineProperty(document, 'visibilityState', {
+        value: state,
+        configurable: true,
+      })
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'))
+      })
+    }
+
+    it('persists the latest live content when the document becomes hidden', () => {
+      const { rerender } = renderHook(
+        ({ blockId, content }) => useDraftAutosave(blockId, content),
+        { initialProps: { blockId: 'BLOCK_1', content: 'hello' } },
+      )
+
+      // Keystroke inside the debounce window — no row written yet.
+      rerender({ blockId: 'BLOCK_1', content: 'hello w' })
+      expect(mockedSaveDraft).not.toHaveBeenCalled()
+
+      setVisibility('hidden')
+
+      expect(mockedSaveDraft).toHaveBeenCalledTimes(1)
+      expect(mockedSaveDraft).toHaveBeenCalledWith('BLOCK_1', 'hello w')
+    })
+
+    it('does NOT save on visibilitychange back to visible', () => {
+      renderHook(() => useDraftAutosave('BLOCK_1', 'hello'))
+
+      setVisibility('visible')
+
+      expect(mockedSaveDraft).not.toHaveBeenCalled()
+    })
+
+    it('persists the latest live content on pagehide', () => {
+      const { rerender } = renderHook(
+        ({ blockId, content }) => useDraftAutosave(blockId, content),
+        { initialProps: { blockId: 'BLOCK_1', content: 'hello' } },
+      )
+      rerender({ blockId: 'BLOCK_1', content: 'hello world' })
+
+      act(() => {
+        window.dispatchEvent(new Event('pagehide'))
+      })
+
+      expect(mockedSaveDraft).toHaveBeenCalledTimes(1)
+      expect(mockedSaveDraft).toHaveBeenCalledWith('BLOCK_1', 'hello world')
+    })
+
+    it('does not save empty content on hidden', () => {
+      renderHook(() => useDraftAutosave('BLOCK_1', ''))
+
+      setVisibility('hidden')
+
+      expect(mockedSaveDraft).not.toHaveBeenCalled()
+    })
+
+    it('does not save when no block is focused (blockId null)', () => {
+      renderHook(() => useDraftAutosave(null, 'stale content'))
+
+      setVisibility('hidden')
+      act(() => {
+        window.dispatchEvent(new Event('pagehide'))
+      })
+
+      expect(mockedSaveDraft).not.toHaveBeenCalled()
+    })
+  })
+
+  // Finding 3 (max-latency cap) — continuous typing resets the trailing
+  // debounce on every keystroke, so pre-fix NO draft row was ever written
+  // during an uninterrupted run and a kill lost the whole run. Once a save
+  // has been pending longer than the cap, it fires immediately.
+  describe('finding 3 — max-latency cap on the trailing debounce', () => {
+    it('continuous typing (never pausing 2s) still persists a draft within the cap', () => {
+      const { rerender } = renderHook(
+        ({ blockId, content }) => useDraftAutosave(blockId, content),
+        { initialProps: { blockId: 'BLOCK_1', content: 'c0' } },
+      )
+
+      // Keystrokes every second — each one resets the 2s trailing debounce.
+      for (let i = 1; i <= 4; i++) {
+        act(() => {
+          vi.advanceTimersByTime(1000)
+        })
+        rerender({ blockId: 'BLOCK_1', content: `c${i}` })
+      }
+      expect(mockedSaveDraft).not.toHaveBeenCalled()
+
+      // The 5th keystroke lands at the 5s cap — the save fires immediately
+      // instead of re-arming another 2s trailing window.
+      act(() => {
+        vi.advanceTimersByTime(1000)
+      })
+      rerender({ blockId: 'BLOCK_1', content: 'c5' })
+      act(() => {
+        vi.advanceTimersByTime(0)
+      })
+
+      expect(mockedSaveDraft).toHaveBeenCalledTimes(1)
+      expect(mockedSaveDraft).toHaveBeenCalledWith('BLOCK_1', 'c5')
+    })
+
+    it('the cap window resets after a capped save (no immediate re-fire)', () => {
+      const { rerender } = renderHook(
+        ({ blockId, content }) => useDraftAutosave(blockId, content),
+        { initialProps: { blockId: 'BLOCK_1', content: 'c0' } },
+      )
+
+      for (let i = 1; i <= 5; i++) {
+        act(() => {
+          vi.advanceTimersByTime(1000)
+        })
+        rerender({ blockId: 'BLOCK_1', content: `c${i}` })
+      }
+      act(() => {
+        vi.advanceTimersByTime(0)
+      })
+      expect(mockedSaveDraft).toHaveBeenCalledTimes(1)
+
+      // Next keystroke starts a fresh run: an ordinary 2s trailing debounce.
+      act(() => {
+        vi.advanceTimersByTime(1000)
+      })
+      rerender({ blockId: 'BLOCK_1', content: 'c6' })
+      act(() => {
+        vi.advanceTimersByTime(1999)
+      })
+      expect(mockedSaveDraft).toHaveBeenCalledTimes(1)
+      act(() => {
+        vi.advanceTimersByTime(1)
+      })
+      expect(mockedSaveDraft).toHaveBeenCalledTimes(2)
+      expect(mockedSaveDraft).toHaveBeenLastCalledWith('BLOCK_1', 'c6')
+    })
+  })
+
   // Issue #106 — autosave is the canonical `pool_busy` consumer: a
   // user typing fast can collide with another in-flight write that
   // holds every connection in the sqlx pool. `retryOnPoolBusy` should

@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next'
 
 import { t as translate } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
+import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import { getPageStore } from '@/stores/page-blocks'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
@@ -96,6 +97,19 @@ export function useUndoShortcuts(): void {
       // Skip if inside contentEditable, input, or textarea
       const target = e.target as HTMLElement
       if (target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+        return
+      }
+
+      // Skip while the roving block editor is mounted. A `data-editor-portal`
+      // overlay (context menu, date picker) can hold DOM focus on a plain
+      // button while the editor's blur is suppressed (useEditorBlur Step 4a),
+      // leaving it mounted with UNFLUSHED edits — the tag guard above doesn't
+      // catch that target. Running page-level undo/redo then diverges the
+      // editor doc from the reloaded store: the next blur flushes the stale
+      // content back, silently re-applying the undone edit and wiping the redo
+      // stack. While a block is focused, in-editor undo (TipTap history) owns
+      // Ctrl+Z; page-level undo resumes once the editor unmounts.
+      if (useBlockStore.getState().focusedBlockId != null) {
         return
       }
 

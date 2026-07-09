@@ -47,10 +47,17 @@ export function useEditorBlur(params: {
     'activeBlockId' | 'originalMarkdown' | 'getMarkdown' | 'unmount'
   >
   blockId: string
-  edit: (blockId: string, content: string) => void
-  splitBlock: (blockId: string, content: string) => void
+  /** Store edit — resolves `false` when the backend write failed and the
+   * optimistic update was rolled back (it never rejects). The outcome gates
+   * the draft discard below. Fire-and-forget callers may return void. */
+  edit: (blockId: string, content: string) => Promise<boolean> | void
+  splitBlock: (blockId: string, content: string) => Promise<void> | void
   setFocused: (id: string | null) => void
-  discardDraft: () => void
+  /** `useDraftAutosave`'s discard. When a save was dispatched during this
+   * blur, its outcome promise and the saved content are forwarded so the
+   * persisted draft row is only deleted AFTER the save committed — on
+   * failure the row is the last surviving copy of the typed text. */
+  discardDraft: (saveOutcome?: Promise<boolean | void>, failedContent?: string) => void
 }): { handleBlur: (e: React.FocusEvent) => void } {
   const { blockId, edit, splitBlock, setFocused, discardDraft } = params
 
@@ -89,10 +96,11 @@ export function useEditorBlur(params: {
       // skip the duplicate edit() in Step 5 (while still unmounting to tear
       // down editor state / discard the draft / clear focus).
       let earlyPersisted: string | null = null
+      let earlyPersistOutcome: Promise<boolean> | void = undefined
       if (rovingEditorRef.current.originalMarkdown === '' && rovingEditorRef.current.getMarkdown) {
         const content = rovingEditorRef.current.getMarkdown()
         if (content && content !== '' && !shouldSplitOnBlur(content)) {
-          edit(blockId, content)
+          earlyPersistOutcome = edit(blockId, content)
           earlyPersisted = content
           // Don't return — continue to normal blur logic (unmount, setFocused, etc.)
         }
@@ -136,22 +144,32 @@ export function useEditorBlur(params: {
 
       // Step 5: Unmount -> save or split -> discard draft -> clear focus
       const changed = rovingEditorRef.current.unmount()
+      // Findings 2/48: capture the save's settlement so the draft discard can
+      // gate its deleteDraft on the write actually committing (`edit` resolves
+      // false on failure — it never rejects). Pre-fix the draft row was
+      // deleted concurrently with the un-awaited IPC, so a failed save lost
+      // BOTH copies of the typed text (store rollback + hard row DELETE).
+      let saveOutcome: Promise<boolean | void> | undefined
       if (changed !== null) {
         if (shouldSplitOnBlur(changed)) {
-          flushSync(() => {
-            splitBlock(blockId, changed)
-          })
+          const outcome = flushSync(() => splitBlock(blockId, changed))
+          if (outcome) saveOutcome = outcome
         } else if (changed !== earlyPersisted) {
           // #1062: skip the duplicate edit() when unmount returned the exact
           // content Step 3 already persisted (the fresh-block plain-blur case).
-          flushSync(() => {
-            edit(blockId, changed)
-          })
+          const outcome = flushSync(() => edit(blockId, changed))
+          if (outcome) saveOutcome = outcome
+        } else if (earlyPersistOutcome) {
+          // #1062 skip path — Step 3's edit is the one save of this blur, so
+          // its outcome is what must gate the discard.
+          saveOutcome = earlyPersistOutcome
         }
       }
       // Always discard draft on blur — even when content is unchanged, a
       // stale draft from a previous autosave cycle may exist in the database.
-      discardDraft()
+      // The row deletion itself is deferred inside discardDraft until
+      // `saveOutcome` resolves successfully (when one exists).
+      discardDraft(saveOutcome, changed ?? undefined)
       logger.debug('editor', 'blur', { blockId })
       setFocused(null)
     },

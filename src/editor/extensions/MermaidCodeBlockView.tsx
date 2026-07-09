@@ -22,7 +22,7 @@
  */
 
 import { type NodeViewProps, NodeViewContent, NodeViewWrapper } from '@tiptap/react'
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 // Lazy-load MermaidDiagram so mermaid.js stays out of the editor/index chunk
@@ -39,11 +39,41 @@ const MermaidDiagram = lazy(() =>
 const CodeNodeViewContent = NodeViewContent<'code'>
 
 export function MermaidCodeBlockView(props: NodeViewProps): React.ReactElement {
-  const { node } = props
+  const { node, editor, getPos } = props
   const { t } = useTranslation()
   const language = (node.attrs['language'] as string | null) ?? null
   // Default to the rendered diagram; the user toggles to raw source to edit.
   const [showSource, setShowSource] = useState(false)
+
+  // Finding 45 — while the diagram is shown, the ProseMirror-managed source
+  // sits in a display:none <pre>. A selection inside the node (typing
+  // ```mermaid with the caret in the block, or clicking a static mermaid
+  // block to focus it) would route keystrokes into that invisible text:
+  // characters get swallowed, Enter inserts hidden newlines, Ctrl+A + typing
+  // replaces the whole diagram. Switch to source mode whenever the editor
+  // selection ENTERS the node (transition-triggered, so the user can still
+  // toggle back to the diagram manually without being flipped right back).
+  useEffect(() => {
+    if (language !== 'mermaid') return undefined
+    let wasInside = false
+    const syncToSelection = () => {
+      const pos = getPos()
+      const nodeAt = typeof pos === 'number' ? editor.state.doc.nodeAt(pos) : null
+      const { from, to } = editor.state.selection
+      const inside =
+        nodeAt !== null && typeof pos === 'number' && from >= pos && to <= pos + nodeAt.nodeSize
+      if (inside && !wasInside) setShowSource(true)
+      wasInside = inside
+    }
+    // The roving editor may mount with the caret already inside the code
+    // block (it's the doc's only textblock) — check once before the first
+    // selectionUpdate.
+    syncToSelection()
+    editor.on('selectionUpdate', syncToSelection)
+    return () => {
+      editor.off('selectionUpdate', syncToSelection)
+    }
+  }, [editor, getPos, language])
 
   // Non-mermaid code blocks: render the standard editable code block. The
   // `language-<x>` class mirrors CodeBlockLowlight's default DOM so highlight

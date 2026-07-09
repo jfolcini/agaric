@@ -41,6 +41,7 @@ function makeProps(latex: string, updateAttributes = vi.fn()) {
   return {
     node: { attrs: { latex } },
     updateAttributes,
+    editor: { commands: { focus: vi.fn() } },
   } as unknown as React.ComponentProps<typeof MathInlineNodeView>
 }
 
@@ -66,6 +67,91 @@ describe('MathInlineNodeView (#1437)', () => {
   it('shows an empty-state hint for blank LaTeX (no KaTeX render attempted)', () => {
     render(<MathInlineNodeView {...makeProps('   ')} />)
     expect(screen.queryByTestId('katex-inline')).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * Finding 44 — the LaTeX source editor was unusable: focusing the input blurred
+ * the ProseMirror contenteditable, and `useEditorBlur` (finding no
+ * `[data-editor-portal]` ancestor on the relatedTarget) saved + unmounted the
+ * block, destroying the input mid-interaction. The node view must:
+ *  - tag the source-editor span with `data-editor-portal` (the blur guard's
+ *    single opt-in escape hatch — see useEditorBlur's EDITOR_PORTAL_SELECTOR),
+ *  - focus the input when the source is revealed (the reveal click keeps the
+ *    editor focused via preventDefault, so nothing else focuses it),
+ *  - contain its keydowns so use-block-keyboard's capture-phase container
+ *    listener cannot flush/merge/navigate blocks while the user types LaTeX.
+ */
+describe('MathNodeView source editor focus retention (finding 44)', () => {
+  afterEach(() => vi.clearAllMocks())
+
+  it('wraps the source input in a data-editor-portal element so the blur guard keeps the block mounted', async () => {
+    render(<MathInlineNodeView {...makeProps('a^2')} />)
+    fireEvent.click(await screen.findByTestId('math-rendered'))
+    const input = await screen.findByTestId('math-source-input')
+    // `[data-editor-portal]` is useEditorBlur's EDITOR_PORTAL_SELECTOR — the
+    // single opt-in that stops Step 5 (unmount + save) when focus moves here.
+    expect(input.closest('[data-editor-portal]')).not.toBeNull()
+  })
+
+  it('focuses the source input when it is revealed', async () => {
+    render(<MathInlineNodeView {...makeProps('a^2')} />)
+    fireEvent.click(await screen.findByTestId('math-rendered'))
+    const input = await screen.findByTestId('math-source-input')
+    await waitFor(() => expect(document.activeElement).toBe(input))
+  })
+
+  it('keydown in the source input never reaches capture-phase block keyboard listeners', async () => {
+    // Mirrors use-block-keyboard: a capture-phase keydown listener on an
+    // ancestor of the editor DOM. Keys typed into the LaTeX field must not
+    // reach it (Enter there would flush/split the block under the input).
+    const captureSpy = vi.fn()
+    document.body.addEventListener('keydown', captureSpy, true)
+    try {
+      render(<MathInlineNodeView {...makeProps('a^2')} />)
+      fireEvent.click(await screen.findByTestId('math-rendered'))
+      const input = await screen.findByTestId('math-source-input')
+
+      fireEvent.keyDown(input, { key: 'Enter' })
+      fireEvent.keyDown(input, { key: 'Backspace' })
+      fireEvent.keyDown(input, { key: 'ArrowUp' })
+      expect(captureSpy).not.toHaveBeenCalled()
+
+      // Control: keydown elsewhere still propagates normally.
+      fireEvent.keyDown(document.body, { key: 'Enter' })
+      expect(captureSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      document.body.removeEventListener('keydown', captureSpy, true)
+    }
+  })
+
+  it('Enter closes the source editor and returns focus to the editor', async () => {
+    const props = makeProps('a^2')
+    render(<MathInlineNodeView {...props} />)
+    fireEvent.click(await screen.findByTestId('math-rendered'))
+    const input = await screen.findByTestId('math-source-input')
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    await waitFor(() => expect(screen.queryByTestId('math-source-input')).not.toBeInTheDocument())
+    expect(screen.getByTestId('math-rendered')).toBeInTheDocument()
+    expect(
+      (props as { editor: { commands: { focus: () => void } } }).editor.commands.focus,
+    ).toHaveBeenCalled()
+  })
+
+  it('Escape closes the source editor and returns focus to the editor', async () => {
+    const props = makeProps('x_1')
+    render(<MathInlineNodeView {...props} />)
+    fireEvent.click(await screen.findByTestId('math-rendered'))
+    const input = await screen.findByTestId('math-source-input')
+
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    await waitFor(() => expect(screen.queryByTestId('math-source-input')).not.toBeInTheDocument())
+    expect(
+      (props as { editor: { commands: { focus: () => void } } }).editor.commands.focus,
+    ).toHaveBeenCalled()
   })
 })
 

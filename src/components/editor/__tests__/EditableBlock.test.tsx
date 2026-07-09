@@ -1158,7 +1158,7 @@ describe('EditableBlock', () => {
 
     // ── Store method rejections ──────────────────────────────────────
 
-    it('continues blur sequence when edit() rejects', () => {
+    it('continues blur sequence when edit() rejects but KEEPS the draft (failed save must not lose both copies)', async () => {
       suppressUnhandledRejections()
       mockEdit.mockRejectedValueOnce(new Error('backend error'))
 
@@ -1180,13 +1180,20 @@ describe('EditableBlock', () => {
       const wrapper = getBlockEditorWrapper()
       fireEvent.blur(wrapper as Element)
 
-      // edit was called (and will reject), but blur still completes
+      // edit was called (and will reject), and blur still completes...
       expect(mockEdit).toHaveBeenCalledWith('B1', 'updated text')
-      expect(mockDeleteDraft).toHaveBeenCalledWith('B1')
       expect(mockSetFocused).toHaveBeenCalledWith(null)
+      // ...but the crash-recovery draft is only discarded AFTER a
+      // successful save — a failed save keeps it so the typed text
+      // survives (the pre-fix behavior deleted it concurrently, losing
+      // both copies).
+      await act(async () => {
+        await Promise.resolve()
+      })
+      expect(mockDeleteDraft).not.toHaveBeenCalled()
     })
 
-    it('continues blur sequence when splitBlock() rejects', () => {
+    it('continues blur sequence when splitBlock() rejects but KEEPS the draft', async () => {
       suppressUnhandledRejections()
       mockSplitBlock.mockRejectedValueOnce(new Error('split failed'))
 
@@ -1204,8 +1211,11 @@ describe('EditableBlock', () => {
       fireEvent.blur(wrapper as Element)
 
       expect(mockSplitBlock).toHaveBeenCalledWith('B1', 'line1\nline2')
-      expect(mockDeleteDraft).toHaveBeenCalledWith('B1')
       expect(mockSetFocused).toHaveBeenCalledWith(null)
+      await act(async () => {
+        await Promise.resolve()
+      })
+      expect(mockDeleteDraft).not.toHaveBeenCalled()
     })
 
     it('continues focus transition when edit() rejects for previous block', async () => {
