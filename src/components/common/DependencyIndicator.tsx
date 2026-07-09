@@ -23,7 +23,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useBatchProperties } from '@/hooks/useBatchProperties'
+import { useBatchPropertyRows } from '@/hooks/useBatchPropertyRows'
 import { logger } from '@/lib/logger'
 import type { PropertyRow } from '@/lib/tauri'
 import { batchResolve, getProperties } from '@/lib/tauri'
@@ -51,7 +51,7 @@ export function DependencyIndicator({
   const [blockedByTitle, setBlockedByTitle] = useState<string | null>(null)
   const [hasBlockedBy, setHasBlockedBy] = useState(false)
 
-  const batchProperties = useBatchProperties()
+  const batchProperties = useBatchPropertyRows()
   // Read from the provider (if mounted) — `undefined` means "not in
   // cache yet" (initial fetch still pending or block missing from
   // batch). Empty array means "fetched, no properties".

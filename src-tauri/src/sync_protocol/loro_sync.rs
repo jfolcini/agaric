@@ -257,7 +257,7 @@ fn classify_from_vv_reachability(
 ///
 /// `sql_deleted` is the vault-wide set of SQL-soft-deleted block ids
 /// (`deleted_at IS NOT NULL`). It is read ONCE per sync round by the caller
-/// ([`super::orchestrator::SyncOrchestrator::head_exchange_outgoing_loro`] via
+/// ([`super::session_state_machine::SyncOrchestrator::head_exchange_outgoing_loro`] via
 /// [`read_sql_soft_deleted_ids`]) and threaded through every per-space
 /// `prepare_outgoing` call. Previously each call re-ran the same full-vault
 /// `SELECT id FROM blocks WHERE deleted_at IS NOT NULL` into a fresh
@@ -349,7 +349,7 @@ pub async fn prepare_outgoing(
 /// This preserves the pre-#2040 self-contained one-shot signature for callers
 /// that prepare exactly ONE space (tests, the snapshot/daemon seed paths) and
 /// therefore gain nothing from hoisting the read. The hot multi-space round —
-/// [`super::orchestrator::SyncOrchestrator::head_exchange_outgoing_loro`] —
+/// [`super::session_state_machine::SyncOrchestrator::head_exchange_outgoing_loro`] —
 /// reads the set ONCE and calls [`prepare_outgoing`] directly per space, so it
 /// does NOT pay one full-vault read per space. Behaviour is identical to the
 /// old inline read: the set is exactly what `prepare_outgoing` would have read.
@@ -369,7 +369,7 @@ pub async fn prepare_outgoing_for_pool(
 ///
 /// Hoisted out of [`prepare_outgoing`] so the per-space loop does not re-run
 /// this identical full-vault scan once per space. The caller
-/// ([`super::orchestrator::SyncOrchestrator::head_exchange_outgoing_loro`])
+/// ([`super::session_state_machine::SyncOrchestrator::head_exchange_outgoing_loro`])
 /// invokes this once before iterating spaces and threads the returned set into
 /// every `prepare_outgoing` call. The set is small (tombstones, periodically
 /// purged); its content does not depend on the space being exported.

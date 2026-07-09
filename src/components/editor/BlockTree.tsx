@@ -52,7 +52,7 @@ import { useBlockKeyboard } from '@/editor/use-block-keyboard'
 import { useEditorEventDispatch } from '@/editor/use-editor-event-dispatch'
 import { type RovingEditorHandle, useRovingEditor } from '@/editor/use-roving-editor'
 import { BatchAttachmentsProvider } from '@/hooks/useBatchAttachments'
-import { BatchPropertiesProvider } from '@/hooks/useBatchProperties'
+import { BatchPropertiesProvider } from '@/hooks/useBatchPropertyRows'
 import { BlockActionsProvider } from '@/hooks/useBlockActions'
 import { useBlockCollapse } from '@/hooks/useBlockCollapse'
 import { useBlockDatePicker } from '@/hooks/useBlockDatePicker'
@@ -520,7 +520,7 @@ export function BlockTree({
   // from the single page-wide `BatchPropertiesProvider` batch (mounted below),
   // inside `BlockListRenderer`, instead of a SECOND identical
   // `getBatchProperties` IPC issued here. See BlockListRenderer /
-  // useBlockPropertiesBatch.
+  // useExtraBlockProperties.
 
   // ── Editor flush callback (split + checkbox/todo persistence) ──────
   const handleFlush = useBlockFlush({

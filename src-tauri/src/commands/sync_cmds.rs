@@ -340,7 +340,7 @@ pub fn start_sync_inner(
     // Real per-peer exclusion lives in the daemon, where
     // `try_sync_with_peer` re-acquires the same lock for the duration
     // of the actual network sync — see
-    // `src-tauri/src/sync_daemon/orchestrator.rs::try_sync_with_peer`
+    // `src-tauri/src/sync_daemon/session_supervisor.rs::try_sync_with_peer`
     // (the `try_lock_peer` call there is what serialises real syncs).
     // If a wrapper call interleaves with a daemon sync exactly on the
     // lock acquisition the wrapper wins this probe and the daemon's

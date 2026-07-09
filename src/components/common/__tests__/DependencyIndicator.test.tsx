@@ -34,7 +34,7 @@ import {
   DependencyIndicator,
   type DependencyIndicatorProps,
 } from '@/components/common/DependencyIndicator'
-import { BatchPropertiesProvider } from '@/hooks/useBatchProperties'
+import { BatchPropertiesProvider } from '@/hooks/useBatchPropertyRows'
 
 function makeCache(): React.RefObject<Map<string, unknown[]>> {
   return { current: new Map() }

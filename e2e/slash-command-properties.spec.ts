@@ -25,7 +25,7 @@ import { expect, focusBlock, openPage, reopenPage, test, waitForBoot } from './h
  *
  * Why presets (not the bare `/assignee` / `/location` exact commands): the exact
  * commands intentionally set an EMPTY value and route to the property editor,
- * and `useBlockPropertiesBatch` drops empty-valued props — so no chip renders.
+ * and `useExtraBlockProperties` drops empty-valued props — so no chip renders.
  * The preset path (`assignee-me`, `location-office`, `effort-1h`, `repeat-daily`)
  * writes a real value, which is what makes the persisted chip observable.
  *

@@ -184,7 +184,7 @@ describe('JournalPage / BlockTree integration — auto-create race', () => {
       // `.find(...)` / `.filter(...)` on the result.
       if (cmd === 'get_properties') return []
       // `get_batch_properties` returns a `Record<blockId, PropertyRow[]>`
-      // — give it an empty record so BlockTree's `useBlockPropertiesBatch`
+      // — give it an empty record so BlockTree's `useExtraBlockProperties`
       // doesn't log "Cannot read properties of null (reading 'filter')".
       if (cmd === 'get_batch_properties') return {}
       // Catch-all empty pagination response covers `list_blocks`,

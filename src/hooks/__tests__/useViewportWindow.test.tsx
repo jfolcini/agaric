@@ -32,7 +32,7 @@ vi.mock('../../lib/logger', () => ({
 }))
 
 import { getBatchProperties } from '../../lib/tauri'
-import { BatchPropertiesProvider } from '../useBatchProperties'
+import { BatchPropertiesProvider } from '../useBatchPropertyRows'
 import type { ViewportObserver } from '../useViewportObserver'
 import { useViewportWindow } from '../useViewportWindow'
 

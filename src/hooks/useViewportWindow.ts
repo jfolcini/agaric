@@ -1,7 +1,7 @@
 /**
  * useViewportWindow — narrows a page's full block list to the rows actually
  * inside the rendered viewport window, so BlockTree-level batch metadata IPCs
- * (`useBlockPropertiesBatch`, `useBlockLinkResolve`, the batch-attachments
+ * (`useExtraBlockProperties`, `useBlockLinkResolve`, the batch-attachments
  * provider) fetch for the ~visible rows instead of every block on the page
  * (#1268).
  *
@@ -25,7 +25,7 @@
  *   observer fires" gap.
  * - A block scrolled out of view flips to off-screen → it drops from the
  *   window on the next recompute. Already-fetched data is retained by the
- *   downstream hooks' reference-stable maps (e.g. `useBlockPropertiesBatch`
+ *   downstream hooks' reference-stable maps (e.g. `useExtraBlockProperties`
  *   keeps prior arrays), so it isn't re-fetched and isn't lost; it just stops
  *   being part of the next IPC's id set.
  * - A block scrolled back into view flips on-screen → it re-enters the window

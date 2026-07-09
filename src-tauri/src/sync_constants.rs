@@ -15,7 +15,7 @@ use std::time::Duration;
 // Generous enough to absorb a large multi-device frontier merge or a
 // one-shot snapshot apply without spuriously aborting, while still
 // guaranteeing forward progress against a stuck remote / dead-loop in
-// the state machine. Used by both initiator (`sync_daemon::orchestrator`)
+// the state machine. Used by both initiator (`sync_daemon::session_supervisor`)
 // and responder (`sync_daemon::server`) message loops.
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(120);
 

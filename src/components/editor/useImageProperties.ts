@@ -16,7 +16,7 @@ import {
   DEFAULT_IMAGE_ALIGNMENT,
   type ImageAlignment,
 } from '@/components/editor-toolbar/ImageResizeToolbar'
-import { useBatchProperties } from '@/hooks/useBatchProperties'
+import { useBatchPropertyRows } from '@/hooks/useBatchPropertyRows'
 import { logger } from '@/lib/logger'
 import { getBatchProperties, type PropertyRow } from '@/lib/tauri'
 
@@ -52,7 +52,7 @@ export function useImageProperties(blockId: string, hasImageAttachments: boolean
   // Outside a provider (unit tests, isolated renders — StaticBlock's only
   // production mount is under BlockTree, which mounts the provider), fall back
   // to the single-block batched IPC (#543: one call for all three properties).
-  const batchProperties = useBatchProperties()
+  const batchProperties = useBatchPropertyRows()
   useEffect(() => {
     if (!hasImageAttachments) return
 

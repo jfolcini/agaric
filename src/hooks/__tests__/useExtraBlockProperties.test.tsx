@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 /**
- * Tests for useBlockPropertiesBatch — projects the row-UI "extra"
+ * Tests for useExtraBlockProperties — projects the row-UI "extra"
  * property map from the SHARED `BatchPropertiesProvider` batch (#2288).
  *
  * The hook no longer fires its own `getBatchProperties` IPC; it reshapes
@@ -32,8 +32,8 @@ vi.mock('../../lib/logger', () => ({
 
 import type { PropertyRow } from '../../lib/tauri'
 import { getBatchProperties } from '../../lib/tauri'
-import { BatchPropertiesProvider } from '../useBatchProperties'
-import { useBlockPropertiesBatch } from '../useBlockPropertiesBatch'
+import { BatchPropertiesProvider } from '../useBatchPropertyRows'
+import { useExtraBlockProperties } from '../useExtraBlockProperties'
 
 const mockedGetBatchProperties = vi.mocked(getBatchProperties)
 
@@ -69,15 +69,15 @@ beforeEach(() => {
   mockedGetBatchProperties.mockResolvedValue({})
 })
 
-describe('useBlockPropertiesBatch (provider-projected, #2288)', () => {
+describe('useExtraBlockProperties (provider-projected, #2288)', () => {
   it('returns an empty map with no provider mounted', () => {
-    const { result } = renderHook(() => useBlockPropertiesBatch([{ id: 'B1' }]))
+    const { result } = renderHook(() => useExtraBlockProperties([{ id: 'B1' }]))
     expect(result.current).toEqual({})
     expect(mockedGetBatchProperties).not.toHaveBeenCalled()
   })
 
   it('returns an empty map (and the provider fires no IPC) when there are no blocks', async () => {
-    const { result } = renderHook(() => useBlockPropertiesBatch([]), {
+    const { result } = renderHook(() => useExtraBlockProperties([]), {
       wrapper: providerWrapper([]),
     })
     await new Promise<void>((r) => queueMicrotask(r))
@@ -91,7 +91,7 @@ describe('useBlockPropertiesBatch (provider-projected, #2288)', () => {
       B2: [row({ key: 'assignee', value_text: 'alice' })],
     })
 
-    const { result } = renderHook(() => useBlockPropertiesBatch([{ id: 'B1' }, { id: 'B2' }]), {
+    const { result } = renderHook(() => useExtraBlockProperties([{ id: 'B1' }, { id: 'B2' }]), {
       wrapper: providerWrapper(['B1', 'B2']),
     })
 
@@ -115,7 +115,7 @@ describe('useBlockPropertiesBatch (provider-projected, #2288)', () => {
       ],
     })
 
-    const { result } = renderHook(() => useBlockPropertiesBatch([{ id: 'B1' }]), {
+    const { result } = renderHook(() => useExtraBlockProperties([{ id: 'B1' }]), {
       wrapper: providerWrapper(['B1']),
     })
 
@@ -134,7 +134,7 @@ describe('useBlockPropertiesBatch (provider-projected, #2288)', () => {
       ],
     })
 
-    const { result } = renderHook(() => useBlockPropertiesBatch([{ id: 'B1' }]), {
+    const { result } = renderHook(() => useExtraBlockProperties([{ id: 'B1' }]), {
       wrapper: providerWrapper(['B1']),
     })
 
@@ -153,7 +153,7 @@ describe('useBlockPropertiesBatch (provider-projected, #2288)', () => {
       B2: [row({ key: 'assignee', value_text: 'alice' })],
     })
 
-    const { result } = renderHook(() => useBlockPropertiesBatch([{ id: 'B1' }, { id: 'B2' }]), {
+    const { result } = renderHook(() => useExtraBlockProperties([{ id: 'B1' }, { id: 'B2' }]), {
       wrapper: providerWrapper(['B1', 'B2']),
     })
 
@@ -169,7 +169,7 @@ describe('useBlockPropertiesBatch (provider-projected, #2288)', () => {
     })
 
     const { result, rerender } = renderHook(
-      ({ blocks }: { blocks: Array<{ id: string }> }) => useBlockPropertiesBatch(blocks),
+      ({ blocks }: { blocks: Array<{ id: string }> }) => useExtraBlockProperties(blocks),
       { initialProps: { blocks: [{ id: 'B1' }] }, wrapper: providerWrapper(['B1']) },
     )
 
@@ -198,7 +198,7 @@ describe('useBlockPropertiesBatch (provider-projected, #2288)', () => {
 
     const captured: Array<Record<string, Array<{ key: string; value: string }>>> = []
     function Probe() {
-      captured.push(useBlockPropertiesBatch([{ id: 'B1' }]))
+      captured.push(useExtraBlockProperties([{ id: 'B1' }]))
       return null
     }
 

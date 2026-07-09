@@ -1,5 +1,5 @@
 /**
- * useBatchProperties — context-backed map of block_id → PropertyRow[].
+ * useBatchPropertyRows — context-backed map of block_id → PropertyRow[].
  *
  * Fetches FULL property lists for the given block IDs in a single
  * `getBatchProperties` IPC. Mounted at the parent that knows the full
@@ -8,7 +8,7 @@
  * each firing their own `getProperties` IPC on initial mount.
  *
  * Outside a provider, the hook returns `null` — components that fall
- * back to per-block fetches use `useBatchProperties()?.get(blockId)`.
+ * back to per-block fetches use `useBatchPropertyRows()?.get(blockId)`.
  *
  * Collapses the per-row `getProperties` fan-out in
  * `DependencyIndicator` (which previously dedup'd only RE-RENDERS via a
@@ -112,6 +112,6 @@ export function BatchPropertiesProvider({
   return <BatchPropertiesContext.Provider value={value}>{children}</BatchPropertiesContext.Provider>
 }
 
-export function useBatchProperties(): BatchPropertiesValue | null {
+export function useBatchPropertyRows(): BatchPropertiesValue | null {
   return useContext(BatchPropertiesContext)
 }

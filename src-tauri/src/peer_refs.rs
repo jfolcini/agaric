@@ -154,7 +154,7 @@ pub async fn upsert_peer_ref_with_cert(
 /// `last_sent_hash` accepts the empty string (`""`) as a "we sent
 /// nothing this session" sentinel. Two call sites use it:
 ///
-/// 1. The per-session [`crate::sync_protocol::orchestrator`] propagates
+/// 1. The per-session [`crate::sync_protocol::session_state_machine`] propagates
 ///    the empty-string default when no ops were sent this session
 ///    (typical for an initiator that has no new ops since the previous
 ///    sync) — see the `last_sent_hash.clone().unwrap_or_default()`
