@@ -62,8 +62,11 @@ describe('preload', () => {
 
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       const params = args as Record<string, unknown> | undefined
+      // #2277 item 7 — list_blocks params (including `cursor`) now nest under
+      // the single `request` DTO; `scope` stays a separate top-level arg.
+      const req = (params?.['request'] as Record<string, unknown> | undefined) ?? params
       if (cmd === 'list_blocks') {
-        if (!params?.['cursor']) {
+        if (!req?.['cursor']) {
           // First page
           return { items: [mockPages[0]], next_cursor: 'cursor_1', has_more: true }
         }
