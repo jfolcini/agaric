@@ -501,12 +501,6 @@ export function createReducers({
         .toSorted((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0))
       if (ordered.length === 0) return
 
-      // #2274 — snapshot for rollback. The batch is transactional (all-or-
-      // nothing) backend-side, so on error NOTHING committed and restoring this
-      // pre-move snapshot exactly reconciles FE with the backend — no reload.
-      const prevBlocks = get().blocks
-      const prevById = get().blocksById
-
       try {
         // #2274 — ONE IPC. `move_blocks_batch` lands the ordered run at
         // consecutive slots `newIndex, newIndex + 1, …` under `newParentId`
@@ -534,8 +528,15 @@ export function createReducers({
       } catch (err) {
         logger.error('page-blocks', 'Failed to move blocks', { ids, newParentId, newIndex }, err)
         notify.error(i18n.t('error.moveBlockFailed'))
-        // Whole batch rolled back backend-side — restore the pre-move snapshot.
-        set({ blocks: prevBlocks, blocksById: prevById })
+        // #2274 — the batch is transactional (all-or-nothing) backend-side and
+        // this reducer applies NO optimistic update before the IPC resolves,
+        // so on error there is nothing to roll back: the moved blocks' tree
+        // shape is exactly what the (rolled-back) backend still holds. R26 —
+        // the old wholesale pre-move snapshot restore here violated the
+        // #714/#1077 commit-time discipline: it clobbered concurrent writes
+        // (an edit echo adoption, a sync-triggered load()) that landed while
+        // the IPC was in flight, diverging the store from the DB until the
+        // next load(). Surface the failure and leave commit-time state alone.
       }
     },
 

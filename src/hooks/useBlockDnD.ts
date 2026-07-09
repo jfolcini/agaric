@@ -149,30 +149,101 @@ export function useBlockDnD({
   // lands back where they were instead of with no focused block.
   const preDragFocusedIdRef = useRef<string | null>(null)
 
+  // #914 — selection roots for the active drag. When the dragged block is part
+  // of a multi-selection, the whole selection moves as one gesture. We collapse
+  // the selection to its top-level "roots" (selected blocks not already nested
+  // inside another selected block) so a nested selected child travels inside its
+  // ancestor's subtree instead of being moved independently. Computed against
+  // the full `blocks` (true tree) so collapsed/zoomed views don't drop roots.
+  // A drag is a multi-drag only when the dragged block is itself a root AND
+  // there is more than one root — otherwise it stays single-block behaviour.
+  const dragRoots = useMemo(() => {
+    if (!activeId || !selectedBlockIds || selectedBlockIds.length <= 1) return []
+    if (!selectedBlockIds.includes(activeId)) return []
+    const roots = computeSelectionRoots(blocks, selectedBlockIds)
+    if (roots.length <= 1 || !roots.includes(activeId)) return []
+    return roots
+  }, [activeId, selectedBlockIds, blocks])
+
+  const isMultiDrag = dragRoots.length > 1
+
   // Items visible during drag: exclude descendants of the active item
   const activeDescendants = useMemo(
     () => (activeId ? getDragDescendants(collapsedVisible, activeId) : new Set<string>()),
     [activeId, collapsedVisible],
   )
 
+  // R12 (#914) — during a multi-drag EVERY selected root moves, so the OTHER
+  // roots' rows and their descendants must not offer projection/drop targets:
+  // `getProjection` could otherwise project a parent equal to (own-parent
+  // violation) or inside (cycle) another moving subtree — an op the backend
+  // rejects 100% of the time, failing the whole batch after a visually valid
+  // drop indicator. Mirrors the single-drag exclusion of the active block's
+  // own descendants. Empty unless the drag is a multi-drag.
+  const otherMovingSubtrees = useMemo(() => {
+    const excluded = new Set<string>()
+    if (!activeId || dragRoots.length <= 1) return excluded
+    for (const rootId of dragRoots) {
+      if (rootId === activeId) continue
+      excluded.add(rootId)
+      for (const id of getDragDescendants(collapsedVisible, rootId)) excluded.add(id)
+    }
+    return excluded
+  }, [activeId, dragRoots, collapsedVisible])
+
   const visibleItems = useMemo(
     () =>
-      activeId ? collapsedVisible.filter((b) => !activeDescendants.has(b.id)) : collapsedVisible,
-    [collapsedVisible, activeId, activeDescendants],
+      activeId
+        ? collapsedVisible.filter(
+            (b) => !activeDescendants.has(b.id) && !otherMovingSubtrees.has(b.id),
+          )
+        : collapsedVisible,
+    [collapsedVisible, activeId, activeDescendants, otherMovingSubtrees],
   )
 
-  // Height of the dragged subtree (max descendant depth − active depth), so the
+  // R12 — slot basis for the multi-drag drop. The backend computes the FIRST
+  // root's slot while the other (yet-unmoved) selected roots still sit in
+  // their source groups (#774 per-move slot semantics, replayed by
+  // `reconcileBatchMove`), so those roots must stay COUNTABLE for
+  // `computeDropIndex` even though they are hidden from projection/rendering.
+  // Their descendants stay excluded — a legal destination parent is outside
+  // every moving subtree, so a moving root's descendant can never be its
+  // child and cannot affect the count.
+  const slotItems = useMemo(() => {
+    if (!isMultiDrag) return visibleItems
+    const rootSet = new Set(dragRoots)
+    return collapsedVisible.filter(
+      (b) => !activeDescendants.has(b.id) && (rootSet.has(b.id) || !otherMovingSubtrees.has(b.id)),
+    )
+  }, [
+    isMultiDrag,
+    visibleItems,
+    collapsedVisible,
+    activeDescendants,
+    otherMovingSubtrees,
+    dragRoots,
+  ])
+
+  // Height of the dragged subtree (max descendant depth − root depth), so the
   // projection can't offer a depth whose descendants would exceed
-  // MAX_BLOCK_DEPTH and get rejected by the backend (#928).
+  // MAX_BLOCK_DEPTH and get rejected by the backend (#928). For a multi-drag
+  // every root lands at the projected depth, so the ceiling must respect the
+  // TALLEST moving subtree, not just the active one's.
   const subtreeHeight = useMemo(() => {
-    if (!activeId || activeDescendants.size === 0) return 0
-    const activeDepth = collapsedVisible.find((b) => b.id === activeId)?.depth ?? 0
+    if (!activeId) return 0
+    const roots = isMultiDrag ? dragRoots : [activeId]
+    const depthById = new Map(collapsedVisible.map((b) => [b.id, b.depth] as const))
     let h = 0
-    for (const b of collapsedVisible) {
-      if (activeDescendants.has(b.id)) h = Math.max(h, b.depth - activeDepth)
+    for (const rootId of roots) {
+      const rootDepth = depthById.get(rootId)
+      if (rootDepth === undefined) continue
+      for (const id of getDragDescendants(collapsedVisible, rootId)) {
+        const d = depthById.get(id)
+        if (d !== undefined) h = Math.max(h, d - rootDepth)
+      }
     }
     return h
-  }, [activeId, activeDescendants, collapsedVisible])
+  }, [activeId, isMultiDrag, dragRoots, collapsedVisible])
 
   // Projection of where the dragged item would land
   const projected = useMemo(() => {
@@ -202,24 +273,6 @@ export function useBlockDnD({
     if (activeIndex < 0 || overIndex < 0) return false
     return activeIndex < overIndex
   }, [activeId, overId, visibleItems])
-
-  // #914 — selection roots for the active drag. When the dragged block is part
-  // of a multi-selection, the whole selection moves as one gesture. We collapse
-  // the selection to its top-level "roots" (selected blocks not already nested
-  // inside another selected block) so a nested selected child travels inside its
-  // ancestor's subtree instead of being moved independently. Computed against
-  // the full `blocks` (true tree) so collapsed/zoomed views don't drop roots.
-  // A drag is a multi-drag only when the dragged block is itself a root AND
-  // there is more than one root — otherwise it stays single-block behaviour.
-  const dragRoots = useMemo(() => {
-    if (!activeId || !selectedBlockIds || selectedBlockIds.length <= 1) return []
-    if (!selectedBlockIds.includes(activeId)) return []
-    const roots = computeSelectionRoots(blocks, selectedBlockIds)
-    if (roots.length <= 1 || !roots.includes(activeId)) return []
-    return roots
-  }, [activeId, selectedBlockIds, blocks])
-
-  const isMultiDrag = dragRoots.length > 1
 
   // ── DnD sensors ────────────────────────────────────────────────────
   // #926 — discriminate the drag-activation by POINTER COARSENESS, not viewport
@@ -341,12 +394,9 @@ export function useBlockDnD({
         // The drop slot is computed for the active block as if it alone moved;
         // the other roots land contiguously after it (moveBlocks fans out the
         // consecutive slots). #400: 0-based sibling slot under projected parent.
-        const newIndex = computeDropIndex(
-          visibleItems,
-          projected.parentId,
-          over.id as string,
-          blockId,
-        )
+        // R12 — counted over `slotItems` (other moving roots stay countable,
+        // matching the backend's per-move slot basis; see the memo).
+        const newIndex = computeDropIndex(slotItems, projected.parentId, over.id as string, blockId)
         restoreFocusOnSuccess('moveBlocks', moveBlocks(dragRoots, projected.parentId, newIndex))
         return
       }
@@ -393,6 +443,7 @@ export function useBlockDnD({
       rootParentId,
       projected,
       visibleItems,
+      slotItems,
       moveToParent,
       reorder,
       setFocused,
