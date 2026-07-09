@@ -617,15 +617,22 @@ pub async fn delete_blocks_by_ids_inner(
     // Resolve the live root set INSIDE the tx so a row that was
     // soft-deleted between FE selection and this call drops out
     // cleanly.
-    let live_roots: Vec<String> = sqlx::query_scalar!(
-        r#"SELECT id AS "id!: String" FROM blocks
+    // #2201 item 2a: carry `block_type` alongside `id` in the live-root
+    // probe so the per-root fan-out loop below no longer needs a separate
+    // `SELECT block_type` per root (N+1). `block_type` is `TEXT NOT NULL`
+    // (0001_initial + 0005 CHECK trigger), hence the `block_type!` annotation.
+    let live_roots: Vec<(String, String)> = sqlx::query!(
+        r#"SELECT id AS "id!: String", block_type AS "block_type!: String" FROM blocks
            WHERE id IN (SELECT value FROM json_each(?1))
              AND deleted_at IS NULL
 "#,
         ids_json,
     )
     .fetch_all(&mut **tx)
-    .await?;
+    .await?
+    .into_iter()
+    .map(|row| (row.id, row.block_type))
+    .collect();
 
     if live_roots.is_empty() {
         // Every requested id is missing or already deleted. Commit the
@@ -639,7 +646,7 @@ pub async fn delete_blocks_by_ids_inner(
     // would silently leak orphan pages whose `space` ref dangles. We
     // surface the FIRST offending space + its child count so the
     // operator sees actionable detail.
-    for root in &live_roots {
+    for (root, _root_block_type) in &live_roots {
         // #708: registry-backed "is a space" check — see the single-row
         // path above.
         let is_space_block =
@@ -706,7 +713,7 @@ pub async fn delete_blocks_by_ids_inner(
         Vec<String>,
         Option<crate::space::SpaceId>,
     )> = Vec::with_capacity(live_roots.len());
-    for root in &live_roots {
+    for (root, root_block_type) in &live_roots {
         let payload = DeleteBlockPayload {
             block_id: BlockId::from_trusted(root),
         };
@@ -718,14 +725,11 @@ pub async fn delete_blocks_by_ids_inner(
         )
         .await?;
         let op_record = Arc::new(op_record);
-        // #2037 pt2: read this root's `block_type` (indexed PK lookup, same
-        // shape as the cohort/space resolution below) so the dispatch can
-        // narrow the rebuild fan-out for a CONTENT root.
-        let root_block_type: String =
-            sqlx::query_scalar!("SELECT block_type FROM blocks WHERE id = ?", root)
-                .fetch_one(&mut **tx)
-                .await?;
-        tx.enqueue_lifecycle_background(Arc::clone(&op_record), root_block_type);
+        // #2037 pt2: the root's `block_type` (used to narrow the rebuild
+        // fan-out for a CONTENT root) now rides along on the `live_roots`
+        // probe above (#2201 item 2a), dropping the former per-root
+        // `SELECT block_type` N+1 lookup.
+        tx.enqueue_lifecycle_background(Arc::clone(&op_record), root_block_type.clone());
 
         // PRE-UPDATE capture (load-bearing — see comment above): the active
         // subtree cohort (seed + active descendants) and the seed's space,
@@ -771,7 +775,7 @@ pub async fn delete_blocks_by_ids_inner(
     // P-4 — sweep inherited tag rows for every root. Per-root call
     // (the helper takes a single seed); the SQL it emits is bounded
     // by the same depth-100 invariant.
-    for root in &live_roots {
+    for (root, _root_block_type) in &live_roots {
         crate::tag_inheritance::remove_subtree_inherited(&mut tx, root).await?;
     }
 
