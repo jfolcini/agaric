@@ -16,7 +16,7 @@
  *
  * Two layers of protection:
  *   1. Compile-time — the `satisfies Record<…Kind, true>` completeness records
- *      fail to type-check (`tsgo -b`) the moment a bindings variant is added
+ *      fail to type-check (`tsc -b`) the moment a bindings variant is added
  *      without being classified below.
  *   2. Runtime — the union-equality assertions fail if the op TABLE the UI
  *      renders from drifts from its classification (a surfaced variant dropped
