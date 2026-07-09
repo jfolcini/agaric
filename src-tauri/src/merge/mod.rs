@@ -58,7 +58,9 @@ pub(crate) fn engine_apply(
     op_created_at: &str,
     state: &crate::loro::shared::LoroState,
 ) {
-    let crate::loro::shared::LoroState { registry } = state;
+    // #2295: `LoroState` gained private replay-suppression fields, so bind the
+    // registry by field access rather than an exhaustive destructure.
+    let registry = &state.registry;
 
     let mut guard = match registry.for_space(space_id, device_id) {
         Ok(g) => g,

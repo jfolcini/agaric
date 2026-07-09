@@ -2989,6 +2989,199 @@ async fn boot_replay_preserves_new_scheme_sibling_order_603() {
     );
 }
 
+/// #2295 — boot replay must reproject each touched parent group ONCE from the
+/// engine's FINAL state, and that batched reproject must be correct even when
+/// the replayed ops span MORE THAN ONE read-chunk (`REPLAY_CHUNK_SIZE = 200`).
+///
+/// Seeds a page with >200 children (so the replay walk pages across the chunk
+/// boundary), all appended in creation order, then a `MoveBlock` that moves the
+/// LAST child to index 0. The children's SQL rows are pre-seeded (as a prior
+/// session's already-materialized rows) with DELIBERATELY WRONG positions in
+/// plain creation order — so if the end-of-replay reproject did NOT run (or ran
+/// per-op against intermediate state), the SQL `position` order would disagree
+/// with the engine's final sibling order. After replay we assert the engine
+/// order and the SQL `ORDER BY position` order AGREE and match the expected
+/// final order (the moved child first), proving the suppress-then-drain
+/// batching yields the right SQL positions across a multi-chunk replay.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn boot_replay_reprojects_batched_over_chunk_boundary_2295() {
+    use crate::space::SpaceId;
+
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const PAGE_ID: &str = "01HZ00000000000000002295PG";
+    // More than REPLAY_CHUNK_SIZE (200): 250 creates + 1 move = 251 ops,
+    // spanning chunks [1..=200] and [201..=251].
+    const N: usize = 250;
+    let device_id = "dev-replay-2295";
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let state = mat.loro_state();
+
+    // Space block + registered space (#708) + page with `space_id`.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+         VALUES (?, 'tag', 'space', NULL, 0)",
+    )
+    .bind(SPACE)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+        .bind(SPACE)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+         VALUES (?, 'page', 'P', NULL, 0, ?, ?)",
+    )
+    .bind(PAGE_ID)
+    .bind(PAGE_ID)
+    .bind(SPACE)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Stable child ids in creation order.
+    let child_ids: Vec<String> = (0..N)
+        .map(|k| {
+            BlockId::test_id(&format!("C2295CHILD{k:04}"))
+                .as_str()
+                .to_string()
+        })
+        .collect();
+
+    // Pre-seed each child's SQL row (already-materialized from the prior
+    // session) with a DELIBERATELY WRONG position == creation order. Without
+    // the end-of-replay reproject, SQL `ORDER BY position` would stay in
+    // creation order and disagree with the engine's post-move final order.
+    for (k, id) in child_ids.iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
+                                 space_id) \
+             VALUES (?, 'content', 'c', ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(PAGE_ID)
+        .bind(i64::try_from(k).unwrap())
+        .bind(PAGE_ID)
+        .bind(SPACE)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    // Seed the engine with just the page (the children enter the engine as the
+    // replayed CreateBlock ops apply — the engine is "behind" SQL).
+    {
+        let space = SpaceId::from_trusted(SPACE);
+        let mut guard = state.registry.for_space(&space, device_id).unwrap();
+        guard
+            .engine_mut()
+            .apply_create_block(PAGE_ID, "page", "P", None, 0)
+            .unwrap();
+    }
+
+    // Append 250 new-scheme creates (each appended at its own index) WITHOUT
+    // materialising, then a MoveBlock sending the LAST child to index 0.
+    for (k, id) in child_ids.iter().enumerate() {
+        append_local_op(
+            &pool,
+            device_id,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::from_trusted(id),
+                block_type: "content".into(),
+                parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+                position: None,
+                index: Some(i64::try_from(k).unwrap()),
+                content: "c".into(),
+            }),
+        )
+        .await
+        .unwrap();
+    }
+    append_local_op(
+        &pool,
+        device_id,
+        OpPayload::MoveBlock(crate::op::MoveBlockPayload {
+            block_id: BlockId::from_trusted(child_ids.last().unwrap()),
+            new_parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+            new_position: 99, // junk legacy breadcrumb — routing must use new_index
+            new_index: Some(0),
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(read_cursor(&pool).await, 0, "nothing materialised yet");
+
+    // Boot-replay across the chunk boundary.
+    let report = replay_unmaterialized_ops(&pool, &mat).await.unwrap();
+    assert_eq!(
+        report.ops_replayed,
+        (N + 1) as u64,
+        "every create + the move must replay exactly once across both chunks"
+    );
+    assert!(
+        report.replay_errors.is_empty(),
+        "{:?}",
+        report.replay_errors
+    );
+    assert_eq!(read_cursor(&pool).await, i64::try_from(N + 1).unwrap());
+    mat.shutdown();
+
+    // Expected final order: the moved LAST child first, then the rest in
+    // creation order.
+    let mut expected: Vec<String> = Vec::with_capacity(N);
+    expected.push(child_ids[N - 1].clone());
+    expected.extend(child_ids[..N - 1].iter().cloned());
+
+    // Engine sibling order reflects the move…
+    let engine_order: Vec<String> = {
+        let space = SpaceId::from_trusted(SPACE);
+        let mut guard = state.registry.for_space(&space, device_id).unwrap();
+        guard
+            .engine_mut()
+            .children_ordered_block_ids(Some(PAGE_ID))
+            .unwrap()
+    };
+    assert_eq!(
+        engine_order, expected,
+        "engine order must place the moved last child first"
+    );
+
+    // …and the batched end-of-replay reproject must have rewritten SQL
+    // `position` to AGREE with the engine's final order (not the wrong
+    // pre-seeded creation order).
+    let sql_order: Vec<String> = sqlx::query_as::<_, (String,)>(
+        "SELECT id FROM blocks WHERE parent_id = ? ORDER BY position, id",
+    )
+    .bind(PAGE_ID)
+    .fetch_all(&pool)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|(id,)| id)
+    .collect();
+    assert_eq!(
+        sql_order, expected,
+        "SQL ORDER BY position must match the engine order after a batched, \
+         multi-chunk boot replay (#2295)"
+    );
+
+    // Dense 1-based positions with no gaps/collisions: the moved child is 1.
+    let moved_pos: i64 = sqlx::query_scalar("SELECT position FROM blocks WHERE id = ?")
+        .bind(&child_ids[N - 1])
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        moved_pos, 1,
+        "moved-to-top child must have dense position 1"
+    );
+}
+
 // === #1255: degraded-boot signal ===
 //
 // When the C-2b op-log replay fails wholesale, `recover_at_boot` must no

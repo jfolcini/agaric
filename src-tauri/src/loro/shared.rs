@@ -43,6 +43,45 @@ use crate::loro::registry::LoroEngineRegistry;
 /// call site.
 pub struct LoroState {
     pub registry: LoroEngineRegistry,
+
+    /// #2295 — boot-replay reprojection suppression flag.
+    ///
+    /// Boot replay (`recovery::replay::replay_unmaterialized_ops`) drives
+    /// every unmaterialized op through the FULL per-op `apply_op_tx`
+    /// (`chunk = None`) path, so each replayed create/move reprojects its
+    /// whole sibling group INLINE — an O(N²) reprojection storm across a
+    /// crash-recovery boot. When this flag is `true`, the per-op handlers
+    /// in `materializer/handlers/loro_apply.rs` SKIP the inline
+    /// `reproject_dense_positions` and instead record the touched
+    /// `(space_id, parent)` group into [`replay_dirty_parents`]; the replay
+    /// loop then reprojects each touched parent ONCE from the engine's FINAL
+    /// state after all ops have applied.
+    ///
+    /// ## Safety invariant (load-bearing — do NOT relax)
+    ///
+    /// This GLOBAL flag is sound ONLY because boot replay runs inside
+    /// `recover_at_boot` (driven by `block_on`) BEFORE the sync daemon or
+    /// any Tauri command handler starts, and the background cache tasks are
+    /// enqueued only AFTER replay finishes. During the replay window the
+    /// ONLY code applying ops is replay's own serialized foreground
+    /// `ApplyOp`s — the system is quiescent. If any other applier could run
+    /// concurrently with the flag set, it would wrongly defer ITS
+    /// reprojection into replay's dirty set (or skip it entirely), so the
+    /// flag MUST stay confined to that quiescent boot window. It is set by
+    /// [`begin_replay_suppression`](Self::begin_replay_suppression) and
+    /// cleared by [`end_replay_suppression`](Self::end_replay_suppression),
+    /// both called only from the replay loop.
+    replay_suppress_reproject: std::sync::atomic::AtomicBool,
+
+    /// #2295 — the set of `(space_id, Option<parent_block_id>)` sibling
+    /// groups touched by a create/move while [`replay_suppress_reproject`]
+    /// was set. Mirrors the space-qualified key `ChunkAccumulator` uses
+    /// (`materializer/handlers/apply.rs`): the parent id is globally-unique
+    /// so it never collides across spaces, but the `None` (top-level) key
+    /// would, hence the `space_id` qualifier. Drained ONCE at end-of-replay
+    /// (`drain_replay_dirty`) so each touched parent is reprojected exactly
+    /// once from the engine's final sibling order.
+    replay_dirty_parents: std::sync::Mutex<std::collections::HashSet<(String, Option<String>)>>,
 }
 
 impl LoroState {
@@ -51,7 +90,60 @@ impl LoroState {
     pub fn new() -> Self {
         Self {
             registry: LoroEngineRegistry::new(),
+            replay_suppress_reproject: std::sync::atomic::AtomicBool::new(false),
+            replay_dirty_parents: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
+    }
+
+    /// #2295 — enter the boot-replay reprojection-suppression window: set
+    /// the flag and clear any stale dirty set. See the field docs for the
+    /// quiescence invariant this relies on.
+    pub fn begin_replay_suppression(&self) {
+        self.replay_suppress_reproject
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.replay_dirty_parents
+            .lock()
+            .expect("replay_dirty_parents mutex poisoned")
+            .clear();
+    }
+
+    /// #2295 — leave the suppression window (clear the flag ONLY). Does NOT
+    /// clear the dirty set — the caller drains it (`drain_replay_dirty`)
+    /// AFTER this so any op applying once suppression is off reprojects
+    /// inline normally.
+    pub fn end_replay_suppression(&self) {
+        self.replay_suppress_reproject
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+
+    /// #2295 — is inline per-op reprojection currently suppressed? Acquire
+    /// ordering pairs with the `Release` stores; the window is
+    /// single-threaded so `Relaxed` would suffice, but the acquire/release
+    /// pair is defence in depth.
+    pub fn is_replay_suppressed(&self) -> bool {
+        self.replay_suppress_reproject
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// #2295 — record a `(space_id, parent)` sibling group touched while
+    /// suppressed, for a single end-of-replay reproject. Idempotent: the
+    /// `HashSet` dedupes repeated touches of the same group.
+    pub fn record_replay_dirty(&self, space_id: &str, parent: Option<&str>) {
+        self.replay_dirty_parents
+            .lock()
+            .expect("replay_dirty_parents mutex poisoned")
+            .insert((space_id.to_string(), parent.map(str::to_string)));
+    }
+
+    /// #2295 — take the dirty-parent set, leaving it empty. Returned in
+    /// arbitrary order; the reproject is order-independent (each writes the
+    /// final dense ranks for its own group).
+    pub fn drain_replay_dirty(&self) -> Vec<(String, Option<String>)> {
+        let mut set = self
+            .replay_dirty_parents
+            .lock()
+            .expect("replay_dirty_parents mutex poisoned");
+        std::mem::take(&mut *set).into_iter().collect()
     }
 }
 

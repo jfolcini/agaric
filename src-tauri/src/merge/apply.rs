@@ -13,7 +13,6 @@
 
 #[cfg(test)]
 mod engine_apply_unit_tests {
-    use crate::loro::registry::LoroEngineRegistry;
     use crate::loro::shared::LoroState;
     use crate::merge::engine_apply;
     use crate::op::{
@@ -32,9 +31,10 @@ mod engine_apply_unit_tests {
     const DEVICE_ID: &str = "device-engine-apply-test";
 
     fn fresh_state() -> LoroState {
-        LoroState {
-            registry: LoroEngineRegistry::new(),
-        }
+        // #2295: `LoroState` now carries private replay-suppression fields,
+        // so construct via the canonical constructor instead of a struct
+        // literal.
+        LoroState::new()
     }
 
     fn create_op(block_id: &str, content: &str) -> OpPayload {

@@ -393,6 +393,32 @@ pub async fn replay_unmaterialized_ops(
     let mut report = ReplayReport::default();
     let mut last_seen: i64 = cursor;
 
+    // #2295 — the per-space Loro engine state the apply pipeline mutates.
+    // Boot replay drives every op through `apply_op_tx(chunk = None)`, so each
+    // replayed create/move would reproject its whole sibling group INLINE
+    // (O(N²) across a recovery boot). Instead we SUPPRESS the inline
+    // reprojection for the duration of the replay window and reproject each
+    // touched parent ONCE, below, from the engine's FINAL state.
+    let state = materializer.loro_state();
+
+    // #2295 — RAII backstop: whatever happens in the enqueue loop / drain
+    // (`?`-early-return on a chunk read or the foreground flush), the
+    // suppression flag is ALWAYS cleared. The success path clears it
+    // explicitly FIRST (before draining) so the drop here is an idempotent
+    // no-op; the error path relies on this drop (next boot re-replays).
+    struct SuppressionGuard<'a>(&'a crate::loro::shared::LoroState);
+    impl Drop for SuppressionGuard<'_> {
+        fn drop(&mut self) {
+            self.0.end_replay_suppression();
+        }
+    }
+    state.begin_replay_suppression();
+    let _suppress_guard = SuppressionGuard(state);
+
+    // #2295 — remember the (single, per the #412 guard above) device id so we
+    // can acquire the right per-space engine for the end-of-replay reproject.
+    let mut replay_device_id: Option<String> = None;
+
     // Walk the op log in seq-ascending chunks. We re-read each chunk
     // by `seq > last_seen` so the iteration is stateless across chunks
     // — no offset cursor to drift if a concurrent writer (there is
@@ -417,6 +443,9 @@ pub async fn replay_unmaterialized_ops(
 
         for record in rows {
             last_seen = last_seen.max(record.seq);
+            // #2295: capture the device id before the record moves into the
+            // task — the end-of-replay reproject needs it to reach the engine.
+            replay_device_id = Some(record.device_id.clone());
             let task = MaterializeTask::ApplyOp(Arc::new(record));
             match materializer.enqueue_foreground(task).await {
                 Ok(()) => {
@@ -441,6 +470,54 @@ pub async fn replay_unmaterialized_ops(
     // step 2 (drafts) could enqueue synthetic edit_block ops that
     // interleave with the replayed real ops.
     materializer.flush_foreground().await?;
+
+    // #2295 — every replayed op has now applied, so the per-space engines hold
+    // FINAL state. Reproject each touched parent group ONCE from that state.
+    //
+    // Order matters:
+    //   1. Clear the suppression flag FIRST, so anything that applies an op
+    //      after this point reprojects inline normally (quiescence means
+    //      nothing should, but the ordering is the invariant).
+    //   2. Drain the dirty set (this leaves it empty for the next boot).
+    //   3. Reproject each `(space_id, parent)` from the engine's final sibling
+    //      order.
+    state.end_replay_suppression();
+    let dirty = state.drain_replay_dirty();
+    let mut parents_reprojected = 0usize;
+    if let Some(device_id) = replay_device_id.as_deref() {
+        use crate::space::SpaceId;
+
+        // Do ALL engine reads first (the per-space `EngineGuard` is `!Send` and
+        // must not be held across an `.await`): for each dirty group, take the
+        // guard, read the final ordered child ids, drop the guard. Collect the
+        // orderings, THEN run the async reproject loop with no guard held.
+        let mut orderings: Vec<Vec<String>> = Vec::with_capacity(dirty.len());
+        for (space_id, parent) in &dirty {
+            let space = SpaceId::from_trusted(space_id);
+            // `for_space` lazily creates an engine for an absent space; a fresh
+            // engine has no such parent node, so `children_ordered_block_ids`
+            // returns empty and the reproject below is a no-op — the
+            // "skip absent space/engine" behaviour, without a special case.
+            let ordered = {
+                let mut guard = state.registry.for_space(&space, device_id)?;
+                guard
+                    .engine_mut()
+                    .children_ordered_block_ids(parent.as_deref())?
+            };
+            orderings.push(ordered);
+        }
+
+        let mut conn = pool.acquire().await?;
+        for ordered in &orderings {
+            crate::loro::projection::reproject_dense_positions(&mut conn, ordered).await?;
+            parents_reprojected += 1;
+        }
+    }
+
+    tracing::debug!(
+        parents_reprojected,
+        "replay: batched end-of-replay reproject complete (#2295)"
+    );
 
     tracing::info!(
         ops_replayed = report.ops_replayed,
