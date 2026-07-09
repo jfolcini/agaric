@@ -168,7 +168,17 @@ pub(crate) async fn apply_create_block_via_loro(
             acc.record_reproject(space_id.as_str().to_owned(), parent_key, siblings);
         }
         None => {
-            projection::reproject_dense_positions(conn, &siblings).await?;
+            // #2295: during boot replay the reprojection is suppressed and
+            // deferred to a single end-of-replay reproject from the engine's
+            // final state (see `LoroState::replay_suppress_reproject`). Record
+            // this create's parent group instead of reprojecting inline. Off
+            // replay (flag=false) this branch is byte-identical to before.
+            if state.is_replay_suppressed() {
+                let parent_key = p.parent_id.as_ref().map(crate::ulid::BlockId::as_str);
+                state.record_replay_dirty(space_id.as_str(), parent_key);
+            } else {
+                projection::reproject_dense_positions(conn, &siblings).await?;
+            }
         }
     }
 
@@ -611,7 +621,7 @@ pub(crate) async fn apply_move_block_via_loro(
     // current parent), so the authoritative new parent is the post-apply
     // snapshot's `parent_id`.
     #[allow(clippy::type_complexity)]
-    let engine_result: Option<(BlockSnapshot, Vec<String>, Vec<String>)> = {
+    let engine_result: Option<(BlockSnapshot, Option<String>, Vec<String>, Vec<String>)> = {
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
         let new_parent = p.new_parent_id.as_ref().map(crate::ulid::BlockId::as_str);
@@ -661,10 +671,10 @@ pub(crate) async fn apply_move_block_via_loro(
                 engine.children_ordered_block_ids(snap.parent_id.as_deref())?
             };
             drop(guard);
-            Some((snap, old_siblings, new_siblings))
+            Some((snap, old_parent, old_siblings, new_siblings))
         }
     };
-    let Some((snapshot, old_siblings, new_siblings)) = engine_result else {
+    let Some((snapshot, old_parent, old_siblings, new_siblings)) = engine_result else {
         super::sql_only_fallback::record(
             "move_block",
             super::sql_only_fallback::SqlOnlyFallbackReason::EngineMissingTarget,
@@ -673,11 +683,27 @@ pub(crate) async fn apply_move_block_via_loro(
     };
 
     projection::project_move_block_to_sql(conn, &snapshot).await?;
-    // Reproject the source group (it shrank, or — for a same-parent move — it is
-    // the single affected group). `new_siblings` is empty on a same-parent move.
-    projection::reproject_dense_positions(conn, &old_siblings).await?;
-    if !new_siblings.is_empty() {
-        projection::reproject_dense_positions(conn, &new_siblings).await?;
+    // #2295: during boot replay both reprojections are suppressed and deferred
+    // to a single end-of-replay reproject per touched parent from the engine's
+    // final state (see `LoroState::replay_suppress_reproject`). Record the same
+    // groups the inline path would have reprojected — the source (old-parent)
+    // group always, and the target (new-parent) group only when reparenting
+    // (`!new_siblings.is_empty()`, the exact condition guarding the second
+    // inline reproject). Off replay (flag=false) the reproject calls below are
+    // byte-identical to before.
+    if state.is_replay_suppressed() {
+        state.record_replay_dirty(space_id.as_str(), old_parent.as_deref());
+        if !new_siblings.is_empty() {
+            state.record_replay_dirty(space_id.as_str(), snapshot.parent_id.as_deref());
+        }
+    } else {
+        // Reproject the source group (it shrank, or — for a same-parent move —
+        // it is the single affected group). `new_siblings` is empty on a
+        // same-parent move.
+        projection::reproject_dense_positions(conn, &old_siblings).await?;
+        if !new_siblings.is_empty() {
+            projection::reproject_dense_positions(conn, &new_siblings).await?;
+        }
     }
     tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
     Ok(())
