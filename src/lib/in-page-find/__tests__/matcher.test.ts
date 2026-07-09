@@ -108,9 +108,17 @@ describe('compileQuery', () => {
     ])
   })
 
-  it('regex returns `error` on invalid pattern', () => {
+  it('regex returns `error` with the `invalid` arm + raw compile message on a bad pattern', () => {
     const compiled = compileQuery('[abc', { ...defaultOpts, isRegex: true })
     expect(compiled.kind).toBe('error')
+    if (compiled.kind === 'error') {
+      expect(compiled.error.kind).toBe('invalid')
+      // The `invalid` arm carries the raw `new RegExp(...)` throw message so
+      // the toolbar can surface it verbatim; assert it's populated.
+      if (compiled.error.kind === 'invalid') {
+        expect(compiled.error.message.length).toBeGreaterThan(0)
+      }
+    }
   })
 
   it('regex enforces pattern length cap', () => {

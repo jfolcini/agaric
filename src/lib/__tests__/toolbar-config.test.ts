@@ -20,6 +20,7 @@ import {
   createRefsAndBlocks,
   createStructureButtons,
   LANG_SHORT,
+  MARK_TOGGLE_SHORTCUT_IDS,
   toolbarActiveClass,
 } from '../toolbar-config'
 
@@ -205,6 +206,39 @@ describe('createMarkToggles', () => {
           if (other !== command) expect(toggles[other]).not.toHaveBeenCalled()
         }
       })
+    }
+  })
+})
+
+// ── MARK_TOGGLE_SHORTCUT_IDS ─────────────────────────────────────────────
+
+// #2277 — the mark-toggle label → shortcut-id map was previously re-declared
+// locally in both FormatMenu and SelectionBubbleMenu. It now lives here as the
+// single source of truth shared by both surfaces, so pin its exact entries to
+// guard against silent divergence.
+describe('MARK_TOGGLE_SHORTCUT_IDS', () => {
+  it('maps the configurable mark toggles to their shortcut ids', () => {
+    expect(MARK_TOGGLE_SHORTCUT_IDS).toEqual({
+      'toolbar.code': 'inlineCode',
+      'toolbar.strikethrough': 'strikethrough',
+      'toolbar.highlight': 'highlight',
+    })
+  })
+
+  // Bold/Italic use TipTap StarterKit defaults (not in the rebindable catalog),
+  // so they are intentionally absent from the map.
+  it('omits bold and italic (StarterKit defaults)', () => {
+    expect(MARK_TOGGLE_SHORTCUT_IDS['toolbar.bold']).toBeUndefined()
+    expect(MARK_TOGGLE_SHORTCUT_IDS['toolbar.italic']).toBeUndefined()
+  })
+
+  // Every configurable mark in the map must correspond to a real button
+  // produced by createMarkToggles, so the shortcut hints never target a
+  // button that no longer renders.
+  it('every mapped label is a real mark-toggle button', () => {
+    const labels = new Set(createMarkToggles(makeEditor()).map((b) => b.label))
+    for (const label of Object.keys(MARK_TOGGLE_SHORTCUT_IDS)) {
+      expect(labels).toContain(label)
     }
   })
 })

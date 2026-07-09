@@ -140,6 +140,46 @@ describe('InPageFind — toggles', () => {
   })
 })
 
+describe('InPageFind — regexError render switches exhaustively over the union', () => {
+  // The render maps each `FindRegexError` arm to its own user-facing string.
+  // Drive the store's `regexError` directly (bypassing the matcher) so every
+  // arm — including `tooSlow`, which only the walker driver can raise — is
+  // asserted against its exact resolved text.
+  it('tooLong arm renders the "too long" message', () => {
+    render(<InPageFind />)
+    openToolbar()
+    act(() => {
+      useInPageFindStore.setState({ regexError: { kind: 'tooLong' } })
+    })
+    expect(screen.getByTestId('in-page-find-error').textContent).toBe(
+      'Pattern is too long (max 1 KB).',
+    )
+    expect(screen.getByTestId('in-page-find-counter').textContent).toBe('—')
+  })
+
+  it('tooSlow arm renders the "too slow" message', () => {
+    render(<InPageFind />)
+    openToolbar()
+    act(() => {
+      useInPageFindStore.setState({ regexError: { kind: 'tooSlow' } })
+    })
+    expect(screen.getByTestId('in-page-find-error').textContent).toBe(
+      'Pattern is too slow — try a simpler expression.',
+    )
+    expect(screen.getByTestId('in-page-find-counter').textContent).toBe('—')
+  })
+
+  it('invalid arm renders the raw compile message verbatim', () => {
+    render(<InPageFind />)
+    openToolbar()
+    act(() => {
+      useInPageFindStore.setState({ regexError: { kind: 'invalid', message: 'boom' } })
+    })
+    expect(screen.getByTestId('in-page-find-error').textContent).toBe('Invalid regex: boom')
+    expect(screen.getByTestId('in-page-find-counter').textContent).toBe('—')
+  })
+})
+
 describe('InPageFind — navigation', () => {
   it('Enter advances to next; Shift+Enter goes back', async () => {
     render(<InPageFind />)
