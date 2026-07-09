@@ -19,12 +19,13 @@ import { shouldSplitOnBlur } from '@/editor/use-roving-editor'
 import { useDraftAutosave } from '@/hooks/useDraftAutosave'
 import { useEditorBlur } from '@/hooks/useEditorBlur'
 import { useScrollCaretAboveKeyboard } from '@/hooks/useScrollCaretAboveKeyboard'
+import { retryOnPoolBusy } from '@/lib/app-error'
 import { attachmentRef } from '@/lib/attachment-ref'
 import { extractFileInfo, isAttachmentAllowed, readFileBytes } from '@/lib/file-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
-import { addAttachmentWithBytes, deleteDraft } from '@/lib/tauri'
+import { addAttachmentWithBytes, deleteDraft, saveDraft } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useBlockStore } from '@/stores/blocks'
 import { type PageBlockState, usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
@@ -34,38 +35,98 @@ import { type PageBlockState, usePageBlockStore, usePageBlockStoreApi } from '@/
  * Uses `shouldSplitOnBlur` to decide between split and edit.
  * Returns the changed markdown, or null if unchanged.
  *
- * #770 gap 1 — ALWAYS drop the previous block's `block_drafts` row here.
- * This function is the programmatic-move path (auto-mount effect +
- * `handleFocus`), which does NOT go through `useEditorBlur`'s
- * `discardDraft()`. Without this delete a debounced draft row left behind by
- * the previous block survives to the next boot, where `flush_all_drafts`
- * replays it as an `edit_block` op — potentially clobbering newer content.
- * The op we just appended via `editFn`/`splitBlockFn` (or the unchanged
- * existing content) is the canonical record, so the stale draft row is always
- * safe to delete. Fire-and-forget: a failed delete only leaves the pre-
- * existing orphan-recovery behaviour, never loses committed content. We delete
- * even when `changed === null` because a >2 s pause can have persisted a row
- * for content that ended up unchanged at unmount.
+ * #770 gap 1 — drop the previous block's `block_drafts` row here. This
+ * function is the programmatic-move path (auto-mount effect + `handleFocus`),
+ * which does NOT go through `useEditorBlur`'s `discardDraft()`. Without the
+ * delete a debounced draft row left behind by the previous block survives to
+ * the next boot, where `flush_all_drafts` replays it as an `edit_block` op —
+ * potentially clobbering newer content.
+ *
+ * #2409 — but the delete is GATED on the appended op actually committing,
+ * mirroring the blur path (`useEditorBlur` Step 5 → `discardDraftFor`).
+ * `edit`/`splitBlock` resolve `false` when the backend write failed and the
+ * optimistic update was rolled back (they never reject in production). Firing
+ * `deleteDraft` unconditionally — concurrently with the un-awaited edit IPC —
+ * destroyed BOTH copies of the typed text when that save later failed (store
+ * rollback + hard row DELETE, nothing left for boot-time `flush_all_drafts`).
+ * On a failed save we therefore RE-SEED the row with the full live markdown
+ * we just tried to persist (`changed`) — mirroring the blur path's
+ * `failedContent` re-save — because the previous block's own autosave does not
+ * run a final save on a programmatic move (it sees `isFocused → false`), so its
+ * debounced row may be stale or absent. On `changed === null` no op is appended, so the existing
+ * committed content is the canonical record and the row is always safe to
+ * delete (a >2 s pause can still have persisted a row for content that ended
+ * up unchanged at unmount). Best-effort delete: deleting an absent row is a
+ * harmless no-op.
  */
 function persistUnmount(
   re: RovingEditorHandle,
   prevId: string,
-  editFn: (id: string, content: string) => void,
-  splitBlockFn: (id: string, content: string) => void,
+  editFn: (id: string, content: string) => Promise<boolean> | void,
+  splitBlockFn: (id: string, content: string) => Promise<boolean> | void,
 ): string | null {
   const changed = re.unmount()
-  if (changed !== null) {
-    if (shouldSplitOnBlur(changed)) {
-      splitBlockFn(prevId, changed)
-    } else {
-      editFn(prevId, changed)
-    }
-  }
   // #770 gap 1 — drop the previous block's draft row so it can't resurrect at
   // boot. Best-effort; deleting an absent row is a harmless no-op.
-  void deleteDraft(prevId).catch((err: unknown) => {
-    logger.warn('EditableBlock', 'deleteDraft failed during programmatic unmount', { prevId }, err)
-  })
+  const deletePrevDraft = () => {
+    void deleteDraft(prevId).catch((err: unknown) => {
+      logger.warn(
+        'EditableBlock',
+        'deleteDraft failed during programmatic unmount',
+        { prevId },
+        err,
+      )
+    })
+  }
+  if (changed === null) {
+    // Unchanged: no op appended → existing committed content is canonical.
+    deletePrevDraft()
+    return changed
+  }
+  const outcome = shouldSplitOnBlur(changed)
+    ? splitBlockFn(prevId, changed)
+    : editFn(prevId, changed)
+  // #2409 — defer the delete until the appended op resolves. Keep the row on a
+  // failed save (`ok === false`) so the typed text survives for boot recovery.
+  void Promise.resolve(outcome)
+    .catch((err: unknown) => {
+      // Store actions resolve false rather than reject; treat an escaped
+      // rejection as a failed save (keep the row — the safe direction).
+      logger.warn(
+        'EditableBlock',
+        'edit/split outcome rejected during programmatic unmount',
+        { prevId },
+        err,
+      )
+      return false as const
+    })
+    .then((ok) => {
+      if (ok !== false) {
+        deletePrevDraft()
+        return
+      }
+      // #2409 — failed save: the appended op rolled back, so `changed` (the
+      // full live markdown captured at unmount) is the ONLY surviving copy.
+      // Unlike the blur path, the previous block's own `useDraftAutosave` does
+      // NOT run a final content save here — it sees `isFocused → false`
+      // (blockId → null), so Effect B's cleanup skips (`blockIdRef === null`).
+      // Its debounced `block_drafts` row can therefore be up to
+      // DRAFT_DEBOUNCE_MS stale, or absent entirely when a continuous typing
+      // run never hit a debounce tick. Merely keeping that row would still lose
+      // the most recent keystrokes (or everything, in the no-row case). Re-seed
+      // the row with `changed` — mirroring the blur path's `failedContent`
+      // re-save (`useDraftAutosave` discardDraftFor) — so boot-time
+      // `flush_all_drafts` recovers the full typed text. Best-effort with the
+      // standard pool_busy retry.
+      void retryOnPoolBusy(() => saveDraft(prevId, changed)).catch((err: unknown) => {
+        logger.warn(
+          'EditableBlock',
+          'draft re-save after failed programmatic save failed',
+          { prevId },
+          err,
+        )
+      })
+    })
   return changed
 }
 
