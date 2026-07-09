@@ -20,6 +20,18 @@ vi.mock('@/lib/block-events', () => ({
   dispatchBlockEvent: (...args: unknown[]) => dispatchBlockEvent(...args),
 }))
 
+// The currently-focused block id is read at runtime from the global block store
+// (`useBlockStore.getState().focusedBlockId`) — the same source convertAndInsert
+// samples SYNCHRONOUSLY at paste time. Drive it per test to model a roving-editor
+// focus handoff DURING the async convert turn (#2454).
+let mockFocusedBlockId: string | null = null
+
+vi.mock('@/stores/blocks', () => ({
+  useBlockStore: {
+    getState: () => ({ focusedBlockId: mockFocusedBlockId }),
+  },
+}))
+
 // Lazy-loaded inside convertAndInsert; control their output per test.
 const htmlBodyToOutline = vi.fn()
 const outlineToIndentedMarkdown = vi.fn()
@@ -35,6 +47,7 @@ vi.mock('../../html-to-blocks', () => ({
 
 afterEach(() => {
   vi.clearAllMocks()
+  mockFocusedBlockId = null
 })
 
 interface FakeView {
@@ -155,6 +168,62 @@ describe('convertAndInsert — destroyed-view guard (#2033)', () => {
     // The inline-insert guard caught the destroyed view: no dispatch, and the
     // block-paste bus was never used (this was the single-block inline path).
     expect(view.dispatch).not.toHaveBeenCalled()
+    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+  })
+})
+
+describe('convertAndInsert — single-inline focus-handoff guard (#2454)', () => {
+  it('does NOT inline-insert when focus moved to a different block during the async turn', async () => {
+    const { convertAndInsert } = await loadModule()
+    // Live view throughout: the roving view is handed to another block WITHOUT
+    // being destroyed, so isDestroyed never catches this — only the focus check.
+    const view = makeView(false)
+
+    // Single top-level, non-structural block → the inline-insert path.
+    htmlBodyToOutline.mockReturnValue([{ content: 'hello', depth: 0 }])
+
+    // Focus has since moved from the paste-time target to a different block.
+    mockFocusedBlockId = 'BLOCK_B'
+
+    await expect(
+      convertAndInsert(view as unknown as EditorView, '<p>hello</p>', 'hello', 'BLOCK_A'),
+    ).resolves.toBeUndefined()
+
+    // The inline insert was aborted: nothing dispatched into the (wrong) block,
+    // and the block-paste bus was not used (this was the inline path).
+    expect(view.dispatch).not.toHaveBeenCalled()
+    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+  })
+
+  it('inline-inserts when focus is unchanged (happy path)', async () => {
+    const { convertAndInsert } = await loadModule()
+    const view = makeView(false)
+
+    htmlBodyToOutline.mockReturnValue([{ content: 'hello', depth: 0 }])
+
+    // Focus is still on the paste-time target block.
+    mockFocusedBlockId = 'BLOCK_A'
+
+    await convertAndInsert(view as unknown as EditorView, '<p>hello</p>', 'hello', 'BLOCK_A')
+
+    // The inline insert ran: exactly one dispatch into the view, no block event.
+    expect(view.dispatch).toHaveBeenCalledTimes(1)
+    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+  })
+
+  it('inline-inserts when targetBlockId is null regardless of current focus', async () => {
+    const { convertAndInsert } = await loadModule()
+    const view = makeView(false)
+
+    htmlBodyToOutline.mockReturnValue([{ content: 'hello', depth: 0 }])
+
+    // A null capture keeps the prior behaviour (mirrors the multi-block guard):
+    // even if some block is now focused, the null target does not abort.
+    mockFocusedBlockId = 'BLOCK_B'
+
+    await convertAndInsert(view as unknown as EditorView, '<p>hello</p>', 'hello', null)
+
+    expect(view.dispatch).toHaveBeenCalledTimes(1)
     expect(dispatchBlockEvent).not.toHaveBeenCalled()
   })
 })

@@ -148,6 +148,22 @@ export async function convertAndInsert(
     // headings always route through the block path so they become their own
     // typed blocks.
     if (blocks.length === 1 && blocks[0]?.depth === 0 && !isStructuralLine(blocks[0].content)) {
+      // #2454 — the single roving TipTap view can be handed to a DIFFERENT block
+      // during the async conversion turn WITHOUT being destroyed (the view object
+      // survives; only its document / active block changes), so `isDestroyed`
+      // does not catch a focus handoff. The inline insert lands at the CURRENT
+      // caret, so re-check that the focused block still matches the paste-time
+      // `targetBlockId` before splicing marks; if focus has moved, abort rather
+      // than corrupt whatever block is now focused. Mirrors the multi-block
+      // receiver's guard (useBlockTreeEventListeners.ts) and the picker-handoff
+      // precedent (#2428). `targetBlockId == null` keeps prior behaviour.
+      if (targetBlockId != null && useBlockStore.getState().focusedBlockId !== targetBlockId) {
+        logger.warn('htmlPaste', 'Discarding inline HTML paste: focus moved since paste', {
+          targetBlockId,
+          focusedBlockId: useBlockStore.getState().focusedBlockId,
+        })
+        return
+      }
       insertInlineMarkdown(view, blocks[0].content)
       return
     }
