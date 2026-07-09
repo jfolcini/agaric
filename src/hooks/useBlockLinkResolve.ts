@@ -61,7 +61,7 @@ export async function fetchAndCacheLinks(
   isCancelled: () => boolean,
 ): Promise<void> {
   try {
-    const resolved = await batchResolve([...ids], spaceId ?? undefined)
+    const resolved = await batchResolve([...ids], spaceId ?? 'global')
     if (isCancelled()) return
     const store = useResolveStore.getState()
     const resolvedIds = new Set(resolved.map((r) => r.id))

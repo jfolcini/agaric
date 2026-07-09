@@ -99,7 +99,7 @@ export function DonePanel({
     const uniqueParentIds = collectUniqueParentIds(blocks)
     if (uniqueParentIds.length === 0) return
     let cancelled = false
-    batchResolve(uniqueParentIds)
+    batchResolve(uniqueParentIds, 'global')
       .then((resolved) => {
         if (cancelled) return
         setPageTitles((prev) => mergeResolvedTitles(prev, resolved, t('donePanel.untitled')))

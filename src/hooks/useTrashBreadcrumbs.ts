@@ -32,7 +32,7 @@ export function useTrashBreadcrumbs(blocks: BlockRow[]): (block: BlockRow) => st
   useEffect(() => {
     if (pageIds.length === 0) return
     let cancelled = false
-    batchResolve(pageIds)
+    batchResolve(pageIds, 'global')
       .then((resolved) => {
         if (cancelled) return
         const map = new Map<string, ResolvedBlock | null>()

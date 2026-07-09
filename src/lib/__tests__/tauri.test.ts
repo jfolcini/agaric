@@ -989,18 +989,20 @@ describe('listTagsByPrefix', () => {
 // ---------------------------------------------------------------------------
 
 describe('batchResolve', () => {
-  it('invokes batch_resolve with ids and a global scope by default', async () => {
+  it("invokes batch_resolve with ids and a global scope for the explicit 'global' opt-in", async () => {
     const expected = [
       { id: 'B1', title: 'Block 1', block_type: 'content', deleted: false },
       { id: 'B2', title: null, block_type: 'page', deleted: true },
     ]
     mockedInvoke.mockResolvedValueOnce(expected)
 
-    const result = await batchResolve(['B1', 'B2'])
+    // #2300 — the scope arg is now REQUIRED; cross-space callers must
+    // spell out `'global'` (the old silent-omission default is gone).
+    const result = await batchResolve(['B1', 'B2'], 'global')
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
     // + Phase 3 — wrapper always forwards a `scope`;
-    // `{ kind: 'global' }` when the caller omits spaceId.
+    // `{ kind: 'global' }` for the explicit `'global'` opt-in.
     expect(mockedInvoke).toHaveBeenCalledWith('batch_resolve', {
       ids: ['B1', 'B2'],
       scope: { kind: 'global' },
@@ -1008,7 +1010,7 @@ describe('batchResolve', () => {
     expect(result).toEqual(expected)
   })
 
-  it('forwards spaceId as an active scope when provided (+  Phase 3)', async () => {
+  it('forwards a space ULID scope as an active scope (+  Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce([])
 
     await batchResolve(['B1'], 'SPACE_X')
@@ -3734,7 +3736,7 @@ describe('cross-cutting', () => {
     await purgeBlock('id')
     await listBlocks({ spaceId: 'TEST_SPACE_01' })
     await getBlock('id')
-    await batchResolve(['id'])
+    await batchResolve(['id'], 'global')
     await moveBlock('id', null, 0)
     await addTag('id', 'tag')
     await removeTag('id', 'tag')

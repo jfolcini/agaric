@@ -88,7 +88,7 @@ describe('useBacklinkResolution', () => {
 
     // Wait for batchResolve to be called and resolved
     await waitFor(() => {
-      expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A])
+      expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], 'global')
     })
 
     await waitFor(() => {
@@ -268,7 +268,10 @@ describe('useBacklinkResolution', () => {
     const { result } = renderHook(() => useBacklinkResolution(groups))
 
     await waitFor(() => {
-      expect(mockedBatchResolve).toHaveBeenCalledWith(expect.arrayContaining([ULID_A, ULID_B]))
+      expect(mockedBatchResolve).toHaveBeenCalledWith(
+        expect.arrayContaining([ULID_A, ULID_B]),
+        'global',
+      )
     })
 
     await waitFor(() => {

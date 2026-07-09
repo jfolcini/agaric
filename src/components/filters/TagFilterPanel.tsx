@@ -298,7 +298,7 @@ export function TagFilterPanel(): React.ReactElement {
       ...new Set(results.map((b) => b.page_id).filter((id): id is string => id != null)),
     ]
     if (parentIds.length === 0) return
-    batchResolve(parentIds)
+    batchResolve(parentIds, 'global')
       .then((resolved) => {
         if (Array.isArray(resolved)) {
           setPageTitles((prev) => {

@@ -172,7 +172,7 @@ export async function resolveAndMergeTitles(
   applyResolved: (resolved: ResolvedBlock[]) => void,
 ): Promise<void> {
   if (ids.length === 0) return
-  const resolved = await batchResolve(ids)
+  const resolved = await batchResolve(ids, 'global')
   if (isStale()) return
   applyResolved(resolved)
 }

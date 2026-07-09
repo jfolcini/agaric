@@ -156,7 +156,7 @@ export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResol
 
     let cancelled = false
 
-    batchResolve([...idsToResolve])
+    batchResolve([...idsToResolve], 'global')
       .then((resolved) => {
         if (cancelled) return
         mergeResolvedIntoCache(resolveCache.current, resolved, idsToResolve, currentSpaceId)

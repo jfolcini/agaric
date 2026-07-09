@@ -117,7 +117,7 @@ async function resolvePageTitles(
   const parentIds = items.map((b) => b.page_id).filter((id): id is string => id != null)
   const allIds = [...parentIds, ...extraIds]
   if (allIds.length === 0) return new Map()
-  const resolved = await batchResolve([...new Set(allIds)])
+  const resolved = await batchResolve([...new Set(allIds)], 'global')
   const titleMap = new Map<string, string>()
   for (const r of resolved) {
     if (r.title) titleMap.set(r.id, r.title)
