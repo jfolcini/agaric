@@ -12,6 +12,7 @@
  * `KatexMath` import is mocked so KaTeX itself never loads in the test env.
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@tiptap/react', () => ({
@@ -37,7 +38,11 @@ vi.mock('@/components/rendering/KatexMath', () => ({
 
 const { MathInlineNodeView, MathBlockNodeView } = await import('../MathNodeView')
 
-function makeProps(latex: string, updateAttributes = vi.fn(), deleteNode = vi.fn()) {
+function makeProps(
+  latex: string,
+  updateAttributes: (attrs: { latex: string }) => void = vi.fn(),
+  deleteNode: () => void = vi.fn(),
+) {
   return {
     node: { attrs: { latex } },
     updateAttributes,
@@ -207,6 +212,26 @@ describe('MathNodeView drops whitespace-only atoms on close (#2453)', () => {
     fireEvent.change(input, { target: { value: '' } })
     expect(update).toHaveBeenCalledWith({ latex: '' })
     expect(deleteNode).not.toHaveBeenCalled()
+  })
+
+  it('type → clear → blur drops the atom via the real updateAttributes → re-render chain', async () => {
+    // Fidelity harness: a real `updateAttributes` that mutates the node's latex
+    // and re-renders (mirroring TipTap's setNodeMarkup), so the close handler
+    // reads the value the user actually left rather than a static seed.
+    const deleteNode = vi.fn()
+    function Harness(): React.ReactElement {
+      const [latex, setLatex] = useState('a')
+      const update = ({ latex: v }: { latex: string }) => setLatex(v)
+      return <MathInlineNodeView {...makeProps(latex, update, deleteNode)} />
+    }
+    render(<Harness />)
+    fireEvent.click(await screen.findByTestId('math-rendered'))
+    const input = await screen.findByTestId('math-source-input')
+    // Clear the field — re-renders the node view with latex='' committed.
+    fireEvent.change(input, { target: { value: '' } })
+    await waitFor(() => expect(input).toHaveValue(''))
+    fireEvent.blur(input)
+    expect(deleteNode).toHaveBeenCalledTimes(1)
   })
 })
 
