@@ -6072,6 +6072,24 @@ async fn move_blocks_to_space_moves_all_in_one_tx() {
             "block {id} must carry the target space_id"
         );
     }
+
+    // #2201: the `space` key's `property_definitions` declaration is now
+    // fetched ONCE before the loop and fed to every per-block write via
+    // `set_property_in_tx_with_declaration`. Behaviour must be identical:
+    // EXACTLY the 4 moved blocks carry the target space_id, proving the
+    // hoisted declaration was applied to each iteration (none skipped, no
+    // extra rows written).
+    let with_space: i64 = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM blocks WHERE space_id = ? AND id LIKE 'MBS_BLK_%'",
+    )
+    .bind("MBS_SPACE")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        with_space, 4,
+        "the hoisted space declaration must land on every moved block (#2201)"
+    );
 }
 
 /// Re-homing: a block already in space A moves to space B (the `space`

@@ -3703,6 +3703,114 @@ async fn eval_grouped_respects_filters() {
 }
 
 // ======================================================================
+// #2201 — grouped `filtered_count` short-circuit when there is NO filter.
+// With `compiled_filter == None` the extra COUNT(DISTINCT bl.source_id)
+// query is skipped and `filtered_count` is set to `total_count` directly.
+// The two are provably equal (same predicates; `block_links` PK collapses
+// nothing), so this asserts the reused value matches the independently
+// computed `total_count`. The paired filter test below proves the
+// filtered path still narrows the count.
+// ======================================================================
+
+#[tokio::test]
+async fn eval_grouped_no_filter_filtered_count_equals_total_2201() {
+    let (pool, _dir) = test_pool().await;
+    // Two distinct source pages, one backlink each -> total_count = 2.
+    insert_block_with_parent(&pool, "PAGE_A", "page", "Page A", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "BLK_A1",
+        "content",
+        "block a1",
+        Some("PAGE_A"),
+        Some(1),
+    )
+    .await;
+    insert_block_with_parent(&pool, "PAGE_B", "page", "Page B", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "BLK_B1",
+        "content",
+        "block b1",
+        Some("PAGE_B"),
+        Some(1),
+    )
+    .await;
+    insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+    insert_block_link(&pool, "BLK_A1", "TARGET").await;
+    insert_block_link(&pool, "BLK_B1", "TARGET").await;
+    let page = default_page();
+
+    // No filter (None) -> exercises the short-circuit branch.
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
+        .await
+        .unwrap();
+    assert_eq!(resp.total_count, 2, "two cross-page backlinks");
+    assert!(resp.total_count > 0, "sanity: non-empty base set");
+    assert_eq!(
+        resp.filtered_count, resp.total_count,
+        "with no filter, filtered_count must equal total_count (short-circuit)"
+    );
+
+    // Empty filter vec compiles to `None` as well -> same short-circuit.
+    let resp_empty = eval_backlink_query_grouped(&pool, "TARGET", Some(vec![]), None, &page, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        resp_empty.filtered_count, resp_empty.total_count,
+        "empty filter vec is treated as no filter and must short-circuit too"
+    );
+}
+
+#[tokio::test]
+async fn eval_grouped_with_filter_still_reduces_count_2201() {
+    let (pool, _dir) = test_pool().await;
+    // Same two-source setup, but only BLK_A1 carries the `status` property.
+    insert_block_with_parent(&pool, "PAGE_A", "page", "Page A", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "BLK_A1",
+        "content",
+        "block a1",
+        Some("PAGE_A"),
+        Some(1),
+    )
+    .await;
+    insert_block_with_parent(&pool, "PAGE_B", "page", "Page B", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "BLK_B1",
+        "content",
+        "block b1",
+        Some("PAGE_B"),
+        Some(1),
+    )
+    .await;
+    insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+    insert_block_link(&pool, "BLK_A1", "TARGET").await;
+    insert_block_link(&pool, "BLK_B1", "TARGET").await;
+    insert_property(&pool, "BLK_A1", "status", Some("active"), None, None).await;
+    let page = default_page();
+
+    // A present filter -> the extra COUNT runs and must narrow the count.
+    let filters = vec![BacklinkFilter::PropertyIsSet {
+        key: "status".into(),
+    }];
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", Some(filters), None, &page, None)
+        .await
+        .unwrap();
+    assert_eq!(resp.total_count, 2, "base set still has 2 backlinks");
+    assert_eq!(
+        resp.filtered_count, 1,
+        "only BLK_A1 has status set, so the filtered path must reduce the count to 1"
+    );
+    assert!(
+        resp.filtered_count < resp.total_count,
+        "filtered path must produce a strictly smaller count than total here"
+    );
+}
+
+// ======================================================================
 // H-11 — eval_backlink_query_grouped: total_count / filtered_count must
 // be computed AFTER self-reference + orphan filtering.
 //

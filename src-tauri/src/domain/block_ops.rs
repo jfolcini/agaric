@@ -470,6 +470,12 @@ pub(crate) async fn create_block_in_tx(
 /// trivially unit-testable. The full `PropertyDefinition` struct carries
 /// `key` and `created_at` fields that the validation logic does not need;
 /// this slimmer view keeps the helper signature minimal.
+///
+/// `Clone` (#2201): the move-to-space batch fetches the `space` declaration
+/// ONCE and feeds a clone to each per-block
+/// [`set_property_in_tx_with_declaration`] call, hoisting the per-iteration
+/// `property_definitions` SELECT out of the loop.
+#[derive(Clone)]
 pub(crate) struct PropertyDeclaration {
     pub(crate) value_type: String,
     pub(crate) options: Option<String>,

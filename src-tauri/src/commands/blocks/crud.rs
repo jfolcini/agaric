@@ -1,7 +1,7 @@
 use crate::db::{CommandTx, WriteCtx};
 use crate::op::{
     DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload, PurgeBlockPayload,
-    RestoreBlockPayload,
+    RestoreBlockPayload, SPACE_PROPERTY_KEY,
 };
 use std::sync::Arc;
 
@@ -11,7 +11,10 @@ use super::super::*;
 // #882: the create-block / set-property tx cores moved to the neutral
 // `crate::domain::block_ops` layer. The `*_inner` wrappers below (which own
 // the transaction + post-commit dispatch) stay here and call into domain.
-use crate::domain::block_ops::{create_block_in_tx, set_property_in_tx};
+use crate::domain::block_ops::{
+    PropertyDeclaration, create_block_in_tx, set_property_in_tx,
+    set_property_in_tx_with_declaration,
+};
 use crate::space::{SpaceId, SpaceScope};
 
 /// Look up the most-recent `edit_block`/`create_block` op for the given
@@ -924,6 +927,27 @@ pub async fn move_blocks_to_space_inner(
     .into_iter()
     .collect();
 
+    // #2201: hoist the `space` key's `property_definitions` lookup out of the
+    // per-block loop. `set_property_in_tx` runs `SELECT value_type, options
+    // FROM property_definitions WHERE key = ?` on EVERY iteration; the row for
+    // the fixed `space` key is invariant across the loop, so fetch it ONCE and
+    // feed it to `set_property_in_tx_with_declaration` per block. Identical
+    // behaviour: the declaration is exactly what the wrapper would have
+    // fetched each time (the same SELECT, same `key`), so validation and the
+    // written rows are unchanged — only the redundant N-1 SELECTs are removed.
+    // (Non-clear write — `value_ref` is Some — so the wrapper's `is_clear`
+    // skip never applied; the lookup always ran.)
+    let space_declaration: Option<PropertyDeclaration> = sqlx::query!(
+        "SELECT value_type, options FROM property_definitions WHERE key = ?",
+        SPACE_PROPERTY_KEY,
+    )
+    .fetch_optional(&mut **tx)
+    .await?
+    .map(|row| PropertyDeclaration {
+        value_type: row.value_type,
+        options: row.options,
+    });
+
     let mut moved: i64 = 0;
     for block_id in block_ids {
         if !alive.contains(&block_id) {
@@ -935,17 +959,20 @@ pub async fn move_blocks_to_space_inner(
         // materialised write share the single source of truth with the
         // single-row `set_property` path. The `space` key is non-reserved and
         // is exempt from the cross-space ref guard (see `set_property_in_tx`).
-        let (_row, op_record) = set_property_in_tx(
+        // Pass the pre-fetched declaration (#2201) so the per-block
+        // `property_definitions` SELECT is skipped.
+        let (_row, op_record) = set_property_in_tx_with_declaration(
             &mut tx,
             materializer.loro_state(),
             device_id,
             block_id,
-            "space",
+            SPACE_PROPERTY_KEY,
             None,
             None,
             None,
             Some(space_id.clone()),
             None,
+            space_declaration.clone(),
         )
         .await?;
         tx.enqueue_background(op_record);

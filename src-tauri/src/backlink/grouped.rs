@@ -179,39 +179,57 @@ pub async fn eval_backlink_query_grouped(
     // (block_id, space_id, and the fragment binds) is applied via `.bind()`
     // in declaration order so the positional binds interleave correctly —
     // the base-query `?` come first, then the fragment `?` in fragment
-    // order. An absent filter emits no extra clause (identical to the old
-    // `?3 IS NULL` no-op branch).
+    // order.
+    //
+    // `filter_clause` is spliced into BOTH the filtered_count query (below,
+    // when a filter is present) and the grouped keyset page query (step b).
+    // An absent filter emits no extra clause (identical to the old `?3 IS
+    // NULL` no-op branch), so it must stay in scope for the page query.
     let filter_clause = match compiled_filter.as_ref() {
         Some(cf) => format!(" AND ({})", cf.sql),
         None => String::new(),
     };
-    let filtered_count_sql = format!(
-        "SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
-         JOIN blocks b ON b.id = bl.source_id \
-         JOIN blocks tgt ON tgt.id = ? \
-         WHERE bl.target_id = ? \
-           AND bl.source_id != ? \
-           AND b.deleted_at IS NULL \
-           AND b.page_id IS NOT NULL \
-           AND b.page_id != COALESCE(tgt.page_id, tgt.id) \
-           AND (? IS NULL OR b.space_id = ?){filter_clause}"
-    );
-    let mut fc_q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(filtered_count_sql))
-        .bind(block_id) // tgt.id = ?
-        .bind(block_id) // bl.target_id = ?
-        .bind(block_id) // bl.source_id != ?
-        .bind(space_id) // ? IS NULL
-        .bind(space_id); // b.space_id = ?
-    if let Some(cf) = compiled_filter.as_ref() {
-        for b in &cf.binds {
-            fc_q = match b {
-                FilterBind::Text(s) => fc_q.bind(s.clone()),
-                FilterBind::Num(n) => fc_q.bind(*n),
-            };
+
+    // #2201: skip the `filtered_count` COUNT round-trip entirely when there
+    // is NO filter. With `compiled_filter == None` this query carries EXACTLY
+    // the base predicates the `total_count` query used (target match,
+    // self-exclusion, `deleted_at`, orphan/self-page exclusion, space scope)
+    // and no extra clause — so `COUNT(DISTINCT bl.source_id)` here equals
+    // `total_count`'s `COUNT(*)`: `block_links`' `PRIMARY KEY (source_id,
+    // target_id)` means each source appears at most once for the fixed target
+    // `bl.target_id = ?`, so the `DISTINCT` collapses nothing and the two
+    // counts are provably identical. Reuse `total_count` and save the query.
+    // Only a present filter (which narrows the set) needs the extra COUNT.
+    let filtered_count: usize = match compiled_filter.as_ref() {
+        None => total_count,
+        Some(cf) => {
+            let filtered_count_sql = format!(
+                "SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
+                 JOIN blocks b ON b.id = bl.source_id \
+                 JOIN blocks tgt ON tgt.id = ? \
+                 WHERE bl.target_id = ? \
+                   AND bl.source_id != ? \
+                   AND b.deleted_at IS NULL \
+                   AND b.page_id IS NOT NULL \
+                   AND b.page_id != COALESCE(tgt.page_id, tgt.id) \
+                   AND (? IS NULL OR b.space_id = ?){filter_clause}"
+            );
+            let mut fc_q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(filtered_count_sql))
+                .bind(block_id) // tgt.id = ?
+                .bind(block_id) // bl.target_id = ?
+                .bind(block_id) // bl.source_id != ?
+                .bind(space_id) // ? IS NULL
+                .bind(space_id); // b.space_id = ?
+            for b in &cf.binds {
+                fc_q = match b {
+                    FilterBind::Text(s) => fc_q.bind(s.clone()),
+                    FilterBind::Num(n) => fc_q.bind(*n),
+                };
+            }
+            let filtered_count_i64: i64 = fc_q.fetch_one(pool).await?;
+            usize::try_from(filtered_count_i64).unwrap_or(0)
         }
-    }
-    let filtered_count_i64: i64 = fc_q.fetch_one(pool).await?;
-    let filtered_count: usize = usize::try_from(filtered_count_i64).unwrap_or(0);
+    };
 
     if filtered_count == 0 {
         return Ok(GroupedBacklinkResponse {
