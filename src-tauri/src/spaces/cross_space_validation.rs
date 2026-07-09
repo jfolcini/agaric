@@ -121,7 +121,24 @@ pub async fn validate_content_cross_space_refs(
     let Some(source_space) = source_space else {
         return Ok(());
     };
+    validate_content_refs_in_space(conn, source_block_id, &source_space, content).await
+}
 
+/// Space-explicit variant of [`validate_content_cross_space_refs`] for
+/// callers that already know the source block's space — in particular
+/// `create_block_in_tx`, which must run this fallible validation BEFORE the
+/// engine apply commits the block into the shared LoroDoc (a rejected create
+/// must leave NO engine mutation behind), i.e. before the row it would
+/// otherwise resolve the space from even exists. The space is resolved from
+/// the parent there (the same resolution anchor the engine apply uses).
+///
+/// `source_block_id` is used only for the error message.
+pub async fn validate_content_refs_in_space(
+    conn: &mut sqlx::SqliteConnection,
+    source_block_id: &BlockId,
+    source_space: &SpaceId,
+    content: &str,
+) -> Result<(), AppError> {
     // Collect all ULIDs referenced in the content (both link and tag-ref forms)
     let mut targets: Vec<&str> = Vec::new();
     for cap in ULID_LINK_RE.captures_iter(content) {
@@ -142,7 +159,7 @@ pub async fn validate_content_cross_space_refs(
     for target_str in targets {
         // Only a target assigned to a DIFFERENT space is a violation.
         if let Some(target_space) = target_spaces.get(target_str)
-            && *target_space != source_space
+            && target_space != source_space
         {
             return Err(AppError::validation(format!(
                 "cross-space reference: block '{}' (space {}) references '{}' (space {})",

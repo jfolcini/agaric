@@ -949,13 +949,27 @@ pub(crate) async fn collect_restore_cohort(
     // #1055: mirror `project_restore_block_to_sql`'s cohort-contiguous
     // walk exactly so the captured fanout set equals the rows the UPDATE
     // clears (the recursive arm descends only through same-cohort blocks).
-    let rows: Vec<(String,)> = sqlx::query_as::<_, (String,)>(concat!(
-        crate::descendants_cte_cohort!(),
+    // R27: the walk is depth-UNBOUNDED (batched capped CTEs, re-anchored at
+    // the depth-100 boundary) because the restore projection it mirrors now
+    // walks unbounded too — a capped capture would restore the deep tail in
+    // SQL while leaving it tombstoned in the engine.
+    let walked = crate::block_descendants::collect_subtree_ids_unbounded(
+        &mut *conn,
+        p.block_id.as_str(),
+        crate::block_descendants::DescendantWalkFilter::Cohort(p.deleted_at_ref),
+    )
+    .await?;
+    // The walker admits the seed unconditionally; post-filter to exactly the
+    // rows the UPDATE clears (a seed outside the cohort must yield itself
+    // out, matching the old single-CTE capture).
+    let payload = serde_json::Value::from(walked).to_string();
+    // dynamic-sql: json_each id-list filter over the walked cohort; single
+    // bound JSON parameter, immune to the SQLite variable limit.
+    let rows: Vec<(String,)> = sqlx::query_as::<_, (String,)>(
         "SELECT id FROM blocks \
-         WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
-    ))
-    .bind(p.block_id.as_str())
-    .bind(p.deleted_at_ref)
+         WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at = ?2",
+    )
+    .bind(&payload)
     .bind(p.deleted_at_ref)
     .fetch_all(&mut *conn)
     .await?;
@@ -988,12 +1002,28 @@ pub(crate) async fn collect_delete_cohort(
     conn: &mut sqlx::SqliteConnection,
     p: &DeleteBlockPayload,
 ) -> Result<Vec<String>, AppError> {
-    let rows: Vec<(String,)> = sqlx::query_as::<_, (String,)>(concat!(
-        crate::descendants_cte_active!(),
+    // R27: depth-UNBOUNDED walk (batched capped CTEs, re-anchored at the
+    // depth-100 boundary) so the captured fan-out cohort matches the
+    // now-unbounded SQL cascade (`project_delete_block_to_sql`). A capped
+    // capture would leave every node past the cap engine-live while SQL
+    // tombstones it — wedging the #1257 outbound freshness gate.
+    let walked = crate::block_descendants::collect_subtree_ids_unbounded(
+        &mut *conn,
+        p.block_id.as_str(),
+        crate::block_descendants::DescendantWalkFilter::Active,
+    )
+    .await?;
+    // The walker admits the seed unconditionally; post-filter to exactly the
+    // rows the cascade UPDATE touches (an already-deleted seed must yield
+    // itself out, matching the old single-CTE capture's idempotency).
+    let payload = serde_json::Value::from(walked).to_string();
+    // dynamic-sql: json_each id-list filter over the walked cohort; single
+    // bound JSON parameter, immune to the SQLite variable limit.
+    let rows: Vec<(String,)> = sqlx::query_as::<_, (String,)>(
         "SELECT id FROM blocks \
-         WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
-    ))
-    .bind(p.block_id.as_str())
+         WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at IS NULL",
+    )
+    .bind(&payload)
     .fetch_all(&mut *conn)
     .await?;
     Ok(rows.into_iter().map(|(id,)| id).collect())

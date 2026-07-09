@@ -25,8 +25,12 @@ leak-timeout = "30s"
 #     DB pools per case); B4 runs ~30s even alone.
 #   * perf26_draft_recovery_at_10k_ops_is_fast — seeds 10K op-log rows (~50s of
 #     setup) before exercising indexed draft recovery; sat right under the 60s kill.
+#   * replay_streams_all_rows_across_multiple_chunks_1574 — drives 205 full
+#     import_and_project rounds (one per seeded inbox row, spanning 2 replay
+#     chunks); ~50s alone on a dev box, so full-suite CPU contention pushes it
+#     past the 60s kill on the first attempt.
 [[profile.default.overrides]]
-filter = 'test(/apply_reproject_proptest::/) | test(/perf26_draft_recovery_at_10k_ops_is_fast/)'
+filter = 'test(/apply_reproject_proptest::/) | test(/perf26_draft_recovery_at_10k_ops_is_fast/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/)'
 slow-timeout = { period = "30s", terminate-after = 4 }
 
 [profile.ci]

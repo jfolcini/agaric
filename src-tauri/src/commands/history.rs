@@ -65,10 +65,77 @@ async fn reproject_live_sibling_group(
     crate::loro::projection::reproject_dense_positions(tx, &ordered).await
 }
 
+/// Preflight a reverse [`OpPayload::MoveBlock`] against the CURRENT tree
+/// state. `compute_reverse` reconstructs the prior placement purely from
+/// op-log history, so by the time an undo/redo/revert applies it the target
+/// parent may have been soft-deleted or purged, or may have become a
+/// DESCENDANT of the moved block (reverting only the older of two moves).
+/// The forward path validates both inside its tx (parent liveness + the
+/// shared `block_descendants::move_would_cycle` probe, `move_ops.rs`);
+/// without the same checks here the raw UPDATE commits a live block under a
+/// tombstone (invisible in both tree and trash, hard-deleted by a later
+/// purge of the parent), a dangling `parent_id` (opaque FK abort), or a
+/// `parent_id` CYCLE (both subtrees unreachable from every page root).
+///
+/// Failures are classified [`AppError::NonReversible`] — the same contract
+/// `compute_reverse` uses for ops discovered non-reversible at runtime — so
+/// the interactive paths abort loudly (the whole tx rolls back) while a
+/// point-in-time restore SKIPS + COUNTS the op (#2020 best-effort contract,
+/// enforced pre-append in [`revert_ops_in_tx`] via
+/// `reverse::is_skippable_non_reversible`).
+async fn reverse_move_preflight(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    p: &crate::op::MoveBlockPayload,
+) -> Result<(), AppError> {
+    // A move back to top level (`new_parent_id = None`) has no target parent
+    // to validate and can never form a cycle.
+    let Some(pid) = p.new_parent_id.as_ref().map(BlockId::as_str) else {
+        return Ok(());
+    };
+
+    // Target parent must exist and be live — same probe as the forward path
+    // (`move_block_in_tx`). A purged parent would otherwise abort the COMMIT
+    // on the deferred `parent_id` FK; a tombstoned one would strand the moved
+    // block as a live orphan.
+    let parent_live = sqlx::query!(
+        r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        pid
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+    if parent_live.is_none() {
+        tracing::warn!(
+            block_id = %p.block_id,
+            prior_parent = %pid,
+            "reverse move rejected: the prior parent is missing or soft-deleted",
+        );
+        return Err(AppError::NonReversible {
+            op_type: "move_block".into(),
+        });
+    }
+
+    // Cycle probe — the SAME shared helper the forward command path
+    // (`move_ops.rs`) and the materializer SQL-only fallback (`sql_only.rs`)
+    // use, so the three SQL-side `parent_id` writers cannot drift.
+    if crate::block_descendants::move_would_cycle(&mut **tx, p.block_id.as_str(), pid).await? {
+        tracing::warn!(
+            block_id = %p.block_id,
+            prior_parent = %pid,
+            "reverse move rejected: reparenting onto the prior parent would form a parent_id cycle",
+        );
+        return Err(AppError::NonReversible {
+            op_type: "move_block".into(),
+        });
+    }
+    Ok(())
+}
+
 /// #1553: Reverse a [`OpPayload::MoveBlock`] inside an existing transaction as a
-/// single inseparable unit: the raw `parent_id`/`position` UPDATE, the dense
-/// 1-based reprojection of BOTH affected sibling groups, and the `page_id` /
-/// `space_id` re-derivation of the moved subtree.
+/// single inseparable unit: the current-state preflight
+/// ([`reverse_move_preflight`]), the raw `parent_id`/`position` UPDATE, the
+/// dense 1-based reprojection of BOTH affected sibling groups, the `page_id` /
+/// `space_id` re-derivation of the moved subtree, and the per-space engine
+/// convergence apply.
 ///
 /// The reverse-apply path ([`apply_reverse_in_tx`]) never enters `apply_op_tx`,
 /// so the engine reprojection the forward path relies on does NOT run here. The
@@ -80,12 +147,29 @@ async fn reproject_live_sibling_group(
 /// both reprojections into one helper makes the densification structurally
 /// inseparable from the raw write, so the settled position is what persists, not
 /// the transient provisional one.
+///
+/// After the SQL settle, the SAME reverse move is driven into the shared
+/// per-space Loro engine (`apply_move_block_to` with the SQL-settled slot):
+/// the forward move path is engine-authoritative — it translates the
+/// requested slot against the ENGINE's sibling order and dense-reprojects
+/// EVERY sibling's SQL position from it — so leaving the engine on the
+/// pre-undo order would make the NEXT forward move in the group silently
+/// re-apply the undone move over SQL.
 async fn reverse_move_block(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
     p: &crate::op::MoveBlockPayload,
 ) -> Result<(), AppError> {
     let new_parent_id_str = p.new_parent_id.as_ref().map(BlockId::as_str);
     let move_block_id_str = p.block_id.as_str();
+
+    // Validate the reconstructed target against the CURRENT tree (parent
+    // liveness + cycle probe) BEFORE any write. `revert_ops_in_tx` runs the
+    // same preflight pre-append so a point-in-time restore can SKIP the op;
+    // this in-helper check is the authoritative guard for every entry point
+    // (single undo, redo, batch revert).
+    reverse_move_preflight(tx, p).await?;
 
     // #928: capture the moved block's CURRENT parent BEFORE the reverse UPDATE
     // reparents it. The reverse of a move re-homes the block from its present
@@ -165,7 +249,65 @@ async fn reverse_move_block(
     // `space_id` (#533) for the moved subtree until the async `RebuildPageIds`
     // materializer task lands.
     crate::commands::block_cleanup::rederive_page_and_space_ids(tx, move_block_id_str).await?;
+
+    // Drive the SAME reverse move into the shared per-space engine so its
+    // fractional sibling order converges with the SQL settle above. The
+    // engines are session-persistent singletons reconciled only at boot
+    // replay; without this apply the engine keeps the PRE-undo order and the
+    // next forward move in either affected group reprojects that stale order
+    // over SQL — silently resurrecting the undone move. `slot` is the
+    // SQL-settled live-sibling slot, the same interpretation
+    // `apply_move_block_to` gives a forward move's `new_index`. Mirrors the
+    // forward path's engine-unavailable handling (`apply_move_block_via_loro`):
+    // an unresolved space or a block/parent missing from the engine falls back
+    // to the SQL-only result with a breadcrumb — boot replay reconciles.
+    let space_id = crate::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+    if let Some(space_id) = space_id {
+        let mut guard = state.registry.for_space(&space_id, device_id)?;
+        let engine = guard.engine_mut();
+        let block_in_engine = engine.read_block(move_block_id_str)?.is_some();
+        let parent_in_engine = match new_parent_id_str {
+            Some(pid) => engine.read_block(pid)?.is_some(),
+            None => true,
+        };
+        if block_in_engine && parent_in_engine {
+            engine.apply_move_block_to(move_block_id_str, new_parent_id_str, slot)?;
+        } else {
+            tracing::warn!(
+                block_id = %move_block_id_str,
+                "reverse move: block or prior parent missing from the per-space \
+                 engine; SQL reversed without engine convergence (boot replay reconciles)",
+            );
+        }
+        drop(guard);
+    } else {
+        tracing::warn!(
+            block_id = %move_block_id_str,
+            "reverse move: space unresolved; SQL reversed without engine \
+             convergence (boot replay reconciles)",
+        );
+    }
     Ok(())
+}
+
+/// Mint the SINGLE timestamp for a reverse op: it becomes both the op's
+/// `op_log.created_at` (via `append_local_*op_in_tx`) and any
+/// `blocks.deleted_at` stamp the apply writes ([`apply_reverse_in_tx`]).
+///
+/// DeleteBlock reverses (undo of create / restore) take the process-monotonic
+/// delete clock, exactly like the forward delete path (`delete_block_inner`):
+/// `deleted_at` is the restore-cohort IDENTITY, so it must be unique per
+/// delete (#1549 — two same-millisecond deletes would otherwise merge cohorts
+/// and over-restore) and must equal the op's `created_at` exactly
+/// (`reverse_delete_block` reconstructs `RestoreBlock { deleted_at_ref:
+/// record.created_at }`). Every other reverse keeps wall-clock `now_ms`,
+/// matching its forward counterpart.
+fn reverse_op_timestamp(reverse_payload: &OpPayload) -> i64 {
+    if matches!(reverse_payload, OpPayload::DeleteBlock(_)) {
+        crate::db::next_delete_ms()
+    } else {
+        crate::db::now_ms()
+    }
 }
 
 /// Apply the materialized effect of a reverse [`OpPayload`] to the blocks/tags/properties
@@ -183,10 +325,23 @@ async fn reverse_move_block(
 /// Undo/redo applies the *reverse* effect via bespoke reverse SQL (it is NOT an
 /// op replayed through `apply_op_projected`/`apply_op_tx`); this is a documented,
 /// permanent exception (Stage 3), NOT a site to route through the collapsed
-/// projection. Leave it as reverse SQL.
+/// projection. Leave it as reverse SQL. (The MoveBlock arm additionally drives
+/// the settled reverse move into the per-space engine so the engine's sibling
+/// order converges with the reverse SQL — see [`reverse_move_block`].)
+///
+/// `op_created_at` is the SAME timestamp the caller bound as the reverse op's
+/// `op_log.created_at` (mint it via [`reverse_op_timestamp`]). The DeleteBlock
+/// arm stamps it into `blocks.deleted_at`, preserving the forward-path cohort
+/// invariant `op.created_at == blocks.deleted_at` (#1549): `reverse_delete_block`
+/// later reconstructs `RestoreBlock { deleted_at_ref: record.created_at }`, so
+/// a second independent clock read here would make redo-of-that-undo match
+/// ZERO rows and silently no-op.
 pub async fn apply_reverse_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
     reverse_payload: &OpPayload,
+    op_created_at: i64,
 ) -> Result<(), AppError> {
     match reverse_payload {
         // Idempotency policy:
@@ -221,14 +376,32 @@ pub async fn apply_reverse_in_tx(
             // restore the M6/restore-path (`restore_block_inner` or
             // `OpPayload::RestoreBlock` below) picks them up. No
             // page_id work is needed here.
-            let now = crate::db::now_ms();
-            // dynamic-sql: test-only fixture/verification query (differential enumeration test, #2190 review).
-            sqlx::query(concat!(
-                crate::descendants_cte_active!(),
-                "UPDATE blocks SET deleted_at = ? \
-                 WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
-            ))
-            .bind(p.block_id.as_str())
+            //
+            // Cohort invariant (#1549): stamp the CALLER-minted op timestamp,
+            // never a fresh `now_ms()` — `deleted_at` must equal the reverse
+            // op's `created_at` exactly or the matching redo/undo
+            // `RestoreBlock { deleted_at_ref }` finds zero rows.
+            //
+            // R27: walk depth-UNBOUNDED (batched capped CTEs) + json_each
+            // UPDATE — the same shape as `project_delete_block_to_sql` — so
+            // an undo-produced delete of a merged tree deeper than the
+            // depth-100 cap tombstones the WHOLE subtree instead of leaving
+            // a live tail stranded under tombstoned ancestors.
+            let now = op_created_at;
+            let cohort = crate::block_descendants::collect_subtree_ids_unbounded(
+                tx,
+                p.block_id.as_str(),
+                crate::block_descendants::DescendantWalkFilter::Active,
+            )
+            .await?;
+            let cohort_json = serde_json::Value::from(cohort).to_string();
+            // dynamic-sql: json_each id-list UPDATE over the walked cohort;
+            // single bound JSON parameter, immune to the SQLite variable limit.
+            sqlx::query(
+                "UPDATE blocks SET deleted_at = ?2 \
+                 WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at IS NULL",
+            )
+            .bind(&cohort_json)
             .bind(now)
             .execute(&mut **tx)
             .await?;
@@ -236,31 +409,82 @@ pub async fn apply_reverse_in_tx(
         OpPayload::RestoreBlock(p) => {
             // Cascade restore (same as restore_block_inner).
             //
-            // `descendants_cte_standard!()` with `depth < 100` bounds
-            // the walk. Shared CTE lives in
-            // `crate::block_descendants`.
-            // dynamic-sql: test-only fixture/verification query (differential enumeration test, #2190 review).
-            sqlx::query(concat!(
-                crate::descendants_cte_standard!(),
+            // R27: cohort-contiguous, depth-UNBOUNDED walk + json_each
+            // UPDATE — the same shape as `restore_block_inner` /
+            // `project_restore_block_to_sql` / `collect_restore_cohort` —
+            // so undo/revert restores the WHOLE cohort of a merged tree
+            // deeper than the depth-100 cap.
+            let cohort = crate::block_descendants::collect_subtree_ids_unbounded(
+                tx,
+                p.block_id.as_str(),
+                crate::block_descendants::DescendantWalkFilter::Cohort(p.deleted_at_ref),
+            )
+            .await?;
+            let cohort_json = serde_json::Value::from(cohort).to_string();
+            // dynamic-sql: json_each id-list UPDATE over the walked cohort;
+            // single bound JSON parameter, immune to the SQLite variable limit.
+            sqlx::query(
                 "UPDATE blocks SET deleted_at = NULL \
-                 WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
-            ))
-            .bind(p.block_id.as_str())
+                 WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at = ?2",
+            )
+            .bind(&cohort_json)
             .bind(p.deleted_at_ref)
             .execute(&mut **tx)
             .await?;
 
-            // #664: refresh `page_id` AND `space_id` for the restored
-            // subtree synchronously, mirroring `restore_block_inner` and
-            // ultimately `move_block_inner`. Without this sync update,
-            // callers reading right after commit can see a stale `page_id`
-            // (the moved-then-deleted descendant case described in
-            // `restore_block_inner`) or stale `space_id` (#533). Before
-            // #664 this arm open-coded the chain and had drifted to skip
-            // the `space_id` step; routing through the shared helper makes
-            // the complete behaviour structurally impossible to drift.
-            crate::commands::block_cleanup::rederive_page_and_space_ids(tx, p.block_id.as_str())
+            // #1884: also restore UPWARD, mirroring the two other restore
+            // writers (`restore_block_inner`, `project_restore_block_to_sql`).
+            // The downward cohort UPDATE alone leaves the block LIVE under a
+            // still-tombstoned parent when that parent was deleted SEPARATELY
+            // (its cascade skipped the already-deleted block, so the block
+            // kept its own cohort): invisible in both the tree and trash, and
+            // hard-deleted by a later purge of the parent. Walk the contiguous
+            // soft-deleted ancestor chain up to the nearest live ancestor and
+            // clear it. Idempotent (an already-live chain restores nothing),
+            // preserving the batch-undo idempotency policy above.
+            // (`&mut Transaction` deref-coerces to `&mut SqliteConnection`,
+            // so pass `tx` directly — clippy::explicit_auto_deref.)
+            let restored_ancestor_top =
+                crate::block_descendants::restore_deleted_ancestor_chain(tx, p.block_id.as_str())
+                    .await?
+                    .topmost;
+
+            // Idempotency guard: the reverse of a delete may target a block
+            // that was since PURGED (row gone). The cohort UPDATE above
+            // matched zero rows — fine per the idempotency policy — but the
+            // page/space re-derivation reads the seed row and errors on a
+            // missing block, so probe first.
+            let seed_id = p.block_id.as_str();
+            let seed_row = sqlx::query!(
+                "SELECT deleted_at, block_type FROM blocks WHERE id = ?",
+                seed_id
+            )
+            .fetch_optional(&mut **tx)
+            .await?;
+            if seed_row.is_some() {
+                // #664: refresh `page_id` AND `space_id` for the restored
+                // subtree synchronously, mirroring `restore_block_inner` and
+                // ultimately `move_block_inner`. Without this sync update,
+                // callers reading right after commit can see a stale `page_id`
+                // (the moved-then-deleted descendant case described in
+                // `restore_block_inner`) or stale `space_id` (#533). Before
+                // #664 this arm open-coded the chain and had drifted to skip
+                // the `space_id` step; routing through the shared helper makes
+                // the complete behaviour structurally impossible to drift.
+                crate::commands::block_cleanup::rederive_page_and_space_ids(
+                    tx,
+                    p.block_id.as_str(),
+                )
                 .await?;
+
+                // #1884: when an ancestor chain was restored above, ALSO
+                // re-derive from the TOPMOST restored ancestor so the whole
+                // reconnected subtree — not just `block_id`'s — is refreshed,
+                // mirroring `restore_block_inner`'s `inheritance_root`.
+                if let Some(ref top) = restored_ancestor_top {
+                    crate::commands::block_cleanup::rederive_page_and_space_ids(tx, top).await?;
+                }
+            }
         }
         OpPayload::EditBlock(p) => {
             let block_id_str = p.block_id.as_str();
@@ -279,11 +503,12 @@ pub async fn apply_reverse_in_tx(
             }
         }
         OpPayload::MoveBlock(p) => {
-            // #1553: the raw write + both sibling-group reprojections + page/space
-            // re-derivation are encapsulated in `reverse_move_block` so the dense
-            // reprojection (which replaces the provisional `new_position` with the
-            // settled 1-based rank) cannot be separated from the raw write.
-            reverse_move_block(tx, p).await?;
+            // #1553: the preflight + raw write + both sibling-group reprojections
+            // + page/space re-derivation + engine convergence are encapsulated in
+            // `reverse_move_block` so the dense reprojection (which replaces the
+            // provisional `new_position` with the settled 1-based rank) cannot be
+            // separated from the raw write.
+            reverse_move_block(tx, state, device_id, p).await?;
         }
         // AddTag and RemoveTag are intentionally idempotent: INSERT OR IGNORE
         // silently handles duplicates, and the DELETE below does not check
@@ -472,7 +697,15 @@ pub async fn revert_ops_inner(
     // Interactive batch undo preserves the historical contract: a single
     // non-reversible op aborts the whole revert (skip_non_reversible =
     // false). The discarded skip count is irrelevant on this path.
-    let (results, _skipped) = revert_ops_in_tx(&mut tx, pool, device_id, ops, false).await?;
+    let (results, _skipped) = revert_ops_in_tx(
+        &mut tx,
+        pool,
+        materializer.loro_state(),
+        device_id,
+        ops,
+        false,
+    )
+    .await?;
 
     // Commits, then fires queued dispatches in enqueue order. If commit
     // fails, no dispatches fire.
@@ -503,6 +736,7 @@ pub async fn revert_ops_inner(
 async fn revert_ops_in_tx(
     tx: &mut CommandTx,
     pool: &SqlitePool,
+    state: &crate::loro::shared::LoroState,
     device_id: &str,
     ops: Vec<OpRef>,
     skip_non_reversible: bool,
@@ -590,6 +824,24 @@ async fn revert_ops_in_tx(
     let mut results = Vec::with_capacity(reverses.len());
 
     for (op_ref, reverse_payload, _created_at, reversed_op_type) in reverses {
+        // Preflight state-dependent reverses against the CURRENT (in-tx) tree
+        // BEFORE appending: a reverse move whose reconstructed prior parent is
+        // gone/tombstoned, or that would form a `parent_id` cycle, is
+        // non-reversible against today's tree. Checking pre-append keeps the
+        // append-only op_log free of never-applied reverse ops when the
+        // point-in-time restore path SKIPS the op (#2020); the interactive
+        // paths (`skip_non_reversible = false`) abort the whole batch with the
+        // same classified error — the tx rolls back, nothing is applied.
+        if let OpPayload::MoveBlock(p) = &reverse_payload
+            && let Err(e) = reverse_move_preflight(tx, p).await
+        {
+            if skip_non_reversible && reverse::is_skippable_non_reversible(&e) {
+                non_reversible_skipped += 1;
+                continue;
+            }
+            return Err(e);
+        }
+
         let new_op_type = reverse_payload.op_type_str().to_owned();
 
         // Append reverse op to log first, then apply — same order as
@@ -599,15 +851,17 @@ async fn revert_ops_in_tx(
         // are legitimate redo targets (activity-feed / point-in-time
         // restore undo), so flag them `is_undo = 1` like the interactive
         // undo path.
-        let op_record = op_log::append_local_undo_op_in_tx(
-            tx,
-            device_id,
-            reverse_payload.clone(),
-            crate::db::now_ms(),
-        )
-        .await?;
+        //
+        // ONE timestamp for the append AND the apply (`reverse_op_timestamp`):
+        // the DeleteBlock arm stamps it into `blocks.deleted_at`, and the
+        // cohort invariant `op.created_at == blocks.deleted_at` (#1549) is
+        // what lets a later undo/redo of this reverse find its rows.
+        let op_ts = reverse_op_timestamp(&reverse_payload);
+        let op_record =
+            op_log::append_local_undo_op_in_tx(tx, device_id, reverse_payload.clone(), op_ts)
+                .await?;
 
-        apply_reverse_in_tx(tx, &reverse_payload).await?;
+        apply_reverse_in_tx(tx, state, device_id, &reverse_payload, op_ts).await?;
 
         results.push(UndoResult {
             reversed_op: op_ref,
@@ -791,8 +1045,15 @@ pub async fn restore_page_to_op_inner(
         tx.rollback().await?;
         (vec![], 0)
     } else {
-        let (results, skipped) =
-            revert_ops_in_tx(&mut tx, pool, device_id, candidate_ops, true).await?;
+        let (results, skipped) = revert_ops_in_tx(
+            &mut tx,
+            pool,
+            materializer.loro_state(),
+            device_id,
+            candidate_ops,
+            true,
+        )
+        .await?;
         if results.is_empty() {
             // Every candidate op was non-reversible — nothing was applied,
             // so release the write lock without churning the materializer.
@@ -904,15 +1165,24 @@ pub async fn undo_page_op_inner(
     // #659: flag the reverse op as an undo op (`op_log.is_undo = 1`) so
     // `redo_page_op_inner` can verify that the ref it is asked to reverse
     // really came from an undo.
-    let op_record = op_log::append_local_undo_op_in_tx(
+    //
+    // ONE timestamp threads through BOTH the append and the apply
+    // (`reverse_op_timestamp`): the DeleteBlock arm stamps it into
+    // `blocks.deleted_at`, preserving the `op.created_at == deleted_at`
+    // cohort invariant (#1549) that redo relies on.
+    let op_ts = reverse_op_timestamp(&reverse_payload);
+    let op_record =
+        op_log::append_local_undo_op_in_tx(&mut tx, device_id, reverse_payload.clone(), op_ts)
+            .await?;
+
+    apply_reverse_in_tx(
         &mut tx,
+        materializer.loro_state(),
         device_id,
-        reverse_payload.clone(),
-        crate::db::now_ms(),
+        &reverse_payload,
+        op_ts,
     )
     .await?;
-
-    apply_reverse_in_tx(&mut tx, &reverse_payload).await?;
 
     // Retain the identity fields the UndoResult needs after the tx
     // consumes its owned clone.
@@ -990,15 +1260,22 @@ pub async fn redo_page_op_inner(
     // desequence.
     let mut tx = CommandTx::begin_immediate(pool, "redo_page_op").await?;
 
-    let op_record = op_log::append_local_op_in_tx(
+    // ONE timestamp threads through BOTH the append and the apply
+    // (`reverse_op_timestamp`): a redo that re-deletes stamps
+    // `blocks.deleted_at = op.created_at`, so the NEXT undo's
+    // `RestoreBlock { deleted_at_ref }` finds the cohort (#1549).
+    let op_ts = reverse_op_timestamp(&reverse_payload);
+    let op_record =
+        op_log::append_local_op_in_tx(&mut tx, device_id, reverse_payload.clone(), op_ts).await?;
+
+    apply_reverse_in_tx(
         &mut tx,
+        materializer.loro_state(),
         device_id,
-        reverse_payload.clone(),
-        crate::db::now_ms(),
+        &reverse_payload,
+        op_ts,
     )
     .await?;
-
-    apply_reverse_in_tx(&mut tx, &reverse_payload).await?;
 
     // Retain the identity fields the UndoResult needs after the tx
     // consumes its owned clone.
@@ -1290,7 +1567,15 @@ pub async fn undo_page_group_inner(
     // IMMEDIATE transaction back — no partial undo. `revert_ops_in_tx` sorts
     // the ops newest-first and applies the reverses in that order; the
     // discarded skip count is always 0 on this path.
-    let (results, _skipped) = revert_ops_in_tx(&mut tx, pool, device_id, ops, false).await?;
+    let (results, _skipped) = revert_ops_in_tx(
+        &mut tx,
+        pool,
+        materializer.loro_state(),
+        device_id,
+        ops,
+        false,
+    )
+    .await?;
 
     // Commit, then fire queued dispatches in enqueue order. If commit fails, no
     // dispatches fire.

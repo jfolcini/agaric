@@ -4105,7 +4105,14 @@ async fn apply_reverse_remove_tag_on_nonexistent_is_idempotent() {
         block_id: BlockId::test_id("GHOST_BLK"),
         tag_id: BlockId::test_id("GHOST_TAG"),
     });
-    let result = apply_reverse_in_tx(&mut tx, &payload).await;
+    let result = apply_reverse_in_tx(
+        &mut tx,
+        &crate::loro::shared::LoroState::new(),
+        DEV,
+        &payload,
+        crate::db::now_ms(),
+    )
+    .await;
 
     // RemoveTag is intentionally idempotent (B-64): deleting a nonexistent
     // association is a harmless no-op, symmetric with AddTag's INSERT OR IGNORE.
@@ -4124,7 +4131,14 @@ async fn apply_reverse_delete_property_on_nonexistent_is_idempotent() {
         block_id: BlockId::test_id("GHOST_BLK"),
         key: "priority".into(),
     });
-    let result = apply_reverse_in_tx(&mut tx, &payload).await;
+    let result = apply_reverse_in_tx(
+        &mut tx,
+        &crate::loro::shared::LoroState::new(),
+        DEV,
+        &payload,
+        crate::db::now_ms(),
+    )
+    .await;
 
     // I-CommandsCRUD-10: DeleteProperty's reverse is intentionally idempotent —
     // its forward counterpart (SetProperty) is already idempotent (INSERT OR
@@ -4146,7 +4160,14 @@ async fn apply_reverse_delete_attachment_on_nonexistent_is_idempotent() {
         attachment_id: BlockId::test_id("ATT_GHOST"),
         fs_path: "/tmp/ghost.bin".into(),
     });
-    let result = apply_reverse_in_tx(&mut tx, &payload).await;
+    let result = apply_reverse_in_tx(
+        &mut tx,
+        &crate::loro::shared::LoroState::new(),
+        DEV,
+        &payload,
+        crate::db::now_ms(),
+    )
+    .await;
 
     // I-CommandsCRUD-10: DeleteAttachment's reverse is intentionally idempotent —
     // its forward counterpart (AddAttachment) is already idempotent (INSERT OR
@@ -4214,6 +4235,8 @@ async fn apply_reverse_routes_column_backed_keys_to_blocks_columns_604() {
     //    set_todo_state with this prior value.
     apply_reverse_in_tx(
         &mut tx,
+        &crate::loro::shared::LoroState::new(),
+        DEV,
         &OpPayload::SetProperty(SetPropertyPayload {
             block_id: block_id.clone(),
             key: "todo_state".into(),
@@ -4223,6 +4246,7 @@ async fn apply_reverse_routes_column_backed_keys_to_blocks_columns_604() {
             value_ref: None,
             value_bool: None,
         }),
+        crate::db::now_ms(),
     )
     .await
     .expect("reverse SetProperty(todo_state) must not hit the 0088 CHECK");
@@ -4230,6 +4254,8 @@ async fn apply_reverse_routes_column_backed_keys_to_blocks_columns_604() {
     // 2. Reverse SetProperty(due_date) — date keys carry value_date.
     apply_reverse_in_tx(
         &mut tx,
+        &crate::loro::shared::LoroState::new(),
+        DEV,
         &OpPayload::SetProperty(SetPropertyPayload {
             block_id: block_id.clone(),
             key: "due_date".into(),
@@ -4239,6 +4265,7 @@ async fn apply_reverse_routes_column_backed_keys_to_blocks_columns_604() {
             value_ref: None,
             value_bool: None,
         }),
+        crate::db::now_ms(),
     )
     .await
     .expect("reverse SetProperty(due_date) must not hit the 0088 CHECK");
@@ -4248,10 +4275,13 @@ async fn apply_reverse_routes_column_backed_keys_to_blocks_columns_604() {
     //    silent no-op that left the column populated).
     apply_reverse_in_tx(
         &mut tx,
+        &crate::loro::shared::LoroState::new(),
+        DEV,
         &OpPayload::DeleteProperty(DeletePropertyPayload {
             block_id: block_id.clone(),
             key: "scheduled_date".into(),
         }),
+        crate::db::now_ms(),
     )
     .await
     .unwrap();
@@ -4259,6 +4289,8 @@ async fn apply_reverse_routes_column_backed_keys_to_blocks_columns_604() {
     // 4. Reverse SetProperty(space) — stamps space_id for the page group.
     apply_reverse_in_tx(
         &mut tx,
+        &crate::loro::shared::LoroState::new(),
+        DEV,
         &OpPayload::SetProperty(SetPropertyPayload {
             block_id: page_id.clone(),
             key: "space".into(),
@@ -4268,6 +4300,7 @@ async fn apply_reverse_routes_column_backed_keys_to_blocks_columns_604() {
             value_ref: Some(BlockId::from_trusted(TEST_SPACE_ID)),
             value_bool: None,
         }),
+        crate::db::now_ms(),
     )
     .await
     .expect("reverse SetProperty(space) must not hit the 0088 CHECK");
@@ -4313,10 +4346,13 @@ async fn apply_reverse_routes_column_backed_keys_to_blocks_columns_604() {
     let mut tx = pool.begin().await.unwrap();
     apply_reverse_in_tx(
         &mut tx,
+        &crate::loro::shared::LoroState::new(),
+        DEV,
         &OpPayload::DeleteProperty(DeletePropertyPayload {
             block_id: page_id.clone(),
             key: "space".into(),
         }),
+        crate::db::now_ms(),
     )
     .await
     .unwrap();
@@ -4803,7 +4839,15 @@ async fn apply_reverse_move_block_refreshes_space_id_657() {
         new_index: None,
     });
     let mut tx = pool.begin().await.unwrap();
-    apply_reverse_in_tx(&mut tx, &payload).await.unwrap();
+    apply_reverse_in_tx(
+        &mut tx,
+        &crate::loro::shared::LoroState::new(),
+        DEV,
+        &payload,
+        crate::db::now_ms(),
+    )
+    .await
+    .unwrap();
     tx.commit().await.unwrap();
 
     for id in ["CHILD657", "GRAND657"] {
@@ -4847,7 +4891,15 @@ async fn apply_reverse_restore_block_refreshes_space_id_657() {
         deleted_at_ref: COHORT_TS,
     });
     let mut tx = pool.begin().await.unwrap();
-    apply_reverse_in_tx(&mut tx, &payload).await.unwrap();
+    apply_reverse_in_tx(
+        &mut tx,
+        &crate::loro::shared::LoroState::new(),
+        DEV,
+        &payload,
+        crate::db::now_ms(),
+    )
+    .await
+    .unwrap();
     tx.commit().await.unwrap();
 
     for id in ["CHILD657", "GRAND657"] {
@@ -5457,13 +5509,21 @@ async fn undo_page_group_enumeration_matches_find_undo_group_differential() {
 }
 
 // ======================================================================
-// AUDIT REPRO (temporary) — reverse-move boundary violations
+// Reverse-apply integrity — the reverse path must validate the CURRENT
+// tree state before writing (cycle probe, target-parent liveness, #1884
+// upward ancestor restore), exactly like its forward counterparts.
 // ======================================================================
 
-/// Repro 1: reverting an old move op after the prior parent was reparented
-/// under the moved block installs a parent_id CYCLE in SQL.
+/// Reverting an old move op AFTER the prior parent was reparented under the
+/// moved block must be REJECTED (classified `NonReversible`), never commit a
+/// `blocks.parent_id` cycle. The forward path guards this via the shared
+/// `block_descendants::move_would_cycle` probe (`move_ops.rs`); the reverse
+/// path (`reverse_move_block`) must run the same probe.
+///
+/// Reachable from the History view: select only the old 'moved' entry and
+/// click Revert (`HistoryRevertDialog` → `revert_ops`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn audit_repro_revert_move_installs_parent_cycle() {
+async fn revert_of_move_rejects_cycle_forming_reverse() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -5509,11 +5569,7 @@ async fn audit_repro_revert_move_installs_parent_cycle() {
     let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
         .await
         .unwrap();
-    let m = ops
-        .iter()
-        .filter(|o| o.op_type == "move_block")
-        .last()
-        .unwrap();
+    let m = ops.iter().rfind(|o| o.op_type == "move_block").unwrap();
     let m_seq = m.seq;
 
     // Now move A under B (valid: B is no longer inside A)
@@ -5522,7 +5578,9 @@ async fn audit_repro_revert_move_installs_parent_cycle() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    // Revert op M alone (History view arbitrary-selection revert)
+    // Revert op M alone (History view arbitrary-selection revert). The reverse
+    // MoveBlock targets prior parent A, which is now a DESCENDANT of B — the
+    // interactive batch contract is abort-before-apply with a classified error.
     let res = revert_ops_inner(
         &pool,
         DEV,
@@ -5533,8 +5591,17 @@ async fn audit_repro_revert_move_installs_parent_cycle() {
         }],
     )
     .await;
-    eprintln!("revert result: {res:?}");
+    let err = res.expect_err(
+        "reverting a move whose prior parent is now a descendant of the moved \
+         block must be rejected, not committed as a parent_id cycle",
+    );
+    assert!(
+        matches!(err, AppError::NonReversible { .. }),
+        "cycle-forming reverse move must be classified NonReversible, got: {err:?}"
+    );
 
+    // The rejected revert must leave the tree exactly as it was: A under B,
+    // B under the page — acyclic and fully reachable.
     let a_parent: Option<String> = sqlx::query_scalar("SELECT parent_id FROM blocks WHERE id = ?")
         .bind(a.id.as_str())
         .fetch_one(&pool)
@@ -5545,22 +5612,26 @@ async fn audit_repro_revert_move_installs_parent_cycle() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    eprintln!(
-        "A.parent = {a_parent:?}, B.parent = {b_parent:?}, A={}, B={}",
-        a.id.as_str(),
-        b.id.as_str()
+    assert_eq!(
+        a_parent.as_deref(),
+        Some(b.id.as_str()),
+        "rejected revert must leave A under B (tree unchanged)"
     );
-    assert!(
-        !(a_parent.as_deref() == Some(b.id.as_str()) && b_parent.as_deref() == Some(a.id.as_str())),
-        "CYCLE INSTALLED: A.parent=B and B.parent=A"
+    assert_eq!(
+        b_parent.as_deref(),
+        Some(page_id.as_str()),
+        "rejected revert must leave B under the page (no cycle installed)"
     );
     mat.shutdown();
 }
 
-/// Repro 2: reverting a move after the prior parent was soft-deleted leaves a
-/// LIVE block parented under a tombstone (invisible orphan).
+/// Reverting a move AFTER the prior parent was soft-deleted must be REJECTED
+/// (classified `NonReversible`), never reparent a LIVE block under a
+/// tombstone — such a block is invisible in both the tree and the trash, and
+/// a later 'delete forever' on the tombstoned parent would hard-delete it
+/// (the purge CTE walks without a `deleted_at` filter).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn audit_repro_revert_move_under_tombstoned_parent() {
+async fn revert_of_move_rejects_tombstoned_prior_parent() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -5608,12 +5679,7 @@ async fn audit_repro_revert_move_under_tombstoned_parent() {
     let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
         .await
         .unwrap();
-    let m_seq = ops
-        .iter()
-        .filter(|o| o.op_type == "move_block")
-        .last()
-        .unwrap()
-        .seq;
+    let m_seq = ops.iter().rfind(|o| o.op_type == "move_block").unwrap().seq;
 
     // Delete A (trash)
     delete_block_inner(&pool, DEV, &mat, a.id.clone())
@@ -5621,7 +5687,8 @@ async fn audit_repro_revert_move_under_tombstoned_parent() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    // Revert op M alone
+    // Revert op M alone: the reverse MoveBlock targets prior parent A, which
+    // is now tombstoned. The revert must abort with a classified error.
     let res = revert_ops_inner(
         &pool,
         DEV,
@@ -5632,32 +5699,39 @@ async fn audit_repro_revert_move_under_tombstoned_parent() {
         }],
     )
     .await;
-    eprintln!("revert result: {res:?}");
+    let err = res.expect_err(
+        "reverting a move whose prior parent is soft-deleted must be rejected, \
+         not leave a live block parented under a tombstone",
+    );
+    assert!(
+        matches!(err, AppError::NonReversible { .. }),
+        "reverse move onto a tombstoned parent must be classified NonReversible, got: {err:?}"
+    );
 
+    // The rejected revert must leave B exactly where it was: live under C.
     let (b_parent, b_deleted): (Option<String>, Option<i64>) =
         sqlx::query_as("SELECT parent_id, deleted_at FROM blocks WHERE id = ?")
             .bind(b.id.as_str())
             .fetch_one(&pool)
             .await
             .unwrap();
-    let a_deleted: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
-        .bind(a.id.as_str())
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    eprintln!("B.parent = {b_parent:?}, B.deleted = {b_deleted:?}, A.deleted = {a_deleted:?}");
-    assert!(
-        !(b_deleted.is_none() && a_deleted.is_some() && b_parent.as_deref() == Some(a.id.as_str())),
-        "LIVE ORPHAN: live B parented under tombstoned A"
+    assert_eq!(
+        b_parent.as_deref(),
+        Some(c.id.as_str()),
+        "rejected revert must leave B under its current parent C"
     );
+    assert!(b_deleted.is_none(), "B must remain live");
     mat.shutdown();
 }
 
-/// Repro 3: reverting an old delete (via History/ActivityFeed) after the
-/// parent was separately deleted restores the block live under a tombstoned
-/// ancestor (the #1884 upward restore is missing on the reverse path).
+/// Reverting an old delete (History view / ActivityFeed single-op revert)
+/// AFTER the parent was separately deleted must restore the tombstoned
+/// ancestor chain too (#1884), exactly like the forward restore command
+/// (`restore_block_inner`) and the materializer projection
+/// (`project_restore_block_to_sql`) — otherwise the block comes back LIVE
+/// under a still-tombstoned parent, invisible in both the tree and trash.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn audit_repro_revert_delete_under_tombstoned_ancestor() {
+async fn revert_of_delete_restores_tombstoned_ancestor_chain_1884() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -5696,8 +5770,7 @@ async fn audit_repro_revert_delete_under_tombstoned_ancestor() {
         .unwrap();
     let d1_seq = ops
         .iter()
-        .filter(|o| o.op_type == "delete_block")
-        .last()
+        .rfind(|o| o.op_type == "delete_block")
         .unwrap()
         .seq;
     delete_block_inner(&pool, DEV, &mat, a.id.clone())
@@ -5705,8 +5778,10 @@ async fn audit_repro_revert_delete_under_tombstoned_ancestor() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    // Revert D1 alone
-    let res = revert_ops_inner(
+    // Revert D1 alone: the reverse RestoreBlock must clear B's cohort AND
+    // restore the contiguous tombstoned ancestor chain (here: A), mirroring
+    // the #1884 behaviour of every other restore writer.
+    revert_ops_inner(
         &pool,
         DEV,
         &mat,
@@ -5715,23 +5790,761 @@ async fn audit_repro_revert_delete_under_tombstoned_ancestor() {
             seq: d1_seq,
         }],
     )
-    .await;
-    eprintln!("revert result: {res:?}");
+    .await
+    .expect("reverting the child's delete must succeed");
 
-    let b_deleted: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
-        .bind(b.id.as_str())
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let (b_parent, b_deleted): (Option<String>, Option<i64>) =
+        sqlx::query_as("SELECT parent_id, deleted_at FROM blocks WHERE id = ?")
+            .bind(b.id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     let a_deleted: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
         .bind(a.id.as_str())
         .fetch_one(&pool)
         .await
         .unwrap();
-    eprintln!("B.deleted = {b_deleted:?}, A.deleted = {a_deleted:?}");
-    assert!(
-        !(b_deleted.is_none() && a_deleted.is_some()),
-        "LIVE-UNDER-TOMBSTONE: B restored live while ancestor A stays deleted"
+    assert!(b_deleted.is_none(), "B must be restored live");
+    assert_eq!(
+        b_parent.as_deref(),
+        Some(a.id.as_str()),
+        "B keeps its parent A after the revert"
     );
+    assert!(
+        a_deleted.is_none(),
+        "#1884: the revert must restore B's tombstoned ancestor A too — a live \
+         block under a tombstoned parent is invisible in both tree and trash; \
+         got A.deleted_at = {a_deleted:?}"
+    );
+    mat.shutdown();
+}
+
+/// Point-in-time restore (#2020 best-effort contract): a reverse move whose
+/// prior parent was PURGED cannot be applied — it must be SKIPPED and counted
+/// (`non_reversible_skipped`), not abort the whole restore with an opaque FK
+/// error (and never write a dangling `parent_id`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_page_to_op_skips_reverse_move_onto_purged_parent() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let (page_id, _children) = create_page_with_children(&pool, &mat).await;
+
+    // P and Q under the page, X under P.
+    let p = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "P".into(),
+        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(3),
+    )
+    .await
+    .unwrap();
+    let q = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "Q".into(),
+        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(4),
+    )
+    .await
+    .unwrap();
+    let x = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "X".into(),
+        Some(p.id.clone()),
+        Some(0),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Restore target: the create-X op (the state just before the move below).
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
+    let target_seq = ops
+        .iter()
+        .rfind(|o| o.op_type == "create_block")
+        .unwrap()
+        .seq;
+
+    // Op M: move X from P to Q; then delete AND purge P — the reverse of M
+    // now targets a parent that no longer exists at all.
+    move_block_inner(&pool, DEV, &mat, x.id.clone(), Some(q.id.clone()), 0)
+        .await
+        .unwrap();
+    delete_block_inner(&pool, DEV, &mat, p.id.clone())
+        .await
+        .unwrap();
+    purge_block_inner(&pool, DEV, &mat, p.id.clone())
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let result = restore_page_to_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        page_id.clone(),
+        DEV.to_owned(),
+        target_seq,
+    )
+    .await
+    .expect(
+        "restore must complete best-effort, skipping the unappliable reverse \
+         move instead of aborting on a purged prior parent",
+    );
+
+    // Skipped: the reverse move onto the purged parent (dynamically
+    // non-reversible). P's own delete/purge ops fall outside the page-scoped
+    // membership CTE once the purge removed P's row, so the move is the only
+    // candidate — and it must be SKIPPED, not applied (dangling `parent_id` /
+    // FK abort) and not abort the restore.
+    assert_eq!(
+        result.non_reversible_skipped, 1,
+        "the reverse move onto the purged parent must be skipped+counted; \
+         got {result:?}"
+    );
+    assert_eq!(
+        result.ops_reverted, 0,
+        "nothing else was revertible; got {result:?}"
+    );
+
+    // X must stay live under Q — never re-parented to a nonexistent row.
+    let (x_parent, x_deleted): (Option<String>, Option<i64>) =
+        sqlx::query_as("SELECT parent_id, deleted_at FROM blocks WHERE id = ?")
+            .bind(x.id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        x_parent.as_deref(),
+        Some(q.id.as_str()),
+        "the skipped reverse move must leave X under its current parent Q"
+    );
+    assert!(x_deleted.is_none(), "X must remain live");
+    mat.shutdown();
+}
+
+// ======================================================================
+// Undo/redo cohort invariant — `op.created_at == blocks.deleted_at`
+// (#1549 analogue for undo-produced deletes)
+// ======================================================================
+
+/// An undo-produced soft-delete (reverse of `create_block`) must stamp
+/// `blocks.deleted_at` with the SAME value as the reverse op's
+/// `op_log.created_at`, and that value must come from the process-monotonic
+/// delete clock (`next_delete_ms`) — never a second independent `now_ms()`
+/// read. Two clock reads break the redo chain (the later `RestoreBlock`
+/// matches zero rows), and a non-monotonic stamp can collide with an
+/// existing cohort (#1549 over-restore).
+///
+/// Determinism: the delete clock is pre-advanced ~2s into the future, so a
+/// wall-clock (`now_ms`) stamp is guaranteed to violate the monotonic floor.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_produced_delete_cohorts_are_monotonic_and_match_op_created_at() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let (page_id, _children) = create_page_with_children(&pool, &mat).await;
+
+    // Two nested blocks whose creates form one undo group.
+    let a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "A".into(),
+        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(3),
+    )
+    .await
+    .unwrap();
+    let b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "B".into(),
+        Some(a.id.clone()),
+        Some(0),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Advance the process-global delete clock well past wall-clock so a
+    // `now_ms()`-stamped cohort deterministically lands BELOW the floor.
+    let mut floor = 0;
+    for _ in 0..2000 {
+        floor = crate::db::next_delete_ms();
+    }
+
+    // Group-undo the whole burst (routes through `revert_ops_in_tx`); every
+    // reverse here is a DeleteBlock.
+    let results = undo_page_group_inner(&pool, DEV, &mat, page_id.clone(), 0, 60_000)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert!(
+        results.len() >= 2,
+        "group undo must cover at least the two creates; got {results:?}"
+    );
+
+    let mut cohorts: Vec<i64> = Vec::new();
+    for r in &results {
+        assert_eq!(r.new_op_type, "delete_block");
+        let (op_created_at, block_id): (i64, String) = sqlx::query_as(
+            "SELECT created_at, block_id FROM op_log WHERE device_id = ? AND seq = ?",
+        )
+        .bind(&r.new_op_ref.device_id)
+        .bind(r.new_op_ref.seq)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let deleted_at: Option<i64> =
+            sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(&block_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let deleted_at = deleted_at.unwrap_or_else(|| {
+            panic!("undo of create must soft-delete block {block_id}, got live row")
+        });
+        assert_eq!(
+            deleted_at, op_created_at,
+            "cohort invariant: blocks.deleted_at must equal the reverse op's \
+             op_log.created_at (block {block_id}) — otherwise redo's \
+             RestoreBlock(deleted_at_ref) matches zero rows and silently no-ops"
+        );
+        assert!(
+            deleted_at > floor,
+            "undo-produced delete cohort must come from the monotonic delete \
+             clock (next_delete_ms > pre-advanced floor {floor}), got {deleted_at} \
+             for block {block_id} — a wall-clock stamp can collide with an \
+             existing cohort (#1549)"
+        );
+        cohorts.push(deleted_at);
+    }
+    let mut deduped = cohorts.clone();
+    deduped.sort_unstable();
+    deduped.dedup();
+    assert_eq!(
+        deduped.len(),
+        cohorts.len(),
+        "each undo-produced delete must get a DISTINCT cohort timestamp; got {cohorts:?}"
+    );
+    // Silence unused warnings for ids the loop resolves dynamically.
+    let _ = (a, b);
+    mat.shutdown();
+}
+
+/// Behavioural pin for the cohort invariant: create → undo → redo must bring
+/// the block back. (With two independent clock reads, redo's RestoreBlock
+/// referenced a `deleted_at` that no row carried whenever the append and the
+/// apply straddled a millisecond boundary.)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_undo_redo_roundtrip_restores_block_live() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let (page_id, _children) = create_page_with_children(&pool, &mat).await;
+    let c = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "C".into(),
+        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(3),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let undo = undo_page_op_inner(&pool, DEV, &mat, page_id.clone(), 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(undo.new_op_type, "delete_block");
+    let deleted: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(c.id.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(deleted.is_some(), "undo of create must soft-delete C");
+
+    redo_page_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        undo.new_op_ref.device_id.clone(),
+        undo.new_op_ref.seq,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let deleted: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(c.id.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        deleted.is_none(),
+        "redo of undo-of-create must restore C live (RestoreBlock cohort must \
+         match the undo op's deleted_at stamp); got deleted_at = {deleted:?}"
+    );
+    mat.shutdown();
+}
+
+/// Same invariant through the redo path's own delete stamping:
+/// delete → undo (restore) → redo (re-delete) → undo (restore) must end with
+/// the block live — the final RestoreBlock references the REDO op's
+/// `created_at`, which must equal the `deleted_at` the redo stamped.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_undo_redo_undo_chain_ends_with_block_live() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let (page_id, child_ids) = create_page_with_children(&pool, &mat).await;
+    let target = crate::ulid::BlockId::from_trusted(&child_ids[0]);
+
+    delete_block_inner(&pool, DEV, &mat, target.clone())
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Undo the delete → restore.
+    let undo = undo_page_op_inner(&pool, DEV, &mat, page_id.clone(), 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(undo.new_op_type, "restore_block");
+
+    // Redo → re-delete (appended as a forward op, `is_undo = 0`).
+    redo_page_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        undo.new_op_ref.device_id.clone(),
+        undo.new_op_ref.seq,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let deleted: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(target.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(deleted.is_some(), "redo must re-delete the block");
+
+    // Undo again — targets the redo's delete op (newest is_undo = 0 op) and
+    // must find its cohort.
+    undo_page_op_inner(&pool, DEV, &mat, page_id.clone(), 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let deleted: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(target.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        deleted.is_none(),
+        "undo of the redo's delete must restore the block live (cohort match); \
+         got deleted_at = {deleted:?}"
+    );
+    mat.shutdown();
+}
+
+// ======================================================================
+// Undo must keep the shared per-space Loro engine in step with SQL —
+// otherwise the NEXT forward move reprojects the whole sibling group
+// from the stale engine order, silently resurrecting the undone move.
+// ======================================================================
+
+/// Seed one pre-existing block into BOTH SQL and the per-space engine tree
+/// (mirrors `undo_integration.rs::seed_block_both`): a brand-new root page
+/// created via op resolves no space yet and would take the SQL-only fallback,
+/// so pre-existing roots are replayed straight into the engine.
+async fn seed_block_into_sql_and_engine(
+    pool: &SqlitePool,
+    state: &crate::loro::shared::LoroState,
+    id: &str,
+    block_type: &str,
+    content: &str,
+    parent_id: Option<&str>,
+    position: i64,
+) {
+    insert_block(pool, id, block_type, content, parent_id, Some(position)).await;
+    let space = SpaceId::from_trusted(TEST_SPACE_ID);
+    let mut guard = state
+        .registry
+        .for_space(&space, DEV)
+        .expect("for_space seed");
+    guard
+        .engine_mut()
+        .apply_create_block(id, block_type, content, parent_id, position)
+        .expect("seed apply_create_block into engine");
+    drop(guard);
+}
+
+/// Drive a single op through the production ENGINE path: append to the
+/// op-log, then run the foreground ApplyOp (`dispatch_op` → `apply_*_via_loro`
+/// + dense reprojection) and settle the background fan-out.
+async fn dispatch_op_via_engine(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    payload: crate::op::OpPayload,
+) {
+    let record = op_log::append_local_op(pool, DEV, payload)
+        .await
+        .expect("append_local_op");
+    mat.dispatch_op(&record).await.expect("dispatch_op");
+    settle(mat).await;
+}
+
+/// Undoing a move must drive the SAME reverse move into the per-space engine:
+/// the forward move path is engine-authoritative (it translates the requested
+/// slot against the engine's sibling order and reprojects EVERY sibling's SQL
+/// position from it), so a stale engine order silently re-applies the undone
+/// move on the next forward move in the group.
+///
+/// Scenario: siblings X,Y,Z → move X to the end (Y,Z,X) → undo (X,Y,Z) →
+/// move Y to the end. Expected X,Z,Y; with a stale engine the result was
+/// Z,X,Y — the undone move of X resurrected.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_move_keeps_engine_order_in_step_with_sql() {
+    use crate::op::{CreateBlockPayload, MoveBlockPayload};
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let state = mat.loro_state();
+
+    const S1: &str = "01HZUES000000000000000PAG1";
+    const X: &str = "01HZUES0000000000000000XXX";
+    const Y: &str = "01HZUES0000000000000000YYY";
+    const Z: &str = "01HZUES0000000000000000ZZZ";
+
+    seed_block_into_sql_and_engine(&pool, state, S1, "page", "page-1", None, 1).await;
+    assign_all_to_test_space(&pool).await;
+
+    // Create X,Y,Z as children of S1 through the engine path (slots 0,1,2).
+    for (i, child) in [X, Y, Z].into_iter().enumerate() {
+        dispatch_op_via_engine(
+            &pool,
+            &mat,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::from_trusted(child),
+                block_type: "content".into(),
+                parent_id: Some(BlockId::from_trusted(S1)),
+                position: None,
+                index: Some(i64::try_from(i).unwrap()),
+                content: child.into(),
+            }),
+        )
+        .await;
+    }
+    assign_all_to_test_space(&pool).await;
+
+    async fn sql_order(pool: &SqlitePool) -> Vec<String> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT id FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+             ORDER BY position, id",
+        )
+        .bind("01HZUES000000000000000PAG1")
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        rows.into_iter().map(|(id,)| id).collect::<Vec<_>>()
+    }
+    assert_eq!(sql_order(&pool).await, vec![X, Y, Z], "sanity: X,Y,Z");
+
+    // Move X to the end (slot 2) — engine + SQL now hold Y,Z,X.
+    dispatch_op_via_engine(
+        &pool,
+        &mat,
+        OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: BlockId::from_trusted(X),
+            new_parent_id: Some(BlockId::from_trusted(S1)),
+            new_position: 3,
+            new_index: Some(2),
+        }),
+    )
+    .await;
+    assert_eq!(sql_order(&pool).await, vec![Y, Z, X], "after move: Y,Z,X");
+
+    // Undo the move: SQL must return to X,Y,Z AND the engine must follow.
+    let undo = undo_page_op_inner(&pool, DEV, &mat, S1.to_owned(), 0)
+        .await
+        .expect("undo move");
+    settle(&mat).await;
+    assert_eq!(undo.reversed_op_type, "move_block");
+    assert_eq!(sql_order(&pool).await, vec![X, Y, Z], "after undo: X,Y,Z");
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        let engine_order = guard
+            .engine_mut()
+            .children_ordered_block_ids(Some(S1))
+            .expect("children_ordered_block_ids");
+        drop(guard);
+        assert_eq!(
+            engine_order,
+            vec![X.to_owned(), Y.to_owned(), Z.to_owned()],
+            "undo must drive the reverse move into the per-space engine — a \
+             stale engine order re-applies the undone move on the next \
+             forward move in this sibling group"
+        );
+    }
+
+    // The user now sees X,Y,Z and moves Y to the end → expects X,Z,Y. With a
+    // stale engine (Y,Z,X) the reprojection produced Z,X,Y instead.
+    dispatch_op_via_engine(
+        &pool,
+        &mat,
+        OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: BlockId::from_trusted(Y),
+            new_parent_id: Some(BlockId::from_trusted(S1)),
+            new_position: 3,
+            new_index: Some(2),
+        }),
+    )
+    .await;
+    assert_eq!(
+        sql_order(&pool).await,
+        vec![X, Z, Y],
+        "the forward move AFTER an undo must project against the undone \
+         order (X,Y,Z), not resurrect the undone move"
+    );
+
+    // ENGINE-PATH GUARD: all blocks must be present in the engine tree, so a
+    // silent regression to the SQL-only fallback fails loudly.
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        for id in [S1, X, Y, Z] {
+            assert!(
+                guard
+                    .engine_mut()
+                    .read_block(id)
+                    .expect("read_block")
+                    .is_some(),
+                "block {id} absent from the engine tree — ops took the SQL-only \
+                 fallback, not the production engine path",
+            );
+        }
+        drop(guard);
+    }
+    mat.shutdown();
+}
+
+/// Undo-of-delete (reverse `RestoreBlock`) staleness probe: the SQL restore
+/// must reach the per-space engine too, or the NEXT forward move in the
+/// sibling group reprojects the group WITHOUT the restored block — its stale
+/// SQL rank then collides with a live sibling's and the visible order
+/// silently diverges from what the user arranged.
+///
+/// Scenario: X,Y,Z → delete Y → undo (SQL: X,Y,Z again) → move X to the end.
+/// Expected Y,Z,X; with a stale engine (Y still tombstoned there) the group
+/// reprojects only [Z,X], leaving Y at its stale rank.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_delete_keeps_engine_in_step_for_next_move() {
+    use crate::op::{CreateBlockPayload, DeleteBlockPayload, MoveBlockPayload};
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let state = mat.loro_state();
+
+    const S1: &str = "01HZUED000000000000000PAG1";
+    const X: &str = "01HZUED0000000000000000XXX";
+    const Y: &str = "01HZUED0000000000000000YYY";
+    const Z: &str = "01HZUED0000000000000000ZZZ";
+
+    seed_block_into_sql_and_engine(&pool, state, S1, "page", "page-1", None, 1).await;
+    assign_all_to_test_space(&pool).await;
+    for (i, child) in [X, Y, Z].into_iter().enumerate() {
+        dispatch_op_via_engine(
+            &pool,
+            &mat,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::from_trusted(child),
+                block_type: "content".into(),
+                parent_id: Some(BlockId::from_trusted(S1)),
+                position: None,
+                index: Some(i64::try_from(i).unwrap()),
+                content: child.into(),
+            }),
+        )
+        .await;
+    }
+    assign_all_to_test_space(&pool).await;
+
+    async fn sql_order(pool: &SqlitePool) -> Vec<String> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT id FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+             ORDER BY position, id",
+        )
+        .bind("01HZUED000000000000000PAG1")
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        rows.into_iter().map(|(id,)| id).collect::<Vec<_>>()
+    }
+    assert_eq!(sql_order(&pool).await, vec![X, Y, Z], "sanity: X,Y,Z");
+
+    // Delete Y through the engine path, then undo it.
+    dispatch_op_via_engine(
+        &pool,
+        &mat,
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: BlockId::from_trusted(Y),
+        }),
+    )
+    .await;
+    assert_eq!(sql_order(&pool).await, vec![X, Z], "after delete: X,Z");
+
+    undo_page_op_inner(&pool, DEV, &mat, S1.to_owned(), 0)
+        .await
+        .expect("undo delete");
+    settle(&mat).await;
+    assert_eq!(sql_order(&pool).await, vec![X, Y, Z], "after undo: X,Y,Z");
+
+    // Move X to the end. The user sees X,Y,Z and expects Y,Z,X. If the undo
+    // never restored Y in the engine, the group reprojects as [Z,X] only and
+    // Y's stale rank corrupts the visible order.
+    dispatch_op_via_engine(
+        &pool,
+        &mat,
+        OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: BlockId::from_trusted(X),
+            new_parent_id: Some(BlockId::from_trusted(S1)),
+            new_position: 3,
+            new_index: Some(2),
+        }),
+    )
+    .await;
+    assert_eq!(
+        sql_order(&pool).await,
+        vec![Y, Z, X],
+        "the forward move AFTER an undo-of-delete must project against the \
+         restored sibling group (X,Y,Z → move X to end → Y,Z,X)"
+    );
+    mat.shutdown();
+}
+
+/// Undo-of-create (reverse `DeleteBlock`) staleness probe: the SQL tombstone
+/// must reach the per-space engine too, or the NEXT forward move in the
+/// sibling group reprojects the group WITH the undone block still in it —
+/// live siblings keep order but the undone block's presence skews the ranks
+/// the engine hands back on subsequent slot translations.
+///
+/// Scenario: X,Y → create Z between them (slot 1) → undo (SQL: X,Y) →
+/// move Y to slot 0. Expected Y,X; a stale engine still holding Z translates
+/// the slot against [X,Z,Y] and reprojects Z's tombstoned row too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_create_keeps_engine_in_step_for_next_move() {
+    use crate::op::{CreateBlockPayload, MoveBlockPayload};
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let state = mat.loro_state();
+
+    const S1: &str = "01HZUEC000000000000000PAG1";
+    const X: &str = "01HZUEC0000000000000000XXX";
+    const Y: &str = "01HZUEC0000000000000000YYY";
+    const Z: &str = "01HZUEC0000000000000000ZZZ";
+
+    seed_block_into_sql_and_engine(&pool, state, S1, "page", "page-1", None, 1).await;
+    assign_all_to_test_space(&pool).await;
+    for (i, child) in [X, Y].into_iter().enumerate() {
+        dispatch_op_via_engine(
+            &pool,
+            &mat,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::from_trusted(child),
+                block_type: "content".into(),
+                parent_id: Some(BlockId::from_trusted(S1)),
+                position: None,
+                index: Some(i64::try_from(i).unwrap()),
+                content: child.into(),
+            }),
+        )
+        .await;
+    }
+    assign_all_to_test_space(&pool).await;
+
+    // Create Z between X and Y, then undo it.
+    dispatch_op_via_engine(
+        &pool,
+        &mat,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(Z),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::from_trusted(S1)),
+            position: None,
+            index: Some(1),
+            content: Z.into(),
+        }),
+    )
+    .await;
+    assign_all_to_test_space(&pool).await;
+
+    async fn sql_order(pool: &SqlitePool) -> Vec<String> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT id FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+             ORDER BY position, id",
+        )
+        .bind("01HZUEC000000000000000PAG1")
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        rows.into_iter().map(|(id,)| id).collect::<Vec<_>>()
+    }
+    assert_eq!(sql_order(&pool).await, vec![X, Z, Y], "sanity: X,Z,Y");
+
+    undo_page_op_inner(&pool, DEV, &mat, S1.to_owned(), 0)
+        .await
+        .expect("undo create");
+    settle(&mat).await;
+    assert_eq!(sql_order(&pool).await, vec![X, Y], "after undo: X,Y");
+
+    // Move Y to the front. The user sees X,Y and expects Y,X — the slot must
+    // be translated against the LIVE group (X,Y), not one still holding Z.
+    dispatch_op_via_engine(
+        &pool,
+        &mat,
+        OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: BlockId::from_trusted(Y),
+            new_parent_id: Some(BlockId::from_trusted(S1)),
+            new_position: 1,
+            new_index: Some(0),
+        }),
+    )
+    .await;
+    assert_eq!(
+        sql_order(&pool).await,
+        vec![Y, X],
+        "the forward move AFTER an undo-of-create must project against the \
+         live sibling group (X,Y → move Y to front → Y,X)"
+    );
+
+    // The undone block must stay tombstoned in SQL with its cohort intact.
+    let z_deleted: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(Z)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(z_deleted.is_some(), "undone create must stay soft-deleted");
     mat.shutdown();
 }

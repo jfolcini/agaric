@@ -14,16 +14,6 @@ use super::super::*;
 use crate::domain::block_ops::{create_block_in_tx, set_property_in_tx};
 use crate::space::{SpaceId, SpaceScope};
 
-/// #2268: minimum number of rows a single-root cascade UPDATE must touch before
-/// the depth-saturation probe (`cascade_depth_saturated`, a full
-/// `WITH RECURSIVE ... MAX(depth)` re-walk) is worth running. The cap that the
-/// probe detects is `>= 99` levels; a cascade cannot reach depth `d` without
-/// touching the `d + 1`-node chain down to it, so a subtree that could trip the
-/// `>= 99` warn must have flipped at least 99 rows. Gating the probe on this
-/// bound keeps the common (shallow) delete/restore path free of the extra walk
-/// while still catching a genuinely pathological tree.
-const SATURATION_PROBE_MIN_ROWS: u64 = 99;
-
 /// Look up the most-recent `edit_block`/`create_block` op for the given
 /// `block_id`, scoped to the supplied connection (typically a live
 /// transaction). Returns the originating `(device_id, seq)` pair if any,
@@ -746,75 +736,37 @@ pub async fn delete_blocks_by_ids_inner(
         delete_fanout.push((op_record, cohort, delete_space_id));
     }
 
-    // One recursive CTE seeded from every root in `live_roots` (via
-    // `json_each`). `b.deleted_at IS NULL` applies to BOTH the seed
-    // and the recursive arm: roots already tombstoned drop out
-    // (idempotency). `d.depth < 100` bounds runaway recursion on
-    // corrupted parent_id chains.
-    //
-    // The seed-from-many shape is the key insight from the
-    // Audit (Tier 2.1): the FE's ancestor-pre-walk used
-    // to filter selected descendants client-side because each root
-    // ran in its own tx; a single CTE that already unions every
-    // root's subtree subsumes the same set without the JS pre-walk.
-    let live_roots_json = serde_json::to_string(&live_roots)?;
-    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
+    // Stamp the UNION of the pre-captured per-root cohorts. The cohorts were
+    // collected above (pre-UPDATE, same tx) by `collect_delete_cohort`, whose
+    // walk is depth-UNBOUNDED (R27: batched capped CTEs re-anchored at the
+    // depth-100 boundary — a merged sync tree can legally exceed the local
+    // depth bound, and the old single capped CTE silently truncated its
+    // cascade there). Stamping exactly the captured union keeps the SQL rows
+    // and the post-commit engine fan-out consuming ONE list, so the two can
+    // never diverge on pathological trees. `deleted_at IS NULL` keeps the
+    // UPDATE idempotent; overlapping roots (one selected root inside another's
+    // subtree) dedupe via the `IN`. Cap crossings warn loudly inside the
+    // walker (superseding the former `MAX(depth) >= 99` saturation probe).
+    let union_cohort: Vec<&str> = {
+        let mut seen = std::collections::HashSet::new();
+        delete_fanout
+            .iter()
+            .flat_map(|(_, cohort, _)| cohort.iter())
+            .filter(|id| seen.insert(id.as_str()))
+            .map(String::as_str)
+            .collect()
+    };
+    let union_cohort_json = serde_json::to_string(&union_cohort)?;
+    // dynamic-sql: json_each id-list UPDATE over the walked cohort union;
+    // single bound JSON parameter, immune to the SQLite variable limit.
     let result = sqlx::query(
-        "WITH RECURSIVE descendants(id, depth) AS ( \
-             SELECT id, 0 FROM blocks \
-             WHERE id IN (SELECT value FROM json_each(?1)) \
-               AND deleted_at IS NULL \
-             UNION ALL \
-             SELECT b.id, d.depth + 1 FROM blocks b \
-             INNER JOIN descendants d ON b.parent_id = d.id \
-             WHERE b.deleted_at IS NULL AND d.depth < 100 \
-         ) \
-         UPDATE blocks SET deleted_at = ?2 \
-         WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
+        "UPDATE blocks SET deleted_at = ?2 \
+         WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at IS NULL",
     )
-    .bind(&live_roots_json)
+    .bind(&union_cohort_json)
     .bind(now)
     .execute(&mut **tx)
     .await?;
-
-    // Surface a saturation warn so a pathological tree under any root in the
-    // batch is still observable. #2200 (Tier-2): collapse the former per-root
-    // `cascade_depth_saturated` loop (up to `live_roots.len()` separate
-    // recursive walks) into a SINGLE `MAX(depth)` over ONE multi-root recursive
-    // CTE, mirroring the purge path's collapsed form (see the `SELECT
-    // MAX(depth) FROM descendants` over `json_each(?1)` in
-    // `purge_blocks_by_ids_inner`). Semantics are identical to the old loop:
-    // `cascade_depth_saturated` walks `descendants_cte_standard!()` (seed
-    // `id = ?`, NO `deleted_at` filter, recursive arm capped `depth < 100`) and
-    // reports `MAX(depth) >= 99`. This multi-root CTE uses the SAME shape —
-    // seeded from every root via `json_each(?1)`, no `deleted_at` filter, same
-    // `d.depth < 100` cap — so `MAX(depth)` over the union of all roots' subtrees
-    // equals the max over the per-root walks, and `>= 99` flags saturation for
-    // the batch exactly as the loop's per-root check did (any single saturated
-    // root drives the batch max to >= 99). One walk covers every root.
-    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
-    let saturation_max_depth: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(
-        "WITH RECURSIVE descendants(id, depth) AS ( \
-             SELECT id, 0 FROM blocks \
-             WHERE id IN (SELECT value FROM json_each(?1)) \
-             UNION ALL \
-             SELECT b.id, d.depth + 1 FROM blocks b \
-             INNER JOIN descendants d ON b.parent_id = d.id \
-             WHERE d.depth < 100 \
-         ) \
-         SELECT MAX(depth) FROM descendants",
-    )
-    .bind(&live_roots_json)
-    .fetch_one(&mut **tx)
-    .await?;
-    if saturation_max_depth.unwrap_or(0) >= 99 {
-        tracing::warn!(
-            op = "delete_blocks_by_ids",
-            "cascade-depth cap reached (>=99 levels); descendants \
-             below depth 100 were not soft-deleted. A tree in this batch is \
-             pathologically deep.",
-        );
-    }
 
     // P-4 — sweep inherited tag rows for every root. Per-root call
     // (the helper takes a single seed); the SQL it emits is bounded
@@ -1106,15 +1058,29 @@ pub async fn restore_block_inner(
 
     // Restore within same transaction.
     //
-    // `descendants_cte_standard!()` filters  — conflict
-    // copies have independent lifecycles and must not be bulk-restored with
-    // the original (invariant #9). Shared CTE in `crate::block_descendants`.
-    let result = sqlx::query(concat!(
-        crate::descendants_cte_standard!(),
+    // R27: cohort-contiguous, depth-UNBOUNDED walk (batched capped CTEs,
+    // re-anchored at the depth-100 boundary) + json_each UPDATE — the SAME
+    // shape as `project_restore_block_to_sql` and `collect_restore_cohort`,
+    // so the SQL rows this command clears, the replay projection, and the
+    // post-commit engine fan-out all consume one walk definition and cannot
+    // diverge on a merged tree deeper than the cap. Cohort identity stays
+    // structural (#1055): each batch's recursive arm only descends through
+    // `deleted_at = ?` children, which also keeps conflict copies (independent
+    // lifecycles) out of the bulk restore.
+    let restore_cohort = crate::block_descendants::collect_subtree_ids_unbounded(
+        &mut tx,
+        &block_id,
+        crate::block_descendants::DescendantWalkFilter::Cohort(deleted_at_ref),
+    )
+    .await?;
+    let restore_cohort_json = serde_json::Value::from(restore_cohort).to_string();
+    // dynamic-sql: json_each id-list UPDATE over the walked cohort; single
+    // bound JSON parameter, immune to the SQLite variable limit.
+    let result = sqlx::query(
         "UPDATE blocks SET deleted_at = NULL \
-         WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
-    ))
-    .bind(&block_id)
+         WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at = ?2",
+    )
+    .bind(&restore_cohort_json)
     .bind(deleted_at_ref)
     .execute(&mut **tx)
     .await?;
@@ -1141,40 +1107,9 @@ pub async fn restore_block_inner(
             .await?
             .topmost;
 
-    // Warn when the cascade walk hit the depth-100 cap so
-    // an operator has a breadcrumb if a pathological tree silently
-    // truncated the restore. The cap itself is preserved (invariant
-    // #9); we only ADD detection + surfacing here.
-    //
-    // #2268 (perf): mirror the delete path — gate the full `MAX(depth)`
-    // saturation re-walk behind a cheap `rows_affected` threshold so the common
-    // case does ZERO extra walks. Soundness for restore: `next_delete_ms()`
-    // gives every delete op a UNIQUE `deleted_at`, and a single-root delete
-    // stamps a region contiguous downward from its root, capped at depth 100 —
-    // so a restore rooted AT that root can only be depth-truncated if the
-    // cohort itself reaches depth >= 99, which flips >= 100 rows; a restore
-    // rooted DEEPER inside a cohort can never be truncated (all cohort nodes
-    // sit within depth 100 of the cohort root, hence closer to the sub-root).
-    //
-    // KNOWN residual (accepted): `delete_blocks_by_ids_inner` stamps ONE
-    // `deleted_at` across MULTIPLE roots. If a second batch root sits > 100
-    // levels below this restore root, beyond a previously-deleted (other-
-    // timestamp) gap, its cohort rows are unreachable by the depth-capped
-    // restore walk while fewer than 99 rows flip here — the truncation warn
-    // (pre-#2268 behavior) is then skipped. That needs an already-pathological
-    // > 100-deep tree plus interleaved deletes spanning the gap, and the warn
-    // is a best-effort operator breadcrumb, not a correctness gate — the
-    // deeper cohort remains restorable via its own batch root.
-    if result.rows_affected() >= SATURATION_PROBE_MIN_ROWS
-        && crate::block_descendants::cascade_depth_saturated(&mut **tx, &block_id).await?
-    {
-        tracing::warn!(
-            block_id = %block_id,
-            op = "restore_block",
-            "cascade-depth cap reached (>=99 levels); descendants \
-             below depth 100 were not restored. Tree is pathologically deep.",
-        );
-    }
+    // R27: the pre-fix #2268 `MAX(depth)` saturation probe is gone — the
+    // batched walk above no longer truncates at the depth-100 cap (crossing
+    // it warns loudly inside `collect_subtree_ids_unbounded` instead).
 
     // Refresh `page_id` for the restored subtree synchronously,
     // mirroring the recursive-CTE UPDATE in `move_block_inner` (see
@@ -1229,6 +1164,89 @@ pub async fn restore_block_inner(
         block_id,
         restored_count: result.rows_affected(),
     })
+}
+
+/// One purge root's post-commit engine fan-out inputs: the appended
+/// `PurgeBlock` op record (for op identity + timestamp), the pre-cascade
+/// subtree cohort ids, and the root's space.
+type PurgeEngineFanout = (
+    Arc<op_log::OpRecord>,
+    Vec<String>,
+    Option<crate::space::SpaceId>,
+);
+
+/// #1257 PRE-CASCADE capture for the post-commit engine purge fan-out.
+///
+/// Captures a purge root's full subtree COHORT and its SPACE while the SQL
+/// rows still exist — once `purge_subtree_tables` runs they are physically
+/// gone and neither could be reconstructed. A purged block is SQL-ABSENT
+/// (not soft-deleted), so it does not itself create the #1257
+/// engine-live-but-SQL-deleted phantom the sync gate refuses; but the
+/// engine must still drop the purged subtree from its LoroDoc to stay in
+/// lockstep — otherwise the subtree keeps exporting over sync and any
+/// inbound peer change touching it resurrects the purged rows into SQL.
+///
+/// The cohort walk mirrors the SQL cascade's shape (`deleted_at`-free,
+/// `depth < 100` cap). The root is soft-deleted, so the canonical
+/// `resolve_block_space` (which filters `deleted_at IS NULL`) would return
+/// `None`; the denormalized `blocks.space_id` column (which survives a
+/// soft-delete) is read directly instead. Shared by all three purge
+/// variants (`purge_block_inner`, `purge_all_deleted_inner`,
+/// `purge_blocks_by_ids_inner`) so their engine handling cannot drift.
+async fn capture_purge_engine_fanout(
+    tx: &mut CommandTx,
+    root_id: &str,
+) -> Result<(Vec<String>, Option<crate::space::SpaceId>), AppError> {
+    let cohort = sqlx::query_scalar::<_, String>(concat!(
+        // #1655: single-root purge cohort walk via the shared
+        // `descendants_cte_purge!()` macro (no `deleted_at` filter,
+        // `depth < 100` cap) instead of re-inlining the CTE body.
+        crate::descendants_cte_purge!(),
+        "SELECT id FROM descendants",
+    ))
+    .bind(root_id)
+    .fetch_all(&mut ***tx)
+    .await?;
+    let space_id = sqlx::query_scalar!("SELECT space_id FROM blocks WHERE id = ?", root_id)
+        .fetch_optional(&mut ***tx)
+        .await?
+        .flatten()
+        .map(|s| crate::space::SpaceId::from_trusted(&s));
+    Ok((cohort, space_id))
+}
+
+/// #1257 POST-COMMIT engine fan-out shared by all three purge variants.
+///
+/// Drops each purged subtree from the per-space Loro engine using the
+/// PRE-CASCADE-captured cohort + space (the SQL rows are physically gone
+/// by now, so neither could be recovered here). `engine_apply(PurgeBlock)`
+/// removes a block's `blocks`/`block_properties`/`block_tags` entries from
+/// the LoroDoc; it is per-block-id, so the whole captured cohort is
+/// driven. Mirrors the delete/restore fan-out. A no-space root is a no-op;
+/// the SQL cascade stands as the durable outcome.
+fn dispatch_purge_engine_fanout(materializer: &Materializer, fanout: &[PurgeEngineFanout]) {
+    for (op_record, cohort, purge_space_id) in fanout {
+        let Some(space_id) = purge_space_id else {
+            continue;
+        };
+        for cohort_id in cohort {
+            let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
+                block_id: BlockId::from_trusted(cohort_id),
+            });
+            let op_id = format!(
+                "{}/{}#cohort/{}",
+                op_record.device_id, op_record.seq, cohort_id,
+            );
+            crate::merge::engine_apply(
+                &op_id,
+                &payload,
+                &op_record.device_id,
+                space_id,
+                &op_record.created_at.to_string(),
+                materializer.loro_state(),
+            );
+        }
+    }
 }
 
 /// Permanently purge a soft-deleted block and all its descendants.
@@ -1308,8 +1326,16 @@ pub async fn purge_block_inner(
     });
 
     // Append to op_log within transaction
-    let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, crate::db::now_ms()).await?;
+    let op_record = Arc::new(
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, crate::db::now_ms()).await?,
+    );
+
+    // #1257 PRE-CASCADE capture: the purge cohort + space must be read
+    // BEFORE the physical delete below erases them — see
+    // `capture_purge_engine_fanout`. Drives the post-commit engine fan-out
+    // that keeps the per-space LoroDoc in lockstep with the SQL purge
+    // (mirroring `purge_blocks_by_ids_inner`).
+    let (purge_cohort, purge_space_id) = capture_purge_engine_fanout(&mut tx, &block_id).await?;
 
     // --- Inline physical purge (previously soft_delete::purge_block) ---
     // Defer FK checks until commit — the entire subtree will be gone by then
@@ -1348,8 +1374,12 @@ pub async fn purge_block_inner(
     // Commit + fire-and-forget background cache dispatch. #2037 pt2: thread
     // the block's type so the materializer narrows the rebuild fan-out for a
     // content-block purge.
-    tx.enqueue_lifecycle_background(op_record, block_type);
+    tx.enqueue_lifecycle_background(Arc::clone(&op_record), block_type);
     tx.commit_and_dispatch(materializer).await?;
+
+    // #1257 POST-COMMIT engine fan-out: drop the purged subtree from the
+    // per-space Loro engine (see `dispatch_purge_engine_fanout`).
+    dispatch_purge_engine_fanout(materializer, &[(op_record, purge_cohort, purge_space_id)]);
 
     // #85 F2: unlink the purged attachment files post-commit (best-effort).
     spawn_purged_attachment_cleanup(materializer.app_data_dir(), purged_attachment_paths);
@@ -1598,12 +1628,20 @@ pub async fn purge_all_deleted_inner(
     }
 
     let now = crate::db::now_ms();
+    let mut purge_fanout: Vec<PurgeEngineFanout> = Vec::with_capacity(roots.len());
     for root in &roots {
         let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
             block_id: BlockId::from_trusted(&root.id),
         });
-        let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
-        tx.enqueue_lifecycle_background(op_record, root.block_type.clone());
+        let op_record =
+            Arc::new(op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?);
+        tx.enqueue_lifecycle_background(Arc::clone(&op_record), root.block_type.clone());
+
+        // #1257 PRE-CASCADE capture: cohort + space per root, read before
+        // the flat delete below erases the rows — drives the post-commit
+        // engine fan-out (mirroring `purge_blocks_by_ids_inner`).
+        let (cohort, space_id) = capture_purge_engine_fanout(&mut tx, &root.id).await?;
+        purge_fanout.push((op_record, cohort, space_id));
     }
 
     // Defer FK checks until commit
@@ -1631,6 +1669,10 @@ pub async fn purge_all_deleted_inner(
     // dispatch. Attachment-file unlink runs after dispatch (cache
     // rebuilds are independent of the filesystem side effect).
     tx.commit_and_dispatch(materializer).await?;
+
+    // #1257 POST-COMMIT engine fan-out: drop every purged subtree from the
+    // per-space Loro engine (see `dispatch_purge_engine_fanout`).
+    dispatch_purge_engine_fanout(materializer, &purge_fanout);
 
     // + #85 F2: post-commit attachment-file unlink on a blocking thread
     // (the per-file `unlink` syscalls must not hold up the IPC reply; the DB tx
@@ -1765,41 +1807,38 @@ pub async fn restore_blocks_by_ids_inner(
     }
 
     // C3 (#345): restore each root's EXACT delete cohort, not "any
-    // tombstoned descendant". The single-row path
-    // (`restore_block_inner`) scopes its UPDATE with
-    // `AND deleted_at = deleted_at_ref` — restoring only the descendants
-    // that were cascade-deleted in the SAME event as the root. The old
-    // batch UPDATE used `AND deleted_at IS NOT NULL`, which over-restored
-    // a child trashed at T1 that later sits under a root cascade-deleted
-    // at T2: restoring the T2 root un-deleted the unrelated T1 child too.
-    // Worse, the per-root op emitted above carries the root's own
-    // `deleted_at` (T2), so a peer replaying that op restores ONLY the T2
-    // cohort → local-vs-sync divergence.
+    // tombstoned descendant" — a child trashed at T1 that later sits under
+    // a root cascade-deleted at T2 must NOT be restored with the T2 root
+    // (the per-root op emitted above carries the root's own `deleted_at`,
+    // so a peer replaying it restores only the T2 cohort; over-restoring
+    // locally would diverge from sync).
     //
-    // A single scalar bind can't express "match the seed root's own
-    // timestamp" for a multi-root walk, so the recursive CTE carries each
-    // seed's `deleted_at` (`root_deleted_at`) down the tree and the walk
-    // only descends into children that share their parent's cohort
-    // timestamp (`b.deleted_at = c.root_deleted_at`). A descendant trashed
-    // in a different event has a different `deleted_at` and is pruned —
-    // exactly matching the single-row cohort guard, but per-root. Seeds are
-    // pre-filtered to soft-deleted roots (`b.deleted_at IS NOT NULL`);
-    // `depth < 100` bounds runaway recursion (invariant #9).
-    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
-    let result = sqlx::query!(
-        "WITH RECURSIVE cohort(id, root_deleted_at, depth) AS ( \
-             SELECT b.id, b.deleted_at, 0 FROM blocks b \
-             WHERE b.id IN (SELECT value FROM json_each(?1)) \
-               AND b.deleted_at IS NOT NULL \
-             UNION ALL \
-             SELECT b.id, c.root_deleted_at, c.depth + 1 FROM blocks b \
-             INNER JOIN cohort c ON b.parent_id = c.id \
-             WHERE b.deleted_at = c.root_deleted_at AND c.depth < 100 \
-         ) \
-         UPDATE blocks SET deleted_at = NULL \
-         WHERE id IN (SELECT id FROM cohort) AND deleted_at IS NOT NULL",
-        ids_json
+    // The cohort identity is enforced at CAPTURE time: each root's
+    // `collect_restore_cohort` walk above only descends through children
+    // sharing the root's `deleted_at_ref` (and is depth-UNBOUNDED per R27
+    // — batched capped CTEs re-anchored at the depth-100 boundary — so a
+    // merged tree deeper than the cap restores its whole cohort). Stamping
+    // exactly the captured union keeps the SQL rows and the post-commit
+    // engine fan-out consuming ONE list, so the two can never diverge.
+    // Overlapping roots dedupe via the `IN`; `deleted_at IS NOT NULL`
+    // keeps the UPDATE idempotent.
+    let union_cohort: Vec<&str> = {
+        let mut seen = std::collections::HashSet::new();
+        restore_fanout
+            .iter()
+            .flat_map(|(_, cohort)| cohort.iter())
+            .filter(|id| seen.insert(id.as_str()))
+            .map(String::as_str)
+            .collect()
+    };
+    let union_cohort_json = serde_json::to_string(&union_cohort)?;
+    // dynamic-sql: json_each id-list UPDATE over the walked cohort union;
+    // single bound JSON parameter, immune to the SQLite variable limit.
+    let result = sqlx::query(
+        "UPDATE blocks SET deleted_at = NULL \
+         WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at IS NOT NULL",
     )
+    .bind(&union_cohort_json)
     .execute(&mut **tx)
     .await?;
     let count = result.rows_affected();
@@ -1963,11 +2002,7 @@ pub async fn purge_blocks_by_ids_inner(
     // / no-space is a no-op; the SQL cascade stands. The op-log shape (one
     // op per root) and the apply cursor are untouched.
     let now = crate::db::now_ms();
-    let mut purge_fanout: Vec<(
-        Arc<op_log::OpRecord>,
-        Vec<String>,
-        Option<crate::space::SpaceId>,
-    )> = Vec::with_capacity(roots.len());
+    let mut purge_fanout: Vec<PurgeEngineFanout> = Vec::with_capacity(roots.len());
     for root in &roots {
         let payload = PurgeBlockPayload {
             block_id: BlockId::from_trusted(&root.id),
@@ -1987,23 +2022,9 @@ pub async fn purge_blocks_by_ids_inner(
         // PRE-CASCADE capture: the full subtree (purge ignores `deleted_at`,
         // invariant #9 exception — mirror the same shape the cascade walks)
         // and the seed's denormalized space (read directly; the canonical
-        // resolver filters out this soft-deleted row).
-        let cohort = sqlx::query_scalar::<_, String>(concat!(
-            // #1655: single-root purge cohort walk via the shared
-            // `descendants_cte_purge!()` macro (no `deleted_at` filter,
-            // `depth < 100` cap) instead of re-inlining the CTE body.
-            crate::descendants_cte_purge!(),
-            "SELECT id FROM descendants",
-        ))
-        .bind(&root.id)
-        .fetch_all(&mut **tx)
-        .await?;
-        let purge_space_id =
-            sqlx::query_scalar!("SELECT space_id FROM blocks WHERE id = ?", root.id,)
-                .fetch_optional(&mut **tx)
-                .await?
-                .flatten()
-                .map(|s| crate::space::SpaceId::from_trusted(&s));
+        // resolver filters out this soft-deleted row). Shared helper used by
+        // all three purge variants.
+        let (cohort, purge_space_id) = capture_purge_engine_fanout(&mut tx, &root.id).await?;
         purge_fanout.push((op_record, cohort, purge_space_id));
     }
 
@@ -2036,36 +2057,11 @@ pub async fn purge_blocks_by_ids_inner(
     // Commit + drain enqueued background dispatches.
     tx.commit_and_dispatch(materializer).await?;
 
-    // #1257 POST-COMMIT engine fan-out. Drop each purged subtree
-    // from the per-space Loro engine using the PRE-CASCADE-captured cohort +
-    // space (the SQL rows are physically gone now, so neither could be
-    // recovered here). `engine_apply(PurgeBlock)` removes a block's
-    // `blocks`/`block_properties`/`block_tags` entries from the LoroDoc; it
-    // is per-block-id, so we drive the whole captured cohort. Mirrors the
-    // delete/restore fan-out. A no-space root is a no-op; the SQL cascade
-    // above stands as the durable outcome.
-    for (op_record, cohort, purge_space_id) in &purge_fanout {
-        let Some(space_id) = purge_space_id else {
-            continue;
-        };
-        for cohort_id in cohort {
-            let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
-                block_id: BlockId::from_trusted(cohort_id),
-            });
-            let op_id = format!(
-                "{}/{}#cohort/{}",
-                op_record.device_id, op_record.seq, cohort_id,
-            );
-            crate::merge::engine_apply(
-                &op_id,
-                &payload,
-                &op_record.device_id,
-                space_id,
-                &op_record.created_at.to_string(),
-                materializer.loro_state(),
-            );
-        }
-    }
+    // #1257 POST-COMMIT engine fan-out. Drop each purged subtree from the
+    // per-space Loro engine using the PRE-CASCADE-captured cohort + space
+    // (see `dispatch_purge_engine_fanout` — shared by all three purge
+    // variants).
+    dispatch_purge_engine_fanout(materializer, &purge_fanout);
 
     // + #85 F2: post-commit attachment-file unlink (mirrors
     // `purge_all_deleted_inner`), resolved against the materializer's
@@ -2377,6 +2373,20 @@ pub async fn create_blocks_batch_inner(
     }
     crate::commands::ensure_batch_within_cap("specs", specs.len())?;
 
+    // PRE-VALIDATE every spec's pure shape (block_type membership, content
+    // length) BEFORE the loop's first `apply_op_projected` commits a block
+    // into the shared per-space Loro engine. The engine has NO rollback: a
+    // mid-batch shape rejection used to roll back SQL + op_log while specs
+    // `0..k` stayed committed in the LoroDoc — phantom nodes that export
+    // over sync. The loop's own `create_block_in_tx` re-runs these checks
+    // (unchanged), so behaviour is identical for single creates; per-spec
+    // checks that need tx state (parent liveness, depth, cross-space refs,
+    // property validation) still run in-loop and are covered by
+    // `create_block_in_tx`'s validate-before-engine-apply ordering.
+    for spec in &specs {
+        crate::domain::block_ops::validate_create_block_shape(&spec.block_type, &spec.content)?;
+    }
+
     let mut tx = CommandTx::begin_immediate(pool, "create_blocks_batch").await?;
 
     let mut created: Vec<BlockRow> = Vec::with_capacity(specs.len());
@@ -2566,6 +2576,17 @@ mod saturation_probe_tests {
     //! so the common (shallow) case does ZERO extra `MAX(depth)` walks. These
     //! tests assert the gate still SURFACES the `>=99`-level warn on a genuinely
     //! pathological chain, and stays SILENT (probe skipped) on a shallow tree.
+    //!
+    //! R27 update: the SINGLE-block delete path now routes through
+    //! `project_delete_block_to_sql`, whose cascade walks the subtree in
+    //! depth-capped BATCHES (`collect_subtree_ids_unbounded`) instead of one
+    //! capped CTE — a merged sync tree can legally exceed the local depth
+    //! bound, and truncating its cascade stranded live orphans under
+    //! tombstoned ancestors. That path therefore COMPLETES past the cap and
+    //! emits the walker's cap-crossing breadcrumb rather than the old
+    //! truncation warn (`delete_block_inner_cascades_past_depth_cap_r27`).
+    //! The local restore / batch-delete paths keep the capped CTE + the
+    //! original saturation warn (their tests below are unchanged).
     use super::*;
     use crate::db::init_pool;
     use tempfile::TempDir;
@@ -2648,12 +2669,14 @@ mod saturation_probe_tests {
     const DEV: &str = "sat-probe-device";
 
     #[tokio::test]
-    async fn delete_block_inner_still_warns_on_saturated_chain_2268() {
+    async fn delete_block_inner_cascades_past_depth_cap_r27() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
-        // 101 nodes → deepest at depth 100; cascade flips all 101 rows, so the
-        // probe (gated on `rows_affected >= 99`) runs and reports saturation.
-        let root = insert_chain(&pool, "DELSAT", 101).await;
+        // 130 nodes → deepest at depth 129, PAST the depth-100 CTE cap. The
+        // old single-CTE cascade flipped only the 101 rows within the cap
+        // (stranding 29 live orphans under tombstoned ancestors); the batched
+        // walker must flip ALL 130 and surface the cap-crossing breadcrumb.
+        let root = insert_chain(&pool, "DELSAT", 130).await;
 
         let (buf, guard) = capture();
         let resp = delete_block_inner(&pool, DEV, &mat, BlockId::from_trusted(&root))
@@ -2661,13 +2684,23 @@ mod saturation_probe_tests {
             .unwrap();
         drop(guard);
         assert_eq!(
-            resp.descendants_affected, 101,
-            "the whole 101-node chain must be soft-deleted (root + descendants)"
+            resp.descendants_affected, 130,
+            "the whole 130-node chain must be soft-deleted (root + descendants), \
+             including the 29 nodes past the depth-100 cap"
+        );
+        let live_below_cap: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            live_below_cap, 0,
+            "no live orphan may survive under the tombstoned chain"
         );
         let out = logged(&buf);
         assert!(
-            out.contains("cascade-depth cap reached") && out.contains("op=\"delete_block\""),
-            "a >=99-level delete must still emit the saturation warn, got: {out:?}"
+            out.contains("crossed the depth-100 CTE cap"),
+            "a past-cap delete must emit the batched-walk breadcrumb warn, got: {out:?}"
         );
         mat.shutdown();
     }
@@ -2693,10 +2726,13 @@ mod saturation_probe_tests {
     }
 
     #[tokio::test]
-    async fn restore_block_inner_still_warns_on_saturated_chain_2268() {
+    async fn restore_block_inner_restores_past_depth_cap_r27() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
-        let root = insert_chain(&pool, "RESSAT", 101).await;
+        // 130 nodes → deepest at depth 129, PAST the depth-100 CTE cap: both
+        // the delete and the restore must cover the full chain via the
+        // batched walker (the old capped CTEs stopped at 101 rows).
+        let root = insert_chain(&pool, "RESSAT", 130).await;
 
         // Delete the whole chain first (single shared `deleted_at`).
         delete_block_inner(&pool, DEV, &mat, BlockId::from_trusted(&root))
@@ -2714,34 +2750,54 @@ mod saturation_probe_tests {
             .unwrap();
         drop(guard);
         assert_eq!(
-            resp.restored_count, 101,
-            "the whole 101-node chain must be restored"
+            resp.restored_count, 130,
+            "the whole 130-node chain must be restored, including the 29 \
+             nodes past the depth-100 cap"
+        );
+        let still_deleted: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE deleted_at IS NOT NULL")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            still_deleted, 0,
+            "no tombstoned tail may survive under the restored chain"
         );
         let out = logged(&buf);
         assert!(
-            out.contains("cascade-depth cap reached") && out.contains("op=\"restore_block\""),
-            "a >=99-level restore must still emit the saturation warn, got: {out:?}"
+            out.contains("crossed the depth-100 CTE cap"),
+            "a past-cap restore must emit the batched-walk breadcrumb warn, got: {out:?}"
         );
         mat.shutdown();
     }
 
     #[tokio::test]
-    async fn batch_delete_still_warns_on_saturated_chain_2268() {
+    async fn batch_delete_cascades_past_depth_cap_r27() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
-        let root = insert_chain(&pool, "BATSAT", 101).await;
+        // 130 nodes → deepest at depth 129, PAST the depth-100 CTE cap. The
+        // batch path stamps the union of the pre-captured walker cohorts, so
+        // all 130 rows must flip (the old capped multi-seed CTE stopped at 101).
+        let root = insert_chain(&pool, "BATSAT", 130).await;
 
         let (buf, guard) = capture();
         let n = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![BlockId::from_trusted(&root)])
             .await
             .unwrap();
         drop(guard);
-        assert_eq!(n, 101, "the batch cascade must soft-delete all 101 nodes");
+        assert_eq!(n, 130, "the batch cascade must soft-delete all 130 nodes");
+        let live: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            live, 0,
+            "no live orphan may survive under the tombstoned chain"
+        );
         let out = logged(&buf);
         assert!(
-            out.contains("cascade-depth cap reached")
-                && out.contains("op=\"delete_blocks_by_ids\""),
-            "a >=99-level batch delete must still emit the saturation warn, got: {out:?}"
+            out.contains("crossed the depth-100 CTE cap"),
+            "a past-cap batch delete must emit the batched-walk breadcrumb warn, got: {out:?}"
         );
         mat.shutdown();
     }
