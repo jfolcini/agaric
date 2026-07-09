@@ -14,8 +14,8 @@
  */
 import { useCallback, useId } from 'react'
 
-import { useSearchHistoryCycling } from '../../hooks/useSearchHistoryCycling'
-import { selectHistoryForSpace, useSearchHistoryStore } from '../../stores/search-history'
+import { useSearchHistoryCycling } from '@/hooks/useSearchHistoryCycling'
+import { selectHistoryForSpace, useSearchHistoryStore } from '@/stores/search-history'
 
 export interface UseSearchHistoryControlsOptions {
   currentSpaceId: string | null

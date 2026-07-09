@@ -26,8 +26,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { notify } from '@/lib/notify'
+import type { BacklinkFilter } from '@/lib/tauri'
 
-import type { BacklinkFilter } from '../../lib/tauri'
 import { BacklinkDateFilterForm } from './categories/BacklinkDateFilterForm'
 import { BacklinkPriorityFilterForm } from './categories/BacklinkPriorityFilterForm'
 import { BacklinkPropertyFilterForm } from './categories/BacklinkPropertyFilterForm'

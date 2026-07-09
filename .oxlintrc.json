@@ -83,7 +83,19 @@
     "unicorn/prefer-string-slice": "error",
     "eslint/no-alert": "error",
     "unicorn/prefer-modern-math-apis": "error",
-    "eslint/no-lonely-if": "error"
+    "eslint/no-lonely-if": "error",
+
+    "eslint/no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "regex": "^(\\.\\./){2,}",
+            "message": "Use the @/ alias for deep-relative intra-src imports (#2278)."
+          }
+        ]
+      }
+    ]
   },
   "overrides": [
     {
@@ -93,10 +105,18 @@
       }
     },
     {
-      "files": ["**/__tests__/**", "**/*.test.ts", "**/*.test.tsx", "**/*.property.test.ts"],
+      "files": [
+        "**/__tests__/**",
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/*.spec.ts",
+        "**/*.spec.tsx",
+        "**/*.property.test.ts"
+      ],
       "rules": {
         "typescript/require-await": "off",
-        "eslint/no-console": "off"
+        "eslint/no-console": "off",
+        "eslint/no-restricted-imports": "off"
       }
     },
     {

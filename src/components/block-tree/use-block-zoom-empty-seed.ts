@@ -27,14 +27,13 @@
 import type { TFunction } from 'i18next'
 import { useEffect, useRef } from 'react'
 
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import { logger } from '../../lib/logger'
-import { createBlock } from '../../lib/tauri'
-import type { FlatBlock } from '../../lib/tree-utils'
-import { getDragDescendants } from '../../lib/tree-utils'
-import { useBlockStore } from '../../stores/blocks'
-import { type PageBlockState, usePageBlockStoreApi } from '../../stores/page-blocks'
+import { createBlock } from '@/lib/tauri'
+import type { FlatBlock } from '@/lib/tree-utils'
+import { getDragDescendants } from '@/lib/tree-utils'
+import { useBlockStore } from '@/stores/blocks'
+import { type PageBlockState, usePageBlockStoreApi } from '@/stores/page-blocks'
 
 export interface UseBlockZoomEmptySeedParams {
   /** When false the effect is a no-op (e.g. weekly/monthly journal views). */

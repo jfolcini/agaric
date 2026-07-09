@@ -1,6 +1,7 @@
 import type React from 'react'
 
-import type { BulletListNode, OrderedListNode, ParagraphNode } from '../../../editor/types'
+import type { BulletListNode, OrderedListNode, ParagraphNode } from '@/editor/types'
+
 import type { RenderContext } from '../context'
 import { renderInlineContent } from './inline'
 

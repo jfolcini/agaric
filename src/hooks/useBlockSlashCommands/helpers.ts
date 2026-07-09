@@ -5,14 +5,14 @@
  * empty dep arrays.
  */
 
+import { notifyUnknownNodeTypeToast } from '@/editor/markdown-serialize-toast'
+import { serialize } from '@/editor/markdown-serializer'
+import type { DocNode } from '@/editor/types'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { editBlock, getProperty } from '@/lib/tauri'
+import { useUndoStore } from '@/stores/undo'
 
-import { notifyUnknownNodeTypeToast } from '../../editor/markdown-serialize-toast'
-import { serialize } from '../../editor/markdown-serializer'
-import type { DocNode } from '../../editor/types'
-import { logger } from '../../lib/logger'
-import { editBlock, getProperty } from '../../lib/tauri'
-import { useUndoStore } from '../../stores/undo'
 import type { DatePickerMode, SlashCommandContext } from './types'
 
 export function notifyUndo(rootParentId: string | null): void {

@@ -1,8 +1,9 @@
 import type React from 'react'
 
-import type { BlockRefNode } from '../../../editor/types'
-import { cn } from '../../../lib/utils'
-import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import type { BlockRefNode } from '@/editor/types'
+import { cn } from '@/lib/utils'
+
 import type { RenderContext } from '../context'
 
 /**

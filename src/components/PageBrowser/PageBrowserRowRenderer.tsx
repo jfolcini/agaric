@@ -14,12 +14,12 @@ import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { PageTreeItem } from '@/components/pages/PageTreeItem'
+import type { DensityMode } from '@/hooks/usePageBrowserDensity'
+import type { PageBrowserRow } from '@/hooks/usePageBrowserGrouping'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
+import type { PageWithMetadataRow } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 
-import type { DensityMode } from '../../hooks/usePageBrowserDensity'
-import type { PageBrowserRow } from '../../hooks/usePageBrowserGrouping'
-import type { PageWithMetadataRow } from '../../lib/tauri'
 import { DensityRow } from './DensityRow'
 
 export interface PageBrowserRowRendererProps {

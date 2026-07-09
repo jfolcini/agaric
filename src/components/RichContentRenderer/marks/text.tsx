@@ -1,9 +1,10 @@
 import type React from 'react'
 
-import type { LinkMark, TextNode } from '../../../editor/types'
-import { i18n } from '../../../lib/i18n'
-import { openUrl } from '../../../lib/open-url'
-import { isAllowedUrl } from '../../../lib/url-validation'
+import type { LinkMark, TextNode } from '@/editor/types'
+import { i18n } from '@/lib/i18n'
+import { openUrl } from '@/lib/open-url'
+import { isAllowedUrl } from '@/lib/url-validation'
+
 import type { RenderContext } from '../context'
 
 /**

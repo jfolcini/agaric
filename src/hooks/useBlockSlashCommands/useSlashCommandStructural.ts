@@ -11,13 +11,13 @@
 
 import { useMemo } from 'react'
 
+import type { PickerItem } from '@/editor/SuggestionList'
 import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
 import { serializeBlockSubtree } from '@/lib/block-clipboard'
 import { convertBlockContent, turnIdToBlockType } from '@/lib/block-type-convert'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
-import type { PickerItem } from '../../editor/SuggestionList'
 import { applyContentEdit, readCurrentContent } from './helpers'
 import type { SlashCommandContext, SlashHandlerTables } from './types'
 

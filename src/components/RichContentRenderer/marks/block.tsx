@@ -7,7 +7,8 @@ import type {
   OrderedListNode,
   ParagraphNode,
   TableNode,
-} from '../../../editor/types'
+} from '@/editor/types'
+
 import type { RenderContext } from '../context'
 import { renderBlockquoteBlock } from './blockquote'
 import { renderCodeBlock } from './code'

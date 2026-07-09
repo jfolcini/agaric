@@ -21,26 +21,26 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
+import { usePaginatedQuery } from '@/hooks/usePaginatedQuery'
 import { validationCode } from '@/lib/app-error'
 import { PAGINATION_LIMIT } from '@/lib/constants'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { INTERACTIONS, traceInteraction } from '@/lib/observability'
+import { reportIpcError } from '@/lib/report-ipc-error'
 import { astToFilterProjection, type SearchQueryAST } from '@/lib/search-query'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
-
-import { useListKeyboardNavigation } from '../../hooks/useListKeyboardNavigation'
-import { usePaginatedQuery } from '../../hooks/usePaginatedQuery'
-import { logger } from '../../lib/logger'
-import { INTERACTIONS, traceInteraction } from '../../lib/observability'
-import { reportIpcError } from '../../lib/report-ipc-error'
-import type { BlockRow, SearchBlockRow } from '../../lib/tauri'
-import { batchResolve, getBlock, searchBlocks } from '../../lib/tauri'
+import type { BlockRow, SearchBlockRow } from '@/lib/tauri'
+import { batchResolve, getBlock, searchBlocks } from '@/lib/tauri'
 import {
   type RecentPage,
   selectRecentPagesForSpace,
   toRecentPage,
   useRecentPagesStore,
-} from '../../stores/recent-pages'
-import { useTabsStore } from '../../stores/tabs'
+} from '@/stores/recent-pages'
+import { useTabsStore } from '@/stores/tabs'
+
 import { groupResultsByPage, type SearchResultGroup } from '../search/SearchResultGroups'
 import type { SearchToggleState } from '../search/SearchToggleRow'
 import { astFilterParams } from './searchFilterParams'

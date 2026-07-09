@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { JournalCalendarDropdown } from '@/components/journal/JournalCalendarDropdown'
+import { logger } from '@/lib/logger'
 
 // Mock the heavy react-day-picker Calendar with a minimal interactive stub that
 // exposes a day button (to exercise the date-select dismiss path) while keeping
@@ -130,5 +131,32 @@ describe('JournalCalendarDropdown focus restoration (#1101)', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+})
+
+describe('JournalCalendarDropdown IPC error path (#1270)', () => {
+  it('logs a warning and keeps rendering when the agenda-count fetch rejects', async () => {
+    const user = userEvent.setup()
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    // The `countAgendaBatchBySource` IPC (routed through `invoke`) rejects on
+    // mount — the dropdown must swallow it (catch branch), not crash.
+    mockedInvoke.mockRejectedValueOnce(new Error('agenda fetch failed'))
+
+    render(<Harness />)
+    await user.click(screen.getByRole('button', { name: /open calendar picker/i }))
+
+    // The dropdown still opens — the rejection is caught, not propagated.
+    expect(screen.getByRole('dialog', { name: /date picker/i })).toBeInTheDocument()
+    // The catch branch logged the failure with the block's diagnostic tuple.
+    await waitFor(() => {
+      expect(warnSpy).toHaveBeenCalledWith(
+        'JournalCalendarDropdown',
+        'Failed to load agenda counts for calendar',
+        undefined,
+        expect.any(Error),
+      )
+    })
+
+    warnSpy.mockRestore()
   })
 })

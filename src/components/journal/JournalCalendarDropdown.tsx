@@ -5,14 +5,13 @@ import type { CalendarDay, Modifiers } from 'react-day-picker'
 import { useTranslation } from 'react-i18next'
 
 import { Calendar } from '@/components/ui/calendar'
+import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
+import { useWeekStart } from '@/hooks/useWeekStart'
+import { formatDate, getWeekOptions } from '@/lib/date-utils'
 import { logger } from '@/lib/logger'
+import { countAgendaBatchBySource } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
-
-import { useBlockPropertyEvents } from '../../hooks/useBlockPropertyEvents'
-import { useWeekStart } from '../../hooks/useWeekStart'
-import { formatDate, getWeekOptions } from '../../lib/date-utils'
-import { countAgendaBatchBySource } from '../../lib/tauri'
-import { useSpaceStore } from '../../stores/space'
+import { useSpaceStore } from '@/stores/space'
 
 /** Compute ~42 date strings (6 weeks) for the calendar view centred on the given month. */
 function getCalendarDateRange(month: Date): string[] {

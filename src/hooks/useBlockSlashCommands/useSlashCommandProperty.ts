@@ -10,18 +10,18 @@
 
 import { useMemo } from 'react'
 
+import { guessMimeType, isAttachmentAllowed, readFileBytes } from '@/lib/file-utils'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import { guessMimeType, isAttachmentAllowed, readFileBytes } from '../../lib/file-utils'
-import { logger } from '../../lib/logger'
-import { formatRepeatLabel } from '../../lib/repeat-utils'
+import { formatRepeatLabel } from '@/lib/repeat-utils'
 import {
   addAttachmentWithBytes,
   deleteProperty,
   setPriority as setPriorityCmd,
   setProperty,
   setTodoState as setTodoStateCmd,
-} from '../../lib/tauri'
+} from '@/lib/tauri'
+
 import { notifyUndo, warnIfBlocked } from './helpers'
 import type { SlashCommandContext, SlashHandlerTables } from './types'
 

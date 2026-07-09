@@ -4,11 +4,12 @@
 
 import type React from 'react'
 
-import { useScrollToFocus } from '../../hooks/useScrollToFocus'
-import { useToday } from '../../hooks/useToday'
-import type { DayEntry } from '../../lib/date-utils'
-import { useBlockStore } from '../../stores/blocks'
-import { useNavigationStore } from '../../stores/navigation'
+import { useScrollToFocus } from '@/hooks/useScrollToFocus'
+import { useToday } from '@/hooks/useToday'
+import type { DayEntry } from '@/lib/date-utils'
+import { useBlockStore } from '@/stores/blocks'
+import { useNavigationStore } from '@/stores/navigation'
+
 import { DaySection } from './DaySection'
 import { UnfinishedTasks } from './UnfinishedTasks'
 

@@ -16,8 +16,9 @@
  * Zero external dependencies. O(n) in the input length.
  */
 
-import { logger } from '../../lib/logger'
-import { isAllowedUrl } from '../../lib/url-validation'
+import { logger } from '@/lib/logger'
+import { isAllowedUrl } from '@/lib/url-validation'
+
 import { scanBareUrl, underscoreRunFlank, WORD_CHAR_RE } from '../markdown-common'
 import type {
   BlockLevelNode,

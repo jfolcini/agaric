@@ -6,11 +6,10 @@
 import { format } from 'date-fns'
 import type React from 'react'
 
+import { getSourceColor } from '@/lib/date-property-colors'
+import type { DayEntry } from '@/lib/date-utils'
 import { t } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
-
-import { getSourceColor } from '../../lib/date-property-colors'
-import type { DayEntry } from '../../lib/date-utils'
 
 interface MonthlyDayCellProps {
   entry: DayEntry

@@ -15,12 +15,11 @@
 import type { TFunction } from 'i18next'
 import { useEffect, useRef } from 'react'
 
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import { logger } from '../../lib/logger'
-import { createBlock } from '../../lib/tauri'
-import { useBlockStore } from '../../stores/blocks'
-import type { usePageBlockStoreApi } from '../../stores/page-blocks'
+import { createBlock } from '@/lib/tauri'
+import { useBlockStore } from '@/stores/blocks'
+import type { usePageBlockStoreApi } from '@/stores/page-blocks'
 
 type TFn = TFunction
 

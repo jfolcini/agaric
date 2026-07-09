@@ -1,8 +1,8 @@
 import type React from 'react'
 import { lazy, Suspense } from 'react'
 
-import { i18n } from '../../../lib/i18n'
-import { Spinner } from '../../ui/spinner'
+import { Spinner } from '@/components/ui/spinner'
+import { i18n } from '@/lib/i18n'
 
 // Lazy-load MermaidDiagram to avoid bundling mermaid on initial load
 const LazyMermaidDiagram = lazy(() =>

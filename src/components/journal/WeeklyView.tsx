@@ -5,10 +5,11 @@
 import type React from 'react'
 import { useMemo } from 'react'
 
-import { useBatchCounts } from '../../hooks/useBatchCounts'
-import type { DayEntry } from '../../lib/date-utils'
-import { formatDate, getWeekDays } from '../../lib/date-utils'
-import { useJournalStore } from '../../stores/journal'
+import { useBatchCounts } from '@/hooks/useBatchCounts'
+import type { DayEntry } from '@/lib/date-utils'
+import { formatDate, getWeekDays } from '@/lib/date-utils'
+import { useJournalStore } from '@/stores/journal'
+
 import { DaySection } from './DaySection'
 import { RescheduleDropZone } from './RescheduleDropZone'
 

@@ -14,16 +14,15 @@ import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHead
 import { BlockListItem } from '@/components/editor/BlockListItem'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
+import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { usePaginatedQuery } from '@/hooks/usePaginatedQuery'
-
-import { useBlockNavigation } from '../../hooks/useBlockNavigation'
-import { useToday } from '../../hooks/useToday'
-import type { NavigateToPageFn } from '../../lib/block-events'
-import { logger } from '../../lib/logger'
-import type { BlockRow } from '../../lib/tauri'
-import { batchResolve, listUnfinishedTasks, paginationLimit } from '../../lib/tauri'
-import { useSpaceStore } from '../../stores/space'
+import { useToday } from '@/hooks/useToday'
+import type { NavigateToPageFn } from '@/lib/block-events'
+import { logger } from '@/lib/logger'
+import type { BlockRow } from '@/lib/tauri'
+import { batchResolve, listUnfinishedTasks, paginationLimit } from '@/lib/tauri'
+import { useSpaceStore } from '@/stores/space'
 
 // ── Constants ──────────────────────────────────────────────────────────
 

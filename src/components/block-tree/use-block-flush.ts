@@ -31,15 +31,14 @@ import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
 import { useCallback, useRef } from 'react'
 
+import { parse } from '@/editor/markdown-serializer'
+import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import { processCheckboxSyntax } from '@/lib/block-utils'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import { parse } from '../../editor/markdown-serializer'
-import type { RovingEditorHandle } from '../../editor/use-roving-editor'
-import { processCheckboxSyntax } from '../../lib/block-utils'
-import { logger } from '../../lib/logger'
-import { setTodoState as setTodoStateCmd } from '../../lib/tauri'
-import type { usePageBlockStoreApi } from '../../stores/page-blocks'
-import { useUndoStore } from '../../stores/undo'
+import { setTodoState as setTodoStateCmd } from '@/lib/tauri'
+import type { usePageBlockStoreApi } from '@/stores/page-blocks'
+import { useUndoStore } from '@/stores/undo'
 
 type TFn = TFunction
 

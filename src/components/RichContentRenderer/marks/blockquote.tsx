@@ -1,8 +1,9 @@
 import type React from 'react'
 
-import type { BlockLevelNode, BlockquoteNode } from '../../../editor/types'
-import { i18n } from '../../../lib/i18n'
-import { cn } from '../../../lib/utils'
+import type { BlockLevelNode, BlockquoteNode } from '@/editor/types'
+import { i18n } from '@/lib/i18n'
+import { cn } from '@/lib/utils'
+
 import { CALLOUT_CONFIG, HEADING_CLASSES, type RenderContext } from '../context'
 import { renderInlineContent } from './inline'
 

@@ -11,7 +11,8 @@
 import { Extension, InputRule } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 
-import { logger } from '../../lib/logger'
+import { logger } from '@/lib/logger'
+
 import type { PickerItem } from '../SuggestionList'
 import { createPickerPlugin, resolveAndInsertPickerToken } from './picker-plugin'
 
