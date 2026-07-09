@@ -759,29 +759,36 @@ export interface ResolvedBlock {
   deleted: boolean
 }
 
+/**
+ * #2300 — explicit resolution scope for {@link batchResolve}: a space ULID to
+ * scope resolution to that (active) space, or the literal `'global'` to opt IN
+ * to cross-space resolution (trash / global search). REQUIRED: omitting the
+ * scope — the old silent-`global` default — is no longer possible, so a
+ * callsite that means active-space scoping can't leak other spaces' titles by
+ * forgetting the argument (the 'no live links between spaces' policy).
+ */
+export type ResolveScope = string | 'global'
+
 /** Batch-resolve block metadata for multiple IDs in a single call.
  *
- * `spaceId` — when set, restricts resolution to blocks
- * whose owning page carries `space = <spaceId>`. Foreign-space targets
- * simply do not appear in the response, which is what makes the chip
- * fall into the "unknown id" branch and render via the broken-link
- * UX (locked-in policy: no live links between spaces, ever).
+ * `scope` — REQUIRED (#2300). Pass a space ULID to restrict resolution to
+ * blocks whose owning page carries `space = <scope>`; foreign-space targets
+ * simply do not appear in the response, which is what makes the chip fall into
+ * the "unknown id" branch and render via the broken-link UX (locked-in policy:
+ * no live links between spaces, ever). Pass the literal `'global'` to opt IN to
+ * cross-space resolution on surfaces that genuinely want it (trash breadcrumbs,
+ * global search).
  *
- * The wrapper keeps `spaceId` optional at the TypeScript boundary so
- * legacy cross-space callers (TrashView breadcrumbs, SearchPanel
- * results, agenda panels, dependency chips) compile unchanged. Omitting
- * it routes through `toSpaceScope(undefined)`, which yields
- * `{ kind: 'global' }` — the backend then resolves across every space
- * rather than rejecting. Pass the active `currentSpaceId` to scope
- * resolution to one space; leave it undefined only on surfaces that
- * genuinely want cross-space resolution (e.g. trash). Mirrors the
- * optional `spaceId` shape used by `listBlocks` / `searchBlocks`.
+ * The scope is no longer optional: previously omitting `spaceId` silently
+ * routed through `toSpaceScope(undefined)` → `{ kind: 'global' }`, so a caller
+ * that meant active-space scoping could leak other spaces' titles just by
+ * forgetting the argument. Making it required turns that mistake into a compile
+ * error — a caller must now spell out `'global'` to cross spaces on purpose.
  */
-export async function batchResolve(
-  ids: string[],
-  spaceId?: string | undefined,
-): Promise<ResolvedBlock[]> {
-  return unwrap(await commands.batchResolve(ids, toSpaceScope(spaceId)))
+export async function batchResolve(ids: string[], scope: ResolveScope): Promise<ResolvedBlock[]> {
+  const spaceScope: SpaceScope =
+    scope === 'global' ? { kind: 'global' } : { kind: 'active', space_id: scope }
+  return unwrap(await commands.batchResolve(ids, spaceScope))
 }
 
 /**

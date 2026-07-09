@@ -112,7 +112,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
 
         // Resolve page titles for breadcrumbs
         if (outcome.pageIds.length === 0) return
-        const resolved = await batchResolve(outcome.pageIds)
+        const resolved = await batchResolve(outcome.pageIds, 'global')
         if (cancelled) return
         setAgendaPageTitles(buildPageTitleMap(resolved))
       } catch (err) {

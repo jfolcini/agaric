@@ -158,7 +158,7 @@ async function resolvePageTitles(parentIds: string[]): Promise<Map<string, strin
   const titles = new Map<string, string>()
   if (parentIds.length === 0) return titles
   try {
-    const resolved = await batchResolve(parentIds)
+    const resolved = await batchResolve(parentIds, 'global')
     for (const r of resolved) {
       titles.set(r.id, r.title ?? 'Untitled')
     }

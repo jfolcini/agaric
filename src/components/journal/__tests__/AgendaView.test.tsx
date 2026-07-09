@@ -371,7 +371,7 @@ describe('AgendaView', () => {
       )
     })
 
-    expect(mockedBatchResolve).toHaveBeenCalledWith(['PAGE1', 'PAGE2'])
+    expect(mockedBatchResolve).toHaveBeenCalledWith(['PAGE1', 'PAGE2'], 'global')
   })
 
   // 6b. Resolves page_ids for page grouping

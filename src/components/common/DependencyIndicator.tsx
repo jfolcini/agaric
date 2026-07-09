@@ -102,7 +102,7 @@ export function DependencyIndicator({
 
         // Try to resolve the title of the blocking task
         try {
-          const resolved = await batchResolve([blockedByProp.value_ref])
+          const resolved = await batchResolve([blockedByProp.value_ref], 'global')
           if (!cancelled && resolved.length > 0 && resolved[0]?.title) {
             setBlockedByTitle(resolved[0].title)
           }

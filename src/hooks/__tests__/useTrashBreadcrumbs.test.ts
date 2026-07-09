@@ -50,7 +50,7 @@ describe('useTrashBreadcrumbs', () => {
 
     const { result } = renderHook(() => useTrashBreadcrumbs(blocks))
 
-    expect(mockedBatchResolve).toHaveBeenCalledWith(['P1'])
+    expect(mockedBatchResolve).toHaveBeenCalledWith(['P1'], 'global')
     // Before resolve flushes: page map empty, getPageLabel returns null.
     expect(result.current(blocks[0] as BlockRow)).toBe(null)
 

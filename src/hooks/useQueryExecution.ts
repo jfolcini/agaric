@@ -260,7 +260,7 @@ export async function resolveInlineQuery(
 async function resolvePageTitles(items: BlockRow[]): Promise<Map<string, string>> {
   const parentIds = items.map((b) => b.page_id).filter((id): id is string => id != null)
   if (parentIds.length === 0) return new Map()
-  const resolved = await batchResolve([...new Set(parentIds)])
+  const resolved = await batchResolve([...new Set(parentIds)], 'global')
   const titleMap = new Map<string, string>()
   for (const r of resolved) {
     if (r.title) titleMap.set(r.id, r.title)

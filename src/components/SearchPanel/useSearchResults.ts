@@ -233,7 +233,7 @@ export function useSearchResults({
     // result that omits some ids) cannot cause a re-fire on the next
     // `loadMore`.
     for (const id of parentIds) attemptedBreadcrumbIdsRef.current.add(id)
-    batchResolve(parentIds)
+    batchResolve(parentIds, 'global')
       .then((resolved) => {
         if (Array.isArray(resolved)) {
           setPageTitles((prev) => {
