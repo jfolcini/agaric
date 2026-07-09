@@ -24,6 +24,15 @@ import { expect, test, waitForBoot } from './helpers'
  * DuePanel in daily view uses `listBlocks({ agendaDate })` which matches
  * blocks by due_date or scheduled_date. The "Due" / "Scheduled" filter pills
  * narrow results to a single column.
+ *
+ * NOTE on `excludePageId` (useDuePanelData / UX live-review #7): the Agenda
+ * list deliberately drops items that live ON the journal day's own page so a
+ * todo written in today's note isn't shown twice (once in the note body, once
+ * in the Agenda). Today's page is PAGE_DAILY, so BLOCK_DAILY_3/4/5 (due today,
+ * children of PAGE_DAILY) are excluded from the Agenda list — they surface in
+ * the note body above. The Agenda "due/scheduled today" list therefore shows
+ * the PAGE_PROJECTS items only: BLOCK_PROJ_1 (scheduled today) and
+ * BLOCK_PROJ_2 (due today).
  */
 
 // ===========================================================================
@@ -47,12 +56,16 @@ test.describe('Due date filtering', () => {
     await expect(header).toBeVisible()
     await expect(header).toHaveAttribute('aria-expanded', 'true')
 
-    // Verify at least one due-panel item is rendered.
-    // Seed data has 4 blocks due today + 1 scheduled today = 5 total.
+    // The Agenda "due/scheduled today" list shows the PAGE_PROJECTS items
+    // (BLOCK_PROJ_1 scheduled today, BLOCK_PROJ_2 due today). The three
+    // BLOCK_DAILY_* items due today live on today's page (PAGE_DAILY) and are
+    // excluded from the Agenda list by `excludePageId` (see header note).
     const items = duePanel.locator('[data-testid="due-panel-item"]')
     await expect(items.first()).toBeVisible({ timeout: 5000 })
+    await expect(duePanel.getByText('Fix login bug')).toBeVisible()
+    await expect(duePanel.getByText('Ship v2.0 release')).toBeVisible()
     const count = await items.count()
-    expect(count).toBeGreaterThanOrEqual(3)
+    expect(count).toBeGreaterThanOrEqual(2)
   })
 
   test('DuePanel "Due" filter shows only due-dated blocks', async ({ page }) => {
@@ -73,11 +86,17 @@ test.describe('Due date filtering', () => {
     // Wait for the filter to take effect
     await expect(dueFilter).toHaveAttribute('aria-pressed', 'true')
 
-    // Due-only blocks for today: BLOCK_DAILY_3, BLOCK_DAILY_4, BLOCK_DAILY_5, BLOCK_PROJ_2
+    // Due-only, and not on today's page: BLOCK_PROJ_2 ("Fix login bug", due
+    // today). BLOCK_DAILY_3/4/5 are due today but excluded via `excludePageId`
+    // (they live on PAGE_DAILY); BLOCK_PROJ_1 is scheduled-only (due tomorrow)
+    // so the "Due" filter drops it. The filter is meaningful precisely because
+    // it hides the scheduled-only "Ship v2.0 release" row.
     const items = duePanel.locator('[data-testid="due-panel-item"]')
     await expect(items.first()).toBeVisible({ timeout: 5000 })
+    await expect(duePanel.getByText('Fix login bug')).toBeVisible()
+    await expect(duePanel.getByText('Ship v2.0 release')).toHaveCount(0)
     const count = await items.count()
-    expect(count).toBeGreaterThanOrEqual(3)
+    expect(count).toBeGreaterThanOrEqual(1)
   })
 })
 
