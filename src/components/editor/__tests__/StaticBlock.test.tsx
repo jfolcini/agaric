@@ -56,8 +56,8 @@ vi.mock('@/hooks/useBatchAttachments', () => ({
 // BatchPropertiesProvider when present. Default mock returns `null` (no
 // provider) so existing tests exercise the per-block getBatchProperties
 // fallback; the #2270 suite below injects a fake provider value.
-vi.mock('@/hooks/useBatchProperties', () => ({
-  useBatchProperties: vi.fn(() => null),
+vi.mock('@/hooks/useBatchPropertyRows', () => ({
+  useBatchPropertyRows: vi.fn(() => null),
 }))
 
 vi.mock('@/editor/markdown-serializer', async (importOriginal) => {
@@ -85,8 +85,8 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
 const { useBatchAttachments } = await import('@/hooks/useBatchAttachments')
 const mockedUseBatchAttachments = vi.mocked(useBatchAttachments)
 
-const { useBatchProperties } = await import('@/hooks/useBatchProperties')
-const mockedUseBatchProperties = vi.mocked(useBatchProperties)
+const { useBatchPropertyRows } = await import('@/hooks/useBatchPropertyRows')
+const mockedUseBatchPropertyRows = vi.mocked(useBatchPropertyRows)
 
 /**
  * Convenience: build a fake `BatchPropertiesProvider` context value that maps
@@ -95,7 +95,7 @@ const mockedUseBatchProperties = vi.mocked(useBatchProperties)
  * models an in-flight (re)fetch. All other ids resolve to undefined.
  */
 function mockBatchProperties(rows: PropertyRow[] | undefined, options: { loading?: boolean } = {}) {
-  mockedUseBatchProperties.mockReturnValue({
+  mockedUseBatchPropertyRows.mockReturnValue({
     get: (id: string) => (id === 'B1' ? rows : undefined),
     loading: options.loading ?? false,
     invalidate: vi.fn(),
@@ -203,7 +203,7 @@ describe('StaticBlock', () => {
     mockBatchAttachments([])
     // Default: no BatchPropertiesProvider → StaticBlock uses the per-block
     // getBatchProperties fallback (the #2270 suite overrides this).
-    mockedUseBatchProperties.mockReturnValue(null)
+    mockedUseBatchPropertyRows.mockReturnValue(null)
     delete (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__']
   })
 
@@ -1297,7 +1297,7 @@ describe('StaticBlock', () => {
 
     it('falls back to the per-block getBatchProperties IPC when no provider is present', async () => {
       ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
-      // No provider (default beforeEach: useBatchProperties → null).
+      // No provider (default beforeEach: useBatchPropertyRows → null).
       mockBatchAttachments([makeImageAttachment()])
       mockedGetBatchProperties.mockResolvedValueOnce({ B1: [textProp('image_width', '25')] })
 

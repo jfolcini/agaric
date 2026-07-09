@@ -23,7 +23,7 @@
 //! - `android.permission.CHANGE_WIFI_MULTICAST_STATE`
 //!
 //! Missing permissions surface as a `SecurityException` here and are
-//! logged by [`crate::sync_daemon::orchestrator::daemon_loop`].
+//! logged by [`crate::sync_daemon::session_supervisor::daemon_loop`].
 //!
 //! [`WifiManager.createMulticastLock()`]: https://developer.android.com/reference/android/net/wifi/WifiManager#createMulticastLock(java.lang.String)
 

@@ -106,7 +106,7 @@ export async function fetchAndCacheLinks(
  * O(N x content-length) `matchAll(ULID_LINK_RE)` scan over every block;
  * re-running that on identity churn alone is wasted CPU. So we derive a
  * stable `contentSignature` (id + content per block) in a memo and key
- * the effect on it — mirroring `useBlockPropertiesBatch`'s `idSignature`
+ * the effect on it — mirroring `useExtraBlockProperties`'s `idSignature`
  * guard, but including content because `[[ULID]]` tokens live there.
  */
 export function useBlockLinkResolve(

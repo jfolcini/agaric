@@ -28,7 +28,7 @@
 //! [`send_sync_message`] / [`recv_sync_message`]; the protocol
 //! orchestrator state machine only ever sees plain
 //! [`SyncMessage::LoroSync`] values (it rejects a stray
-//! `LoroSyncChunked` loudly — see `sync_protocol::orchestrator`).
+//! `LoroSyncChunked` loudly — see `sync_protocol::session_state_machine`).
 //!
 //! Both session loops (initiator `run_sync_session`, responder
 //! `handle_incoming_sync`) route every send/recv through these

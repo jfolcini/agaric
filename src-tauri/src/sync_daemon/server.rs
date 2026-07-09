@@ -229,7 +229,7 @@ async fn handle_incoming_sync_inner(
 
         // #778: the peer's identity is the verified TLS certificate CN
         // (mTLS), mirroring the initiator-side fallback
-        // (`expected_remote_id` in `sync_protocol::orchestrator`). The
+        // (`expected_remote_id` in `sync_protocol::session_state_machine`). The
         // heads-claimed id is only a fallback for cert-less connections
         // (in-memory test pairs); the hoisted B-34 check above
         // guarantees the two agree whenever both are present.

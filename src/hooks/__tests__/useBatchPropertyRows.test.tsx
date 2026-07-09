@@ -1,5 +1,5 @@
 /**
- * Tests for useBatchProperties / BatchPropertiesProvider (
+ * Tests for useBatchPropertyRows / BatchPropertiesProvider (
  * Tier 2.4a).
  *
  * Validates:
@@ -27,7 +27,7 @@ vi.mock('../../lib/logger', () => ({
 }))
 
 import type { PropertyRow } from '../../lib/tauri'
-import { BatchPropertiesProvider, useBatchProperties } from '../useBatchProperties'
+import { BatchPropertiesProvider, useBatchPropertyRows } from '../useBatchPropertyRows'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -45,7 +45,7 @@ function makeWrapper(blockIds: string[]) {
 
 /** Probe captures the latest context value into the supplied collector. */
 function Probe({ onResult }: { onResult: (value: BatchPropertiesValue | null) => void }) {
-  const value = useBatchProperties()
+  const value = useBatchPropertyRows()
   onResult(value)
   return null
 }
@@ -67,14 +67,14 @@ beforeEach(() => {
   mockedInvoke.mockResolvedValue({})
 })
 
-describe('useBatchProperties', () => {
+describe('useBatchPropertyRows', () => {
   it('returns null outside a provider', () => {
-    const { result } = renderHook(() => useBatchProperties())
+    const { result } = renderHook(() => useBatchPropertyRows())
     expect(result.current).toBeNull()
   })
 
   it('provider returns empty map / loading=false when blockIds is empty', async () => {
-    const { result } = renderHook(() => useBatchProperties(), {
+    const { result } = renderHook(() => useBatchPropertyRows(), {
       wrapper: makeWrapper([]),
     })
 
@@ -94,7 +94,7 @@ describe('useBatchProperties', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBatchProperties(), {
+    const { result } = renderHook(() => useBatchPropertyRows(), {
       wrapper: makeWrapper(['B1', 'B2', 'B3']),
     })
 
@@ -116,7 +116,7 @@ describe('useBatchProperties', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBatchProperties(), {
+    const { result } = renderHook(() => useBatchPropertyRows(), {
       wrapper: makeWrapper(['B1']),
     })
 
@@ -231,7 +231,7 @@ describe('useBatchProperties', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBatchProperties(), {
+    const { result } = renderHook(() => useBatchPropertyRows(), {
       wrapper: makeWrapper(['A']),
     })
 
@@ -291,7 +291,7 @@ describe('useBatchProperties', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBatchProperties(), {
+    const { result } = renderHook(() => useBatchPropertyRows(), {
       wrapper: makeWrapper(['A']),
     })
 

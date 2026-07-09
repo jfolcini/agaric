@@ -34,7 +34,7 @@
 //!
 //! The per-session HeadExchange → OpBatch → ApplyingOps → Merging →
 //! Complete state machine lives in
-//! [`crate::sync_protocol::orchestrator`]. This module instantiates a
+//! [`crate::sync_protocol::session_state_machine`]. This module instantiates a
 //! [`SyncOrchestrator`] per session, feeds it messages received from
 //! the wire, and forwards the orchestrator's responses back — but the
 //! state-machine semantics (which message is valid in which state, how

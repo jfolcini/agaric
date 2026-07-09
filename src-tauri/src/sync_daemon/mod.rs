@@ -14,8 +14,8 @@
 //!   concurrent sync sessions with the same device.
 
 mod discovery;
-mod orchestrator;
 mod server;
+mod session_supervisor;
 mod snapshot_transfer;
 // #611: transport-level SyncMessage encode/decode — splits large
 // LoroSync payloads onto the chunked binary path and reassembles them
@@ -61,7 +61,7 @@ pub(crate) use discovery::{format_peer_address, process_service_removed};
 // this `#[allow]` rustc fires `unused_imports` on non-test builds because no
 // production code path imports through this module.
 #[allow(unused_imports)]
-pub(crate) use orchestrator::{
+pub(crate) use session_supervisor::{
     SyncDaemonContext, SyncSessionContext, run_sequential_sync_round, run_sync_session,
     try_sync_with_peer,
 };
@@ -287,7 +287,7 @@ impl SyncDaemon {
                 "SyncDaemon transitioning from dormant to active (paired peer detected)"
             );
 
-            if let Err(e) = orchestrator::daemon_loop(ctx, shutdown_notify_task).await {
+            if let Err(e) = session_supervisor::daemon_loop(ctx, shutdown_notify_task).await {
                 tracing::error!(error = %e, "SyncDaemon (post-dormant) exited with error");
             }
         });
@@ -342,7 +342,7 @@ impl SyncDaemon {
         let cancel = ctx.cancel.clone();
 
         let handle = tokio::spawn(async move {
-            if let Err(e) = orchestrator::daemon_loop(ctx, shutdown_notify_flag).await {
+            if let Err(e) = session_supervisor::daemon_loop(ctx, shutdown_notify_flag).await {
                 tracing::error!(error = %e, "SyncDaemon exited with error");
             }
         });

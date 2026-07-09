@@ -113,7 +113,7 @@ impl From<OpTransfer> for OpRecord {
 ///
 /// The full session is driven by two cooperating state machines: the
 /// per-session [`SyncOrchestrator`](super::SyncOrchestrator) (defined in
-/// [`crate::sync_protocol::orchestrator`]) drives the head-exchange →
+/// [`crate::sync_protocol::session_state_machine`]) drives the head-exchange →
 /// op-stream → merge → complete pipeline, and the surrounding
 /// [`crate::sync_daemon`] orchestrator drives the post-complete
 /// snapshot and file-transfer sub-flows. The valid order on the wire
@@ -171,8 +171,8 @@ impl From<OpTransfer> for OpRecord {
 ///    [`SyncState::Failed`](super::SyncState::Failed); the connection
 ///    is closed and the daemon retries on the next scheduled tick.
 ///
-/// See [`crate::sync_protocol::orchestrator`] (per-session ASCII
-/// diagram) and [`crate::sync_daemon::orchestrator`] (daemon-level
+/// See [`crate::sync_protocol::session_state_machine`] (per-session ASCII
+/// diagram) and [`crate::sync_daemon::session_supervisor`] (daemon-level
 /// orchestration) for the source-of-truth narrative.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]

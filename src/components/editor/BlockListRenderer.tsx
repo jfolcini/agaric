@@ -22,7 +22,7 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { DragStateContext, DragStateStore } from '@/components/editor/drag-state-store'
 import { SortableBlockWrapper } from '@/components/editor/SortableBlockWrapper'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
-import { useBlockPropertiesBatch } from '@/hooks/useBlockPropertiesBatch'
+import { useExtraBlockProperties } from '@/hooks/useExtraBlockProperties'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
 import type { FlatBlock, Projection } from '@/lib/tree-utils'
 import { SENTINEL_ID } from '@/lib/tree-utils'
@@ -90,11 +90,11 @@ export function BlockListRenderer({
   // #2288 — project the row-UI property chips from the SINGLE page-wide
   // batch published by the `BatchPropertiesProvider` (mounted by BlockTree,
   // one `getBatchProperties` IPC over the windowed ids). Previously BlockTree
-  // fired a SECOND identical batch via `useBlockPropertiesBatch` and threaded
+  // fired a SECOND identical batch via `useExtraBlockProperties` and threaded
   // the map in as a prop; both consumed the same backend data with divergent
   // invalidation. Deriving here (inside the provider) collapses them to one
   // fetch. Outside a provider (isolated unit renders) the hook returns `{}`.
-  const blockProperties = useBlockPropertiesBatch(visibleItems)
+  const blockProperties = useExtraBlockProperties(visibleItems)
 
   // #1267 — publish the per-move DnD state to a ref-backed external store with
   // per-id subscription instead of threading `projected`/`overId`/`dropAfter`

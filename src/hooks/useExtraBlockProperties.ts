@@ -1,8 +1,8 @@
 /**
- * useBlockPropertiesBatch — derives the per-block "extra" property map
+ * useExtraBlockProperties — derives the per-block "extra" property map
  * (everything except `todo_state`, `priority`, `due_date`,
  * `scheduled_date`) for the row UI from the shared
- * `BatchPropertiesProvider` (see `useBatchProperties`).
+ * `BatchPropertiesProvider` (see `useBatchPropertyRows`).
  *
  * #2288: this hook USED to fire its own page-wide `getBatchProperties`
  * IPC over the windowed block ids — the exact same batch the
@@ -13,7 +13,7 @@
  * `{ blockId: { key, value }[] }` map the row UI wants. There is a
  * SINGLE page-wide batch (the provider's) and this hook is a pure
  * projection of it — so it MUST be called inside a
- * `BatchPropertiesProvider`. Outside one (`useBatchProperties()` →
+ * `BatchPropertiesProvider`. Outside one (`useBatchPropertyRows()` →
  * `null`, e.g. isolated unit renders) it returns an empty map.
  *
  * Because it now sources data from the provider it also inherits the
@@ -37,7 +37,7 @@
 import { useMemo, useRef } from 'react'
 
 import type { PropertyRow } from '../lib/tauri'
-import { useBatchProperties } from './useBatchProperties'
+import { useBatchPropertyRows } from './useBatchPropertyRows'
 
 const BUILTIN_PROPERTY_KEYS: ReadonlySet<string> = new Set([
   'todo_state',
@@ -90,8 +90,8 @@ function mapRows(rows: readonly PropertyRow[]): Array<{ key: string; value: stri
     .filter((p) => p.value !== '')
 }
 
-export function useBlockPropertiesBatch(blocks: Array<{ id: string }>): BlockPropertiesMap {
-  const batch = useBatchProperties()
+export function useExtraBlockProperties(blocks: Array<{ id: string }>): BlockPropertiesMap {
+  const batch = useBatchPropertyRows()
   // The provider's `get` identity changes iff its underlying map is
   // rebuilt — i.e. on a (re)fetch. It stays stable across drag/reorder
   // (no refetch), so keying the projection on it re-derives exactly when

@@ -99,7 +99,7 @@ ALLOWLIST_GLOBS = [
     # apply_remote — remote ops; dispatching would double-fire.
     "src-tauri/src/sync_protocol/loro_sync.rs",
     # Post-session bookkeeping.
-    "src-tauri/src/sync_protocol/orchestrator.rs",
+    "src-tauri/src/sync_protocol/session_state_machine.rs",
     # External-integration internals, no op_log.
     "src-tauri/src/gcal_push/connector.rs",
     "src-tauri/src/gcal_push/lease.rs",

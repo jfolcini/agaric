@@ -18,7 +18,7 @@ pub mod loro_sync;
 pub mod snapshot_fallback_metrics;
 
 mod operations;
-mod orchestrator;
+mod session_state_machine;
 pub mod types;
 
 #[cfg(test)]
@@ -29,5 +29,5 @@ mod tests;
 // ---------------------------------------------------------------------------
 
 pub use operations::*;
-pub use orchestrator::SyncOrchestrator;
+pub use session_state_machine::SyncOrchestrator;
 pub use types::*;

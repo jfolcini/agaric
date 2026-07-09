@@ -37,7 +37,7 @@
 //! ## What this module does **not** own
 //!
 //! * Peer discovery, scheduling, backoff, per-peer locking, connection
-//!   setup, TOFU cert pinning — see [`crate::sync_daemon::orchestrator`].
+//!   setup, TOFU cert pinning — see [`crate::sync_daemon::session_supervisor`].
 //! * Snapshot catch-up — once the machine reaches
 //!   [`SyncState::ResetRequired`], the daemon layer drives the
 //!   snapshot sub-flow via [`crate::sync_daemon::snapshot_transfer`].

@@ -410,7 +410,7 @@ pub(crate) enum CatchupOutcome {
 /// Attempt to receive + apply a snapshot from the responder after the
 /// initiator's main loop reached [`SyncState::ResetRequired`].
 ///
-/// Called by [`run_sync_session`](super::orchestrator::run_sync_session)
+/// Called by [`run_sync_session`](super::session_supervisor::run_sync_session)
 /// once the main message loop exits with `state == ResetRequired`.
 ///
 /// Behaviour:
