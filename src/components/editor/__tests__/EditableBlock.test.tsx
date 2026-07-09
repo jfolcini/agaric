@@ -1193,6 +1193,34 @@ describe('EditableBlock', () => {
       expect(mockDeleteDraft).not.toHaveBeenCalled()
     })
 
+    it('keeps the draft when splitBlock RESOLVES false (failed split-on-blur, #2451 review)', async () => {
+      // The real store contract: splitBlock resolves false when any of the
+      // split's writes failed — it never rejects. Pre-fix it resolved void,
+      // which slipped past discardDraft's `ok === false` gate and deleted
+      // the draft row holding the only surviving copy of the unsplit text.
+      mockSplitBlock.mockResolvedValueOnce(false)
+
+      const mockUnmount = vi.fn(() => 'line1\nline2')
+      const roving = makeRovingEditor({
+        unmount: mockUnmount,
+        activeBlockId: 'B1',
+      })
+
+      render(
+        <EditableBlock blockId="B1" content="original" isFocused rovingEditor={roving as never} />,
+      )
+
+      const wrapper = getBlockEditorWrapper()
+      fireEvent.blur(wrapper as Element)
+
+      expect(mockSplitBlock).toHaveBeenCalledWith('B1', 'line1\nline2')
+      expect(mockSetFocused).toHaveBeenCalledWith(null)
+      await act(async () => {
+        await Promise.resolve()
+      })
+      expect(mockDeleteDraft).not.toHaveBeenCalled()
+    })
+
     it('continues blur sequence when splitBlock() rejects but KEEPS the draft', async () => {
       suppressUnhandledRejections()
       mockSplitBlock.mockRejectedValueOnce(new Error('split failed'))

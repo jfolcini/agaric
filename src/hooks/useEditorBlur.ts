@@ -51,7 +51,11 @@ export function useEditorBlur(params: {
    * optimistic update was rolled back (it never rejects). The outcome gates
    * the draft discard below. Fire-and-forget callers may return void. */
   edit: (blockId: string, content: string) => Promise<boolean> | void
-  splitBlock: (blockId: string, content: string) => Promise<void> | void
+  /** Store splitBlock — same contract as `edit`: resolves `false` when any
+   * of the split's writes failed (first-line edit, edit-only save, or a
+   * createBelow), so the draft discard keeps the row holding the full
+   * unsplit markdown. Fire-and-forget callers may return void. */
+  splitBlock: (blockId: string, content: string) => Promise<boolean> | void
   setFocused: (id: string | null) => void
   /** `useDraftAutosave`'s discard. When a save was dispatched during this
    * blur, its outcome promise and the saved content are forwarded so the
