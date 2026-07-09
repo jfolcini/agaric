@@ -3602,6 +3602,70 @@ describe('PageBlockStore', () => {
       expect(store.getState().blocks.map((b) => b.position)).toEqual([1, 2, 3, 4])
     })
 
+    // R4/R13 — the optimistic same-parent movers (#404 reorder, moveUp,
+    // moveDown) keep the ARRAY order authoritative but rewrite only the moved
+    // block's `position` to the backend's PROVISIONAL rank, leaving sibling
+    // integers stale. The batch reconcile must therefore derive its replay
+    // baseline from the rendered flat-array order, NOT by re-sorting the stale
+    // `(position, id)` integers — the id tie-break silently committed a
+    // sibling order that diverged from the DB until the next full load().
+    it('replays against the RENDERED sibling order, not stale position integers, after an optimistic reorder (R4)', async () => {
+      // State an optimistic reorder leaves behind: the user dragged A from the
+      // top to the end of dense [A,B,C,D]. The splice yields array [B,C,D,A]
+      // and rewrites only A.position to the provisional rank 4 — B,C,D keep
+      // their pre-move integers, so the store holds a D=4/A=4 tie while the
+      // backend holds dense B=1,C=2,D=3,A=4.
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'B', position: 2, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'C', position: 3, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'D', position: 4, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'A', position: 4, parent_id: 'PAGE_1', depth: 0 }),
+        ],
+      })
+
+      mockedInvoke.mockResolvedValueOnce(batchResp(['B', 'C'], 'PAGE_1'))
+
+      // Multi-select move of [B,C] to the end (slot 3 of the rendered order).
+      await store.getState().moveBlocks(['B', 'C'], 'PAGE_1', 3)
+
+      expect(reloaded()).toBe(false)
+      // Backend ground truth (replay against its dense in-tx order B,C,D,A):
+      //   k=0: B → slot 3 among [C,D,A] ⇒ C,D,A,B
+      //   k=1: C → slot 4 (clamped to 3) among [D,A,B] ⇒ D,A,B,C
+      // A stale `(position, id)` baseline breaks the D=4/A=4 tie by id (A<D),
+      // replays against [B,C,A,D] and silently commits A,D,B,C instead.
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['D', 'A', 'B', 'C'])
+      // The reconcile re-densifies the touched group, healing the stale ranks.
+      expect(store.getState().blocks.map((b) => b.position)).toEqual([1, 2, 3, 4])
+    })
+
+    it('replays against array order even when stale positions sort OUT OF ORDER (two stacked optimistic reorders, R13)', async () => {
+      // Two stacked optimistic reorders on dense [A,B,C,D]: drag A to the end
+      // (array [B,C,D,A], A.position=4), then drag B to slot 2 (array
+      // [C,D,B,A], B.position = provisional 3). Stored integers are now
+      // C=3,D=4,B=3,A=4 — sorted `(position, id)` they read [B,C,A,D], which
+      // disagrees with the true order [C,D,B,A] beyond mere ties.
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'C', position: 3, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'D', position: 4, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'B', position: 3, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'A', position: 4, parent_id: 'PAGE_1', depth: 0 }),
+        ],
+      })
+
+      mockedInvoke.mockResolvedValueOnce(batchResp(['D'], 'PAGE_1'))
+
+      // Move [D] (rendered slot 1) to the end — slot 3 among the others.
+      await store.getState().moveBlocks(['D'], 'PAGE_1', 3)
+
+      expect(reloaded()).toBe(false)
+      // Backend ground truth: D → slot 3 among its dense order [C,B,A] ⇒
+      // C,B,A,D. The stale baseline would commit B,C,A,D.
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'B', 'A', 'D'])
+    })
+
     it('preserves DOCUMENT order even when ids are passed out of order', async () => {
       store.setState({
         blocks: [
@@ -3688,7 +3752,7 @@ describe('PageBlockStore', () => {
       expect(batchCall()?.blockIds).toEqual(['A'])
     })
 
-    it('restores the prior state and does not notify undo when the batch fails', async () => {
+    it('leaves the tree unchanged and does not notify undo when the batch fails', async () => {
       const before = [
         makeBlock({ id: 'A', position: 1, parent_id: 'PAGE_1', depth: 0 }),
         makeBlock({ id: 'B', position: 2, parent_id: 'PAGE_1', depth: 0 }),
@@ -3700,10 +3764,66 @@ describe('PageBlockStore', () => {
 
       await store.getState().moveBlocks(['A', 'B'], 'PAGE_1', 1)
 
-      // No reconciling reload — the pre-move snapshot is restored in place.
+      // No reconciling reload — nothing was applied optimistically, so the
+      // pre-move state is still in place (R26: no snapshot restore either).
       expect(reloaded()).toBe(false)
       expect(store.getState().blocks.map((b) => b.id)).toEqual(['A', 'B'])
       expect(store.getState().blocks.find((b) => b.id === 'A')?.parent_id).toBe('PAGE_1')
+      expect(mockOnNewAction).not.toHaveBeenCalled()
+      expect(vi.mocked(toast.error)).toHaveBeenCalled()
+    })
+
+    // R26 — moveBlocks applies NO optimistic update before the IPC, and the
+    // batch is all-or-nothing backend-side, so a failed batch has NOTHING to
+    // roll back. The old catch handler restored a wholesale pre-move
+    // blocks/blocksById snapshot, clobbering any concurrent write (edit echo
+    // adoption, a sync-triggered load()) that landed while the IPC was in
+    // flight — diverging the store from the DB until the next load(). The
+    // commit-time state must survive a batch failure untouched.
+    it('does not clobber a concurrent mid-flight write when the batch fails (R26)', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 1, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'B', position: 2, parent_id: 'PAGE_1', depth: 0 }),
+        ],
+      })
+
+      let rejectBatch!: (err: Error) => void
+      mockedInvoke.mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            rejectBatch = reject
+          }),
+      )
+
+      const moving = store.getState().moveBlocks(['A'], 'PAGE_1', 1)
+
+      // Concurrent writes land while the batch IPC is in flight — an edit echo
+      // rewrites B's content and a sync load delivers a new block C. Both are
+      // already durable backend-side.
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 1, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({
+            id: 'B',
+            position: 2,
+            parent_id: 'PAGE_1',
+            depth: 0,
+            content: 'edited mid-flight',
+          }),
+          makeBlock({ id: 'C', position: 3, parent_id: 'PAGE_1', depth: 0 }),
+        ],
+      })
+
+      rejectBatch(new Error('move failed'))
+      await moving
+
+      // The failed batch rolled back backend-side and nothing was applied
+      // optimistically — the concurrent writes must survive.
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['A', 'B', 'C'])
+      expect(store.getState().blocksById.get('B')?.content).toBe('edited mid-flight')
+      expect(store.getState().blocksById.has('C')).toBe(true)
+      expect(reloaded()).toBe(false)
       expect(mockOnNewAction).not.toHaveBeenCalled()
       expect(vi.mocked(toast.error)).toHaveBeenCalled()
     })

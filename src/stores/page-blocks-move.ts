@@ -80,8 +80,9 @@ interface StructuralMoveSpec {
  * ids (already in destination order), the requested destination parent and the
  * 0-based `newIndex`, this REPLAYS the backend's per-move pipeline: move k
  * inserts block[k] at slot `newIndex + k` among the destination parent's
- * then-current OTHER children (sorted `(position, id)`, slot clamped to the
- * group size), densely renumbering the touched groups after each step —
+ * then-current OTHER children (baseline sibling order derived from the
+ * rendered flat-array order — see the `posOf` seeding below — slot clamped to
+ * the group size), densely renumbering the touched groups after each step —
  * exactly the state block[k+1]'s move is computed against in the backend's
  * single tx (#774). A remove-all-then-splice shortcut is NOT equivalent when
  * the selection interleaves with non-moved siblings in the destination group
@@ -129,10 +130,31 @@ export function reconcileBatchMove(
   // Working copy of every block's (parent, position) — mutated as the replay
   // walks the moves, exactly like the backend's in-tx state.
   const parentOf = new Map<string, string | null>(blocks.map((b) => [b.id, b.parent_id ?? null]))
-  const posOf = new Map<string, number | null>(blocks.map((b) => [b.id, b.position ?? null]))
 
-  // `(position, id)` comparator over the working copy — the canonical sibling
-  // order used by both the backend and `buildFlatTree`.
+  // Seed each block's rank from its DENSE RANK IN THE FLAT-ARRAY ORDER, not
+  // from the stored `position` integers. The optimistic same-parent movers
+  // (#404 `reorder`, `moveUp`, `moveDown`) keep the ARRAY order authoritative
+  // but rewrite only the moved block's `position` to the backend's PROVISIONAL
+  // rank, leaving sibling integers stale (duplicated, or even sorting out of
+  // order after stacked moves). The backend has no such ties — it dense-
+  // renumbers every touched group in-tx — so replaying against the stale
+  // integers with an id tie-break silently committed a sibling order diverging
+  // from the DB after any optimistic reorder. Within a sibling group,
+  // ascending flat-array index IS the sibling order (`state.blocks` is a DFS
+  // flatten and `buildFlatTree`'s position sort is stable), so dense
+  // array-derived ranks reproduce exactly the baseline the backend replays
+  // against.
+  const posOf = new Map<string, number | null>()
+  const groupRank = new Map<string | null, number>()
+  for (const b of blocks) {
+    const p = b.parent_id ?? null
+    const rank = (groupRank.get(p) ?? 0) + 1
+    groupRank.set(p, rank)
+    posOf.set(b.id, rank)
+  }
+
+  // `(position, id)` comparator over the working copy. Ranks are dense and
+  // unique per sibling group, so the id tie-break is defensive only.
   const cmp = (a: string, b: string) => {
     const pa = posOf.get(a) ?? Number.MAX_SAFE_INTEGER
     const pb = posOf.get(b) ?? Number.MAX_SAFE_INTEGER
@@ -163,7 +185,9 @@ export function reconcileBatchMove(
     }
   })
 
-  // Materialise the updated bag (only touched blocks re-allocate) and rebuild.
+  // Materialise the updated bag and rebuild. A block re-allocates when its
+  // (parent, rank) changed — including blocks whose stored `position` was a
+  // stale optimistic leftover, which this pass heals to the dense rank.
   const updatedBag: FlatBlock[] = []
   for (const b of blocks) {
     const p = parentOf.get(b.id) ?? null

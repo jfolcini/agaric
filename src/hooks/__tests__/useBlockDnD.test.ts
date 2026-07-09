@@ -1580,6 +1580,111 @@ describe('useBlockDnD', () => {
       expect(params.moveBlocks).toHaveBeenCalledWith(['B', 'C'], 'A', 0)
     })
 
+    // R12 — during a multi-drag EVERY selected root moves, so the OTHER
+    // roots' rows and their whole subtrees must not offer projection/drop
+    // targets: `getProjection` could otherwise project a parent equal to
+    // (own-parent violation) or inside (cycle) another moving subtree — an op
+    // the backend rejects 100% of the time, failing the whole batch after a
+    // visually valid drop indicator.
+    describe('multi-drag drop-target exclusion (R12)', () => {
+      // R1 (+child R1a) and R2 (+children R2a, R2b) both selected; X is a
+      // plain unselected sibling.
+      const forest = [
+        makeBlock({ id: 'R1', depth: 0, parent_id: null, position: 0 }),
+        makeBlock({ id: 'R1a', depth: 1, parent_id: 'R1', position: 0 }),
+        makeBlock({ id: 'R2', depth: 0, parent_id: null, position: 1 }),
+        makeBlock({ id: 'R2a', depth: 1, parent_id: 'R2', position: 0 }),
+        makeBlock({ id: 'R2b', depth: 1, parent_id: 'R2', position: 1 }),
+        makeBlock({ id: 'X', depth: 0, parent_id: null, position: 2 }),
+      ]
+
+      function mockRealDescendants() {
+        mockedGetDragDescendants.mockImplementation((_items, id) => {
+          if (id === 'R1') return new Set(['R1a'])
+          if (id === 'R2') return new Set(['R2a', 'R2b'])
+          return new Set()
+        })
+      }
+
+      function multiDragParams() {
+        return makeDefaultParams({
+          blocks: forest,
+          collapsedVisible: forest,
+          selectedBlockIds: ['R1', 'R2'],
+        })
+      }
+
+      it('excludes the OTHER selected roots and their descendants from visibleItems', () => {
+        mockRealDescendants()
+        mockedComputeSelectionRoots.mockReturnValue(['R1', 'R2'])
+        const params = multiDragParams()
+        const { result } = renderHook(() => useBlockDnD(params))
+
+        act(() => {
+          result.current.handleDragStart(makeDragStartEvent('R1') as never)
+        })
+
+        expect(result.current.isMultiDrag).toBe(true)
+        // The active root stays (drag placeholder) and its descendants vanish
+        // (existing single-drag behaviour); the other moving root R2 and its
+        // whole subtree must vanish too, so no row inside a moving subtree is
+        // droppable / projectable.
+        expect(result.current.visibleItems.map((b) => b.id)).toEqual(['R1', 'X'])
+      })
+
+      it('feeds getProjection only candidates OUTSIDE every moving subtree', () => {
+        mockRealDescendants()
+        mockedComputeSelectionRoots.mockReturnValue(['R1', 'R2'])
+        const params = multiDragParams()
+        const { result } = renderHook(() => useBlockDnD(params))
+
+        act(() => {
+          result.current.handleDragStart(makeDragStartEvent('R1') as never)
+        })
+        act(() => {
+          result.current.handleDragOver(makeDragOverEvent('X') as never)
+        })
+
+        const lastCall = mockedGetProjection.mock.calls.at(-1) as [typeof forest, ...unknown[]]
+        const ids = lastCall[0].map((b) => b.id)
+        expect(ids).toContain('R1')
+        expect(ids).toContain('X')
+        // No row of another moving subtree can become previousItem/parent.
+        expect(ids).not.toContain('R2')
+        expect(ids).not.toContain('R2a')
+        expect(ids).not.toContain('R2b')
+      })
+
+      it('keeps the other (yet-unmoved) roots countable in the computeDropIndex slot basis', () => {
+        // #774 — the backend computes the FIRST root's slot while the other
+        // selected roots still sit in their source groups, so they must stay
+        // countable for the slot even though they are hidden from projection.
+        // Their descendants stay excluded (never children of a legal parent).
+        mockRealDescendants()
+        mockedComputeSelectionRoots.mockReturnValue(['R1', 'R2'])
+        const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
+        mockedGetProjection.mockReturnValue(projection)
+        mockedComputeDropIndex.mockReturnValue(2)
+        const params = multiDragParams()
+        const { result } = renderHook(() => useBlockDnD(params))
+
+        act(() => {
+          result.current.handleDragStart(makeDragStartEvent('R1') as never)
+        })
+        act(() => {
+          result.current.handleDragEnd(makeDragEndEvent('R1', 'X') as never)
+        })
+
+        expect(params.moveBlocks).toHaveBeenCalledWith(['R1', 'R2'], null, 2)
+        const slotCall = mockedComputeDropIndex.mock.calls.at(-1) as [typeof forest, ...unknown[]]
+        const slotIds = slotCall[0].map((b) => b.id)
+        expect(slotIds).toContain('R2') // countable at slot time
+        expect(slotIds).not.toContain('R2a')
+        expect(slotIds).not.toContain('R2b')
+        expect(slotIds).not.toContain('R1a')
+      })
+    })
+
     it('restores focus on the dragged block after a successful multi-drag', async () => {
       const params = makeDefaultParams({
         blocks: threeBlocks,

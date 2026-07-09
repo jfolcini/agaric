@@ -272,9 +272,16 @@ export function getProjection(
     return { depth: 0, parentId: rootParentId, maxDepth: 0, minDepth: 0 }
   }
 
-  // Sentinel: drop after last item — compute depth/parent from drag offset
+  // Sentinel: drop after last item — compute depth/parent from drag offset.
+  // The move puts the active item AFTER the last row, i.e. it vacates its
+  // current slot first — so it must not serve as its own depth anchor or
+  // ancestor. Without this exclusion, dragging the LAST block onto the
+  // sentinel with a rightward offset projected the block as a child of ITSELF
+  // (an own-parent move the backend always rejects). Found by the
+  // tree-utils property suite.
   if (overId === SENTINEL_ID) {
-    const lastItem = items.at(-1)
+    const rest = items.filter((item) => item.id !== activeId)
+    const lastItem = rest.at(-1)
     const maxEndDepth = Math.min(lastItem ? lastItem.depth + 1 : 0, depthCeiling)
     // Use drag offset to allow indentation even at the end
     const effectiveOffset =
@@ -286,7 +293,7 @@ export function getProjection(
     // Walk backwards to find parent at endDepth - 1
     let endParentId = rootParentId
     if (endDepth > 0) {
-      const ancestor = [...items].toReversed().find((item) => item.depth === endDepth - 1)
+      const ancestor = rest.toReversed().find((item) => item.depth === endDepth - 1)
       endParentId = ancestor?.id ?? rootParentId
     }
 
@@ -325,6 +332,13 @@ export function getProjection(
   let depth = projectedDepth
   if (depth > maxDepth) depth = maxDepth
   if (depth < minDepth) depth = minDepth
+  // #928 — the depth ceiling is authoritative. `minDepth` (the next item's
+  // depth) can exceed it when a tall subtree is dropped directly above a deep
+  // row; letting minDepth win would offer a drop the backend always rejects
+  // (the dragged subtree's bottom would pass MAX_BLOCK_DEPTH). The shallower
+  // projection keeps a valid parent chain — `getParentId` walks back to the
+  // ancestor at depth - 1, which precedes any deeper previous item.
+  if (depth > depthCeiling) depth = depthCeiling
   depth = Math.max(0, depth)
 
   // Determine the parent ID at this depth

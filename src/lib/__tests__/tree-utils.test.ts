@@ -466,6 +466,23 @@ describe('getProjection', () => {
       expect(result.maxDepth).toBe(MAX_BLOCK_DEPTH - 1 - 3)
       expect(result.depth).toBeLessThanOrEqual(MAX_BLOCK_DEPTH - 1 - 3)
     })
+
+    it('lets the ceiling WIN when minDepth (next item depth) conflicts with it', () => {
+      // Drop X (carrying a 5-deep subtree) directly above D18 (depth 18): the
+      // structural minDepth is 18 but the ceiling for a height-5 subtree is
+      // 19 - 5 = 14. Projecting depth 18 would put the subtree bottom at 23 —
+      // an op the backend rejects every time — so the ceiling must win and
+      // the parent resolves to the ancestor at depth 13.
+      const chainWithX: FlatBlock[] = [
+        ...Array.from({ length: 19 }, (_, d) =>
+          mkFlat(`D${d}`, d === 0 ? null : `D${d - 1}`, 1, d),
+        ),
+        mkFlat('X', null, 2, 0),
+      ]
+      const result = getProjection(chainWithX, 'X', 'D18', 0, INDENT, null, 5)
+      expect(result.depth).toBe(MAX_BLOCK_DEPTH - 1 - 5)
+      expect(result.parentId).toBe('D13')
+    })
   })
 })
 
@@ -634,6 +651,23 @@ describe('getProjection sentinel', () => {
   it('returns depth 0 for sentinel with empty items list', () => {
     const result = getProjection([], 'A', SENTINEL_ID, 0, INDENT)
     // activeItem not found → fallback
+    expect(result.depth).toBe(0)
+    expect(result.parentId).toBeNull()
+  })
+
+  it('never projects the active block as its own parent (LAST block dragged onto the sentinel)', () => {
+    // B is the last item; once it vacates its slot the only remaining anchor
+    // is A. The old code anchored on `items.at(-1)` — B itself — and offered
+    // "child of B" for B's own drop, an own-parent move the backend always
+    // rejects. Found by the tree-utils property suite.
+    const result = getProjection(items, 'B', SENTINEL_ID, DEAD_ZONE_PX + INDENT, INDENT)
+    expect(result.parentId).toBe('A')
+    expect(result.depth).toBe(1)
+  })
+
+  it('projects a lone block onto the sentinel at root level regardless of offset', () => {
+    const lone: FlatBlock[] = [mkFlat('ONLY', null, 1, 0)]
+    const result = getProjection(lone, 'ONLY', SENTINEL_ID, DEAD_ZONE_PX + INDENT, INDENT)
     expect(result.depth).toBe(0)
     expect(result.parentId).toBeNull()
   })
