@@ -557,58 +557,55 @@ pub async fn project_purge_blocks_to_sql(
 /// the timestamp string explicitly rather than reading it back from
 /// the engine — see `apply_delete_block_via_loro` for the wiring.
 ///
-/// **Cascade scope.** This projection walks the descendant CTE and
-/// soft-deletes every active descendant in one UPDATE. The engine's
+/// **Cascade scope.** This projection walks the active-descendant set and
+/// soft-deletes every active descendant. The engine's
 /// `apply_delete_block` is per-block-id only, so the engine-side
 /// fan-out for descendants is handled by the post-commit dispatch
 /// (`dispatch_restore_descendants` is the symmetric helper for
 /// restore); SQL state for the cohort is correct as soon as this
 /// projection runs.
 ///
-/// **Idempotence.** The `WHERE deleted_at IS NULL` filter on the CTE
-/// makes a re-apply a no-op for rows already soft-deleted at any
-/// earlier timestamp.
+/// **Depth (R27).** The walk is depth-UNBOUNDED: it batches the capped
+/// descendant CTE (invariant #9 — `d.depth < 100` per batch) and
+/// re-anchors at the cap boundary via
+/// [`crate::block_descendants::collect_subtree_ids_unbounded`], so a
+/// merged sync tree deeper than the cap no longer silently truncates
+/// its cascade (pre-R27 the sub-cap descendants stayed live under a
+/// tombstoned ancestor). Crossing the cap warns loudly in the
+/// collector (supersedes the #1582 detection-only warn + the #2268
+/// row-count gate — there is no truncation left to detect).
+///
+/// **Idempotence.** The `WHERE deleted_at IS NULL` filter on the
+/// UPDATE (and on the walk's recursive arm) makes a re-apply a no-op
+/// for rows already soft-deleted at any earlier timestamp.
+///
+/// Returns the walked cohort (seed + the active descendants stamped by
+/// this call) so the sync-import caller can fan the tombstone out to
+/// the per-space engine (R9 — see `import_and_project` Pass C).
 pub async fn project_delete_block_to_sql(
     conn: &mut SqliteConnection,
     block_id: &str,
     deleted_at: i64,
-) -> Result<(), AppError> {
-    let result = sqlx::query(concat!(
-        crate::descendants_cte_active!(),
-        "UPDATE blocks SET deleted_at = ? \
-         WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
-    ))
-    .bind(block_id)
+) -> Result<Vec<String>, AppError> {
+    let cohort = crate::block_descendants::collect_subtree_ids_unbounded(
+        &mut *conn,
+        block_id,
+        crate::block_descendants::DescendantWalkFilter::Active,
+    )
+    .await?;
+    let payload = serde_json::Value::from(cohort.clone()).to_string();
+    // dynamic-sql: json_each id-list UPDATE over the walked cohort (the id
+    // set is computed at runtime by the batched walk); single bound JSON
+    // parameter, immune to the SQLite variable limit.
+    sqlx::query(
+        "UPDATE blocks SET deleted_at = ?1 \
+         WHERE id IN (SELECT value FROM json_each(?2)) AND deleted_at IS NULL",
+    )
     .bind(deleted_at)
+    .bind(&payload)
     .execute(&mut *conn)
     .await?;
-    // #1582: surface deep-tree truncation on the op-replay / sql_only
-    // paths. The command path (`delete_block_inner`) routes through here
-    // too now (#2344), so this is the single place the warn lives for the
-    // via-loro command/op-replay arm AND the engine-less `sql_only` fallback,
-    // covering a >100-deep tree that silently dropped its sub-cap descendants.
-    // Detection only; the depth-100 cap itself is unchanged (invariant #9).
-    //
-    // #2268 (perf): gate the full `WITH RECURSIVE ... MAX(depth)` re-walk
-    // behind the cascade's affected-row count so the common small delete pays
-    // ZERO extra walks — a >=99-level truncation implies `rows_affected >= 99`
-    // (see `SATURATION_PROBE_MIN_ROWS`). Previously the command path applied
-    // this gate; routing through the projection would have run the probe
-    // UNCONDITIONALLY on every delete, so re-apply the gate here to avoid a
-    // per-delete regression (also benefits the sql_only/replay callers).
-    if result.rows_affected() >= crate::block_descendants::SATURATION_PROBE_MIN_ROWS
-        && crate::block_descendants::cascade_depth_saturated(&mut *conn, block_id).await?
-    {
-        tracing::warn!(
-            block_id = %block_id,
-            op = "delete_block",
-            path = "projection",
-            "#1582: cascade-depth cap reached (>=99 levels) on op-replay/sql_only \
-             delete; descendants below depth 100 were not soft-deleted. \
-             Tree pathologically deep.",
-        );
-    }
-    Ok(())
+    Ok(cohort)
 }
 
 /// Project a `MoveBlock` engine state into SQL.  Mirrors the per-block
@@ -682,13 +679,27 @@ pub async fn project_restore_block_to_sql(
     block_id: &str,
     deleted_at_ref: i64,
 ) -> Result<Vec<String>, AppError> {
-    sqlx::query(concat!(
-        crate::descendants_cte_cohort!(),
+    // R27: the cohort walk is depth-UNBOUNDED (batched capped CTE,
+    // re-anchored at the depth-100 boundary) so a merged sync tree deeper
+    // than the cap restores its WHOLE contiguous cohort instead of leaving
+    // the sub-cap tail tombstoned. Cohort identity stays structural (#1055):
+    // each batch's recursive arm only descends through `deleted_at = ?`
+    // children, and continuation batches re-anchor only at rows that
+    // matched the cohort filter.
+    let cohort = crate::block_descendants::collect_subtree_ids_unbounded(
+        &mut *conn,
+        block_id,
+        crate::block_descendants::DescendantWalkFilter::Cohort(deleted_at_ref),
+    )
+    .await?;
+    let payload = serde_json::Value::from(cohort).to_string();
+    // dynamic-sql: json_each id-list UPDATE over the walked cohort; single
+    // bound JSON parameter, immune to the SQLite variable limit.
+    sqlx::query(
         "UPDATE blocks SET deleted_at = NULL \
-         WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
-    ))
-    .bind(block_id)
-    .bind(deleted_at_ref)
+         WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at = ?2",
+    )
+    .bind(&payload)
     .bind(deleted_at_ref)
     .execute(&mut *conn)
     .await?;
@@ -715,24 +726,9 @@ pub async fn project_restore_block_to_sql(
             .await?
             .chain;
 
-    // #1582: surface deep-tree truncation on the op-replay / sql_only
-    // paths. The command path (`restore_block_inner`) already emits this
-    // warn, but this projection — driven by both the via-loro op-replay
-    // arm and the engine-less `sql_only` fallback — did not, so a >100-deep
-    // cohort silently dropped its sub-cap descendants here with no
-    // breadcrumb. Detection only; the depth-100 cap is unchanged (invariant
-    // #9). `cascade_depth_saturated` walks the depth-only standard CTE, so
-    // it is invariant to which rows the cohort UPDATE actually cleared.
-    if crate::block_descendants::cascade_depth_saturated(&mut *conn, block_id).await? {
-        tracing::warn!(
-            block_id = %block_id,
-            op = "restore_block",
-            path = "projection",
-            "#1582: cascade-depth cap reached (>=99 levels) on op-replay/sql_only \
-             restore; descendants below depth 100 were not restored. \
-             Tree pathologically deep.",
-        );
-    }
+    // R27: the pre-fix #1582 detection-only saturation probe is gone — the
+    // batched walk above no longer truncates at the depth-100 cap (crossing
+    // it warns loudly inside `collect_subtree_ids_unbounded` instead).
     Ok(restored_ancestors)
 }
 
@@ -1321,28 +1317,48 @@ pub async fn reproject_block_tags_from_engine(
 ///   [`project_delete_block_to_sql`]). Idempotent: rows already deleted
 ///   (at any timestamp) are skipped by the active-CTE `deleted_at IS
 ///   NULL` filter.
-/// * `None` — the block is alive on the remote. Restore it **only if it
-///   is a genuine delete seed** — i.e. currently soft-deleted in SQL
-///   *and* with no soft-deleted ancestor. A block whose ancestor is
-///   still deleted is a descendant of a live soft-delete cohort, not a
-///   restore target; clearing it would resurrect a soft-deleted subtree
-///   (the exact bug [`project_block_full_to_sql`] guards against — the
-///   engine's seed-only marking means a descendant reads back `None`
-///   here even though it must stay deleted). When it IS a seed, the
-///   cohort is cleared by `deleted_at` value (via
-///   [`project_restore_block_to_sql`]).
+/// * `None` — the block is alive on the remote. Three sub-cases, decided
+///   by the block's SQL soft-delete state and its (depth-unbounded)
+///   nearest tombstoned ancestor:
+///   - **SQL-deleted, no tombstoned ancestor** — a genuine delete seed
+///     the remote restored: clear the cohort by `deleted_at` value (via
+///     [`project_restore_block_to_sql`]).
+///   - **SQL-deleted, tombstoned ancestor** — a descendant of a live
+///     soft-delete cohort, not a restore target; clearing it would
+///     resurrect a soft-deleted subtree (the exact bug
+///     [`project_block_full_to_sql`] guards against — the engine's
+///     seed-only marking means a descendant reads back `None` here even
+///     though it must stay deleted). No-op.
+///   - **SQL-live, tombstoned ancestor (R9 sweep)** — the concurrent
+///     cross-peer "delete subtree" vs "move block INTO that subtree"
+///     merge: the deleter peer's cascade ran before the move arrived, so
+///     the moved-in block sits LIVE under a tombstoned parent (an
+///     invisible orphan the other peer has already trashed). Sweep it
+///     (and its live descendants) into the nearest tombstoned ancestor's
+///     cohort — mirroring the cascade the mover peer computes when it
+///     imports the delete — so both peers project identical SQL from the
+///     identical converged CRDT state.
 ///
 /// ## Ordering within `apply_remote`
 ///
 /// Must run AFTER the core-column pass ([`project_block_full_to_sql`])
 /// so every changed block's `parent_id` row exists — the descendant /
 /// ancestor CTE walks rely on it. Order relative to the property / tag
-/// passes does not matter (they touch disjoint columns).
+/// passes does not matter (they touch disjoint columns). The sweep and
+/// the cascade are order-independent WITHIN Pass C: whichever of the
+/// tombstoned ancestor / moved-in block is reprojected first, the other
+/// branch converges on the same cohort.
+///
+/// Returns the `(block_id, deleted_at)` pairs this call newly stamped
+/// into SQL (cascade or sweep; empty for restores/no-ops) so the caller
+/// can fan the tombstones out to the per-space engine — a block whose
+/// engine meta stays "live" while SQL says "deleted" would wedge the
+/// #1257 outbound freshness gate.
 pub async fn reproject_block_deleted_at_from_engine(
     conn: &mut SqliteConnection,
     block_id: &crate::ulid::BlockId,
     engine_deleted_at: Option<&str>,
-) -> Result<(), AppError> {
+) -> Result<Vec<(String, i64)>, AppError> {
     if let Some(ts) = engine_deleted_at {
         // Cascade soft-delete the seed + active descendants at the
         // engine's timestamp. Re-uses the local delete projection so
@@ -1380,47 +1396,59 @@ pub async fn reproject_block_deleted_at_from_engine(
                 }
             },
         };
-        project_delete_block_to_sql(conn, block_id.as_str(), ts).await?;
-    } else {
-        // The remote says this block is alive. Read SQL's current
-        // soft-delete state: nothing to do if it is already alive or
-        // absent.
-        let block_id_str = block_id.as_str();
-        let current: Option<Option<i64>> =
-            sqlx::query_scalar!("SELECT deleted_at FROM blocks WHERE id = ?", block_id_str)
-                .fetch_optional(&mut *conn)
-                .await?;
-        let Some(Some(deleted_at_ref)) = current else {
-            return Ok(());
-        };
+        let cohort = project_delete_block_to_sql(conn, block_id.as_str(), ts).await?;
+        return Ok(cohort.into_iter().map(|id| (id, ts)).collect());
+    }
+    // The remote says this block is alive. Read SQL's current
+    // soft-delete state: nothing to do if the row is absent.
+    let block_id_str = block_id.as_str();
+    let current: Option<Option<i64>> =
+        sqlx::query_scalar!("SELECT deleted_at FROM blocks WHERE id = ?", block_id_str)
+            .fetch_optional(&mut *conn)
+            .await?;
+    let Some(sql_deleted_at) = current else {
+        return Ok(Vec::new());
+    };
 
-        // Resurrection guard: only a genuine delete seed (no
-        // soft-deleted ancestor) is a restore target. A block under a
-        // still-deleted ancestor must stay deleted — the engine marks
-        // only the seed, so its `None` here means "descendant of a
-        // live cohort", not "restore me". `ancestors_cte_standard!()`
-        // emits the seed at depth 0; the `a.depth > 0` filter
-        // restricts the check to strict ancestors.
-        let has_deleted_ancestor: bool = sqlx::query_scalar(concat!(
-            crate::ancestors_cte_standard!(),
-            "SELECT EXISTS( \
-                 SELECT 1 FROM ancestors a \
-                 JOIN blocks b ON b.id = a.id \
-                 WHERE a.depth > 0 AND b.deleted_at IS NOT NULL \
-             )",
-        ))
-        .bind(block_id.as_str())
-        .fetch_one(&mut *conn)
-        .await?;
-        if has_deleted_ancestor {
-            return Ok(());
-        }
+    // Nearest tombstoned STRICT ancestor (depth-unbounded — R27): drives
+    // both the resurrection guard (restore direction) and the R9
+    // live-under-tombstone sweep (delete direction). The engine marks only
+    // the delete seed, so a `None` engine slot under a tombstoned ancestor
+    // means "descendant of a live cohort", never "restore me".
+    let tombstoned_ancestor =
+        crate::block_descendants::nearest_tombstoned_ancestor(&mut *conn, block_id_str).await?;
 
+    match (sql_deleted_at, tombstoned_ancestor) {
         // Genuine seed restore: clear the cohort (seed + descendants
         // soft-deleted at the same timestamp).
-        project_restore_block_to_sql(conn, block_id.as_str(), deleted_at_ref).await?;
+        (Some(deleted_at_ref), None) => {
+            project_restore_block_to_sql(conn, block_id_str, deleted_at_ref).await?;
+            Ok(Vec::new())
+        }
+        // Resurrection guard: a block under a still-deleted ancestor must
+        // stay deleted.
+        (Some(_), Some(_)) => Ok(Vec::new()),
+        // R9 sweep: LIVE in both engine and SQL but sitting under a
+        // tombstoned ancestor — the concurrent delete-vs-move-in merge.
+        // Inherit the nearest tombstoned ancestor's cohort (cascading over
+        // the block's own live descendants), exactly what the mover peer's
+        // inbound delete cascade computed. Loud: this is a cross-peer
+        // reconciliation, not a user action.
+        (None, Some((ancestor_id, ancestor_ts))) => {
+            tracing::warn!(
+                block_id = %block_id_str,
+                ancestor_id = %ancestor_id,
+                cohort_ts = ancestor_ts,
+                "reproject_block_deleted_at_from_engine: live block under a \
+                 tombstoned ancestor after import (concurrent delete-vs-move \
+                 merge, R9); sweeping it into the ancestor's trash cohort",
+            );
+            let cohort = project_delete_block_to_sql(conn, block_id_str, ancestor_ts).await?;
+            Ok(cohort.into_iter().map(|id| (id, ancestor_ts)).collect())
+        }
+        // Healthy live block on a live chain — nothing to do.
+        (None, None) => Ok(Vec::new()),
     }
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -2263,6 +2291,193 @@ mod tests {
             !saturated,
             "#1582: a 10-deep cohort MUST NOT trip saturation"
         );
+    }
+
+    /// R27: a merged (sync-composed) tree can legally exceed the depth-100
+    /// CTE cap, and the delete cascade must still stamp EVERY active
+    /// descendant — the capped walk is looped in batches, never truncated.
+    /// A 130-deep chain soft-deleted at the root must end with all 130 rows
+    /// in the cohort (pre-fix: only the top 101 were stamped).
+    #[tokio::test]
+    async fn delete_cascade_projects_full_cohort_below_depth_cap() {
+        let (pool, _dir) = fresh_pool().await;
+        let root = "01HZ0000000000000000DEL_R3";
+        seed_chain(&pool, root, 130).await;
+
+        let deleted_at: i64 = 1_778_414_400_000;
+        let mut conn = pool.acquire().await.expect("acquire");
+        let cohort = project_delete_block_to_sql(&mut conn, root, deleted_at)
+            .await
+            .expect("project delete");
+        drop(conn);
+
+        let stamped: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE deleted_at = ?")
+            .bind(deleted_at)
+            .fetch_one(&pool)
+            .await
+            .expect("count stamped");
+        assert_eq!(
+            stamped, 130,
+            "delete cascade must reach below the depth-100 CTE cap (batched \
+             walk) — every block of the 130-deep chain belongs to the cohort"
+        );
+        assert_eq!(
+            cohort.len(),
+            130,
+            "the projection must return the full walked cohort for the \
+             caller's engine fan-out"
+        );
+    }
+
+    /// R27 (restore arm): a 130-deep same-cohort chain restored at the root
+    /// must clear `deleted_at` on EVERY row (pre-fix: rows below the
+    /// depth-100 CTE cap stayed tombstoned — a truncated restore).
+    #[tokio::test]
+    async fn restore_cascade_projects_full_cohort_below_depth_cap() {
+        let (pool, _dir) = fresh_pool().await;
+        let root = "01HZ0000000000000000RES_R3";
+        seed_chain(&pool, root, 130).await;
+
+        // Stamp the whole chain into one cohort directly (the pool holds
+        // only the chain rows) — the restore walk is the unit under test.
+        let cohort_ts: i64 = 1_778_414_400_000;
+        sqlx::query("UPDATE blocks SET deleted_at = ?")
+            .bind(cohort_ts)
+            .execute(&pool)
+            .await
+            .expect("stamp cohort");
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_restore_block_to_sql(&mut conn, root, cohort_ts)
+            .await
+            .expect("project restore");
+        drop(conn);
+
+        let still_deleted: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE deleted_at IS NOT NULL")
+                .fetch_one(&pool)
+                .await
+                .expect("count still deleted");
+        assert_eq!(
+            still_deleted, 0,
+            "restore cascade must reach below the depth-100 CTE cap (batched \
+             walk) — the whole 130-deep cohort must come back live"
+        );
+    }
+
+    /// R9: a LIVE block sitting under a tombstoned ancestor (the concurrent
+    /// cross-peer "delete subtree" vs "move block INTO that subtree" merge)
+    /// must be swept into the nearest tombstoned ancestor's cohort by the
+    /// deleted_at reproject — mirroring the cascade the other peer already
+    /// ran. Pre-fix the engine-alive/SQL-alive branch returned early and the
+    /// block stayed a live invisible orphan.
+    #[tokio::test]
+    async fn reproject_sweeps_live_block_under_tombstoned_ancestor_into_cohort() {
+        let (pool, _dir) = fresh_pool().await;
+        let cohort_ts: i64 = 1_779_703_200_000;
+
+        // P is tombstoned at T; X (and X's child Y) are LIVE under it —
+        // exactly the state a concurrent remote move-into-deleted-subtree
+        // leaves on the deleting peer after Pass A projected the move.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+             VALUES (?, 'content', 'p', NULL, 0, ?)",
+        )
+        .bind(BLOCK_A)
+        .bind(cohort_ts)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'x', ?, 0)",
+        )
+        .bind(BLOCK_B)
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'y', ?, 0)",
+        )
+        .bind(TAG_C)
+        .bind(BLOCK_B)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // The engine says X is alive (no delete op for X exists anywhere).
+        let mut conn = pool.acquire().await.expect("acquire");
+        let bid = BlockId::from_trusted(BLOCK_B);
+        let swept = reproject_block_deleted_at_from_engine(&mut conn, &bid, None)
+            .await
+            .expect("reproject");
+        drop(conn);
+
+        assert!(
+            swept
+                .iter()
+                .any(|(id, ts)| id == BLOCK_B && *ts == cohort_ts)
+                && swept.iter().any(|(id, ts)| id == TAG_C && *ts == cohort_ts),
+            "the sweep must report the stamped ids + cohort ts so the caller \
+             can fan the tombstones out to the engine; got {swept:?}"
+        );
+        for id in [BLOCK_B, TAG_C] {
+            let deleted_at: Option<i64> =
+                sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .expect("fetch deleted_at");
+            assert_eq!(
+                deleted_at,
+                Some(cohort_ts),
+                "block {id} must inherit the nearest tombstoned ancestor's \
+                 cohort timestamp (live-under-tombstone sweep)"
+            );
+        }
+    }
+
+    /// R9 guard: a live block whose whole ancestor chain is live must NOT be
+    /// touched by the sweep (the engine-alive/SQL-alive fast path stays a
+    /// no-op for healthy trees).
+    #[tokio::test]
+    async fn reproject_leaves_live_block_with_live_ancestors_untouched() {
+        let (pool, _dir) = fresh_pool().await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'p', NULL, 0)",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'x', ?, 0)",
+        )
+        .bind(BLOCK_B)
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        let bid = BlockId::from_trusted(BLOCK_B);
+        let swept = reproject_block_deleted_at_from_engine(&mut conn, &bid, None)
+            .await
+            .expect("reproject");
+        drop(conn);
+
+        assert!(swept.is_empty(), "healthy live block must not be swept");
+        let deleted_at: Option<i64> =
+            sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(BLOCK_B)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch deleted_at");
+        assert_eq!(deleted_at, None, "live block must stay live");
     }
 
     #[tokio::test]

@@ -45,7 +45,61 @@ async fn rebuild_page_ids_impl(pool: &SqlitePool) -> Result<u64, AppError> {
     )
     .execute(pool)
     .await?;
-    Ok(result.rows_affected())
+    let mut conn = pool.acquire().await?;
+    let extended = extend_page_ids_below_depth_cap(&mut conn).await?;
+    Ok(result.rows_affected() + extended)
+}
+
+/// R27: extension pass shared by both rebuild variants — derive `page_id`
+/// for blocks the depth-capped ancestor CTE left unresolved (more than 100
+/// parent-steps below their page). Merged sync trees can legally exceed the
+/// local `MAX_BLOCK_DEPTH` bound, and pre-fix these rows resolved no page
+/// ancestor and were left/reset to NULL — silently invisible to every
+/// `WHERE page_id = ?` read.
+///
+/// Each fixpoint iteration copies the parent's already-resolved `page_id`
+/// one level further down; it runs AFTER the capped rebuild so parent values
+/// are fresh. The loop is monotone (every iteration resolves at least one
+/// previously-NULL row or stops), so it terminates without an explicit
+/// depth bound — invariant #9 is untouched because this pass contains no
+/// recursive CTE at all. Orphans, tags, and cycle members keep NULL exactly
+/// as before (their parent chain never yields a resolved `page_id`). On a
+/// healthy (≤100-deep) tree the first iteration matches zero rows, so the
+/// extension costs one no-op UPDATE. Crossing the cap is LOUD (warn), never
+/// a silent NULL.
+async fn extend_page_ids_below_depth_cap(
+    conn: &mut sqlx::SqliteConnection,
+) -> Result<u64, AppError> {
+    let mut total: u64 = 0;
+    let mut rounds: u64 = 0;
+    loop {
+        let res = sqlx::query!(
+            "UPDATE blocks SET page_id = \
+                 (SELECT p.page_id FROM blocks p WHERE p.id = blocks.parent_id) \
+             WHERE page_id IS NULL \
+               AND block_type != 'page' \
+               AND parent_id IS NOT NULL \
+               AND (SELECT p.page_id FROM blocks p WHERE p.id = blocks.parent_id) \
+                   IS NOT NULL"
+        )
+        .execute(&mut *conn)
+        .await?;
+        if res.rows_affected() == 0 {
+            break;
+        }
+        total += res.rows_affected();
+        rounds += 1;
+    }
+    if total > 0 {
+        tracing::warn!(
+            total,
+            rounds,
+            "page_id derivation extended past the depth-100 ancestor-CTE cap \
+             (tree deeper than DESCENDANT_DEPTH_CAP — merged sync trees can \
+             legally exceed the local depth bound, R27)",
+        );
+    }
+    Ok(total)
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +203,12 @@ async fn rebuild_page_ids_split_impl(
         let res = q.execute(&mut *tx).await?;
         updated += res.rows_affected();
     }
+
+    // R27: resolve blocks deeper than the read-phase CTE's depth-100 cap —
+    // without this the NULL-reset above would DESTROY their previously
+    // correct `page_id`. Runs inside the same write tx so the reset and the
+    // extension land atomically.
+    updated += extend_page_ids_below_depth_cap(&mut tx).await?;
 
     tx.commit().await?;
     Ok(updated)
@@ -564,6 +624,108 @@ mod tests {
             space_id.as_deref(),
             Some("SPACE01"),
             "child inherits space_id from its parent"
+        );
+    }
+
+    /// R27: a merged (sync-composed) tree can legally exceed the depth-100
+    /// ancestor-CTE cap. The full rebuild must keep deriving `page_id` for
+    /// blocks more than 100 parent-steps below their page (pre-fix they
+    /// resolved no page ancestor and were left/reset to NULL — invisible to
+    /// every `WHERE page_id = ?` read).
+    #[tokio::test]
+    async fn rebuild_page_ids_derives_deep_blocks_past_depth_cap() {
+        let (pool, _dir) = test_pool().await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('DEEPPAGE01', 'page', 'p', NULL, 1, 'DEEPPAGE01')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed page");
+        let mut parent = "DEEPPAGE01".to_string();
+        for i in 0..120 {
+            let id = format!("DEEPCHAIN{i:04}");
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+                 VALUES (?, 'content', '', ?, 1)",
+            )
+            .bind(&id)
+            .bind(&parent)
+            .execute(&pool)
+            .await
+            .expect("seed chain row");
+            parent = id;
+        }
+
+        super::rebuild_page_ids(&pool).await.expect("rebuild");
+
+        let unresolved: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM blocks WHERE block_type != 'page' AND page_id IS NULL",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("count unresolved");
+        assert_eq!(
+            unresolved, 0,
+            "every block of the 120-deep chain must resolve page_id past the \
+             depth-100 CTE cap (iterative extension)"
+        );
+        let deepest: Option<String> =
+            sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = 'DEEPCHAIN0119'")
+                .fetch_one(&pool)
+                .await
+                .expect("deepest page_id");
+        assert_eq!(
+            deepest.as_deref(),
+            Some("DEEPPAGE01"),
+            "the deepest block must resolve to the owning page"
+        );
+    }
+
+    /// R27 (split variant): the read/write-split rebuild NULL-resets every
+    /// `page_id` before re-stamping — it must not destroy a deep block's
+    /// previously-correct value (pre-fix, blocks below the depth-100 cap
+    /// were reset to NULL and never re-stamped).
+    #[tokio::test]
+    async fn rebuild_page_ids_split_preserves_deep_blocks_past_depth_cap() {
+        let (pool, _dir) = test_pool().await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('DEEPPAGE02', 'page', 'p', NULL, 1, 'DEEPPAGE02')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed page");
+        let mut parent = "DEEPPAGE02".to_string();
+        for i in 0..120 {
+            let id = format!("DEEPSPLIT{i:04}");
+            // Seed with the CORRECT page_id already materialized.
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+                 VALUES (?, 'content', '', ?, 1, 'DEEPPAGE02')",
+            )
+            .bind(&id)
+            .bind(&parent)
+            .execute(&pool)
+            .await
+            .expect("seed chain row");
+            parent = id;
+        }
+
+        super::rebuild_page_ids_split(&pool, &pool)
+            .await
+            .expect("split rebuild");
+
+        let deepest: Option<String> =
+            sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = 'DEEPSPLIT0119'")
+                .fetch_one(&pool)
+                .await
+                .expect("deepest page_id");
+        assert_eq!(
+            deepest.as_deref(),
+            Some("DEEPPAGE02"),
+            "the split rebuild must not NULL a deep block's previously-correct \
+             page_id (iterative extension past the depth-100 cap)"
         );
     }
 

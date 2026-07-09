@@ -63,76 +63,35 @@ pub async fn move_block_inner(
     Ok(response)
 }
 
-/// Apply ONE move inside an already-open [`CommandTx`], WITHOUT committing.
+/// Validate ONE move against the CURRENT in-tx state WITHOUT mutating
+/// anything: self-parent, block liveness, target-parent liveness, cycle, and
+/// depth-cap checks — the read-only validation phase extracted verbatim from
+/// [`move_block_in_tx`]'s former inline body.
 ///
-/// Extracted from [`move_block_inner`] (#2274) so both the single-move command
-/// and the batched [`move_blocks_batch_inner`] share one implementation of the
-/// validation + op_log-append + engine-apply + reprojection + cache-recompute
-/// pipeline. The caller owns the transaction lifecycle (BEGIN / COMMIT); this
-/// helper only appends the op via `enqueue_background` so the caller's single
-/// `commit_and_dispatch` drains every enqueued op in FIFO order.
+/// Extracted so [`move_blocks_batch_inner`] can run a PRE-VALIDATION pass over
+/// EVERY move before the first `apply_op_projected` call touches the shared
+/// in-memory per-space Loro engine. The engine mutation is NOT transactional:
+/// a mid-batch rejection used to roll back SQL + op_log while the engine kept
+/// moves `0..k` applied — a silent divergence that later dense-rank
+/// reprojections (`reproject_dense_positions` has no `parent_id` filter)
+/// wrote back into SQL as phantom sibling order.
 ///
-/// Called back-to-back within one tx, each invocation reads the state the
-/// PREVIOUS move committed in-tx (`apply_op_projected` writes the engine + SQL
-/// AND runs the inline count/page-id maintenance synchronously — `chunk = None`),
-/// which is exactly what preserves the #774 slot
-/// semantics for a batch: parking block[k] at slot `start+k` drops block[k+1]
-/// at `start+k+1` immediately after it. Any `?` propagation rolls the WHOLE
-/// transaction back (nothing moved) because the caller never reaches commit.
-///
-/// See [`move_block_inner`]'s original inline body for the full rationale on
-/// each step; the comments are preserved verbatim below.
-#[instrument(skip(tx, state, device_id), err)]
-async fn move_block_in_tx(
+/// The caller's `BEGIN IMMEDIATE` eagerly acquired the write lock, preventing
+/// SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation and
+/// the actual mutation.
+async fn validate_move_in_tx(
     tx: &mut CommandTx,
-    state: &crate::loro::shared::LoroState,
-    device_id: &str,
-    block_id: String,
-    new_parent_id: Option<String>,
-    new_index: i64,
-) -> Result<MoveResponse, AppError> {
-    // 1. Validate block cannot become its own parent (pure-logic check, no DB)
-    if let Some(ref pid) = new_parent_id
-        && pid == &block_id
+    block_id: &str,
+    new_parent_id: Option<&str>,
+) -> Result<(), AppError> {
+    // Validate block cannot become its own parent (pure-logic check, no DB)
+    if let Some(pid) = new_parent_id
+        && pid == block_id
     {
         return Err(AppError::InvalidOperation(format!(
             "block '{block_id}' cannot be its own parent"
         )));
     }
-
-    // 1b. #400: `new_index` is a 0-based sibling slot. "Move to the top" / "nest
-    // as first child" are slot 0 — both previously rejected as `position <= 0`.
-    // The old positive-position validation is gone; clamp a stray negative.
-    let new_index = new_index.max(0);
-    // Provisional 1-based dense rank for the optimistic SQL write + response;
-    // the materializer reprojects the authoritative ranks from the engine's
-    // fractional order shortly after (eventual consistency, as for engine state).
-    // #400/#383: overflow-safe 0-based slot → 1-based provisional rank, capped
-    // below the reserved keyset tail marker; reprojection sets the dense rank.
-    let provisional_position = crate::pagination::index_to_provisional_position(new_index);
-
-    // 2. Build OpPayload (#400: carries the 0-based `new_index`; `new_position`
-    // is a 1-based breadcrumb mirroring it for legacy readers).
-    // (#383's NULL_POSITION_SENTINEL rejection is obsolete here: callers supply
-    // a 0-based `new_index` slot, not a verbatim position. `provisional_position`
-    // is a transient optimistic rank the materializer reprojects, so a caller can
-    // no longer push a block into the synthetic sentinel tail bucket.)
-    let new_parent_block_id = new_parent_id.as_ref().map(|s| BlockId::from_trusted(s));
-    // #1257 keep the typed `MoveBlockPayload` so the command path can append it
-    // to the op_log; `apply_op_projected` then re-derives the payload from the
-    // appended `op_record` to drive the in-tx move. The op-log carries an owned
-    // `OpPayload::MoveBlock(move_payload.clone())`.
-    let move_payload = MoveBlockPayload {
-        block_id: BlockId::from_trusted(&block_id),
-        new_parent_id: new_parent_block_id.clone(),
-        new_position: provisional_position,
-        new_index: Some(new_index),
-    };
-
-    // 3. Validation + op_log + move, inside the caller-owned IMMEDIATE tx.
-    //    The caller's BEGIN IMMEDIATE eagerly acquired the write lock, preventing
-    //    SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
-    //    and the actual mutation.
 
     // Validate block exists and is not deleted (TOCTOU-safe)
     let existing = sqlx::query!(
@@ -148,7 +107,7 @@ async fn move_block_in_tx(
     }
 
     // Validate new parent exists and is not deleted (TOCTOU-safe)
-    if let Some(ref pid) = new_parent_id {
+    if let Some(pid) = new_parent_id {
         let exists = sqlx::query!(
             r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
             pid
@@ -169,7 +128,7 @@ async fn move_block_in_tx(
         // The helper returns the boolean only; the rejection is the command
         // path's own (a user-driven move must surface the error, whereas the
         // sync-replay fallback no-op-warns — see the helper docstring).
-        if crate::block_descendants::move_would_cycle(&mut ***tx, &block_id, pid).await? {
+        if crate::block_descendants::move_would_cycle(&mut ***tx, block_id, pid).await? {
             return Err(AppError::validation("cycle detected".into()));
         }
 
@@ -223,6 +182,73 @@ async fn move_block_in_tx(
             )));
         }
     }
+
+    Ok(())
+}
+
+/// Apply ONE move inside an already-open [`CommandTx`], WITHOUT committing.
+///
+/// Extracted from [`move_block_inner`] (#2274) so both the single-move command
+/// and the batched [`move_blocks_batch_inner`] share one implementation of the
+/// validation + op_log-append + engine-apply + reprojection + cache-recompute
+/// pipeline. The caller owns the transaction lifecycle (BEGIN / COMMIT); this
+/// helper only appends the op via `enqueue_background` so the caller's single
+/// `commit_and_dispatch` drains every enqueued op in FIFO order.
+///
+/// Called back-to-back within one tx, each invocation reads the state the
+/// PREVIOUS move committed in-tx (`apply_op_projected` writes the engine + SQL
+/// AND runs the inline count/page-id maintenance synchronously — `chunk = None`),
+/// which is exactly what preserves the #774 slot
+/// semantics for a batch: parking block[k] at slot `start+k` drops block[k+1]
+/// at `start+k+1` immediately after it. Any `?` propagation rolls the WHOLE
+/// transaction back (nothing moved) because the caller never reaches commit.
+///
+/// See [`move_block_inner`]'s original inline body for the full rationale on
+/// each step; the comments are preserved verbatim below.
+#[instrument(skip(tx, state, device_id), err)]
+async fn move_block_in_tx(
+    tx: &mut CommandTx,
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
+    block_id: String,
+    new_parent_id: Option<String>,
+    new_index: i64,
+) -> Result<MoveResponse, AppError> {
+    // 1. Full read-only validation (self-parent, liveness, cycle, depth) —
+    //    extracted to `validate_move_in_tx` so the batch path can PRE-validate
+    //    every move before the first engine apply. Runs against the current
+    //    in-tx state, so back-to-back calls within one tx validate against the
+    //    previous move's committed-in-tx state (#774 semantics preserved).
+    validate_move_in_tx(tx, &block_id, new_parent_id.as_deref()).await?;
+
+    // 1b. #400: `new_index` is a 0-based sibling slot. "Move to the top" / "nest
+    // as first child" are slot 0 — both previously rejected as `position <= 0`.
+    // The old positive-position validation is gone; clamp a stray negative.
+    let new_index = new_index.max(0);
+    // Provisional 1-based dense rank for the optimistic SQL write + response;
+    // the materializer reprojects the authoritative ranks from the engine's
+    // fractional order shortly after (eventual consistency, as for engine state).
+    // #400/#383: overflow-safe 0-based slot → 1-based provisional rank, capped
+    // below the reserved keyset tail marker; reprojection sets the dense rank.
+    let provisional_position = crate::pagination::index_to_provisional_position(new_index);
+
+    // 2. Build OpPayload (#400: carries the 0-based `new_index`; `new_position`
+    // is a 1-based breadcrumb mirroring it for legacy readers).
+    // (#383's NULL_POSITION_SENTINEL rejection is obsolete here: callers supply
+    // a 0-based `new_index` slot, not a verbatim position. `provisional_position`
+    // is a transient optimistic rank the materializer reprojects, so a caller can
+    // no longer push a block into the synthetic sentinel tail bucket.)
+    let new_parent_block_id = new_parent_id.as_ref().map(|s| BlockId::from_trusted(s));
+    // #1257 keep the typed `MoveBlockPayload` so the command path can append it
+    // to the op_log; `apply_op_projected` then re-derives the payload from the
+    // appended `op_record` to drive the in-tx move. The op-log carries an owned
+    // `OpPayload::MoveBlock(move_payload.clone())`.
+    let move_payload = MoveBlockPayload {
+        block_id: BlockId::from_trusted(&block_id),
+        new_parent_id: new_parent_block_id.clone(),
+        new_position: provisional_position,
+        new_index: Some(new_index),
+    };
 
     // 4. Append to op_log within transaction
     let op_record = op_log::append_local_op_in_tx(
@@ -374,6 +400,30 @@ pub async fn move_blocks_batch_inner(
     let start_index = new_index.max(0);
 
     let mut tx = CommandTx::begin_immediate(pool, "move_blocks_batch").await?;
+
+    // PRE-VALIDATE every move against the CURRENT in-tx state BEFORE the
+    // first engine apply. `move_block_in_tx` mutates the SHARED in-memory
+    // per-space Loro engine synchronously inside the SQL tx window, and the
+    // engine has NO rollback: a mid-batch rejection (cycle / depth / missing
+    // block or parent) used to roll back SQL + op_log while the engine kept
+    // moves `0..k` — a divergence later reprojections wrote back into SQL as
+    // phantom sibling order. Rejecting the whole batch here, before ANY
+    // engine mutation, keeps the engine in lockstep with the rolled-back tx.
+    //
+    // This pre-pass is equivalent to the per-iteration checks the apply loop
+    // below still runs (so #774 consecutive-slot semantics are untouched):
+    // every batch member moves under the SAME target parent, and a
+    // successful earlier move never alters the target's ancestor chain (a
+    // member ON that chain fails the cycle probe here first) nor deepens
+    // another member's subtree — so a batch that passes this pass cannot be
+    // rejected mid-loop. The one asymmetry is deliberately conservative: a
+    // batch member nested inside ANOTHER member's subtree no longer gets
+    // depth-cap credit for that member moving out first (the frontend only
+    // ever sends selection ROOTS, so members are never nested in practice).
+    for id in &block_ids {
+        validate_move_in_tx(&mut tx, id.as_str(), new_parent_id.as_deref()).await?;
+    }
+
     let mut responses = Vec::with_capacity(block_ids.len());
     for (k, id) in block_ids.into_iter().enumerate() {
         // Consecutive destination slots: block[k] → slot `start_index + k`.

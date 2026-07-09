@@ -306,6 +306,7 @@ where
     // form instead, mirroring the established idiom in this crate
     // (see `move_ops.rs:180,193` and the `ancestor_db_tests` here at
     // lines 408+).
+    // dynamic-sql: recursive CTE assembled from `descendants_cte_standard!()` at runtime
     let max_depth: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(concat!(
         descendants_cte_standard!(),
         "SELECT MAX(depth) FROM descendants",
@@ -319,6 +320,173 @@ where
     // when saturation occurs. The conservative `CAP-1` boundary catches both
     // genuine cap saturation and a tree sitting exactly at the cap leaf level.
     Ok(max_depth.unwrap_or(0) >= DESCENDANT_DEPTH_CAP - 1)
+}
+
+/// Recursive-arm filter for [`collect_subtree_ids_unbounded`]'s batched
+/// depth-unbounded descendant walk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DescendantWalkFilter {
+    /// Descend only through still-active children (`deleted_at IS NULL`) —
+    /// the soft-delete cascade shape ([`descendants_cte_active`]).
+    Active,
+    /// Descend only through children soft-deleted at this cohort timestamp —
+    /// the restore-cohort shape ([`descendants_cte_cohort`]).
+    Cohort(i64),
+}
+
+/// R27: depth-UNBOUNDED descendant collection for the delete/restore cascade
+/// projections.
+///
+/// Two peers can legally compose a merged (sync-imported) tree deeper than
+/// any locally-enforced bound — each peer's moves validated against its own
+/// pre-merge state — so a cascade that stops at the depth-100 CTE cap
+/// silently truncates on converged-but-deep trees. This walk keeps invariant
+/// #9 (every recursive CTE bounds `d.depth < 100`) **per batch** and gains
+/// unbounded reach by re-anchoring the next batch at the cap-boundary rows
+/// (`depth == 100`), whose children the capped arm did not visit.
+///
+/// Returns the seed plus every descendant admitted by `filter`, in
+/// deterministic `(depth, id)` order per batch. Termination is guaranteed
+/// even on a corrupted (cyclic) `parent_id` chain: a node is anchored at most
+/// once (`anchored` set), so the frontier strictly consumes unvisited nodes.
+/// Crossing the cap is LOUD (a `tracing::warn!` per walk), never a silent
+/// truncation.
+pub(crate) async fn collect_subtree_ids_unbounded(
+    conn: &mut sqlx::SqliteConnection,
+    seed_id: &str,
+    filter: DescendantWalkFilter,
+) -> Result<Vec<String>, sqlx::Error> {
+    // Multi-seed variants of `descendants_cte_active!()` /
+    // `descendants_cte_cohort!()`: the macro family hard-codes the
+    // single-root `id = ?` anchor, so the batched walk uses the `json_each`
+    // anchor shape (same as the multi-root `crud.rs` bulk cascades). The
+    // recursive arm is byte-aligned with the macros' load-bearing filters —
+    // the #1655 drift guard checks every arm in the crate.
+    // dynamic-sql: json_each multi-seed anchor; not expressible via the
+    // compile-checked `query!` macro (see the module-level CTE notes).
+    const ACTIVE_SQL: &str = "WITH RECURSIVE descendants(id, depth) AS ( \
+         SELECT id, 0 FROM blocks WHERE id IN (SELECT value FROM json_each(?1)) \
+         UNION ALL \
+         SELECT b.id, d.depth + 1 FROM blocks b \
+         INNER JOIN descendants d ON b.parent_id = d.id \
+         WHERE b.deleted_at IS NULL AND d.depth < 100 \
+     ) SELECT id, depth FROM descendants ORDER BY depth, id";
+    const COHORT_SQL: &str = "WITH RECURSIVE descendants(id, depth) AS ( \
+         SELECT id, 0 FROM blocks WHERE id IN (SELECT value FROM json_each(?1)) \
+         UNION ALL \
+         SELECT b.id, d.depth + 1 FROM blocks b \
+         INNER JOIN descendants d ON b.parent_id = d.id \
+         WHERE b.deleted_at = ?2 AND d.depth < 100 \
+     ) SELECT id, depth FROM descendants ORDER BY depth, id";
+
+    let mut collected: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut result: Vec<String> = Vec::new();
+    let mut anchored: std::collections::HashSet<String> =
+        std::collections::HashSet::from([seed_id.to_string()]);
+    let mut frontier: Vec<String> = vec![seed_id.to_string()];
+    let mut rounds: u32 = 0;
+    while !frontier.is_empty() {
+        rounds += 1;
+        let payload = serde_json::Value::from(std::mem::take(&mut frontier)).to_string();
+        let mut query = match filter {
+            DescendantWalkFilter::Active => {
+                // dynamic-sql: json_each multi-seed batched CTE (see ACTIVE_SQL above)
+                sqlx::query_as::<_, (String, i64)>(ACTIVE_SQL).bind(&payload)
+            }
+            DescendantWalkFilter::Cohort(_) => {
+                // dynamic-sql: json_each multi-seed batched CTE (see COHORT_SQL above)
+                sqlx::query_as::<_, (String, i64)>(COHORT_SQL).bind(&payload)
+            }
+        };
+        if let DescendantWalkFilter::Cohort(ts) = filter {
+            query = query.bind(ts);
+        }
+        let rows = query.fetch_all(&mut *conn).await?;
+        for (id, depth) in rows {
+            // Cap-boundary row: its children were NOT visited by this batch
+            // (the recursive arm stops expanding at depth 100). Re-anchor
+            // from it next round — at most once per node (cycle guard).
+            if depth == DESCENDANT_DEPTH_CAP && anchored.insert(id.clone()) {
+                frontier.push(id.clone());
+            }
+            if collected.insert(id.clone()) {
+                result.push(id);
+            }
+        }
+    }
+    if rounds > 1 {
+        tracing::warn!(
+            seed_id = %seed_id,
+            rounds,
+            cohort_size = result.len(),
+            "descendant cascade walk crossed the depth-100 CTE cap \
+             (DESCENDANT_DEPTH_CAP); continued in batches — a merged sync \
+             tree can legally exceed the local depth bound (R27)",
+        );
+    }
+    Ok(result)
+}
+
+/// R9: nearest soft-deleted STRICT ancestor of `block_id`, walking the
+/// `parent_id` chain upward without a depth bound (batched capped CTEs,
+/// re-anchored at the cap boundary — same discipline as
+/// [`collect_subtree_ids_unbounded`]).
+///
+/// Returns `Some((ancestor_id, deleted_at))` for the tombstoned ancestor
+/// closest to the block, or `None` when the whole chain is live (or the walk
+/// dead-ends at a root/orphan). Used by the sync-import deleted_at reproject
+/// both as the resurrection guard (a block under a still-deleted ancestor
+/// must stay deleted) and as the cohort source for the live-under-tombstone
+/// sweep (a concurrently moved-in block inherits this ancestor's cohort).
+/// A corrupted parent-chain CYCLE terminates loudly (`tracing::error!`) and
+/// reports `None` rather than wedging inbound sync.
+pub(crate) async fn nearest_tombstoned_ancestor(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+) -> Result<Option<(String, i64)>, sqlx::Error> {
+    let mut cursor = block_id.to_string();
+    let mut visited: std::collections::HashSet<String> =
+        std::collections::HashSet::from([cursor.clone()]);
+    loop {
+        // Strict ancestors that are tombstoned, plus the cap-boundary row
+        // (`depth == 100`) to re-anchor from; depth-ascending so the FIRST
+        // tombstoned row is the nearest.
+        // dynamic-sql: recursive CTE assembled from `ancestors_cte_standard!()` at runtime
+        let rows: Vec<(String, i64, Option<i64>)> = sqlx::query_as(concat!(
+            ancestors_cte_standard!(),
+            "SELECT a.id, a.depth, b.deleted_at FROM ancestors a \
+             JOIN blocks b ON b.id = a.id \
+             WHERE a.depth > 0 AND (b.deleted_at IS NOT NULL OR a.depth = 100) \
+             ORDER BY a.depth",
+        ))
+        .bind(&cursor)
+        .fetch_all(&mut *conn)
+        .await?;
+        for (id, _depth, deleted_at) in &rows {
+            if let Some(ts) = deleted_at {
+                return Ok(Some((id.clone(), *ts)));
+            }
+        }
+        // No tombstone in this batch. Continue only when the walk was cut by
+        // the cap (a live row at exactly depth 100); otherwise the chain
+        // ended at a live root/orphan.
+        match rows.last() {
+            Some((id, depth, None)) if *depth == DESCENDANT_DEPTH_CAP => {
+                if !visited.insert(id.clone()) {
+                    tracing::error!(
+                        block_id = %block_id,
+                        repeated_ancestor = %id,
+                        "nearest_tombstoned_ancestor: parent-chain CYCLE \
+                         detected while walking past the depth-100 cap; \
+                         aborting the ancestor walk (treating chain as live)",
+                    );
+                    return Ok(None);
+                }
+                cursor.clone_from(id);
+            }
+            _ => return Ok(None),
+        }
+    }
 }
 
 /// #1323 (Step 4): shared cycle probe for a `MoveBlock`, used by BOTH the
@@ -361,9 +529,7 @@ where
     if new_parent == block_id {
         return Ok(true);
     }
-    // dynamic-sql: recursive ancestor CTE assembled at runtime from the
-    // `ancestors_cte_standard!()` macro; not expressible via the
-    // compile-checked `query!` macro form.
+    // dynamic-sql: recursive CTE assembled from `ancestors_cte_standard!()` at runtime
     let hit: Option<i64> = sqlx::query_scalar::<_, i64>(concat!(
         ancestors_cte_standard!(),
         "SELECT 1 FROM ancestors WHERE id = ?",
@@ -467,9 +633,7 @@ pub async fn restore_deleted_ancestor_chain(
     // We capture every id (not just the topmost) because the #2017 caller fans
     // each one out to the per-space Loro engine; the topmost is the last row
     // (greatest depth) and drives the #1884 re-derivation root.
-    // dynamic-sql: recursive deleted-ancestor CTE assembled from const
-    // fragments at runtime (variable-depth upward walk); not expressible as a
-    // compile-checked `query!` macro.
+    // dynamic-sql: recursive CTE assembled from `deleted_chain_cte!()` at runtime
     let chain: Vec<String> = sqlx::query_scalar::<_, String>(concat!(
         deleted_chain_cte!(),
         "SELECT id FROM deleted_chain ORDER BY depth ASC",
@@ -482,9 +646,7 @@ pub async fn restore_deleted_ancestor_chain(
         return Ok(RestoredAncestorChain::default());
     }
 
-    // dynamic-sql: recursive deleted-ancestor CTE assembled from const
-    // fragments at runtime; clears the contiguous tombstoned chain in one
-    // statement. Not expressible as a compile-checked `query!` macro.
+    // dynamic-sql: recursive CTE assembled from `deleted_chain_cte!()` at runtime
     sqlx::query(concat!(
         deleted_chain_cte!(),
         "UPDATE blocks SET deleted_at = NULL \
@@ -705,6 +867,97 @@ mod ancestor_db_tests {
         assert_eq!(
             count, 101,
             "ancestor walk must be bounded at depth < 100 (seed + 100 ancestors), got {count}",
+        );
+    }
+
+    /// R27: the batched depth-unbounded walk must collect EVERY node of a
+    /// 150-deep chain (the capped CTE alone stops at 101) — invariant #9 is
+    /// kept per batch, reach is gained by re-anchoring at the cap boundary.
+    #[tokio::test]
+    async fn collect_subtree_ids_unbounded_walks_past_depth_cap() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "UNB_R", None).await;
+        for i in 1..150 {
+            let id = format!("UNB_{i}");
+            let parent = if i == 1 {
+                "UNB_R".to_string()
+            } else {
+                format!("UNB_{}", i - 1)
+            };
+            insert_block(&pool, &id, Some(parent.as_str())).await;
+        }
+
+        let mut conn = pool.acquire().await.unwrap();
+        let ids = super::collect_subtree_ids_unbounded(
+            &mut conn,
+            "UNB_R",
+            super::DescendantWalkFilter::Active,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            ids.len(),
+            150,
+            "the batched walk must reach every node of a 150-deep chain \
+             (got {})",
+            ids.len()
+        );
+    }
+
+    /// R9/R27: the depth-unbounded nearest-tombstoned-ancestor probe must
+    /// find a tombstone sitting MORE than 100 parent-steps above the block.
+    #[tokio::test]
+    async fn nearest_tombstoned_ancestor_finds_ancestor_past_depth_cap() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "NTA_R", None).await;
+        for i in 1..=120 {
+            let id = format!("NTA_{i}");
+            let parent = if i == 1 {
+                "NTA_R".to_string()
+            } else {
+                format!("NTA_{}", i - 1)
+            };
+            insert_block(&pool, &id, Some(parent.as_str())).await;
+        }
+        sqlx::query("UPDATE blocks SET deleted_at = 1779703200000 WHERE id = 'NTA_R'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let mut conn = pool.acquire().await.unwrap();
+        let hit = super::nearest_tombstoned_ancestor(&mut conn, "NTA_120")
+            .await
+            .unwrap();
+        assert_eq!(
+            hit,
+            Some(("NTA_R".to_string(), 1_779_703_200_000)),
+            "the probe must find the tombstoned root 120 levels up"
+        );
+    }
+
+    /// The nearest-tombstoned-ancestor probe must terminate (loudly, as a
+    /// live-chain answer) on a corrupted `parent_id` CYCLE rather than
+    /// looping forever past the cap.
+    #[tokio::test]
+    async fn nearest_tombstoned_ancestor_terminates_on_parent_cycle() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "CYC_A", None).await;
+        insert_block(&pool, "CYC_B", Some("CYC_A")).await;
+        insert_block(&pool, "CYC_LEAF", Some("CYC_B")).await;
+        // Corrupt: A's parent becomes B → A ↔ B cycle above the leaf.
+        sqlx::query("UPDATE blocks SET parent_id = 'CYC_B' WHERE id = 'CYC_A'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let mut conn = pool.acquire().await.unwrap();
+        let hit = super::nearest_tombstoned_ancestor(&mut conn, "CYC_LEAF")
+            .await
+            .unwrap();
+        assert_eq!(
+            hit, None,
+            "a fully-live corrupted cycle must terminate as 'no tombstoned \
+             ancestor', never hang"
         );
     }
 
@@ -953,26 +1206,28 @@ mod cohort_cascade_drift_guard {
             &std::fs::read_to_string(&crud)
                 .unwrap_or_else(|e| panic!("read {} failed: {e}", crud.display())),
         );
-        // Multi-root bulk DELETE: active recursive arm, json_each seed.
+        // R27: the multi-root bulk delete/restore no longer run their own
+        // recursive CTEs — the cascade walk lives in ONE place
+        // (`collect_delete_cohort` / `collect_restore_cohort`, both backed by
+        // the depth-unbounded `collect_subtree_ids_unbounded` walker) and the
+        // UPDATEs stamp exactly the captured cohort union via `json_each`, so
+        // the SQL rows and the post-commit engine fan-out cannot diverge.
+        // Pin the new canonical UPDATE shapes (idempotency predicates intact).
         assert!(
             norm.contains(
-                "SELECT id, 0 FROM blocks WHERE id IN (SELECT value FROM json_each(?1)) \
-                 AND deleted_at IS NULL"
+                "UPDATE blocks SET deleted_at = ?2 \
+                 WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at IS NULL"
             ),
-            "#1655: multi-root bulk-delete CTE anchor drifted from the \
-             `json_each(?1) … deleted_at IS NULL` shape",
+            "#1655/R27: multi-root bulk-delete UPDATE drifted from the \
+             `json_each(?1) … deleted_at IS NULL` cohort-union shape",
         );
         assert!(
-            norm.contains("WHERE b.deleted_at IS NULL AND d.depth < 100"),
-            "#1655: multi-root bulk-delete recursive arm must filter \
-             `deleted_at IS NULL` then cap depth",
-        );
-        // Multi-root bulk RESTORE: per-root cohort timestamp threaded as
-        // `root_deleted_at`, recursive arm matches it then caps depth.
-        assert!(
-            norm.contains("WHERE b.deleted_at = c.root_deleted_at AND c.depth < 100"),
-            "#1655: multi-root bulk-restore cohort recursive arm must match \
-             the per-root `root_deleted_at` then cap depth",
+            norm.contains(
+                "UPDATE blocks SET deleted_at = NULL \
+                 WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at IS NOT NULL"
+            ),
+            "#1655/R27: multi-root bulk-restore UPDATE drifted from the \
+             `json_each(?1) … deleted_at IS NOT NULL` cohort-union shape",
         );
     }
 }

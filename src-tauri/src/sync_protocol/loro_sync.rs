@@ -606,48 +606,70 @@ async fn resolve_changed_page_ids(
         return Ok(Vec::new());
     }
 
-    // Bind the changed ids as an IN-list (bounded by message size, well under
-    // MAX_SQL_PARAMS in practice; chunk defensively to stay within the SQLite
-    // variable limit for an unusually large single-message import).
+    // Walk each seed block up its parent chain until a `page` row is hit
+    // (or an orphan dead-ends it). `WHERE a.cur_type != 'page'` stops the
+    // recursion as soon as the page root is reached, so a page block seeded
+    // directly resolves to itself at depth 0.
+    //
+    // R27: the walk is depth-UNBOUNDED. Each batch keeps invariant #9
+    // (`a.depth < 100` in the recursive arm) and additionally returns the
+    // cap-boundary rows (`depth = 100`, non-page), which seed the NEXT
+    // batch — so a block arbitrarily deep below its page (a merged sync
+    // tree can legally exceed the local depth bound) still resolves its
+    // owning page instead of silently never invalidating it. The `visited`
+    // set guarantees termination even on a corrupted (cyclic) chain. Seeds
+    // bind as ONE json_each parameter (no MAX_SQL_PARAMS chunking needed).
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
+    const RESOLVE_SQL: &str = "WITH RECURSIVE ancestors(cur_id, cur_type, depth) AS ( \
+         SELECT b.id, b.block_type, 0 FROM blocks b \
+         WHERE b.id IN (SELECT value FROM json_each(?1)) \
+         UNION ALL \
+         SELECT parent.id, parent.block_type, a.depth + 1 \
+         FROM ancestors a \
+         JOIN blocks child ON child.id = a.cur_id \
+         JOIN blocks parent ON parent.id = child.parent_id \
+         WHERE a.cur_type != 'page' \
+           AND a.depth < 100 \
+     ) \
+     SELECT DISTINCT cur_id, cur_type FROM ancestors \
+     WHERE cur_type = 'page' OR depth = 100";
+
     let mut page_ids: Vec<String> = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    for chunk in changed_blocks.chunks(crate::db::MAX_SQL_PARAMS) {
-        let placeholders = std::iter::repeat_n("?", chunk.len())
-            .collect::<Vec<_>>()
-            .join(", ");
-        // Walk each seed block up its parent chain until a `page` row is hit
-        // (or depth/orphan cuts it off). `WHERE a.cur_type != 'page'` stops
-        // the recursion as soon as the page root is reached, so a page block
-        // seeded directly resolves to itself at depth 0.
-        // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
-        let sql = format!(
-            "WITH RECURSIVE ancestors(seed_id, cur_id, cur_type, depth) AS ( \
-                 SELECT b.id, b.id, b.block_type, 0 FROM blocks b \
-                 WHERE b.id IN ({placeholders}) \
-                 UNION ALL \
-                 SELECT a.seed_id, parent.id, parent.block_type, a.depth + 1 \
-                 FROM ancestors a \
-                 JOIN blocks child ON child.id = a.cur_id \
-                 JOIN blocks parent ON parent.id = child.parent_id \
-                 WHERE a.cur_type != 'page' \
-                   AND a.depth < 100 \
-             ) \
-             SELECT DISTINCT cur_id FROM ancestors WHERE cur_type = 'page'",
-        );
-        // dynamic-sql: recursive ancestor CTE with a runtime-built IN-list
-        // placeholder set (chunked over the changed-block ids); not expressible
-        // as a compile-checked `query_scalar!` because the placeholder count
-        // varies per chunk. #646.
-        let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()));
-        for id in chunk {
-            q = q.bind(id.as_str());
-        }
-        let rows = q.fetch_all(pool).await?;
-        for id in rows {
-            if seen.insert(id.clone()) {
-                page_ids.push(id);
+    let mut frontier: Vec<String> = changed_blocks
+        .iter()
+        .map(|b| b.as_str().to_string())
+        .collect();
+    let mut visited: std::collections::HashSet<String> = frontier.iter().cloned().collect();
+    let mut rounds: u32 = 0;
+    while !frontier.is_empty() {
+        rounds += 1;
+        let payload = serde_json::Value::from(std::mem::take(&mut frontier)).to_string();
+        // dynamic-sql: recursive ancestor CTE with a json_each seed list;
+        // not expressible as a compile-checked `query!` form. #646.
+        let rows: Vec<(String, String)> = sqlx::query_as(RESOLVE_SQL)
+            .bind(&payload)
+            .fetch_all(pool)
+            .await?;
+        for (cur_id, cur_type) in rows {
+            if cur_type == "page" {
+                if seen.insert(cur_id.clone()) {
+                    page_ids.push(cur_id);
+                }
+            } else if visited.insert(cur_id.clone()) {
+                // Cap-boundary row: continue the walk from it next round.
+                frontier.push(cur_id);
             }
         }
+    }
+    if rounds > 1 {
+        tracing::warn!(
+            rounds,
+            changed = changed_blocks.len(),
+            "changed-page resolution crossed the depth-100 ancestor-CTE cap; \
+             continued in batches (merged sync tree deeper than the local \
+             depth bound — R27)",
+        );
     }
     Ok(page_ids)
 }
@@ -896,12 +918,20 @@ pub(crate) async fn import_and_project(
     // AFTER Pass A so every changed block's `parent_id` row exists — the
     // helper's descendant-cascade / ancestor-guard CTE walks depend on
     // it.  The engine stores `deleted_at` on the delete seed only, so the
-    // helper re-derives the SQL cascade from the seed timestamp (and an
+    // helper re-derives the SQL cascade from the seed timestamp (an
     // ancestor check prevents a snapshot re-import from resurrecting a
-    // soft-deleted subtree).
+    // soft-deleted subtree, and — R9 — a live block whose post-merge
+    // parent chain crosses a tombstoned ancestor is swept into that
+    // ancestor's cohort, converging the concurrent delete-vs-move-in
+    // merge to the same SQL on every peer). Every `(id, deleted_at)`
+    // pair the pass stamps is collected for the post-commit engine
+    // fan-out below.
+    let mut swept_tombstones: Vec<(String, i64)> = Vec::new();
     for (block_id, (_, _, _, engine_deleted_at)) in changed_blocks.iter().zip(&block_states) {
-        reproject_block_deleted_at_from_engine(&mut tx, block_id, engine_deleted_at.as_deref())
-            .await?;
+        let stamped =
+            reproject_block_deleted_at_from_engine(&mut tx, block_id, engine_deleted_at.as_deref())
+                .await?;
+        swept_tombstones.extend(stamped);
     }
 
     // Pass D — hard-purge (#2128). Mirrors a remote `PurgeBlock` by deleting
@@ -933,6 +963,41 @@ pub(crate) async fn import_and_project(
         .await?;
 
     tx.commit().await?;
+
+    // R9: fan the Pass-C tombstones out to the ENGINE for every stamped
+    // block whose engine meta still says "live". The SQL cascade/sweep can
+    // legally reach blocks no peer ever wrote a delete op for (a block
+    // concurrently moved INTO the deleted subtree), and an engine-live /
+    // SQL-deleted block permanently wedges the #1257 outbound freshness
+    // gate. This mirrors the local delete path's #2344
+    // `dispatch_delete_descendants` fan-out (same cohort timestamp,
+    // idempotent per-block engine writes), and is deterministic across
+    // peers — each peer derives the identical set from the identical
+    // converged CRDT state. Runs AFTER the committed projection and is
+    // best-effort: a failure must NOT turn the committed projection into
+    // an `Err` (same policy as the tag rebuild below); the next import /
+    // boot replay re-derives the same fan-out.
+    if !swept_tombstones.is_empty() {
+        let fanout_result: Result<(), AppError> = (|| {
+            let mut guard = registry.for_space(space_id, device_id)?;
+            let engine = guard.engine_mut();
+            for (id, ts) in &swept_tombstones {
+                if engine.read_deleted_at(id)?.is_none() {
+                    engine.apply_delete_block(id, &ts.to_string())?;
+                }
+            }
+            Ok(())
+        })();
+        if let Err(err) = fanout_result {
+            tracing::warn!(
+                error = %err,
+                "engine tombstone fan-out failed AFTER the projection \
+                 committed; the committed SQL state stands; the #1257 \
+                 freshness gate may refuse outbound export for this space \
+                 until a later import / boot replay re-derives the fan-out"
+            );
+        }
+    }
 
     // Refresh the derived `block_tag_inherited` cache. `block_tags` only carries
     // direct edges; inherited tags are a recursive-CTE projection over
@@ -1757,6 +1822,239 @@ mod tests {
         );
     }
 
+    /// R27: a merged (sync-composed) tree can legally exceed the depth-100
+    /// ancestor-CTE cap. The changed-page resolution must keep walking in
+    /// batches past the cap so a deep changed block still refreshes its
+    /// owning page on the frontend (pre-fix: the capped walk resolved no
+    /// page and the block's page was silently never invalidated).
+    #[tokio::test]
+    async fn resolve_changed_page_ids_resolves_deep_block_past_depth_cap() {
+        let (pool, _dir) = fresh_pool().await;
+        // Page root + a 120-deep content chain under it.
+        let page = "01HZ00000000000000000DEEPPG";
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'page', 'pg', NULL, 0, ?)",
+        )
+        .bind(page)
+        .bind(page)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut parent = page.to_string();
+        let mut leaf = String::new();
+        for i in 0..120 {
+            let id = format!("01HZDEEPCHAIN{i:04}");
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+                 VALUES (?, 'content', '', ?, 0)",
+            )
+            .bind(&id)
+            .bind(&parent)
+            .execute(&pool)
+            .await
+            .unwrap();
+            parent.clone_from(&id);
+            leaf = id;
+        }
+
+        let page_ids =
+            resolve_changed_page_ids(&pool, &[crate::ulid::BlockId::from(leaf.as_str())])
+                .await
+                .expect("resolve");
+        assert_eq!(
+            page_ids,
+            vec![page.to_string()],
+            "a changed block 120 levels below its page must still resolve \
+             the owning page (batched ancestor walk past the depth-100 cap)"
+        );
+    }
+
+    /// R9: concurrent cross-peer "delete subtree" vs "move block INTO that
+    /// subtree" must NOT permanently diverge the two peers' SQL projections.
+    ///
+    /// Device-1 soft-deletes subtree P (P + then-current child C get engine
+    /// tombstones — the local cascade + #2344 descendant fan-out); device-2,
+    /// which has not yet seen the delete, legally moves live block X under C.
+    /// After exchanging the two concurrent updates the CRDT converges on both
+    /// peers, and both peers' `blocks.deleted_at` for X must agree: X inherits
+    /// P's cohort tombstone (the mover peer computes this via the inbound
+    /// delete cascade; the deleter peer must reach the same state via the
+    /// live-under-tombstone sweep). Pre-fix the deleter peer kept X live as an
+    /// invisible orphan under tombstoned P while the mover peer trashed it.
+    #[tokio::test]
+    async fn concurrent_delete_vs_move_into_subtree_converges_deleted_at_on_both_peers() {
+        let space = SpaceId::from_trusted(SPACE_A);
+        let cohort_ts: i64 = 1_779_703_200_000;
+        let ts_str = cohort_ts.to_string();
+
+        // Device-1 (the DELETER) authors the shared tree: page P with child
+        // C, and a SECOND page Q holding block X. (X must live under a
+        // different parent than root so the later move's changed-set
+        // resolution — children of the move's old/new parents — never pulls
+        // P itself back into the reproject set on the deleter peer.)
+        let (pool1, _dir1) = fresh_pool().await;
+        let registry1 = LoroEngineRegistry::new();
+        {
+            let mut g = registry1.for_space(&space, "device-1").expect("for_space");
+            let e = g.engine_mut();
+            e.apply_create_block(BLOCK_A, "page", "P", None, 0)
+                .expect("P");
+            e.apply_create_block(BLOCK_B, "content", "C", Some(BLOCK_A), 0)
+                .expect("C");
+            e.apply_create_block(BLOCK_D, "page", "Q", None, 1)
+                .expect("Q");
+            e.apply_create_block(BLOCK_C, "content", "X", Some(BLOCK_D), 0)
+                .expect("X");
+        }
+
+        // Converge device-2 (the MOVER) via a snapshot import (projects the
+        // three blocks into pool2's SQL too).
+        let (pool2, _dir2) = fresh_pool().await;
+        let registry2 = LoroEngineRegistry::new();
+        let seed_msg = prepare_outgoing_for_pool(&pool1, &registry1, &space, "device-1", None)
+            .await
+            .expect("prepare seed")
+            .expect("freshness gate must not refuse");
+        apply_remote(&pool2, &registry2, "device-2", seed_msg)
+            .await
+            .expect("seed device-2");
+
+        // Mirror device-1's own materialized SQL state (its local commands
+        // would have written these rows synchronously).
+        for (id, block_type, parent) in [
+            (BLOCK_A, "page", None),
+            (BLOCK_B, "content", Some(BLOCK_A)),
+            (BLOCK_D, "page", None),
+            (BLOCK_C, "content", Some(BLOCK_D)),
+        ] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+                 VALUES (?, ?, '', ?, 0, CASE WHEN ? = 'page' THEN ? ELSE NULL END)",
+            )
+            .bind(id)
+            .bind(block_type)
+            .bind(parent)
+            .bind(block_type)
+            .bind(id)
+            .execute(&pool1)
+            .await
+            .unwrap();
+        }
+
+        // Both peers are converged; capture each side's vv for the later
+        // concurrent exchange.
+        let vv1 = registry1.loro_vv(&space).expect("vv1");
+        let vv2 = registry2.loro_vv(&space).expect("vv2");
+
+        // ── Concurrent divergence ─────────────────────────────────────────
+        // Device-1: soft-delete P. Local cascade stamps P + C in SQL; the
+        // engine gets tombstones for the seed AND the then-current
+        // descendant C (#2344 fan-out). X is NOT a descendant here, so no
+        // delete op for X exists anywhere.
+        {
+            let mut g = registry1.for_space(&space, "device-1").expect("for_space");
+            let e = g.engine_mut();
+            e.apply_delete_block(BLOCK_A, &ts_str).expect("delete P");
+            e.apply_delete_block(BLOCK_B, &ts_str)
+                .expect("delete C fanout");
+        }
+        {
+            let mut conn = pool1.acquire().await.expect("acquire pool1");
+            crate::loro::projection::project_delete_block_to_sql(&mut conn, BLOCK_A, cohort_ts)
+                .await
+                .expect("local delete cascade");
+        }
+
+        // Device-2 (has not seen the delete): legally move X under C.
+        {
+            let mut g = registry2.for_space(&space, "device-2").expect("for_space");
+            g.engine_mut()
+                .apply_move_block_to(BLOCK_C, Some(BLOCK_B), 0)
+                .expect("move X under C");
+        }
+        sqlx::query("UPDATE blocks SET parent_id = ? WHERE id = ?")
+            .bind(BLOCK_B)
+            .bind(BLOCK_C)
+            .execute(&pool2)
+            .await
+            .unwrap();
+
+        // ── Exchange (prepared BEFORE either import — truly concurrent) ──
+        let msg_1_to_2 =
+            prepare_outgoing_for_pool(&pool1, &registry1, &space, "device-1", Some(&vv2))
+                .await
+                .expect("prepare 1→2")
+                .expect("device-1 export must not be refused");
+        let msg_2_to_1 =
+            prepare_outgoing_for_pool(&pool2, &registry2, &space, "device-2", Some(&vv1))
+                .await
+                .expect("prepare 2→1")
+                .expect("device-2 export must not be refused");
+
+        apply_remote(&pool1, &registry1, "device-1", msg_2_to_1)
+            .await
+            .expect("device-1 imports the move");
+        apply_remote(&pool2, &registry2, "device-2", msg_1_to_2)
+            .await
+            .expect("device-2 imports the delete");
+
+        // ── Convergence: identical SQL deleted_at on both peers ──────────
+        for id in [BLOCK_A, BLOCK_B, BLOCK_C] {
+            let d1: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool1)
+                .await
+                .expect("pool1 deleted_at");
+            let d2: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool2)
+                .await
+                .expect("pool2 deleted_at");
+            assert_eq!(
+                d1, d2,
+                "block {id}: the two peers' SQL soft-delete state diverged \
+                 after the concurrent delete-vs-move merge"
+            );
+            assert_eq!(
+                d1,
+                Some(cohort_ts),
+                "block {id} must land in P's trash cohort on BOTH peers \
+                 (move-into-deleted-subtree converges to 'deleted with the \
+                 subtree')"
+            );
+        }
+
+        // ── No #1257 freshness-gate wedge: the swept tombstone must also
+        // reach each peer's ENGINE, so outbound export keeps working. ─────
+        for (label, registry, device, pool) in [
+            ("device-1", &registry1, "device-1", &pool1),
+            ("device-2", &registry2, "device-2", &pool2),
+        ] {
+            {
+                let mut g = registry.for_space(&space, device).expect("for_space");
+                let engine_deleted = g
+                    .engine_mut()
+                    .read_deleted_at(BLOCK_C)
+                    .expect("read_deleted_at X");
+                assert!(
+                    engine_deleted.is_some(),
+                    "{label}: X's cohort tombstone must be fanned out to the \
+                     engine (engine-live + SQL-deleted would wedge the #1257 \
+                     freshness gate)"
+                );
+            }
+            let msg = prepare_outgoing_for_pool(pool, registry, &space, device, None)
+                .await
+                .expect("prepare post-merge");
+            assert!(
+                msg.is_some(),
+                "{label}: outbound export must not be refused after the \
+                 reconciled merge (#1257 gate must see engine and SQL agree)"
+            );
+        }
+    }
+
     /// Phase 2: a remote `DeleteBlock` of a subtree seed
     /// propagates the soft-delete to SQL for the seed AND its
     /// descendants — even though the engine marks only the seed.
@@ -1806,6 +2104,63 @@ mod tests {
                 "block {id} must be soft-deleted at the seed's cohort timestamp"
             );
         }
+    }
+
+    /// R27 end-to-end: a remote subtree delete over a merged tree DEEPER
+    /// than the depth-100 CTE cap must cascade to EVERY descendant on the
+    /// receiving peer (pre-fix the sub-cap tail stayed live under the
+    /// tombstoned ancestor — invisible orphans). The 120-deep chain stands
+    /// in for a sync-composed tree that no local command could create but
+    /// two peers can legally merge.
+    #[tokio::test]
+    async fn apply_remote_deep_subtree_delete_cascades_below_depth_cap() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        let registry_a = LoroEngineRegistry::new();
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            let e = g.engine_mut();
+            e.apply_create_block(BLOCK_A, "page", "pg", None, 0)
+                .expect("page");
+            let mut parent = BLOCK_A.to_string();
+            for i in 0..120 {
+                let id = format!("01HZDEEPSYNC{i:04}");
+                e.apply_create_block(&id, "content", "", Some(parent.as_str()), 0)
+                    .expect("chain row");
+                parent = id;
+            }
+            e.apply_delete_block(BLOCK_A, "1779703200000")
+                .expect("delete seed");
+        }
+        let msg = prepare_outgoing_for_pool(&pool, &registry_a, &space, "device-A", None)
+            .await
+            .expect("prepare")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
+
+        let registry_b = LoroEngineRegistry::new();
+        apply_remote(&pool, &registry_b, "device-B", msg)
+            .await
+            .expect("apply_remote");
+
+        let live: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL")
+            .fetch_one(&pool)
+            .await
+            .expect("count live");
+        assert_eq!(
+            live, 0,
+            "the inbound delete cascade must reach every block of the \
+             121-block chain, including those below the depth-100 CTE cap"
+        );
+        let deleted: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE deleted_at = 1779703200000")
+                .fetch_one(&pool)
+                .await
+                .expect("count cohort");
+        assert_eq!(
+            deleted, 121,
+            "every block must carry the seed's cohort timestamp"
+        );
     }
 
     /// Phase 2: a remote `RestoreBlock` of a subtree seed clears

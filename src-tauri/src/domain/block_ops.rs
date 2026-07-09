@@ -178,6 +178,30 @@ pub(crate) fn typed_property_args_for_registry_value(
     }
 }
 
+/// Pure per-block create validation: block_type membership + content-length
+/// cap. Extracted from [`create_block_in_tx`]'s former inline steps 1 / 1c so
+/// `create_blocks_batch_inner` can PRE-validate every spec BEFORE the first
+/// `apply_op_projected` call commits a block into the shared per-space Loro
+/// engine — a mid-batch shape rejection must not leave earlier specs applied
+/// in the (non-transactional) engine while SQL + op_log roll back.
+pub(crate) fn validate_create_block_shape(block_type: &str, content: &str) -> Result<(), AppError> {
+    match block_type {
+        "content" | "tag" | "page" => {}
+        _ => {
+            return Err(AppError::validation(format!(
+                "unknown block_type '{block_type}': must be 'content', 'tag', or 'page'"
+            )));
+        }
+    }
+    if content.len() > MAX_CONTENT_LENGTH {
+        return Err(AppError::validation(format!(
+            "content length {} exceeds maximum {MAX_CONTENT_LENGTH}",
+            content.len()
+        )));
+    }
+    Ok(())
+}
+
 /// Create a new block inside an existing transaction.
 ///
 /// This is the core implementation shared by [`create_block_inner`](crate::commands::create_block_inner) (which
@@ -209,15 +233,9 @@ pub(crate) async fn create_block_in_tx(
     // after the last sibling. (Was a legacy 1-based `position`.)
     index: Option<i64>,
 ) -> Result<(BlockRow, op_log::OpRecord), AppError> {
-    // 1. Validate block_type
-    match block_type.as_str() {
-        "content" | "tag" | "page" => {}
-        _ => {
-            return Err(AppError::validation(format!(
-                "unknown block_type '{block_type}': must be 'content', 'tag', or 'page'"
-            )));
-        }
-    }
+    // 1 + 1c. Validate block_type and content length (pure checks, shared
+    // with `create_blocks_batch_inner`'s pre-validation pass).
+    validate_create_block_shape(&block_type, &content)?;
 
     // 1b. #400: `index` is a 0-based slot; slot 0 ("first child") is valid. The
     // old positive-1-based-position validation is gone. A stray negative clamps.
@@ -225,14 +243,6 @@ pub(crate) async fn create_block_in_tx(
     // sibling slot, not a verbatim position — the engine derives the dense
     // position via reprojection, so a caller can no longer target the sentinel.)
     let index = index.map(|i| i.max(0));
-
-    // 1c. Validate content length
-    if content.len() > MAX_CONTENT_LENGTH {
-        return Err(AppError::validation(format!(
-            "content length {} exceeds maximum {MAX_CONTENT_LENGTH}",
-            content.len()
-        )));
-    }
 
     // 2. Generate new BlockId
     let block_id = BlockId::new();
@@ -277,6 +287,33 @@ pub(crate) async fn create_block_in_tx(
                 "maximum nesting depth of {MAX_BLOCK_DEPTH} exceeded"
             )));
         }
+    }
+
+    // 2b. Referential cross-space integrity — validated BEFORE the engine
+    // apply below. `apply_op_projected` COMMITS the block into the shared
+    // per-space LoroDoc, and the engine has no rollback: running this
+    // fallible check after it (the old post-INSERT ordering) left a phantom
+    // committed node in the CRDT on rejection — op_log + SQL rolled back
+    // while the block kept exporting over sync. A non-page block's space is
+    // fully determined by its parent (the SAME resolution anchor
+    // `apply_create_block_via_loro` uses), so resolve the parent's space and
+    // scan the content against it pre-insert. A parentless create — or a
+    // page, which resolves its space via itself (`page_id = id`), not its
+    // parent — has no resolvable space at this point and is skipped, exactly
+    // matching the post-INSERT `resolve_block_space(new_block)` outcome this
+    // ordering replaces (orphans are tolerated by the validator's contract).
+    if block_type != "page"
+        && let Some(ref pid) = parent_id
+        && let Some(source_space) =
+            crate::space::resolve_block_space(&mut **tx, &BlockId::from_trusted(pid)).await?
+    {
+        crate::spaces::cross_space_validation::validate_content_refs_in_space(
+            tx,
+            &block_id,
+            &source_space,
+            &content,
+        )
+        .await?;
     }
 
     // 3b. Build CreateBlockPayload (#400: carries the 0-based `index`; `None`
@@ -381,15 +418,11 @@ pub(crate) async fn create_block_in_tx(
         .await?;
     }
 
-    // Referential cross-space integrity: reject creating a
-    // block whose content references a block in a different space. Runs
-    // after the INSERT so the new block's `page_id` (hence space) is
-    // resolvable; an unparented/orphan block resolves to no space and is
-    // skipped by the validator.
-    crate::spaces::cross_space_validation::validate_content_cross_space_refs(
-        tx, &block_id, &content,
-    )
-    .await?;
+    // Referential cross-space integrity moved to step 2b ABOVE: it must run
+    // BEFORE `apply_op_projected` commits the block into the LoroDoc, so a
+    // rejected create leaves no phantom engine node behind. The space is
+    // resolved from the parent pre-insert (identical outcome to the old
+    // post-INSERT self-resolution).
 
     // #2344: the owning-page `pages_cache` count recompute that used to run here
     // (old step (d)) is now performed by the routed `apply_op_projected`
@@ -735,6 +768,26 @@ pub(crate) async fn set_property_in_tx_with_declaration(
     // behaviour. (The helper's projection then performs the identical
     // `UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?` fan-out.)
     if key == SPACE_PROPERTY_KEY {
+        // R17: only the authoritative `space_id` holders may carry the
+        // reserved `space` key — page blocks and top-level tag blocks (the
+        // documented membership model; see `move_blocks_to_space_inner`'s
+        // doc comment and `cache::page_id::rebuild_space_ids`). Stamping a
+        // CONTENT block into a foreign space mis-scopes every space-filtered
+        // read and mis-routes all later per-space engine applies for the
+        // block (reachable via the generic `set_property` IPC/MCP path), so
+        // reject loudly at the LOCAL command boundary. The tag
+        // adoption/migration paths append their `SetProperty(space)` ops
+        // directly (`add_tag` orphan adoption, `migrate_orphan_tags_to_space`)
+        // and are unaffected.
+        let is_space_holder = existing.block_type == "page"
+            || (existing.block_type == "tag" && existing.parent_id.is_none());
+        if !is_space_holder {
+            return Err(AppError::validation(format!(
+                "property 'space' can only be set on a page or top-level tag block; \
+                 block '{block_id}' is a '{}' block",
+                existing.block_type
+            )));
+        }
         let Some(target) = value_ref.as_deref() else {
             return Err(AppError::validation(
                 "property 'space' requires a value_ref pointing at a space block".into(),
