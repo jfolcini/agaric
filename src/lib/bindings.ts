@@ -74,33 +74,27 @@ export const commands = {
 	/**
 	 *  Tauri command: list blocks with filtering and pagination. Delegates to [`list_blocks_inner`].
 	 * 
-	 *  The three agenda knobs (`date`, `date_range`, `source`) are bundled
-	 *  into a single [`AgendaQuery`] to keep this wrapper under the
-	 *  `tauri-specta` 10-arg limit after Phase 2 added the space parameter.
-	 *  The hand-written TS wrapper in `src/lib/tauri.ts` keeps the flat
-	 *  public API (accepts `agendaDate` / `agendaDateRange` / `agendaSource`
-	 *  at the top level and marshals them into this struct for the IPC
-	 *  boundary).
+	 *  Takes a single [`ListBlocksRequest`] — the intentional per-command IPC
+	 *  request DTO (#2277 item 7). All `list_blocks` query params (including
+	 *  the agenda knobs `date` / `date_range` / `source`) live together as
+	 *  fields of the request; the grouping reflects the request, not the
+	 *  `tauri-specta` 10-arg transport limit, and a new filter is added as a
+	 *  field there. The hand-written TS wrapper in `src/lib/tauri.ts` keeps
+	 *  its flat public API and builds the request only at the IPC boundary.
 	 * 
 	 *  # Scope (#2248)
 	 * 
-	 *  Takes the canonical [`SpaceScope`] rather than a bare `space_id: String`.
-	 *  Block listing is inherently per-space (each active block belongs to exactly
-	 *  one space) and the old bare-string API had no cross-space mode, so
-	 *  [`SpaceScope::Global`] is rejected via [`SpaceScope::require_active`] instead
-	 *  of silently widening into a cross-space listing. The frontend wrapper keeps a
-	 *  required `spaceId: string` and threads it through `requireActiveScope`, which
-	 *  throws on an empty string, so `Active` is the only shape it can produce and
-	 *  callers must short-circuit locally when there is no active space.
+	 *  The orthogonal [`SpaceScope`] stays a separate argument rather than a
+	 *  request field. Block listing is inherently per-space (each active block
+	 *  belongs to exactly one space) and the old bare-string API had no
+	 *  cross-space mode, so [`SpaceScope::Global`] is rejected via
+	 *  [`SpaceScope::require_active`] instead of silently widening into a
+	 *  cross-space listing. The frontend wrapper keeps a required
+	 *  `spaceId: string` and threads it through `requireActiveScope`, which
+	 *  throws on an empty string, so `Active` is the only shape it can produce
+	 *  and callers must short-circuit locally when there is no active space.
 	 */
-	listBlocks: (parentId: string | null, blockType: string | null, tagId: string | null, agenda: {
-	/**  Single-date agenda lookup (`YYYY-MM-DD`). */
-	date: string | null,
-	/**  Date-range agenda lookup (inclusive on both ends). */
-	dateRange: DateRange | null,
-	/**  Optional source filter (`due_date` / `scheduled_date`). */
-	source: string | null,
-} | null, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("list_blocks", { parentId, blockType, tagId, agenda, cursor, limit, scope })),
+	listBlocks: (request: ListBlocksRequest, scope: SpaceScope) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("list_blocks", { request, scope })),
 	/**
 	 *  Tauri command: paginate soft-deleted blocks. Delegates to [`list_trash_inner`].
 	 * 
@@ -166,7 +160,7 @@ export const commands = {
 	 *  TS wrapper in `src/lib/tauri.ts` keeps the public API at
 	 *  `searchBlocks({ parentId, tagIds, spaceId, ... })` and marshals
 	 *  into the struct only at the IPC boundary, mirroring the
-	 *  [`ExtraQueryFilters`] precedent on [`query_by_property`].
+	 *  [`QueryByPropertyRequest`] precedent on [`query_by_property`].
 	 */
 	searchBlocks: (query: string, cursor: string | null, limit: number | null, filter: SearchFilter) => typedError<PageResponse<SearchBlockRow>, AppError>(__TAURI_INVOKE("search_blocks", { query, cursor, limit, filter })),
 	/**
@@ -197,48 +191,22 @@ export const commands = {
 	/**
 	 *  Tauri command: query blocks by property key/value. Delegates to [`query_by_property_inner`].
 	 * 
-	 *  All push-down filters (`exclude_parent_id`, `content_non_empty`,
-	 *  `block_type`, `value_text_in`, `value_date_range`) are bundled
-	 *  into [`ExtraQueryFilters`] to keep this wrapper under the
-	 *  `tauri-specta` 10-arg limit. The hand-written TS wrapper in
-	 *  `src/lib/tauri.ts` keeps the flat public API at
-	 *  `queryByProperty({ blockType, valueTextIn, ... })` and marshals
-	 *  into the struct only at the IPC boundary, mirroring the
-	 *  [`AgendaQuery`] precedent on `list_blocks`.
+	 *  Takes a single [`QueryByPropertyRequest`] — the intentional per-command
+	 *  IPC request DTO (#2277 item 7). Every `query_by_property` query param
+	 *  (the property `key`/`value`/`operator`, pagination, and all push-down
+	 *  filters: `exclude_parent_id`, `content_non_empty`, `block_type`,
+	 *  `value_text_in`, `value_date_range`, `exclude_todo_states`) lives
+	 *  together as fields of the request; the grouping reflects the request,
+	 *  not the `tauri-specta` 10-arg transport limit, and a new filter is
+	 *  added as a field there. The hand-written TS wrapper in
+	 *  `src/lib/tauri.ts` keeps its flat public API at
+	 *  `queryByProperty({ blockType, valueTextIn, ... })` and builds the
+	 *  request only at the IPC boundary.
+	 * 
+	 *  The orthogonal [`SpaceScope`] stays a separate argument rather than a
+	 *  request field.
 	 */
-	queryByProperty: (key: string, valueText: string | null, valueDate: string | null, operator: string | null, cursor: string | null, limit: number | null, scope: SpaceScope, extraFilters: {
-	/**
-	 *  Exclude rows whose `parent_id` matches.
-	 *  `IS NOT` semantics so NULL parents are kept.
-	 */
-	excludeParentId: string | null,
-	/**
-	 *  Drop rows whose content is NULL, empty, or
-	 *  whitespace-only (matches FE `!b.content?.trim()`).
-	 */
-	contentNonEmpty: boolean | null,
-	/**  Push `block_type = ?` into SQL. */
-	blockType: string | null,
-	/**
-	 *  Push `value_text IN (...)` into SQL via
-	 *  `json_each`. Mutually exclusive with `value_text` on
-	 *  `query_by_property`.
-	 */
-	valueTextIn: string[] | null,
-	/**
-	 *  Push `value_date >= from AND value_date < to`
-	 *  into SQL (half-open `[from, to)` range).
-	 */
-	valueDateRange: [string, string] | null,
-	/**
-	 *  #738 sub-2 — push `b.todo_state NOT IN (...)` into SQL so the
-	 *  DuePanel's overdue query can exclude completed (`DONE`) tasks at
-	 *  the database layer instead of post-filtering a capped page. NULL
-	 *  `todo_state` rows are retained (only the listed states are
-	 *  dropped). `None` / empty preserves the unfiltered behaviour.
-	 */
-	excludeTodoStates: string[] | null,
-} | null) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("query_by_property", { key, valueText, valueDate, operator, cursor, limit, scope, extraFilters })),
+	queryByProperty: (request: QueryByPropertyRequest, scope: SpaceScope) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("query_by_property", { request, scope })),
 	/**
 	 *  Tauri command: AND-intersect property + tag predicates in SQL.
 	 *  Delegates to [`filtered_blocks_query_inner`].
@@ -1276,32 +1244,6 @@ export type AdvancedQueryResponse = {
 	aggregates?: AggregateResult[],
 };
 
-/**
- *  Bundled agenda filter for the [`list_blocks`] Tauri command.
- * 
- *  Exists purely to keep `list_blocks`'s argument count under the
- *  `tauri-specta` 10-arg limit after Phase 2 added `space_id`.
- *  The three sub-fields were previously top-level parameters and are
- *  still threaded into `list_blocks_inner` as individual parameters —
- *  the bundling is a transport-layer concern. `None` means "no agenda
- *  filter applies" (the common case), and each sub-field remains
- *  optional inside the struct so callers can still specify a single
- *  date without the range, etc.
- * 
- *  Serde `rename_all = "camelCase"` matches the Tauri command-arg
- *  convention (camelCase keys on the IPC boundary), so the hand-written
- *  TS wrapper in `src/lib/tauri.ts` can pass `{ dateRange, source, date }`
- *  without an extra translation layer.
- */
-export type AgendaQuery = {
-	/**  Single-date agenda lookup (`YYYY-MM-DD`). */
-	date: string | null,
-	/**  Date-range agenda lookup (inclusive on both ends). */
-	dateRange: DateRange | null,
-	/**  Optional source filter (`due_date` / `scheduled_date`). */
-	source: string | null,
-};
-
 /**  The closed set of aggregate operators. */
 export type AggOp = 
 /**
@@ -1800,62 +1742,6 @@ export type Draft = {
 };
 
 /**
- *  Bundled extra filters for the [`query_by_property`] Tauri command.
- * 
- *  Exists purely to keep `query_by_property`'s argument count under
- *  The `tauri-specta` 10-arg limit. added
- *  `exclude_parent_id` / `content_non_empty` (pushing this command
- *  To 9 IPC args incl. `pool`); adds another three
- *  (`block_type`, `value_text_in`, `value_date_range`). Bundling all
- *  five into one struct keeps the IPC arg count at 8.
- * 
- *  The five sub-fields are still threaded into
- *  `query_by_property_inner` as individual parameters — bundling is a
- *  transport-layer concern. `None` means "no extra filter applies"
- *  (the common case); each sub-field remains optional inside the
- *  struct so callers can specify just one. The hand-written TS
- *  wrapper in `src/lib/tauri.ts` keeps the flat public API and
- *  marshals into this struct only at the IPC boundary, mirroring the
- *  [`AgendaQuery`] precedent on `list_blocks`.
- * 
- *  Serde `rename_all = "camelCase"` matches the Tauri command-arg
- *  convention.
- */
-export type ExtraQueryFilters = {
-	/**
-	 *  Exclude rows whose `parent_id` matches.
-	 *  `IS NOT` semantics so NULL parents are kept.
-	 */
-	excludeParentId: string | null,
-	/**
-	 *  Drop rows whose content is NULL, empty, or
-	 *  whitespace-only (matches FE `!b.content?.trim()`).
-	 */
-	contentNonEmpty: boolean | null,
-	/**  Push `block_type = ?` into SQL. */
-	blockType: string | null,
-	/**
-	 *  Push `value_text IN (...)` into SQL via
-	 *  `json_each`. Mutually exclusive with `value_text` on
-	 *  `query_by_property`.
-	 */
-	valueTextIn: string[] | null,
-	/**
-	 *  Push `value_date >= from AND value_date < to`
-	 *  into SQL (half-open `[from, to)` range).
-	 */
-	valueDateRange: [string, string] | null,
-	/**
-	 *  #738 sub-2 — push `b.todo_state NOT IN (...)` into SQL so the
-	 *  DuePanel's overdue query can exclude completed (`DONE`) tasks at
-	 *  the database layer instead of post-filtering a capped page. NULL
-	 *  `todo_state` rows are retained (only the listed states are
-	 *  dropped). `None` / empty preserves the unfiltered behaviour.
-	 */
-	excludeTodoStates: string[] | null,
-};
-
-/**
  *  A boolean tree over [`FilterPrimitive`] leaves.
  * 
  *  Struct variants (not newtype/tuple variants) for the same reason
@@ -2283,6 +2169,51 @@ export type LinkMetadata = {
 	 *  deserializing cleanly as `false`.
 	 */
 	not_found?: boolean,
+};
+
+/**
+ *  Per-command IPC request DTO for the [`list_blocks`] Tauri command
+ *  (#2277 item 7).
+ * 
+ *  This is the intentional, semantic IPC boundary type for `list_blocks`:
+ *  one explicit `*Request` DTO per command as the IPC boundary type — the
+ *  grouping reflects the request, NOT the `tauri-specta` 10-arg limit. A
+ *  new `list_blocks` filter is added as a field here, never as a fresh
+ *  top-level command argument. This replaces the older arg-count-driven
+ *  `AgendaQuery` overflow bundle, whose only job was to keep the command
+ *  under the transport arg cap; the three agenda knobs (`date`,
+ *  `date_range`, `source`) now flatten directly into this request instead
+ *  of nesting one struct inside another.
+ * 
+ *  The orthogonal space-scoping concern (`SpaceScope`) is deliberately
+ *  kept as a separate command argument, not folded in here.
+ * 
+ *  Each field is threaded into `list_blocks_inner` as an individual
+ *  parameter — the request shape is the IPC boundary concern only. Every
+ *  filter is optional; `None` means "no filter applies" (the common case).
+ * 
+ *  Serde `rename_all = "camelCase"` matches the Tauri command-arg
+ *  convention (camelCase keys on the IPC boundary), so the hand-written
+ *  TS wrapper in `src/lib/tauri.ts` can build the request with camelCase
+ *  keys without an extra translation layer.
+ */
+export type ListBlocksRequest = {
+	/**  Restrict to children of this parent block. */
+	parentId: BlockId | null,
+	/**  Restrict to a single `block_type`. */
+	blockType: string | null,
+	/**  Restrict to blocks carrying this tag. */
+	tagId: string | null,
+	/**  Single-date agenda lookup (`YYYY-MM-DD`). */
+	date: string | null,
+	/**  Date-range agenda lookup (inclusive on both ends). */
+	dateRange: DateRange | null,
+	/**  Optional agenda source filter (`due_date` / `scheduled_date`). */
+	source: string | null,
+	/**  Opaque pagination cursor. */
+	cursor: string | null,
+	/**  Page size. */
+	limit: number | null,
 };
 
 /**  Filter / sort bundle for [`list_pages_with_metadata`]. */
@@ -2801,6 +2732,76 @@ export type PropertyValue = { type: "Text"; value: string } |
 export type PurgeResponse = {
 	block_id: string,
 	purged_count: number,
+};
+
+/**
+ *  Per-command IPC request DTO for the [`query_by_property`] Tauri command
+ *  (#2277 item 7).
+ * 
+ *  This is the intentional, semantic IPC boundary type for
+ *  `query_by_property`: one explicit `*Request` DTO per command as the IPC
+ *  boundary type — the grouping reflects the request, NOT the
+ *  `tauri-specta` 10-arg limit. A new `query_by_property` filter is added
+ *  as a field here, never as a fresh top-level command argument. This
+ *  replaces the older arg-count-driven `ExtraQueryFilters` overflow
+ *  bundle, which split params arbitrarily (some top-level, some bundled)
+ *  purely to stay under the transport arg cap; all query params now live
+ *  together in this one request.
+ * 
+ *  The orthogonal space-scoping concern (`SpaceScope`) is deliberately
+ *  kept as a separate command argument, not folded in here.
+ * 
+ *  Each field is threaded into `query_by_property_inner` as an individual
+ *  parameter — the request shape is the IPC boundary concern only.
+ * 
+ *  Serde `rename_all = "camelCase"` matches the Tauri command-arg
+ *  convention (camelCase keys on the IPC boundary), so the hand-written
+ *  TS wrapper in `src/lib/tauri.ts` can build the request with camelCase
+ *  keys without an extra translation layer.
+ */
+export type QueryByPropertyRequest = {
+	/**  Property key to match (required). */
+	key: string,
+	/**  Match on `value_text` equality/comparison. */
+	valueText: string | null,
+	/**  Match on `value_date` equality/comparison. */
+	valueDate: string | null,
+	/**  Comparison operator (`eq` / `neq` / `lt` / `gt` / `lte` / `gte`). */
+	operator: string | null,
+	/**  Opaque pagination cursor. */
+	cursor: string | null,
+	/**  Page size. */
+	limit: number | null,
+	/**
+	 *  Exclude rows whose `parent_id` matches.
+	 *  `IS NOT` semantics so NULL parents are kept.
+	 */
+	excludeParentId: string | null,
+	/**
+	 *  Drop rows whose content is NULL, empty, or
+	 *  whitespace-only (matches FE `!b.content?.trim()`).
+	 */
+	contentNonEmpty: boolean | null,
+	/**  Push `block_type = ?` into SQL. */
+	blockType: string | null,
+	/**
+	 *  Push `value_text IN (...)` into SQL via
+	 *  `json_each`. Mutually exclusive with `value_text`.
+	 */
+	valueTextIn: string[] | null,
+	/**
+	 *  Push `value_date >= from AND value_date < to`
+	 *  into SQL (half-open `[from, to)` range).
+	 */
+	valueDateRange: [string, string] | null,
+	/**
+	 *  #738 sub-2 — push `b.todo_state NOT IN (...)` into SQL so the
+	 *  DuePanel's overdue query can exclude completed (`DONE`) tasks at
+	 *  the database layer instead of post-filtering a capped page. NULL
+	 *  `todo_state` rows are retained (only the listed states are
+	 *  dropped). `None` / empty preserves the unfiltered behaviour.
+	 */
+	excludeTodoStates: string[] | null,
 };
 
 /**

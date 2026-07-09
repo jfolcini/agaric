@@ -1991,7 +1991,7 @@ describe('list_blocks with agendaDate', () => {
   it('returns blocks due on the given date', () => {
     const today = new Date()
     const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-    const result = invoke('list_blocks', { agendaDate: todayStr }) as {
+    const result = invoke('list_blocks', { request: { date: todayStr } }) as {
       items: Record<string, unknown>[]
     }
     // Should include blocks with due_date=today OR scheduled_date=today
@@ -2005,8 +2005,7 @@ describe('list_blocks with agendaDate', () => {
     const today = new Date()
     const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
     const result = invoke('list_blocks', {
-      agendaDate: todayStr,
-      agendaSource: 'column:due_date',
+      request: { date: todayStr, source: 'column:due_date' },
     }) as { items: Record<string, unknown>[] }
     for (const item of result.items) {
       expect(item['due_date']).toBe(todayStr)
@@ -2017,8 +2016,7 @@ describe('list_blocks with agendaDate', () => {
     const today = new Date()
     const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
     const result = invoke('list_blocks', {
-      agendaDate: todayStr,
-      agendaSource: 'column:scheduled_date',
+      request: { date: todayStr, source: 'column:scheduled_date' },
     }) as { items: Record<string, unknown>[] }
     for (const item of result.items) {
       expect(item['scheduled_date']).toBe(todayStr)
@@ -2029,7 +2027,7 @@ describe('list_blocks with agendaDate', () => {
   })
 
   it('returns empty for a date with no items', () => {
-    const result = invoke('list_blocks', { agendaDate: '1900-01-01' }) as {
+    const result = invoke('list_blocks', { request: { date: '1900-01-01' } }) as {
       items: Record<string, unknown>[]
     }
     expect(result.items).toHaveLength(0)

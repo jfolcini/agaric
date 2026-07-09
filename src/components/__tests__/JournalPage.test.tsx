@@ -266,7 +266,8 @@ function renderJournal(props?: { onNavigateToPage?: (pageId: string, title?: str
 
 /** `list_blocks` response when loading the template page's children. */
 function templateListBlocksResponse(args: unknown): unknown {
-  const params = args as { parentId?: string } | undefined
+  // #2277 item 7 — list_blocks params now nest under `request`.
+  const params = (args as { request?: { parentId?: string } } | undefined)?.request
   if (params?.parentId === 'TMPL-PAGE') {
     return {
       items: [
@@ -325,7 +326,8 @@ function templateLoadPageSubtreeResponse(args: unknown): unknown {
 
 /** `query_by_property` response that advertises the journal template page. */
 function templateQueryByPropertyResponse(args: unknown): unknown {
-  const params = args as { key: string }
+  // #2277 item 7 — query_by_property params now nest under `request`.
+  const params = (args as { request: { key: string } }).request
   if (params.key === 'journal-template') {
     return {
       items: [
@@ -2590,9 +2592,12 @@ describe('JournalPage', () => {
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith(
           'query_by_property',
+          // #2277 item 7 — query params nest under `request`.
           expect.objectContaining({
-            key: 'journal-template',
-            valueText: 'true',
+            request: expect.objectContaining({
+              key: 'journal-template',
+              valueText: 'true',
+            }),
           }),
         )
       })
@@ -2798,9 +2803,12 @@ describe('JournalPage', () => {
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith(
           'query_by_property',
+          // #2277 item 7 — query params nest under `request`.
           expect.objectContaining({
-            key: 'journal-template',
-            valueText: 'true',
+            request: expect.objectContaining({
+              key: 'journal-template',
+              valueText: 'true',
+            }),
           }),
         )
       })
@@ -3316,7 +3324,7 @@ describe('JournalPage', () => {
 
   describe('journal template mock helpers', () => {
     it('templateListBlocksResponse: returns the template children for TMPL-PAGE', () => {
-      const result = templateListBlocksResponse({ parentId: 'TMPL-PAGE' }) as {
+      const result = templateListBlocksResponse({ request: { parentId: 'TMPL-PAGE' } }) as {
         items: Array<{ id: string; content: string }>
         has_more: boolean
       }
@@ -3329,12 +3337,12 @@ describe('JournalPage', () => {
     })
 
     it('templateListBlocksResponse: returns emptyPage for any other parentId', () => {
-      expect(templateListBlocksResponse({ parentId: 'OTHER-PAGE' })).toBe(emptyPage)
-      expect(templateListBlocksResponse(undefined)).toBe(emptyPage)
+      expect(templateListBlocksResponse({ request: { parentId: 'OTHER-PAGE' } })).toBe(emptyPage)
+      expect(templateListBlocksResponse({ request: {} })).toBe(emptyPage)
     })
 
     it('templateQueryByPropertyResponse: returns the template page for `journal-template` key', () => {
-      const result = templateQueryByPropertyResponse({ key: 'journal-template' }) as {
+      const result = templateQueryByPropertyResponse({ request: { key: 'journal-template' } }) as {
         items: Array<{ id: string; content: string }>
       }
       expect(result.items).toHaveLength(1)
@@ -3343,7 +3351,9 @@ describe('JournalPage', () => {
     })
 
     it('templateQueryByPropertyResponse: returns emptyPage for any other key', () => {
-      expect(templateQueryByPropertyResponse({ key: 'something-else' })).toBe(emptyPage)
+      expect(templateQueryByPropertyResponse({ request: { key: 'something-else' } })).toBe(
+        emptyPage,
+      )
     })
 
     it('templateCreateBlockResponse: returns a daily page when blockType is `page`', () => {
@@ -3373,12 +3383,14 @@ describe('JournalPage', () => {
 
     it('makeJournalTemplateMockImpl: dispatches each supported command', async () => {
       const impl = makeJournalTemplateMockImpl('2024-01-15')
-      const listResult = (await impl('list_blocks', { parentId: 'TMPL-PAGE' })) as {
+      const listResult = (await impl('list_blocks', { request: { parentId: 'TMPL-PAGE' } })) as {
         items: Array<unknown>
       }
       expect(listResult.items).toHaveLength(2)
 
-      const queryResult = (await impl('query_by_property', { key: 'journal-template' })) as {
+      const queryResult = (await impl('query_by_property', {
+        request: { key: 'journal-template' },
+      })) as {
         items: Array<unknown>
       }
       expect(queryResult.items).toHaveLength(1)

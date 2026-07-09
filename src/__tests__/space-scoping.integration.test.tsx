@@ -136,7 +136,9 @@ describe(' Phase 4 — space scoping integration', () => {
     const templateQuery = mockedInvoke.mock.calls.find((c) => {
       if (c[0] !== 'query_by_property') return false
       const args = c[1] as Record<string, unknown>
-      return args['key'] === 'template'
+      // #2277 item 7 — query params nest under `request`; `scope` stays separate.
+      const request = args['request'] as Record<string, unknown> | undefined
+      return request?.['key'] === 'template'
     })
     expect(templateQuery).toBeDefined()
     const args = templateQuery?.[1] as Record<string, unknown>

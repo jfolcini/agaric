@@ -96,12 +96,16 @@ describe('useBlockTags allTags', () => {
     ])
 
     expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', {
-      parentId: null,
-      blockType: 'tag',
-      tagId: null,
-      agenda: null,
-      cursor: null,
-      limit: null,
+      request: {
+        parentId: null,
+        blockType: 'tag',
+        tagId: null,
+        date: null,
+        dateRange: null,
+        source: null,
+        cursor: null,
+        limit: null,
+      },
       // #2248 — `useBlockTags` threads `currentSpaceId` through
       // `requireActiveScope` into an active SpaceScope.
       scope: { kind: 'active', space_id: 'SPACE_1' },

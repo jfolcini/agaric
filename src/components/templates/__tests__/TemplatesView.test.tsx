@@ -119,7 +119,7 @@ describe('TemplatesView', () => {
     // `first_child_for_blocks` batch IPC, not per-template `list_blocks`.
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'query_by_property') {
-        const params = args as { key: string }
+        const params = (args as { request: { key: string } }).request
         if (params.key === 'template') {
           return {
             items: [makeTemplate('T1', 'Meeting Notes'), makeTemplate('T2', 'Weekly Review')],
@@ -162,7 +162,7 @@ describe('TemplatesView', () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'query_by_property') {
-        const params = args as { key: string }
+        const params = (args as { request: { key: string } }).request
         if (params.key === 'template') {
           return {
             items: [makeTemplate('T1', 'Meeting Notes'), makeTemplate('T2', 'Weekly Review')],
@@ -200,7 +200,7 @@ describe('TemplatesView', () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'query_by_property') {
-        const params = args as { key: string }
+        const params = (args as { request: { key: string } }).request
         if (params.key === 'template') {
           return {
             items: [
@@ -233,7 +233,7 @@ describe('TemplatesView', () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'query_by_property') {
-        const params = args as { key: string }
+        const params = (args as { request: { key: string } }).request
         if (params.key === 'template') {
           return {
             items: [makeTemplate('T1', 'Meeting Notes')],
@@ -266,7 +266,7 @@ describe('TemplatesView', () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'query_by_property') {
-        const params = args as { key: string }
+        const params = (args as { request: { key: string } }).request
         if (params.key === 'template') {
           return {
             items: [makeTemplate('T1', 'Meeting Notes')],
@@ -322,7 +322,7 @@ describe('TemplatesView', () => {
   it('remove button is always visible (no opacity-0 / group-hover gating)', async () => {
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'query_by_property') {
-        const params = args as { key: string }
+        const params = (args as { request: { key: string } }).request
         if (params.key === 'template') {
           return {
             items: [makeTemplate('T1', 'Meeting Notes')],
@@ -353,7 +353,7 @@ describe('TemplatesView', () => {
     const setupSingleTemplate = () => {
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
         if (cmd === 'query_by_property') {
-          const params = args as { key: string }
+          const params = (args as { request: { key: string } }).request
           if (params.key === 'template') {
             return {
               items: [makeTemplate('T1', 'Meeting Notes')],
@@ -451,7 +451,7 @@ describe('TemplatesView', () => {
   it('shows journal template badge', async () => {
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'query_by_property') {
-        const params = args as { key: string }
+        const params = (args as { request: { key: string } }).request
         if (params.key === 'template') {
           return {
             items: [makeTemplate('T1', 'Meeting Notes'), makeTemplate('T2', 'Daily Journal')],
@@ -494,7 +494,7 @@ describe('TemplatesView', () => {
     let journalLimit: unknown = null
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'query_by_property') {
-        const params = args as { key: string; limit?: unknown }
+        const params = (args as { request: { key: string; limit?: unknown } }).request
         if (params.key === 'template') {
           return {
             items: [makeTemplate('T1', 'Meeting Notes')],
@@ -525,7 +525,7 @@ describe('TemplatesView', () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'query_by_property') {
-        const params = args as { key: string }
+        const params = (args as { request: { key: string } }).request
         if (params.key === 'template') {
           return {
             items: [makeTemplate('T1', 'Daily Journal')],
@@ -571,7 +571,7 @@ describe('TemplatesView', () => {
     // T1 → "Page template", T2 → "Journal template" (T2 is NOT a page badge).
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'query_by_property') {
-        const params = args as { key: string }
+        const params = (args as { request: { key: string } }).request
         if (params.key === 'template') {
           return {
             items: [makeTemplate('T1', 'Meeting Notes'), makeTemplate('T2', 'Daily Journal')],
@@ -608,7 +608,7 @@ describe('TemplatesView', () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'query_by_property') {
-        const params = args as { key: string }
+        const params = (args as { request: { key: string } }).request
         if (params.key === 'template') {
           return {
             items: [makeTemplate('T1', 'Meeting Notes')],
@@ -649,7 +649,7 @@ describe('TemplatesView', () => {
   it('has no a11y violations with templates loaded', async () => {
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'query_by_property') {
-        const params = args as { key: string }
+        const params = (args as { request: { key: string } }).request
         if (params.key === 'template') {
           return {
             items: [makeTemplate('T1', 'Meeting Notes')],
@@ -686,7 +686,7 @@ describe('TemplatesView', () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'query_by_property') {
-        const params = args as { key: string }
+        const params = (args as { request: { key: string } }).request
         if (params.key === 'template') {
           return {
             items: [
@@ -735,7 +735,7 @@ describe('TemplatesView', () => {
     const mockedToastError = vi.mocked(toast.error)
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'query_by_property') {
-        const params = args as { key: string }
+        const params = (args as { request: { key: string } }).request
         if (params.key === 'template') {
           return {
             items: [makeTemplate('T1', 'Meeting Notes')],

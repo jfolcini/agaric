@@ -96,11 +96,13 @@ describe('executeAgendaFilters', () => {
 
       mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
         const a = args as Record<string, unknown>
+        // #2277 item 7 — query_by_property params now nest under `request`.
+        const req = (a['request'] as Record<string, unknown>) ?? a
         if (cmd === 'list_undated_tasks') return emptyPage
-        if (a['key'] === 'due_date') {
+        if (req['key'] === 'due_date') {
           return { items: [dueBlock], next_cursor: null, has_more: false }
         }
-        if (a['key'] === 'scheduled_date') {
+        if (req['key'] === 'scheduled_date') {
           return { items: [schedBlock], next_cursor: null, has_more: false }
         }
         return emptyPage
@@ -156,13 +158,14 @@ describe('executeAgendaFilters', () => {
 
       mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
         const a = args as Record<string, unknown>
+        const req = (a['request'] as Record<string, unknown>) ?? a
         if (cmd === 'list_undated_tasks') {
           return { items: [undatedBlock], next_cursor: null, has_more: false }
         }
-        if (a['key'] === 'due_date') {
+        if (req['key'] === 'due_date') {
           return { items: [dueBlock], next_cursor: null, has_more: false }
         }
-        if (a['key'] === 'scheduled_date') {
+        if (req['key'] === 'scheduled_date') {
           return emptyPage
         }
         return emptyPage
@@ -207,14 +210,15 @@ describe('executeAgendaFilters', () => {
 
       mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
         const a = args as Record<string, unknown>
+        const req = (a['request'] as Record<string, unknown>) ?? a
         if (cmd === 'list_undated_tasks') return emptyPage
-        if (a['key'] === 'due_date') {
-          if (a['cursor'] === 'DUE_CURSOR_2') {
+        if (req['key'] === 'due_date') {
+          if (req['cursor'] === 'DUE_CURSOR_2') {
             return { items: [duePage2], next_cursor: null, has_more: false }
           }
           return { items: [duePage1], next_cursor: 'DUE_CURSOR_2', has_more: true }
         }
-        if (a['key'] === 'scheduled_date') {
+        if (req['key'] === 'scheduled_date') {
           return { items: [schedPage1], next_cursor: null, has_more: false }
         }
         return emptyPage
@@ -233,8 +237,10 @@ describe('executeAgendaFilters', () => {
       const calls = mockedInvoke.mock.calls as Array<[string, Record<string, unknown>]>
       expect(calls).toHaveLength(1)
       expect(calls[0]?.[0]).toBe('query_by_property')
-      expect(calls[0]?.[1]?.['key']).toBe('due_date')
-      expect(calls[0]?.[1]?.['cursor']).toBe('DUE_CURSOR_2')
+      // #2277 item 7 — query_by_property params now nest under `request`.
+      const reqArg = calls[0]?.[1]?.['request'] as Record<string, unknown>
+      expect(reqArg?.['key']).toBe('due_date')
+      expect(reqArg?.['cursor']).toBe('DUE_CURSOR_2')
 
       expect(page2.blocks.map((b) => b.id)).toEqual(['due-2'])
       expect(page2.hasMore).toBe(false)

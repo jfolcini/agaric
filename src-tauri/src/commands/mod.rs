@@ -468,55 +468,89 @@ pub struct DateRange {
     pub end: String,
 }
 
-/// Bundled agenda filter for the [`list_blocks`] Tauri command.
+/// Per-command IPC request DTO for the [`list_blocks`] Tauri command
+/// (#2277 item 7).
 ///
-/// Exists purely to keep `list_blocks`'s argument count under the
-/// `tauri-specta` 10-arg limit after Phase 2 added `space_id`.
-/// The three sub-fields were previously top-level parameters and are
-/// still threaded into `list_blocks_inner` as individual parameters —
-/// the bundling is a transport-layer concern. `None` means "no agenda
-/// filter applies" (the common case), and each sub-field remains
-/// optional inside the struct so callers can still specify a single
-/// date without the range, etc.
+/// This is the intentional, semantic IPC boundary type for `list_blocks`:
+/// one explicit `*Request` DTO per command as the IPC boundary type — the
+/// grouping reflects the request, NOT the `tauri-specta` 10-arg limit. A
+/// new `list_blocks` filter is added as a field here, never as a fresh
+/// top-level command argument. This replaces the older arg-count-driven
+/// `AgendaQuery` overflow bundle, whose only job was to keep the command
+/// under the transport arg cap; the three agenda knobs (`date`,
+/// `date_range`, `source`) now flatten directly into this request instead
+/// of nesting one struct inside another.
+///
+/// The orthogonal space-scoping concern (`SpaceScope`) is deliberately
+/// kept as a separate command argument, not folded in here.
+///
+/// Each field is threaded into `list_blocks_inner` as an individual
+/// parameter — the request shape is the IPC boundary concern only. Every
+/// filter is optional; `None` means "no filter applies" (the common case).
 ///
 /// Serde `rename_all = "camelCase"` matches the Tauri command-arg
 /// convention (camelCase keys on the IPC boundary), so the hand-written
-/// TS wrapper in `src/lib/tauri.ts` can pass `{ dateRange, source, date }`
-/// without an extra translation layer.
-#[derive(Debug, Clone, serde::Deserialize, Serialize, Type)]
+/// TS wrapper in `src/lib/tauri.ts` can build the request with camelCase
+/// keys without an extra translation layer.
+#[derive(Debug, Clone, Default, serde::Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
-pub struct AgendaQuery {
+pub struct ListBlocksRequest {
+    /// Restrict to children of this parent block.
+    pub parent_id: Option<BlockId>,
+    /// Restrict to a single `block_type`.
+    pub block_type: Option<String>,
+    /// Restrict to blocks carrying this tag.
+    pub tag_id: Option<String>,
     /// Single-date agenda lookup (`YYYY-MM-DD`).
     pub date: Option<String>,
     /// Date-range agenda lookup (inclusive on both ends).
     pub date_range: Option<DateRange>,
-    /// Optional source filter (`due_date` / `scheduled_date`).
+    /// Optional agenda source filter (`due_date` / `scheduled_date`).
     pub source: Option<String>,
+    /// Opaque pagination cursor.
+    pub cursor: Option<String>,
+    /// Page size.
+    pub limit: Option<i64>,
 }
 
-/// Bundled extra filters for the [`query_by_property`] Tauri command.
+/// Per-command IPC request DTO for the [`query_by_property`] Tauri command
+/// (#2277 item 7).
 ///
-/// Exists purely to keep `query_by_property`'s argument count under
-/// The `tauri-specta` 10-arg limit. added
-/// `exclude_parent_id` / `content_non_empty` (pushing this command
-/// To 9 IPC args incl. `pool`); adds another three
-/// (`block_type`, `value_text_in`, `value_date_range`). Bundling all
-/// five into one struct keeps the IPC arg count at 8.
+/// This is the intentional, semantic IPC boundary type for
+/// `query_by_property`: one explicit `*Request` DTO per command as the IPC
+/// boundary type — the grouping reflects the request, NOT the
+/// `tauri-specta` 10-arg limit. A new `query_by_property` filter is added
+/// as a field here, never as a fresh top-level command argument. This
+/// replaces the older arg-count-driven `ExtraQueryFilters` overflow
+/// bundle, which split params arbitrarily (some top-level, some bundled)
+/// purely to stay under the transport arg cap; all query params now live
+/// together in this one request.
 ///
-/// The five sub-fields are still threaded into
-/// `query_by_property_inner` as individual parameters — bundling is a
-/// transport-layer concern. `None` means "no extra filter applies"
-/// (the common case); each sub-field remains optional inside the
-/// struct so callers can specify just one. The hand-written TS
-/// wrapper in `src/lib/tauri.ts` keeps the flat public API and
-/// marshals into this struct only at the IPC boundary, mirroring the
-/// [`AgendaQuery`] precedent on `list_blocks`.
+/// The orthogonal space-scoping concern (`SpaceScope`) is deliberately
+/// kept as a separate command argument, not folded in here.
+///
+/// Each field is threaded into `query_by_property_inner` as an individual
+/// parameter — the request shape is the IPC boundary concern only.
 ///
 /// Serde `rename_all = "camelCase"` matches the Tauri command-arg
-/// convention.
+/// convention (camelCase keys on the IPC boundary), so the hand-written
+/// TS wrapper in `src/lib/tauri.ts` can build the request with camelCase
+/// keys without an extra translation layer.
 #[derive(Debug, Clone, Default, serde::Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
-pub struct ExtraQueryFilters {
+pub struct QueryByPropertyRequest {
+    /// Property key to match (required).
+    pub key: String,
+    /// Match on `value_text` equality/comparison.
+    pub value_text: Option<String>,
+    /// Match on `value_date` equality/comparison.
+    pub value_date: Option<String>,
+    /// Comparison operator (`eq` / `neq` / `lt` / `gt` / `lte` / `gte`).
+    pub operator: Option<String>,
+    /// Opaque pagination cursor.
+    pub cursor: Option<String>,
+    /// Page size.
+    pub limit: Option<i64>,
     /// Exclude rows whose `parent_id` matches.
     /// `IS NOT` semantics so NULL parents are kept.
     pub exclude_parent_id: Option<String>,
@@ -526,8 +560,7 @@ pub struct ExtraQueryFilters {
     /// Push `block_type = ?` into SQL.
     pub block_type: Option<String>,
     /// Push `value_text IN (...)` into SQL via
-    /// `json_each`. Mutually exclusive with `value_text` on
-    /// `query_by_property`.
+    /// `json_each`. Mutually exclusive with `value_text`.
     pub value_text_in: Option<Vec<String>>,
     /// Push `value_date >= from AND value_date < to`
     /// into SQL (half-open `[from, to)` range).

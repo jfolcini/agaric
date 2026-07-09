@@ -36,16 +36,15 @@ describe('loadTemplatePages', () => {
 
     // `blockType: 'page'` is pushed into SQL via
     // Tier 3.4's `query_by_property` push-down, so the IPC carries it
-    // in the `extraFilters` struct.
+    // as a field of the single `request` DTO (#2277 item 7).
     expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
-      key: 'template',
-      valueText: 'true',
-      valueDate: null,
-      operator: null,
-      cursor: null,
-      limit: 100,
-      scope: { kind: 'global' },
-      extraFilters: {
+      request: {
+        key: 'template',
+        valueText: 'true',
+        valueDate: null,
+        operator: null,
+        cursor: null,
+        limit: 100,
         excludeParentId: null,
         contentNonEmpty: null,
         blockType: 'page',
@@ -53,6 +52,7 @@ describe('loadTemplatePages', () => {
         valueDateRange: null,
         excludeTodoStates: null,
       },
+      scope: { kind: 'global' },
     })
     expect(result).toHaveLength(2)
     expect(result[0]?.id).toBe('T1')
@@ -344,8 +344,10 @@ describe('loadJournalTemplate', () => {
     expect(mockedInvoke).toHaveBeenCalledWith(
       'query_by_property',
       expect.objectContaining({
-        key: 'journal-template',
-        valueText: 'true',
+        request: expect.objectContaining({
+          key: 'journal-template',
+          valueText: 'true',
+        }),
       }),
     )
   })

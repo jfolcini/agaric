@@ -52,7 +52,7 @@ pub struct ListBlocksFilter {
 }
 ```
 
-Precedents: `SearchFilter`, `ExtraQueryFilters`, `AgendaQuery`, `ListPagesWithMetadataFilter`. See `src-tauri/src/commands/mod.rs` for the established naming.
+Precedents: `SearchFilter`, `ListBlocksRequest`, `QueryByPropertyRequest`, `ListPagesWithMetadataFilter`. See `src-tauri/src/commands/mod.rs` for the established naming.
 
 ## `CommandTx` for atomic multi-row writes
 

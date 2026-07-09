@@ -585,7 +585,7 @@ pub async fn get_status(
 /// TS wrapper in `src/lib/tauri.ts` keeps the public API at
 /// `searchBlocks({ parentId, tagIds, spaceId, ... })` and marshals
 /// into the struct only at the IPC boundary, mirroring the
-/// [`ExtraQueryFilters`] precedent on [`query_by_property`].
+/// [`QueryByPropertyRequest`] precedent on [`query_by_property`].
 #[tauri::command]
 #[specta::specta]
 pub async fn search_blocks(
@@ -925,46 +925,42 @@ mod join_error_tests {
 
 /// Tauri command: query blocks by property key/value. Delegates to [`query_by_property_inner`].
 ///
-/// All push-down filters (`exclude_parent_id`, `content_non_empty`,
-/// `block_type`, `value_text_in`, `value_date_range`) are bundled
-/// into [`ExtraQueryFilters`] to keep this wrapper under the
-/// `tauri-specta` 10-arg limit. The hand-written TS wrapper in
-/// `src/lib/tauri.ts` keeps the flat public API at
-/// `queryByProperty({ blockType, valueTextIn, ... })` and marshals
-/// into the struct only at the IPC boundary, mirroring the
-/// [`AgendaQuery`] precedent on `list_blocks`.
+/// Takes a single [`QueryByPropertyRequest`] — the intentional per-command
+/// IPC request DTO (#2277 item 7). Every `query_by_property` query param
+/// (the property `key`/`value`/`operator`, pagination, and all push-down
+/// filters: `exclude_parent_id`, `content_non_empty`, `block_type`,
+/// `value_text_in`, `value_date_range`, `exclude_todo_states`) lives
+/// together as fields of the request; the grouping reflects the request,
+/// not the `tauri-specta` 10-arg transport limit, and a new filter is
+/// added as a field there. The hand-written TS wrapper in
+/// `src/lib/tauri.ts` keeps its flat public API at
+/// `queryByProperty({ blockType, valueTextIn, ... })` and builds the
+/// request only at the IPC boundary.
+///
+/// The orthogonal [`SpaceScope`] stays a separate argument rather than a
+/// request field.
 #[tauri::command]
 #[specta::specta]
-#[allow(clippy::too_many_arguments)]
 pub async fn query_by_property(
     pool: State<'_, ReadPool>,
-    key: String,
-    value_text: Option<String>,
-    value_date: Option<String>,
-    operator: Option<String>,
-    cursor: Option<String>,
-    limit: Option<i64>,
+    request: QueryByPropertyRequest,
     scope: SpaceScope,
-    extra_filters: Option<ExtraQueryFilters>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    let (
+    let QueryByPropertyRequest {
+        key,
+        value_text,
+        value_date,
+        operator,
+        cursor,
+        limit,
         exclude_parent_id,
         content_non_empty,
         block_type,
         value_text_in,
         value_date_range,
         exclude_todo_states,
-    ) = match extra_filters {
-        Some(f) => (
-            f.exclude_parent_id,
-            f.content_non_empty.unwrap_or(false),
-            f.block_type,
-            f.value_text_in,
-            f.value_date_range,
-            f.exclude_todo_states,
-        ),
-        None => (None, false, None, None, None, None),
-    };
+    } = request;
+    let content_non_empty = content_non_empty.unwrap_or(false);
     query_by_property_inner(
         &pool.0,
         key,

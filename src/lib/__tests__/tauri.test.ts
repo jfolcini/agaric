@@ -355,13 +355,19 @@ describe('listBlocks', () => {
     const result = await listBlocks({ spaceId: 'TEST_SPACE_01' })
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
+    // #2277 item 7 — all query params marshal into a single `request` DTO;
+    // `scope` stays a separate arg.
     expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', {
-      parentId: null,
-      blockType: null,
-      tagId: null,
-      agenda: null,
-      cursor: null,
-      limit: null,
+      request: {
+        parentId: null,
+        blockType: null,
+        tagId: null,
+        date: null,
+        dateRange: null,
+        source: null,
+        cursor: null,
+        limit: null,
+      },
       // #2248 — spaceId is wrapped into an active SpaceScope via requireActiveScope.
       scope: { kind: 'active', space_id: 'TEST_SPACE_01' },
     })
@@ -397,16 +403,16 @@ describe('listBlocks', () => {
     })
 
     expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', {
-      parentId: 'PARENT01',
-      blockType: 'page',
-      tagId: 'TAG01',
-      agenda: {
+      request: {
+        parentId: 'PARENT01',
+        blockType: 'page',
+        tagId: 'TAG01',
         date: '2025-01-15',
         dateRange: null,
         source: null,
+        cursor: 'cursor123',
+        limit: 25,
       },
-      cursor: 'cursor123',
-      limit: 25,
       scope: { kind: 'active', space_id: 'TEST_SPACE_01' },
     })
     expect(result).toEqual(pageResp)
@@ -418,17 +424,21 @@ describe('listBlocks', () => {
     await listBlocks({ blockType: 'page', spaceId: 'TEST_SPACE_01' })
 
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    // #2277 item 7 — query params live in the `request` DTO.
+    const request = args['request'] as Record<string, unknown>
     // Tauri 2 requires null for Option<T>, not undefined
-    expect(args['parentId']).toBeNull()
-    expect(args['tagId']).toBeNull()
-    // agenda params bundle to null on the IPC boundary when none are set
-    expect(args['agenda']).toBeNull()
-    expect(args['cursor']).toBeNull()
-    expect(args['limit']).toBeNull()
+    expect(request['parentId']).toBeNull()
+    expect(request['tagId']).toBeNull()
+    // agenda params default to null on the IPC boundary when none are set
+    expect(request['date']).toBeNull()
+    expect(request['dateRange']).toBeNull()
+    expect(request['source']).toBeNull()
+    expect(request['cursor']).toBeNull()
+    expect(request['limit']).toBeNull()
     // #2248 — `spaceId` is wrapped into an active SpaceScope.
     expect(args['scope']).toEqual({ kind: 'active', space_id: 'TEST_SPACE_01' })
     // blockType should be the value we passed
-    expect(args['blockType']).toBe('page')
+    expect(request['blockType']).toBe('page')
   })
 
   it('wraps spaceId into an active SpaceScope on the wire (#2248)', async () => {
@@ -1442,19 +1452,26 @@ describe('queryByProperty', () => {
     })
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
-    // Push-down knobs are bundled into
-    // `extraFilters` on the IPC boundary; with no extras supplied the
-    // wrapper sends `null` so the backend's `Option<ExtraQueryFilters>`
-    // short-circuits.
+    // #2277 item 7 — all query params (key/value/operator, pagination, and
+    // the push-down knobs) marshal into a single `request` DTO; unset
+    // push-down knobs default to null inside the request. `scope` stays a
+    // separate arg.
     expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
-      key: 'status',
-      valueText: 'done',
-      valueDate: null,
-      operator: null,
-      cursor: 'cur1',
-      limit: 10,
+      request: {
+        key: 'status',
+        valueText: 'done',
+        valueDate: null,
+        operator: null,
+        cursor: 'cur1',
+        limit: 10,
+        excludeParentId: null,
+        contentNonEmpty: null,
+        blockType: null,
+        valueTextIn: null,
+        valueDateRange: null,
+        excludeTodoStates: null,
+      },
       scope: { kind: 'global' },
-      extraFilters: null,
     })
     expect(result).toEqual(pageResp)
   })
@@ -1465,14 +1482,21 @@ describe('queryByProperty', () => {
     await queryByProperty({ key: 'status' })
 
     expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
-      key: 'status',
-      valueText: null,
-      valueDate: null,
-      operator: null,
-      cursor: null,
-      limit: null,
+      request: {
+        key: 'status',
+        valueText: null,
+        valueDate: null,
+        operator: null,
+        cursor: null,
+        limit: null,
+        excludeParentId: null,
+        contentNonEmpty: null,
+        blockType: null,
+        valueTextIn: null,
+        valueDateRange: null,
+        excludeTodoStates: null,
+      },
       scope: { kind: 'global' },
-      extraFilters: null,
     })
   })
 
@@ -1483,9 +1507,8 @@ describe('queryByProperty', () => {
     expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
   })
 
-  // Push-down filters reach the binding through
-  // `extraFilters`.
-  it('forwards excludeParentId and contentNonEmpty into extraFilters', async () => {
+  // Push-down filters reach the binding as fields of the `request` DTO.
+  it('forwards excludeParentId and contentNonEmpty into request', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
     await queryByProperty({
       key: 'completed_at',
@@ -1494,17 +1517,17 @@ describe('queryByProperty', () => {
       contentNonEmpty: true,
     })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    const extra = args['extraFilters'] as Record<string, unknown>
-    expect(extra['excludeParentId']).toBe('PAGE_1')
-    expect(extra['contentNonEmpty']).toBe(true)
-    expect(extra['blockType']).toBeNull()
-    expect(extra['valueTextIn']).toBeNull()
-    expect(extra['valueDateRange']).toBeNull()
+    const request = args['request'] as Record<string, unknown>
+    expect(request['excludeParentId']).toBe('PAGE_1')
+    expect(request['contentNonEmpty']).toBe(true)
+    expect(request['blockType']).toBeNull()
+    expect(request['valueTextIn']).toBeNull()
+    expect(request['valueDateRange']).toBeNull()
   })
 
   // Block_type / valueTextIn / valueDateRange
-  // round-trip through the extraFilters bundle.
-  it('forwards blockType / valueTextIn / valueDateRange into extraFilters', async () => {
+  // round-trip through the `request` DTO.
+  it('forwards blockType / valueTextIn / valueDateRange into request', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
     await queryByProperty({
       key: 'status',
@@ -1513,13 +1536,13 @@ describe('queryByProperty', () => {
       valueDateRange: ['2026-01-01', '2026-02-01'],
     })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    const extra = args['extraFilters'] as Record<string, unknown>
-    expect(extra['blockType']).toBe('page')
-    expect(extra['valueTextIn']).toEqual(['TODO', 'DOING'])
-    expect(extra['valueDateRange']).toEqual(['2026-01-01', '2026-02-01'])
-    // Tier 1.5 knobs default-null inside the bundle when not supplied.
-    expect(extra['excludeParentId']).toBeNull()
-    expect(extra['contentNonEmpty']).toBeNull()
+    const request = args['request'] as Record<string, unknown>
+    expect(request['blockType']).toBe('page')
+    expect(request['valueTextIn']).toEqual(['TODO', 'DOING'])
+    expect(request['valueDateRange']).toEqual(['2026-01-01', '2026-02-01'])
+    // Tier 1.5 knobs default-null inside the request when not supplied.
+    expect(request['excludeParentId']).toBeNull()
+    expect(request['contentNonEmpty']).toBeNull()
   })
 })
 
