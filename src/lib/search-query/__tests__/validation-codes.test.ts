@@ -4,7 +4,7 @@
  * Since #2251 the primary cross-language pin is **by construction**: the
  * `ValidationCode` const object is `satisfies`-checked against the
  * specta-generated string-literal union in `bindings.ts`, so a rename/typo
- * on either side fails `tsgo -b` after bindings regeneration (the Rust
+ * on either side fails `tsc -b` after bindings regeneration (the Rust
  * `validation_code_wire_strings_pinned` test pins the same strings against
  * the serde output). The runtime tests below cover what the type system
  * cannot: that the const values round-trip as the union's own literals, and
@@ -24,7 +24,7 @@ describe('ValidationCode (#1061/#2251 shared contract)', () => {
     // variant names). The `satisfies` clause in validation-codes.ts already
     // enforces this at compile time against the generated union; this runtime
     // pin documents the wire strings and guards the vitest path, which does
-    // not gate on tsgo.
+    // not gate on tsc.
     expect(ValidationCode).toEqual({
       InvalidGlob: 'InvalidGlob',
       InvalidRegex: 'InvalidRegex',

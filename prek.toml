@@ -123,16 +123,17 @@ exclude = "(src/lib/bindings\\.ts$|\\.sqlx/|^package(-lock)?\\.json$)"
 pass_filenames = true
 stages = ["pre-commit"]
 
-# TypeScript type checking — tsgo (@typescript/native-preview, the Go port of
-# tsc). ~8x faster than `tsc -b` (≈2.5s vs ≈19.5s cold) and agrees with it on
-# this project under the strict flags. Binary ships prebuilt via platform
-# optionalDependencies, so it resolves under `.npmrc` ignore-scripts=true.
+# TypeScript type checking — TypeScript 7.0's `tsc` IS the native (Go-port)
+# compiler now, graduated from the `@typescript/native-preview` (`tsgo`)
+# preview. Fast native typecheck (~8x faster than the old JS `tsc`). Binary
+# ships prebuilt via platform optionalDependencies, so it resolves under
+# `.npmrc` ignore-scripts=true.
 [[repos]]
 repo = "local"
 [[repos.hooks]]
 id = "tsc"
-name = "typescript check (tsgo)"
-entry = "npx tsgo -b --noEmit"
+name = "typescript check (tsc)"
+entry = "npx tsc -b --noEmit"
 language = "system"
 pass_filenames = false
 types_or = ["ts", "tsx"]

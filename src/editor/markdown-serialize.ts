@@ -792,7 +792,7 @@ function serializeHorizontalRule(_node: HorizontalRuleNode): string {
  *
  * The mapped type keyed by `BlockLevelNode['type']` is exhaustive at compile
  * time: adding a new block node type to the `BlockLevelNode` union turns this
- * object literal into a `tsgo` error (missing property) until a handler is
+ * object literal into a `tsc` error (missing property) until a handler is
  * supplied — so a new block kind can no longer compile while being silently
  * dropped by a switch that forgot it.
  */

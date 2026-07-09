@@ -950,7 +950,7 @@ function fbqInSpace(b: Record<string, unknown>, spaceId: string | null): boolean
 // value the mock must return for that command is therefore `T` (the ok-branch
 // `data`). The types below derive, purely at compile time, the exact snake_case
 // key set the mock must implement plus a structural return contract per command,
-// so `HANDLERS` is type-checked against the REAL command surface by tsgo — not
+// so `HANDLERS` is type-checked against the REAL command surface by tsc — not
 // just the name-only regex parity script (which it complements, not replaces:
 // the script still guards the KNOWN_UNMOCKED allowlist + generated-code drift).
 //
@@ -1014,7 +1014,7 @@ type ReturnContract<T> = [T] extends [PageResponse<unknown>]
  * The exact handler map the mock must implement: one entry per generated
  * command, keyed by its snake_case IPC name, each a handler whose return is
  * checked against {@link ReturnContract}. Applied to `HANDLERS` via `satisfies`
- * so tsgo fails on excess (a), missing (c), or wrong-shape (b) handlers.
+ * so tsc fails on excess (a), missing (c), or wrong-shape (b) handlers.
  */
 type TypedHandlers = {
   [K in keyof typeof commands as SnakeCase<K & string>]: (
@@ -1028,7 +1028,7 @@ type TypedHandlers = {
 // literal's "freshness", degrading `satisfies` to a plain assignability check
 // that silently ignores excess keys and — via the index signature — masks
 // missing ones (only the per-value wrong-shape check would survive). Keeping it
-// fresh is what lets tsgo report excess (b) and missing (c) handlers, not just
+// fresh is what lets tsc report excess (b) and missing (c) handlers, not just
 // wrong-shape (a). The string-indexable `HANDLERS` view is re-exported below;
 // the internal `HANDLERS['…']` sibling lookups reference that annotated view (a
 // forward reference resolved at call time), so this literal has no circular

@@ -81,7 +81,7 @@ if (expected.size === 0) {
 // (#2241) The literal was renamed from `export const HANDLERS` to
 // `const HANDLERS_TYPED = … satisfies TypedHandlers`; the trailing `satisfies`
 // now gives compile-time type linkage to `bindings.ts` (excess / missing /
-// wrong-shape → tsgo error), which this name-only script complements by also
+// wrong-shape → tsc error), which this name-only script complements by also
 // guarding the KNOWN_UNMOCKED allowlist and generated-code parse drift.
 const handlersBlockMatch = handlersSrc.match(
   /const HANDLERS_TYPED\s*=\s*\{([\s\S]*?)\n\}\s*satisfies\s+TypedHandlers/,
