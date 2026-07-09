@@ -1,9 +1,10 @@
 import type React from 'react'
 import { Fragment, useEffect, useState } from 'react'
 
-import type { CodeBlockNode } from '../../../editor/types'
-import { curatedLowlight } from '../../../lib/lowlight-curated'
-import { ScrollArea } from '../../ui/scroll-area'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import type { CodeBlockNode } from '@/editor/types'
+import { curatedLowlight } from '@/lib/lowlight-curated'
+
 import { renderMermaidBlock } from './mermaid'
 
 // `curatedLowlight` shared instance (see `src/lib/lowlight-curated.ts`).

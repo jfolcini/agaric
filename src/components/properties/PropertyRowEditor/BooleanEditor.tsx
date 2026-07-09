@@ -6,8 +6,7 @@
 import { useTranslation } from 'react-i18next'
 
 import { Checkbox } from '@/components/ui/checkbox'
-
-import type { PropertyRow } from '../../../lib/tauri'
+import type { PropertyRow } from '@/lib/tauri'
 
 export interface BooleanEditorProps {
   prop: PropertyRow

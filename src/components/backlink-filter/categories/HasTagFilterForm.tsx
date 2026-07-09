@@ -24,8 +24,8 @@ import { Spinner } from '@/components/ui/spinner'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
+import { listTagsByPrefix } from '@/lib/tauri'
 
-import { listTagsByPrefix } from '../../../lib/tauri'
 import type { FilterFormHandle } from './types'
 
 export interface HasTagFilterFormProps {

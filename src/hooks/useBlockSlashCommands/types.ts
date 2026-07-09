@@ -15,9 +15,9 @@ import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
 import type { StoreApi } from 'zustand'
 
-import type { PickerItem } from '../../editor/SuggestionList'
-import type { RovingEditorHandle } from '../../editor/use-roving-editor'
-import type { PageBlockState } from '../../stores/page-blocks'
+import type { PickerItem } from '@/editor/SuggestionList'
+import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import type { PageBlockState } from '@/stores/page-blocks'
 
 export type DatePickerMode = 'date' | 'due' | 'schedule' | 'repeat-until'
 

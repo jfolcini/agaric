@@ -16,7 +16,8 @@ import type { Editor } from '@tiptap/core'
 import type { PluginKey } from '@tiptap/pm/state'
 import { Suggestion, type SuggestionOptions } from '@tiptap/suggestion'
 
-import { logger } from '../../lib/logger'
+import { logger } from '@/lib/logger'
+
 import { createSuggestionRenderer } from '../suggestion-renderer'
 import type { PickerItem } from '../SuggestionList'
 

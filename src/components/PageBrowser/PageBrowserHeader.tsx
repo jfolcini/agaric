@@ -25,9 +25,8 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-
-import type { DensityMode } from '../../hooks/usePageBrowserDensity'
-import type { SortOption } from '../../hooks/usePageBrowserSort'
+import type { DensityMode } from '@/hooks/usePageBrowserDensity'
+import type { SortOption } from '@/hooks/usePageBrowserSort'
 
 export interface PageBrowserHeaderProps {
   formRef: React.RefObject<HTMLFormElement | null>

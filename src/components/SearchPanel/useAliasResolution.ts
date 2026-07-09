@@ -14,10 +14,10 @@
 
 import { useEffect, useState } from 'react'
 
-import { isNotFound } from '../../lib/app-error'
-import { logger } from '../../lib/logger'
-import type { BlockRow } from '../../lib/tauri'
-import { getBlock, resolvePageByAlias } from '../../lib/tauri'
+import { isNotFound } from '@/lib/app-error'
+import { logger } from '@/lib/logger'
+import type { BlockRow } from '@/lib/tauri'
+import { getBlock, resolvePageByAlias } from '@/lib/tauri'
 
 export interface AliasResolution {
   /**

@@ -6,8 +6,8 @@
  * deterministic and side-effect free.
  */
 
-import type { ExecuteFiltersResult } from '../../lib/agenda-filters'
-import type { BlockRow, ResolvedBlock } from '../../lib/tauri'
+import type { ExecuteFiltersResult } from '@/lib/agenda-filters'
+import type { BlockRow, ResolvedBlock } from '@/lib/tauri'
 
 /** Fallback title used when batch-resolve returns a null title. */
 export const FALLBACK_PAGE_TITLE = 'Untitled'

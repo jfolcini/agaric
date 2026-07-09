@@ -27,8 +27,8 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 
-import { logger } from '../../lib/logger'
-import { listTagsByPrefix, paginationLimit } from '../../lib/tauri'
+import { logger } from '@/lib/logger'
+import { listTagsByPrefix, paginationLimit } from '@/lib/tauri'
 
 export interface TagResolution {
   /** Ids for the names that resolved. One entry per resolved input name. */

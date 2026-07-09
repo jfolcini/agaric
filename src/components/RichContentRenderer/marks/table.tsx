@@ -6,7 +6,8 @@ import type {
   TableHeaderNode,
   TableNode,
   TableRowNode,
-} from '../../../editor/types'
+} from '@/editor/types'
+
 import type { RenderContext } from '../context'
 import { renderInlineContent } from './inline'
 

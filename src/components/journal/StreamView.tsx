@@ -35,9 +35,9 @@ import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { useJournalBlockCreation } from '@/hooks/useJournalBlockCreation'
 import { useJournalDateFormat } from '@/hooks/useJournalDateFormat'
 import { STREAM_BATCH_DAYS, useStreamDates } from '@/hooks/useStreamDates'
+import type { DayEntry } from '@/lib/date-utils'
+import { formatDate, formatJournalTitle } from '@/lib/date-utils'
 
-import type { DayEntry } from '../../lib/date-utils'
-import { formatDate, formatJournalTitle } from '../../lib/date-utils'
 import { DaySection } from './DaySection'
 
 interface StreamViewProps {

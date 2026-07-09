@@ -22,8 +22,9 @@
 import { Extension, InputRule } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 
-import { pushEmojiRecent } from '../../hooks/useEmojiRecents'
-import { isEmojiPickerEnabled } from '../../lib/editor-preferences'
+import { pushEmojiRecent } from '@/hooks/useEmojiRecents'
+import { isEmojiPickerEnabled } from '@/lib/editor-preferences'
+
 import { emojiByShortcode, searchEmoji } from '../emoji-data'
 import type { PickerItem } from '../SuggestionList'
 import { createPickerPlugin } from './picker-plugin'

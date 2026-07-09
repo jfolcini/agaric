@@ -1,7 +1,7 @@
 import type React from 'react'
 import { lazy, Suspense } from 'react'
 
-import type { MathBlockNode, MathInlineNode } from '../../../editor/types'
+import type { MathBlockNode, MathInlineNode } from '@/editor/types'
 
 // Lazy-load KatexMath so KaTeX (+ CSS) stays out of the initial bundle (#750).
 const LazyKatexMath = lazy(() =>

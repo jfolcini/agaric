@@ -1,6 +1,7 @@
 import type React from 'react'
 
-import type { HeadingNode } from '../../../editor/types'
+import type { HeadingNode } from '@/editor/types'
+
 import { HEADING_CLASSES, type RenderContext } from '../context'
 import { renderInlineContent } from './inline'
 

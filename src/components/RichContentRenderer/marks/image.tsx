@@ -1,7 +1,7 @@
 import type React from 'react'
 
-import type { ImageNode } from '../../../editor/types'
-import { GatedImage } from '../../rendering/GatedImage'
+import { GatedImage } from '@/components/rendering/GatedImage'
+import type { ImageNode } from '@/editor/types'
 
 /**
  * Static (read-only) render of a markdown `![alt](url)` image (#1434, #1492).

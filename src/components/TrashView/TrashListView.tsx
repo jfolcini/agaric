@@ -29,9 +29,9 @@ import { ListViewState } from '@/components/common/ListViewState'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import type { RichContentCallbacks } from '@/hooks/useRichContentCallbacks'
+import type { BlockRow } from '@/lib/tauri'
 
-import type { RichContentCallbacks } from '../../hooks/useRichContentCallbacks'
-import type { BlockRow } from '../../lib/tauri'
 import { TrashRowItem } from './TrashRowItem'
 
 // Estimated row height in CSS px. A trash row is a bordered card with

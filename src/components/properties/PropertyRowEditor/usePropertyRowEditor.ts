@@ -14,15 +14,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { useDateInput } from '@/hooks/useDateInput'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { setPriorityLevels } from '@/lib/priority-levels'
+import type { PageHeading, PropertyDefinition, PropertyRow } from '@/lib/tauri'
+import { listAllPagesInSpace, setProperty, updatePropertyDefOptions } from '@/lib/tauri'
+import { useSpaceStore } from '@/stores/space'
 
-import { useDateInput } from '../../../hooks/useDateInput'
-import { setPriorityLevels } from '../../../lib/priority-levels'
-import type { PageHeading, PropertyDefinition, PropertyRow } from '../../../lib/tauri'
-import { listAllPagesInSpace, setProperty, updatePropertyDefOptions } from '../../../lib/tauri'
-import { useSpaceStore } from '../../../stores/space'
 import { parseSelectOptions, readCurrentValue } from './shared'
 
 export interface UsePropertyRowEditorArgs {

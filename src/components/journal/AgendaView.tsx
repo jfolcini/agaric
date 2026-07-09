@@ -12,19 +12,19 @@ import {
 } from '@/components/agenda/AgendaFilterBuilder'
 import { AgendaResults } from '@/components/agenda/AgendaResults'
 import { ViewHeader } from '@/components/layout/ViewHeader'
-import { t } from '@/lib/i18n'
-import { logger } from '@/lib/logger'
-import { notify } from '@/lib/notify'
-
-import { useAgendaPreferences } from '../../hooks/useAgendaPreferences'
+import { useAgendaPreferences } from '@/hooks/useAgendaPreferences'
 import {
   executeAgendaFilters,
   loadMoreAgendaFilters,
   loadMoreUnfilteredAgenda,
-} from '../../lib/agenda-filters'
-import type { BlockRow } from '../../lib/tauri'
-import { batchResolve } from '../../lib/tauri'
-import { useSpaceStore } from '../../stores/space'
+} from '@/lib/agenda-filters'
+import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
+import type { BlockRow } from '@/lib/tauri'
+import { batchResolve } from '@/lib/tauri'
+import { useSpaceStore } from '@/stores/space'
+
 import { appendUniqueBlocks, buildPageTitleMap, processFilterResult } from './AgendaView.helpers'
 
 interface AgendaViewProps {
