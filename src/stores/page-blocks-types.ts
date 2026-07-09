@@ -58,8 +58,12 @@ export interface PageBlockState {
    * Auto-split: given a block ID and markdown with newlines, split into
    * multiple blocks. First line edits the original, subsequent lines
    * create new blocks below.
+   *
+   * Resolves `true` only when the plan fully committed (noop included);
+   * `false` on any failed write — mirroring `edit`'s resolve-false contract
+   * so blur-path callers can gate the crash-recovery draft discard on it.
    */
-  splitBlock: (blockId: string, markdown: string) => Promise<void>
+  splitBlock: (blockId: string, markdown: string) => Promise<boolean>
 
   /**
    * Reorder: move block to a 0-based sibling slot (#400). `newIndex` is an

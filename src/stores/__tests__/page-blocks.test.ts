@@ -1046,6 +1046,81 @@ describe('PageBlockStore', () => {
       expect(blocks[1]?.content).toBe('world')
     })
 
+    // #2451 review — splitBlock's resolution gates the blur path's draft
+    // discard (useEditorBlur forwards it to discardDraft, which keeps the
+    // draft row only when the outcome is exactly `false`). A void/undefined
+    // resolution slipped past that gate and deleted the crash-recovery draft
+    // even when the first-line write failed — the same content-loss class as
+    // the edit path (#2407), on the symmetric split path.
+    describe('splitBlock outcome (draft-discard gate)', () => {
+      it('resolves false when the first-line edit fails', async () => {
+        const block = makeBlock({ id: 'A', position: 0, content: 'original' })
+        store.setState({ blocks: [block] })
+        // edit('A', 'line1') → invoke('edit_block', ...) — rejects; edit()
+        // swallows it and resolves false (the real store contract).
+        mockedInvoke.mockRejectedValueOnce(new Error('edit failed'))
+
+        await expect(store.getState().splitBlock('A', 'line1\nline2')).resolves.toBe(false)
+      })
+
+      it('resolves false when a createBelow fails mid-split', async () => {
+        const block = makeBlock({ id: 'A', position: 0, content: 'original' })
+        store.setState({ blocks: [block] })
+        mockedInvoke.mockResolvedValueOnce({
+          id: 'A',
+          block_type: 'text',
+          content: 'line1',
+          parent_id: null,
+          position: 0,
+          deleted_at: null,
+        })
+        mockedInvoke.mockRejectedValueOnce(new Error('create failed'))
+
+        await expect(store.getState().splitBlock('A', 'line1\nline2')).resolves.toBe(false)
+      })
+
+      it('resolves false when the edit-only plan save fails', async () => {
+        const block = makeBlock({ id: 'A', position: 0, content: 'hello' })
+        store.setState({ blocks: [block] })
+        // 'hello\n' parses to a single paragraph whose serialization ('hello')
+        // differs from the input → plan.kind === 'edit-only'.
+        mockedInvoke.mockRejectedValueOnce(new Error('edit failed'))
+
+        await expect(store.getState().splitBlock('A', 'hello\n')).resolves.toBe(false)
+      })
+
+      it('resolves true on a fully successful split', async () => {
+        const block = makeBlock({ id: 'A', position: 0, content: 'original' })
+        store.setState({ blocks: [block] })
+        mockedInvoke.mockResolvedValueOnce({
+          id: 'A',
+          block_type: 'text',
+          content: 'line1',
+          parent_id: null,
+          position: 0,
+          deleted_at: null,
+        })
+        mockedInvoke.mockResolvedValueOnce({
+          id: 'B',
+          block_type: 'text',
+          content: 'line2',
+          parent_id: null,
+          position: 1,
+          deleted_at: null,
+        })
+
+        await expect(store.getState().splitBlock('A', 'line1\nline2')).resolves.toBe(true)
+      })
+
+      it('resolves true for a noop plan (nothing needed persisting)', async () => {
+        const block = makeBlock({ id: 'A', position: 0, content: 'no newlines' })
+        store.setState({ blocks: [block] })
+
+        await expect(store.getState().splitBlock('A', 'no newlines')).resolves.toBe(true)
+        expect(mockedInvoke).not.toHaveBeenCalled()
+      })
+    })
+
     it('rolls back on createBelow failure during splitBlock', async () => {
       const block = makeBlock({ id: 'A', position: 0, content: 'original' })
       store.setState({ blocks: [block] })

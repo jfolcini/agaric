@@ -305,15 +305,25 @@ export function createReducers({
       }
     },
 
-    splitBlock: async (blockId: string, markdown: string) => {
-      if (splitInProgress.has(blockId)) return
+    // Resolves `true` only when the plan FULLY committed (noop counts — there
+    // was nothing to persist). `false` on any failed write, mirroring edit()'s
+    // resolve-false contract: the blur path forwards this outcome to
+    // `discardDraft`, whose `ok === false` gate keeps the crash-recovery
+    // draft row alive when the typed text did not reach the DB (#2451 review
+    // — a void resolution slipped past that gate and deleted the draft even
+    // when the first-line write failed, the #2407 content-loss class on the
+    // split path).
+    splitBlock: async (blockId: string, markdown: string): Promise<boolean> => {
+      // Re-entrant duplicate: the first in-flight split owns the writes and
+      // its own outcome; this call persisted nothing, so report false (the
+      // safe direction for a draft-discard gate).
+      if (splitInProgress.has(blockId)) return false
       splitInProgress.add(blockId)
       try {
         const plan = planSplit(markdown)
-        if (plan.kind === 'noop') return
+        if (plan.kind === 'noop') return true
         if (plan.kind === 'edit-only') {
-          await get().edit(blockId, plan.content)
-          return
+          return await get().edit(blockId, plan.content)
         }
         // Capture the pre-edit content so we can roll back the optimistic
         // local update if the FIRST `createBelow` fails after `edit` already
@@ -331,7 +341,7 @@ export function createReducers({
         // content. Abort the split before creating anything if the first
         // edit didn't commit; the original block keeps its pre-paste content
         // (edit() already restored it) and nothing downstream is created.
-        if (!(await get().edit(blockId, plan.first))) return
+        if (!(await get().edit(blockId, plan.first))) return false
         let lastId = blockId
         for (const content of plan.rest) {
           const newId = await get().createBelow(lastId, content)
@@ -357,10 +367,14 @@ export function createReducers({
                 }
               })
             }
-            return
+            // Some of the typed lines never reached the DB — report failure
+            // so the blur path keeps the draft (which holds the FULL
+            // unsplit markdown) for recovery.
+            return false
           }
           lastId = newId
         }
+        return true
       } finally {
         splitInProgress.delete(blockId)
       }

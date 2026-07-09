@@ -1264,7 +1264,9 @@ describe('useEditorBlur', () => {
 
     it('forwards the splitBlock outcome on the split path', () => {
       mockShouldSplitOnBlur.mockReturnValue(true)
-      const splitOutcome = Promise.resolve()
+      // splitBlock resolves a boolean like edit() (#2451 review): false when
+      // any of the split's writes failed, so the draft discard can gate on it.
+      const splitOutcome = Promise.resolve(false)
       const mockSplitBlock = vi.fn(() => splitOutcome)
       const mockDiscardDraft = vi.fn()
 
