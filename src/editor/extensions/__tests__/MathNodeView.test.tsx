@@ -37,10 +37,11 @@ vi.mock('@/components/rendering/KatexMath', () => ({
 
 const { MathInlineNodeView, MathBlockNodeView } = await import('../MathNodeView')
 
-function makeProps(latex: string, updateAttributes = vi.fn()) {
+function makeProps(latex: string, updateAttributes = vi.fn(), deleteNode = vi.fn()) {
   return {
     node: { attrs: { latex } },
     updateAttributes,
+    deleteNode,
     editor: { commands: { focus: vi.fn() } },
   } as unknown as React.ComponentProps<typeof MathInlineNodeView>
 }
@@ -152,6 +153,60 @@ describe('MathNodeView source editor focus retention (finding 44)', () => {
     expect(
       (props as { editor: { commands: { focus: () => void } } }).editor.commands.focus,
     ).toHaveBeenCalled()
+  })
+})
+
+/**
+ * #2453 — a whitespace-only inline math atom has no canonical serialized form:
+ * the serializer drops it on emit (#2451), so an invisible atom wedged between
+ * two delimiter-wrapped runs makes serialize → parse → serialize non-idempotent.
+ * The node view drops the atom when the user finishes editing its source with
+ * empty/whitespace LaTeX — on CLOSE (blur / Enter / Escape), never per-keystroke,
+ * so clearing the field to retype does not delete the node mid-edit.
+ */
+describe('MathNodeView drops whitespace-only atoms on close (#2453)', () => {
+  afterEach(() => vi.clearAllMocks())
+
+  it('deletes the node when the source editor is blurred with empty LaTeX', async () => {
+    const deleteNode = vi.fn()
+    render(<MathInlineNodeView {...makeProps('', vi.fn(), deleteNode)} />)
+    // The empty atom renders the placeholder; open its source and blur without typing.
+    fireEvent.click(await screen.findByTestId('math-rendered'))
+    const input = await screen.findByTestId('math-source-input')
+    fireEvent.blur(input)
+    expect(deleteNode).toHaveBeenCalledTimes(1)
+  })
+
+  it('deletes the node on Enter when the LaTeX is whitespace-only', async () => {
+    const deleteNode = vi.fn()
+    render(<MathInlineNodeView {...makeProps('   ', vi.fn(), deleteNode)} />)
+    fireEvent.click(await screen.findByTestId('math-rendered'))
+    const input = await screen.findByTestId('math-source-input')
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(deleteNode).toHaveBeenCalledTimes(1)
+  })
+
+  it('does NOT delete the node when closing with non-empty LaTeX', async () => {
+    const deleteNode = vi.fn()
+    render(<MathInlineNodeView {...makeProps('a^2', vi.fn(), deleteNode)} />)
+    fireEvent.click(await screen.findByTestId('math-rendered'))
+    const input = await screen.findByTestId('math-source-input')
+    fireEvent.blur(input)
+    expect(deleteNode).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.queryByTestId('math-source-input')).not.toBeInTheDocument())
+  })
+
+  it('does not delete on a per-keystroke edit that leaves the field empty mid-typing', async () => {
+    // Only a CLOSE with empty latex drops the atom; an intermediate empty value
+    // during editing must keep the node so the user can retype.
+    const deleteNode = vi.fn()
+    const update = vi.fn()
+    render(<MathInlineNodeView {...makeProps('a', update, deleteNode)} />)
+    fireEvent.click(await screen.findByTestId('math-rendered'))
+    const input = await screen.findByTestId('math-source-input')
+    fireEvent.change(input, { target: { value: '' } })
+    expect(update).toHaveBeenCalledWith({ latex: '' })
+    expect(deleteNode).not.toHaveBeenCalled()
   })
 })
 
