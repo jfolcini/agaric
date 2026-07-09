@@ -5647,6 +5647,97 @@ async fn delete_blocks_by_ids_cascades_descendants() {
     }
 }
 
+/// #2201 item 2a: a single batch that mixes a PAGE root and a CONTENT
+/// root must delete both correctly. The per-root fan-out reads each
+/// root's `block_type` (now carried on the `live_roots` probe rather
+/// than a per-root `SELECT block_type`) to narrow the rebuild fan-out
+/// for a CONTENT root, so this exercises BOTH branches in one batch and
+/// pins that the block_type carried alongside `id` is the right one per
+/// root.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_blocks_by_ids_mixed_block_types_delete_correctly() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // A PAGE root (with a content child, so the cascade is non-trivial).
+    let page_root = create_block_inner(&pool, DEV, &mat, "page".into(), "P".into(), None, Some(1))
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let page_child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "p-child".into(),
+        Some(page_root.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // An independent CONTENT root (with its own child).
+    let content_root = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "C".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let content_child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "c-child".into(),
+        Some(content_root.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Batch-delete BOTH roots in one call: page root FIRST, content root
+    // SECOND, so a per-root/id mix-up (wrong block_type paired with a root)
+    // would surface here.
+    let affected = delete_blocks_by_ids_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![page_root.id.clone(), content_root.id.clone()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        affected, 4,
+        "page root + its child + content root + its child = 4 rows soft-deleted"
+    );
+
+    for id in [
+        &page_root.id,
+        &page_child.id,
+        &content_root.id,
+        &content_child.id,
+    ] {
+        let deleted_at: Option<i64> =
+            sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            deleted_at.is_some(),
+            "block {id} must be soft-deleted by the mixed-type batch cascade"
+        );
+    }
+}
+
 /// `delete_blocks_by_ids_inner` writes ONE
 /// `delete_block` op_log row per RESOLVED root. Two independent roots
 /// + their children = 2 op_log rows total (cascade is captured by
