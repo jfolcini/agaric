@@ -790,7 +790,7 @@ describe('EditableBlock', () => {
     // replayed by flush_all_drafts as an edit_block op (possibly clobbering
     // newer content). persistUnmount must delete the previous block's draft
     // row so nothing is flushable at boot.
-    it('deletes the previous block draft row on a programmatic focus move (gap 1)', () => {
+    it('deletes the previous block draft row on a programmatic focus move (gap 1)', async () => {
       const mockMount = vi.fn()
       const mockUnmount = vi.fn(() => 'unsaved changes')
       const roving = makeRovingEditor({
@@ -805,7 +805,12 @@ describe('EditableBlock', () => {
       rerender(<EditableBlock blockId="B1" content="x" isFocused rovingEditor={roving as never} />)
 
       expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', 'unsaved changes')
-      // The orphan draft row for the block we moved AWAY from must be dropped.
+      // #2409 — the orphan draft row for the block we moved AWAY from is dropped
+      // only AFTER the appended edit op commits (deferred behind the outcome
+      // promise), not concurrently with the in-flight IPC.
+      await act(async () => {
+        await Promise.resolve()
+      })
       expect(mockDeleteDraft).toHaveBeenCalledWith('OLD_BLOCK')
     })
 
@@ -828,6 +833,115 @@ describe('EditableBlock', () => {
 
       expect(mockEdit).not.toHaveBeenCalled()
       expect(mockDeleteDraft).toHaveBeenCalledWith('OLD_BLOCK')
+    })
+
+    // #2409 — the programmatic-handoff path must gate the previous block's
+    // draft delete on the appended edit op committing, exactly like the blur
+    // path (useEditorBlur Step 5 → discardDraftFor). When the edit IPC fails
+    // and the store rolls back, KEEP the row — it is the last surviving copy
+    // of the typed text for boot-time flush_all_drafts recovery. Pre-fix the
+    // delete fired unconditionally, destroying both copies on a failed save.
+    it('KEEPS the previous block draft row when the handoff edit RESOLVES false (gap 1, #2409)', async () => {
+      mockEdit.mockResolvedValueOnce(false)
+      const mockMount = vi.fn()
+      const mockUnmount = vi.fn(() => 'unsaved changes')
+      const roving = makeRovingEditor({
+        mount: mockMount,
+        unmount: mockUnmount,
+        activeBlockId: 'OLD_BLOCK',
+      })
+
+      const { rerender } = render(
+        <EditableBlock blockId="B1" content="x" isFocused={false} rovingEditor={roving as never} />,
+      )
+      rerender(<EditableBlock blockId="B1" content="x" isFocused rovingEditor={roving as never} />)
+
+      expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', 'unsaved changes')
+      await act(async () => {
+        await Promise.resolve()
+      })
+      // Failed save → the draft row survives (do NOT delete).
+      expect(mockDeleteDraft).not.toHaveBeenCalled()
+    })
+
+    // #2409 — keeping the pre-existing row is not enough: the previous block's
+    // own useDraftAutosave does NOT run a final save on a programmatic move (it
+    // sees isFocused → false, blockId → null), so its debounced row can be
+    // stale or absent (continuous typing under the max-latency cap never wrote
+    // one). On a failed save the full live markdown (`changed`) must be
+    // re-seeded into block_drafts — mirroring the blur path's failedContent
+    // re-save — so boot-time flush_all_drafts recovers the most recent text.
+    it('RE-SEEDS the previous block draft with the full content when the handoff edit RESOLVES false (gap 1, #2409)', async () => {
+      mockEdit.mockResolvedValueOnce(false)
+      const mockMount = vi.fn()
+      const mockUnmount = vi.fn(() => 'unsaved changes')
+      const roving = makeRovingEditor({
+        mount: mockMount,
+        unmount: mockUnmount,
+        activeBlockId: 'OLD_BLOCK',
+      })
+
+      const { rerender } = render(
+        <EditableBlock blockId="B1" content="x" isFocused={false} rovingEditor={roving as never} />,
+      )
+      rerender(<EditableBlock blockId="B1" content="x" isFocused rovingEditor={roving as never} />)
+
+      expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', 'unsaved changes')
+      await act(async () => {
+        await Promise.resolve()
+      })
+      // Failed save → the row is re-seeded with the full live markdown, not
+      // deleted.
+      expect(mockSaveDraft).toHaveBeenCalledWith('OLD_BLOCK', 'unsaved changes')
+      expect(mockDeleteDraft).not.toHaveBeenCalled()
+    })
+
+    it('deletes the previous block draft row when the handoff edit RESOLVES non-false (gap 1, #2409)', async () => {
+      mockEdit.mockResolvedValueOnce(true)
+      const mockMount = vi.fn()
+      const mockUnmount = vi.fn(() => 'unsaved changes')
+      const roving = makeRovingEditor({
+        mount: mockMount,
+        unmount: mockUnmount,
+        activeBlockId: 'OLD_BLOCK',
+      })
+
+      const { rerender } = render(
+        <EditableBlock blockId="B1" content="x" isFocused={false} rovingEditor={roving as never} />,
+      )
+      rerender(<EditableBlock blockId="B1" content="x" isFocused rovingEditor={roving as never} />)
+
+      expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', 'unsaved changes')
+      await act(async () => {
+        await Promise.resolve()
+      })
+      // Successful save → the stale row is safe to drop.
+      expect(mockDeleteDraft).toHaveBeenCalledWith('OLD_BLOCK')
+    })
+
+    // #2409 — the split branch of the handoff path is gated the same way: a
+    // failed split-on-blur (splitBlock resolves false) keeps the row holding
+    // the only copy of the unsplit markdown.
+    it('KEEPS the previous block draft row when the handoff splitBlock RESOLVES false (gap 1, #2409)', async () => {
+      mockSplitBlock.mockResolvedValueOnce(false)
+      const mockMount = vi.fn()
+      const mockUnmount = vi.fn(() => 'line1\nline2')
+      const roving = makeRovingEditor({
+        mount: mockMount,
+        unmount: mockUnmount,
+        activeBlockId: 'OLD_BLOCK',
+      })
+
+      const { rerender } = render(
+        <EditableBlock blockId="B1" content="" isFocused={false} rovingEditor={roving as never} />,
+      )
+      rerender(<EditableBlock blockId="B1" content="" isFocused rovingEditor={roving as never} />)
+
+      expect(mockSplitBlock).toHaveBeenCalledWith('OLD_BLOCK', 'line1\nline2')
+      await act(async () => {
+        await Promise.resolve()
+      })
+      expect(mockDeleteDraft).not.toHaveBeenCalled()
     })
 
     it('calls splitBlock when previous block content has newlines', () => {
