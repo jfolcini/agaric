@@ -10,6 +10,7 @@ import type {
   BlockLevelNode,
   BlockLinkNode,
   BlockquoteNode,
+  BlockRefNode,
   BulletListNode,
   CodeBlockNode,
   DocNode,
@@ -18,6 +19,7 @@ import type {
   HorizontalRuleNode,
   InlineNode,
   ListItemNode,
+  MathInlineNode,
   OrderedListNode,
   ParagraphNode,
   PMMark,
@@ -75,6 +77,14 @@ export function blockLink(id: string): BlockLinkNode {
 
 export function hardBreak(): HardBreakNode {
   return { type: 'hardBreak' }
+}
+
+export function blockRef(id: string): BlockRefNode {
+  return { type: 'block_ref', attrs: { id } }
+}
+
+export function mathInline(latex: string): MathInlineNode {
+  return { type: 'math_inline', attrs: { latex } }
 }
 
 export function paragraph(...nodes: InlineNode[]): ParagraphNode {

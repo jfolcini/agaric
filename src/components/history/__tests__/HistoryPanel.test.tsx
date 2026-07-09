@@ -26,8 +26,10 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { makeHistoryEntry } from '@/__tests__/fixtures'
+import { makeBlock, makeHistoryEntry } from '@/__tests__/fixtures'
 import { HistoryPanel } from '@/components/history/HistoryPanel'
+import { getPageStore, PageBlockStoreProvider } from '@/stores/page-blocks'
+import { useUndoStore } from '@/stores/undo'
 
 vi.mock('@/hooks/useRichContentCallbacks', () => ({
   useRichContentCallbacks: vi.fn(() => ({
@@ -69,6 +71,7 @@ function setupInvokeRouter(handlers: Record<string, (args: unknown) => unknown>)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  useUndoStore.setState({ pages: new Map() })
 })
 
 describe('HistoryPanel', () => {
@@ -787,6 +790,145 @@ describe('HistoryPanel', () => {
       // Toast still fires, but with no action option (single arg call form).
       await waitFor(() => {
         expect(toast.success).toHaveBeenCalledWith('Reverted successfully')
+      })
+    })
+  })
+
+  // ===========================================================================
+  // Findings 39 + 40 — restore goes through the raw `editBlock` IPC, which
+  // bypasses the page store. The panel must (39) patch the mounted page
+  // store that owns the block so the restored content is visible immediately
+  // (and a later roving-editor mount doesn't flush the stale content back
+  // over the restore), and (40) reset the page's undo/redo anchors via
+  // `useUndoStore.onNewAction` — restore is a new user mutation, so the
+  // positional undoDepth and stale redoStack must not survive it.
+  // ===========================================================================
+  describe('restore updates the mounted page store and undo anchors', () => {
+    function setupRestoreFixture() {
+      const page = {
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'Old content' })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }
+      setupInvokeRouter({
+        get_block_history: () => page,
+        get_block: () => ({ id: 'BLOCK001', block_type: 'content', content: 'Current text' }),
+        edit_block: () => ({ id: 'BLOCK001', block_type: 'content', content: 'Old content' }),
+        compute_block_vs_current_diff: () => [],
+        compute_edit_diff: () => [],
+      })
+    }
+
+    function renderWithPageStore() {
+      render(
+        <PageBlockStoreProvider pageId="PAGE_1">
+          <HistoryPanel blockId="BLOCK001" />
+        </PageBlockStoreProvider>,
+      )
+      const store = getPageStore('PAGE_1')
+      if (!store) throw new Error('page store not registered')
+      act(() => {
+        store.setState({
+          blocks: [makeBlock({ id: 'BLOCK001', content: 'Current text', page_id: 'PAGE_1' })],
+          loading: false,
+        })
+      })
+      return store
+    }
+
+    async function clickRestore() {
+      const user = userEvent.setup()
+      const row = await screen.findByTestId('block-history-row-0')
+      await user.click(row)
+      const restoreBtn = await screen.findByTestId('block-history-restore-0')
+      await user.click(restoreBtn)
+    }
+
+    it('applies the restored content to the page store owning the block (finding 39)', async () => {
+      setupRestoreFixture()
+      const store = renderWithPageStore()
+
+      await clickRestore()
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+          blockId: 'BLOCK001',
+          toText: 'Old content',
+        })
+      })
+
+      // The visible block (store content) must reflect the restore — not the
+      // stale pre-restore content that a later editor mount would flush back.
+      await waitFor(() => {
+        expect(store.getState().blocksById.get('BLOCK001')?.content).toBe('Old content')
+      })
+      expect(store.getState().blocks[0]?.content).toBe('Old content')
+    })
+
+    it('resets the page undo/redo anchors after a restore (finding 40)', async () => {
+      setupRestoreFixture()
+      renderWithPageStore()
+      // Simulate a prior Ctrl+Z: positional anchor at depth 1 with a stale
+      // redo entry that a Ctrl+Y would otherwise replay over the restore.
+      useUndoStore.setState({
+        pages: new Map([
+          [
+            'PAGE_1',
+            { redoStack: [{ device_id: 'DEVICE01', seq: 9 }], undoDepth: 1, redoGroupSizes: [1] },
+          ],
+        ]),
+      })
+
+      await clickRestore()
+
+      await waitFor(() => {
+        expect(useUndoStore.getState().pages.get('PAGE_1')).toEqual({
+          redoStack: [],
+          undoDepth: 0,
+          redoGroupSizes: [],
+        })
+      })
+    })
+
+    it('toast Undo re-applies the snapshot to the store and resets undo anchors', async () => {
+      setupRestoreFixture()
+      const store = renderWithPageStore()
+
+      await clickRestore()
+
+      let undoOnClick: (() => void) | undefined
+      await waitFor(() => {
+        const calls = vi.mocked(toast.success).mock.calls
+        const lastCall = calls.find((c) => c[0] === 'Reverted successfully')
+        expect(lastCall).toBeDefined()
+        const opts = lastCall?.[1] as { action?: { label: string; onClick: () => void } }
+        undoOnClick = opts?.action?.onClick
+        expect(undoOnClick).toBeDefined()
+      })
+
+      // Re-seed stale undo state between restore and its toast-Undo so the
+      // second raw editBlock is verified to reset it too.
+      useUndoStore.setState({
+        pages: new Map([
+          [
+            'PAGE_1',
+            { redoStack: [{ device_id: 'DEVICE01', seq: 9 }], undoDepth: 1, redoGroupSizes: [1] },
+          ],
+        ]),
+      })
+
+      undoOnClick?.()
+
+      await waitFor(() => {
+        expect(store.getState().blocksById.get('BLOCK001')?.content).toBe('Current text')
+      })
+      await waitFor(() => {
+        expect(useUndoStore.getState().pages.get('PAGE_1')).toEqual({
+          redoStack: [],
+          undoDepth: 0,
+          redoGroupSizes: [],
+        })
       })
     })
   })

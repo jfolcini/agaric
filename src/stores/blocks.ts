@@ -14,6 +14,8 @@
 import { create } from 'zustand'
 
 import type { FlatBlock } from '../lib/tree-utils'
+import { useNavigationStore } from './navigation'
+import { selectPageStack, useTabsStore } from './tabs'
 
 export type { FlatBlock }
 
@@ -208,3 +210,36 @@ export const useBlockStore = create<BlockStore>((set) => ({
     set({ selectedBlockIds: ids, selectionAnchorId: null, selectionFocusId: null })
   },
 }))
+
+// ── Selection is page-scoped; navigation is not ─────────────────────────────
+//
+// `selectedBlockIds` is a global array while blocks render per-page, and
+// nothing in the navigation path cleared it: ids selected on page A survived
+// a navigation to page B, the batch toolbar showed a stale "N selected" with
+// zero visible rows, further selections accumulated across pages, and a batch
+// delete silently soft-deleted the invisible page-A blocks (undo bookkeeping
+// registers only under the CURRENT page, so Ctrl+Z could not restore them).
+//
+// Clear the selection whenever the active page context — the current view or
+// the top of the active tab's page stack — changes. Module-level cross-store
+// subscriptions mirror the established `createPerSpaceSlice.attach` pattern.
+
+/** Key identifying "which blocks the user is looking at" for selection scope. */
+function activePageContextKey(): string {
+  const view = useNavigationStore.getState().currentView
+  const topPageId = selectPageStack(useTabsStore.getState()).at(-1)?.pageId ?? ''
+  return `${view} ${topPageId}`
+}
+
+let lastPageContextKey = activePageContextKey()
+
+function clearSelectionOnPageContextChange(): void {
+  const key = activePageContextKey()
+  if (key === lastPageContextKey) return
+  lastPageContextKey = key
+  const { selectedBlockIds, selectionAnchorId, clearSelected } = useBlockStore.getState()
+  if (selectedBlockIds.length > 0 || selectionAnchorId !== null) clearSelected()
+}
+
+useNavigationStore.subscribe(clearSelectionOnPageContextChange)
+useTabsStore.subscribe(clearSelectionOnPageContextChange)

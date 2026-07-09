@@ -5,9 +5,11 @@
  * to the correct callback and that listeners are cleaned up.
  */
 
-import { fireEvent, renderHook } from '@testing-library/react'
+import { fireEvent, renderHook, waitFor } from '@testing-library/react'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { t } from '../../lib/i18n'
 import { __resetLastInteractedTreeForTests } from '../../lib/last-interacted-tree'
 import { useBlockStore } from '../../stores/blocks'
 import type { UseBlockTreeKeyboardShortcutsOptions } from '../useBlockTreeKeyboardShortcuts'
@@ -384,18 +386,55 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       expect(mockWriteText).toHaveBeenCalledWith('alpha\n  alpha-child\nbeta')
     })
 
-    it('Ctrl+X copies then removes the selection roots and clears selection', () => {
+    it('Ctrl+X copies then removes the selection roots and clears selection', async () => {
       const { opts, pageStore } = clipboardOpts({ selectedBlockIds: ['A', 'B'] })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
       fireEvent.keyDown(document, { key: 'x', ctrlKey: true })
 
       expect(mockWriteText).toHaveBeenCalledWith('alpha\n  alpha-child\nbeta')
+      // Removal is gated on the clipboard write RESOLVING (a failed write must
+      // not destroy the blocks), so it lands a microtask later.
+      await waitFor(() => expect(pageStore.__remove).toHaveBeenCalledWith('A'))
       // Only the roots A and B are removed (A1 cascades with A).
-      expect(pageStore.__remove).toHaveBeenCalledWith('A')
       expect(pageStore.__remove).toHaveBeenCalledWith('B')
       expect(pageStore.__remove).not.toHaveBeenCalledWith('A1')
       expect(opts.clearSelected).toHaveBeenCalled()
+    })
+
+    it('Ctrl+X does NOT remove blocks when the clipboard write fails (no silent destruction)', async () => {
+      mockWriteText.mockRejectedValue(new Error('wayland clipboard unavailable'))
+      const { opts, pageStore } = clipboardOpts({ selectedBlockIds: ['A', 'B'] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'x', ctrlKey: true })
+
+      // The failure surfaces as a toast…
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith(t('palette.copyFailed')))
+      // …and the cut is aborted: blocks intact, selection kept.
+      expect(pageStore.__remove).not.toHaveBeenCalled()
+      expect(opts.clearSelected).not.toHaveBeenCalled()
+    })
+
+    it('Ctrl+C surfaces a toast when the clipboard write fails', async () => {
+      mockWriteText.mockRejectedValue(new Error('denied'))
+      const { opts } = clipboardOpts({ selectedBlockIds: ['A'] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'c', ctrlKey: true })
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith(t('palette.copyFailed')))
+    })
+
+    it('Ctrl+V surfaces a toast when the clipboard read fails', async () => {
+      mockReadText.mockRejectedValue(new Error('denied'))
+      const { opts, pageStore } = clipboardOpts({ selectedBlockIds: ['A'] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'v', ctrlKey: true })
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith(t('error.pasteBlocksFailed')))
+      expect(pageStore.__pasteBlocks).not.toHaveBeenCalled()
     })
 
     it('Ctrl+V reads the clipboard and inserts after the last selected block', async () => {

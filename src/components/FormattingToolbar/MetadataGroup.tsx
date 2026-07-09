@@ -21,7 +21,7 @@ import { toolbarActiveClass } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
 
 import { Button } from '../ui/button'
-import { type RenderMode, Tip } from './shared'
+import { type RenderMode, Tip, toolbarPressHandlers } from './shared'
 
 interface CyclePriorityButtonProps {
   mode: RenderMode
@@ -61,11 +61,10 @@ export function renderCyclePriority({
           'justify-start text-sm w-full [@media(pointer:coarse)]:min-h-11',
           currentPriority != null && toolbarActiveClass,
         )}
-        onPointerDown={(e) => {
-          e.preventDefault()
+        {...toolbarPressHandlers(() => {
           dispatchBlockEvent('CYCLE_PRIORITY')
           onAfterOverflowAction()
-        }}
+        })}
       >
         <span className="inline-flex items-center gap-1 text-xs font-semibold leading-none mr-2">
           {priorityDot(currentPriority)}
@@ -83,10 +82,7 @@ export function renderCyclePriority({
         aria-label={t('toolbar.cyclePriority')}
         aria-pressed={currentPriority != null}
         className={cn(currentPriority != null && toolbarActiveClass)}
-        onPointerDown={(e) => {
-          e.preventDefault()
-          dispatchBlockEvent('CYCLE_PRIORITY')
-        }}
+        {...toolbarPressHandlers(() => dispatchBlockEvent('CYCLE_PRIORITY'))}
       >
         <span className="inline-flex items-center gap-1 text-xs font-semibold leading-none text-muted-foreground">
           {priorityDot(currentPriority)}

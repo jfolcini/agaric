@@ -54,6 +54,8 @@ vi.mock('@/stores/navigation', () => ({
     getState: vi.fn(() => ({
       currentView: 'page-editor',
     })),
+    // `@/stores/blocks` registers a module-level cross-store subscription.
+    subscribe: vi.fn(() => () => {}),
   },
 }))
 
@@ -66,6 +68,8 @@ vi.mock('@/stores/tabs', () => ({
       activeTabIndex: 0,
       replacePage: mockReplacePage,
     })),
+    // `@/stores/blocks` registers a module-level cross-store subscription.
+    subscribe: vi.fn(() => () => {}),
   },
   selectPageStack: (state: { tabs: { pageStack: unknown[] }[]; activeTabIndex: number }) =>
     state.tabs[state.activeTabIndex]?.pageStack ?? [],
@@ -94,6 +98,7 @@ vi.mock('../../lib/announcer', () => ({
 
 import { toast } from 'sonner'
 
+import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -142,6 +147,13 @@ beforeEach(() => {
   ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   vi.clearAllMocks()
   useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
+  // Real singleton — the roving-editor guard reads `focusedBlockId` from it.
+  useBlockStore.setState({
+    focusedBlockId: null,
+    selectedBlockIds: [],
+    selectionAnchorId: null,
+    selectionFocusId: null,
+  })
   // Pin a deterministic active space so `useResolveStore.set`
   // composes its key with a known prefix.
   useSpaceStore.setState({
@@ -281,6 +293,66 @@ describe('useUndoShortcuts', () => {
 
     textarea.remove()
     unmount()
+  })
+
+  // Finding 41 — while the roving block editor is mounted (a block is
+  // focused), a `data-editor-portal` overlay (context menu, date picker) can
+  // hold DOM focus on a plain <button>: the editor's blur is suppressed, so
+  // it stays mounted with unflushed edits. The contentEditable/INPUT/TEXTAREA
+  // guard doesn't cover that target, so page-level undo would revert ops the
+  // dirty editor later flushes right back (also wiping the redo stack).
+  // Page-level undo/redo must therefore bail while a block editor is active.
+  describe('roving-editor guard (finding 41)', () => {
+    it('does NOT fire page undo while a block editor is mounted and focus is on a portal button', () => {
+      useBlockStore.setState({ focusedBlockId: 'BLOCK_A' })
+
+      const { unmount } = renderHook(() => useUndoShortcuts())
+
+      // Simulate a focused context-menu item: a plain button, not an
+      // editable element, so the tag guard alone does not skip it.
+      const menuItem = document.createElement('button')
+      document.body.append(menuItem)
+
+      fireEvent.keyDown(menuItem, { key: 'z', ctrlKey: true })
+
+      expect(mockUndo).not.toHaveBeenCalled()
+
+      menuItem.remove()
+      unmount()
+    })
+
+    it('does NOT fire page redo while a block editor is mounted', () => {
+      useBlockStore.setState({ focusedBlockId: 'BLOCK_A' })
+
+      const { unmount } = renderHook(() => useUndoShortcuts())
+
+      const menuItem = document.createElement('button')
+      document.body.append(menuItem)
+
+      fireEvent.keyDown(menuItem, { key: 'y', ctrlKey: true })
+      fireEvent.keyDown(menuItem, { key: 'z', ctrlKey: true, shiftKey: true })
+
+      expect(mockRedo).not.toHaveBeenCalled()
+
+      menuItem.remove()
+      unmount()
+    })
+
+    it('fires page undo again once the editor unmounted (focus cleared)', () => {
+      useBlockStore.setState({ focusedBlockId: null })
+
+      const { unmount } = renderHook(() => useUndoShortcuts())
+
+      const menuItem = document.createElement('button')
+      document.body.append(menuItem)
+
+      fireEvent.keyDown(menuItem, { key: 'z', ctrlKey: true })
+
+      expect(mockUndo).toHaveBeenCalledWith('PAGE_1')
+
+      menuItem.remove()
+      unmount()
+    })
   })
 
   it('Cmd+Z works (metaKey for Mac)', () => {

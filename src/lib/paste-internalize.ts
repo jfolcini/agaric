@@ -47,11 +47,17 @@ export function buildImportRefInternalizers(): RefInternalizers | null {
   // Lazily-fetched, paste-scoped caches. `title → [ulid, …]` keeps every page
   // sharing a title so the duplicate rule can count them; `name → ulid` is a
   // 1:1 tag map (tag names are unique). Built on first reference of each kind.
+  // A FAILED fetch is cached as `null` (existence UNKNOWN — one attempt per
+  // paste): treating it as an empty map would send every already-existing name
+  // down the create branch, minting duplicate pages/tags.
   let pagesByTitle: Map<string, string[]> | null = null
+  let pagesFetchFailed = false
   let tagsByName: Map<string, string> | null = null
+  let tagsFetchFailed = false
 
-  async function ensurePages(): Promise<Map<string, string[]>> {
+  async function ensurePages(): Promise<Map<string, string[]> | null> {
     if (pagesByTitle) return pagesByTitle
+    if (pagesFetchFailed) return null
     const map = new Map<string, string[]>()
     try {
       for (const p of await listAllPagesInSpace(spaceId)) {
@@ -63,18 +69,23 @@ export function buildImportRefInternalizers(): RefInternalizers | null {
       }
     } catch (err) {
       logger.warn('page-blocks', 'import: page list fetch failed', {}, err)
+      pagesFetchFailed = true
+      return null
     }
     pagesByTitle = map
     return map
   }
 
-  async function ensureTags(): Promise<Map<string, string>> {
+  async function ensureTags(): Promise<Map<string, string> | null> {
     if (tagsByName) return tagsByName
+    if (tagsFetchFailed) return null
     const map = new Map<string, string>()
     try {
       for (const t of await listAllTagsInSpace(spaceId)) map.set(t.name, t.tag_id)
     } catch (err) {
       logger.warn('page-blocks', 'import: tag list fetch failed', {}, err)
+      tagsFetchFailed = true
+      return null
     }
     tagsByName = map
     return map
@@ -83,6 +94,9 @@ export function buildImportRefInternalizers(): RefInternalizers | null {
   return {
     page: async (name) => {
       const map = await ensurePages()
+      // List unavailable → existence unknown: leave the link as plain text
+      // rather than guessing "missing" and creating a duplicate.
+      if (map === null) return null
       const existing = map.get(name)
       // Ambiguous duplicate title → leave plain text (never guess).
       if (existing && existing.length > 1) return null
@@ -100,6 +114,7 @@ export function buildImportRefInternalizers(): RefInternalizers | null {
     },
     tag: async (name) => {
       const map = await ensureTags()
+      if (map === null) return null
       const existing = map.get(name)
       if (existing != null) return existing
       try {

@@ -62,6 +62,16 @@ export const QueryPicker = Extension.create<QueryPickerOptions>({
         // empty-query gate below cleanly hands off to manual syntax.
         allowSpaces: false,
         allowedPrefixes: null,
+        // Gate activation to the bare `{{` (mirrors the emoji picker's
+        // allow-gate rule): once the user types manual `{{query …}}` syntax
+        // the plugin must DEACTIVATE so the popup closes. Emptying the item
+        // list alone would leave a floating generic 'No results' popup over
+        // the typing until the first space/Escape. U+FFFC is textBetween's
+        // leaf placeholder for non-text nodes.
+        allow: ({ state, range }) => {
+          const text = state.doc.textBetween(range.from, range.to, undefined, '\uFFFC')
+          return text === '{{'
+        },
         editor,
         // Only offer the affordance right after `{{`; once the user types,
         // defer to manual `{{query …}}` + QueryHint completion.

@@ -75,36 +75,46 @@ export function detectBlockType(content: string): BlockTypeToken {
 }
 
 /**
- * Read the inline text out of `content`, stripping whatever block marker the
- * first line currently carries (or unwrapping a fenced code block).
+ * Read the inline text lines out of `content`, stripping whatever block
+ * marker the first line currently carries (or unwrapping a fenced code
+ * block). Quote/callout markers repeat on every line, so continuation lines
+ * shed their `> ` prefix too; all other content keeps its trailing lines
+ * verbatim so multi-line blocks (code fences, tables, math) never lose text.
  */
-function firstLineText(content: string): string {
+function extractLines(content: string): string[] {
   const lines = content.split('\n')
-  if (FENCE_RE.test((lines[0] ?? '').trimStart())) {
+  const first = lines[0] ?? ''
+  if (FENCE_RE.test(first.trimStart())) {
     const inner = content.replace(/^```[^\n]*\n?/, '').replace(/\n?```\s*$/, '')
-    return inner.split('\n')[0] ?? ''
+    return inner.split('\n')
   }
-  return stripBlockMarker(lines[0] ?? '')
+  const rest = lines.slice(1)
+  if (QUOTE_RE.test(first) || CALLOUT_RE.test(first)) {
+    return [stripBlockMarker(first), ...rest.map((l) => l.replace(/^>\s?/, ''))]
+  }
+  return [stripBlockMarker(first), ...rest]
 }
 
 /**
  * Convert `content` to the target block `type`, returning the new markdown.
- * Operates on the first line's marker; preserves the inline text.
+ * Re-marks the first line and preserves every trailing line: quote/callout
+ * targets re-mark each line (so the whole block stays inside the quote);
+ * other targets keep the tail verbatim (markdown lazy continuation keeps it
+ * attached to list items).
  */
 export function convertBlockContent(content: string, type: BlockTypeToken): string {
   if (type === 'code') {
     // Wrap the (marker-stripped) content in a fenced code block. If it is
     // already fenced, leave it as-is.
     if (FENCE_RE.test(content.trimStart())) return content
-    const body = stripBlockMarker(content.split('\n')[0] ?? '')
-    const rest = content.split('\n').slice(1)
-    return `\`\`\`\n${[body, ...rest].join('\n')}\n\`\`\``
+    return `\`\`\`\n${extractLines(content).join('\n')}\n\`\`\``
   }
 
-  const text = firstLineText(content)
+  const [text = '', ...rest] = extractLines(content)
+  const tail = rest.length > 0 ? `\n${rest.join('\n')}` : ''
   switch (type) {
     case 'paragraph': {
-      return text
+      return `${text}${tail}`
     }
     case 'h1':
     case 'h2':
@@ -113,19 +123,19 @@ export function convertBlockContent(content: string, type: BlockTypeToken): stri
     case 'h5':
     case 'h6': {
       const level = Number.parseInt(type.slice(1), 10)
-      return `${'#'.repeat(level)} ${text}`
+      return `${'#'.repeat(level)} ${text}${tail}`
     }
     case 'quote': {
-      return `> ${text}`
+      return [text, ...rest].map((l) => `> ${l}`).join('\n')
     }
     case 'numbered-list': {
-      return `1. ${text}`
+      return `1. ${text}${tail}`
     }
     case 'bullet-list': {
-      return `- ${text}`
+      return `- ${text}${tail}`
     }
     case 'callout': {
-      return `> [!INFO] ${text}`
+      return [`> [!INFO] ${text}`, ...rest.map((l) => `> ${l}`)].join('\n')
     }
     default: {
       return content

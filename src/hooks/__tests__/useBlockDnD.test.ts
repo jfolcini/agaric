@@ -647,6 +647,97 @@ describe('useBlockDnD', () => {
     })
   })
 
+  // ── Finding 37: zero-movement touch drop must restore pre-drag focus ──
+  //
+  // On touch the drag activates on the 250ms delay ALONE (no movement), so a
+  // slow chevron tap while editing starts a "drag" that flushes + blurs the
+  // editor. Releasing without moving drops the row over itself: nothing moves,
+  // but the pre-fix code cleared `preDragFocusedIdRef` on the `over` path
+  // without restoring it — unlike the `!over` release and Esc-cancel paths.
+  describe('over-self zero-movement drop (finding 37)', () => {
+    it('restores the pre-drag focused block when the drop lands over the active row with no projection', () => {
+      const params = makeDefaultParams({ rovingEditor: { activeBlockId: 'A' } })
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('B') as never)
+      })
+      // Drag start flushed + cleared focus (the finding's flush/blur).
+      expect(params.handleFlush).toHaveBeenCalledOnce()
+      expect(params.setFocused).toHaveBeenCalledWith(null)
+
+      // Stationary release: dnd-kit reports the active row as `over`.
+      act(() => {
+        result.current.handleDragEnd(makeDragEndEvent('B', 'B') as never)
+      })
+
+      // No move was issued …
+      expect(params.reorder).not.toHaveBeenCalled()
+      expect(params.moveToParent).not.toHaveBeenCalled()
+      // … so the pre-drag focus must be restored, like the cancel paths.
+      expect(params.setFocused).toHaveBeenLastCalledWith('A')
+    })
+
+    it('restores the pre-drag focus when the projection reports no parent change', () => {
+      mockedGetProjection.mockReturnValue({
+        depth: 0,
+        maxDepth: 3,
+        minDepth: 0,
+        parentId: null,
+      } as unknown as Projection)
+      const params = makeDefaultParams({ rovingEditor: { activeBlockId: 'A' } })
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('B') as never)
+      })
+      act(() => {
+        result.current.handleDragEnd(makeDragEndEvent('B', 'B') as never)
+      })
+
+      expect(params.reorder).not.toHaveBeenCalled()
+      expect(params.moveToParent).not.toHaveBeenCalled()
+      expect(params.setFocused).toHaveBeenLastCalledWith('A')
+    })
+
+    it('does NOT restore the pre-drag focus when the over-self drop changes depth (a real move)', async () => {
+      // Horizontal-only drag over the own row: projection reparents the block.
+      mockedGetProjection.mockReturnValue({
+        depth: 1,
+        maxDepth: 3,
+        minDepth: 0,
+        parentId: 'A',
+      } as unknown as Projection)
+      const params = makeDefaultParams({ rovingEditor: { activeBlockId: 'A' } })
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('B') as never)
+      })
+      await act(async () => {
+        result.current.handleDragEnd(makeDragEndEvent('B', 'B') as never)
+      })
+
+      expect(params.moveToParent).toHaveBeenCalledWith('B', 'A', 0)
+      // Success path focuses the DRAGGED block, not the pre-drag editor.
+      expect(params.setFocused).toHaveBeenLastCalledWith('B')
+    })
+
+    it('does not set any focus on an over-self drop when nothing was focused pre-drag', () => {
+      const params = makeDefaultParams({ rovingEditor: { activeBlockId: null } })
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('B') as never)
+      })
+      act(() => {
+        result.current.handleDragEnd(makeDragEndEvent('B', 'B') as never)
+      })
+
+      expect(params.setFocused).not.toHaveBeenCalled()
+    })
+  })
+
   // ── 10. activeDescendants memo ───────────────────────────────────────
 
   describe('activeDescendants / visibleItems memo', () => {

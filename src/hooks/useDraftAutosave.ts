@@ -4,6 +4,17 @@ import { isPoolBusy, retryOnPoolBusy } from '@/lib/app-error'
 import { logger } from '@/lib/logger'
 import { deleteDraft, flushDraft, saveDraft } from '@/lib/tauri'
 
+/** Trailing debounce for the per-keystroke `saveDraft` cadence. */
+const DRAFT_DEBOUNCE_MS = 2000
+
+/**
+ * Max-latency cap on the trailing debounce (finding: continuous typing resets
+ * the timer on every keystroke, so an uninterrupted run never persisted a
+ * draft row and a webview kill lost the whole run). Once a save has been
+ * pending longer than this, it fires immediately instead of re-arming.
+ */
+const DRAFT_MAX_LATENCY_MS = 5000
+
 /**
  * Autosave hook for block draft content.
  *
@@ -69,6 +80,10 @@ export function useDraftAutosave(blockId: string | null, content: string) {
   // cleared by Effect A on a genuine fresh save (so a later real edit is not
   // suppressed).
   const discardedRef = useRef<Set<string>>(new Set())
+  // Max-latency cap (see DRAFT_MAX_LATENCY_MS) — when the current continuous
+  // typing run first armed a (since-reset) debounce timer; null when no save
+  // is pending.
+  const pendingSinceRef = useRef<number | null>(null)
 
   /**
    * Discard the current block's draft: cancel any pending save, mark the
@@ -78,16 +93,71 @@ export function useDraftAutosave(blockId: string | null, content: string) {
    * Takes the target id explicitly so the empty-content path can discard the
    * block it observed in render (rather than `blockIdRef.current`, which is
    * already correct here but kept explicit for clarity at the two call sites).
+   *
+   * Findings 2/48 — when the caller dispatched a save during this discard
+   * (blur's `edit_block`), it passes the save's outcome promise (`edit`
+   * resolves `false` on failure, never rejects). The cancel + #1065 marker
+   * stay synchronous, but the row DELETE is deferred until the outcome
+   * resolves true: deleting concurrently with the in-flight IPC destroyed
+   * both copies of the typed text when the save failed (store rollback +
+   * hard row DELETE, nothing left for boot-time `flush_all_drafts`). On
+   * failure the row is kept and the exact failed content is re-saved so
+   * recovery works even when no debounce tick ever wrote a row.
    */
-  const discardDraftFor = (id: string) => {
+  const discardDraftFor = (
+    id: string,
+    saveOutcome?: Promise<boolean | void>,
+    failedContent?: string,
+  ) => {
     versionRef.current++ // invalidate any pending save
     if (timerRef.current) clearTimeout(timerRef.current)
+    pendingSinceRef.current = null
     // #1065 — mark this block discarded so Effect B's cleanup skips the
     // flush even if an unmount coincides with blur (blockIdRef still set).
     discardedRef.current.add(id)
-    retryOnPoolBusy(() => deleteDraft(id)).catch((err: unknown) => {
-      logger.warn('useDraftAutosave', 'deleteDraft failed during discard', { blockId: id }, err)
-    })
+    if (!saveOutcome) {
+      retryOnPoolBusy(() => deleteDraft(id)).catch((err: unknown) => {
+        logger.warn('useDraftAutosave', 'deleteDraft failed during discard', { blockId: id }, err)
+      })
+      return
+    }
+    const capturedVersion = versionRef.current
+    void saveOutcome
+      .catch((err: unknown) => {
+        // Store actions resolve false rather than reject; treat an escaped
+        // rejection as a failed save (keep the row — the safe direction).
+        logger.warn(
+          'useDraftAutosave',
+          'save outcome rejected during discard',
+          { blockId: id },
+          err,
+        )
+        return false as const
+      })
+      .then((ok) => {
+        // Newer activity (a fresh debounced save after a refocus) supersedes
+        // this discard — deleting now could destroy the newer draft row.
+        if (versionRef.current !== capturedVersion) return
+        if (ok === false) {
+          logger.warn('useDraftAutosave', 'save failed — keeping draft row for recovery', {
+            blockId: id,
+          })
+          if (failedContent) {
+            retryOnPoolBusy(() => saveDraft(id, failedContent)).catch((err: unknown) => {
+              logger.warn(
+                'useDraftAutosave',
+                'draft re-save after failed save failed',
+                { blockId: id },
+                err,
+              )
+            })
+          }
+          return
+        }
+        retryOnPoolBusy(() => deleteDraft(id)).catch((err: unknown) => {
+          logger.warn('useDraftAutosave', 'deleteDraft failed during discard', { blockId: id }, err)
+        })
+      })
   }
 
   // Effect A — debounced saveDraft. Re-runs on every content change (i.e.
@@ -100,6 +170,9 @@ export function useDraftAutosave(blockId: string | null, content: string) {
     // path below still advances the marker.
     const lastSeen = lastSeenRef.current
     lastSeenRef.current = { blockId, content }
+
+    // A block change starts a fresh typing run for the max-latency cap.
+    if (lastSeen.blockId !== blockId) pendingSinceRef.current = null
 
     if (!blockId) return
 
@@ -123,27 +196,40 @@ export function useDraftAutosave(blockId: string | null, content: string) {
 
     const capturedVersion = ++versionRef.current
 
-    timerRef.current = setTimeout(() => {
-      if (versionRef.current !== capturedVersion) return // stale — discardDraft was called
-      // #1065 — a genuine fresh save for this block clears any prior
-      // "discarded" marker so a real edit made after a discard can flush.
-      discardedRef.current.delete(blockId)
-      retryOnPoolBusy(() => saveDraft(blockId, content), {
-        onRetry: (attempt) => {
-          logger.debug('useDraftAutosave', 'retrying saveDraft (pool_busy)', {
-            blockId,
-            attempt,
-          })
-        },
-      }).catch((err: unknown) => {
-        // After exhausting the pool_busy retries the helper bubbles the
-        // last error untouched, so `database` / exhausted `pool_busy`
-        // both land here. Keep the existing log-only behaviour (autosave
-        // is best-effort; the user retries by typing one more char).
-        const label = isPoolBusy(err) ? 'saveDraft exhausted pool_busy retries' : 'saveDraft failed'
-        logger.warn('useDraftAutosave', label, { blockId }, err)
-      })
-    }, 2000)
+    // Max-latency cap: a trailing debounce alone never fires during
+    // continuous typing (every keystroke resets it). Once a save has been
+    // pending longer than DRAFT_MAX_LATENCY_MS, fire immediately instead of
+    // re-arming — so a webview kill mid-run loses at most the cap window.
+    if (pendingSinceRef.current === null) pendingSinceRef.current = Date.now()
+    const overdue = Date.now() - pendingSinceRef.current >= DRAFT_MAX_LATENCY_MS
+
+    timerRef.current = setTimeout(
+      () => {
+        if (versionRef.current !== capturedVersion) return // stale — discardDraft was called
+        pendingSinceRef.current = null
+        // #1065 — a genuine fresh save for this block clears any prior
+        // "discarded" marker so a real edit made after a discard can flush.
+        discardedRef.current.delete(blockId)
+        retryOnPoolBusy(() => saveDraft(blockId, content), {
+          onRetry: (attempt) => {
+            logger.debug('useDraftAutosave', 'retrying saveDraft (pool_busy)', {
+              blockId,
+              attempt,
+            })
+          },
+        }).catch((err: unknown) => {
+          // After exhausting the pool_busy retries the helper bubbles the
+          // last error untouched, so `database` / exhausted `pool_busy`
+          // both land here. Keep the existing log-only behaviour (autosave
+          // is best-effort; the user retries by typing one more char).
+          const label = isPoolBusy(err)
+            ? 'saveDraft exhausted pool_busy retries'
+            : 'saveDraft failed'
+          logger.warn('useDraftAutosave', label, { blockId }, err)
+        })
+      },
+      overdue ? 0 : DRAFT_DEBOUNCE_MS,
+    )
 
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current)
@@ -231,9 +317,42 @@ export function useDraftAutosave(blockId: string | null, content: string) {
     }
   }, [blockId])
 
-  /** Call after a successful normal save to discard the draft without flushing. */
-  const discardDraft = () => {
-    if (blockIdRef.current) discardDraftFor(blockIdRef.current)
+  // Effect C — background/close flush of the live content. The debounced
+  // draft row is the ONLY crash/kill safety net, and a trailing debounce
+  // means it can be missing (continuous typing — Effect A's cleanup resets
+  // the timer on every keystroke) or ~2s stale at the moment the OS
+  // backgrounds-then-kills the webview (mobile) or the window is torn down.
+  // While a block is focused, persist the latest live content the moment the
+  // page is hidden (visibilitychange) or unloading (pagehide) so boot-time
+  // `flush_all_drafts` can recover it. Fire-and-forget: the process may die
+  // at any moment, and the IPC completes on the Rust side once dispatched.
+  useEffect(() => {
+    if (!blockId) return
+    const persistLatest = () => {
+      const latest = contentRef.current
+      if (!latest) return
+      retryOnPoolBusy(() => saveDraft(blockId, latest)).catch((err: unknown) => {
+        logger.warn('useDraftAutosave', 'background flush saveDraft failed', { blockId }, err)
+      })
+    }
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') persistLatest()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('pagehide', persistLatest)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('pagehide', persistLatest)
+    }
+  }, [blockId])
+
+  /**
+   * Call after a normal save to discard the draft without flushing. Pass the
+   * save's outcome promise (and the content it saved) to defer the row
+   * DELETE until the save committed — see {@link discardDraftFor}.
+   */
+  const discardDraft = (saveOutcome?: Promise<boolean | void>, failedContent?: string) => {
+    if (blockIdRef.current) discardDraftFor(blockIdRef.current, saveOutcome, failedContent)
   }
 
   return { discardDraft }

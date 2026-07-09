@@ -11,6 +11,14 @@ export const WORD_CHAR_RE = /[\p{L}\p{N}]/u
 const WS_RE = /\s/
 
 /**
+ * Uppercase ULID (26 chars) — the payload shape of the `#[ULID]`, `[[ULID]]`
+ * and `((ULID))` ref tokens. Shared: the parser recognizes the tokens with it
+ * (`tryConsumeToken`), and the serializer uses it to escape a LITERAL
+ * `((ULID))` in text so it cannot resurrect as a live block_ref on reparse.
+ */
+export const ULID_RE = /^[0-9A-Z]{26}$/
+
+/**
  * CommonMark-aligned flanking test for the contiguous `_` run containing
  * position `pos` of `src`. The flanking chars are taken from the FULL run in
  * both directions — `pos` may sit mid-run — so the rule always sees the run's

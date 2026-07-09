@@ -79,9 +79,16 @@ export const TaskPaste = Extension.create({
             // pasting mid-paragraph must NOT clobber the existing content — fall
             // through to the default paste, which inserts the raw marker at the
             // caret (then folds into todo_state at flush). See #1514.
+            // The parent must also BE a plain paragraph: an empty code block
+            // passes the emptiness check but must keep the marker literal —
+            // taking over would replace the codeBlock node itself.
             const { $from } = view.state.selection
             const parent = $from.parent
-            if (parent.content.size > 0 || parent.attrs?.['todoState']) {
+            if (
+              parent.type.name !== 'paragraph' ||
+              parent.content.size > 0 ||
+              parent.attrs?.['todoState']
+            ) {
               return false
             }
 

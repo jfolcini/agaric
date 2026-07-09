@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '../../__tests__/fixtures'
+import { parse } from '../../editor/markdown-serializer'
 import { announce } from '../../lib/announcer'
 import { useBlockKeyboardHandlers } from '../useBlockKeyboardHandlers'
 
@@ -948,6 +949,301 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// Store failure CONTRACT: pageStore.edit() RESOLVES `false` on failure (it
+// rolls back its optimistic write and toasts internally) — it NEVER rejects.
+// The throwing-edit mocks elsewhere in this file pin the defensive catch, but
+// the boolean is the only failure signal production ever emits; ignoring it
+// let a failed merge-edit fall through to remove() and permanently delete the
+// source block whose merged content was never saved.
+// ---------------------------------------------------------------------------
+describe('merge honors edit() resolving false (store contract)', () => {
+  it('handleMergeWithPrev does not remove the source block when edit resolves false', async () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.unmount = vi.fn(() => 'Beta')
+    params.edit = vi.fn(async () => false)
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleMergeWithPrev()
+    })
+
+    expect(params.edit).toHaveBeenCalledTimes(1)
+    expect(params.remove).not.toHaveBeenCalled()
+    // Failure cleanup remounts the source block with its captured content.
+    expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'Beta')
+    expect(params.setFocused).not.toHaveBeenCalled()
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.mergeBlocksFailed')
+  })
+
+  it('handleMergeWithPrev skips the reparent step when edit resolves false', async () => {
+    const params = makeDefaultParams()
+    params.blocks = [
+      makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
+      makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
+      makeBlock({ id: 'B1', depth: 1, content: 'B-one', parent_id: 'B' }),
+    ]
+    params.collapsedVisible = [
+      makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
+      makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
+    ]
+    params.rovingEditor.unmount = vi.fn(() => 'Beta')
+    params.edit = vi.fn(async () => false)
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleMergeWithPrev()
+    })
+
+    expect(params.moveBlocks).not.toHaveBeenCalled()
+    expect(params.remove).not.toHaveBeenCalled()
+  })
+
+  it('handleMergeById does not remove the source block when edit resolves false', async () => {
+    const params = makeDefaultParams()
+    params.edit = vi.fn(async () => false)
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleMergeById('C')
+    })
+
+    expect(params.edit).toHaveBeenCalledTimes(1)
+    expect(params.remove).not.toHaveBeenCalled()
+    expect(params.setFocused).not.toHaveBeenCalled()
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.mergeBlocksFailed')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Re-entrancy: handleMergeWithPrev unmounts the roving editor (emptying the
+// doc) and then awaits IPC. An autorepeat/double Backspace in that window
+// routes through the Backspace-on-empty rule into handleDeleteBlock, racing
+// remove() against the in-flight merge (cascade-deleting the source subtree).
+// The merge needs its own in-progress guard, honored by delete/enter too.
+// ---------------------------------------------------------------------------
+describe('merge in-progress guard (autorepeat Backspace)', () => {
+  function deferredEdit() {
+    let resolve!: (v: boolean) => void
+    const promise = new Promise<boolean>((res) => {
+      resolve = res
+    })
+    return { edit: vi.fn(() => promise), resolve }
+  }
+
+  it('handleDeleteBlock is a no-op while a merge is in flight; remove runs exactly once', async () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.unmount = vi.fn(() => 'Beta')
+    const deferred = deferredEdit()
+    params.edit = deferred.edit
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    let mergePromise!: Promise<void>
+    act(() => {
+      mergePromise = result.current.handleMergeWithPrev()
+    })
+    // Autorepeat Backspace lands while the merge's edit IPC is pending: the
+    // unmounted (now-empty) editor routes it to the Backspace-on-empty rule.
+    act(() => {
+      result.current.handleDeleteBlock({ cursorPlacement: 'end' })
+    })
+    expect(params.remove).not.toHaveBeenCalled()
+
+    await act(async () => {
+      deferred.resolve(true)
+      await mergePromise
+    })
+
+    // Only the merge's own remove ran — once, for the merged-away block.
+    expect(params.remove).toHaveBeenCalledTimes(1)
+    expect(params.remove).toHaveBeenCalledWith('B')
+  })
+
+  it('a second handleMergeWithPrev while one is in flight is dropped', async () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.unmount = vi.fn(() => 'Beta')
+    const deferred = deferredEdit()
+    params.edit = deferred.edit
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    let first!: Promise<void>
+    let second!: Promise<void>
+    act(() => {
+      first = result.current.handleMergeWithPrev()
+      second = result.current.handleMergeWithPrev()
+    })
+    // The merge's edit runs synchronously up to its first await, so a
+    // non-guarded second call would have already invoked edit again here.
+    expect(params.edit).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      deferred.resolve(true)
+      await Promise.all([first, second])
+    })
+    expect(params.remove).toHaveBeenCalledTimes(1)
+  })
+
+  it('handleEnterSave is a no-op while a merge is in flight', async () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.unmount = vi.fn(() => 'Beta')
+    const deferred = deferredEdit()
+    params.edit = deferred.edit
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    let mergePromise!: Promise<void>
+    act(() => {
+      mergePromise = result.current.handleMergeWithPrev()
+    })
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+    expect(params.createBelow).not.toHaveBeenCalled()
+
+    await act(async () => {
+      deferred.resolve(true)
+      await mergePromise
+    })
+    expect(params.remove).toHaveBeenCalledTimes(1)
+  })
+
+  it('handleMergeById is guarded against an in-flight merge too', async () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.unmount = vi.fn(() => 'Beta')
+    const deferred = deferredEdit()
+    params.edit = deferred.edit
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    let first!: Promise<void>
+    let second!: Promise<void>
+    act(() => {
+      first = result.current.handleMergeWithPrev()
+      second = result.current.handleMergeById('C')
+    })
+    expect(params.edit).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      deferred.resolve(true)
+      await Promise.all([first, second])
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Backspace-at-start against a VERBATIM previous block (code fence, table,
+// math block, divider): a textual join corrupts the construct ('```js\ncode\n```'
+// + 'text' re-parses as an unclosed fence that swallows the text). The merge
+// must be a conservative no-op join: keep both blocks, move the caret only.
+// ---------------------------------------------------------------------------
+describe('merge into a verbatim previous block is a no-op join', () => {
+  const CODE_FENCE = '```js\ncode\n```'
+  const DIVIDER = '---'
+
+  const paragraphDoc = (s: string) => ({
+    type: 'doc' as const,
+    content: [{ type: 'paragraph' as const, content: [{ type: 'text' as const, text: s }] }],
+  })
+
+  beforeEach(() => {
+    vi.mocked(parse).mockImplementation((s: string) => {
+      if (s === CODE_FENCE) {
+        return {
+          type: 'doc',
+          content: [
+            {
+              type: 'codeBlock',
+              attrs: { language: 'js' },
+              content: [{ type: 'text', text: 'code' }],
+            },
+          ],
+        } as ReturnType<typeof parse>
+      }
+      if (s === DIVIDER) {
+        return {
+          type: 'doc',
+          content: [{ type: 'horizontalRule' }],
+        } as ReturnType<typeof parse>
+      }
+      return paragraphDoc(s) as ReturnType<typeof parse>
+    })
+  })
+
+  afterEach(() => {
+    vi.mocked(parse).mockImplementation((s: string) => paragraphDoc(s) as ReturnType<typeof parse>)
+  })
+
+  it('code-fence prev: flushes the current block and focuses prev with caret at end', async () => {
+    const params = makeDefaultParams()
+    params.collapsedVisible = [
+      makeBlock({ id: 'A', depth: 0, content: CODE_FENCE }),
+      makeBlock({ id: 'B', depth: 0, content: 'text' }),
+    ]
+    params.blocks = params.collapsedVisible
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleMergeWithPrev()
+    })
+
+    // No textual join, no delete — the fence would swallow the text.
+    expect(params.edit).not.toHaveBeenCalled()
+    expect(params.remove).not.toHaveBeenCalled()
+    // Current typing is persisted, then focus moves to the fence block.
+    expect(params.handleFlush).toHaveBeenCalled()
+    expect(params.setFocused).toHaveBeenCalledWith('A')
+    expect(params.rovingEditor.mount).toHaveBeenCalledWith('A', CODE_FENCE, {
+      cursorPlacement: 'end',
+    })
+  })
+
+  it('divider prev: horizontalRule last node also suppresses the join', async () => {
+    const params = makeDefaultParams()
+    params.collapsedVisible = [
+      makeBlock({ id: 'A', depth: 0, content: DIVIDER }),
+      makeBlock({ id: 'B', depth: 0, content: 'text' }),
+    ]
+    params.blocks = params.collapsedVisible
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleMergeWithPrev()
+    })
+
+    expect(params.edit).not.toHaveBeenCalled()
+    expect(params.remove).not.toHaveBeenCalled()
+  })
+
+  it('handleMergeById no-ops against a verbatim prev without unmounting the editor', async () => {
+    const params = makeDefaultParams({ focusedBlockId: 'B' })
+    params.collapsedVisible = [
+      makeBlock({ id: 'A', depth: 0, content: CODE_FENCE }),
+      makeBlock({ id: 'B', depth: 0, content: 'text' }),
+    ]
+    params.blocks = params.collapsedVisible
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleMergeById('B')
+    })
+
+    expect(params.edit).not.toHaveBeenCalled()
+    expect(params.remove).not.toHaveBeenCalled()
+    expect(params.rovingEditor.unmount).not.toHaveBeenCalled()
+  })
+
+  it('paragraph prev still merges normally', async () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.unmount = vi.fn(() => 'Beta')
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleMergeWithPrev()
+    })
+
+    expect(params.edit).toHaveBeenCalledWith('A', 'AlphaBeta')
+    expect(params.remove).toHaveBeenCalledWith('B')
+  })
+})
+
 describe('useBlockKeyboardHandlers handleMergeById', () => {
   it('merges block by id with previous', async () => {
     const params = makeDefaultParams()
@@ -1135,6 +1431,27 @@ describe('useBlockKeyboardHandlers handleEnterSave', () => {
     expect(params.handleFlush).toHaveBeenCalled()
     expect(params.createBelow).toHaveBeenCalledWith('B')
     expect(params.justCreatedBlockIds.current.has('NEW_1')).toBe(true)
+  })
+
+  // Store contract (#730 family): edit() RESOLVES false on failure — it never
+  // rejects. Ignoring the boolean let a failed before-caret save fall through
+  // to createBelow, forking the content (stale block + orphan after-text).
+  it('aborts the split and restores the full content when edit resolves false', async () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.getMarkdown = vi.fn(() => 'hello world')
+    params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello ', after: 'world' }))
+    params.edit = vi.fn(async () => false)
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    // The after-text block must NOT be created — the before-save didn't commit.
+    expect(params.createBelow).not.toHaveBeenCalled()
+    // The user keeps their complete, unsplit text editable.
+    expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'hello world')
+    expect(params.setFocused).not.toHaveBeenCalled()
   })
 
   it('restores the original block when a split createBelow fails', async () => {

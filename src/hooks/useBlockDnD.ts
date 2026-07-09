@@ -351,6 +351,11 @@ export function useBlockDnD({
         preDragFocusedIdRef.current = null
         return
       }
+      // Capture before clearing: an over-self drop that moves nothing (below)
+      // restores this focus like the `!over` and Esc-cancel paths do. On touch
+      // the delay-only activation (250ms hold, zero movement) makes that path
+      // common — a slow chevron tap must not strand the editor blurred.
+      const preDragFocusedId = preDragFocusedIdRef.current
       preDragFocusedIdRef.current = null
 
       const blockId = active.id as string
@@ -423,6 +428,11 @@ export function useBlockDnD({
         // path instead of `moveToParent`'s full `load()` refetch.
         if (active.id !== over.id || (over.id as string) === SENTINEL_ID) {
           restoreFocusOnSuccess('reorder', reorder(blockId, newIndex))
+        } else if (preDragFocusedId) {
+          // Zero-effective-movement drop (over self, same parent/depth):
+          // nothing moved, so treat it as a cancel and restore the editor
+          // focus the drag start cleared.
+          setFocused(preDragFocusedId)
         }
         return
       }
@@ -436,6 +446,9 @@ export function useBlockDnD({
           blockId,
         )
         restoreFocusOnSuccess('reorder', reorder(blockId, newIndex))
+      } else if (preDragFocusedId) {
+        // Same zero-movement cancel semantics for the no-projection path.
+        setFocused(preDragFocusedId)
       }
     },
     [

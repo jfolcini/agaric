@@ -18,7 +18,7 @@ import { TurnIntoMenu } from '@/components/editor-toolbar/TurnIntoMenu'
 import { TableOpsSelector } from '../TableOpsSelector'
 import { Button } from '../ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover'
-import { type RenderMode, Tip } from './shared'
+import { type RenderMode, Tip, toolbarPressHandlers } from './shared'
 
 interface FormatButtonProps {
   editor: Editor
@@ -60,10 +60,7 @@ export function renderFormatButton({
         aria-haspopup="dialog"
         aria-expanded={open}
         className="justify-start text-sm w-full [@media(pointer:coarse)]:min-h-11"
-        onPointerDown={(e) => {
-          e.preventDefault()
-          setOpen((prev) => !prev)
-        }}
+        {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
       >
         <Type className="h-3.5 w-3.5 mr-2" />
         <span>{t('toolbar.format')}</span>
@@ -76,10 +73,7 @@ export function renderFormatButton({
           aria-label={t('toolbar.format')}
           aria-haspopup="dialog"
           aria-expanded={open}
-          onPointerDown={(e) => {
-            e.preventDefault()
-            setOpen((prev) => !prev)
-          }}
+          {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
         >
           <Type className="h-3.5 w-3.5" />
         </Button>
@@ -149,10 +143,7 @@ export function renderTurnIntoButton({
         aria-haspopup="menu"
         aria-expanded={open}
         className="justify-start text-sm w-full [@media(pointer:coarse)]:min-h-11"
-        onPointerDown={(e) => {
-          e.preventDefault()
-          setOpen((prev) => !prev)
-        }}
+        {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
       >
         <Pilcrow className="h-3.5 w-3.5 mr-2" />
         <span>{t('toolbar.turnInto')}</span>
@@ -165,10 +156,7 @@ export function renderTurnIntoButton({
           aria-label={t('toolbar.turnInto')}
           aria-haspopup="menu"
           aria-expanded={open}
-          onPointerDown={(e) => {
-            e.preventDefault()
-            setOpen((prev) => !prev)
-          }}
+          {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
         >
           <Pilcrow className="h-3.5 w-3.5" />
         </Button>
@@ -182,6 +170,12 @@ export function renderTurnIntoButton({
         align="start"
         className="w-auto max-w-[calc(100vw-2rem)] p-1"
         data-editor-portal
+        // Same guards as the Format popover (#1958): don't pull DOM focus out
+        // of the editor on open, and don't let Radix's close autofocus strand
+        // focus on <body> after Escape/outside dismissal (these popovers
+        // anchor to a PopoverAnchor, so there is no trigger to restore to).
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        onCloseAutoFocus={(e) => e.preventDefault()}
       >
         <TurnIntoMenu editor={editor} onClose={() => setOpen(false)} />
       </PopoverContent>
@@ -235,10 +229,7 @@ export function renderTableOpsButton({
         size="sm"
         aria-label={t('toolbar.tableOps')}
         className="justify-start text-sm w-full [@media(pointer:coarse)]:min-h-11"
-        onPointerDown={(e) => {
-          e.preventDefault()
-          setOpen((prev) => !prev)
-        }}
+        {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
       >
         <Table2 className="h-3.5 w-3.5 mr-2" />
         <span>{t('toolbar.tableOps')}</span>
@@ -250,10 +241,7 @@ export function renderTableOpsButton({
           size="sm"
           aria-label={t('toolbar.tableOps')}
           className="h-7 gap-1 px-1.5 text-xs"
-          onPointerDown={(e) => {
-            e.preventDefault()
-            setOpen((prev) => !prev)
-          }}
+          {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
         >
           <Table2 className="h-3.5 w-3.5" />
           <span className="font-medium">{t('toolbar.tableOps')}</span>
@@ -268,6 +256,9 @@ export function renderTableOpsButton({
         align="start"
         className="w-auto max-w-[calc(100vw-2rem)] p-1"
         data-editor-portal
+        // #1958 guards — see the Turn into popover above.
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        onCloseAutoFocus={(e) => e.preventDefault()}
       >
         <TableOpsSelector
           editor={editor}
@@ -320,10 +311,7 @@ export function renderTablePickerButton({
         size="sm"
         aria-label={t('toolbar.insertTable')}
         className="justify-start text-sm w-full [@media(pointer:coarse)]:min-h-11"
-        onPointerDown={(e) => {
-          e.preventDefault()
-          setOpen((prev) => !prev)
-        }}
+        {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
       >
         <Table className="h-3.5 w-3.5 mr-2" />
         <span>{t('toolbar.insertTable')}</span>
@@ -334,10 +322,7 @@ export function renderTablePickerButton({
           variant="ghost"
           size="icon-xs"
           aria-label={t('toolbar.insertTable')}
-          onPointerDown={(e) => {
-            e.preventDefault()
-            setOpen((prev) => !prev)
-          }}
+          {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
         >
           <Table className="h-3.5 w-3.5" />
         </Button>
@@ -351,6 +336,9 @@ export function renderTablePickerButton({
         align="start"
         className="w-auto max-w-[calc(100vw-2rem)] p-1"
         data-editor-portal
+        // #1958 guards — see the Turn into popover above.
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        onCloseAutoFocus={(e) => e.preventDefault()}
       >
         <TablePicker
           editor={editor}
