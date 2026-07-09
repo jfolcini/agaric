@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE loro_sync_inbox SET purged_ids = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "6aa82fe71b9fd1c6019c1000bd11b6be43bb99364387618bcce7bcd5c81e2dde"
+}

@@ -562,6 +562,10 @@ pub async fn apply_remote(
         &space_id,
         &bytes,
         inbox_id,
+        // Live apply: the engine import delta carries the purged set, so no
+        // tombstone is threaded in here (it is WRITTEN by import_and_project,
+        // #2292). Only the recovery replay path supplies a recovered set.
+        &[],
         InboundDeliveryKind::Live,
     )
     .await?;
@@ -739,10 +743,21 @@ pub(crate) enum InboundDeliveryKind {
 /// The untrusted fallback reprojects the WHOLE live tree with a global
 /// tag-inheritance rebuild — the pre-#2036 recovery behaviour (idempotent
 /// upserts), returned as the changed set so the caller's FTS / cache fan-out
-/// heals too. Known pre-existing gap (#2128, unchanged here): a purge whose
-/// Pass D never committed is invisible to a redundant re-import (the engine
-/// index already dropped the subtree, so the purged delta is empty); the
-/// stale purged rows are NOT swept by this additive fallback.
+/// heals too. Gap boundary (#2128 / #2292): the additive Live no-op fallback
+/// still cannot sweep purged rows — a purge whose Pass D never committed is
+/// invisible to a redundant re-import (the engine index already dropped the
+/// subtree, so the purged delta is empty), so this fallback leaves those stale
+/// rows (pre-existing #2128). The RECOVERY-REPLAY path, however, IS now fixed:
+/// it re-sweeps them from the durable `purged_ids` tombstone persisted on the
+/// inbox row (#2292), independent of the (empty) re-import delta. Remaining
+/// non-goal: a Live redelivery into a space that still holds a leftover
+/// tombstoned slot reprojects the tree but does NOT consult that slot's
+/// tombstone, so its stale rows persist until the next boot replay sweeps them
+/// (down from "forever").
+// #2292: crossed the 7-arg clippy ceiling adding `inbox_id` + `tombstone_purged`
+// (the durable-tombstone plumbing). Threading them as fields of a struct here
+// would obscure the linear import→project flow for no real benefit.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn import_and_project(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
@@ -750,6 +765,11 @@ pub(crate) async fn import_and_project(
     space_id: &SpaceId,
     bytes: &[u8],
     inbox_id: i64,
+    // #2292: purged ids recovered from a crashed apply's durable tombstone
+    // (`loro_sync_inbox.purged_ids`). Unioned into Pass D so a purge whose
+    // engine delta is now empty (subtree already gone) is still re-swept from
+    // SQL. Empty on the live apply path (the engine delta carries the set).
+    tombstone_purged: &[crate::ulid::BlockId],
     delivery: InboundDeliveryKind,
 ) -> Result<(Vec<crate::ulid::BlockId>, Vec<crate::ulid::BlockId>), AppError> {
     use crate::loro::projection::{
@@ -787,6 +807,74 @@ pub(crate) async fn import_and_project(
                 .engine_mut()
                 .import_with_changed_purged_tagscope(bytes)
         })?
+    };
+
+    // #2292: durable tombstone of the purged id set on the write-ahead inbox
+    // slot. Written in its OWN autocommit tx on `pool` — NOT the Phase-2
+    // projection tx below — precisely so it survives a crash mid-projection:
+    // the slot row (INSERTed before the engine import) and this tombstone must
+    // both outlive the window in which the engine has already imported the
+    // purge but the SQL Pass-D sweep has not yet committed. On recovery the
+    // engine delta is empty (the subtree is already gone), so the purged set
+    // can no longer be recomputed from the engine — this durable copy is the
+    // only way to re-sweep the stale SQL rows without a FORBIDDEN "SQL minus
+    // engine" reconcile (#779). Cleared for free by the in-tx slot DELETE when
+    // the projection commits.
+    //
+    // Placed right after the engine import to minimize the window in which the
+    // engine may be persisted (periodic `save_all_engines`) with no durable
+    // tombstone yet.
+    //
+    // Guard: only when the engine actually purged something this import. The
+    // empty-set skip is load-bearing on the replay re-import path — replay's
+    // engine delta is empty, so writing an empty tombstone here would CLOBBER
+    // the real one recovered from the row.
+    if !purged_blocks.is_empty() {
+        // #2292 (CR, Fix 5): persist the UNION of the engine's purged set and
+        // any tombstone recovered from this row, so a recovery re-import that
+        // recomputes a non-empty purge set does not overwrite/lose the
+        // originally-recovered tombstone ids. `BlockId` is
+        // `#[serde(transparent)]`, so serializing the `&str` view yields the
+        // identical JSON array of id strings the decoder expects. On the live
+        // path `tombstone_purged` is empty, so the union is exactly
+        // `purged_blocks` (unchanged behaviour). `AppError: From<serde_json::Error>`
+        // handles the (only theoretically possible) encode failure.
+        let mut union: Vec<&str> = purged_blocks
+            .iter()
+            .map(crate::ulid::BlockId::as_str)
+            .collect();
+        union.extend(tombstone_purged.iter().map(crate::ulid::BlockId::as_str));
+        union.sort_unstable();
+        union.dedup();
+        let purged_json = serde_json::to_string(&union)?;
+        sqlx::query!(
+            "UPDATE loro_sync_inbox SET purged_ids = ? WHERE id = ?",
+            purged_json,
+            inbox_id,
+        )
+        .execute(pool)
+        .await?;
+    }
+
+    // #2292 (CR, Fix 2): a block the engine currently holds LIVE must not be
+    // swept by a stale recovered tombstone (a later move can resurrect a
+    // previously-purged id; Pass A upserts it live, and an unfiltered Pass D
+    // would then delete it → SQL-behind-engine divergence). Narrow the recovered
+    // tombstone to ids the engine no longer holds. Stays within #779: an engine
+    // that reloaded empty holds nothing live, so it still sweeps the full
+    // tombstone (the device's own durable record). Uncertain reads (Err) are
+    // treated as LIVE and excluded — prefer leaving a stale row over deleting a
+    // live one.
+    let tombstone_to_sweep: Vec<crate::ulid::BlockId> = if tombstone_purged.is_empty() {
+        Vec::new()
+    } else {
+        let mut guard = registry.for_space(space_id, device_id)?;
+        let engine = guard.engine_mut();
+        tombstone_purged
+            .iter()
+            .filter(|id| matches!(engine.read_block(id.as_str()), Ok(None)))
+            .cloned()
+            .collect()
     };
 
     // #2264: complete no-op import diff (a redelivered / echoed payload that
@@ -944,12 +1032,25 @@ pub(crate) async fn import_and_project(
     // could still have a stale row — Pass D guarantees it is gone. The engine
     // handed us the COMPLETE purged set, so no descendant CTE is needed.
     // Atomic with the rest of the projection: a rollback leaves SQL untouched.
-    if !purged_blocks.is_empty() {
-        let purged_refs: Vec<&str> = purged_blocks
-            .iter()
-            .map(crate::ulid::BlockId::as_str)
-            .collect();
-        project_purge_blocks_to_sql(&mut tx, &purged_refs).await?;
+    // #2292: sweep the UNION of the engine's purged set and the durable
+    // tombstone recovered from the inbox row — NARROWED (Fix 2) to
+    // `tombstone_to_sweep`, the recovered ids the engine no longer holds live,
+    // so a stale tombstone can never delete a block a later move resurrected.
+    // On a live apply the tombstone is empty and this is exactly the engine set;
+    // on a crash-recovery replay the engine set is empty (subtree already gone)
+    // and the narrowed tombstone carries the ids. `project_purge_blocks_to_sql`
+    // is idempotent (INSERT OR IGNORE into a keyed temp table, then joined
+    // DELETEs), so re-sweeping already-gone ids is a no-op and the dedup below
+    // is a courtesy, not a correctness requirement.
+    let mut purge_union: Vec<&str> = purged_blocks
+        .iter()
+        .map(crate::ulid::BlockId::as_str)
+        .collect();
+    purge_union.extend(tombstone_to_sweep.iter().map(crate::ulid::BlockId::as_str));
+    purge_union.sort_unstable();
+    purge_union.dedup();
+    if !purge_union.is_empty() {
+        project_purge_blocks_to_sql(&mut tx, &purge_union).await?;
     }
 
     // #535: clear the write-ahead inbox slot in the SAME tx as the SQL
@@ -1084,6 +1185,11 @@ pub(crate) async fn replay_inbox_row(
     space_id: &str,
     bytes: &[u8],
     inbox_id: i64,
+    // #2292: purged ids decoded from this row's durable `purged_ids` tombstone
+    // (empty for a non-purge slot). Forwarded into `import_and_project` so
+    // Pass D re-sweeps the stale SQL rows even though the re-imported engine
+    // delta is now empty.
+    tombstone_purged: &[crate::ulid::BlockId],
 ) -> Result<Vec<crate::ulid::BlockId>, AppError> {
     let space = SpaceId::from_trusted(space_id);
 
@@ -1169,6 +1275,7 @@ pub(crate) async fn replay_inbox_row(
         &space,
         bytes,
         inbox_id,
+        tombstone_purged,
         InboundDeliveryKind::RecoveryReplay,
     )
     .await
@@ -2523,6 +2630,7 @@ mod tests {
             space.as_str(),
             &history_bytes,
             inbox_id,
+            &[],
         )
         .await
         .expect("replay must not error — it drops the slot and skips");
@@ -2926,6 +3034,7 @@ mod tests {
             space.as_str(),
             &update_bytes,
             inbox_id,
+            &[],
         )
         .await
         .expect("replay must not error — it drops the slot and skips");
@@ -3024,6 +3133,7 @@ mod tests {
             space.as_str(),
             &update_bytes,
             inbox_id,
+            &[],
         )
         .await
         .expect("reachable update must replay cleanly");
@@ -3099,6 +3209,7 @@ mod tests {
             space.as_str(),
             &snapshot_bytes,
             inbox_id,
+            &[],
         )
         .await
         .expect("a snapshot slot must replay unconditionally");
@@ -3730,6 +3841,425 @@ mod tests {
             .await
             .expect("count inbox");
         assert_eq!(inbox_count, 0, "both slots must be cleared");
+    }
+
+    /// #2292 gate: a purge whose SQL Pass-D sweep never committed — the engine
+    /// already shows the subtree gone, but the stale SQL child rows survive —
+    /// is re-swept on boot from the durable `purged_ids` tombstone. This pins
+    /// the exact gap the pre-#2292 additive fallback misses: on re-import the
+    /// engine delta is EMPTY (nothing left to purge), so the purged set can
+    /// come ONLY from the tombstone — never from a FORBIDDEN (#779) "SQL minus
+    /// engine" reconcile. The post-crash state is constructed directly (no real
+    /// crash): full tree in SQL+engine, purge applied to the ENGINE only, an
+    /// inbox slot carrying the (no-op-on-replay) bytes + the tombstone.
+    #[tokio::test]
+    async fn replay_sync_inbox_resweeps_purge_from_tombstone_2292() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+        let page = BLOCK_A;
+        let c1 = BLOCK_B;
+        let c2 = BLOCK_C;
+
+        // Steady state: build page -> {c1, c2} in a bare engine and project it
+        // into B's engine + SQL via a real inbound snapshot apply (the apply's
+        // own slot clears on success).
+        let snapshot_bytes: Vec<u8> = {
+            let mut e = LoroEngine::with_peer_id("device-A").expect("engine");
+            e.apply_create_block(page, "page", "Parent", None, 0)
+                .expect("page");
+            e.apply_create_block(c1, "content", "child one", Some(page), 0)
+                .expect("c1");
+            e.apply_create_block(c2, "content", "child two", Some(page), 1)
+                .expect("c2");
+            e.export_snapshot().expect("export")
+        };
+        let registry_b = LoroEngineRegistry::new();
+        apply_remote(
+            &pool,
+            &registry_b,
+            "device-B",
+            LoroSyncMessage::Snapshot {
+                protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+                space_id: space.clone(),
+                bytes: snapshot_bytes,
+            },
+        )
+        .await
+        .expect("apply snapshot");
+        for id in [page, c1, c2] {
+            let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .expect("count");
+            assert_eq!(n, 1, "pre-crash: {id} must be projected");
+        }
+        // Seed derived fts rows for the subtree to prove Pass D sweeps derived
+        // tables too, not just `blocks`.
+        for id in [page, c1, c2] {
+            sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, 'x')")
+                .bind(id)
+                .execute(&pool)
+                .await
+                .expect("seed fts");
+        }
+
+        // Post-crash state: apply the purge to the ENGINE only (Phase 1
+        // persisted via loro_doc_state) while the SQL rows survive (Phase-2
+        // Pass D never committed). Export B's post-purge snapshot as the
+        // leftover slot's bytes — re-importing it on recovery is a no-op, so
+        // the engine delta is empty and ONLY the tombstone can drive Pass D.
+        {
+            let mut g = registry_b
+                .for_space(&space, "device-B")
+                .expect("for_space B");
+            g.engine_mut()
+                .apply_purge_block(page)
+                .expect("purge B engine");
+        }
+        let slot_bytes: Vec<u8> = {
+            let mut g = registry_b
+                .for_space(&space, "device-B")
+                .expect("for_space B-export");
+            g.engine_mut().export_snapshot().expect("export post-purge")
+        };
+        {
+            let mut g = registry_b
+                .for_space(&space, "device-B")
+                .expect("for_space B-check");
+            assert!(
+                g.engine_mut().read_block(page).expect("read").is_none(),
+                "engine must show the purged subtree gone"
+            );
+        }
+
+        // Seed the crashed slot WITH the durable tombstone (JSON id array).
+        let purged_json = serde_json::to_string(&[page, c1, c2]).expect("serialise tombstone");
+        sqlx::query(
+            "INSERT INTO loro_sync_inbox (space_id, bytes, purged_ids, created_at) \
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(space.as_str())
+        .bind(&slot_bytes)
+        .bind(&purged_json)
+        .bind(crate::db::now_ms())
+        .execute(&pool)
+        .await
+        .expect("seed crashed slot");
+
+        // Boot replay.
+        let replayed = crate::recovery::replay_sync_inbox(&pool, &registry_b, "device-B")
+            .await
+            .expect("replay");
+        assert_eq!(replayed, 1, "the crashed purge slot must replay");
+
+        // The stale SQL rows for the whole purged subtree are now swept —
+        // across `blocks` AND the seeded derived table — driven solely by the
+        // tombstone (the re-import's engine delta was empty).
+        for id in [page, c1, c2] {
+            let blk: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .expect("count blocks");
+            assert_eq!(
+                blk, 0,
+                "#2292: stale purged row {id} must be swept via the tombstone"
+            );
+            let fts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fts_blocks WHERE block_id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .expect("count fts");
+            assert_eq!(
+                fts, 0,
+                "#2292: stale fts row {id} must be swept via the tombstone"
+            );
+        }
+        // The slot is cleared iff the projection committed.
+        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+            .fetch_one(&pool)
+            .await
+            .expect("count inbox");
+        assert_eq!(remaining, 0, "the replayed slot must be cleared");
+    }
+
+    /// #2292 happy path: a normal inbound purge apply (Live) sweeps the SQL
+    /// subtree AND clears the write-ahead slot on commit. The tombstone written
+    /// mid-apply (before the projection tx) is transparent to the success path
+    /// — the in-tx slot DELETE clears it for free — so the observable end-state
+    /// is identical to the pre-#2292 purge apply (additive).
+    #[tokio::test]
+    async fn apply_remote_purge_clears_slot_and_tombstone_on_commit_2292() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+        let page = BLOCK_A;
+        let c1 = BLOCK_B;
+        let c2 = BLOCK_C;
+
+        // Bare engine A: build the tree, remember its vv, snapshot into B.
+        let mut engine_a = LoroEngine::with_peer_id("device-A").expect("engine");
+        engine_a
+            .apply_create_block(page, "page", "Parent", None, 0)
+            .expect("page");
+        engine_a
+            .apply_create_block(c1, "content", "child one", Some(page), 0)
+            .expect("c1");
+        engine_a
+            .apply_create_block(c2, "content", "child two", Some(page), 1)
+            .expect("c2");
+        let vv_before = engine_a.version_vector();
+        let snapshot_bytes = engine_a.export_snapshot().expect("snapshot");
+
+        let registry_b = LoroEngineRegistry::new();
+        apply_remote(
+            &pool,
+            &registry_b,
+            "device-B",
+            LoroSyncMessage::Snapshot {
+                protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+                space_id: space.clone(),
+                bytes: snapshot_bytes,
+            },
+        )
+        .await
+        .expect("apply snapshot");
+
+        // A purges the subtree; export the purge as an incremental Update.
+        engine_a.apply_purge_block(page).expect("purge A");
+        let purge_update = engine_a
+            .export_update_since(&vv_before)
+            .expect("export update");
+
+        // Live inbound purge apply — writes the tombstone before the projection
+        // tx, sweeps Pass D, then clears the slot in the same tx.
+        let outcome = apply_remote(
+            &pool,
+            &registry_b,
+            "device-B",
+            LoroSyncMessage::Update {
+                protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+                space_id: space.clone(),
+                from_vv: vv_before.clone(),
+                bytes: purge_update,
+            },
+        )
+        .await
+        .expect("apply purge update");
+        assert!(
+            matches!(outcome, ApplyOutcome::Imported { .. }),
+            "purge apply must report Imported, got {outcome:?}"
+        );
+
+        // Additive end-state: SQL subtree swept, slot (with its tombstone) gone.
+        for id in [page, c1, c2] {
+            let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .expect("count");
+            assert_eq!(n, 0, "purged {id} must be swept from SQL on the live path");
+        }
+        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+            .fetch_one(&pool)
+            .await
+            .expect("count inbox");
+        assert_eq!(
+            remaining, 0,
+            "the slot (with its tombstone) must be gone after a successful commit"
+        );
+    }
+
+    /// #2292 (CR, Fix 3): exercise the REAL tombstone WRITER, not a hand-seeded
+    /// `purged_ids`. A live inbound purge `apply_remote` runs the genuine
+    /// tombstone UPDATE (its real WHERE / union-serialization / guard), but the
+    /// Phase-2 projection tx is forced to FAIL AFTER that autocommit UPDATE has
+    /// committed — reproducing the crash window the tombstone exists to survive.
+    /// We assert the surviving row's `purged_ids` deserializes to EXACTLY the
+    /// engine's purged set, then that a later `replay_sync_inbox` (injection
+    /// removed) re-sweeps the stale SQL rows and clears the slot.
+    ///
+    /// Injection mechanism — why NOT a competing `BEGIN IMMEDIATE` writer lock:
+    /// the preferred busy-lock injection is unworkable in this schema. The
+    /// tombstone UPDATE is itself an autocommit WRITE on the same WAL database as
+    /// the Phase-2 `BEGIN IMMEDIATE`; a single held writer lock fails BOTH — and
+    /// also the write-ahead inbox INSERT that runs even earlier in `apply_remote`
+    /// — so it is impossible to let the tombstone COMMIT while busy-failing only
+    /// Phase 2 with one lock. Instead we inject a deterministic Phase-2 failure
+    /// that leaves the autocommit tombstone intact: a temporary BEFORE-DELETE
+    /// trigger on `loro_sync_inbox` that RAISEs. The in-tx slot DELETE is the
+    /// LAST statement of the Phase-2 tx, so its abort drops (rolls back) Passes
+    /// A–D AFTER the tombstone UPDATE already committed — exactly the
+    /// SQL-behind-engine crash state. Dropped before the replay so the recovery
+    /// DELETE can clear the slot.
+    #[tokio::test]
+    async fn apply_remote_purge_writes_tombstone_before_failed_projection_2292() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+        let page = BLOCK_A;
+        let c1 = BLOCK_B;
+        let c2 = BLOCK_C;
+
+        // Bare engine A: build the tree, remember its vv, snapshot into B.
+        let mut engine_a = LoroEngine::with_peer_id("device-A").expect("engine");
+        engine_a
+            .apply_create_block(page, "page", "Parent", None, 0)
+            .expect("page");
+        engine_a
+            .apply_create_block(c1, "content", "child one", Some(page), 0)
+            .expect("c1");
+        engine_a
+            .apply_create_block(c2, "content", "child two", Some(page), 1)
+            .expect("c2");
+        let vv_before = engine_a.version_vector();
+        let snapshot_bytes = engine_a.export_snapshot().expect("snapshot");
+
+        let registry_b = LoroEngineRegistry::new();
+        apply_remote(
+            &pool,
+            &registry_b,
+            "device-B",
+            LoroSyncMessage::Snapshot {
+                protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+                space_id: space.clone(),
+                bytes: snapshot_bytes,
+            },
+        )
+        .await
+        .expect("apply snapshot");
+        for id in [page, c1, c2] {
+            let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .expect("count");
+            assert_eq!(n, 1, "pre-crash: {id} must be projected");
+        }
+        // Seed derived fts rows so the replay proves Pass D sweeps derived tables
+        // too, not just `blocks`.
+        for id in [page, c1, c2] {
+            sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, 'x')")
+                .bind(id)
+                .execute(&pool)
+                .await
+                .expect("seed fts");
+        }
+
+        // Inject the deterministic Phase-2 failure (see fn docs): abort the
+        // in-tx slot DELETE, Phase 2's last statement, leaving the autocommit
+        // tombstone intact.
+        sqlx::query(
+            "CREATE TRIGGER t_fail_projection_2292 BEFORE DELETE ON loro_sync_inbox \
+             BEGIN SELECT RAISE(ABORT, 'injected #2292 projection failure'); END",
+        )
+        .execute(&pool)
+        .await
+        .expect("install failure trigger");
+
+        // A purges the subtree; export the purge as an incremental Update.
+        engine_a.apply_purge_block(page).expect("purge A");
+        let purge_update = engine_a
+            .export_update_since(&vv_before)
+            .expect("export update");
+
+        // Live inbound purge apply — writes the REAL tombstone (autocommit)
+        // before the projection tx, which the trigger then aborts. `apply_remote`
+        // must surface the failure as `Err` AFTER the tombstone committed.
+        let result = apply_remote(
+            &pool,
+            &registry_b,
+            "device-B",
+            LoroSyncMessage::Update {
+                protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+                space_id: space.clone(),
+                from_vv: vv_before.clone(),
+                bytes: purge_update,
+            },
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "injected Phase-2 abort must make apply_remote return Err, got {result:?}"
+        );
+
+        // The engine DID import the purge (Phase 1) ...
+        {
+            let mut g = registry_b.for_space(&space, "device-B").expect("for_space");
+            assert!(
+                g.engine_mut().read_block(page).expect("read").is_none(),
+                "engine must show the purged subtree gone"
+            );
+        }
+        // ... but the SQL rows survive (Phase 2 rolled back) — the crash state.
+        for id in [page, c1, c2] {
+            let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .expect("count");
+            assert_eq!(
+                n, 1,
+                "post-crash: stale SQL row {id} must survive the rolled-back projection"
+            );
+        }
+
+        // THE WRITER ASSERTION: the surviving slot's `purged_ids` was written by
+        // the real UPDATE and deserializes to EXACTLY the engine's purged set.
+        let stored: Option<String> =
+            sqlx::query_scalar("SELECT purged_ids FROM loro_sync_inbox WHERE space_id = ?")
+                .bind(space.as_str())
+                .fetch_one(&pool)
+                .await
+                .expect("the slot must survive with its tombstone");
+        let stored =
+            stored.expect("purged_ids must be non-NULL — the real writer must have persisted it");
+        let mut got: Vec<String> =
+            serde_json::from_str(&stored).expect("tombstone must be a JSON id array");
+        got.sort();
+        let mut want = vec![page.to_string(), c1.to_string(), c2.to_string()];
+        want.sort();
+        assert_eq!(
+            got, want,
+            "#2292: the WRITER must persist exactly the engine's purged seed + descendants"
+        );
+
+        // Remove the injected failure so recovery can clear the slot.
+        sqlx::query("DROP TRIGGER t_fail_projection_2292")
+            .execute(&pool)
+            .await
+            .expect("drop failure trigger");
+
+        // Boot replay re-sweeps the stale rows FROM THE WRITTEN TOMBSTONE (the
+        // re-import's engine delta is empty) and clears the slot.
+        let replayed = crate::recovery::replay_sync_inbox(&pool, &registry_b, "device-B")
+            .await
+            .expect("replay");
+        assert_eq!(replayed, 1, "the crashed purge slot must replay");
+        for id in [page, c1, c2] {
+            let blk: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .expect("count blocks");
+            assert_eq!(
+                blk, 0,
+                "#2292: stale row {id} must be swept via the written tombstone"
+            );
+            let fts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fts_blocks WHERE block_id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .expect("count fts");
+            assert_eq!(
+                fts, 0,
+                "#2292: stale fts row {id} must be swept via the written tombstone"
+            );
+        }
+        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+            .fetch_one(&pool)
+            .await
+            .expect("count inbox");
+        assert_eq!(remaining, 0, "the replayed slot must be cleared");
     }
 
     /// #1257 freshness gate — DIVERGENCE case. The sender's engine still
@@ -4433,6 +4963,7 @@ mod tests {
             space.as_str(),
             &bytes,
             inbox_id,
+            &[],
         )
         .await
         .expect("replay");

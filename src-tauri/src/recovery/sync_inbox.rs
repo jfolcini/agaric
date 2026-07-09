@@ -75,7 +75,7 @@ pub async fn replay_sync_inbox(
     // each iteration — stateless across chunks, exactly like the op-log walk.
     loop {
         let rows = sqlx::query!(
-            "SELECT id, space_id, bytes FROM loro_sync_inbox \
+            "SELECT id, space_id, bytes, purged_ids FROM loro_sync_inbox \
              WHERE id > ? ORDER BY id ASC LIMIT ?",
             last_seen,
             REPLAY_CHUNK_SIZE,
@@ -113,6 +113,29 @@ pub async fn replay_sync_inbox(
                 );
             }
 
+            // #2292: decode this row's durable purged-id tombstone (a JSON
+            // array written by the crashed apply BEFORE its projection tx).
+            // NULL → no purge delta → empty set. A malformed tombstone must
+            // NOT wedge boot: log + fall back to empty (the pre-#2292 additive
+            // behaviour), never propagate the parse error out of the walk.
+            let tombstone_purged: Vec<crate::ulid::BlockId> = match row.purged_ids.as_deref() {
+                None => Vec::new(),
+                Some(json) => match serde_json::from_str(json) {
+                    Ok(ids) => ids,
+                    Err(e) => {
+                        tracing::warn!(
+                            inbox_id = row.id,
+                            space_id = %row.space_id,
+                            error = %e,
+                            "#2292: sync-inbox slot has an unparseable purged_ids \
+                             tombstone — re-sweeping nothing from it (additive \
+                             fallback still applies)"
+                        );
+                        Vec::new()
+                    }
+                },
+            };
+
             match crate::sync_protocol::loro_sync::replay_inbox_row(
                 pool,
                 registry,
@@ -120,6 +143,7 @@ pub async fn replay_sync_inbox(
                 &row.space_id,
                 &row.bytes,
                 row.id,
+                &tombstone_purged,
             )
             .await
             {
@@ -196,14 +220,21 @@ mod tests {
         e.export_snapshot().expect("export")
     }
 
-    async fn seed_inbox(pool: &SqlitePool, space_id: &str, bytes: &[u8]) {
-        sqlx::query("INSERT INTO loro_sync_inbox (space_id, bytes, created_at) VALUES (?, ?, ?)")
-            .bind(space_id)
-            .bind(bytes)
-            .bind(crate::db::now_ms())
-            .execute(pool)
-            .await
-            .expect("seed inbox");
+    /// #2292: `purged_ids` is the durable purge tombstone (JSON array of block
+    /// ids), or `None` for a non-purge slot (the overwhelmingly common case,
+    /// and what the pre-#2292 write-ahead path always stored).
+    async fn seed_inbox(pool: &SqlitePool, space_id: &str, bytes: &[u8], purged_ids: Option<&str>) {
+        sqlx::query(
+            "INSERT INTO loro_sync_inbox (space_id, bytes, purged_ids, created_at) \
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(space_id)
+        .bind(bytes)
+        .bind(purged_ids)
+        .bind(crate::db::now_ms())
+        .execute(pool)
+        .await
+        .expect("seed inbox");
     }
 
     /// #1574: seed MORE than one chunk's worth of inbox rows
@@ -222,7 +253,7 @@ mod tests {
         for i in 0..row_count {
             let bid = block_id_for(i);
             let bytes = snapshot_with_block(&bid, &format!("device-{i}"));
-            seed_inbox(&pool, space.as_str(), &bytes).await;
+            seed_inbox(&pool, space.as_str(), &bytes, None).await;
             block_ids.push(bid);
         }
 
@@ -276,7 +307,7 @@ mod tests {
         let purged = SpaceId::from_trusted("01HZ0000000000000000PURGED");
         let bid = block_id_for(7);
         let bytes = snapshot_with_block(&bid, "device-purged");
-        seed_inbox(&pool, purged.as_str(), &bytes).await;
+        seed_inbox(&pool, purged.as_str(), &bytes, None).await;
 
         // Sanity: the target space really is unregistered.
         let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM spaces WHERE id = ?")
@@ -310,5 +341,40 @@ mod tests {
             space_id.is_none(),
             "a purged-space block must land space-less (NULL space_id), not error"
         );
+    }
+
+    /// #2292: a non-purge slot (NULL `purged_ids`) replays exactly as before —
+    /// the block is projected and the slot cleared, with the new column path
+    /// decoding NULL to an empty tombstone (no Pass-D sweep triggered).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn replay_null_purged_ids_slot_behaves_as_before_2292() {
+        let (pool, _dir) = test_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+        let bid = block_id_for(3);
+        let bytes = snapshot_with_block(&bid, "device-null");
+
+        // Explicit NULL tombstone — the common non-purge write-ahead slot.
+        seed_inbox(&pool, space.as_str(), &bytes, None).await;
+
+        let registry = LoroEngineRegistry::new();
+        let replayed = replay_sync_inbox(&pool, &registry, "device-B")
+            .await
+            .expect("replay");
+        assert_eq!(replayed, 1, "the non-purge slot must replay");
+
+        let projected: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(&bid)
+            .fetch_one(&pool)
+            .await
+            .expect("count block");
+        assert_eq!(
+            projected, 1,
+            "the block must be projected on a NULL-tombstone replay"
+        );
+        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+            .fetch_one(&pool)
+            .await
+            .expect("count inbox");
+        assert_eq!(remaining, 0, "the NULL-tombstone slot must be cleared");
     }
 }
