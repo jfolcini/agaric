@@ -37,6 +37,7 @@
 //! If an agent needs one of these, the user runs it from the UI.
 
 use std::future::Future;
+use std::sync::Arc;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -51,6 +52,7 @@ use super::registry::{
     TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_CREATE_PAGE, TOOL_DELETE_BLOCK, TOOL_SET_PROPERTY,
     TOOL_UPDATE_BLOCK_CONTENT, ToolDescription, ToolRegistry,
 };
+use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
 use crate::commands::{
     add_tag_inner, create_block_inner, create_block_inner_with_space, delete_block_inner,
     edit_block_inner, set_property_inner,
@@ -58,6 +60,7 @@ use crate::commands::{
 use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::space::{SpaceId, SpaceScope};
+use crate::ulid::BlockId;
 
 // ---------------------------------------------------------------------------
 // Typed argument structs (one per tool)
@@ -155,17 +158,36 @@ pub struct ReadWriteTools {
     pool: SqlitePool,
     materializer: Materializer,
     device_id: String,
+    /// #2505: emits `blocks:changed` / `block:properties-changed` on the Tauri
+    /// bus after each tool commits, so an MCP write propagates to open views.
+    /// Defaults to [`NoopViewChangeEmitter`] (headless / test path); production
+    /// swaps in the Tauri emitter via [`with_view_emitter`](Self::with_view_emitter).
+    view_emitter: Arc<dyn ViewChangeEmitter>,
 }
 
 impl ReadWriteTools {
     /// Construct a read-write registry. `pool` must be the *writer* pool
     /// — the six tools all mutate.
+    ///
+    /// The view-change emitter defaults to a no-op; production callers chain
+    /// [`with_view_emitter`](Self::with_view_emitter) to route change
+    /// notifications onto the Tauri event bus.
     pub fn new(pool: SqlitePool, materializer: Materializer, device_id: String) -> Self {
         Self {
             pool,
             materializer,
             device_id,
+            view_emitter: Arc::new(NoopViewChangeEmitter),
         }
+    }
+
+    /// #2505: install the emitter that propagates each committed write to open
+    /// views. Production passes a `TauriViewChangeEmitter`; tests inject a
+    /// recording emitter to assert payload parity with the local-write path.
+    #[must_use]
+    pub fn with_view_emitter(mut self, view_emitter: Arc<dyn ViewChangeEmitter>) -> Self {
+        self.view_emitter = view_emitter;
+        self
     }
 }
 
@@ -202,23 +224,28 @@ impl ToolRegistry for ReadWriteTools {
         let pool = self.pool.clone();
         let materializer = self.materializer.clone();
         let device_id = self.device_id.clone();
+        let emitter = self.view_emitter.clone();
         scoped_dispatch(ctx, name, move |name| async move {
+            let emitter: &dyn ViewChangeEmitter = emitter.as_ref();
             match name.as_str() {
                 TOOL_APPEND_BLOCK => {
-                    handle_append_block(&pool, &materializer, &device_id, args).await
+                    handle_append_block(&pool, &materializer, &device_id, emitter, args).await
                 }
                 TOOL_UPDATE_BLOCK_CONTENT => {
-                    handle_update_block_content(&pool, &materializer, &device_id, args).await
+                    handle_update_block_content(&pool, &materializer, &device_id, emitter, args)
+                        .await
                 }
                 TOOL_SET_PROPERTY => {
-                    handle_set_property(&pool, &materializer, &device_id, args).await
+                    handle_set_property(&pool, &materializer, &device_id, emitter, args).await
                 }
-                TOOL_ADD_TAG => handle_add_tag(&pool, &materializer, &device_id, args).await,
+                TOOL_ADD_TAG => {
+                    handle_add_tag(&pool, &materializer, &device_id, emitter, args).await
+                }
                 TOOL_CREATE_PAGE => {
-                    handle_create_page(&pool, &materializer, &device_id, args).await
+                    handle_create_page(&pool, &materializer, &device_id, emitter, args).await
                 }
                 TOOL_DELETE_BLOCK => {
-                    handle_delete_block(&pool, &materializer, &device_id, args).await
+                    handle_delete_block(&pool, &materializer, &device_id, emitter, args).await
                 }
                 other => Err(unknown_tool_error(other)),
             }
@@ -385,10 +412,44 @@ fn tool_desc_delete_block() -> ToolDescription {
 // server translates them to JSON-RPC codes the same way as the RO path.
 // ---------------------------------------------------------------------------
 
+/// #2505: resolve the owning-page id set for `seed` (post-commit) and emit
+/// `blocks:changed` so open views reload the touched page store(s).
+///
+/// Reuses [`crate::sync_protocol::loro_sync::resolve_changed_page_ids`] — the
+/// exact `parent_id`-chain walk the sync path (#1071) uses — so the payload is
+/// semantically identical to `SyncEvent::Complete`'s `changed_page_ids`. The
+/// walk reads `parent_id` (set synchronously in the command tx), NOT the
+/// denormalized `page_id` column (stamped later in a background task), so it is
+/// correct immediately after the inner command commits. A resolution error is
+/// logged, never propagated — the write already committed and the tool result
+/// must not fail on a notification hiccup.
+async fn emit_blocks_changed_for(
+    pool: &SqlitePool,
+    emitter: &dyn ViewChangeEmitter,
+    seed: BlockId,
+) {
+    match crate::sync_protocol::loro_sync::resolve_changed_page_ids(
+        pool,
+        std::slice::from_ref(&seed),
+    )
+    .await
+    {
+        Ok(changed_page_ids) => emitter.emit_blocks_changed(changed_page_ids),
+        Err(e) => tracing::warn!(
+            target: "mcp",
+            error = %e,
+            block_id = %seed.as_str(),
+            "failed to resolve changed_page_ids for blocks:changed emit; \
+             open views may stay stale until reload-on-mount",
+        ),
+    }
+}
+
 async fn handle_append_block(
     pool: &SqlitePool,
     materializer: &Materializer,
     device_id: &str,
+    emitter: &dyn ViewChangeEmitter,
     args: Value,
 ) -> Result<Value, AppError> {
     let args: AppendBlockArgs = parse_args(TOOL_APPEND_BLOCK, args)?;
@@ -430,6 +491,9 @@ async fn handle_append_block(
         index,
     )
     .await?;
+    // The appended block shares its parent's owning page, so resolve from the
+    // freshly-created block id (BlockRow.id).
+    emit_blocks_changed_for(pool, emitter, resp.id.clone()).await;
     to_tool_result(&resp)
 }
 
@@ -437,6 +501,7 @@ async fn handle_update_block_content(
     pool: &SqlitePool,
     materializer: &Materializer,
     device_id: &str,
+    emitter: &dyn ViewChangeEmitter,
     args: Value,
 ) -> Result<Value, AppError> {
     let args: UpdateBlockContentArgs = parse_args(TOOL_UPDATE_BLOCK_CONTENT, args)?;
@@ -445,8 +510,15 @@ async fn handle_update_block_content(
     let space_id = normalize_ulid_arg(&args.space_id);
     // Refuse cross-space writes at the MCP boundary.
     validate_block_in_space(pool, &block_id, &space_id).await?;
-    let resp =
-        edit_block_inner(pool, device_id, materializer, block_id.into(), args.content).await?;
+    let resp = edit_block_inner(
+        pool,
+        device_id,
+        materializer,
+        block_id.clone().into(),
+        args.content,
+    )
+    .await?;
+    emit_blocks_changed_for(pool, emitter, BlockId::from_trusted(&block_id)).await;
     to_tool_result(&resp)
 }
 
@@ -454,6 +526,7 @@ async fn handle_set_property(
     pool: &SqlitePool,
     materializer: &Materializer,
     device_id: &str,
+    emitter: &dyn ViewChangeEmitter,
     args: Value,
 ) -> Result<Value, AppError> {
     let args: SetPropertyArgs = parse_args(TOOL_SET_PROPERTY, args)?;
@@ -489,6 +562,9 @@ async fn handle_set_property(
     // naming the tool, without duplicating the precheck at this boundary.
     let active_id =
         crate::ulid::verify_active(pool, &crate::ulid::BlockId::from_trusted(&block_id)).await?;
+    // Clone the key for the property-changed emit below — `set_property_inner`
+    // takes it by value.
+    let key_for_emit = args.key.clone();
     let resp = set_property_inner(
         pool,
         device_id,
@@ -505,6 +581,14 @@ async fn handle_set_property(
         Some(TOOL_SET_PROPERTY),
     )
     .await?;
+    // #2505: a property write touches the block's page (a visible todo
+    // checkbox / priority badge etc. may need to re-render), so emit the
+    // page-keyed `blocks:changed` AND the existing `block:properties-changed`
+    // event with the exact `{ block_id, changed_keys }` payload the local
+    // `set_property` command emits (`emit_property_changed_event`), so the
+    // property-change dispatcher needs no changes.
+    emit_blocks_changed_for(pool, emitter, BlockId::from_trusted(&block_id)).await;
+    emitter.emit_property_changed(block_id, vec![key_for_emit]);
     to_tool_result(&crate::pagination::BlockRow::from(resp))
 }
 
@@ -512,6 +596,7 @@ async fn handle_add_tag(
     pool: &SqlitePool,
     materializer: &Materializer,
     device_id: &str,
+    emitter: &dyn ViewChangeEmitter,
     args: Value,
 ) -> Result<Value, AppError> {
     let args: AddTagArgs = parse_args(TOOL_ADD_TAG, args)?;
@@ -528,10 +613,12 @@ async fn handle_add_tag(
         pool,
         device_id,
         materializer,
-        crate::ulid::BlockId::from(block_id),
+        crate::ulid::BlockId::from(block_id.clone()),
         crate::ulid::BlockId::from(tag_id),
     )
     .await?;
+    // The tagged block's page re-renders (a tag chip appears on the block).
+    emit_blocks_changed_for(pool, emitter, BlockId::from_trusted(&block_id)).await;
     to_tool_result(&resp)
 }
 
@@ -539,6 +626,7 @@ async fn handle_create_page(
     pool: &SqlitePool,
     materializer: &Materializer,
     device_id: &str,
+    emitter: &dyn ViewChangeEmitter,
     args: Value,
 ) -> Result<Value, AppError> {
     let args: CreatePageArgs = parse_args(TOOL_CREATE_PAGE, args)?;
@@ -561,6 +649,11 @@ async fn handle_create_page(
         &scope,
     )
     .await?;
+    // A newly-created page resolves to itself (page_id = id), so `blocks:changed`
+    // carries the new page id. No mounted store renders a page that did not
+    // exist a moment ago, so this is a no-op for open views today — emitted for
+    // consistency and to feed any future page-list consumer of the one signal.
+    emit_blocks_changed_for(pool, emitter, resp.id.clone()).await;
     to_tool_result(&resp)
 }
 
@@ -568,6 +661,7 @@ async fn handle_delete_block(
     pool: &SqlitePool,
     materializer: &Materializer,
     device_id: &str,
+    emitter: &dyn ViewChangeEmitter,
     args: Value,
 ) -> Result<Value, AppError> {
     let args: DeleteBlockArgs = parse_args(TOOL_DELETE_BLOCK, args)?;
@@ -576,7 +670,11 @@ async fn handle_delete_block(
     let space_id = normalize_ulid_arg(&args.space_id);
     // Refuse cross-space writes at the MCP boundary.
     validate_block_in_space(pool, &block_id, &space_id).await?;
-    let resp = delete_block_inner(pool, device_id, materializer, block_id.into()).await?;
+    let resp = delete_block_inner(pool, device_id, materializer, block_id.clone().into()).await?;
+    // Soft-delete leaves the row (and its `parent_id` chain) intact, so the
+    // owning page still resolves — the page must reload to drop the block from
+    // its rendered tree.
+    emit_blocks_changed_for(pool, emitter, BlockId::from_trusted(&block_id)).await;
     to_tool_result(&resp)
 }
 

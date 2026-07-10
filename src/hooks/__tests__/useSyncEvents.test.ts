@@ -245,22 +245,24 @@ describe('mapBackendState', () => {
 
 describe('useSyncEvents', () => {
   describe('listener registration', () => {
-    it('registers listeners for sync:complete and sync:error (Phase 2)', async () => {
+    it('registers listeners for sync:complete, sync:error, and blocks:changed', async () => {
       // Phase 2 dropped the `sync:progress` listener — the
       // Channel<SyncProgressUpdate> opened by `startSync` is the
       // canonical source for progress now (see `useSyncTrigger`).
-      // Keeping the assertion as 2 (down from 3 in Phase 1) pins the
-      // contract; if a future change re-introduces the legacy listener
-      // it is a deliberate decision, not a silent regression.
+      // #2505 added the `blocks:changed` listener (out-of-band local /
+      // MCP-write signal). Pinning the count at 3 makes any future
+      // listener addition/removal a deliberate decision, not a silent
+      // regression.
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
+        expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
       const eventNames = mockListen.mock.calls.map((c) => c[0])
       expect(eventNames).toContain('sync:complete')
       expect(eventNames).toContain('sync:error')
+      expect(eventNames).toContain('blocks:changed')
       expect(eventNames).not.toContain('sync:progress')
 
       unmount()
@@ -275,7 +277,7 @@ describe('useSyncEvents', () => {
 
       // Wait for listen promises to resolve
       await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
+        expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
       unmount()
@@ -325,7 +327,7 @@ describe('useSyncEvents', () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
+        expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
       const callback = getListenerCallback('sync:complete')
@@ -350,7 +352,7 @@ describe('useSyncEvents', () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
+        expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
       const callback = getListenerCallback('sync:complete')
@@ -372,7 +374,7 @@ describe('useSyncEvents', () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
+        expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
       const callback = getListenerCallback('sync:complete')
@@ -394,7 +396,7 @@ describe('useSyncEvents', () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
+        expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
       const callback = getListenerCallback('sync:complete')
@@ -416,7 +418,7 @@ describe('useSyncEvents', () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
+        expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
       const callback = getListenerCallback('sync:complete')
@@ -438,7 +440,7 @@ describe('useSyncEvents', () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
+        expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
       const callback = getListenerCallback('sync:complete')
@@ -463,7 +465,7 @@ describe('useSyncEvents', () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
+        expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
       const callback = getListenerCallback('sync:complete')
@@ -485,7 +487,7 @@ describe('useSyncEvents', () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
+        expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
       const callback = getListenerCallback('sync:complete')
@@ -507,7 +509,7 @@ describe('useSyncEvents', () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
+        expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
       const callback = getListenerCallback('sync:complete')
@@ -532,7 +534,7 @@ describe('useSyncEvents', () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
+        expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
       const callback = getListenerCallback('sync:complete')
@@ -560,7 +562,7 @@ describe('useSyncEvents', () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
+        expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
       const callback = getListenerCallback('sync:complete')
@@ -588,7 +590,7 @@ describe('useSyncEvents', () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
+        expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
       const callback = getListenerCallback('sync:complete')
@@ -615,7 +617,7 @@ describe('useSyncEvents', () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
+        expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
       const callback = getListenerCallback('sync:complete')
@@ -641,7 +643,7 @@ describe('useSyncEvents', () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
+        expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
       const callback = getListenerCallback('sync:complete')
@@ -667,7 +669,7 @@ describe('useSyncEvents', () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
+        expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
       const callback = getListenerCallback('sync:complete')
@@ -687,12 +689,74 @@ describe('useSyncEvents', () => {
     })
   })
 
+  // #2505 — the `blocks:changed` listener routes an out-of-band local write
+  // (today: an MCP RW tool) through the SAME targeted-reload machinery
+  // `sync:complete` uses, minus the toast / ops-counter side effects.
+  describe('blocks:changed handler (#2505)', () => {
+    it('reloads ONLY the changed page store when changed_page_ids is present', async () => {
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+
+      const callback = getListenerCallback('blocks:changed')
+      callback({ payload: { changed_page_ids: ['PAGE_1'] } })
+
+      // Targeted: PAGE_1 reloads + re-anchors; PAGE_2 is skipped.
+      expect(mockLoad).toHaveBeenCalledTimes(1)
+      expect(mockLoad2).not.toHaveBeenCalled()
+      expect(mockReanchorUndo).toHaveBeenCalledWith('PAGE_1')
+      expect(mockReanchorUndo).not.toHaveBeenCalledWith('PAGE_2')
+      // Same resolve-preload side effect as sync:complete.
+      expect(mockPreload).toHaveBeenCalledWith('SPACE_TEST', true)
+
+      unmount()
+    })
+
+    it('reloads ALL mounted stores when changed_page_ids is empty (fallback)', async () => {
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+
+      const callback = getListenerCallback('blocks:changed')
+      // Empty set (e.g. the written block had no resolvable page ancestor) →
+      // fall back to reloading everything, exactly like sync:complete.
+      callback({ payload: { changed_page_ids: [] } })
+
+      expect(mockLoad).toHaveBeenCalledTimes(1)
+      expect(mockLoad2).toHaveBeenCalledTimes(1)
+
+      unmount()
+    })
+
+    it('does NOT toast or touch the sync store (no ops counter)', async () => {
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+
+      const callback = getListenerCallback('blocks:changed')
+      callback({ payload: { changed_page_ids: ['PAGE_1'] } })
+
+      // Unlike sync:complete, blocks:changed carries no ops counts and shows
+      // no toast — it is a pure reconciliation signal.
+      expect(mockSetState).not.toHaveBeenCalled()
+      expect(mockSetOpsReceived).not.toHaveBeenCalled()
+
+      unmount()
+    })
+  })
+
   describe('sync:error handler', () => {
     it('sets error state with message', async () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
+        expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
       const callback = getListenerCallback('sync:error')
@@ -713,7 +777,7 @@ describe('useSyncEvents', () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
+        expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
       const callback = getListenerCallback('sync:error')
@@ -745,7 +809,7 @@ describe('useSyncEvents', () => {
       // Wait for all three listen() calls to be issued (positive observable),
       // then drain the rejected-promise microtask chain so each .catch() handler
       // runs before we assert the negative.
-      await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(2))
+      await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
       await Promise.resolve()
       await Promise.resolve()
 
@@ -763,7 +827,7 @@ describe('useSyncEvents', () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
+        expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
       const callback = getListenerCallback('sync:complete')
@@ -785,7 +849,7 @@ describe('useSyncEvents', () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(2)
+        expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
       const callback = getListenerCallback('sync:error')

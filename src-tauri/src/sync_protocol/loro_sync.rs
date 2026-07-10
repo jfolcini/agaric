@@ -602,7 +602,7 @@ pub async fn apply_remote(
 /// therefore be empty even when `changed_blocks` is not. The frontend treats
 /// an empty set as "fall back to a full reload", so a missed resolution
 /// degrades to the old behaviour rather than dropping an update.
-async fn resolve_changed_page_ids(
+pub(crate) async fn resolve_changed_page_ids(
     pool: &SqlitePool,
     changed_blocks: &[crate::ulid::BlockId],
 ) -> Result<Vec<String>, AppError> {
