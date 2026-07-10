@@ -27,19 +27,14 @@ import { checkForUpdatesNow, LAST_UPDATE_CHECK_STORAGE_KEY } from '@/hooks/useUp
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { GESTURE_ENTRIES } from '@/lib/gesture-coachmark'
 import { isMobilePlatform } from '@/lib/platform'
+import { getPref, PREFS } from '@/lib/preferences'
 
 interface HelpTabProps {
   onReportBugClick: () => void
 }
 
 function readLastCheckIso(): string | null {
-  try {
-    return typeof localStorage !== 'undefined'
-      ? localStorage.getItem(LAST_UPDATE_CHECK_STORAGE_KEY)
-      : null
-  } catch {
-    return null
-  }
+  return typeof localStorage === 'undefined' ? null : getPref(PREFS.lastUpdateCheck)
 }
 
 export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement {
