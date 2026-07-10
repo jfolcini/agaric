@@ -1380,12 +1380,9 @@ fn bench_revert_ops_50op_at_100k(c: &mut Criterion) {
     assert_under_budget("revert_ops (50op) @ 100K", &acc, BUDGET_MS);
 }
 
-// ===========================================================================
-// Problem tier — aspirational budgets, gated behind SLO_INCLUDE_PROBLEM
-// ===========================================================================
-
-/// `list_page_links` — graph-view roll-up. PROBLEM TIER (gated behind
-/// `SLO_INCLUDE_PROBLEM`): a warm measurement is ~530 ms at 100K, ~2.6× over
+/// `list_page_links` — graph-view roll-up. Green tier since #2178; the
+/// history below records the problem-tier era. A warm pre-cap measurement
+/// was ~530 ms at 100K, ~2.6× over
 /// the 200 ms budget (3-JOIN superlinearity; see docs/architecture/operations.md
 /// § Product SLO known-exceeds-budget note). The SQL-review §H-2 `page_link_cache`
 /// rollup (migration 0065) helped but did NOT bring it under budget — this was
@@ -1568,6 +1565,10 @@ const SLO_PAGES_CACHE_COUNTS_DIRECT_SQL: &str = "SELECT p.id AS page_id, \
     ) AS child_block_count \
     FROM blocks p \
     WHERE p.id IN (SELECT value FROM json_each(?))";
+
+// ===========================================================================
+// Problem tier — measurement probes, gated behind SLO_INCLUDE_PROBLEM
+// ===========================================================================
 
 /// `tags_cache` direct query — #2508 scope item 1. PROBLEM TIER (gated
 /// behind `SLO_INCLUDE_PROBLEM`, same `#2178`-style "confirmable probe"
