@@ -232,6 +232,45 @@ pub(crate) fn op_created_at_ms(row: &sqlx::sqlite::SqliteRow, fallback_ms: i64) 
     fallback_ms
 }
 
+/// #2504: count the per-space Loro engine snapshots persisted in
+/// `loro_doc_state`. Returns `0` when the table is absent (an ancient pre-0052
+/// database) or empty.
+///
+/// This is the signal the op-log rebuild ([`recover_blocks_from_op_log`]) uses
+/// to decide whether it is about to silently drop remote-authored content. The
+/// op_log is strictly device-local (remote ops never land in it post-#490-M1),
+/// so a full-log replay reconstructs **only** locally-authored blocks. A
+/// non-empty `loro_doc_state` means the device has synced: the engine holds the
+/// complete convergent state — including every remote-authored block, property,
+/// and tag — that this rebuild cannot see. The count is emitted as a loud log so
+/// the disaster is not silent (issue #2504; the engine-first reprojection that
+/// would actually recover that content is a separate rework — see #2503).
+async fn persisted_engine_snapshot_count(
+    executor: &mut sqlx::SqliteConnection,
+) -> Result<i64, crate::error::AppError> {
+    let table_exists = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'loro_doc_state'"
+    )
+    .fetch_one(&mut *executor)
+    .await?
+        > 0;
+
+    if !table_exists {
+        return Ok(0);
+    }
+
+    // Only rows carrying an actual snapshot blob represent recoverable engine
+    // state; a NULL/empty snapshot column holds no droppable content.
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM loro_doc_state \
+         WHERE snapshot IS NOT NULL AND LENGTH(snapshot) > 0",
+    )
+    .fetch_one(&mut *executor)
+    .await?;
+
+    Ok(count)
+}
+
 /// Replay block-level ops from `op_log` into an existing (temporary)
 /// `blocks` table.  Called by [`ensure_blocks_table_exists`] inside a
 /// transaction so the rebuild is atomic.
@@ -241,6 +280,16 @@ pub(crate) fn op_created_at_ms(row: &sqlx::sqlite::SqliteRow, fallback_ms: i64) 
 /// 0080 applied (nothing converts after 0080 — the 0085/0089 rebuilds copy
 /// RAW into a STRICT INTEGER column), rfc3339 TEXT before that (0080's
 /// julianday() backfill is the designated converter).
+///
+/// **Device-local recovery caveat (#2504).** This rebuild replays the op_log,
+/// which is strictly device-local (remote ops never land in it post-#490-M1).
+/// On a device that has ever synced, it therefore reconstructs **only
+/// locally-authored content** and silently omits every remote-authored block,
+/// property, and tag. The complete convergent state lives in the per-space Loro
+/// engine snapshots (`loro_doc_state`); when those are present this function
+/// logs loudly that remote content is being dropped. Recovering that content
+/// requires an engine-first reprojection (a separate rework tracked by #2503 /
+/// #2504) or a fresh re-sync from a peer.
 async fn recover_blocks_from_op_log(
     executor: &mut sqlx::SqliteConnection,
     deleted_at_is_ms: bool,
@@ -258,6 +307,33 @@ async fn recover_blocks_from_op_log(
     if !op_log_exists {
         tracing::warn!("op_log table missing — cannot recover blocks data");
         return Ok(());
+    }
+
+    // #2504: loudly surface the device-local-only limitation of this rebuild.
+    // The op_log holds ONLY locally-authored ops (#490-M1), so replaying it
+    // reconstructs only local content. If the device has synced, the per-space
+    // Loro engine snapshots in `loro_doc_state` hold the complete convergent
+    // state — including remote-authored content this replay cannot see — and it
+    // is about to be dropped. This is a disaster-path last resort; it must not
+    // fail silently. (Engine-first reprojection that would recover that content
+    // is a separate rework: #2503 / #2504.)
+    let engine_snapshots = persisted_engine_snapshot_count(&mut *executor).await?;
+    if engine_snapshots > 0 {
+        tracing::error!(
+            engine_snapshots,
+            "DISASTER RECOVERY DATA LOSS (#2504): rebuilding `blocks` from the device-local \
+             op_log only. This device has synced ({engine_snapshots} Loro engine snapshot(s) in \
+             `loro_doc_state`), but the op_log holds only locally-authored ops — every \
+             remote-authored block, property, and tag WILL BE MISSING from the rebuilt table. \
+             The complete convergent state survives in `loro_doc_state`; recover it via an \
+             engine-first reprojection or a fresh re-sync from a peer."
+        );
+    } else {
+        tracing::warn!(
+            "Recovering `blocks` from the device-local op_log (#2504). No synced Loro engine \
+             state present, so local content is complete; note this replay would omit any \
+             remote-authored content if the device had synced."
+        );
     }
 
     // C8 (#345): replay in materializer LWW order. The live materializer
@@ -1710,5 +1786,135 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(content, "hello", "single create_block must recover cleanly");
+    }
+
+    /// #2504: [`persisted_engine_snapshot_count`] counts only `loro_doc_state`
+    /// rows that carry an actual snapshot blob — the recoverable engine state
+    /// the op-log rebuild would drop. An absent table, an empty table, and an
+    /// empty-blob row all read as "nothing to lose".
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn persisted_engine_snapshot_count_counts_only_real_snapshots_2504() {
+        let (pool, _dir) = test_pool().await;
+
+        // Empty (but migrated) table ⇒ 0.
+        let mut conn = pool.acquire().await.unwrap();
+        assert_eq!(
+            persisted_engine_snapshot_count(&mut conn).await.unwrap(),
+            0,
+            "no engine snapshots ⇒ 0"
+        );
+        drop(conn);
+
+        // A real snapshot row ⇒ counted; an empty-blob row ⇒ ignored.
+        sqlx::query(
+            "INSERT INTO loro_doc_state (space_id, snapshot, updated_at, op_count) \
+             VALUES ('space-real', ?, 0, 1)",
+        )
+        .bind(vec![1_u8, 2, 3, 4])
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO loro_doc_state (space_id, snapshot, updated_at, op_count) \
+             VALUES ('space-empty', X'', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut conn = pool.acquire().await.unwrap();
+        assert_eq!(
+            persisted_engine_snapshot_count(&mut conn).await.unwrap(),
+            1,
+            "only the non-empty snapshot row counts as recoverable engine state"
+        );
+    }
+
+    /// #2504 (pins the disaster-path gap): [`recover_blocks_from_op_log`]
+    /// rebuilds from the strictly device-local op_log, so it reconstructs ONLY
+    /// locally-authored content. Remote-authored content lives solely in the
+    /// per-space Loro engine snapshots (`loro_doc_state`) and is NOT reprojected
+    /// by this replay — it is silently dropped on recovery.
+    ///
+    /// This test pins the CURRENT (known-incomplete) behavior: a device holds a
+    /// synced engine snapshot plus one locally-authored op; after recovery the
+    /// local block survives, the engine snapshot is left untouched (never
+    /// consulted), and no remote-authored block is reconstructed. When the
+    /// engine-first reprojection lands (#2503 / #2504), recovery should instead
+    /// reproject the engine state and the "remote content survives" assertion in
+    /// the issue's acceptance criteria flips — at which point this test is
+    /// updated to assert survival rather than the gap.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_blocks_from_op_log_is_device_local_only_2504() {
+        let (pool, _dir) = test_pool().await;
+
+        // A synced device: the engine holds convergent state (stands in for
+        // remote-authored content) in `loro_doc_state`, but the op_log carries
+        // ONLY the block this device authored locally — remote ops never land in
+        // the op_log (#490-M1), so there is deliberately no op for "remote-b".
+        sqlx::query(
+            "INSERT INTO loro_doc_state (space_id, snapshot, updated_at, op_count) \
+             VALUES ('space-1', ?, 0, 7)",
+        )
+        .bind(vec![9_u8, 9, 9, 9])
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let payload = serde_json::json!({
+            "block_id": "local-a",
+            "block_type": "content",
+            "index": 0,
+            "content": "authored here",
+        })
+        .to_string();
+        sqlx::query(
+            "INSERT INTO op_log \
+             (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+             VALUES ('this-device', 1, NULL, 'h1', 'create_block', ?, ?)",
+        )
+        .bind(&payload)
+        .bind(1_767_225_600_000_i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // The migrated `blocks` table is empty at boot; recovery replays into it.
+        let mut conn = pool.acquire().await.unwrap();
+        recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        // Locally-authored content survives.
+        let local: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = 'local-a'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(local, 1, "op-log recovery must reconstruct local content");
+
+        // The gap: remote-authored content held only in the engine snapshot is
+        // NOT reconstructed by op-log replay.
+        let remote: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = 'remote-b'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            remote, 0,
+            "#2504 gap: op-log rebuild cannot see remote-authored content in the engine"
+        );
+
+        // The convergent engine state is still present — untouched by this
+        // rebuild — which is exactly what an engine-first reprojection would
+        // consume to recover the dropped remote content.
+        let engine_rows: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM loro_doc_state WHERE space_id = 'space-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            engine_rows, 1,
+            "engine snapshot survives, unread by the op-log rebuild (recoverable via #2503/#2504)"
+        );
     }
 }
