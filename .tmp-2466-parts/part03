@@ -1,0 +1,1200 @@
+    // Content block under p2 linking to p3
+    let b3 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("cross link [[{}]]", p3.id),
+        Some(p2.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Self-link: content under p1 linking back to p1 (should be excluded)
+    let b4 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("self [[{}]]", p1.id),
+        Some(p1.id.clone()),
+        Some(3),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Duplicate content blocks linking to same target (tests DISTINCT)
+    let b5 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("also beta [[{}]]", p2.id),
+        Some(p1.id.clone()),
+        Some(4),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Direct page-to-page link (source is itself a page, no parent rollup)
+    sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(&p2.id)
+        .bind(&p1.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Insert all content block links
+    for (src, tgt) in [
+        (&b1.id, &p2.id),
+        (&b2.id, &p3.id),
+        (&b3.id, &p3.id),
+        (&b4.id, &p1.id),
+        (&b5.id, &p2.id),
+    ] {
+        sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(src)
+            .bind(tgt)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    // -- Compare optimized vs oracle --
+    let mut optimized = list_page_links_inner(&pool, &SpaceScope::Global, None)
+        .await
+        .unwrap();
+    optimized.sort();
+
+    let oracle = list_page_links_oracle(&pool).await;
+
+    assert_eq!(
+        optimized, oracle,
+        "P-15 optimized query must match original oracle.\n  optimized: {optimized:?}\n  oracle:    {oracle:?}"
+    );
+
+    // Sanity: we should have some links
+    assert!(
+        !optimized.is_empty(),
+        "test should produce at least one page link"
+    );
+
+    mat.shutdown();
+}
+
+// Phase 2 — parity test: `&SpaceScope::Global` reproduces the
+// pre-migration `space_id: None` behaviour bit-for-bit. Fixtures span
+// two spaces with intra-space and cross-space links; the global query
+// must surface every edge regardless of where its endpoints live, which
+// is exactly the behaviour the old `None` parameter produced. The
+// `as_filter_param()` adapter returns `None` for `Global`, so the
+// `(?1 IS NULL OR ...)` short-circuit on the SQL side is identical.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_inner_global_matches_legacy_none_pend18() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    // Two source pages and two target pages, one per space.
+    insert_block(&pool, "LPL_PSA", "page", "Source A", None, None).await;
+    insert_block(&pool, "LPL_PSB", "page", "Source B", None, None).await;
+    insert_block(&pool, "LPL_PTA", "page", "Target A", None, None).await;
+    insert_block(&pool, "LPL_PTB", "page", "Target B", None, None).await;
+    assign_to_space(&pool, "LPL_PSA", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "LPL_PTA", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "LPL_PSB", TEST_SPACE_B_ID).await;
+    assign_to_space(&pool, "LPL_PTB", TEST_SPACE_B_ID).await;
+
+    // Two within-space edges + two cross-space edges. The global view
+    // must surface ALL four — that's exactly what the legacy
+    // `space_id: None` did before the migration.
+    for (src, tgt) in [
+        ("LPL_PSA", "LPL_PTA"),
+        ("LPL_PSA", "LPL_PTB"),
+        ("LPL_PSB", "LPL_PTA"),
+        ("LPL_PSB", "LPL_PTB"),
+    ] {
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(src)
+            .bind(tgt)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let global = list_page_links_inner(&pool, &SpaceScope::Global, None)
+        .await
+        .unwrap();
+    let global_edges: std::collections::HashSet<(String, String)> = global
+        .iter()
+        .map(|l| (l.source_id.into(), l.target_id.into()))
+        .collect();
+    assert_eq!(
+        global_edges.len(),
+        4,
+        "Global must surface all four edges (two within-space + two \
+         cross-space); confirms `as_filter_param()` on Global produces \
+         the same `NULL` SQL bind as legacy `None`"
+    );
+
+    // Confirm the active-space partition is strictly tighter — Global
+    // is a superset that includes the cross-space edges Active() drops.
+    let scope_a = list_page_links_inner(
+        &pool,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+        None,
+    )
+    .await
+    .unwrap();
+    let scope_b = list_page_links_inner(
+        &pool,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(scope_a.len(), 1, "Active(A) keeps the within-A edge only");
+    assert_eq!(scope_b.len(), 1, "Active(B) keeps the within-B edge only");
+}
+
+// `tag_ids` filter pushes the GraphView tag-filter
+// predicate into SQL: only edges whose **target page** carries one of
+// the listed tags surface. Pre-Tier-4.5 the renderer fetched every
+// space-wide edge and JS-discarded any whose endpoint was not in the
+// tag-filtered node set.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_filters_by_tag_ids() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Source page (carries no tag) and two target pages — one tagged
+    // with TAG_A, the other with TAG_B. Source -> each target via a
+    // distinct content block. With `tag_ids = [TAG_A]` only the edge
+    // whose target carries TAG_A may surface.
+    let p_src = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Source".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let p_a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target A".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    let p_b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target B".into(),
+        None,
+        Some(3),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Two tag blocks — minted as `block_type='tag'` so the ULID is a
+    // real row in `blocks`. The `block_tags` FK requires both endpoints
+    // to be live blocks.
+    let tag_a = create_block_inner(&pool, DEV, &mat, "tag".into(), "alpha".into(), None, None)
+        .await
+        .unwrap();
+    let tag_b = create_block_inner(&pool, DEV, &mat, "tag".into(), "beta".into(), None, None)
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Tag the target pages.
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(&p_a.id)
+        .bind(&tag_a.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(&p_b.id)
+        .bind(&tag_b.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Two content blocks under p_src, each linking to one target page.
+    let b_to_a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("see [[{}]]", p_a.id),
+        Some(p_src.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let b_to_b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("see [[{}]]", p_b.id),
+        Some(p_src.id.clone()),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(&b_to_a.id)
+        .bind(&p_a.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(&b_to_b.id)
+        .bind(&p_b.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Filter by TAG_A — only the edge to p_a should remain.
+    let tag_ids = vec![tag_a.id.to_string()];
+    let links = list_page_links_inner(&pool, &SpaceScope::Global, Some(&tag_ids))
+        .await
+        .unwrap();
+    let to_a = links
+        .iter()
+        .filter(|l| l.target_id.as_str() == p_a.id)
+        .count();
+    let to_b = links
+        .iter()
+        .filter(|l| l.target_id.as_str() == p_b.id)
+        .count();
+    assert_eq!(to_a, 1, "edge to TAG_A-tagged page must surface");
+    assert_eq!(
+        to_b, 0,
+        "edge to TAG_B-tagged page must be filtered out when tag_ids = [TAG_A]"
+    );
+
+    mat.shutdown();
+}
+
+// Control test: `tag_ids = None` is identical to the
+// pre-Tier-4.5 behaviour (every edge surfaces). Guards against a
+// regression where `None` accidentally suppresses rows via a planner
+// quirk in the `(?2 IS NULL OR …)` short-circuit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_no_tag_filter_returns_all() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let p_src = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Source".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let p_a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target A".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    let p_b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target B".into(),
+        None,
+        Some(3),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let b_to_a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("see [[{}]]", p_a.id),
+        Some(p_src.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let b_to_b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("see [[{}]]", p_b.id),
+        Some(p_src.id.clone()),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(&b_to_a.id)
+        .bind(&p_a.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(&b_to_b.id)
+        .bind(&p_b.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let links_none = list_page_links_inner(&pool, &SpaceScope::Global, None)
+        .await
+        .unwrap();
+    let links_empty = list_page_links_inner(&pool, &SpaceScope::Global, Some(&[]))
+        .await
+        .unwrap();
+
+    let to_a_none = links_none
+        .iter()
+        .filter(|l| l.target_id.as_str() == p_a.id)
+        .count();
+    let to_b_none = links_none
+        .iter()
+        .filter(|l| l.target_id.as_str() == p_b.id)
+        .count();
+    assert_eq!(to_a_none, 1, "no tag filter must surface edge to A");
+    assert_eq!(to_b_none, 1, "no tag filter must surface edge to B");
+    // Empty slice is treated as no filter (matches FE wrapper, which
+    // normalises `tagIds: []` to `null` before binding).
+    assert_eq!(
+        links_empty.len(),
+        links_none.len(),
+        "empty tag_ids slice must be equivalent to None"
+    );
+
+    mat.shutdown();
+}
+
+// ======================================================================
+// Page_id tests
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_block_sets_page_id_self_for_page() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "My Page".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        page.page_id.as_ref().map(crate::ulid::BlockId::as_str),
+        Some(page.id.as_str()),
+        "page block's page_id should be its own id"
+    );
+
+    // Verify via direct DB read
+    let fetched = get_block_inner(&pool, page.id.clone()).await.unwrap();
+    assert_eq!(
+        fetched.page_id.as_ref().map(crate::ulid::BlockId::as_str),
+        Some(page.id.as_str())
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_block_sets_page_id_for_content_block() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Parent Page".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "child block".into(),
+        Some(page.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        child.page_id.as_ref().map(crate::ulid::BlockId::as_str),
+        Some(page.id.as_str()),
+        "content block's page_id should be the parent page's id"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_block_updates_page_id() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page_a = create_block_inner(&pool, DEV, &mat, "page".into(), "Page A".into(), None, None)
+        .await
+        .unwrap();
+    let page_b = create_block_inner(&pool, DEV, &mat, "page".into(), "Page B".into(), None, None)
+        .await
+        .unwrap();
+    let child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "movable".into(),
+        Some(page_a.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        child.page_id.as_ref().map(crate::ulid::BlockId::as_str),
+        Some(page_a.id.as_str())
+    );
+
+    // Move child to page_b
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child.id.clone(),
+        Some(page_b.id.clone()),
+        1,
+    )
+    .await
+    .unwrap();
+
+    let fetched = get_block_inner(&pool, child.id.clone()).await.unwrap();
+    assert_eq!(
+        fetched.page_id.as_ref().map(crate::ulid::BlockId::as_str),
+        Some(page_b.id.as_str()),
+        "page_id should update after move"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_block_updates_descendants_page_id() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page_a = create_block_inner(&pool, DEV, &mat, "page".into(), "Page A".into(), None, None)
+        .await
+        .unwrap();
+    let page_b = create_block_inner(&pool, DEV, &mat, "page".into(), "Page B".into(), None, None)
+        .await
+        .unwrap();
+    let parent = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "parent".into(),
+        Some(page_a.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+    let grandchild = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "grandchild".into(),
+        Some(parent.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        grandchild
+            .page_id
+            .as_ref()
+            .map(crate::ulid::BlockId::as_str),
+        Some(page_a.id.as_str())
+    );
+
+    // Move parent to page_b
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        parent.id.clone(),
+        Some(page_b.id.clone()),
+        1,
+    )
+    .await
+    .unwrap();
+
+    let fetched_grandchild = get_block_inner(&pool, grandchild.id.clone()).await.unwrap();
+    assert_eq!(
+        fetched_grandchild
+            .page_id
+            .as_ref()
+            .map(crate::ulid::BlockId::as_str),
+        Some(page_b.id.as_str()),
+        "descendants' page_id should update after move"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rebuild_page_ids_restores_correct_values() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "RebuildTest".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "child".into(),
+        Some(page.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+
+    // Corrupt page_id by setting it to NULL
+    sqlx::query("UPDATE blocks SET page_id = NULL")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Run rebuild
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let fetched_page = get_block_inner(&pool, page.id.clone()).await.unwrap();
+    assert_eq!(
+        fetched_page
+            .page_id
+            .as_ref()
+            .map(crate::ulid::BlockId::as_str),
+        Some(page.id.as_str())
+    );
+
+    let fetched_child = get_block_inner(&pool, child.id.clone()).await.unwrap();
+    assert_eq!(
+        fetched_child
+            .page_id
+            .as_ref()
+            .map(crate::ulid::BlockId::as_str),
+        Some(page.id.as_str())
+    );
+
+    mat.shutdown();
+}
+
+// ======================================================================
+// Phase 2 — SpaceScope parity test
+// ======================================================================
+//
+// Asserts that `list_page_aliases_by_prefix_inner` honours the
+// `&SpaceScope` boundary: `Global` returns the union across spaces,
+// `Active(SpaceId)` returns only the named space's subset.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pend18_list_page_aliases_by_prefix_scope_parity() {
+    let (pool, _dir) = test_pool().await;
+
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+    insert_block(&pool, "P18_PG_A", "page", "Page A", None, Some(0)).await;
+    insert_block(&pool, "P18_PG_B", "page", "Page B", None, Some(1)).await;
+    set_page_aliases_inner(&pool, "P18_PG_A", vec!["p18-alias-a".into()])
+        .await
+        .unwrap();
+    set_page_aliases_inner(&pool, "P18_PG_B", vec!["p18-alias-b".into()])
+        .await
+        .unwrap();
+    assign_to_space(&pool, "P18_PG_A", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "P18_PG_B", TEST_SPACE_B_ID).await;
+
+    let global = list_page_aliases_by_prefix_inner(&pool, "p18-alias-", None, &SpaceScope::Global)
+        .await
+        .unwrap();
+    assert_eq!(
+        global.len(),
+        2,
+        "Global must surface both spaces' aliases; got {global:?}"
+    );
+
+    let active_a = list_page_aliases_by_prefix_inner(
+        &pool,
+        "p18-alias-",
+        None,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        active_a.len(),
+        1,
+        "Active(TEST_SPACE_ID) must surface only space A's alias; got {active_a:?}"
+    );
+    assert_eq!(active_a[0].0, "P18_PG_A");
+}
+
+// ======================================================================
+// list_all_pages_in_space — no-pagination IPC for export / graph callers
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_all_pages_in_space_returns_every_page_in_scope() {
+    let (pool, _dir) = test_pool().await;
+
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    insert_block(&pool, "LAPS_A1", "page", "Alpha", None, Some(1)).await;
+    insert_block(&pool, "LAPS_A2", "page", "beta", None, Some(2)).await;
+    insert_block(&pool, "LAPS_B1", "page", "Other space", None, Some(3)).await;
+    insert_block(&pool, "LAPS_DEL", "page", "Deleted", None, Some(4)).await;
+    insert_block(&pool, "LAPS_CONT", "content", "Not a page", None, Some(5)).await;
+    assign_to_space(&pool, "LAPS_A1", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "LAPS_A2", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "LAPS_B1", TEST_SPACE_B_ID).await;
+    assign_to_space(&pool, "LAPS_DEL", TEST_SPACE_ID).await;
+    sqlx::query("UPDATE blocks SET deleted_at = 1778284800000 WHERE id = 'LAPS_DEL'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let rows = list_all_pages_in_space_inner(&pool, TEST_SPACE_ID, None)
+        .await
+        .unwrap();
+    let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+
+    // Both live pages in space A, ordered case-insensitively by content.
+    assert_eq!(
+        ids,
+        vec!["LAPS_A1", "LAPS_A2"],
+        "must include both live pages, sorted case-insensitively by content; \
+         must exclude the soft-deleted page, the foreign-space page, and the \
+         content block. got {rows:?}",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_all_pages_in_space_empty_space_returns_empty() {
+    let (pool, _dir) = test_pool().await;
+    let rows = list_all_pages_in_space_inner(&pool, "01NOSUCHSPACE00000000000000", None)
+        .await
+        .unwrap();
+    assert!(
+        rows.is_empty(),
+        "unknown space must return empty; got {rows:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_all_pages_in_space_tag_filter_or_mode() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+
+    insert_block(&pool, "LAPS_TF_PA", "page", "Alpha", None, Some(1)).await;
+    insert_block(&pool, "LAPS_TF_PB", "page", "Beta", None, Some(2)).await;
+    insert_block(&pool, "LAPS_TF_PC", "page", "Gamma", None, Some(3)).await;
+    assign_to_space(&pool, "LAPS_TF_PA", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "LAPS_TF_PB", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "LAPS_TF_PC", TEST_SPACE_ID).await;
+
+    // Two distinct tags.  PA carries TAG_X, PB carries TAG_Y, PC carries neither.
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES ('LAPS_TF_TX', 'tag', 'x')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES ('LAPS_TF_TY', 'tag', 'y')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES ('LAPS_TF_PA', 'LAPS_TF_TX')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES ('LAPS_TF_PB', 'LAPS_TF_TY')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Filter on TAG_X only: PA returns.
+    let rows = list_all_pages_in_space_inner(&pool, TEST_SPACE_ID, Some(&["LAPS_TF_TX".into()]))
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+        vec!["LAPS_TF_PA"],
+        "single-tag filter must surface only the tagged page; got {rows:?}",
+    );
+
+    // Filter on TAG_X OR TAG_Y: both PA + PB return; PC is excluded.
+    let rows = list_all_pages_in_space_inner(
+        &pool,
+        TEST_SPACE_ID,
+        Some(&["LAPS_TF_TX".into(), "LAPS_TF_TY".into()]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+        vec!["LAPS_TF_PA", "LAPS_TF_PB"],
+        "multi-tag filter must union across tags; got {rows:?}",
+    );
+
+    // Empty tag slice: behaves as if no filter passed (returns all pages).
+    let rows = list_all_pages_in_space_inner(&pool, TEST_SPACE_ID, Some(&[]))
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+        vec!["LAPS_TF_PA", "LAPS_TF_PB", "LAPS_TF_PC"],
+        "empty tag-filter slice must not exclude anything; got {rows:?}",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_all_pages_in_space_rejects_oversized_tag_filter() {
+    // #1325: a `tag_ids` array longer than MAX_FILTER_TAG_IDS must be
+    // rejected up-front with AppError::validation("tag_ids.too_many")
+    // BEFORE any SQL placeholder / bind is built — otherwise the dynamic
+    // `IN (?, ?, …)` clause scales 1:1 with caller input and trips SQLite's
+    // parameter limit (a cheap DoS). The empty space here means a DB-reaching
+    // query would succeed with empty rows, so an `Err` proves the guard fired
+    // before the query.
+    let (pool, _dir) = test_pool().await;
+
+    let over_cap: Vec<String> = (0..=crate::commands::tags::MAX_FILTER_TAG_IDS)
+        .map(|i| format!("TAG_{i:05}"))
+        .collect();
+    let err = list_all_pages_in_space_inner(&pool, TEST_SPACE_ID, Some(&over_cap))
+        .await
+        .expect_err("oversized tag_ids filter must be rejected");
+    assert!(
+        matches!(&err, AppError::Validation { message: msg, .. } if msg == "tag_ids.too_many"),
+        "expected AppError::validation(\"tag_ids.too_many\"), got {err:?}"
+    );
+}
+
+// ======================================================================
+// list_template_page_ids_in_space — graph view template flagging
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_template_page_ids_in_space_returns_template_pages_only() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    insert_block(&pool, "TPL_T1", "page", "Template One", None, Some(1)).await;
+    insert_block(&pool, "TPL_T2", "page", "Template Two", None, Some(2)).await;
+    insert_block(&pool, "TPL_REG", "page", "Regular Page", None, Some(3)).await;
+    insert_block(&pool, "TPL_DEL", "page", "Deleted Template", None, Some(4)).await;
+    insert_block(
+        &pool,
+        "TPL_FOREIGN",
+        "page",
+        "Foreign Template",
+        None,
+        Some(5),
+    )
+    .await;
+    assign_to_space(&pool, "TPL_T1", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "TPL_T2", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "TPL_REG", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "TPL_DEL", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "TPL_FOREIGN", TEST_SPACE_B_ID).await;
+
+    // Stamp template=true on three pages (one live in space A, one
+    // soft-deleted in space A, one in space B).
+    for id in ["TPL_T1", "TPL_T2", "TPL_DEL", "TPL_FOREIGN"] {
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'template', 'true')",
+        )
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    // Stamp template=false on the regular page (should not surface).
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES ('TPL_REG', 'template', 'false')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE blocks SET deleted_at = 1778284800000 WHERE id = 'TPL_DEL'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mut ids = list_template_page_ids_in_space_inner(&pool, TEST_SPACE_ID)
+        .await
+        .unwrap();
+    ids.sort();
+    assert_eq!(
+        ids,
+        vec!["TPL_T1".to_string(), "TPL_T2".to_string()],
+        "must include only live template-true pages in the scope; \
+         must exclude template=false, soft-deleted, and foreign-space pages",
+    );
+}
+
+// ======================================================================
+// load_page_subtree — single-SELECT page-tree loader
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn load_page_subtree_returns_active_descendants_excluding_root() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+
+    insert_block(
+        &pool,
+        "01HZPAGE000000000000000PGE",
+        "page",
+        "Page",
+        None,
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01HZSCH1000000000000000001",
+        "content",
+        "C1",
+        Some("01HZPAGE000000000000000PGE"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01HZSCH2000000000000000002",
+        "content",
+        "C2",
+        Some("01HZPAGE000000000000000PGE"),
+        Some(2),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01HZGRAND000000000000000A1",
+        "content",
+        "G1",
+        Some("01HZSCH1000000000000000001"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01HZDEM000000000000000DEM0",
+        "content",
+        "Deleted",
+        Some("01HZPAGE000000000000000PGE"),
+        Some(3),
+    )
+    .await;
+    assign_to_space(&pool, "01HZPAGE000000000000000PGE", TEST_SPACE_ID).await;
+    sqlx::query(
+        "UPDATE blocks SET deleted_at = 1778284800000 WHERE id = '01HZDEM000000000000000DEM0'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    // `page_id` is materializer-maintained in production; backfill by
+    // hand for the test fixture so the WHERE page_id = ? filter hits.
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let subtree = load_page_subtree_inner(&pool, "01HZPAGE000000000000000PGE", TEST_SPACE_ID)
+        .await
+        .unwrap();
+    let mut ids: Vec<&str> = subtree.blocks.iter().map(|r| r.id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(
+        ids,
+        vec![
+            "01HZGRAND000000000000000A1",
+            "01HZSCH1000000000000000001",
+            "01HZSCH2000000000000000002",
+        ],
+        "must return every active descendant (children + grandchild), \
+         excluding the page root and the soft-deleted block; got {subtree:?}",
+    );
+    // #1258 — a well-under-cap page reports the true descendant count and
+    // is NOT flagged truncated.
+    assert!(
+        !subtree.truncated,
+        "a 3-block page is nowhere near the {} cap; must not be truncated",
+        crate::commands::pages::listing::PAGE_SUBTREE_MAX_BLOCKS,
+    );
+    assert_eq!(
+        subtree.total, 3,
+        "total must count exactly the 3 active descendants (excluding root + deleted)",
+    );
+}
+
+/// #1258 — when a page exceeds `PAGE_SUBTREE_MAX_BLOCKS`, the loader caps
+/// `blocks` at the limit but reports `truncated = true` and the TRUE total
+/// descendant count, so the FE can surface a non-blocking "showing the
+/// first N of M" notice instead of silently dropping blocks.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn load_page_subtree_reports_truncation_over_cap() {
+    use crate::commands::pages::listing::PAGE_SUBTREE_MAX_BLOCKS;
+
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+
+    insert_block(
+        &pool,
+        "01HZPAGEB1G00000000000PGE0",
+        "page",
+        "Big Page",
+        None,
+        Some(1),
+    )
+    .await;
+    assign_to_space(&pool, "01HZPAGEB1G00000000000PGE0", TEST_SPACE_ID).await;
+
+    // Insert cap + 5 active descendants directly (bulk; insert_block per-row
+    // would be far too slow for 10k rows). All are direct children of the
+    // page root. ULIDs are sortable so positions don't matter here.
+    //
+    // We set `page_id` directly in the INSERT rather than calling
+    // `rebuild_page_ids` afterwards: every row is a direct child of the page
+    // root, so its `page_id` is exactly that root — identical to what the
+    // materializer's ancestor-walk CTE would compute, but without the
+    // O(N²) correlated-subquery UPDATE that would push a 10k-row rebuild
+    // past the nextest timeout. `load_page_subtree` keys on `page_id`, so
+    // this exercises the exact column the loader reads.
+    let extra: i64 = 5;
+    let count = PAGE_SUBTREE_MAX_BLOCKS + extra;
+    let mut tx = pool.begin().await.unwrap();
+    for i in 0..count {
+        // 26-char Crockford-base32-ish ULID-shaped id, zero-padded index.
+        let id = format!("01HZB1G{i:019}");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, space_id, page_id)
+             VALUES (?1, 'content', ?2, '01HZPAGEB1G00000000000PGE0', ?3, ?4, '01HZPAGEB1G00000000000PGE0')",
+        )
+        .bind(&id)
+        .bind(format!("child {i}"))
+        .bind(i)
+        .bind(TEST_SPACE_ID)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    }
+    tx.commit().await.unwrap();
+
+    let subtree = load_page_subtree_inner(&pool, "01HZPAGEB1G00000000000PGE0", TEST_SPACE_ID)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        i64::try_from(subtree.blocks.len()).unwrap(),
+        PAGE_SUBTREE_MAX_BLOCKS,
+        "blocks must be capped at PAGE_SUBTREE_MAX_BLOCKS",
+    );
+    assert!(
+        subtree.truncated,
+        "a page with {count} descendants exceeds the {PAGE_SUBTREE_MAX_BLOCKS} cap; \
+         must be flagged truncated",
+    );
+    assert_eq!(
+        subtree.total, count,
+        "total must report the TRUE descendant count, independent of the cap",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn load_page_subtree_rejects_foreign_space() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    insert_block(
+        &pool,
+        "01HZPGFRGN000000000000000B",
+        "page",
+        "P",
+        None,
+        Some(1),
+    )
+    .await;
+    assign_to_space(&pool, "01HZPGFRGN000000000000000B", TEST_SPACE_B_ID).await;
+
+    let err = load_page_subtree_inner(&pool, "01HZPGFRGN000000000000000B", TEST_SPACE_ID)
+        .await
+        .expect_err("foreign-space request must error");
+    match err {
+        AppError::Validation { message: msg, .. } => assert!(
+            msg.contains("not in current space"),
+            "validation message should explain space mismatch; got: {msg}",
+        ),
+        other => panic!("expected Validation error; got {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn load_page_subtree_rejects_malformed_root_id() {
+    let (pool, _dir) = test_pool().await;
+    let err = load_page_subtree_inner(&pool, "not-a-ulid", "01TESTSPACE000000000000001")
+        .await
+        .expect_err("malformed ULID must error");
+    assert!(
+        matches!(err, AppError::Ulid(_)),
+        "malformed root id must surface as Ulid, got {err:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #1433 — export aliases + tags into frontmatter (EXPORT direction only).
+// IMPORT (parse/resolve/create) is a deferred follow-up and is NOT tested
+// here.
+// ---------------------------------------------------------------------------
+
+/// Helper: insert a `page_aliases` row directly (bypasses the command layer).
+async fn insert_alias(pool: &SqlitePool, page_id: &str, alias: &str) {
+    sqlx::query("INSERT INTO page_aliases (page_id, alias) VALUES (?, ?)")
+        .bind(page_id)
+        .bind(alias)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// Helper: associate a tag block with a block via `block_tags`.
+async fn insert_block_tag(pool: &SqlitePool, block_id: &str, tag_id: &str) {
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(block_id)
+        .bind(tag_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// A page with aliases exports an `aliases:` frontmatter key whose YAML
+/// sequence holds the alias strings, sorted (deterministic).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_emits_aliases_frontmatter_key_1433() {
+    let (pool, _dir) = test_pool().await;
+    const PAGE: &str = "01AAAAAAAAAAAAAAAAAAAAAS01";
+    insert_block(&pool, PAGE, "page", "Aliased Page", None, Some(0)).await;
+    // Insert out of order; export must sort.
+    insert_alias(&pool, PAGE, "Gamma").await;
+    insert_alias(&pool, PAGE, "Alpha").await;
+    insert_alias(&pool, PAGE, "Beta").await;
+
+    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+    assert!(
+        md.contains("aliases: [Alpha, Beta, Gamma]\n"),
+        "aliases must be a sorted YAML flow sequence, got:\n{md}"
+    );
+    assert!(!md.contains("tags:"), "no tags expected, got:\n{md}");
+}
+
+/// A page with tags exports a `tags:` key carrying the tag NAMES (the tag
+/// blocks' content), not ULIDs, sorted (deterministic).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_emits_tags_frontmatter_with_names_1433() {
+    let (pool, _dir) = test_pool().await;
+    const PAGE: &str = "01AAAAAAAAAAAAAAAAAATAGS01";
+    const TAG_Z: &str = "01AAAAAAAAAAAAAAAAAAATAGZ1";
+    const TAG_A: &str = "01AAAAAAAAAAAAAAAAAAATAGA1";
+    insert_block(&pool, PAGE, "page", "Tagged Page", None, Some(0)).await;
+    insert_block(&pool, TAG_Z, "tag", "zebra", None, None).await;
+    insert_block(&pool, TAG_A, "tag", "apple", None, None).await;
+    // Associate out of name order; export must sort by name.
+    insert_block_tag(&pool, PAGE, TAG_Z).await;
+    insert_block_tag(&pool, PAGE, TAG_A).await;
+
+    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+    assert!(
+        md.contains("tags: [apple, zebra]\n"),
+        "tags must emit sorted NAMES, not ULIDs, got:\n{md}"
+    );
+    assert!(
+        !md.contains(TAG_A) && !md.contains(TAG_Z),
+        "tag ULIDs must not leak into the export, got:\n{md}"
+    );
+    assert!(!md.contains("aliases:"), "no aliases expected, got:\n{md}");
+}
+
+/// A page with neither aliases nor tags omits both keys (and, with no
+/// properties either, emits no frontmatter fence at all).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_omits_aliases_and_tags_when_none_1433() {
+    let (pool, _dir) = test_pool().await;
+    const PAGE: &str = "01AAAAAAAAAAAAAAAAAAAANN01";
+    insert_block(&pool, PAGE, "page", "Plain Page", None, Some(0)).await;
+
+    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+    assert!(!md.contains("aliases:"), "no aliases key, got:\n{md}");
+    assert!(!md.contains("tags:"), "no tags key, got:\n{md}");
+    assert!(
+        !md.contains("---\n"),
