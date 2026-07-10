@@ -3965,19 +3965,19 @@ async fn lifecycle_default_from_start_is_equivalent_to_always_foreground() {
 /// triggers `ResetRequired`, and the snapshot sub-flow catches the
 /// initiator up to the responder's state.
 ///
-/// Flow under test:
-/// 1. Responder has a paired peer + a local op + a complete snapshot
-///    in `log_snapshots`. Its op_log is compacted so any head the
-///    initiator claims looks "lost".
-/// 2. Initiator sends HeadExchange with a stale head for the responder
-///    device that no longer exists in the responder's op_log.
-/// 3. Responder's orchestrator returns `ResetRequired`; server.rs
-///    then runs `try_offer_snapshot_catchup` which sends
-///    `SnapshotOffer` and streams bytes on `SnapshotAccept`.
-/// 4. Initiator's `run_sync_session` catches the `ResetRequired`,
-///    runs `try_receive_snapshot_catchup`, accepts + applies.
-/// 5. Verify: initiator's DB reflects the responder's block set and
-///    `peer_refs.last_hash` is set to the snapshot's `up_to_hash`.
+/// Flow under test (#2503 — Loro-snapshot merge catch-up):
+/// 1. Responder has a paired peer + a materialized block mirrored into its
+///    Loro engine. Its op_log is compacted so any head the initiator claims
+///    looks "lost" — but the ENGINE truth survives compaction.
+/// 2. Initiator sends HeadExchange advertising a crafted Loro VV claiming
+///    responder-authored ops the responder's engine can no longer produce.
+/// 3. Responder's orchestrator returns `ResetRequired`; server.rs then runs
+///    `try_offer_loro_snapshot_catchup` which streams the responder's
+///    per-space Loro snapshot(s) as `LoroSync { Snapshot }`.
+/// 4. Initiator's catch-up (`try_receive_snapshot_catchup`) MERGES the
+///    snapshot into its own engine and reprojects SQL — no wipe.
+/// 5. Verify: initiator's DB + engine reflect the responder's block, and the
+///    merge is a pull (`synced_at` set, `reset_count` NOT bumped).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     use crate::op::{CreateBlockPayload, OpPayload};
@@ -4174,6 +4174,10 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     // mDNS / TLS scaffolding; the wiring in `run_sync_session` is
     // covered by the shorter sub-flow tests in the snapshot_transfer
     // module.
+    // #2503: the responder now streams a Loro snapshot (engine truth); the
+    // initiator MERGES it into its own engine and reprojects SQL. Thread the
+    // initiator's live registry so `apply_remote` has an engine to merge into.
+    let init_state = init_mat.loro_state();
     let outcome = crate::sync_daemon::snapshot_transfer::try_receive_snapshot_catchup(
         &mut client_conn,
         &init_pool,
@@ -4181,21 +4185,21 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
         &init_sink,
         "FEAT6_RESP",
         None,
-        None,
+        Some(crate::sync_daemon::snapshot_transfer::EngineReloadCtx {
+            registry: &init_state.registry,
+            device_id: "FEAT6_INIT",
+        }),
     )
     .await
     .expect("catch-up must succeed end-to-end");
 
-    let applied_up_to_hash = match outcome {
-        crate::sync_daemon::snapshot_transfer::CatchupOutcome::Applied { up_to_hash, .. } => {
-            assert!(
-                !up_to_hash.is_empty(),
-                "snapshot up_to_hash must be populated"
-            );
-            up_to_hash
-        }
-        other => panic!("expected Applied, got {other:?}"),
-    };
+    assert!(
+        matches!(
+            outcome,
+            crate::sync_daemon::snapshot_transfer::CatchupOutcome::Applied { .. }
+        ),
+        "expected Applied, got {outcome:?}"
+    );
 
     // Let the server task finish cleanly.
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), server_task).await;
@@ -4232,13 +4236,25 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
         .expect("peer_refs row must exist after snapshot catch-up");
     assert!(
         peer.synced_at.is_some(),
-        "synced_at must be populated after catch-up"
+        "synced_at must be populated after catch-up (this catch-up is a pull)"
     );
+    // #2503: the Loro-snapshot catch-up is a MERGE, not a reset — the
+    // reset_count must NOT be bumped (that is a legacy-CBOR-only concern).
     assert_eq!(
-        peer.last_hash,
-        Some(applied_up_to_hash),
-        "last_hash must be advanced to the snapshot's up_to_hash after catch-up"
+        peer.reset_count, 0,
+        "#2503: a Loro-snapshot merge catch-up must NOT bump reset_count"
     );
+
+    // #2503: the initiator's engine merged the responder's snapshot — the
+    // block is present in the live engine, not just SQL.
+    {
+        let space = crate::space::SpaceId::from_trusted("01HZFEAT6SPACEXXXXXXXXXXXX");
+        let mut g = init_state.registry.for_space(&space, "FEAT6_INIT").unwrap();
+        assert!(
+            g.engine_mut().read_block("FEAT6BLK001").unwrap().is_some(),
+            "#2503: merged responder block must be present in the initiator engine"
+        );
+    }
 
     resp_mat.shutdown();
     init_mat.shutdown();
@@ -7523,9 +7539,22 @@ async fn issue2140_partial_message_then_close_is_bounded_error() {
 /// sub-flow internally and returns `Ok(())` with the orchestrator left in
 /// `ResetRequired` (it returns before reaching `Complete`). We therefore
 /// assert the returned terminal state is `ResetRequired` (proving the
-/// fallback path fired — NOT a plain incremental session), that the helper
-/// did not error, and that the initiator's DB now reflects the responder's
-/// pre-compaction block (catch-up applied).
+/// fallback path fired — NOT a plain incremental session) and that the helper
+/// did not error.
+///
+/// #2503 semantics change: the catch-up is now a Loro-snapshot **merge**, not
+/// a CBOR wipe-and-replace. For the **own-lineage-loss** trigger this test
+/// crafts (the initiator advertises a Loro VV claiming MORE responder-authored
+/// ops than the responder's engine now holds), the responder's snapshot for
+/// its own lineage is a *prefix* of what the initiator already claims, so the
+/// merge is a dedup no-op: nothing new lands, but — crucially — the initiator
+/// is **NOT wiped** (its engine state survives) and `reset_count` is **NOT**
+/// bumped. This is exactly #2503 open-question-1: an own-lineage-loss reset no
+/// longer needs wipe semantics; the local gap is re-supplied by the #2481
+/// phase-3 re-pull, not by destroying local state. (Real content-landing +
+/// survival under merge is pinned by
+/// `loro_snapshot_catchup_merges_and_preserves_unsynced_local_2503` in
+/// `snapshot_transfer.rs`.)
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issue2140_snapshot_fallback_on_real_compaction_over_real_socket() {
     use crate::op::{CreateBlockPayload, OpPayload};
@@ -7650,33 +7679,39 @@ async fn issue2140_snapshot_fallback_on_real_compaction_over_real_socket() {
          ResetRequired and snapshot catch-up over the real socket"
     );
 
-    // Catch-up applied: the initiator's DB now reflects the responder's
-    // pre-compaction block (the snapshot's content, not the stale claim).
-    let content: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
-        .bind(SNAP_BLOCK)
-        .fetch_optional(&init.pool)
-        .await
-        .unwrap();
-    assert_eq!(
-        content.as_deref(),
-        Some("compacted-state content"),
-        "#2140: snapshot catch-up must land the responder's pre-compaction \
-         state on the initiator over the real socket"
-    );
+    // #2503: the own-lineage-loss merge catch-up must NOT wipe the initiator.
+    // Its crafted RESP-lineage engine ops survive the merge (the responder's
+    // snapshot is a prefix, deduped) — proving there is no wipe-and-replace.
+    {
+        let mut g = init
+            .state
+            .registry
+            .for_space(&snap_space, INIT_DEV)
+            .expect("space");
+        assert!(
+            g.engine_mut()
+                .read_block("01HZ2140INITCLAIM000000000")
+                .unwrap()
+                .is_some(),
+            "#2503: the merge catch-up must NOT wipe the initiator's engine — \
+             its pre-catch-up lineage state must survive"
+        );
+    }
 
-    // peer_refs bookkeeping advanced (synced_at populated) — the
-    // reachability/up_to_hash check the feat6 test performs.
+    // peer_refs bookkeeping advanced (synced_at populated) — the merge is a
+    // pull, so it records like a normal pull.
     let peer = peer_refs::get_peer_ref(&init.pool, RESP_DEV)
         .await
         .unwrap()
-        .expect("peer_refs row must exist after snapshot catch-up");
+        .expect("peer_refs row must exist after the merge catch-up");
     assert!(
         peer.synced_at.is_some(),
         "#2140: synced_at must be populated after real-socket catch-up"
     );
-    assert!(
-        peer.last_hash.is_some(),
-        "#2140: last_hash must be advanced to the snapshot's up_to_hash"
+    assert_eq!(
+        peer.reset_count, 0,
+        "#2503: a Loro-snapshot MERGE catch-up must NOT bump reset_count \
+         (no reset occurred — open q1)"
     );
 
     for dev in &devices {

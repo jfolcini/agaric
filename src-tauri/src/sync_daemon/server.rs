@@ -3,7 +3,7 @@ use crate::peer_refs;
 use crate::sync_constants::HANDSHAKE_TIMEOUT;
 use crate::sync_events::SyncEventSink;
 use crate::sync_net::SyncConnection;
-use crate::sync_protocol::{DeviceHead, SyncMessage, SyncOrchestrator, SyncState};
+use crate::sync_protocol::{SyncMessage, SyncOrchestrator, SyncState};
 use crate::sync_scheduler::SyncScheduler;
 
 /// Result of verifying the peer's TLS certificate against its claimed identity.
@@ -176,18 +176,11 @@ async fn handle_incoming_sync_inner(
     // loop uniform.)
     let first_msg: SyncMessage = super::wire::recv_sync_message(&mut conn).await?;
 
-    // Capture the initiator's advertised heads BEFORE the
-    // orchestrator consumes `first_msg`. If the session later exits in
-    // `ResetRequired` we need these heads to verify our snapshot's
-    // `up_to_seqs` actually covers the remote's frontier — otherwise
-    // `try_offer_snapshot_catchup` would silently re-apply an older
-    // snapshot. For non-HeadExchange first messages (a protocol
-    // violation) we leave it empty; the orchestrator will reject the
-    // session before we ever reach the snapshot offer path.
-    let remote_heads: Vec<DeviceHead> = match &first_msg {
-        SyncMessage::HeadExchange { heads, .. } => heads.clone(),
-        _ => Vec::new(),
-    };
+    // #2503: the responder's Loro-snapshot catch-up
+    // (`try_offer_loro_snapshot_catchup`) exports from the live engine
+    // registry, not from a stored SQL snapshot, so it no longer needs the
+    // initiator's advertised heads to run a covering check — the retired
+    // CBOR offer's `remote_heads` capture is gone.
 
     // ── Per-peer mutual exclusion ─────────────────────────────────────────
     // We can only identify the peer after seeing the HeadExchange.
@@ -478,22 +471,24 @@ async fn handle_incoming_sync_inner(
         }
     }
 
-    // Snapshot-driven catch-up (post-ResetRequired).
+    // Loro-snapshot-driven catch-up (post-ResetRequired, #2503).
     //
-    // If the main loop exited with `state == ResetRequired`, we
-    // signalled to the initiator that our op log cannot satisfy its
-    // heads (typically after compaction). Offer our most recent
-    // snapshot as an alternative path. If `log_snapshots` is empty
-    // (e.g. no compaction has run yet) we simply close the session,
-    // Matching pre-existing behavior.
+    // If the main loop exited with `state == ResetRequired`, we signalled
+    // to the initiator that its Loro version vector is unreachable from
+    // ours. Stream our per-space Loro snapshots (engine truth) so the
+    // initiator can MERGE them into its own engine and reproject SQL —
+    // preserving its unsynced local content (no wipe). Replaces the old
+    // CBOR `SnapshotOffer` RESET.
     if matches!(orch.session().state, SyncState::ResetRequired) {
         let remote_id = orch.session().remote_device_id.clone();
-        match super::snapshot_transfer::try_offer_snapshot_catchup(
+        let loro_state = orch.loro_state();
+        match super::snapshot_transfer::try_offer_loro_snapshot_catchup(
             &mut conn,
             &pool_ref,
+            &loro_state.registry,
             &event_sink,
+            &device_id,
             &remote_id,
-            &remote_heads,
         )
         .await
         {
@@ -501,14 +496,14 @@ async fn handle_incoming_sync_inner(
                 tracing::info!(
                     peer_id = %remote_id,
                     outcome = ?outcome,
-                    "responder snapshot-offer sub-flow complete"
+                    "responder Loro-snapshot catch-up sub-flow complete (#2503)"
                 );
             }
             Err(e) => {
                 tracing::warn!(
                     peer_id = %remote_id,
                     error = %e,
-                    "responder snapshot-offer sub-flow failed (non-fatal)"
+                    "responder Loro-snapshot catch-up sub-flow failed (non-fatal)"
                 );
             }
         }
