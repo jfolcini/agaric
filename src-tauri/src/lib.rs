@@ -164,6 +164,10 @@ macro_rules! agaric_commands {
             // the per-row IPC loop (50 IPCs for "mark 50 done") into
             // one IMMEDIATE tx with one op_log scope.
             $crate::commands::properties::set_todo_state_batch,
+            // Multi-select batch set-property: generalises
+            // `set_todo_state_batch` across the four reserved column-backed
+            // keys (todo_state / priority / due_date / scheduled_date).
+            $crate::commands::properties::set_property_batch,
             $crate::commands::properties::set_priority,
             $crate::commands::properties::set_due_date,
             $crate::commands::properties::set_scheduled_date,

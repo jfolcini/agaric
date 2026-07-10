@@ -6198,6 +6198,617 @@ async fn set_todo_state_batch_clears_state() {
     assert!(v.is_none(), "todo_state must be cleared by None");
 }
 
+// ======================================================================
+// Set_property_batch (generalisation of set_todo_state_batch)
+// ======================================================================
+
+/// N blocks in one input list produce N op_log rows in ONE contiguous seq
+/// range (no foreign tx interleaving) and every block's `todo_state`
+/// column reflects the requested value. Same anchor as the todo-batch
+/// contiguity test, exercised through the generalised entry point.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_batch_writes_one_tx_for_n_blocks() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let mut ids = Vec::with_capacity(5);
+    for i in 0..5 {
+        let b = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            format!("b{i}"),
+            None,
+            Some(i + 1),
+        )
+        .await
+        .unwrap();
+        ids.push(b.id.into_string());
+    }
+    settle(&mat).await;
+
+    let pre_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let updated = set_property_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        ids.clone()
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<crate::ulid::BlockId>>(),
+        "todo_state".into(),
+        Some("DONE".into()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(updated, 5, "all five blocks should be reported as updated");
+
+    let post_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        post_max - pre_max,
+        5,
+        "the 5 set_property ops must occupy a single contiguous seq \
+         range; got pre={pre_max} post={post_max}"
+    );
+
+    for id in &ids {
+        let v: Option<String> = sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(v, Some("DONE".into()), "block {id} todo_state must be DONE");
+    }
+
+    for id in &ids {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM op_log WHERE op_type = 'set_property' \
+             AND device_id = ? AND seq > ? \
+             AND json_extract(payload, '$.block_id') = ? \
+             AND json_extract(payload, '$.key') = 'todo_state'",
+        )
+        .bind(DEV)
+        .bind(pre_max)
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            count, 1,
+            "block {id} should have exactly one todo_state set_property op"
+        );
+    }
+}
+
+/// Missing / soft-deleted ids in the input list are silently dropped
+/// (lenient batch). Mixed input commits the live subset.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_batch_skips_missing_and_deleted() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let live = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "live".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let deleted = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "deleted".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    delete_block_inner(&pool, DEV, &mat, deleted.id.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let updated = set_property_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![live.id.clone(), deleted.id.clone(), "GHOST".into()],
+        "todo_state".into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        updated, 1,
+        "only the live block is updated; the deleted + missing ids drop out"
+    );
+
+    let v: Option<String> = sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+        .bind(&live.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(v, Some("TODO".into()));
+}
+
+/// Atomic abort with a positive control (mirror of
+/// `set_todo_state_batch_atomic_rollback_on_inner_failure`): the same two
+/// blocks provably gain a `todo_state` write + one op_log row under a
+/// VALID state, then a wholesale in-tx validation failure rolls the whole
+/// tx back — no op_log rows, no column writes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_batch_atomic_rollback_on_inner_failure() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "b1".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let b2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "b2".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // ── POSITIVE CONTROL ──────────────────────────────────────────────
+    let ctrl_pre_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let ctrl = set_property_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![b1.id.clone(), b2.id.clone()],
+        "todo_state".into(),
+        Some("DONE".into()),
+    )
+    .await
+    .expect("valid state must commit for the control");
+    assert_eq!(ctrl, 2, "control: both live blocks updated");
+    for id in [&b1.id, &b2.id] {
+        let v: Option<String> = sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            v.as_deref(),
+            Some("DONE"),
+            "control: block {id} must carry the written todo_state"
+        );
+    }
+    let ctrl_ops: i64 = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM op_log WHERE device_id = ? AND seq > ? AND op_type = 'set_property'",
+    )
+    .bind(DEV)
+    .bind(ctrl_pre_max)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(ctrl_ops, 2, "control: one set_property op per block");
+
+    sqlx::query("UPDATE blocks SET todo_state = NULL WHERE id IN (?, ?)")
+        .bind(&b1.id)
+        .bind(&b2.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // ── ATOMIC ABORT ──────────────────────────────────────────────────
+    // Delete the seeded `todo_state` definition so the in-tx fallback
+    // validation rejects. CANCELLED is not in the seeded defaults.
+    sqlx::query("DELETE FROM property_definitions WHERE key = 'todo_state'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let pre_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let result = set_property_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![b1.id.clone(), b2.id.clone()],
+        "todo_state".into(),
+        Some("CANCELLED".into()),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "invalid state must reject with Validation, got {result:?}"
+    );
+
+    let post_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        pre_max, post_max,
+        "validation failure must roll back the whole tx — no op_log rows added"
+    );
+    for id in [&b1.id, &b2.id] {
+        let v: Option<String> = sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(
+            v.is_none(),
+            "block {id} todo_state must remain NULL after rollback"
+        );
+    }
+}
+
+/// Empty input rejects with `Validation`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_batch_rejects_empty_list() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let result = set_property_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![],
+        "todo_state".into(),
+        Some("TODO".into()),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "empty list must reject with Validation, got {result:?}"
+    );
+}
+
+/// Input above the cap rejects with `Validation`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_batch_rejects_oversize_list() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
+        .map(|i| format!("ID{i}"))
+        .collect();
+    let result = set_property_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        oversize
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<crate::ulid::BlockId>>(),
+        "todo_state".into(),
+        Some("TODO".into()),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "oversize list must reject with Validation, got {result:?}"
+    );
+}
+
+/// `value = None` (clear) is valid and propagates to every live block.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_batch_clears_property() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "b".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    set_todo_state_inner(&pool, DEV, &mat, b.id.as_str().into(), Some("TODO".into()))
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let updated = set_property_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![b.id.clone()],
+        "todo_state".into(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(updated, 1);
+
+    let v: Option<String> = sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+        .bind(&b.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(v.is_none(), "todo_state must be cleared by None");
+}
+
+/// Generalisation-specific: a key OUTSIDE the allowlist is rejected with a
+/// `Validation` error and writes NOTHING (no op_log rows, no property row).
+/// This is the security boundary — a batch write must not become a channel
+/// for injecting arbitrary custom properties across N blocks.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_batch_rejects_non_allowlisted_key_and_writes_nothing() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "b".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let pre_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let result = set_property_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![b.id.clone()],
+        "importance".into(),
+        Some("high".into()),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "non-allowlisted key must reject with Validation, got {result:?}"
+    );
+
+    // Nothing written: no op_log growth, no `importance` property row.
+    let post_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(pre_max, post_max, "a rejected key must add no op_log rows");
+    let prop_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'importance'",
+    )
+    .bind(&b.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        prop_count, 0,
+        "no property row may be written for a rejected key"
+    );
+}
+
+/// Generalisation-specific: `priority` routes to `value_text` and the
+/// materialised `blocks.priority` column reflects the value on every block.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_batch_sets_priority_column() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let mut ids = Vec::with_capacity(3);
+    for i in 0..3 {
+        let b = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            format!("b{i}"),
+            None,
+            Some(i + 1),
+        )
+        .await
+        .unwrap();
+        ids.push(b.id.clone());
+    }
+    settle(&mat).await;
+
+    let updated = set_property_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        ids.clone(),
+        "priority".into(),
+        Some("2".into()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(updated, 3);
+
+    for id in &ids {
+        let v: Option<String> = sqlx::query_scalar("SELECT priority FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(v.as_deref(), Some("2"), "block {id} priority must be 2");
+    }
+}
+
+/// Generalisation-specific: `due_date` routes to `value_date` and the
+/// materialised `blocks.due_date` column reflects the value.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_batch_sets_due_date_column() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let mut ids = Vec::with_capacity(2);
+    for i in 0..2 {
+        let b = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            format!("b{i}"),
+            None,
+            Some(i + 1),
+        )
+        .await
+        .unwrap();
+        ids.push(b.id.clone());
+    }
+    settle(&mat).await;
+
+    let updated = set_property_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        ids.clone(),
+        "due_date".into(),
+        Some("2026-07-10".into()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(updated, 2);
+
+    for id in &ids {
+        let v: Option<String> = sqlx::query_scalar("SELECT due_date FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            v.as_deref(),
+            Some("2026-07-10"),
+            "block {id} due_date must be 2026-07-10"
+        );
+    }
+}
+
+/// Generalisation-specific: an invalid reserved value (todo_state outside
+/// the seeded option list) rejects with `Validation` and writes nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_batch_rejects_invalid_reserved_value() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "b".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Delete the seeded definition so the in-tx fallback validation
+    // enforces the built-in ["TODO","DOING","DONE"] set; "BOGUS" is absent.
+    sqlx::query("DELETE FROM property_definitions WHERE key = 'todo_state'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let pre_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let result = set_property_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![b.id.clone()],
+        "todo_state".into(),
+        Some("BOGUS".into()),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "invalid reserved value must reject with Validation, got {result:?}"
+    );
+
+    let post_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(pre_max, post_max, "invalid value must add no op_log rows");
+    let v: Option<String> = sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+        .bind(&b.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        v.is_none(),
+        "no todo_state may be written for an invalid value"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_property_ref_cross_space_rejected() {
     // A ref-type property whose target lives in a different
