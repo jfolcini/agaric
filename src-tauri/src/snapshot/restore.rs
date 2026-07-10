@@ -142,14 +142,27 @@ pub async fn apply_snapshot<R: std::io::Read>(
     materializer: &Materializer,
     compressed_reader: R,
 ) -> Result<SnapshotData, AppError> {
-    // The reader is consumed entirely inside `decode_snapshot`
-    // (zstd-streaming + ciborium) before we acquire the write lock,
-    // so the only memory in flight from this point on is the parsed
-    // `SnapshotData` itself — never the compressed bytes nor the
-    // decompressed CBOR. Production callers feed a `std::fs::File`
-    // opened on a temp file the binary stream was written into;
-    // tests still pass `&bytes[..]` (slice impls `Read`).
-    let data = decode_snapshot(compressed_reader)?;
+    // #2200: the CPU-bound zstd+CBOR decode is offloaded to a blocking
+    // thread so it never stalls the async runtime while other tasks (timers,
+    // concurrent sync sessions, UI command handlers) wait. `apply_snapshot`'s
+    // `R: Read` bound is intentionally NOT `Send + 'static` — tests pass
+    // borrowed `&bytes[..]` slices — so the reader itself cannot cross the
+    // thread boundary. We instead drain it into an owned `Vec` (cheap
+    // sequential I/O off the temp file / slice) and hand that owned buffer to
+    // `spawn_blocking`. The compressed blob is upstream-capped at
+    // `MAX_SNAPSHOT_SIZE` and dropped the instant the decode returns; the #428
+    // decompression-bomb ratio/window bounds still apply inside
+    // `decode_snapshot`. Production callers feed a `std::fs::File` opened on
+    // the temp file the binary stream was written into.
+    let mut compressed = Vec::new();
+    {
+        let mut reader = compressed_reader;
+        std::io::Read::read_to_end(&mut reader, &mut compressed)
+            .map_err(|e| AppError::Snapshot(format!("snapshot read: {e}")))?;
+    }
+    let data = tokio::task::spawn_blocking(move || decode_snapshot(&compressed[..]))
+        .await
+        .map_err(|e| AppError::Snapshot(format!("snapshot decode task panicked: {e}")))??;
 
     // F04: BEGIN IMMEDIATE — acquire write lock upfront (consistent with
     // Every other write path in the codebase). route through

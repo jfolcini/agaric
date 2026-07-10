@@ -646,6 +646,7 @@ fn sync_message_serde_roundtrip() {
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
+            wire_compression: false,
         },
         SyncMessage::LoroSync {
             msg: crate::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot {
@@ -753,6 +754,7 @@ async fn orchestrator_rejects_incompatible_engine_format() {
             loro_vvs: vec![],
             engine_format_version: incompatible,
             op_log_replication: false,
+            wire_compression: false,
         })
         .await;
 
@@ -805,6 +807,7 @@ async fn orchestrator_accepts_legacy_and_matching_engine_format() {
                 loro_vvs: vec![],
                 engine_format_version: version,
                 op_log_replication: false,
+                wire_compression: false,
             })
             .await
             .unwrap_or_else(|e| {
@@ -991,6 +994,7 @@ async fn orchestrator_rejects_loro_sync_chunked_as_unreachable_protocol_state() 
                 size_bytes: 1024,
             },
             is_last: true,
+            compressed: false,
         })
         .await;
 
@@ -1091,6 +1095,7 @@ async fn orchestrator_rejects_messages_in_terminal_state() {
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
+            wire_compression: false,
         })
         .await;
     assert!(
@@ -1202,6 +1207,7 @@ async fn orchestrator_rejects_messages_in_failed_terminal_state() {
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
+            wire_compression: false,
         })
         .await;
 
@@ -1304,6 +1310,7 @@ async fn orchestrator_rejects_head_exchange_in_streaming_state() {
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
+            wire_compression: false,
         })
         .await;
     assert!(
@@ -1461,6 +1468,7 @@ async fn orchestrator_rejects_unexpected_peer_device_id() {
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
+            wire_compression: false,
         })
         .await;
 
@@ -1503,6 +1511,7 @@ async fn orchestrator_accepts_matching_peer_device_id() {
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
+            wire_compression: false,
         })
         .await;
 
@@ -1578,6 +1587,7 @@ async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
+            wire_compression: false,
         })
         .await
         .unwrap();
@@ -1718,6 +1728,7 @@ fn serde_roundtrip_sync_message_head_exchange() {
         loro_vvs: vec![],
         engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
         op_log_replication: false,
+        wire_compression: false,
     };
     let json = serde_json::to_string(&msg).expect("serialize HeadExchange");
     let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize HeadExchange");
@@ -1794,6 +1805,7 @@ fn json_shape_head_exchange_matches_wire_format() {
         loro_vvs: vec![],
         engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
         op_log_replication: false,
+        wire_compression: false,
     };
     let json: serde_json::Value =
         serde_json::to_value(&msg).expect("SyncMessage must serialize to Value");
@@ -1826,6 +1838,7 @@ fn head_exchange_deserializes_without_loro_vvs_field() {
             loro_vvs,
             engine_format_version,
             op_log_replication,
+            wire_compression,
         } => {
             assert_eq!(heads.len(), 1, "heads must round-trip");
             assert!(
@@ -1840,8 +1853,31 @@ fn head_exchange_deserializes_without_loro_vvs_field() {
                 !op_log_replication,
                 "a missing op_log_replication field must default to false (#2481 old-peer)"
             );
+            assert!(
+                !wire_compression,
+                "a missing wire_compression field must default to false (#2200 old-peer)"
+            );
         }
         other => panic!("expected HeadExchange, got {other:?}"),
+    }
+}
+
+#[test]
+fn loro_sync_chunked_deserializes_without_compressed_field() {
+    // #2200 wire back-compat: a #611 peer that predates the `compressed`
+    // flag sends `LoroSyncChunked` with no `compressed` field. `#[serde(
+    // default)]` must fill `false` (raw bytes) rather than failing to parse.
+    let json = r#"{"type":"LoroSyncChunked","header":{"kind":"snapshot","protocol_version":1,"space_id":"01HZ00000000000000000000SP","size_bytes":7},"is_last":true}"#;
+    let msg: SyncMessage = serde_json::from_str(json)
+        .expect("old-format LoroSyncChunked (no compressed) must deserialize");
+    match msg {
+        SyncMessage::LoroSyncChunked { compressed, .. } => {
+            assert!(
+                !compressed,
+                "a missing compressed field must default to false (#2200 old-peer → raw bytes)"
+            );
+        }
+        other => panic!("expected LoroSyncChunked, got {other:?}"),
     }
 }
 
@@ -1857,6 +1893,7 @@ fn json_shape_all_variants_have_type_tag() {
                 loro_vvs: vec![],
                 engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
                 op_log_replication: false,
+                wire_compression: false,
             },
         ),
         (
@@ -1879,6 +1916,7 @@ fn json_shape_all_variants_have_type_tag() {
                     size_bytes: 0,
                 },
                 is_last: true,
+                compressed: false,
             },
         ),
         (
@@ -1990,6 +2028,7 @@ fn serde_roundtrip_empty_heads() {
         loro_vvs: vec![],
         engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
         op_log_replication: false,
+        wire_compression: false,
     };
     let json = serde_json::to_string(&msg).expect("serialize empty HeadExchange");
     let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize empty HeadExchange");
@@ -2033,6 +2072,7 @@ fn serde_roundtrip_many_heads() {
         loro_vvs: vec![],
         engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
         op_log_replication: false,
+        wire_compression: false,
     };
     let json = serde_json::to_string(&msg).expect("serialize many-heads HeadExchange");
     let deser: SyncMessage =
@@ -2124,6 +2164,7 @@ async fn orchestrator_errors_on_head_exchange_during_streaming_ops() {
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
+            wire_compression: false,
         })
         .await;
     assert!(
@@ -2218,6 +2259,7 @@ async fn handle_message_emits_within_sync_msg_span() {
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
+            wire_compression: false,
         })
         .await;
 
@@ -2265,6 +2307,7 @@ async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
+            wire_compression: false,
         })
         .await
         .expect("HeadExchange must not error under the engine path");
@@ -3404,6 +3447,25 @@ async fn start_advertises_op_log_replication_capability_2481() {
         } => assert!(
             op_log_replication,
             "start() must advertise op_log_replication=true (#2481)"
+        ),
+        other => panic!("expected HeadExchange, got {other:?}"),
+    }
+    materializer.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn start_advertises_wire_compression_capability_2200() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+    let msg = orch.start().await.unwrap();
+    match msg {
+        SyncMessage::HeadExchange {
+            wire_compression, ..
+        } => assert!(
+            wire_compression,
+            "start() must advertise wire_compression=true so the responder may \
+             compress the LoroSync payloads it streams back (#2200)"
         ),
         other => panic!("expected HeadExchange, got {other:?}"),
     }

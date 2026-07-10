@@ -189,6 +189,17 @@ async fn handle_incoming_sync_inner(
         _ => Vec::new(),
     };
 
+    // #2200: record the initiator's compression capability on the
+    // connection so the chunked `LoroSync` payloads we stream back ride
+    // the zstd path only when the peer can decompress them. An older
+    // initiator omits the flag (→ `false`) and we stream raw bytes.
+    if let SyncMessage::HeadExchange {
+        wire_compression, ..
+    } = &first_msg
+    {
+        conn.set_peer_wire_compression(*wire_compression);
+    }
+
     // ── Per-peer mutual exclusion ─────────────────────────────────────────
     // We can only identify the peer after seeing the HeadExchange.
     let _peer_guard = if let SyncMessage::HeadExchange { ref heads, .. } = first_msg {

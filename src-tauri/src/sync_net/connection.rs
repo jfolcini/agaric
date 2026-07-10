@@ -128,6 +128,7 @@ pub async fn connect_to_peer(
         inner: InnerStream::Client(ws_stream),
         peer_cert_hash_val: peer_hash,
         peer_cert_cn_val: None, // CN verification is server-side only
+        peer_wire_compression: false,
     })
 }
 
@@ -151,6 +152,15 @@ pub struct SyncConnection {
     /// Device ID extracted from the peer's TLS certificate CN (`agaric-{id}`).
     /// Populated on server-side connections only (responder path).
     pub(super) peer_cert_cn_val: Option<String>,
+    /// #2200 — whether the peer advertised
+    /// `HeadExchange { wire_compression: true }`, so the transport layer
+    /// (`sync_daemon::wire`) may zstd-compress the chunked `LoroSync`
+    /// payloads it streams to this peer. Defaults to `false` (uncompressed)
+    /// and is flipped on only after the responder observes the initiator's
+    /// capability flag, so an un-negotiated connection never emits
+    /// compressed frames. Consulted solely on the send side of the chunked
+    /// path; the receive side keys off the per-message `compressed` flag.
+    pub(super) peer_wire_compression: bool,
 }
 
 impl SyncConnection {
@@ -451,6 +461,23 @@ impl SyncConnection {
         self.peer_cert_cn_val.as_deref()
     }
 
+    /// Record whether the peer advertised support for zstd-compressed
+    /// chunked `LoroSync` payloads (`HeadExchange { wire_compression: true }`).
+    /// The sync-daemon wire layer calls this once, on the responder side,
+    /// after decoding the initiator's `HeadExchange`; the chunked send path
+    /// then consults [`Self::peer_wire_compression`] to decide whether to
+    /// compress. See #2200.
+    pub fn set_peer_wire_compression(&mut self, enabled: bool) {
+        self.peer_wire_compression = enabled;
+    }
+
+    /// Whether the peer advertised support for zstd-compressed chunked
+    /// `LoroSync` payloads. `false` until negotiated, so an un-negotiated
+    /// connection never emits compressed frames (#2200).
+    pub fn peer_wire_compression(&self) -> bool {
+        self.peer_wire_compression
+    }
+
     /// Set the test certificate fields (CN and hash) on this connection.
     ///
     /// Only available in test builds.  Use this after calling
@@ -618,11 +645,13 @@ pub async fn test_connection_pair() -> (SyncConnection, SyncConnection) {
             inner: InnerStream::Test(ws_a),
             peer_cert_hash_val: None,
             peer_cert_cn_val: None,
+            peer_wire_compression: false,
         },
         SyncConnection {
             inner: InnerStream::Test(ws_b),
             peer_cert_hash_val: None,
             peer_cert_cn_val: None,
+            peer_wire_compression: false,
         },
     )
 }

@@ -270,6 +270,11 @@ impl SyncOrchestrator {
             // replication so a capable peer may stream us `OpLogBatch`. An
             // older peer omits/ignores this flag and never sends the variant.
             op_log_replication: true,
+            // #2200: advertise that we can decompress zstd-compressed
+            // chunked LoroSync payloads. The responder (which streams
+            // `LoroSync` back to us) reads this flag and only then
+            // compresses; an older responder ignores it and streams raw.
+            wire_compression: true,
         })
     }
 
@@ -401,6 +406,11 @@ impl SyncOrchestrator {
                 // decides whether to stream `OpLogBatch`), not by this
                 // per-session core. Ignored here.
                 op_log_replication: _,
+                // #2200: the peer's compression capability is consumed by
+                // the sync-daemon wire layer (`sync_daemon::wire`), which
+                // reads it off the received `HeadExchange` and records it
+                // on the `SyncConnection`. Ignored by this core.
+                wire_compression: _,
             } => {
                 // Gate raw-byte Loro merges by engine format before doing any
                 // import work (#2130). An incompatible peer is rejected up

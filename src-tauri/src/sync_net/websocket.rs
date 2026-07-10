@@ -506,6 +506,7 @@ impl SyncServer {
                                         inner: InnerStream::Server(ws_stream),
                                         peer_cert_hash_val: peer_cert_hash,
                                         peer_cert_cn_val: peer_cert_cn,
+                                        peer_wire_compression: false,
                                     };
                                     // Hand the permit to the callback so the
                                     // session slot is held for the responder's
