@@ -357,6 +357,67 @@ pub async fn update_last_address(
 }
 
 // ---------------------------------------------------------------------------
+// Per-peer Loro version vectors (#2502)
+// ---------------------------------------------------------------------------
+//
+// `loro_vv_bytes` (migration 0100) persists the PEER's advertised per-space
+// Loro version vectors as of the last completed sync session. The bytes are an
+// OPAQUE blob to this layer — the sync-protocol layer serializes its
+// `Vec<SpaceVersionVector>` into them and parses them back — so `peer_refs`
+// takes no dependency on `sync_protocol::types` (which already depends on
+// `peer_refs`, so surfacing the typed struct here would be a cycle). It is also
+// deliberately NOT a field on [`PeerRef`]: that struct crosses the Tauri IPC
+// boundary (`commands::sync_cmds::list_peer_refs` / `get_peer_ref`, generating
+// TS bindings), and a raw BLOB has no place in the frontend peer list.
+
+/// Read a peer's persisted per-space Loro version-vector blob (#2502).
+///
+/// Returns `Ok(None)` when the peer row is absent OR the column is NULL (we
+/// have not yet completed a version-vector exchange with this peer). Callers
+/// treat both the same way — "no persisted frontier, fall back to a full
+/// snapshot per space" — so the two cases are not distinguished.
+pub async fn get_loro_vv_bytes(
+    pool: &SqlitePool,
+    peer_id: &str,
+) -> Result<Option<Vec<u8>>, AppError> {
+    let row = sqlx::query_scalar!(
+        "SELECT loro_vv_bytes FROM peer_refs WHERE peer_id = ?",
+        peer_id,
+    )
+    .fetch_optional(pool)
+    .await?;
+    // `row` is `Option<Option<Vec<u8>>>`: outer = row presence, inner = column
+    // NULL-ness. Flatten so an absent row and a NULL column both read `None`.
+    Ok(row.flatten())
+}
+
+/// In-transaction: persist a peer's per-space Loro version-vector blob (#2502).
+///
+/// Composes inside the same `BEGIN IMMEDIATE` transaction as the streamer's
+/// post-session bookkeeping so the persisted frontier commits atomically with
+/// the rest of the sync completion. Returns [`AppError::NotFound`] if
+/// `peer_id` does not exist (the caller is expected to `upsert_peer_ref_in_tx`
+/// first).
+pub async fn update_loro_vv_bytes_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    peer_id: &str,
+    loro_vv_bytes: &[u8],
+) -> Result<(), AppError> {
+    let result = sqlx::query!(
+        "UPDATE peer_refs SET loro_vv_bytes = ? WHERE peer_id = ?",
+        loro_vv_bytes,
+        peer_id,
+    )
+    .execute(&mut **tx)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("peer_refs ({peer_id})")));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Pending-pairing marker
 // ---------------------------------------------------------------------------
 
@@ -1127,5 +1188,69 @@ mod tests {
         let peers = list_peer_refs(&pool).await.unwrap();
         assert_eq!(peers.len(), 1, "the empty-string peer must be filtered out");
         assert_eq!(peers[0].peer_id, "PEER_REAL");
+    }
+
+    // ── loro_vv_bytes (#2502) ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn loro_vv_bytes_defaults_to_none_and_round_trips() {
+        // #2502: a fresh peer row has a NULL `loro_vv_bytes` (read as `None`);
+        // an in-tx write persists the opaque blob verbatim and a subsequent
+        // read returns exactly those bytes.
+        let (pool, _dir) = test_pool().await;
+        upsert_peer_ref(&pool, "peer-vv").await.unwrap();
+
+        // Default: NULL column → None.
+        assert!(
+            get_loro_vv_bytes(&pool, "peer-vv").await.unwrap().is_none(),
+            "loro_vv_bytes must default to None on a fresh peer row"
+        );
+        // Absent row → also None (not an error).
+        assert!(
+            get_loro_vv_bytes(&pool, "no-such-peer")
+                .await
+                .unwrap()
+                .is_none(),
+            "loro_vv_bytes for an absent peer must be None"
+        );
+
+        // Persist a blob (including an embedded NUL to prove it is opaque
+        // binary, not a text column).
+        let blob = vec![0u8, 1, 2, 3, 0, 255, 42];
+        let mut tx = pool.begin().await.unwrap();
+        update_loro_vv_bytes_in_tx(&mut tx, "peer-vv", &blob)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(
+            get_loro_vv_bytes(&pool, "peer-vv").await.unwrap(),
+            Some(blob.clone()),
+            "persisted loro_vv_bytes must round-trip byte-for-byte"
+        );
+
+        // Overwrite replaces the prior blob.
+        let blob2 = vec![9u8, 9, 9];
+        let mut tx = pool.begin().await.unwrap();
+        update_loro_vv_bytes_in_tx(&mut tx, "peer-vv", &blob2)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(
+            get_loro_vv_bytes(&pool, "peer-vv").await.unwrap(),
+            Some(blob2),
+            "a second write must replace the prior loro_vv_bytes"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_loro_vv_bytes_nonexistent_peer_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+        let result = update_loro_vv_bytes_in_tx(&mut tx, "ghost-peer", &[1, 2, 3]).await;
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "update_loro_vv_bytes_in_tx on a nonexistent peer must return NotFound"
+        );
     }
 }

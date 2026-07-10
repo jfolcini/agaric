@@ -1,9 +1,7 @@
 use sqlx::SqlitePool;
 
 use super::types::*;
-use crate::db::ReadPool;
 use crate::error::AppError;
-use crate::op_log;
 use crate::peer_refs;
 
 // ---------------------------------------------------------------------------
@@ -59,61 +57,93 @@ pub async fn get_local_heads(pool: &SqlitePool) -> Result<Vec<DeviceHead>, AppEr
     Ok(heads)
 }
 
-/// Check whether a full reset is required for sync with a remote peer.
+/// Check whether a full reset is required for sync with a remote peer —
+/// **own-lineage-loss detection in Loro version-vector space** (#2502).
 ///
-/// Returns `true` only when the remote advertises a head for **our own
-/// device** (`local_device_id`) that our op log can no longer satisfy —
-/// i.e. the peer claims to have observed ops we authored, but we have
-/// lost that history (log compacted past the peer's frontier, vault
-/// restored from an older backup, …). In that situation a delta replay
-/// is impossible and the daemon layer falls back to snapshot catch-up.
+/// Returns `true` only when the peer's advertised per-space version vectors
+/// claim, for **our own current-epoch Loro `PeerID`** (`own_peer_id`), a
+/// counter *higher* than our local engine can produce for some space — i.e.
+/// the peer has observed ops **we authored** that our own Loro doc no longer
+/// contains (log/history loss, vault restored from an older backup, a
+/// snapshot reset that dropped our tail). In that situation a delta replay is
+/// impossible and the daemon layer falls back to snapshot catch-up.
 ///
-/// # Why only own-device heads (#602)
+/// # Why this replaced the op-log-seq lookup (#2502, #87 §10.5)
 ///
-/// Post-#490-M1 the local `op_log` is strictly device-local: the only
-/// writer is `op_log::append_local_op*` (the local command path), and
-/// inbound sync lands remote state via the Loro engine import + SQL
-/// projection + write-ahead inbox
-/// ([`crate::sync_protocol::loro_sync::import_and_project`]) — it never
-/// inserts the peer's ops into our `op_log`. Resolving a *remote*
-/// device's advertised `(device_id, seq)` against the local `op_log` is
-/// therefore unconditionally `NotFound` the moment that peer has made
-/// any local edit, which degenerated EVERY session between two edited
-/// Devices into `ResetRequired` → stale-snapshot refusal →
-/// backoff, forever (issue #602). Remote-frontier staleness is instead
-/// detected where it can be answered correctly: the Loro version-vector
-/// reachability gate in [`crate::sync_protocol::loro_sync::apply_remote`]
-/// (→ `SnapshotFallbackRequested` → `ResetRequired`).
+/// This check previously resolved the peer's advertised op-log `(device_id,
+/// seq)` head for our own device against the local `op_log`. Post-#490-M1 the
+/// op_log is strictly device-local and, since #2481, also carries *foreign*
+/// device frontiers as append-only audit metadata — so op-log seqs are an
+/// audit/replication cursor, **not** a state-causality signal. Making a state
+/// reset decision from them conflated the two jobs and produced the #602
+/// forever-backoff bug. #2502 retires the op-log-seq lookup entirely: state
+/// causality is judged **only** from Loro VVs. This is the streamer-side,
+/// handshake-time complement to the receiver-side
+/// [`crate::sync_protocol::loro_sync::apply_remote`] reachability gate
+/// (→ `SnapshotFallbackRequested`); both funnel into the single
+/// `ResetRequired` → snapshot-catch-up recovery path.
 ///
-/// A `seq <= 0` claim means "I have observed none of your ops" and is
-/// trivially satisfiable — never a reset condition ([`get_local_heads`]
-/// only ever advertises seqs `>= 1`, but synthetic/legacy peers send 0).
+/// # Why only *our own* peer id
 ///
-/// TODO(#87 plan §10.5): once per-peer version vectors are persisted
-/// (`peer_refs.loro_vv_bytes`) and the orchestrator sends incremental
-/// `Update`s, head/reset detection should move to vv comparison
-/// entirely and this op-log-seq check can be retired from the
-/// handshake.
-pub async fn check_reset_required(
-    pool: &SqlitePool,
-    local_device_id: &str,
-    remote_heads: &[DeviceHead],
+/// The peer being ahead of us for *other* peer ids is normal and expected
+/// (they simply hold more state — we pull it, no reset). A reset is warranted
+/// only when the peer is ahead of us for **our own** contributions, because
+/// those can only have come from us and their absence locally means we lost
+/// our own tail. Restricting the comparison to `own_peer_id` is also what
+/// keeps a post-reset device from looping: a snapshot reset mints a
+/// *new*-epoch `PeerID` starting at counter 0, so no peer has advertised it
+/// yet, and our abandoned pre-reset identity (a different peer id) is
+/// deliberately ignored here.
+///
+/// `local_loro_vvs` are our current per-space engine VVs
+/// (`session_state_machine::collect_local_loro_vvs`); `peer_loro_vvs` are the
+/// peer's advertised `HeadExchange.loro_vvs`. A space the peer advertises but
+/// we lack locally is treated as local counter `0`. A peer counter of `0`
+/// carries no ops and is skipped (matching the receiver-side gate).
+pub fn check_reset_required(
+    own_peer_id: loro::PeerID,
+    local_loro_vvs: &[SpaceVersionVector],
+    peer_loro_vvs: &[SpaceVersionVector],
 ) -> Result<bool, AppError> {
-    for head in remote_heads {
-        // #602: the local op_log can only validly answer questions about
-        // ops THIS device authored — skip every other device's head.
-        if head.device_id != local_device_id {
-            continue;
+    use std::collections::HashMap;
+
+    // Index our local per-space vv bytes for O(1) lookup by space.
+    let local_by_space: HashMap<&crate::space::SpaceId, &[u8]> = local_loro_vvs
+        .iter()
+        .map(|s| (&s.space_id, s.vv.as_slice()))
+        .collect();
+
+    for peer_svv in peer_loro_vvs {
+        let peer_vv = loro::VersionVector::decode(&peer_svv.vv).map_err(|e| {
+            AppError::validation(format!(
+                "check_reset_required: decode peer loro_vv for space {}: {e}",
+                peer_svv.space_id.as_str()
+            ))
+        })?;
+        // Our own contribution the peer claims to have seen for this space.
+        let peer_own = peer_vv.get(&own_peer_id).copied().unwrap_or(0);
+        if peer_own == 0 {
+            continue; // peer has none of our ops for this space — trivially ok
         }
-        // "Zero ops observed" is trivially covered.
-        if head.seq <= 0 {
-            continue;
-        }
-        // I-Core-8: wrap to typed read-pool — caller is in write context
-        match op_log::get_op_by_seq(&ReadPool(pool.clone()), &head.device_id, head.seq).await {
-            Ok(_) => {}
-            Err(AppError::NotFound(_)) => return Ok(true),
-            Err(e) => return Err(e),
+
+        // Our own contribution we can actually produce for this space. A space
+        // we do not hold locally reads as 0 (we authored nothing there that we
+        // still have), so any positive peer claim is a genuine loss.
+        let local_own = match local_by_space.get(&peer_svv.space_id) {
+            Some(bytes) => {
+                let local_vv = loro::VersionVector::decode(bytes).map_err(|e| {
+                    AppError::validation(format!(
+                        "check_reset_required: decode local loro_vv for space {}: {e}",
+                        peer_svv.space_id.as_str()
+                    ))
+                })?;
+                local_vv.get(&own_peer_id).copied().unwrap_or(0)
+            }
+            None => 0,
+        };
+
+        if peer_own > local_own {
+            return Ok(true);
         }
     }
     Ok(false)

@@ -153,6 +153,14 @@ pub struct SyncOrchestrator {
     /// starves the reverse direction (`peers_due_for_resync` never finds
     /// the initiator overdue under sustained activity).
     streamed_to_peer: bool,
+    /// #2502: the peer's per-space Loro version vectors as advertised in this
+    /// session's `HeadExchange`, stashed so the streamer can persist them to
+    /// `peer_refs.loro_vv_bytes` **on session completion** (not at handshake —
+    /// a session that fails mid-stream must not record a frontier the peer
+    /// never actually received). Read back on the next session as the
+    /// incremental-export floor when the initiator advertises no vv for a
+    /// space, retiring the every-tick full-snapshot churn (#610).
+    peer_advertised_loro_vvs: Vec<crate::sync_protocol::types::SpaceVersionVector>,
     event_sink: Option<Box<dyn crate::sync_events::SyncEventSink>>,
 }
 
@@ -176,6 +184,7 @@ impl SyncOrchestrator {
             remote_device_id: None,
             expected_remote_id: None,
             streamed_to_peer: false,
+            peer_advertised_loro_vvs: Vec::new(),
             event_sink: None,
         }
     }
@@ -451,24 +460,32 @@ impl SyncOrchestrator {
                 self.remote_device_id = Some(remote_id.clone());
                 self.session.remote_device_id = remote_id;
 
-                // Check whether a reset is required. #602: only heads
-                // for OUR OWN device are resolved against the local
-                // op_log (own-history compaction/loss detection) — a
-                // remote device's ops never land in our op_log
-                // post-#490-M1, so checking them here made every
-                // two-edited-device session degenerate to
-                // ResetRequired. Remote-frontier staleness is handled
-                // by the loro-vv reachability gate in `apply_remote`
-                // (→ SnapshotFallbackRequested).
-                if check_reset_required(&self.pool, &self.device_id, &heads).await? {
+                // #2502: stash the peer's advertised per-space Loro VVs so the
+                // streamer can persist them to `peer_refs.loro_vv_bytes` on
+                // session completion (churn-cutting export floor next round).
+                self.peer_advertised_loro_vvs = loro_vvs.clone();
+
+                // Check whether a reset is required — own-lineage-loss in Loro
+                // VV space (#2502, retiring the op-log-seq heads check, #87
+                // §10.5). Reset iff the peer's advertised VVs claim ops WE
+                // authored (our own current-epoch Loro PeerID) that our engine
+                // can no longer produce. Remote-frontier staleness (the peer
+                // being ahead for OTHER peer ids) is not a reset — the receiver
+                // -side `apply_remote` reachability gate (→
+                // SnapshotFallbackRequested) handles an unbridgeable delta; both
+                // funnel into the same ResetRequired → snapshot-catch-up path.
+                let epoch = crate::loro::peer_epoch::load_peer_epoch(&self.pool).await?;
+                let own_peer_id = crate::loro::engine::peer_id_for_epoch(&self.device_id, epoch);
+                let local_loro_vvs = self.collect_local_loro_vvs();
+                if check_reset_required(own_peer_id, &local_loro_vvs, &loro_vvs)? {
                     self.state = SyncState::ResetRequired;
                     self.session.state = SyncState::ResetRequired;
                     self.emit(crate::sync_events::SyncEvent::Error {
-                        message: "local op log missing ops claimed by remote".into(),
+                        message: "local engine missing own-authored ops claimed by remote".into(),
                         remote_device_id: self.session.remote_device_id.clone(),
                     });
                     return Ok(Some(SyncMessage::ResetRequired {
-                        reason: "local op log missing ops claimed by remote".into(),
+                        reason: "local engine missing own-authored ops claimed by remote".into(),
                     }));
                 }
 
@@ -707,6 +724,13 @@ impl SyncOrchestrator {
                     self.record_pull_in_tx(&peer_id, &last_hash).await?;
                 }
 
+                // #2502: the streamer persists the peer's advertised per-space
+                // VVs now that the session has completed (the initiator acked
+                // with this SyncComplete), so the next session can ship an
+                // incremental Update from that frontier. No-op for the puller
+                // (its stash is empty — it sent, never received, a HeadExchange).
+                self.persist_peer_loro_vvs(&peer_id).await?;
+
                 self.state = SyncState::Complete;
                 self.session.state = SyncState::Complete;
                 self.emit(crate::sync_events::SyncEvent::Complete {
@@ -878,6 +902,27 @@ impl SyncOrchestrator {
         Ok(())
     }
 
+    /// #2502: persist the peer's advertised per-space Loro VVs to
+    /// `peer_refs.loro_vv_bytes` on session completion.
+    ///
+    /// Only the streamer (responder) populates `peer_advertised_loro_vvs` — it
+    /// is the side that processed an inbound `HeadExchange`; the initiator sent
+    /// one and never received one, so its stash is empty and this is a no-op
+    /// for it (early return). The write composes an upsert + column update in a
+    /// single `BEGIN IMMEDIATE` tx so the frontier commits atomically.
+    async fn persist_peer_loro_vvs(&self, peer_id: &str) -> Result<(), AppError> {
+        if self.peer_advertised_loro_vvs.is_empty() {
+            return Ok(());
+        }
+        let bytes =
+            crate::sync_protocol::types::encode_persisted_loro_vvs(&self.peer_advertised_loro_vvs);
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        peer_refs::upsert_peer_ref_in_tx(&mut tx, peer_id).await?;
+        peer_refs::update_loro_vv_bytes_in_tx(&mut tx, peer_id, &bytes).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// Build and queue outgoing [`SyncMessage::LoroSync`] messages,
     /// one per [`SpaceId`] currently held in
     /// [`crate::loro::shared::get`]'s registry.
@@ -960,12 +1005,38 @@ impl SyncOrchestrator {
         // sharing it across spaces is behaviour-preserving.
         let sql_deleted = loro_sync::read_sql_soft_deleted_ids(&self.pool).await?;
 
+        // #2502/#610: persisted per-peer VV floor. When the initiator advertised
+        // no vv for a space (an older peer, or the every-tick churn case), fall
+        // back to the frontier this peer advertised at its LAST completed session
+        // (`peer_refs.loro_vv_bytes`) so we still ship an incremental Update
+        // instead of a full Snapshot. A stale/ahead persisted floor is safe: the
+        // receiver's `apply_remote` reachability gate catches an unbridgeable
+        // `from_vv` and falls back to a snapshot. Empty when we have no persisted
+        // frontier for this peer (never synced, or the peer id is unresolved).
+        let persisted_floor: Vec<crate::sync_protocol::types::SpaceVersionVector> =
+            match self.remote_device_id.clone().filter(|s| !s.is_empty()) {
+                Some(peer_id) => match crate::peer_refs::get_loro_vv_bytes(&self.pool, &peer_id)
+                    .await?
+                {
+                    Some(bytes) => crate::sync_protocol::types::decode_persisted_loro_vvs(&bytes),
+                    None => Vec::new(),
+                },
+                None => Vec::new(),
+            };
+
         let mut messages: VecDeque<LoroSyncMessage> = VecDeque::with_capacity(space_ids.len());
         for sid in &space_ids {
             let peer_vv = peer_vvs
                 .iter()
                 .find(|v| &v.space_id == sid)
-                .map(|v| v.vv.as_slice());
+                .map(|v| v.vv.as_slice())
+                // #2502/#610 fallback: the peer's last-session frontier.
+                .or_else(|| {
+                    persisted_floor
+                        .iter()
+                        .find(|v| &v.space_id == sid)
+                        .map(|v| v.vv.as_slice())
+                });
             // #1257 freshness gate: `prepare_outgoing` returns `None` when the
             // engine is stale vs SQL for this space (it would export a block SQL
             // has soft-deleted). On refusal, skip the space — emit no payload for

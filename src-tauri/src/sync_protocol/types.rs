@@ -31,6 +31,30 @@ pub struct SpaceVersionVector {
     pub vv: Vec<u8>,
 }
 
+/// Serialize a peer's advertised per-space version vectors into the opaque
+/// blob persisted in `peer_refs.loro_vv_bytes` (#2502).
+///
+/// The persistence layer (`crate::peer_refs`) stores these bytes verbatim and
+/// takes no dependency on this type; the encoding lives here so the
+/// serialize/parse pair stays in one place. JSON is used (rather than a bespoke
+/// binary framing) because the payload is tiny — a handful of spaces, each with
+/// a few-byte Loro-encoded vv — and its debuggability outweighs the size cost
+/// for a per-peer bookmark written once per session.
+pub fn encode_persisted_loro_vvs(vvs: &[SpaceVersionVector]) -> Vec<u8> {
+    // Serializing a `Vec<SpaceVersionVector>` cannot fail (plain data), but map
+    // any theoretical error to an empty blob — the reader treats that as "no
+    // persisted frontier" and falls back to a full snapshot, which is safe.
+    serde_json::to_vec(vvs).unwrap_or_default()
+}
+
+/// Parse the `peer_refs.loro_vv_bytes` blob back into per-space version vectors
+/// (#2502). A malformed/legacy blob yields an empty list — the caller then
+/// falls back to a full snapshot per space, exactly as if nothing were
+/// persisted, so a decode failure is degraded-but-safe rather than fatal.
+pub fn decode_persisted_loro_vvs(bytes: &[u8]) -> Vec<SpaceVersionVector> {
+    serde_json::from_slice(bytes).unwrap_or_default()
+}
+
 /// Wire-format mirror of `OpRecord` for sync transfer.
 ///
 /// **I-Sync-4 — deliberate boundary, not duplication.** Today every field
