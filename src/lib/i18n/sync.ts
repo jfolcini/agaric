@@ -69,6 +69,8 @@ export const sync: Record<string, string> = {
   'device.syncAllLabel': 'Sync with all paired devices',
   'device.syncAllButton': 'Sync All',
   'device.noPairedDevices': 'No paired devices. Click "Pair New Device" to get started.',
+  'device.mdnsDisabledHint':
+    'Automatic discovery unavailable: {{reason}}. Add peers by address instead.',
   'device.noAddress': 'No address',
   'device.editAddressLabel': 'Edit address for {{name}}',
   'device.renameDeviceLabel': 'Rename device {{name}}',

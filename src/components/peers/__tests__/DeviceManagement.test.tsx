@@ -25,6 +25,22 @@ import { axe } from 'vitest-axe'
 import { comparePeers, DeviceManagement } from '@/components/peers/DeviceManagement'
 import type { PeerRefRow } from '@/lib/tauri'
 
+// #2506: DeviceManagement now mounts `useMdnsStatus`, which registers a
+// `sync:mdns_disabled` listener via `useTauriEventListener` → `listen()`.
+// Mock the event bus so tests can drive that listener directly (mirrors
+// AgentAccessTab.test.tsx's `@tauri-apps/api/event` mock).
+type EventHandler = (event: { payload: unknown }) => void
+const mdnsListeners = new Map<string, EventHandler>()
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn(async (name: string, handler: EventHandler) => {
+    mdnsListeners.set(name, handler)
+    return () => {
+      mdnsListeners.delete(name)
+    }
+  }),
+}))
+
 // Mock PairingDialog to prevent it from making its own invoke calls.
 // Expose onOpenChange so tests can simulate dialog close.
 vi.mock('@/components/dialogs/PairingDialog', () => ({
@@ -134,6 +150,7 @@ function mockInvokeByCommand(commands: Record<string, unknown>) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mdnsListeners.clear()
 })
 
 describe('DeviceManagement', () => {
@@ -1245,6 +1262,81 @@ describe('DeviceManagement', () => {
       const hint = container.querySelector('.manual-ip-hint')
       expect(hint).toBeTruthy()
       expect(hint?.textContent).toContain('mDNS discovery')
+    })
+  })
+
+  // --- mDNS-disabled banner (#2506) ---
+
+  describe('mDNS-disabled banner (#2506)', () => {
+    // `useMdnsStatus` (like `useRecoveryStatus`) gates both its live listener
+    // and its mount-time backfill on `__TAURI_INTERNALS__` being present —
+    // set it for this block so the hook actually registers/fetches.
+    let hadTauriInternals: boolean
+
+    beforeEach(() => {
+      hadTauriInternals = '__TAURI_INTERNALS__' in window
+      if (!hadTauriInternals) {
+        Object.defineProperty(window, '__TAURI_INTERNALS__', {
+          value: {},
+          writable: true,
+          configurable: true,
+        })
+      }
+    })
+
+    afterEach(() => {
+      if (!hadTauriInternals) {
+        delete (window as any).__TAURI_INTERNALS__
+      }
+    })
+
+    it('does not show the banner when mDNS is working', async () => {
+      mockInvokeByCommand({
+        get_device_id: mockDeviceId,
+        list_peer_refs: [],
+        get_mdns_status: { disabled: false, reason: null },
+      })
+
+      const { container } = render(<DeviceManagement />)
+
+      await screen.findByText(mockDeviceId)
+      expect(container.querySelector('[data-testid="mdns-disabled-hint"]')).toBeNull()
+    })
+
+    it('shows the banner with the reason when the mount-time backfill reports disabled', async () => {
+      mockInvokeByCommand({
+        get_device_id: mockDeviceId,
+        list_peer_refs: [],
+        get_mdns_status: { disabled: true, reason: 'multicast lock missing' },
+      })
+
+      render(<DeviceManagement />)
+
+      await screen.findByText(mockDeviceId)
+      const hint = await screen.findByTestId('mdns-disabled-hint')
+      expect(hint.textContent).toContain('multicast lock missing')
+    })
+
+    it('shows the banner when the live sync:mdns_disabled event fires', async () => {
+      mockInvokeByCommand({
+        get_device_id: mockDeviceId,
+        list_peer_refs: [],
+        get_mdns_status: { disabled: false, reason: null },
+      })
+
+      render(<DeviceManagement />)
+
+      await screen.findByText(mockDeviceId)
+      expect(screen.queryByTestId('mdns-disabled-hint')).toBeNull()
+
+      const handler = mdnsListeners.get('sync:mdns_disabled')
+      expect(handler).toBeDefined()
+      await act(async () => {
+        handler?.({ payload: { reason: 'iOS sandbox blocks raw UDP' } })
+      })
+
+      const hint = await screen.findByTestId('mdns-disabled-hint')
+      expect(hint.textContent).toContain('iOS sandbox blocks raw UDP')
     })
   })
 

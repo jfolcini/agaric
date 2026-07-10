@@ -467,6 +467,16 @@ export const commands = {
 	startSync: (peerId: string, progress: Channel<SyncProgressUpdate>) => typedError<SyncSessionInfo, AppError>(__TAURI_INVOKE("start_sync", { peerId, progress })),
 	/**  Tauri command: cancel an active sync session. */
 	cancelSync: () => typedError<null, AppError>(__TAURI_INVOKE("cancel_sync")),
+	/**
+	 *  Tauri command: return the current mDNS peer-discovery status (#2506).
+	 * 
+	 *  Used by the peers/device-management surface to backfill the
+	 *  "discovery unavailable" signal on mount, in case its
+	 *  `sync:mdns_disabled` listener registered after the sync daemon already
+	 *  emitted (the daemon can start before the webview finishes mounting —
+	 *  same race `get_recovery_status` covers for `recovery:degraded`).
+	 */
+	getMdnsStatus: () => typedError<MdnsStatus, AppError>(__TAURI_INVOKE("get_mdns_status")),
 	/**  Tauri command: batch-count agenda items per date. Delegates to [`count_agenda_batch_inner`]. */
 	countAgendaBatch: (dates: string[], scope: SpaceScope) => typedError<{ [key in string]: number }, AppError>(__TAURI_INVOKE("count_agenda_batch", { dates, scope })),
 	/**  Tauri command: batch-count agenda items per (date, source). Delegates to [`count_agenda_batch_by_source_inner`]. */
@@ -2297,6 +2307,28 @@ export type McpStatus = {
 	enabled: boolean,
 	socket_path: string,
 	active_connections: number,
+};
+
+/**
+ *  #2506: durable, user-visible mDNS peer-discovery status.
+ * 
+ *  Derived from the [`SyncEvent::MdnsDisabled`] event (whose `reason` field
+ *  it mirrors) and returned by the `get_mdns_status` command so a frontend
+ *  that mounts after the sync daemon already emitted the event (same boot
+ *  race as `recovery:degraded`, see [`crate::recovery::RecoveryStatus`])
+ *  can still discover the disabled state. `disabled = false` (the default)
+ *  means either mDNS is working or the daemon has not attempted to
+ *  initialize it yet (e.g. still dormant, waiting for the first pairing).
+ */
+export type MdnsStatus = {
+	/**  `true` once mDNS initialization has failed at least once. */
+	disabled: boolean,
+	/**
+	 *  The failure reason from the most recent init attempt (the same
+	 *  string carried by [`SyncEvent::MdnsDisabled`]). `None` while
+	 *  `disabled` is `false`.
+	 */
+	reason: string | null,
 };
 
 export type MoveResponse = {

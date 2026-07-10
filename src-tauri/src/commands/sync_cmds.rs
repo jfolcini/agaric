@@ -14,6 +14,7 @@ use crate::error::AppError;
 use crate::pairing::PairingSession;
 use crate::pairing::{PairingMessage, generate_qr_svg, pairing_qr_payload, verify_device_exchange};
 use crate::peer_refs::{self, PeerRef};
+use crate::sync_events::{MdnsStatus, MdnsStatusState};
 use crate::sync_scheduler::SyncScheduler;
 
 use super::*;
@@ -513,6 +514,23 @@ pub async fn start_sync(
 #[specta::specta]
 pub async fn cancel_sync(cancel_flag: State<'_, crate::SyncCancelFlag>) -> Result<(), AppError> {
     cancel_sync_inner(&cancel_flag.0).map_err(sanitize_internal_error)
+}
+
+/// Tauri command: return the current mDNS peer-discovery status (#2506).
+///
+/// Used by the peers/device-management surface to backfill the
+/// "discovery unavailable" signal on mount, in case its
+/// `sync:mdns_disabled` listener registered after the sync daemon already
+/// emitted (the daemon can start before the webview finishes mounting —
+/// same race `get_recovery_status` covers for `recovery:degraded`).
+#[tauri::command]
+#[specta::specta]
+pub async fn get_mdns_status(state: State<'_, MdnsStatusState>) -> Result<MdnsStatus, AppError> {
+    let guard = state
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    Ok(guard.clone())
 }
 
 #[cfg(test)]
