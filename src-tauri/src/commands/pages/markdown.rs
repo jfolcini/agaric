@@ -115,31 +115,6 @@ pub(crate) fn folder_path_to_namespace_title(path: &str) -> String {
         .join("/")
 }
 
-/// #1282 (Obsidian slice) — split an Obsidian-style wiki-link target on its
-/// FIRST `#` into the base page name and an optional sub-anchor. Obsidian links
-/// may address a heading (`[[Page#Heading]]`) or a block id
-/// (`[[Page#^blockId]]`) INSIDE a page; the importer resolves only the base
-/// PAGE (the `#…` sub-anchor is not yet a navigable target — Obsidian
-/// block/heading targeting is a deferred follow-up), so it strips the anchor
-/// here and resolves/creates `page` exactly like a plain `[[page]]`.
-///
-/// Returns `(base, Some(anchor))` when a `#` is present — `base` is the text
-/// before the first `#` with leading/trailing whitespace TRIMMED (matching the
-/// existing page-name handling), and `anchor` is the raw text after the first
-/// `#` (which may itself begin with `^` for a block id, or contain further
-/// `#`). Returns `(name_trimmed, None)` when there is no `#` — a plain
-/// `[[Page]]` link, byte-for-byte the pre-#1282 behaviour so Logseq / plain
-/// Markdown (whose page links carry no `#`) are unaffected. An anchor-only link
-/// like `[[#heading]]` yields an EMPTY base; the caller MUST treat that as "no
-/// page target" and leave the token literal (it must never create an
-/// empty-titled page).
-fn split_wikilink_anchor(name: &str) -> (&str, Option<&str>) {
-    match name.split_once('#') {
-        Some((base, anchor)) => (base.trim(), Some(anchor)),
-        None => (name.trim(), None),
-    }
-}
-
 /// Collect the DISTINCT human-readable `[[Page Name]]` names referenced across
 /// every parsed block's content (#1446 Part B). A token whose body is already a
 /// canonical `[[ULID]]` ref is skipped (it needs no resolution). Used to drive
@@ -1397,33 +1372,11 @@ pub async fn import_markdown_with_progress(
     //     keeping AT MOST the two smallest ids per title (`ORDER BY id ASC`,
     //     capped in Rust): `[single]` → link, `[]` → create, `_` (≥2) →
     //     ambiguous, identical to before.
-    // #1282 (Obsidian slice) — an Obsidian wiki-link may carry a `#…`
-    // sub-anchor (`[[Page#Heading]]` / `[[Page#^blockId]]`) that addresses a
-    // heading/block INSIDE the target page. We resolve only the BASE page: the
-    // collected/resolved map stays keyed on the ORIGINAL full token (so the
-    // rewrite still matches `[[Page#Heading]]` and swaps in `[[<ULID>]]`), but
-    // the SQL lookup / create-if-missing below runs on the anchor-STRIPPED base
-    // name. A plain `[[Page]]` (no `#`) splits to `(Page, None)` and behaves
-    // byte-for-byte as before, so Logseq / plain Markdown is unaffected.
     let link_names = collect_inbound_page_link_names(&parse_output.blocks);
-    // Distinct, non-empty BASE names to look up (anchors stripped). An
-    // anchor-only link like `[[#heading]]` has an EMPTY base and contributes no
-    // lookup target (it never resolves/creates a page).
-    let base_lookup_names: Vec<String> = {
-        use std::collections::BTreeSet;
-        let mut set: BTreeSet<String> = BTreeSet::new();
-        for name in &link_names {
-            let (base, _anchor) = split_wikilink_anchor(name);
-            if !base.is_empty() {
-                set.insert(base.to_string());
-            }
-        }
-        set.into_iter().collect()
-    };
-    let link_matches: HashMap<String, Vec<String>> = if base_lookup_names.is_empty() {
+    let link_matches: HashMap<String, Vec<String>> = if link_names.is_empty() {
         HashMap::new()
     } else {
-        let names_json = serde_json::to_string(&base_lookup_names)?;
+        let names_json = serde_json::to_string(&link_names)?;
         // ORDER BY id ASC so the per-title truncation below keeps the SAME two
         // smallest-id rows the old per-name `LIMIT 2` did (the second only
         // signals "ambiguous"). Restricting `content IN (…names…)` bounds the
@@ -1455,54 +1408,14 @@ pub async fn import_markdown_with_progress(
     };
 
     let mut resolved_page_links: HashMap<String, String> = HashMap::new();
-    // #1282 — BASE name → resolved/created ULID within this pass. Two distinct
-    // full tokens sharing one base (`[[Page#h1]]`, `[[Page#h2]]`) must resolve
-    // to the SAME page and create it AT MOST once; the snapshot above only
-    // reflects pre-existing pages, so a base created here is remembered to keep
-    // the second occurrence from creating a duplicate.
-    let mut resolved_base_links: HashMap<String, String> = HashMap::new();
-    // #1282 — count of DISTINCT full tokens whose `#…` sub-anchor was dropped to
-    // resolve to the base page. Surfaced as one aggregate warning (mirroring the
-    // block-ref-strip warning) so the lossy anchor drop is diagnosable.
-    let mut dropped_anchor_count: usize = 0;
     for name in link_names {
-        // #1282 — split the ORIGINAL captured token into its base page name and
-        // optional `#…` sub-anchor; the map stays keyed on `name` (the full
-        // token) so the rewrite still matches it verbatim.
-        let (base, anchor) = split_wikilink_anchor(&name);
-        if anchor.is_some() {
-            if base.is_empty() {
-                // Anchor-only link (`[[#heading]]`): an intra-note anchor with
-                // no page target. Never create an empty-titled page — leave the
-                // token literal and surface a per-occurrence warning.
-                tracing::debug!(
-                    name = %name,
-                    "import: wiki-link has no page target (intra-note anchor) (#1282)"
-                );
-                warnings.push(format!(
-                    "wiki-link '[[{name}]]' has no page target (intra-note anchor); left as plain text"
-                ));
-                continue;
-            }
-            dropped_anchor_count += 1;
-        }
-        let base = base.to_string();
-
-        // Already resolved/created this base in an earlier iteration (a shared
-        // base across anchors, or a plain `[[Page]]` seen before `[[Page#h]]`).
-        if let Some(ulid) = resolved_base_links.get(&base) {
-            resolved_page_links.insert(name, ulid.clone());
-            continue;
-        }
-
         // Resolve against the in-memory snapshot instead of a per-name query.
-        // A base with no snapshot entry has zero same-space matches (the `[]`
+        // A name with no snapshot entry has zero same-space matches (the `[]`
         // create-if-missing branch).
-        let matches: &[String] = link_matches.get(&base).map_or(&[], Vec::as_slice);
+        let matches: &[String] = link_matches.get(&name).map_or(&[], Vec::as_slice);
 
         match matches {
             [single] => {
-                resolved_base_links.insert(base, single.clone());
                 resolved_page_links.insert(name, single.clone());
             }
             [] => {
@@ -1514,7 +1427,7 @@ pub async fn import_markdown_with_progress(
                     materializer.loro_state(),
                     device_id,
                     "page".into(),
-                    base.clone(),
+                    name.clone(),
                     None,
                     None,
                 )
@@ -1535,7 +1448,6 @@ pub async fn import_markdown_with_progress(
                 )
                 .await?;
                 tx.enqueue_background(new_space_op);
-                resolved_base_links.insert(base, new_page_id.clone());
                 resolved_page_links.insert(name, new_page_id);
             }
             _ => {
@@ -1553,15 +1465,6 @@ pub async fn import_markdown_with_progress(
                 ));
             }
         }
-    }
-    if dropped_anchor_count > 0 {
-        // #1282 — aggregate warning for the lossy anchor drop (mirrors the
-        // block-ref-strip warning style). The links still resolve to the page;
-        // only the `#heading` / `#^blockId` sub-anchor targeting is not applied.
-        warnings.push(format!(
-            "{dropped_anchor_count} wikilink block/heading anchors were dropped; links resolve to \
-             the page (Obsidian block-anchor targeting is not yet supported)"
-        ));
     }
 
     // #1924 / #1950 — resolve inbound inline tags (`#tag` and `#[[Tag With
@@ -2287,36 +2190,6 @@ mod tests {
                 "wiki-link match boundaries for {input:?} must match the TS mirror"
             );
         }
-    }
-
-    /// #1282 (Obsidian slice) — `split_wikilink_anchor` splits a wiki-link
-    /// target on its FIRST `#` into `(base, Some(anchor))`, trims the base,
-    /// yields `(name, None)` when there is no `#`, and reports an EMPTY base for
-    /// an anchor-only link (`[[#heading]]`) so the caller leaves it literal.
-    #[test]
-    fn split_wikilink_anchor_splits_on_first_hash_1282() {
-        // Base only (no `#`) — plain `[[Page]]`, unchanged pre-#1282 behaviour.
-        assert_eq!(split_wikilink_anchor("Page"), ("Page", None));
-        assert_eq!(
-            split_wikilink_anchor("Project/Backend/API"),
-            ("Project/Backend/API", None)
-        );
-        // Base + heading anchor.
-        assert_eq!(
-            split_wikilink_anchor("Target#Some Heading"),
-            ("Target", Some("Some Heading"))
-        );
-        // Base + `^block` id anchor (the `^` stays part of the anchor).
-        assert_eq!(
-            split_wikilink_anchor("Target#^block123"),
-            ("Target", Some("^block123"))
-        );
-        // Empty base — anchor-only intra-note link: "no page target".
-        assert_eq!(split_wikilink_anchor("#heading"), ("", Some("heading")));
-        // Multiple `#` — split on the FIRST; the rest is the anchor verbatim.
-        assert_eq!(split_wikilink_anchor("Page#a#b"), ("Page", Some("a#b")));
-        // Base whitespace is trimmed (matching the existing page-name handling).
-        assert_eq!(split_wikilink_anchor(" Page #h1"), ("Page", Some("h1")));
     }
 
     /// #1950 — the page-link collect/rewrite guard skips a `[[...]]` that is
