@@ -16,9 +16,10 @@
  */
 
 import { isMac } from './platform'
+import { getPref, PREFS, setPref } from './preferences'
 
 /** localStorage key under which the user's chosen chord is persisted. */
-export const QUICK_CAPTURE_SHORTCUT_STORAGE_KEY = 'agaric:quickCaptureShortcut'
+export const QUICK_CAPTURE_SHORTCUT_STORAGE_KEY = PREFS.quickCaptureShortcut.key
 
 /**
  * Default global-shortcut accelerator for the quick-capture flow.
@@ -41,25 +42,17 @@ export function defaultQuickCaptureShortcut(): string {
  */
 export function loadQuickCaptureShortcut(): string {
   if (typeof window === 'undefined') return defaultQuickCaptureShortcut()
-  try {
-    const stored = window.localStorage.getItem(QUICK_CAPTURE_SHORTCUT_STORAGE_KEY)
-    if (stored != null && stored.trim().length > 0) return stored
-  } catch {
-    // localStorage unavailable (Safari private mode, sandboxed iframe).
-  }
-  return defaultQuickCaptureShortcut()
+  const stored = getPref(PREFS.quickCaptureShortcut)
+  return stored.trim().length > 0 ? stored : defaultQuickCaptureShortcut()
 }
 
 /**
- * Persist `shortcut` under the canonical localStorage key. Silently
- * tolerates a missing / disabled `localStorage` so the in-memory
- * registration path still works in private-mode browsers.
+ * Persist `shortcut` under the canonical localStorage key. A missing /
+ * disabled `localStorage` (Safari private mode, sandboxed iframe) is
+ * logged and swallowed by `setPref` so the in-memory registration path
+ * still works.
  */
 export function saveQuickCaptureShortcut(shortcut: string): void {
   if (typeof window === 'undefined') return
-  try {
-    window.localStorage.setItem(QUICK_CAPTURE_SHORTCUT_STORAGE_KEY, shortcut)
-  } catch {
-    // localStorage unavailable — registration in-memory still works.
-  }
+  setPref(PREFS.quickCaptureShortcut, shortcut)
 }

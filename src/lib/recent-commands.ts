@@ -20,6 +20,7 @@
  */
 
 import { activeSpaceKey } from './active-space'
+import { getKeyedPref, PREFS, setKeyedPref } from './preferences'
 
 const SPACE_KEY_PREFIX = 'recent_commands'
 const MAX_RECENT_COMMANDS = 5
@@ -37,16 +38,6 @@ export interface RecentCommand {
   runAt: string
 }
 
-function isRecentCommand(item: unknown): item is RecentCommand {
-  if (item === null || typeof item !== 'object') return false
-  const r = item as Record<string, unknown>
-  return typeof r['id'] === 'string' && typeof r['runAt'] === 'string'
-}
-
-function storageKey(prefix: string): string {
-  return `${prefix}:${activeSpaceKey()}`
-}
-
 /**
  * Read the recent-commands list for the active space from localStorage.
  *
@@ -54,15 +45,7 @@ function storageKey(prefix: string): string {
  *   `recent_commands`; the slash menu passes `RECENT_SLASH_PREFIX` (#1105).
  */
 export function getRecentCommands(prefix: string = SPACE_KEY_PREFIX): RecentCommand[] {
-  try {
-    const raw = localStorage.getItem(storageKey(prefix))
-    if (!raw) return []
-    const parsed: unknown = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter(isRecentCommand)
-  } catch {
-    return []
-  }
+  return getKeyedPref(PREFS.recentCommands, prefix, activeSpaceKey())
 }
 
 /**
@@ -79,11 +62,8 @@ export function addRecentCommand(commandId: string, prefix: string = SPACE_KEY_P
   const commands = getRecentCommands(prefix).filter((c) => c.id !== commandId)
   commands.unshift({ id: commandId, runAt: new Date().toISOString() })
   if (commands.length > MAX_RECENT_COMMANDS) commands.length = MAX_RECENT_COMMANDS
-  try {
-    localStorage.setItem(storageKey(prefix), JSON.stringify(commands))
-  } catch {
-    // localStorage may throw under quota (private-mode browsers, full
-    // disk). The recents strip is a convenience; losing one write is
-    // preferable to crashing the command handler.
-  }
+  // localStorage may throw under quota (private-mode browsers, full disk) —
+  // logged and swallowed by setKeyedPref. The recents strip is a
+  // convenience; losing one write is preferable to crashing the command handler.
+  setKeyedPref(PREFS.recentCommands, commands, prefix, activeSpaceKey())
 }

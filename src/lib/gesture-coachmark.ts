@@ -16,24 +16,16 @@
 import type { LucideIcon } from 'lucide-react'
 import { Hand, PanelLeft, PenLine, Pointer } from 'lucide-react'
 
-const STORAGE_KEY = 'agaric-gesture-coachmark-seen'
+import { getPref, PREFS, setPref } from './preferences'
 
 /** True once the user has dismissed the first-run gesture coach-mark. */
 export function isGestureCoachMarkSeen(): boolean {
-  try {
-    return !!localStorage.getItem(STORAGE_KEY)
-  } catch {
-    return false
-  }
+  return getPref(PREFS.gestureCoachmarkSeen)
 }
 
 /** Persist the dismissal so the coach-mark never re-opens. */
 export function markGestureCoachMarkSeen(): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, 'true')
-  } catch {
-    // localStorage may be unavailable in some environments
-  }
+  setPref(PREFS.gestureCoachmarkSeen, true)
 }
 
 /**

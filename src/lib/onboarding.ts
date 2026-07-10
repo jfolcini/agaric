@@ -9,22 +9,14 @@
  * (private mode, sandboxed iframe).
  */
 
-const STORAGE_KEY = 'agaric-onboarding-done'
+import { getPref, PREFS, setPref } from './preferences'
 
 /** True once the user has dismissed the first-run welcome modal. */
 export function isOnboardingDone(): boolean {
-  try {
-    return !!localStorage.getItem(STORAGE_KEY)
-  } catch {
-    return false
-  }
+  return getPref(PREFS.onboardingDone)
 }
 
 /** Persist the dismissal so the welcome modal never re-opens. */
 export function markOnboardingDone(): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, 'true')
-  } catch {
-    // localStorage may be unavailable in some environments
-  }
+  setPref(PREFS.onboardingDone, true)
 }
