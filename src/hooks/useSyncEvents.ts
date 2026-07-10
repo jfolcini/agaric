@@ -60,6 +60,61 @@ export interface SyncErrorPayload {
   remote_device_id: string
 }
 
+/**
+ * #2505 — payload of the `blocks:changed` event (Rust `BlocksChangedEvent`,
+ * `src-tauri/src/sync_events.rs`). Emitted after an out-of-band local write —
+ * today an MCP read-write tool — commits, so open views reload the touched
+ * pages. `changed_page_ids` carries the IDENTICAL semantics as
+ * `SyncCompletePayload.changed_page_ids` (#1071), which is what lets this
+ * handler reuse the exact same `reloadChangedPageStores` targeted-reload path.
+ * Serialize-only on the Rust side (rides the Tauri event, not specta), so this
+ * hand-written shape is the single source of truth.
+ */
+export interface BlocksChangedPayload {
+  changed_page_ids?: string[]
+}
+
+/**
+ * #1071 / #2505 — the shared targeted page-store reload. Given the set of
+ * owning-page ids touched by an out-of-band write (a remote sync session or an
+ * MCP write), reload + undo-re-anchor ONLY the mounted page stores whose id is
+ * in the set, then run one resolve-cache preload and bump the graph-structure
+ * signal.
+ *
+ * FALLBACK: when `changedPageIds` is absent or empty (an older peer, the
+ * snapshot-catch-up path, or an MCP write whose block had no resolvable page
+ * ancestor) reload EVERY mounted store plus a full preload — when in doubt we
+ * fall back rather than risk a missed update.
+ */
+function reloadChangedPageStores(changedPageIds: string[] | undefined): void {
+  const reanchorUndo = useUndoStore.getState().reanchorAfterRemoteOps
+  const targeted =
+    Array.isArray(changedPageIds) && changedPageIds.length > 0 ? new Set(changedPageIds) : null
+
+  forEachPageStore((pageId, pageStore) => {
+    // In targeted mode, skip stores whose page wasn't touched — they cannot
+    // have changed, so reloading them is pure waste. In fallback mode
+    // (`targeted == null`) reload every store.
+    if (targeted && !targeted.has(pageId)) return
+    // #731 — re-anchor this page's positional undo state BEFORE the reload.
+    // The out-of-band ops just applied shifted the backend op-log indexing
+    // that `undoDepth` addresses; without this reset the next Ctrl+Z would
+    // reverse the wrong op. Keyed by the same pageId the block reload uses.
+    reanchorUndo(pageId)
+    pageStore.getState().load()
+  })
+
+  // Resolve-cache preload — a changed page's / tag's title may have moved.
+  // Takes the active space id so the re-fetch only re-keys current-space pages.
+  const refreshSpaceId = useSpaceStore.getState().currentSpaceId
+  useResolveStore.getState().preload(refreshSpaceId ?? undefined, true)
+
+  // #1530 — out-of-band ops also change the page-link graph topology; bump the
+  // graph-structure signal so a mounted GraphView refetches (stale-while-
+  // revalidate) instead of serving stale nodes/edges until the TTL.
+  recordGraphStructureChange()
+}
+
 /** Map backend state strings to frontend SyncState enum. */
 export function mapBackendState(backendState: string): 'idle' | 'syncing' | 'error' {
   switch (backendState) {
@@ -119,66 +174,14 @@ export function useSyncEvents(): void {
 
         // Reload blocks if we received ops (data changed).
         //
-        // #1071 — TARGETED invalidation. The backend now threads the set of
-        // page-root ids its applied ops actually touched
-        // (`changed_page_ids`). When that set is present and non-empty we
-        // reload + re-anchor ONLY the mounted page stores in the set, and
-        // run the resolve preload once (a changed page's / tag's title may
-        // have moved). This replaces the old O(mounted-pages) fan-out where
-        // one remote op touching one block reloaded every visible BlockTree
-        // (up to ~30 DaySection stores in the monthly journal).
-        //
-        // FALLBACK (mandatory backward-compat): when the field is absent or
-        // empty — an older backend, a peer on the old protocol, or the
-        // snapshot-catch-up path that reimports a whole space — reload ALL
-        // mounted stores + a full preload, exactly the pre-#1071 behaviour.
-        // When in doubt we fall back rather than risk a missed update.
+        // #1071 — TARGETED invalidation via the shared `reloadChangedPageStores`
+        // helper: when `changed_page_ids` is present and non-empty, reload +
+        // re-anchor ONLY the mounted page stores in the set; otherwise fall
+        // back to reloading every mounted store. The same helper backs the
+        // #2505 `blocks:changed` (MCP-write) listener, so both out-of-band
+        // write sources share one reconciliation path.
         if (ops_received > 0) {
-          const reanchorUndo = useUndoStore.getState().reanchorAfterRemoteOps
-          const targeted =
-            Array.isArray(changed_page_ids) && changed_page_ids.length > 0
-              ? new Set(changed_page_ids)
-              : null
-
-          forEachPageStore((pageId, pageStore) => {
-            // In targeted mode, skip stores whose page wasn't touched by the
-            // applied ops — they cannot have changed, so reloading them is
-            // pure waste. In fallback mode (`targeted == null`) reload every
-            // store, as before.
-            if (targeted && !targeted.has(pageId)) return
-            // #731 — re-anchor this page's positional undo state BEFORE the
-            // reload. The remote ops just applied shifted the backend op-log
-            // indexing that `undoDepth` addresses; without this reset the next
-            // Ctrl+Z would reverse the wrong op, and stale redoStack OpRefs
-            // could target ops the remote write superseded. Resetting to depth
-            // 0 / empty redo is the safe re-anchor (a fresh undo re-reads the
-            // newest op). Keyed by the same pageId the block reload uses.
-            reanchorUndo(pageId)
-            pageStore.getState().load()
-          })
-
-          // Resolve-cache preload. In targeted mode the set is non-empty
-          // here (the `ops_received > 0` + non-empty guard), so a page/tag
-          // title may have changed — run the preload. In fallback mode
-          // (unknown change scope) we always preload. Either way the
-          // condition is "we had something to reconcile", which is true in
-          // both branches inside this `ops_received > 0` block.
-          //
-          // Preload takes the active space id so the post-sync
-          // re-fetch only re-keys current-space pages into the cache.
-          // Foreign-space rows synced from the peer never land in the cache
-          // here; they are filtered by the next BlockTree-level batchResolve
-          // and rendered as broken-link chips.
-          const refreshSpaceId = useSpaceStore.getState().currentSpaceId
-          useResolveStore.getState().preload(refreshSpaceId ?? undefined, true)
-
-          // #1530 — remote ops also change the page-link graph topology (a
-          // synced page creation or a `[[link]]` edit). Bump the graph-structure
-          // signal so a mounted GraphView refetches its cache (stale-while-
-          // revalidate) instead of serving stale nodes/edges until the TTL. The
-          // signal is module-level, so a mount that happens after this sync —
-          // while GraphView was unmounted — still observes the bump.
-          recordGraphStructureChange()
+          reloadChangedPageStores(changed_page_ids)
         }
       } catch (err: unknown) {
         logger.error('useSyncEvents', 'sync:complete handler failed', undefined, err)
@@ -208,6 +211,31 @@ export function useSyncEvents(): void {
       enabled,
       onError: (err) => {
         logger.warn('useSyncEvents', 'Failed to listen to sync:error', undefined, err)
+      },
+    },
+  )
+
+  // #2505 — `blocks:changed` is the out-of-band local-write signal. An MCP
+  // read-write tool (append_block / update_block_content / set_property /
+  // add_tag / create_page / delete_block) commits and emits this event; unlike
+  // a page store's own optimistic write, no mounted store learns about it
+  // otherwise (the write is local, so `sync:complete` never fires). Route it
+  // through the SAME targeted-reload path the `sync:complete` handler uses so
+  // the affected page updates without navigation — no toast, no ops counter,
+  // just the reconciliation.
+  useTauriEventListener<BlocksChangedPayload>(
+    'blocks:changed',
+    (event) => {
+      try {
+        reloadChangedPageStores(event.payload.changed_page_ids)
+      } catch (err: unknown) {
+        logger.error('useSyncEvents', 'blocks:changed handler failed', undefined, err)
+      }
+    },
+    {
+      enabled,
+      onError: (err) => {
+        logger.warn('useSyncEvents', 'Failed to listen to blocks:changed', undefined, err)
       },
     },
   )

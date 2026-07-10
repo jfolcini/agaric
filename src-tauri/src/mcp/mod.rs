@@ -24,6 +24,7 @@ pub mod server;
 pub mod summarise;
 pub mod tools_ro;
 pub mod tools_rw;
+pub mod view_notify;
 
 // The rmcp adapter is the production dispatcher.
 // Hand-rolled framing in `mcp/server.rs` is retained for the helper
@@ -675,9 +676,16 @@ pub fn spawn_mcp_rw_task<R: tauri::Runtime>(
     }
 
     let socket_path = default_mcp_rw_socket_path(app_data_dir);
+    // #2505: the RW registry emits `blocks:changed` / `block:properties-changed`
+    // on the same `app_handle` bus the activity feed uses, so an MCP write
+    // propagates to open views (not just the activity feed). Build the Tauri
+    // view-change emitter BEFORE the handle is moved into the activity context.
+    let view_emitter: Arc<dyn view_notify::ViewChangeEmitter> =
+        Arc::new(view_notify::TauriViewChangeEmitter::new(app_handle.clone()));
     let activity_ctx =
         activity::ActivityContext::from_app_handle_with_ring(app_handle, activity_ring);
-    let registry = tools_rw::ReadWriteTools::new(write_pool, materializer, device_id);
+    let registry = tools_rw::ReadWriteTools::new(write_pool, materializer, device_id)
+        .with_view_emitter(view_emitter);
     spawn_mcp_rw_task_with_registry(socket_path, registry, Some(activity_ctx), lifecycle);
 }
 

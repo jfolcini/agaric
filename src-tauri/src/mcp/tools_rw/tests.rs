@@ -1460,3 +1460,273 @@ async fn delete_block_cross_space_rejected() {
         "cross-space delete must surface as Validation, got {err:?}",
     );
 }
+
+// ===================================================================
+// #2505 — view-change event emission (blocks:changed /
+// block:properties-changed). Every RW tool must propagate its committed
+// write to open views, not just to the mcp:activity feed. These tests
+// inject a RecordingViewChangeEmitter and assert the emitted payloads.
+// ===================================================================
+
+use crate::mcp::view_notify::RecordingViewChangeEmitter;
+
+/// `mk_tools` sibling that installs a recording view-change emitter so a
+/// test can assert the `blocks:changed` / `block:properties-changed`
+/// payloads each RW tool emits after it commits.
+async fn mk_tools_recording() -> (
+    ReadWriteTools,
+    Materializer,
+    SqlitePool,
+    String,
+    Arc<RecordingViewChangeEmitter>,
+    TempDir,
+) {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let emitter = Arc::new(RecordingViewChangeEmitter::new());
+    let tools = ReadWriteTools::new(pool.clone(), mat.clone(), DEV.to_string())
+        .with_view_emitter(emitter.clone());
+    let space_id = mk_space(&pool, " test space").await;
+    (tools, mat, pool, space_id, emitter, dir)
+}
+
+/// Create a page in `space` and return its ULID, so the blocks:changed
+/// tests can assert the resolved owning-page id.
+async fn mk_page(pool: &SqlitePool, mat: &Materializer, space: &str, title: &str) -> String {
+    create_block_inner_with_space(
+        pool,
+        DEV,
+        mat,
+        "page".into(),
+        title.into(),
+        None,
+        Some(1),
+        &SpaceScope::Active(SpaceId::from_trusted(space)),
+    )
+    .await
+    .unwrap()
+    .id
+    .into_string()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_block_emits_blocks_changed_for_owning_page() {
+    let (tools, mat, pool, space, emitter, _dir) = mk_tools_recording().await;
+    let page_id = mk_page(&pool, &mat, &space, "Page").await;
+    settle(&mat).await;
+
+    tools
+        .call_tool(
+            "append_block",
+            json!({"parent_id": page_id.clone(), "content": "hello", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("append happy path");
+
+    // The appended block's owning page is `page_id` — the same set
+    // `SyncEvent::Complete` would thread for a synced equivalent.
+    assert_eq!(
+        emitter.blocks_changed(),
+        vec![vec![page_id]],
+        "append_block must emit blocks:changed with the owning page id",
+    );
+    // Content-only write emits no property-changed event.
+    assert!(emitter.property_changed().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn update_block_content_emits_blocks_changed_for_owning_page() {
+    let (tools, mat, pool, space, emitter, _dir) = mk_tools_recording().await;
+    let page_id = mk_page(&pool, &mat, &space, "Page").await;
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "before".into(),
+        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    tools
+        .call_tool(
+            "update_block_content",
+            json!({"block_id": block.id.as_str(), "content": "after", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("update happy path");
+
+    assert_eq!(
+        emitter.blocks_changed(),
+        vec![vec![page_id]],
+        "update_block_content must emit blocks:changed with the owning page id",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_block_emits_blocks_changed_for_owning_page() {
+    let (tools, mat, pool, space, emitter, _dir) = mk_tools_recording().await;
+    let page_id = mk_page(&pool, &mat, &space, "Page").await;
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "doomed".into(),
+        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    tools
+        .call_tool(
+            "delete_block",
+            json!({"block_id": block.id.as_str(), "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("delete happy path");
+
+    // Soft-delete leaves the parent chain intact, so the owning page still
+    // resolves and the page reloads to drop the block from its tree.
+    assert_eq!(
+        emitter.blocks_changed(),
+        vec![vec![page_id]],
+        "delete_block must emit blocks:changed with the owning page id",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_page_emits_blocks_changed_for_itself() {
+    let (tools, _mat, _pool, space, emitter, _dir) = mk_tools_recording().await;
+
+    let result = tools
+        .call_tool(
+            "create_page",
+            json!({"title": "Fresh", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("create_page happy path");
+    let new_page_id = result["id"].as_str().unwrap().to_string();
+
+    // A page resolves to itself (page_id = id), so blocks:changed carries the
+    // new page's own id.
+    assert_eq!(
+        emitter.blocks_changed(),
+        vec![vec![new_page_id]],
+        "create_page must emit blocks:changed with the new page's own id",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tag_emits_blocks_changed_for_owning_page() {
+    let (tools, mat, pool, space, emitter, _dir) = mk_tools_recording().await;
+    let page_id = mk_page(&pool, &mat, &space, "Page").await;
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "taggable".into(),
+        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let tag = create_block_inner(&pool, DEV, &mat, "tag".into(), "global".into(), None, None)
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    tools
+        .call_tool(
+            "add_tag",
+            json!({"block_id": block.id.as_str(), "tag_id": tag.id.as_str(), "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("add_tag happy path");
+
+    assert_eq!(
+        emitter.blocks_changed(),
+        vec![vec![page_id]],
+        "add_tag must emit blocks:changed with the tagged block's owning page id",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_emits_blocks_changed_and_property_changed() {
+    let (tools, mat, pool, space, emitter, _dir) = mk_tools_recording().await;
+    let page_id = mk_page(&pool, &mat, &space, "Page").await;
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "task".into(),
+        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    tools
+        .call_tool(
+            "set_property",
+            json!({
+                "block_id": block.id.as_str(),
+                "key": "assignee",
+                "value_text": "alice",
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("set_property happy path");
+
+    // A property write emits BOTH the page-keyed blocks:changed AND the
+    // existing block:properties-changed.
+    assert_eq!(
+        emitter.blocks_changed(),
+        vec![vec![page_id]],
+        "set_property must emit blocks:changed with the owning page id",
+    );
+
+    // Payload PARITY with the local `set_property` command: it emits
+    // `emit_property_changed_event(app, block_id, vec![key])` →
+    // `PropertyChangedEvent { block_id, changed_keys: [key] }`. The MCP write
+    // must emit the byte-identical payload so the FE property-change dispatcher
+    // needs no changes.
+    let recorded = emitter.property_changed();
+    assert_eq!(recorded.len(), 1, "exactly one property-changed emission");
+    let (recorded_block_id, recorded_keys) = &recorded[0];
+    assert_eq!(recorded_block_id.as_str(), block.id.as_str());
+    assert_eq!(recorded_keys, &vec!["assignee".to_string()]);
+
+    // Serialise the MCP-emitted payload and the local-command payload and
+    // assert they are identical JSON — the concrete "payload-equal" evidence.
+    use crate::sync_events::PropertyChangedEvent;
+    let mcp_payload = serde_json::to_value(PropertyChangedEvent {
+        block_id: recorded_block_id.clone(),
+        changed_keys: recorded_keys.clone(),
+    })
+    .unwrap();
+    let local_command_payload = serde_json::to_value(PropertyChangedEvent {
+        block_id: block.id.as_str().to_string(),
+        changed_keys: vec!["assignee".to_string()],
+    })
+    .unwrap();
+    assert_eq!(
+        mcp_payload, local_command_payload,
+        "MCP set_property property-changed payload must equal the local command's",
+    );
+}

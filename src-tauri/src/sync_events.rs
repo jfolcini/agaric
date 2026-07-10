@@ -181,6 +181,37 @@ pub struct PropertyChangedEvent {
     pub changed_keys: Vec<String>,
 }
 
+/// #2505: event emitted when an **out-of-band local write** — a write that
+/// does not flow through a page store's own optimistic path — changes content
+/// on one or more pages, so any open view rendering those pages reloads.
+///
+/// Today the sole producer is the MCP read-write tool surface
+/// (`append_block` / `update_block_content` / `set_property` / `add_tag` /
+/// `create_page` / `delete_block`): those land in SQL + the Loro engine but,
+/// before #2505, emitted only `mcp:activity`, so an open page displaying the
+/// affected block never learned about the write (stale until navigate-away-
+/// and-back — `sync:complete` never fires for a same-device write). Any future
+/// out-of-band local write path (deep-link-driven mutations, automations)
+/// should funnel through this **one** signal rather than minting a new one.
+pub const EVENT_BLOCKS_CHANGED: &str = "blocks:changed";
+
+/// Payload for [`EVENT_BLOCKS_CHANGED`].
+///
+/// `changed_page_ids` carries the **identical** semantics as
+/// [`SyncEvent::Complete`]'s `changed_page_ids` field (#1071): the deduped set
+/// of owning *page* ids (page-root block ids) touched by the write. The
+/// frontend routes this through the exact `forEachPageStore` targeted-reload
+/// machinery `useSyncEvents` already uses for `sync:complete` — mounted stores
+/// whose id is in the set reload (undo re-anchor first), and an empty/absent
+/// set falls back to reloading every mounted store. Keeping the payload shape
+/// (`changed_page_ids: string[]`) equal to the `sync:complete` field is what
+/// lets the frontend consumer share one code path with no new vocabulary.
+#[derive(Debug, Clone, Serialize)]
+pub struct BlocksChangedEvent {
+    #[serde(default)]
+    pub changed_page_ids: Vec<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Sink trait
 // ---------------------------------------------------------------------------
