@@ -5902,3 +5902,403 @@ async fn apply_snapshot_round_trips_content_hash_and_reconciles_blobs_2022() {
 
     mat.shutdown();
 }
+
+// =======================================================================
+// #2474 — snapshot catch-up data-fate contract
+// =======================================================================
+//
+// `apply_snapshot` is the RESET path a snapshot catch-up
+// (`sync_daemon::snapshot_transfer::try_receive_snapshot_catchup`) runs
+// on the CAUGHT-UP (initiator) device. These tests PIN the observable
+// fate of the initiator's local state across that reset — deliberately,
+// so a future refactor cannot silently change what a user keeps or
+// loses. They do NOT change production behaviour; they document it.
+//
+// The sync protocol is pull-only: within one session data flows
+// responder -> initiator ONLY, never the reverse (#610 — see the
+// explicit "only the puller receives LoroSync, the streamer never
+// reaches this arm" comment in `session_state_machine.rs`'s
+// `SyncMessage::LoroSync` handler). So on EITHER trigger that lands a
+// session in `ResetRequired` — heads (the responder's own-device check
+// fails and it never streams at all) or VV
+// (`ApplyOutcome::SnapshotFallbackRequested`, which only ever fires on
+// the initiator while it is importing a responder `Update`) — the
+// initiator never pushes its own unsynced local ops to the responder
+// in that session. Neither trigger is more "lossy" than the other for
+// that content: it has no peer copy either way, and is gone once
+// `apply_snapshot` wipes `op_log`. (Content a peer already held from an
+// unrelated, separately-timed reverse-direction session is a different,
+// orthogonal story — not a property of which trigger fired.) Either
+// way, on the reset device itself the op_log paper trail — history,
+// undo, and origin attribution — is destroyed unconditionally. These
+// tests pin THAT device-local fate, which is the same regardless of
+// which trigger reached the reset.
+
+/// A minimal, self-consistent snapshot carrying exactly one content
+/// block. Used as the "peer snapshot" a catch-up RESET applies.
+fn one_block_snapshot(block_id: &str, up_to_hash: &str) -> SnapshotData {
+    SnapshotData {
+        schema_version: SCHEMA_VERSION,
+        snapshot_device_id: "peer".to_string(),
+        up_to_seqs: BTreeMap::new(),
+        up_to_hash: up_to_hash.to_string(),
+        tables: SnapshotTables {
+            blocks: vec![BlockSnapshot {
+                id: BlockId::test_id(block_id),
+                block_type: "content".to_string(),
+                content: Some("peer content".to_string()),
+                parent_id: None,
+                position: Some(1),
+                deleted_at: None,
+                todo_state: None,
+                priority: None,
+                due_date: None,
+                scheduled_date: None,
+                space_id: None,
+            }],
+            block_tags: vec![],
+            block_properties: vec![],
+            block_links: vec![],
+            attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
+        },
+    }
+}
+
+/// #2474 (unsynced-op fate): local ops appended AFTER the snapshot
+/// frontier — a user's unsynced local edits — are GONE from `op_log`
+/// after `apply_snapshot`, and the core tables reflect ONLY the snapshot
+/// state. The device-local head query (`get_local_heads`, which the sync
+/// handshake advertises from) resets to EMPTY.
+///
+/// Pins: the wipe of unsynced local ops, the core-table swap to snapshot
+/// state, and the empty post-reset frontier.
+#[tokio::test]
+async fn apply_snapshot_wipes_unsynced_local_ops_and_resets_heads_2474() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let device_id = "dev-1";
+
+    // Frontier state: one op the peer's snapshot will cover (seq 1).
+    insert_block(&pool, "BLOCK-ORIG", "synced").await;
+    insert_op_at(&pool, device_id, "BLOCK-ORIG", 1_735_689_600_000).await;
+
+    // Capture the snapshot at the frontier {dev-1: 1}.
+    let snapshot_id = create_snapshot(&pool, device_id).await.unwrap();
+    let snap_data = sqlx::query!("SELECT data FROM log_snapshots WHERE id = ?", snapshot_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .data;
+
+    // Two UNSYNCED local edits authored AFTER the frontier (seq 2, 3) —
+    // exactly the at-risk set on the lossy heads-triggered reset path.
+    insert_block(&pool, "BLOCK-UNSYNCED-1", "local edit A").await;
+    insert_op_at(&pool, device_id, "BLOCK-UNSYNCED-1", 1_748_736_000_000).await;
+    insert_block(&pool, "BLOCK-UNSYNCED-2", "local edit B").await;
+    insert_op_at(&pool, device_id, "BLOCK-UNSYNCED-2", 1_748_736_001_000).await;
+
+    // Pre-condition: the op_log carries all three ops, the head query
+    // advertises seq 3, and the blocks table holds the two unsynced edits.
+    let op_count_before: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(op_count_before, 3, "pre-condition: 3 ops in the log");
+    let heads_before = crate::sync_protocol::get_local_heads(&pool).await.unwrap();
+    assert_eq!(
+        heads_before.len(),
+        1,
+        "pre-condition: one device advertised"
+    );
+    assert_eq!(
+        heads_before[0].seq, 3,
+        "pre-condition: local head sits at the unsynced frontier (seq 3)"
+    );
+
+    // Apply the peer snapshot (the RESET).
+    apply_snapshot(&pool, &mat, &snap_data[..]).await.unwrap();
+
+    // (a) The unsynced local ops are GONE — the whole op_log is wiped.
+    let op_count_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        op_count_after, 0,
+        "#2474: apply_snapshot wipes op_log — unsynced local ops past the \
+         snapshot frontier are LOST on the reset device"
+    );
+
+    // (b) The core tables reflect ONLY the snapshot: the two unsynced
+    // blocks are gone; only the snapshot's BLOCK-ORIG survives.
+    let block_ids: Vec<String> = sqlx::query_scalar!("SELECT id FROM blocks ORDER BY id")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        block_ids,
+        vec!["BLOCK-ORIG".to_string()],
+        "#2474: core tables must reflect snapshot state; unsynced-edit blocks are wiped"
+    );
+
+    // (c) The device-local head query — the sync handshake's advertise
+    // source — resets to EMPTY (no ops → no heads).
+    let heads_after = crate::sync_protocol::get_local_heads(&pool).await.unwrap();
+    assert!(
+        heads_after.is_empty(),
+        "#2474: post-reset get_local_heads must be empty — the next HeadExchange \
+         advertises nothing and re-pulls the peer's log"
+    );
+
+    mat.shutdown();
+}
+
+/// #2474 (history/undo reset): the undo surface is built on `op_log`, so
+/// after a catch-up RESET there is NOTHING to undo even for a block that
+/// survived in the snapshot — its entire local paper trail was wiped.
+/// `undo_page_op_inner` returns `NotFound` because the op it would walk
+/// back no longer exists.
+///
+/// Pins: undo/history built on op_log is reset (empty) post-RESET.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_snapshot_resets_undo_and_history_surface_2474() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let device_id = "dev-1";
+
+    // A block with a real op history (create + an edit) — undoable
+    // pre-reset.
+    insert_block(&pool, "BLOCK-ORIG", "v1").await;
+    insert_op_at(&pool, device_id, "BLOCK-ORIG", 1_735_689_600_000).await;
+    let snapshot_id = create_snapshot(&pool, device_id).await.unwrap();
+    let snap_data = sqlx::query!("SELECT data FROM log_snapshots WHERE id = ?", snapshot_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .data;
+
+    // A post-frontier local edit — an undoable op in the live log.
+    insert_op_at(&pool, device_id, "BLOCK-ORIG", 1_748_736_000_000).await;
+    let history_before: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        history_before, 2,
+        "pre-condition: two ops form the undo history"
+    );
+
+    // Apply the RESET.
+    apply_snapshot(&pool, &mat, &snap_data[..]).await.unwrap();
+
+    // The op_log — the sole backing store the history/undo queries walk —
+    // is empty, so there is no history at all.
+    let history_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        history_after, 0,
+        "#2474: op_log is empty post-reset, so page history / activity feed reset too"
+    );
+
+    // Undo of the (still-present) snapshot block finds no op to reverse:
+    // the undo stack was destroyed with the op_log.
+    let undo = crate::commands::history::undo_page_op_inner(
+        &pool,
+        device_id,
+        &mat,
+        "BLOCK-ORIG".to_string(),
+        0,
+    )
+    .await;
+    assert!(
+        matches!(undo, Err(AppError::NotFound(_))),
+        "#2474: after a catch-up RESET the undo surface is reset — undo returns \
+         NotFound because op_log (its backing store) was wiped; got {undo:?}"
+    );
+
+    mat.shutdown();
+}
+
+/// #2474 (#792 re-key): the RESET bumps the persisted Loro peer-id epoch
+/// so post-reset engines mint ops under a fresh PeerID. This is the
+/// device-visible half of "the reset device re-keys": a fresh vault sits
+/// at epoch 0; every applied snapshot advances the epoch by exactly one.
+///
+/// Pins: `apply_snapshot` bumps `loro.peer_id_epoch`.
+#[tokio::test]
+async fn apply_snapshot_bumps_peer_epoch_2474() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    assert_eq!(
+        crate::loro::peer_epoch::load_peer_epoch(&pool)
+            .await
+            .unwrap(),
+        0,
+        "pre-condition: a never-reset vault sits at the legacy epoch 0"
+    );
+
+    let data = one_block_snapshot("BLOCK-PEER", "reset-2474");
+    let encoded = encode_snapshot(&data).unwrap();
+    apply_snapshot(&pool, &mat, &encoded[..]).await.unwrap();
+
+    assert_eq!(
+        crate::loro::peer_epoch::load_peer_epoch(&pool)
+            .await
+            .unwrap(),
+        1,
+        "#2474/#792: apply_snapshot must bump the peer-id epoch so post-reset \
+         engines re-key to a fresh Loro PeerID"
+    );
+
+    mat.shutdown();
+}
+
+/// #2474 (loro sidecar + engines): the RESET wipes `loro_doc_state` in
+/// the same transaction as the core swap, so the caller-driven engine
+/// reload rehydrates from an EMPTY table — post-reset engines are
+/// intentionally EMPTY (the snapshot format carries no CRDT state; the
+/// peer's full doc imports cleanly on the next session). The reload also
+/// installs the bumped peer epoch.
+///
+/// Pins: `loro_doc_state` wipe + engines reload empty + epoch installed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_snapshot_wipes_loro_doc_state_and_engines_reload_empty_2474() {
+    use crate::loro::registry::LoroEngineRegistry;
+    use crate::loro::snapshot::{reload_registry_from_db, save_all_engines};
+    use crate::space::SpaceId;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let device_id = "dev-1";
+
+    // A live pre-reset engine holding CRDT state, persisted into
+    // loro_doc_state (mirrors a healthy device with real history).
+    let registry = LoroEngineRegistry::new();
+    let space = SpaceId::from_trusted("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+    {
+        let mut guard = registry.for_space(&space, device_id).expect("engine");
+        guard
+            .engine_mut()
+            .apply_create_block("BLOCK-PRE", "content", "pre-reset content", None, 0)
+            .expect("create in engine");
+    }
+    let saved = save_all_engines(&pool, &registry).await;
+    assert_eq!(
+        saved, 1,
+        "pre-condition: one engine persisted to loro_doc_state"
+    );
+    let doc_state_before: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM loro_doc_state")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        doc_state_before, 1,
+        "pre-condition: loro_doc_state holds the pre-reset engine snapshot"
+    );
+    assert_eq!(
+        registry.peer_epoch(),
+        0,
+        "pre-condition: legacy epoch 0 before any RESET"
+    );
+
+    // Apply the RESET.
+    let data = one_block_snapshot("BLOCK-PEER", "reset-2474");
+    let encoded = encode_snapshot(&data).unwrap();
+    apply_snapshot(&pool, &mat, &encoded[..]).await.unwrap();
+
+    // loro_doc_state is wiped in the same tx as the core swap.
+    let doc_state_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM loro_doc_state")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        doc_state_after, 0,
+        "#2474 (#607/#779): apply_snapshot wipes loro_doc_state so the reload \
+         cannot rehydrate the pre-reset lineage"
+    );
+
+    // The caller's mandatory reload rehydrates from the now-empty table:
+    // post-reset engines are intentionally EMPTY, and the reload installs
+    // the bumped epoch.
+    let rehydrated = reload_registry_from_db(&pool, &registry, device_id)
+        .await
+        .expect("reload after RESET");
+    assert_eq!(
+        rehydrated, 0,
+        "#2474: post-reset engines reload EMPTY — nothing to rehydrate"
+    );
+    assert_eq!(
+        registry.len(),
+        0,
+        "#2474: the pre-reset in-memory engine is dropped; the registry ends up empty"
+    );
+    assert_eq!(
+        registry.peer_epoch(),
+        1,
+        "#2474/#792: the reload installs the epoch apply_snapshot bumped"
+    );
+
+    mat.shutdown();
+}
+
+/// #2474 (double-apply): applying the SAME snapshot blob twice is safe —
+/// the second apply succeeds and leaves identical core-table state (the
+/// wipe-then-insert is deterministic). It is NOT a no-op for the peer
+/// epoch: every apply is an independent RESET, so the epoch increments
+/// again (0 → 1 → 2). Pinned so a future "skip if already applied"
+/// optimization is a conscious, tested change — the current behaviour is
+/// re-apply-and-re-bump, not dedupe.
+#[tokio::test]
+async fn applying_the_same_snapshot_twice_is_reapplied_not_deduped_2474() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let data = one_block_snapshot("BLOCK-PEER", "reset-2474");
+    let encoded = encode_snapshot(&data).unwrap();
+
+    // First apply.
+    apply_snapshot(&pool, &mat, &encoded[..]).await.unwrap();
+    let ids_first: Vec<String> = sqlx::query_scalar!("SELECT id FROM blocks ORDER BY id")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ids_first, vec!["BLOCK-PEER".to_string()]);
+    assert_eq!(
+        crate::loro::peer_epoch::load_peer_epoch(&pool)
+            .await
+            .unwrap(),
+        1,
+        "first apply bumps the epoch to 1"
+    );
+
+    // Second apply of the SAME blob — must succeed (safe/idempotent for
+    // core-table state), not error.
+    apply_snapshot(&pool, &mat, &encoded[..])
+        .await
+        .expect("#2474: re-applying the same snapshot must not fail loudly");
+    let ids_second: Vec<String> = sqlx::query_scalar!("SELECT id FROM blocks ORDER BY id")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        ids_second, ids_first,
+        "#2474: a second apply leaves identical core-table state"
+    );
+
+    // But the epoch bumps AGAIN — each apply is an independent RESET.
+    assert_eq!(
+        crate::loro::peer_epoch::load_peer_epoch(&pool)
+            .await
+            .unwrap(),
+        2,
+        "#2474: the peer epoch is NOT deduped — a second apply is a second RESET \
+         and bumps the epoch to 2"
+    );
+
+    mat.shutdown();
+}

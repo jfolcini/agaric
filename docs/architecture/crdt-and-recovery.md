@@ -63,6 +63,19 @@ Loro engine state is **not** bundled into the snapshot blob — it lives in the 
 
 **Not in a snapshot:** materialised caches (`tags_cache`, `pages_cache`, `agenda_cache`, `block_tag_inherited`, `projected_agenda_cache`, `fts_blocks`, `block_tag_refs`, `page_link_cache`). `apply_snapshot()` wipes them before restoring core data; the materializer rebuilds them after.
 
+### What a catch-up RESET costs the caught-up device (#2474)
+
+`apply_snapshot()` is the RESET path a snapshot catch-up runs on the *caught-up* (initiator) device (`sync_daemon::snapshot_transfer::try_receive_snapshot_catchup`). In one `BEGIN IMMEDIATE` transaction it wipes the core tables **and** `op_log`, `loro_doc_state`, `loro_sync_inbox`, `log_snapshots`, and `block_drafts`, then re-seeds the core tables from the peer's snapshot. The observable contract for that device:
+
+- **Content converges, the local paper trail does not.** Core-table rows are replaced wholesale by the snapshot's rows — the device's document content ends up equal to the snapshot (pinned by `apply_snapshot_wipes_unsynced_local_ops_and_resets_heads_2474`).
+- **Unsynced local ops are LOST.** Any op the device authored *after* the snapshot's frontier is deleted with the rest of `op_log`. Because a sync session only ever pulls data responder → initiator (#610), the reset device never pushes those ops to the peer that offered the snapshot within that same session — true of **both** the heads- and VV-triggered paths (see [sync-protocol-spec.md](sync-protocol-spec.md) § "Fate of the initiator's local state"). Surviving them requires an unrelated, separately-timed reverse-direction session to have already carried them out beforehand. Pinned by `apply_snapshot_wipes_unsynced_local_ops_and_resets_heads_2474`.
+- **History, activity feed, and undo/redo reset to empty.** They are all queries over `op_log`; with the log wiped, `get_local_heads` returns no heads and `undo_page_op_inner` returns `NotFound` even for a block that survived in the snapshot (pinned by `apply_snapshot_resets_undo_and_history_surface_2474`). Origin/`is_undo` attribution for pre-reset ops is gone with them.
+- **The Loro peer-id epoch is bumped (#792)** so post-reset engines re-key to a fresh `PeerID` and their op counters can restart at 0 without forking the `(peer, counter)` space against pre-reset ops peers still hold (pinned by `apply_snapshot_bumps_peer_epoch_2474`).
+- **Loro engines reload EMPTY (#607/#779).** `loro_doc_state` is wiped in the same tx, so the caller's mandatory `reload_registry_from_db` rehydrates nothing — post-reset engines are intentionally empty and import the peer's full CRDT state cleanly on the next session (pinned by `apply_snapshot_wipes_loro_doc_state_and_engines_reload_empty_2474`).
+- **Re-apply is not deduped.** Applying the same snapshot blob twice is safe for core-table state (deterministic wipe-then-insert) but is *not* a no-op for the epoch: each apply is an independent RESET and bumps the epoch again (pinned by `applying_the_same_snapshot_twice_is_reapplied_not_deduped_2474`).
+
+All of the above are pinned by tests in `src-tauri/src/snapshot/tests.rs`.
+
 ### Crash-safe write
 
 `create_snapshot` (`src-tauri/src/snapshot/create.rs`) is two-phase, and the phases hold different locks (#2470):
