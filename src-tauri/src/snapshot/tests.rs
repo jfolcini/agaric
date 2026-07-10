@@ -3598,6 +3598,63 @@ async fn compact_read_phase_collects_data() {
 }
 
 // =======================================================================
+// #2470 item 4 — collect_tables must not need the write lock
+// =======================================================================
+
+/// Pin the invariant that `collect_tables` runs on a plain `pool.begin()`
+/// (`BEGIN DEFERRED`) read transaction and therefore never contends for the
+/// SQLite write lock. Under WAL, a DEFERRED reader is never blocked by a
+/// held writer, so if this ever regressed to running on a `BEGIN IMMEDIATE`
+/// connection (or otherwise started waiting on the writer), the read below
+/// would stall until the held write tx is dropped and the surrounding
+/// `timeout` would fire.
+///
+/// Mechanism: seed a small vault, then hold a `BEGIN IMMEDIATE` write
+/// transaction open on one connection while running `collect_tables` on a
+/// second, freshly-begun `pool.begin()` transaction — wrapped in a short
+/// `tokio::time::timeout`. `test_pool()` uses `init_pool`'s
+/// `max_connections(5)`, so there is headroom for both transactions to be
+/// live on the pool at once.
+#[tokio::test]
+async fn collect_tables_runs_on_deferred_connection_2470() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "BLK-DEFER-1", "deferred read block").await;
+
+    // Acquire and HOLD the write lock on one connection.
+    let write_tx = crate::db::begin_immediate_logged(&pool, "test_hold")
+        .await
+        .unwrap();
+
+    // While the write lock is held, collect_tables on a separate DEFERRED
+    // read transaction must still complete promptly — it must not be
+    // waiting on the writer. A generous few-second timeout distinguishes
+    // "genuinely blocked on the write lock" from ordinary scheduling
+    // jitter, while still failing fast if the invariant is broken.
+    let result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let mut read_tx = pool.begin().await.unwrap();
+        let tables = collect_tables(&mut read_tx).await.unwrap();
+        read_tx.commit().await.unwrap();
+        tables
+    })
+    .await;
+
+    // Now safe to release the writer.
+    write_tx.rollback().await.unwrap();
+
+    let tables = result.unwrap_or_else(|_| {
+        panic!(
+            "collect_tables timed out while a write lock was held — it must \
+             run on a DEFERRED read transaction that never waits on the writer"
+        )
+    });
+    assert_eq!(
+        tables.blocks.len(),
+        1,
+        "collect_tables should still see the seeded block once the read completes"
+    );
+}
+
+// =======================================================================
 // Compact_stale_read_safety
 // =======================================================================
 
@@ -6298,6 +6355,248 @@ async fn applying_the_same_snapshot_twice_is_reapplied_not_deduped_2474() {
         2,
         "#2474: the peer epoch is NOT deduped — a second apply is a second RESET \
          and bumps the epoch to 2"
+    );
+
+    mat.shutdown();
+}
+
+// =======================================================================
+// #2470 item 1 — apply_snapshot write-lock hold time at vault scale, and
+// its effect on a concurrent writer
+// =======================================================================
+
+/// Build a synthetic `SnapshotData` with `n` blocks — a DB-free stand-in for
+/// a vault of `n` blocks so a 100k-block payload can be built without paying
+/// the per-block `create_block_inner` cost. Mirrors
+/// `benches/snapshot_bench.rs::vault_scale_snapshot` byte-for-byte in shape
+/// (same field values, same one-property-per-block ratio) so the ignored
+/// test here and the criterion `apply_snapshot_vault_scale` group measure
+/// the *same* workload — earlier drafts of this harness diverged (this
+/// fixture carried no `block_properties` and no `space_id` while the bench's
+/// `synthetic_snapshot` carried both), which made the two numbers
+/// incomparable. Two deliberate choices, both load-bearing:
+///
+///   * One `block_properties` row per block: matches
+///     `synthetic_snapshot`/`bench_codec`'s existing convention of keeping
+///     `block_properties` serialization/insertion in the measured workload
+///     (a real vault has *some* custom properties on most blocks).
+///   * `space_id: None` on every block: setting it to a dangling id (as
+///     `synthetic_snapshot` does purely for codec/serialization coverage,
+///     where no DB write ever validates it) would make `apply_snapshot`'s
+///     `UPDATE blocks SET space_id = NULL WHERE space_id NOT IN (SELECT id
+///     FROM spaces)` repair pass (restore.rs, #708) touch literally every
+///     row — a full extra table rewrite that is *not* representative of a
+///     real vault (where at most a handful of blocks are spaces, so the
+///     repair only ever touches a small dangling minority). Leaving
+///     `space_id` unset keeps the fixture on the representative path
+///     (repair UPDATE matches 0 rows) instead of manufacturing an
+///     artificial worst case.
+fn vault_scale_snapshot_2470(n: usize) -> SnapshotData {
+    let mut blocks = Vec::with_capacity(n);
+    let mut block_properties = Vec::with_capacity(n);
+    for i in 0..n {
+        let id = BlockId::new();
+        block_properties.push(BlockPropertySnapshot {
+            block_id: id.clone(),
+            key: "effort".to_string(),
+            value_text: Some("medium".to_string()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+            value_bool: None,
+        });
+        blocks.push(BlockSnapshot {
+            id,
+            block_type: "content".to_string(),
+            content: Some(format!(
+                "Vault-scale block {i} for #2470 apply_snapshot lock-hold measurement."
+            )),
+            parent_id: None,
+            position: Some(i64::try_from(i).unwrap() + 1),
+            deleted_at: None,
+            todo_state: None,
+            priority: None,
+            due_date: None,
+            scheduled_date: None,
+            space_id: None,
+        });
+    }
+    SnapshotData {
+        schema_version: SCHEMA_VERSION,
+        snapshot_device_id: "dev-2470".to_string(),
+        up_to_seqs: BTreeMap::new(),
+        up_to_hash: "2470-measurement".to_string(),
+        tables: SnapshotTables {
+            blocks,
+            block_tags: Vec::new(),
+            block_properties,
+            block_links: Vec::new(),
+            attachments: Vec::new(),
+            property_definitions: Vec::new(),
+            page_aliases: Vec::new(),
+        },
+    }
+}
+
+/// Measurement harness for issue #2470 item 1: how long does `apply_snapshot`
+/// hold the SQLite write lock at vault scale (100k blocks), and what does a
+/// concurrent writer observe while it is held?
+///
+/// Mechanism: build a 100k-block snapshot payload, spawn `apply_snapshot` on
+/// one task, and concurrently spawn a second task that repeatedly attempts
+/// its own small write via `begin_immediate_logged` (the same helper every
+/// other write path in the codebase routes through, per `restore.rs`'s F04
+/// doc comment) for the restore's ENTIRE lifetime, recording the MAX wait
+/// across all attempts. Under WAL, SQLite allows only one writer at a time:
+/// the concurrent writer's `BEGIN IMMEDIATE` physically cannot proceed until
+/// the restore's tx commits, or the connection's 5s `busy_timeout` (see
+/// `db::pool::base_connect_options`) expires and it errors out. Exactly one
+/// probe attempt starts while the restore holds the lock — SQLite's
+/// exclusivity guarantees only one writer can be mid-acquisition at a time —
+/// so that attempt's wait is a direct, empirical lower bound on the
+/// write-lock hold time (clamped to ~5s if the true hold exceeds the
+/// busy_timeout, in which case that attempt fails instead of waiting
+/// longer). The `done_flag` set by the restore task (rather than a fixed
+/// head-start sleep — see the writer task's doc comment below for why a
+/// fixed sleep is NOT valid synchronization here) bounds the loop to the
+/// restore's actual lifetime.
+///
+/// `#[ignore]`: this is a measurement harness for #2470, not a CI gate — it
+/// takes multiple seconds and PRINTS numbers via `eprintln!` rather than
+/// asserting tight bounds. Run explicitly with:
+/// `cargo nextest run --run-ignored all -E 'test(measure_apply_snapshot_write_lock_hold_2470)'`
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "measurement for #2470"]
+async fn measure_apply_snapshot_write_lock_hold_2470() {
+    const N: usize = 100_000;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let data = vault_scale_snapshot_2470(N);
+    let compressed = encode_snapshot(&data).unwrap();
+    eprintln!(
+        "[#2470] apply_snapshot measurement: {N} blocks -> {} bytes compressed \
+         ({:.2} MiB)",
+        compressed.len(),
+        compressed.len() as f64 / (1024.0 * 1024.0)
+    );
+
+    // Flipped by the restore task the instant `apply_snapshot` returns, so
+    // the writer probe loop below knows when to stop. `Ordering::Release` /
+    // `Acquire` is enough — there's no other shared state to publish
+    // alongside the flag.
+    let done_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let restore_done_flag = std::sync::Arc::clone(&done_flag);
+
+    // Task A: the restore itself. Times the FULL apply_snapshot call
+    // (decode + BEGIN IMMEDIATE + wipe + insert + commit + cache-rebuild
+    // enqueue) — decode runs before the write lock is taken and is cheap
+    // relative to the writes at this scale, so this is a tight upper bound
+    // on the actual lock-hold duration.
+    let restore_pool = pool.clone();
+    let restore_mat = mat.clone();
+    let restore_task = tokio::spawn(async move {
+        let start = std::time::Instant::now();
+        let result = apply_snapshot(&restore_pool, &restore_mat, &compressed[..]).await;
+        let elapsed = start.elapsed();
+        restore_done_flag.store(true, std::sync::atomic::Ordering::Release);
+        (elapsed, result)
+    });
+
+    // Task B: a concurrent small write, exactly the shape a real caller
+    // (e.g. a command handler creating a block) would issue while a
+    // snapshot restore is in flight on another connection.
+    //
+    // A FIXED head-start sleep before a single attempt (the earlier version
+    // of this test) is not valid synchronization: `apply_snapshot` runs
+    // `decode_snapshot` — deserializing a 100k-block payload — BEFORE it
+    // acquires `BEGIN IMMEDIATE` (restore.rs). A short fixed sleep can
+    // easily elapse while the restore is still decoding, so a single writer
+    // attempt gated on that sleep can win the write lock BEFORE the restore
+    // ever asks for it, producing a near-zero "wait" that looks like a
+    // measurement but never actually overlapped the hold.
+    //
+    // Instead, probe in a loop for the restore's entire lifetime (gated on
+    // `done_flag` above). Exactly one attempt starts while the restore holds
+    // `BEGIN IMMEDIATE`; reporting the MAX wait across all attempts recovers
+    // that attempt's wait without needing to know in advance when the hold
+    // starts or ends.
+    let writer_pool = pool.clone();
+    let writer_task = tokio::spawn(async move {
+        let mut max_wait = std::time::Duration::ZERO;
+        let mut max_wait_outcome: Result<(), String> = Ok(());
+        let mut attempts: u32 = 0;
+        loop {
+            // Read BEFORE this attempt: if the restore finished during a
+            // PRIOR iteration we stop now; if it finishes DURING this
+            // attempt, we still record and report this attempt (it may be
+            // the one that overlapped the hold) and stop next iteration.
+            let restore_already_done = done_flag.load(std::sync::atomic::Ordering::Acquire);
+
+            attempts += 1;
+            let start = std::time::Instant::now();
+            let result =
+                crate::db::begin_immediate_logged(&writer_pool, "concurrent_writer_probe_2470")
+                    .await;
+            let elapsed = start.elapsed();
+            let outcome = match result {
+                Ok(tx) => {
+                    // Roll back rather than commit — this probe must not
+                    // leave any data behind or race the restore's own
+                    // writes.
+                    tx.rollback().await.ok();
+                    Ok(())
+                }
+                Err(e) => Err(e.to_string()),
+            };
+            if elapsed >= max_wait {
+                max_wait = elapsed;
+                max_wait_outcome = outcome;
+            }
+
+            if restore_already_done {
+                break;
+            }
+            // Brief pacing so attempts that land in the uncontended window
+            // before the restore acquires the lock (or after it commits)
+            // don't spin the loop needlessly fast between real probes.
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+        (max_wait, max_wait_outcome, attempts)
+    });
+
+    let (restore_elapsed, restore_result) = restore_task.await.unwrap();
+    let (writer_max_wait, writer_outcome, writer_attempts) = writer_task.await.unwrap();
+
+    eprintln!("[#2470] apply_snapshot({N} blocks) total wall time: {restore_elapsed:?}");
+    eprintln!(
+        "[#2470] concurrent writer probe: {writer_attempts} begin_immediate_logged attempts \
+         spanning the restore's full lifetime; MAX observed wait {writer_max_wait:?} (this is \
+         the attempt that overlapped the restore's held write lock)"
+    );
+    match &writer_outcome {
+        Ok(()) => eprintln!(
+            "[#2470] concurrent writer: the max-wait attempt waited {writer_max_wait:?} and \
+             SUCCEEDED — did not hit pool_busy/SQLITE_BUSY within the 5s busy_timeout, i.e. the \
+             hold ended before busy_timeout expired"
+        ),
+        Err(msg) => eprintln!(
+            "[#2470] concurrent writer: the max-wait attempt waited {writer_max_wait:?} and \
+             FAILED: {msg} — i.e. it hit pool_busy/SQLITE_BUSY after the 5s busy_timeout expired \
+             while the restore still held the write lock (the true hold exceeds 5s)"
+        ),
+    }
+
+    // Loose assertion only: this is a measurement harness, not a flake
+    // trap. The one thing that must always hold is that the restore itself
+    // succeeds — a concurrent writer stalling or even timing out is exactly
+    // the phenomenon #2470 item 1 is measuring, not a bug this test guards.
+    assert!(
+        restore_result.is_ok(),
+        "#2470: apply_snapshot itself must succeed even under concurrent write \
+         contention, got: {:?}",
+        restore_result.err()
     );
 
     mat.shutdown();
