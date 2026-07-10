@@ -100,14 +100,24 @@ describe('SpaceOnboardingHint', () => {
 
   // SOURCE-LEVEL guard — the runtime-i18n indirection (`i18n.t(...)`)
   // for the storage key must not appear in the component module. The
-  // key is now a module-level const.
-  it('source no longer imports i18n; storage key is a module-level const', () => {
+  // key is now a module-level const, sourced from the typed preferences
+  // registry (#2466) rather than declared inline.
+  it('source no longer imports i18n; storage key comes from the preferences registry', () => {
     const here = import.meta.dirname
     const src = readFileSync(join(here, '..', 'SpaceOnboardingHint.tsx'), 'utf8')
     // No import of the i18n module — the runtime-i18n key derivation
     // is gone for good.
     expect(src).not.toMatch(/from\s+['"]@\/lib\/i18n['"]/)
-    // The const must be declared with the canonical historical value.
-    expect(src).toContain("ONBOARDING_STORAGE_KEY = 'agaric:space-onboarding-seen-v1'")
+    // The const is re-exported from the registry, not declared inline.
+    expect(src).toContain('ONBOARDING_STORAGE_KEY = PREFS.spaceOnboardingSeen.key')
+  })
+
+  // SOURCE-LEVEL guard — the canonical historical value must be declared
+  // verbatim in the registry (#2466), the single place a preference's
+  // storage key is now allowed to be a string literal.
+  it('registry declares the canonical historical value verbatim', () => {
+    const here = import.meta.dirname
+    const src = readFileSync(join(here, '..', '..', '..', 'lib', 'preferences.ts'), 'utf8')
+    expect(src).toContain("key: 'agaric:space-onboarding-seen-v1'")
   })
 })
