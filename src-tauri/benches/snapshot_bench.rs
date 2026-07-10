@@ -7,7 +7,7 @@
 
 use std::hint::black_box;
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 use agaric_lib::commands::create_block_inner;
 use agaric_lib::db::init_pool;
@@ -264,14 +264,168 @@ fn bench_codec(c: &mut Criterion) {
 }
 
 // ===========================================================================
+// Benchmark 4: apply_snapshot write-lock hold time at vault scale (#2470 item 1)
+// ===========================================================================
+
+/// Build a synthetic `SnapshotData` with `n` blocks, one `block_properties`
+/// row per block, and NO `space_id` — the DB-free fixture for the
+/// `apply_snapshot_vault_scale` group below. Mirrors
+/// `snapshot::tests::vault_scale_snapshot_2470` byte-for-byte in shape (same
+/// field values, same one-property-per-block ratio) so the criterion group
+/// here and the `#[ignore]`d wall-time measurement in `src/snapshot/tests.rs`
+/// report numbers for the *same* workload.
+///
+/// Deliberately NOT `synthetic_snapshot` above, even though the shapes look
+/// similar: `synthetic_snapshot` sets every block's `space_id` to a shared id
+/// that is never registered as a real space (fine for `bench_codec`, which
+/// only exercises serialization — no DB write ever validates it). Run
+/// through `apply_snapshot` for real, that dangling `space_id` triggers
+/// restore.rs's `UPDATE blocks SET space_id = NULL WHERE space_id NOT IN
+/// (SELECT id FROM spaces)` repair pass (#708) on literally every row — an
+/// entire extra full-table rewrite that is not representative of a real
+/// vault (where at most a handful of blocks are spaces, so the repair only
+/// ever touches a small dangling minority). An earlier version of this
+/// benchmark used `synthetic_snapshot` here and reported vault-scale numbers
+/// wildly inconsistent with the DB-driven `bench_apply_snapshot` group above
+/// and with the `#[ignore]`d test's wall-clock measurement — this
+/// artificial 100%-dangling repair scan was the dominant cause. Leaving
+/// `space_id` unset keeps this fixture on the representative path (repair
+/// UPDATE matches 0 rows), matching how `bench_apply_snapshot`'s
+/// `seed_blocks`/`create_block_inner`-built snapshots behave (no space
+/// membership either).
+fn vault_scale_snapshot(n: usize) -> SnapshotData {
+    let mut blocks = Vec::with_capacity(n);
+    let mut block_properties = Vec::with_capacity(n);
+    for i in 0..n {
+        let id = BlockId::new();
+        block_properties.push(BlockPropertySnapshot {
+            block_id: id.clone(),
+            key: "effort".to_string(),
+            value_text: Some("medium".to_string()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+            value_bool: None,
+        });
+        blocks.push(BlockSnapshot {
+            id,
+            block_type: "content".to_string(),
+            content: Some(format!(
+                "Seeded block number {i} with some placeholder content for snapshot benchmarks."
+            )),
+            parent_id: None,
+            position: Some(i as i64 + 1),
+            deleted_at: None,
+            todo_state: None,
+            priority: None,
+            due_date: None,
+            scheduled_date: None,
+            space_id: None,
+        });
+    }
+    SnapshotData {
+        schema_version: 6,
+        snapshot_device_id: "dev-bench".to_string(),
+        up_to_seqs: BTreeMap::new(),
+        up_to_hash: String::new(),
+        tables: SnapshotTables {
+            blocks,
+            block_tags: Vec::new(),
+            block_properties,
+            block_links: Vec::new(),
+            attachments: Vec::new(),
+            property_definitions: Vec::new(),
+            page_aliases: Vec::new(),
+        },
+    }
+}
+
+/// Benchmark `apply_snapshot` restoring a pre-built snapshot into a pool at
+/// vault scale — 1k / 10k / 100k blocks. Mirrors `bench_codec`'s sizes but
+/// uses the dedicated `vault_scale_snapshot` fixture above (rather than
+/// `bench_apply_snapshot` above, which seeds through `create_block_inner` —
+/// fine at 10/100/1000 but far too slow to use for building a 100k-block
+/// *source* DB here; only the *target* side is timed, so the source data is
+/// synthesized directly).
+///
+/// Setup (untimed, per iteration): fresh pool + materializer in a fresh
+/// `TempDir`. Routine (timed): `apply_snapshot` restoring the pre-encoded
+/// payload into that fresh pool. Uses synchronous `iter_batched` (not
+/// `to_async`) for the same reason as `import_bench.rs`'s
+/// `bench_import_markdown_inner`: criterion's async bencher runs `setup`
+/// *inside* `rt.block_on`, and a second nested `block_on` for per-iteration
+/// pool creation would panic ("Cannot start a runtime from within a
+/// runtime"). `sample_size(10)` keeps the 100k case's wall time sane —
+/// `compaction_bench.rs`'s `bench_compact_op_log` (also per-iteration-fresh-DB
+/// and destructive) sets the same precedent.
+///
+/// This measures apply_snapshot's *total* wall time. `decode_snapshot` runs
+/// BEFORE `begin_immediate_logged` acquires the SQLite write lock and is
+/// cheap relative to the wipe+insert work at these sizes (see `bench_codec`
+/// above for decode cost in isolation), so the reported time is a tight
+/// proxy for the write-lock hold time. For a direct empirical measurement of
+/// what a concurrent writer observes while that lock is held, see
+/// `snapshot::tests::measure_apply_snapshot_write_lock_hold_2470`
+/// (`src/snapshot/tests.rs`, `#[ignore = "measurement for #2470"]`).
+fn bench_apply_snapshot_vault_scale(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("apply_snapshot_vault_scale");
+    // 100k applies take seconds each; keep the sample count small so the
+    // whole group finishes in a reasonable time (see compaction_bench.rs's
+    // bench_compact_op_log for the same tradeoff at the same scale).
+    group.sample_size(10);
+
+    for n in [1_000usize, 10_000, 100_000] {
+        let data = vault_scale_snapshot(n);
+        let encoded = encode_snapshot(&data).unwrap();
+
+        group.throughput(Throughput::Elements(n as u64));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{n}_blocks")),
+            &n,
+            |b, _| {
+                b.iter_batched(
+                    || {
+                        rt.block_on(async {
+                            let dir = TempDir::new().unwrap();
+                            let pool = fresh_pool(&dir, "apply_vault_scale").await;
+                            let mat = Materializer::new(pool.clone());
+                            (dir, pool, mat)
+                        })
+                    },
+                    |(dir, pool, mat)| {
+                        let encoded = encoded.clone();
+                        rt.block_on(async move {
+                            apply_snapshot(&pool, &mat, &encoded[..]).await.unwrap();
+                            mat.shutdown();
+                            // Keep the TempDir alive until the restore above
+                            // has finished touching the DB file.
+                            drop(dir);
+                        });
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+    }
+
+    group.finish();
+}
+
+// ===========================================================================
 // Harness
 // ===========================================================================
 
 criterion_group!(snapshot_create_benches, bench_create_snapshot);
 criterion_group!(snapshot_apply_benches, bench_apply_snapshot);
+criterion_group!(
+    snapshot_apply_vault_scale_benches,
+    bench_apply_snapshot_vault_scale
+);
 criterion_group!(snapshot_codec_benches, bench_codec);
 criterion_main!(
     snapshot_create_benches,
     snapshot_apply_benches,
+    snapshot_apply_vault_scale_benches,
     snapshot_codec_benches
 );
