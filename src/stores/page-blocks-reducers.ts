@@ -31,7 +31,12 @@ import {
   moveBlock,
   moveBlocksBatch,
 } from '../lib/tauri'
-import { getDragDescendants, MAX_BLOCK_DEPTH, type FlatBlock } from '../lib/tree-utils'
+import {
+  buildIndexById,
+  getDragDescendants,
+  MAX_BLOCK_DEPTH,
+  type FlatBlock,
+} from '../lib/tree-utils'
 import { buildBlocksById, cloneBlocksByIdWith, cloneBlocksByIdWithout } from './page-blocks-map'
 import { applyStructuralMove, reconcileBatchMove } from './page-blocks-move'
 import type { PageBlockState } from './page-blocks-types'
@@ -720,8 +725,12 @@ export function createReducers({
                 })
 
               const remaining = cur.filter((b) => !movedSet.has(b.id))
-              const parentDescendants = getDragDescendants(remaining, parent.id)
-              let insertAt = remaining.findIndex((b) => b.id === parent.id) + 1
+              // `remaining` is scanned twice for the parent's slot below
+              // (getDragDescendants + the insertion anchor). Build the id→index
+              // map once so both become O(1) lookups (#2041/#2200).
+              const remainingIndex = buildIndexById(remaining)
+              const parentDescendants = getDragDescendants(remaining, parent.id, remainingIndex)
+              let insertAt = (remainingIndex.get(parent.id) ?? -1) + 1
               while (
                 insertAt < remaining.length &&
                 parentDescendants.has((remaining[insertAt] as FlatBlock).id)
@@ -960,8 +969,16 @@ export function createReducers({
                     b.id === blockId ? Object.assign({}, b, { position: resp.new_position }) : b,
                   )
                 const remaining = cur.filter((b) => !movedSet.has(b.id))
-                const nextDescendants = getDragDescendants(remaining, nextSibling.id)
-                let insertAt = remaining.findIndex((b) => b.id === nextSibling.id) + 1
+                // `remaining` is scanned twice for nextSibling's slot below
+                // (getDragDescendants + the insertion anchor). Build the id→index
+                // map once so both become O(1) lookups (#2041/#2200).
+                const remainingIndex = buildIndexById(remaining)
+                const nextDescendants = getDragDescendants(
+                  remaining,
+                  nextSibling.id,
+                  remainingIndex,
+                )
+                let insertAt = (remainingIndex.get(nextSibling.id) ?? -1) + 1
                 while (
                   insertAt < remaining.length &&
                   nextDescendants.has((remaining[insertAt] as FlatBlock).id)
