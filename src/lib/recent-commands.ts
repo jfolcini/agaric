@@ -20,6 +20,15 @@
  */
 
 import { activeSpaceKey } from './active-space'
+import {
+  PREFERENCES,
+  type PreferenceDefinition,
+  readPreference,
+  type RecentCommand,
+  writePreference,
+} from './preferences'
+
+export type { RecentCommand } from './preferences'
 
 const SPACE_KEY_PREFIX = 'recent_commands'
 const MAX_RECENT_COMMANDS = 5
@@ -30,21 +39,16 @@ const MAX_RECENT_COMMANDS = 5
  */
 export const RECENT_SLASH_PREFIX = 'recent_slash'
 
-export interface RecentCommand {
-  /** Stable command id (e.g. `go-settings`, `search-everywhere`). */
-  id: string
-  /** ISO timestamp of the most recent run — written by `addRecentCommand`. */
-  runAt: string
-}
-
-function isRecentCommand(item: unknown): item is RecentCommand {
-  if (item === null || typeof item !== 'object') return false
-  const r = item as Record<string, unknown>
-  return typeof r['id'] === 'string' && typeof r['runAt'] === 'string'
-}
-
-function storageKey(prefix: string): string {
-  return `${prefix}:${activeSpaceKey()}`
+/**
+ * Resolve the space-keyed `PreferenceDefinition` for a storage namespace.
+ * `PREFERENCES.recentCommandsPalette` / `.recentCommandsSlash` are separate
+ * registry entries (not a single multi-arg family) since `prefix` only ever
+ * takes these two compile-time-known values — see the file header.
+ */
+function prefFor(prefix: string): PreferenceDefinition<RecentCommand[]> {
+  return prefix === RECENT_SLASH_PREFIX
+    ? PREFERENCES.recentCommandsSlash
+    : PREFERENCES.recentCommandsPalette
 }
 
 /**
@@ -54,15 +58,7 @@ function storageKey(prefix: string): string {
  *   `recent_commands`; the slash menu passes `RECENT_SLASH_PREFIX` (#1105).
  */
 export function getRecentCommands(prefix: string = SPACE_KEY_PREFIX): RecentCommand[] {
-  try {
-    const raw = localStorage.getItem(storageKey(prefix))
-    if (!raw) return []
-    const parsed: unknown = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter(isRecentCommand)
-  } catch {
-    return []
-  }
+  return readPreference(prefFor(prefix), activeSpaceKey())
 }
 
 /**
@@ -79,11 +75,8 @@ export function addRecentCommand(commandId: string, prefix: string = SPACE_KEY_P
   const commands = getRecentCommands(prefix).filter((c) => c.id !== commandId)
   commands.unshift({ id: commandId, runAt: new Date().toISOString() })
   if (commands.length > MAX_RECENT_COMMANDS) commands.length = MAX_RECENT_COMMANDS
-  try {
-    localStorage.setItem(storageKey(prefix), JSON.stringify(commands))
-  } catch {
-    // localStorage may throw under quota (private-mode browsers, full
-    // disk). The recents strip is a convenience; losing one write is
-    // preferable to crashing the command handler.
-  }
+  // localStorage may throw under quota (private-mode browsers, full disk) —
+  // logged and swallowed by writePreference. The recents strip is a
+  // convenience; losing one write is preferable to crashing the command handler.
+  writePreference(prefFor(prefix), commands, activeSpaceKey())
 }
