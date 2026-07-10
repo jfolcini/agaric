@@ -89,11 +89,43 @@ Before starting, by item type:
   unreachable branch). Real → code fix. False positive → dismissal comment that says *why*,
   or a structural change that removes the trigger.
 
+## Model selection (cost × risk)
+
+Pick each subagent's model explicitly (the Agent tool's `model` parameter; Workflow's
+`opts.model`) — don't send every item to the session default. Score each batch item on
+two axes during PLAN, before launching builders:
+
+- **Cost** — expected effort: files touched, diff size, toolchain weight (Rust compile +
+  codegen vs. a one-file frontend tweak), how much test-writing the item needs.
+- **Risk** — blast radius of a wrong change: SQL migrations / schema-coupled columns,
+  materializer & concurrency code, security-sensitive paths (code-scanning alerts),
+  cross-cutting refactors, IPC/public-API surfaces, ambiguous specs. Low-risk examples:
+  doc/copy fixes, mechanical renames, isolated UI polish, Dependabot bumps with green tests.
+
+| Item profile | Builder | Reviewer |
+| --- | --- | --- |
+| Low risk + mechanical (docs, rename, copy, small UI polish, dep bump) | `haiku` | `sonnet` |
+| Medium (typical scoped bugfix/feature, one domain, clear acceptance criteria) | `sonnet` | `sonnet` |
+| High risk (migration, materializer/concurrency, security fix, cross-cutting refactor, ambiguous spec) | inherit (omit `model`) | inherit (omit `model`) |
+
+- **Risk dominates cost.** A 5-line change to a migration or the materializer is
+  high-risk despite being cheap; a large mechanical rename is low-risk despite being big.
+  When the axes disagree, follow risk.
+- **The reviewer is never a weaker tier than the builder.** Adversarial review is
+  load-bearing (§4) — a downgraded reviewer is a rubber stamp, not a saving.
+- **Unsure → omit `model` and inherit the session model.** Misclassifying a high-risk
+  item down costs a broken PR plus a re-review, far more than the tokens saved.
+- **Escalate mid-item, don't retry the same tier:** if a `haiku`/`sonnet` builder reports
+  repeated test failures, confusion, or scope surprises, relaunch its continuation one
+  tier up.
+- Discovery sweeps (§1 Explore agents) are always low-risk: run them on `haiku`.
+
 ## 2. BUILD (parallel by default — up to 6 subagents)
 
 Split the batch into **parallel subagents by domain/file-boundary** (one Rust, one
 frontend, or one per non-overlapping feature). Launch them all as background subagents at
-once — don't wait for one before launching the next. Target 5-6 concurrent whenever the
+once — don't wait for one before launching the next — each on the model tier its item
+scored in the cost × risk rubric above. Target 5-6 concurrent whenever the
 batch has enough independent work; if it only yields 2-3 splits, look for finer
 subdivisions (split a Rust agent by module, or frontend by component vs. store).
 
@@ -196,7 +228,8 @@ Every new or changed code path needs tests — non-negotiable, no code ships wit
 **Don't wait for all builds.** As each build subagent completes, launch its review
 subagent while remaining builds continue (build + review can run simultaneously, up to 6
 total active). **No self-reviews** — the reviewer must be a different subagent than the
-builder. If a reviewer makes fixes, it must run the relevant tests to verify. The
+builder. Pick the reviewer's model from the cost × risk rubric (before §2): never a
+weaker tier than the item's builder. If a reviewer makes fixes, it must run the relevant tests to verify. The
 reviewer also owns the single full-suite run for the item (see §2 verification scope).
 
 **Adversarial review depth is earning its cost — do not streamline it away.** On
@@ -327,6 +360,8 @@ the backlog, not to stop. Pending PRs get merged at the next batch-boundary swee
 - **Merge chained PRs bottom-up** — out-of-order merges strand commits on orphan branches.
 - **Closing a plan issue from a partial fix** — only `Closes #NN` when the full plan ships.
 - **Kitchen-sink refactor to one subagent** — split by file boundary (≤6 files each).
+- **Cheap model on a risky item (or reviewer below builder tier)** — score cost × risk
+  first; risk wins, and the reviewer is never weaker than the builder.
 - **Dismissing a red check as "not my diff"** — inherited `main` failures are yours to fix.
 - **Concurrent full-suite commits/pushes get OOM-killed** — never background 2+ hook-heavy
   git ops (each runs full clippy/nextest); earlyoom kills them silently (reports exit 0,
