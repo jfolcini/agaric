@@ -332,10 +332,17 @@ pub(crate) enum DescendantWalkFilter {
     /// Descend only through children soft-deleted at this cohort timestamp —
     /// the restore-cohort shape ([`descendants_cte_cohort`]).
     Cohort(i64),
+    /// Descend through EVERY child regardless of `deleted_at` — the
+    /// standard shape ([`descendants_cte_standard`]). Used by the
+    /// point-in-time restore's page-subtree materialization (#2201), which
+    /// must reach blocks deleted *after* the restore target so the ops that
+    /// deleted them (and every op before that) are still swept.
+    All,
 }
 
 /// R27: depth-UNBOUNDED descendant collection for the delete/restore cascade
-/// projections.
+/// projections (and, via [`DescendantWalkFilter::All`], the point-in-time
+/// restore's page-subtree materialization — #2201).
 ///
 /// Two peers can legally compose a merged (sync-imported) tree deeper than
 /// any locally-enforced bound — each peer's moves validated against its own
@@ -378,6 +385,16 @@ pub(crate) async fn collect_subtree_ids_unbounded(
          INNER JOIN descendants d ON b.parent_id = d.id \
          WHERE b.deleted_at = ?2 AND d.depth < 100 \
      ) SELECT id, depth FROM descendants ORDER BY depth, id";
+    // #2201: unfiltered variant mirroring `descendants_cte_standard!()` —
+    // no `deleted_at` filter, so blocks deleted after a restore target are
+    // still reached (the point-in-time restore must sweep their ops).
+    const ALL_SQL: &str = "WITH RECURSIVE descendants(id, depth) AS ( \
+         SELECT id, 0 FROM blocks WHERE id IN (SELECT value FROM json_each(?1)) \
+         UNION ALL \
+         SELECT b.id, d.depth + 1 FROM blocks b \
+         INNER JOIN descendants d ON b.parent_id = d.id \
+         WHERE d.depth < 100 \
+     ) SELECT id, depth FROM descendants ORDER BY depth, id";
 
     let mut collected: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut result: Vec<String> = Vec::new();
@@ -396,6 +413,10 @@ pub(crate) async fn collect_subtree_ids_unbounded(
             DescendantWalkFilter::Cohort(_) => {
                 // dynamic-sql: json_each multi-seed batched CTE (see COHORT_SQL above)
                 sqlx::query_as::<_, (String, i64)>(COHORT_SQL).bind(&payload)
+            }
+            DescendantWalkFilter::All => {
+                // dynamic-sql: json_each multi-seed batched CTE (see ALL_SQL above)
+                sqlx::query_as::<_, (String, i64)>(ALL_SQL).bind(&payload)
             }
         };
         if let DescendantWalkFilter::Cohort(ts) = filter {

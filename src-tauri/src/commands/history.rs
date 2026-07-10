@@ -1112,28 +1112,38 @@ pub async fn restore_page_to_op_inner(
         .map(|r| (r.device_id, r.seq, r.op_type))
         .collect()
     } else {
-        // Recursive CTE with `depth < 100` to bound the walk against
-        // runaway recursion on corrupted data (invariant #9).
-        // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
+        // #2201: materialize the page subtree ONCE and feed it to the op-log
+        // scan as a `json_each` id list. The previous shape inlined a
+        // `WITH RECURSIVE page_blocks(...)` CTE and referenced it TWICE
+        // (block-op membership + the attachments EXISTS probe), letting
+        // SQLite re-evaluate the recursive walk per reference. The walk uses
+        // `DescendantWalkFilter::All` (NO deleted_at filter — see the NOTE
+        // above: ops on blocks deleted after the target must still be found)
+        // and runs on `tx`, so the subtree read stays inside the same
+        // IMMEDIATE transaction as the membership SELECT (#1551 atomicity).
+        // The batched walker keeps invariant #9 per batch
+        // (depth<100: DESCENDANT_DEPTH_CAP, see block_descendants).
+        let subtree_ids = crate::block_descendants::collect_subtree_ids_unbounded(
+            &mut **tx,
+            &page_id,
+            crate::block_descendants::DescendantWalkFilter::All,
+        )
+        .await?;
+        // sqlx requires `String` (NOT `Vec<String>`) for `json_each(?)`
+        let subtree_json = serde_json::Value::from(subtree_ids).to_string();
         sqlx::query!(
-            "WITH RECURSIVE page_blocks(id, depth) AS ( \
-               SELECT id, 0 FROM blocks WHERE id = ?1 \
-               UNION ALL \
-               SELECT b.id, pb.depth + 1 FROM blocks b JOIN page_blocks pb ON b.parent_id = pb.id \
-               WHERE pb.depth < 100 \
-             ) \
-             SELECT o.device_id, o.seq, o.op_type FROM op_log o \
+            "SELECT o.device_id, o.seq, o.op_type FROM op_log o \
              WHERE ( \
-               o.block_id IN (SELECT id FROM page_blocks) \
+               o.block_id IN (SELECT value FROM json_each(?1)) \
                OR (o.op_type IN ('delete_attachment', 'rename_attachment') AND EXISTS ( \
                    SELECT 1 FROM attachments a \
                    WHERE a.id = json_extract(o.payload, '$.attachment_id') \
-                   AND a.block_id IN (SELECT id FROM page_blocks) \
+                   AND a.block_id IN (SELECT value FROM json_each(?1)) \
                )) \
              ) \
              AND (o.created_at > ?2 OR (o.created_at = ?2 AND (o.seq > ?3 OR (o.seq = ?3 AND o.device_id > ?4)))) \
              ORDER BY o.created_at DESC, o.seq DESC, o.device_id DESC",
-            page_id,
+            subtree_json,
             target_ts,
             target_seq,
             target_device_id,
