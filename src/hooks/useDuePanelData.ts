@@ -35,6 +35,7 @@ import { formatDate } from '@/lib/date-utils'
 import { notify } from '@/lib/notify'
 
 import { logger } from '../lib/logger'
+import { getPref, PREFS } from '../lib/preferences'
 import type { BlockRow, PageResponse, ProjectedAgendaEntry, ResolvedBlock } from '../lib/tauri'
 import {
   batchResolve,
@@ -49,7 +50,7 @@ import { useSpaceStore } from '../stores/space'
 import { useBlockPropertyEvents } from './useBlockPropertyEvents'
 import { useToday } from './useToday'
 
-// ── ULID reference extraction (B-53) ──────────────────────────────────
+// ── ULID reference extraction (B-53) ────────────────────────────────
 /** Matches [[ULID]], #[ULID], and ((ULID)) refs inside block content. */
 const ULID_REF_RE = /(?:\[\[|#\[|\(\()([0-9A-Z]{26})(?:\]\]|\]|\)\))/g
 
@@ -79,7 +80,7 @@ export function clearProjectedCache(): void {
   projectedCache.clear()
 }
 
-// ── Pure helpers ───────────────────────────────────────────
+// ── Pure helpers ──────────────────────────────────
 // Factored out of doFetch/fetchBlocks to keep oxlint eslint/complexity
 // bounded. Each helper is side-effect-free and independently testable.
 
@@ -244,14 +245,7 @@ export function useDuePanelData({
   const [overdueBlocks, setOverdueBlocks] = useState<BlockRow[]>([])
   const [upcomingBlocks, setUpcomingBlocks] = useState<BlockRow[]>([])
 
-  const warningDays = useMemo(() => {
-    try {
-      const stored = localStorage.getItem('agaric:deadlineWarningDays')
-      return stored ? Number.parseInt(stored, 10) : 0
-    } catch {
-      return 0
-    }
-  }, [])
+  const warningDays = useMemo(() => getPref(PREFS.deadlineWarningDays), [])
 
   const todayStr = useToday()
   const isToday = date === todayStr
