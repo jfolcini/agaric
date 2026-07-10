@@ -16,9 +16,10 @@
  */
 
 import { isMac } from './platform'
+import { PREFERENCES, readPreference, writePreference } from './preferences'
 
 /** localStorage key under which the user's chosen chord is persisted. */
-export const QUICK_CAPTURE_SHORTCUT_STORAGE_KEY = 'agaric:quickCaptureShortcut'
+export const QUICK_CAPTURE_SHORTCUT_STORAGE_KEY = PREFERENCES.quickCaptureShortcut.key
 
 /**
  * Default global-shortcut accelerator for the quick-capture flow.
@@ -41,13 +42,8 @@ export function defaultQuickCaptureShortcut(): string {
  */
 export function loadQuickCaptureShortcut(): string {
   if (typeof window === 'undefined') return defaultQuickCaptureShortcut()
-  try {
-    const stored = window.localStorage.getItem(QUICK_CAPTURE_SHORTCUT_STORAGE_KEY)
-    if (stored != null && stored.trim().length > 0) return stored
-  } catch {
-    // localStorage unavailable (Safari private mode, sandboxed iframe).
-  }
-  return defaultQuickCaptureShortcut()
+  const stored = readPreference(PREFERENCES.quickCaptureShortcut)
+  return stored.trim().length > 0 ? stored : defaultQuickCaptureShortcut()
 }
 
 /**
@@ -57,9 +53,5 @@ export function loadQuickCaptureShortcut(): string {
  */
 export function saveQuickCaptureShortcut(shortcut: string): void {
   if (typeof window === 'undefined') return
-  try {
-    window.localStorage.setItem(QUICK_CAPTURE_SHORTCUT_STORAGE_KEY, shortcut)
-  } catch {
-    // localStorage unavailable — registration in-memory still works.
-  }
+  writePreference(PREFERENCES.quickCaptureShortcut, shortcut)
 }

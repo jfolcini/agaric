@@ -18,39 +18,22 @@
 
 import type { SearchSheetMode } from '@/stores/useSearchSheetStore'
 
-const STORAGE_KEY = 'pinned_search_scope'
-
-function isSearchSheetMode(v: unknown): v is SearchSheetMode {
-  return v === 'in-page' || v === 'all-pages'
-}
+import { PREFERENCES, readPreference, removePreference, writePreference } from './preferences'
 
 /**
  * Read the pinned scope, or `null` when none is pinned / the value is
  * unreadable or invalid.
  */
 export function getPinnedSearchScope(): SearchSheetMode | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    return isSearchSheetMode(raw) ? raw : null
-  } catch {
-    return null
-  }
+  return readPreference(PREFERENCES.pinnedSearchScope)
 }
 
 /** Pin `mode` as the default search scope. */
 export function setPinnedSearchScope(mode: SearchSheetMode): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, mode)
-  } catch {
-    // Quota / unavailable — best-effort preference, drop silently.
-  }
+  writePreference(PREFERENCES.pinnedSearchScope, mode)
 }
 
 /** Remove any pinned scope (returns to context-aware defaults). */
 export function clearPinnedSearchScope(): void {
-  try {
-    localStorage.removeItem(STORAGE_KEY)
-  } catch {
-    // Unavailable — nothing to clear.
-  }
+  removePreference(PREFERENCES.pinnedSearchScope)
 }

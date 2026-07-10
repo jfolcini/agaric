@@ -39,10 +39,11 @@ import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import { notify } from '../lib/notify'
 import { isMobilePlatform } from '../lib/platform'
+import { PREFERENCES, readPreference, removePreference, writePreference } from '../lib/preferences'
 import { flushAllDrafts } from '../lib/tauri'
 
 /** localStorage key holding the ISO timestamp of the last successful update check. */
-export const LAST_UPDATE_CHECK_STORAGE_KEY = 'agaric:last-update-check'
+export const LAST_UPDATE_CHECK_STORAGE_KEY = PREFERENCES.lastUpdateCheck.key
 
 /** 24 hours in milliseconds — the boot-check debounce window. */
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
@@ -52,24 +53,13 @@ const UPDATE_AVAILABLE_TOAST_ID = 'update-available'
 
 /** Read the last-check ISO timestamp from localStorage, defensively. */
 function readLastCheckIso(): string | null {
-  try {
-    return typeof localStorage !== 'undefined'
-      ? localStorage.getItem(LAST_UPDATE_CHECK_STORAGE_KEY)
-      : null
-  } catch {
-    return null
-  }
+  return typeof localStorage === 'undefined' ? null : readPreference(PREFERENCES.lastUpdateCheck)
 }
 
 /** Persist the last-check ISO timestamp, defensively. */
 function writeLastCheckIso(iso: string): void {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(LAST_UPDATE_CHECK_STORAGE_KEY, iso)
-    }
-  } catch {
-    // Best-effort; quota errors should not break the boot flow.
-  }
+  if (typeof localStorage === 'undefined') return
+  writePreference(PREFERENCES.lastUpdateCheck, iso)
 }
 
 /** True iff the last successful check was less than 24 h ago. */
@@ -106,12 +96,8 @@ async function performInstall(update: { downloadAndInstall: () => Promise<void> 
     // the LS timestamp so the next boot re-tries the check sooner
     // (avoids a 24 h silent wait after a failed install attempt).
     notify.dismiss(UPDATE_AVAILABLE_TOAST_ID)
-    try {
-      if (typeof localStorage !== 'undefined') {
-        localStorage.removeItem(LAST_UPDATE_CHECK_STORAGE_KEY)
-      }
-    } catch {
-      // Best-effort; quota / private-mode errors are non-fatal.
+    if (typeof localStorage !== 'undefined') {
+      removePreference(PREFERENCES.lastUpdateCheck)
     }
     const message = err instanceof Error ? err.message : i18n.t('help.updateInstallFailedToast')
     notify.error(`${i18n.t('help.updateInstallFailedToast')}: ${message}`)

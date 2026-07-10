@@ -5,19 +5,11 @@
  * Used by PageBrowser to let users pin frequently-used pages and filter to show only starred ones.
  */
 
-const STORAGE_KEY = 'starred-pages'
+import { PREFERENCES, readPreference, writePreference } from './preferences'
 
 /** Read the starred page IDs from localStorage. */
 export function getStarredPages(): string[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return []
-    const parsed: unknown = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter((item): item is string => typeof item === 'string')
-  } catch {
-    return []
-  }
+  return readPreference(PREFERENCES.starredPages)
 }
 
 /** Check whether a page is currently starred. */
@@ -25,7 +17,11 @@ export function isStarred(pageId: string): boolean {
   return getStarredPages().includes(pageId)
 }
 
-/** Toggle the starred state of a page — adds if absent, removes if present. */
+/**
+ * Toggle the starred state of a page — adds if absent, removes if present.
+ * Storage-unavailable write failures are logged and swallowed by
+ * `writePreference` rather than thrown into the click handler.
+ */
 export function toggleStarred(pageId: string): void {
   const pages = getStarredPages()
   const index = pages.indexOf(pageId)
@@ -34,13 +30,7 @@ export function toggleStarred(pageId: string): void {
   } else {
     pages.splice(index, 1)
   }
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(pages))
-  } catch {
-    // Storage unavailable (private mode / quota / locked-down webview) —
-    // degrade to no-persist rather than throwing into the click handler.
-    // Mirrors the silent fallback in getStarredPages above.
-  }
+  writePreference(PREFERENCES.starredPages, pages)
 }
 
 /**
@@ -60,11 +50,8 @@ export function setStarred(ids: string[], starred: boolean): void {
   } else {
     for (const id of ids) set.delete(id)
   }
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify([...set]))
-  } catch {
-    // Storage unavailable (private mode / quota / locked-down webview) —
-    // degrade to no-persist rather than throwing into the click handler.
-    // Mirrors the silent fallback in getStarredPages above.
-  }
+  // Storage-unavailable write failures (private mode / quota / locked-down
+  // webview) are logged and swallowed by writePreference rather than thrown
+  // into the click handler — same silent-degrade as the single-page writers.
+  writePreference(PREFERENCES.starredPages, [...set])
 }
