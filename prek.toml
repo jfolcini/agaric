@@ -367,6 +367,23 @@ pass_filenames = false
 files = "^src/.*\\.(ts|tsx|js|jsx|mjs|cjs)$"
 stages = ["pre-commit"]
 
+# Store-dependency layering guard (#2465). Distinct from `import-cycles`
+# above: a layering violation (e.g. `blocks.ts` reaching into
+# `page-blocks.ts`) can be perfectly acyclic and still break the documented
+# one-way data flow — "Dependencies flow one way: page-block stores → global
+# focus, never the reverse" (docs/architecture/frontend.md). Runs only on
+# `src/stores/` changes since that's the only directory this hook inspects.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "store-layering"
+name = "store dependency layering (page-block stores -> global focus, never the reverse)"
+entry = "node scripts/check-store-layering.mjs"
+language = "system"
+pass_filenames = false
+files = "^src/stores/.*\\.(ts|tsx)$"
+stages = ["pre-commit"]
+
 # axe-presence: every `src/components/__tests__/*.test.tsx` must include
 # at least one axe(...) audit, per src/__tests__/AGENTS.md:227. Without
 # this, accessibility regressions slip through component additions
