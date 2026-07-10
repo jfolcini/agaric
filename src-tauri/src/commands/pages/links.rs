@@ -1,8 +1,11 @@
 //! Page-to-page link (graph view) command handlers (#644 split).
 //!
 //! `list_page_links` and its `*_inner` / read-write-split cores plus the
-//! graph-edge telemetry tripwire.
+//! graph-edge telemetry tripwire. Since #2298 the edge set is capped at
+//! [`PAGE_LINKS_EDGE_CAP`] (count-then-cap: the true total still ships in
+//! [`PageLinksResponse::total`]).
 
+use serde::Serialize;
 use sqlx::SqlitePool;
 use tracing::instrument;
 
@@ -14,20 +17,55 @@ use crate::space::SpaceScope;
 
 use super::super::*;
 
-/// #426: telemetry tripwire for the unbounded graph edge set. NOT a functional
-/// limit — `list_page_links_inner_split` never truncates (the graph renderer
-/// wants the whole set); this only governs when a `warn!` fires so a vault
-/// whose edge set has grown into the mobile-OOM-risk regime is observable in
-/// logs. Deliberately generous (well beyond any normal vault) and to be
-/// calibrated against real device-memory measurements when the mobile
-/// graph-degradation (ego-graph / edge cap) is designed.
+/// #426: telemetry tripwire for a graph edge set that has grown into the
+/// mobile-OOM-risk regime. Since #2298 the response is capped at
+/// [`PAGE_LINKS_EDGE_CAP`], so the tripwire is anchored to the TRUE
+/// pre-cap total (`PageLinksResponse::total`), not to the shipped edge
+/// count — with a 20K cap the shipped length can never reach 50K, and
+/// re-anchoring keeps the "this vault's edge set is huge" signal
+/// observable in logs. Deliberately generous (well beyond any normal
+/// vault); calibrate against real device-memory measurements when the
+/// mobile graph degradation is designed.
 const GRAPH_EDGE_WARN_THRESHOLD: usize = 50_000;
 
-/// List all links between pages (for graph view).
+/// #2298: hard cap on the number of edges `list_page_links` ships across
+/// the IPC boundary. The measured cost of the unbounded read at 300K
+/// edges was the Rust-side materialization + serialization (~560-640 ms
+/// against a ~30-60 ms SQL cost), so the fix is to bound the
+/// materialized set. The maintainer-approved shape is count-then-cap:
+/// return the strongest `PAGE_LINKS_EDGE_CAP` edges plus the TRUE total
+/// count and a `truncated` flag so the FE can show a
+/// "showing N of M — large graph truncated" affordance.
+pub const PAGE_LINKS_EDGE_CAP: usize = 20_000;
+
+/// Response of `list_page_links` (#2298 count-then-cap).
+///
+/// Mirrors the `PageSubtree` (#1258) capped-list-plus-honest-signal
+/// precedent: `edges` is the (possibly capped) edge set, `total` is the
+/// TRUE edge count computed independently of the cap, and `truncated`
+/// (`total > edges.len()`) tells the FE the cap fired so it can surface
+/// a non-blocking "showing N of M" notice instead of silently rendering
+/// a partial graph.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct PageLinksResponse {
+    /// The (possibly capped) edge set — the strongest
+    /// [`PAGE_LINKS_EDGE_CAP`] edges by `ref_count` (see the ordering
+    /// note on [`list_page_links_inner_split_with_cap`]).
+    pub edges: Vec<PageLink>,
+    /// The true count of edges matching the filters, computed
+    /// independently of the cap. `edges.len()` is `min(total, cap)`.
+    pub total: i64,
+    /// True when the cap fired and some edges were dropped from `edges`.
+    pub truncated: bool,
+}
+
+/// List links between pages (for graph view).
 ///
 /// Returns edges where both source and target are non-deleted page blocks.
 /// Block-level links (where source is a content block) are rolled up to
-/// their parent page.
+/// their parent page. Since #2298 the edge set is capped at
+/// [`PAGE_LINKS_EDGE_CAP`] (strongest edges first) and the response
+/// carries the true total plus a `truncated` flag.
 ///
 /// `scope` — [`SpaceScope::Active`] restricts the result set
 /// to edges where **both** the source page (`COALESCE(sb.parent_id,
@@ -58,7 +96,7 @@ pub async fn list_page_links_inner(
     pool: &SqlitePool,
     scope: &SpaceScope,
     tag_ids: Option<&[String]>,
-) -> Result<Vec<PageLink>, AppError> {
+) -> Result<PageLinksResponse, AppError> {
     // Single-pool entry point (tests, callers without a split pool). The
     // pool is writable, so it serves as both the read and write side of
     // the split variant — preserving the lazy-rebuild behaviour.
@@ -83,7 +121,24 @@ pub async fn list_page_links_inner_split(
     read_pool: &SqlitePool,
     scope: &SpaceScope,
     tag_ids: Option<&[String]>,
-) -> Result<Vec<PageLink>, AppError> {
+) -> Result<PageLinksResponse, AppError> {
+    list_page_links_inner_split_with_cap(write_pool, read_pool, scope, tag_ids, PAGE_LINKS_EDGE_CAP)
+        .await
+}
+
+/// Cap-injectable core of [`list_page_links_inner_split`] (#2298).
+///
+/// Production always passes [`PAGE_LINKS_EDGE_CAP`]; tests inject a tiny
+/// `cap` so the over-cap / truncation behaviour is exercised without
+/// seeding 20K+ rows.
+#[instrument(skip(write_pool, read_pool, tag_ids), err)]
+pub async fn list_page_links_inner_split_with_cap(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+    scope: &SpaceScope,
+    tag_ids: Option<&[String]>,
+    cap: usize,
+) -> Result<PageLinksResponse, AppError> {
     let pool = read_pool;
     // Encode the tag set as a JSON array so the SQL
     // can fan it out via `json_each(?2)` (mirrors the
@@ -177,7 +232,18 @@ pub async fn list_page_links_inner_split(
     // — the tag-EXISTS branch UNIONs `block_tags`,
     // `block_tag_inherited`, and `block_tag_refs` to mirror the
     // canonical `tag_query::resolve_tag_leaves` union semantics.
-    let links = sqlx::query_as!(
+    //
+    // #2298 — count-then-cap. The edge set is bounded by `?3` (production:
+    // `PAGE_LINKS_EDGE_CAP`) because the measured cost of the unbounded
+    // read at ~300K edges was the Rust-side materialization/serialization,
+    // not the SQL. Edge-selection policy: there is no focus-page param, so
+    // "keep the visible neighborhood of the focused page complete first"
+    // resolves to shipping the STRONGEST edges first — `ORDER BY
+    // edge_count DESC` — with a deterministic `(source_page_id,
+    // target_page_id)` tiebreak so the truncation boundary is stable
+    // across calls (maintainer decision on #2298).
+    let cap_param = i64::try_from(cap).unwrap_or(i64::MAX);
+    let edges = sqlx::query_as!(
         PageLink,
         r#"WITH space_members AS MATERIALIZED (
              SELECT id AS block_id FROM blocks
@@ -208,48 +274,101 @@ pub async fn list_page_links_inner_split(
                  SELECT 1 FROM block_tag_refs btr
                  WHERE btr.source_id = plc.target_page_id
                    AND btr.tag_id IN (SELECT value FROM json_each(?2))
-             ))"#,
+             ))
+         ORDER BY plc.edge_count DESC, plc.source_page_id ASC,
+             plc.target_page_id ASC
+         LIMIT ?3"#,
         scope.as_filter_param(),
         tag_ids_json.as_deref(),
+        cap_param,
     )
     .fetch_all(pool)
     .await?;
 
-    // #426: the graph view loads the ENTIRE edge set in one shot (no LIMIT —
-    // intentional, the renderer wants the whole graph). That is fine at normal
-    // scale, but on a 10k+ page vault with high link density the edge set can
-    // grow large enough to strain the mobile webview once it crosses the IPC
-    // boundary (every edge is decoded into `Vec<PageLink>`, serialized, and
-    // held in JS). We do NOT truncate here — silently dropping graph edges is a
-    // UX decision (the audit's "degrade to an ego-graph / count-then-warn cap"
-    // remedy) that needs product sign-off and a real mobile-memory measurement
-    // first. Instead emit a telemetry tripwire so the scaling regime is
-    // observable in logs BEFORE it OOMs a device — the "measure/surface before
-    // shipping mobile" minimum the audit asks for. `GRAPH_EDGE_WARN_THRESHOLD`
-    // is a logging tripwire, NOT a functional limit: nothing is dropped, so its
-    // exact value only governs when the warn fires; calibrate it against real
-    // device measurements when the mobile graph degradation is designed.
-    if links.len() > GRAPH_EDGE_WARN_THRESHOLD {
+    let returned = i64::try_from(edges.len()).unwrap_or(i64::MAX);
+
+    // #2298 — compute the TRUE edge count independently of the cap
+    // (same WHERE predicate, same pool) so the FE can surface
+    // "showing N of M — large graph truncated". Mirrors the
+    // `load_page_subtree_inner` (#1258) shape: the second query is only
+    // worth running when the returned set actually hit the cap; below
+    // the cap the LIMIT cannot have fired, so `total == returned`.
+    let total = if returned >= cap_param {
+        sqlx::query_scalar!(
+            r#"WITH space_members AS MATERIALIZED (
+                 SELECT id AS block_id FROM blocks
+                 WHERE space_id = ?1
+             )
+             SELECT COUNT(*) AS "total!: i64"
+             FROM page_link_cache plc
+             WHERE plc.source_page_id != plc.target_page_id
+                 AND plc.src_deleted = 0
+                 AND plc.tgt_deleted = 0
+                 AND plc.tgt_is_page = 1
+                 AND (?1 IS NULL OR (
+                     plc.source_page_id IN (SELECT block_id FROM space_members)
+                     AND plc.target_page_id IN (SELECT block_id FROM space_members)
+                 ))
+                 AND (?2 IS NULL OR EXISTS (
+                     SELECT 1 FROM block_tags bt
+                     WHERE bt.block_id = plc.target_page_id
+                       AND bt.tag_id IN (SELECT value FROM json_each(?2))
+                     UNION ALL
+                     SELECT 1 FROM block_tag_inherited bti
+                     WHERE bti.block_id = plc.target_page_id
+                       AND bti.tag_id IN (SELECT value FROM json_each(?2))
+                     UNION ALL
+                     SELECT 1 FROM block_tag_refs btr
+                     WHERE btr.source_id = plc.target_page_id
+                       AND btr.tag_id IN (SELECT value FROM json_each(?2))
+                 ))"#,
+            scope.as_filter_param(),
+            tag_ids_json.as_deref(),
+        )
+        .fetch_one(pool)
+        .await?
+    } else {
+        returned
+    };
+
+    // #426 / #2298: telemetry tripwire, re-anchored to the TRUE total.
+    // The shipped edge count is now bounded by the cap, so `edges.len()`
+    // can never reach the threshold — the total is what tells us a
+    // vault's edge set has grown into the regime the tripwire exists to
+    // observe. (When `returned < cap` the count query is skipped, but
+    // then `total == returned < cap < threshold`, so no warn is missed.)
+    if usize::try_from(total).unwrap_or(usize::MAX) > GRAPH_EDGE_WARN_THRESHOLD {
         tracing::warn!(
             target: "agaric::list_page_links",
-            edges = links.len(),
+            edges = edges.len(),
+            total,
             threshold = GRAPH_EDGE_WARN_THRESHOLD,
-            "graph edge set exceeds the telemetry tripwire; the full set is \
-             still returned (no truncation), but at this scale the IPC payload \
-             may strain the mobile webview — see #426 (ego-graph / edge-cap \
-             degradation is a deferred UX + measurement decision)"
+            "graph edge set exceeds the telemetry tripwire; only the \
+             strongest `cap` edges are returned (#2298 count-then-cap) — \
+             at this scale the FE shows the 'showing N of M' truncation \
+             affordance"
         );
     }
 
-    Ok(links)
+    let truncated = total > returned;
+
+    Ok(PageLinksResponse {
+        edges,
+        total,
+        truncated,
+    })
 }
 
-/// Tauri command: list all page-to-page links for graph visualization.
+/// Tauri command: list page-to-page links for graph visualization.
 ///
 /// `tag_ids` — when non-empty, restricts edges to
 /// those whose target page carries at least one of the listed tags. The
 /// frontend GraphView passes its active tag filter here so the backend
 /// no longer ships every space-wide edge for the renderer to discard.
+///
+/// #2298 — the edge set is capped at [`PAGE_LINKS_EDGE_CAP`] (strongest
+/// edges first); the response carries the true `total` and a `truncated`
+/// flag so the FE can show a "showing N of M" affordance.
 #[tauri::command]
 #[specta::specta]
 pub async fn list_page_links(
@@ -257,7 +376,7 @@ pub async fn list_page_links(
     read_pool: State<'_, ReadPool>,
     scope: SpaceScope,
     tag_ids: Option<Vec<String>>,
-) -> Result<Vec<PageLink>, AppError> {
+) -> Result<PageLinksResponse, AppError> {
     // SQL/C1 (#341): the lazy `page_link_cache` rebuild is a DELETE+INSERT
     // and must run on the write pool — the read pool is `query_only=ON`.
     list_page_links_inner_split(&write_pool.0, &read_pool.0, &scope, tag_ids.as_deref())

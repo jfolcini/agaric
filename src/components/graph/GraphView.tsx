@@ -66,6 +66,12 @@ export interface GraphCache {
   // alone can never detect a mutation that happened while no instance was
   // mounted.
   invalidationKey: number
+  // #2298 count-then-cap: the TRUE matching-edge count and the cap-fired
+  // flag from `PageLinksResponse`, cached alongside the (possibly capped)
+  // edge set so serving a cache hit re-shows the same "showing N of M
+  // links" notice the original fetch produced.
+  edgesTotal: number
+  edgesTruncated: boolean
 }
 
 /**
@@ -168,6 +174,10 @@ export function GraphView(): React.ReactElement {
   const [error, setError] = useState<string | null>(null)
   const [nodes, setNodes] = useState<GraphNode[]>([])
   const [edges, setEdges] = useState<GraphEdge[]>([])
+  // #2298 — true edge count + cap-fired flag from the latest fetch (or the
+  // cache entry being served); drives the "showing N of M links" notice.
+  const [edgesTotal, setEdgesTotal] = useState(0)
+  const [edgesTruncated, setEdgesTruncated] = useState(false)
   const [tags, setTags] = useState<Array<{ tag_id: string; name: string }>>([])
   const [filters, setFilters] = useState<GraphFilter[]>([])
 
@@ -231,6 +241,8 @@ export function GraphView(): React.ReactElement {
     if (graphCache) {
       setNodes(graphCache.nodes)
       setEdges(graphCache.edges)
+      setEdgesTotal(graphCache.edgesTotal)
+      setEdgesTruncated(graphCache.edgesTruncated)
       setLoading(false)
 
       // #1818: the cache entry also records the invalidation counter it was
@@ -263,10 +275,14 @@ export function GraphView(): React.ReactElement {
           // at so a later mount can detect a mutation that occurred since (incl.
           // during unmount) and refetch even within the TTL.
           invalidationKey,
+          edgesTotal: result.edgesTotal,
+          edgesTruncated: result.edgesTruncated,
         })
 
         setNodes(result.nodes)
         setEdges(result.edges)
+        setEdgesTotal(result.edgesTotal)
+        setEdgesTruncated(result.edgesTruncated)
       } catch (err) {
         if (cancelled) return
         logger.error('GraphView', 'failed to load graph data', undefined, err)
@@ -387,6 +403,15 @@ export function GraphView(): React.ReactElement {
               allTags={tags}
               totalCount={nodes.length}
               filteredCount={filteredNodes.length}
+              /* #2298 — the notice says "Showing N of M links", so N must be
+                 the edge count that survives client-side dimension filtering
+                 (`filteredEdges`), not the raw fetched set: with a status/
+                 priority/has-* filter active, `edges.length` would overstate
+                 what is on screen. Mirrors `filteredCount` above, which also
+                 reports the post-filter (but pre-local-mode) count. */
+              edgesShown={filteredEdges.length}
+              edgesTotal={edgesTotal}
+              edgesTruncated={edgesTruncated}
             />
           </FeatureErrorBoundary>
           {/* #1429 — per-page local-graph toggle + hop-depth control. */}

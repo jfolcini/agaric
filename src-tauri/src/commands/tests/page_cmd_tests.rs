@@ -3037,7 +3037,8 @@ async fn list_page_links_returns_edges_between_pages() {
 
     let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
-        .unwrap();
+        .unwrap()
+        .edges;
 
     // Should have at least one link: p1 → p2 (rolled up from b1 → p2)
     let p1_to_p2 = links
@@ -3110,7 +3111,8 @@ async fn list_page_links_excludes_deleted_pages() {
 
     let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
-        .unwrap();
+        .unwrap()
+        .edges;
     let has_deleted = links.iter().any(|l| l.target_id == p2.id.as_str());
     assert!(!has_deleted, "should not include links to deleted pages");
 
@@ -3172,7 +3174,8 @@ async fn list_page_links_split_lazy_rebuild_on_readonly_pool_c1() {
     let links =
         crate::commands::list_page_links_inner_split(&write, &read, &SpaceScope::Global, None)
             .await
-            .expect("split read must not write through the read pool");
+            .expect("split read must not write through the read pool")
+            .edges;
 
     let edge = links
         .iter()
@@ -3235,7 +3238,8 @@ async fn list_page_links_excludes_self_links() {
 
     let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
-        .unwrap();
+        .unwrap()
+        .edges;
     let self_link = links.iter().find(|l| l.source_id == l.target_id);
     assert!(
         self_link.is_none(),
@@ -3250,7 +3254,8 @@ async fn list_page_links_empty_when_no_links() {
     let (pool, _dir) = test_pool().await;
     let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
-        .unwrap();
+        .unwrap()
+        .edges;
     assert!(links.is_empty(), "should return empty when no links exist");
 }
 
@@ -3328,7 +3333,8 @@ async fn list_page_links_deduplicates_multiple_content_links() {
 
     let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
-        .unwrap();
+        .unwrap()
+        .edges;
 
     // Both b1 and b2 roll up to p1 → p2; GROUP BY should collapse to 1 edge
     let p1_to_p2_count = links
@@ -3404,7 +3410,8 @@ async fn list_page_links_single_link_has_ref_count_one() {
 
     let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
-        .unwrap();
+        .unwrap()
+        .edges;
     let edge = links
         .iter()
         .find(|l| l.source_id == p1.id.as_str() && l.target_id == p2.id.as_str())
@@ -3473,7 +3480,8 @@ async fn list_page_links_excludes_links_with_deleted_parent_page() {
     // Verify link exists before deletion
     let links_before = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
-        .unwrap();
+        .unwrap()
+        .edges;
     let has_link = links_before
         .iter()
         .any(|l| l.source_id == p1.id.as_str() && l.target_id == p2.id.as_str());
@@ -3487,7 +3495,8 @@ async fn list_page_links_excludes_links_with_deleted_parent_page() {
 
     let links_after = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
-        .unwrap();
+        .unwrap()
+        .edges;
     let has_deleted_source = links_after.iter().any(|l| l.source_id == p1.id.as_str());
     assert!(
         !has_deleted_source,
@@ -3667,7 +3676,8 @@ async fn list_page_links_optimized_matches_oracle() {
     // -- Compare optimized vs oracle --
     let mut optimized = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
-        .unwrap();
+        .unwrap()
+        .edges;
     optimized.sort();
 
     let oracle = list_page_links_oracle(&pool).await;
@@ -3728,7 +3738,8 @@ async fn list_page_links_inner_global_matches_legacy_none_pend18() {
 
     let global = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
-        .unwrap();
+        .unwrap()
+        .edges;
     let global_edges: std::collections::HashSet<(String, String)> = global
         .iter()
         .map(|l| (l.source_id.into(), l.target_id.into()))
@@ -3749,14 +3760,16 @@ async fn list_page_links_inner_global_matches_legacy_none_pend18() {
         None,
     )
     .await
-    .unwrap();
+    .unwrap()
+    .edges;
     let scope_b = list_page_links_inner(
         &pool,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
         None,
     )
     .await
-    .unwrap();
+    .unwrap()
+    .edges;
     assert_eq!(scope_a.len(), 1, "Active(A) keeps the within-A edge only");
     assert_eq!(scope_b.len(), 1, "Active(B) keeps the within-B edge only");
 }
@@ -3877,7 +3890,8 @@ async fn list_page_links_filters_by_tag_ids() {
     let tag_ids = vec![tag_a.id.to_string()];
     let links = list_page_links_inner(&pool, &SpaceScope::Global, Some(&tag_ids))
         .await
-        .unwrap();
+        .unwrap()
+        .edges;
     let to_a = links
         .iter()
         .filter(|l| l.target_id.as_str() == p_a.id)
@@ -3978,10 +3992,12 @@ async fn list_page_links_no_tag_filter_returns_all() {
 
     let links_none = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
-        .unwrap();
+        .unwrap()
+        .edges;
     let links_empty = list_page_links_inner(&pool, &SpaceScope::Global, Some(&[]))
         .await
-        .unwrap();
+        .unwrap()
+        .edges;
 
     let to_a_none = links_none
         .iter()
@@ -4002,6 +4018,149 @@ async fn list_page_links_no_tag_filter_returns_all() {
     );
 
     mat.shutdown();
+}
+
+// ======================================================================
+// #2298 — count-then-cap for list_page_links
+// ======================================================================
+
+/// Seed four pages and four rolled-up edges with distinct strengths:
+///
+///   CAP_PA → CAP_PB  ref_count 3 (three content blocks under PA)
+///   CAP_PC → CAP_PB  ref_count 2 (two content blocks under PC)
+///   CAP_PA → CAP_PD  ref_count 1 (direct page→page link)
+///   CAP_PC → CAP_PD  ref_count 1 (direct page→page link)
+///
+/// `block_links` is seeded directly; the lazy-rebuild guard in the read
+/// path materialises `page_link_cache` on the first call.
+async fn seed_capped_links_fixture_2298(pool: &SqlitePool) {
+    insert_block(pool, "CAP_PA", "page", "Page A", None, Some(0)).await;
+    insert_block(pool, "CAP_PB", "page", "Page B", None, Some(1)).await;
+    insert_block(pool, "CAP_PC", "page", "Page C", None, Some(2)).await;
+    insert_block(pool, "CAP_PD", "page", "Page D", None, Some(3)).await;
+
+    for (id, parent, pos) in [
+        ("CAP_A1", "CAP_PA", 0),
+        ("CAP_A2", "CAP_PA", 1),
+        ("CAP_A3", "CAP_PA", 2),
+        ("CAP_C1", "CAP_PC", 0),
+        ("CAP_C2", "CAP_PC", 1),
+    ] {
+        insert_block(
+            pool,
+            id,
+            "content",
+            "see [[CAP_PB]]",
+            Some(parent),
+            Some(pos),
+        )
+        .await;
+    }
+
+    for (src, tgt) in [
+        ("CAP_A1", "CAP_PB"),
+        ("CAP_A2", "CAP_PB"),
+        ("CAP_A3", "CAP_PB"),
+        ("CAP_C1", "CAP_PB"),
+        ("CAP_C2", "CAP_PB"),
+        ("CAP_PA", "CAP_PD"),
+        ("CAP_PC", "CAP_PD"),
+    ] {
+        sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(src)
+            .bind(tgt)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+}
+
+/// #2298 (a): when the edge set exceeds the cap, only the strongest
+/// `cap` edges ship, `total` is the TRUE pre-cap count, and `truncated`
+/// is true. The cap is injected via the `_with_cap` core so the test
+/// doesn't need to seed 20K+ rows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_cap_enforced_with_true_total_2298() {
+    let (pool, _dir) = test_pool().await;
+    seed_capped_links_fixture_2298(&pool).await;
+
+    let resp = list_page_links_inner_split_with_cap(&pool, &pool, &SpaceScope::Global, None, 2)
+        .await
+        .unwrap();
+
+    assert_eq!(resp.edges.len(), 2, "cap of 2 must bound the edge set");
+    assert_eq!(resp.total, 4, "total must be the TRUE pre-cap edge count");
+    assert!(resp.truncated, "cap fired, so truncated must be true");
+    // Strongest-first policy: the two survivors are the ref_count 3 and
+    // ref_count 2 edges; the two ref_count 1 edges are dropped.
+    assert_eq!(resp.edges[0].source_id, "CAP_PA");
+    assert_eq!(resp.edges[0].target_id, "CAP_PB");
+    assert_eq!(resp.edges[0].ref_count, 3);
+    assert_eq!(resp.edges[1].source_id, "CAP_PC");
+    assert_eq!(resp.edges[1].target_id, "CAP_PB");
+    assert_eq!(resp.edges[1].ref_count, 2);
+}
+
+/// #2298 (b): below the cap nothing is dropped — `total` equals
+/// `edges.len()` and `truncated` is false. Exercises the production
+/// entry point (default `PAGE_LINKS_EDGE_CAP`) and the exact-boundary
+/// case (`cap == total`, where the COUNT query runs but must still
+/// report no truncation).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_under_cap_reports_full_total_2298() {
+    let (pool, _dir) = test_pool().await;
+    seed_capped_links_fixture_2298(&pool).await;
+
+    // Production cap (20K) — far above the 4-edge fixture.
+    let resp = list_page_links_inner(&pool, &SpaceScope::Global, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.edges.len(),
+        4,
+        "all four edges must ship under the cap"
+    );
+    assert_eq!(resp.total, 4, "total must equal edges.len() under the cap");
+    assert!(!resp.truncated, "no truncation under the cap");
+
+    // Exact boundary: cap == total. The returned set hits the cap, so
+    // the independent COUNT runs — and must conclude nothing was cut.
+    let at_cap = list_page_links_inner_split_with_cap(&pool, &pool, &SpaceScope::Global, None, 4)
+        .await
+        .unwrap();
+    assert_eq!(at_cap.edges.len(), 4);
+    assert_eq!(at_cap.total, 4);
+    assert!(!at_cap.truncated, "cap == total must not report truncation");
+}
+
+/// #2298 (c): ordering policy — strongest `ref_count` first, with a
+/// deterministic `(source_page_id, target_page_id)` ascending tiebreak
+/// so the truncation boundary is stable across calls.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_orders_strongest_first_deterministic_tiebreak_2298() {
+    let (pool, _dir) = test_pool().await;
+    seed_capped_links_fixture_2298(&pool).await;
+
+    let resp = list_page_links_inner(&pool, &SpaceScope::Global, None)
+        .await
+        .unwrap();
+
+    let got: Vec<(String, String, i64)> = resp
+        .edges
+        .iter()
+        .map(|l| (l.source_id.into(), l.target_id.into(), l.ref_count))
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            ("CAP_PA".into(), "CAP_PB".into(), 3),
+            ("CAP_PC".into(), "CAP_PB".into(), 2),
+            // ref_count tie broken by (source, target) ascending:
+            ("CAP_PA".into(), "CAP_PD".into(), 1),
+            ("CAP_PC".into(), "CAP_PD".into(), 1),
+        ],
+        "edges must be ordered edge_count DESC, then (source, target) ASC"
+    );
 }
 
 // ======================================================================

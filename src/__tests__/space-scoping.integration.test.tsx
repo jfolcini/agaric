@@ -36,7 +36,7 @@ beforeEach(() => {
   // Default: every IPC call resolves to an empty page so unrelated
   // commands don't crash the components under test.
   mockedInvoke.mockImplementation(async (cmd: string) => {
-    if (cmd === 'list_page_links') return []
+    if (cmd === 'list_page_links') return { edges: [], total: 0, truncated: false }
     if (cmd === 'list_all_pages_in_space') return []
     if (cmd === 'list_template_page_ids_in_space') return []
     return emptyPage

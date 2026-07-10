@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH space_members AS MATERIALIZED (\n                 SELECT id AS block_id FROM blocks\n                 WHERE space_id = ?1\n             )\n             SELECT COUNT(*) AS \"total!: i64\"\n             FROM page_link_cache plc\n             WHERE plc.source_page_id != plc.target_page_id\n                 AND plc.src_deleted = 0\n                 AND plc.tgt_deleted = 0\n                 AND plc.tgt_is_page = 1\n                 AND (?1 IS NULL OR (\n                     plc.source_page_id IN (SELECT block_id FROM space_members)\n                     AND plc.target_page_id IN (SELECT block_id FROM space_members)\n                 ))\n                 AND (?2 IS NULL OR EXISTS (\n                     SELECT 1 FROM block_tags bt\n                     WHERE bt.block_id = plc.target_page_id\n                       AND bt.tag_id IN (SELECT value FROM json_each(?2))\n                     UNION ALL\n                     SELECT 1 FROM block_tag_inherited bti\n                     WHERE bti.block_id = plc.target_page_id\n                       AND bti.tag_id IN (SELECT value FROM json_each(?2))\n                     UNION ALL\n                     SELECT 1 FROM block_tag_refs btr\n                     WHERE btr.source_id = plc.target_page_id\n                       AND btr.tag_id IN (SELECT value FROM json_each(?2))\n                 ))",
+  "describe": {
+    "columns": [
+      {
+        "name": "total!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d36cca6774b58fd4f5e134a5df076acc4ec95810dd1a5e7d36139dbf53688043"
+}

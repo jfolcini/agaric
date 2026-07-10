@@ -999,7 +999,8 @@ async fn list_page_links_returns_empty_with_no_links() {
 
     let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
-        .unwrap();
+        .unwrap()
+        .edges;
     assert!(
         links.is_empty(),
         "should return empty vec when no block_links exist"
@@ -1064,7 +1065,8 @@ async fn list_page_links_rolls_up_content_block_links_to_pages() {
 
     let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
-        .unwrap();
+        .unwrap()
+        .edges;
 
     // Assert result has link with source_id = P1.id, target_id = P2.id (rolled up)
     let p1_to_p2 = links
@@ -1139,7 +1141,8 @@ async fn list_page_links_excludes_deleted_blocks() {
 
     let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
-        .unwrap();
+        .unwrap()
+        .edges;
     let has_link = links
         .iter()
         .any(|l| l.source_id.as_str() == p1.id.as_str() && l.target_id.as_str() == p2.id.as_str());
@@ -1193,7 +1196,8 @@ async fn list_page_links_excludes_self_links() {
 
     let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
-        .unwrap();
+        .unwrap()
+        .edges;
     let self_link = links.iter().find(|l| l.source_id == l.target_id);
     assert!(
         self_link.is_none(),
@@ -1278,7 +1282,8 @@ async fn list_page_links_deduplicates() {
 
     let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
-        .unwrap();
+        .unwrap()
+        .edges;
 
     // Both b1 and b2 roll up to P1 → P2; DISTINCT should collapse to 1 edge
     let p1_to_p2_count = links

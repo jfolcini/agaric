@@ -1284,6 +1284,9 @@ fn bench_list_page_links(c: &mut Criterion) {
             async move {
                 let start = Instant::now();
                 for _ in 0..iters {
+                    // #2298: returns `PageLinksResponse` — the edge set is
+                    // capped at PAGE_LINKS_EDGE_CAP (count-then-cap), so at
+                    // 100K this measures the capped read + true-total COUNT.
                     let _ = list_page_links_inner(&pool, &SpaceScope::Global, None)
                         .await
                         .unwrap();

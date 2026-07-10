@@ -31,4 +31,17 @@ export interface GraphEdge extends SimulationLinkDatum<GraphNode> {
 export interface GraphFetchResult {
   nodes: GraphNode[]
   edges: GraphEdge[]
+  /**
+   * TRUE count of page-link edges matching the fetch filters, computed
+   * independently of the backend edge cap (#2298 count-then-cap).
+   * `edges.length` can be smaller both because the cap fired and because
+   * edges touching unknown nodes are dropped client-side.
+   */
+  edgesTotal: number
+  /**
+   * True when the backend `PAGE_LINKS_EDGE_CAP` fired and the fetched
+   * edge set is partial — the UI surfaces a non-blocking
+   * "showing N of M links" notice (#2298).
+   */
+  edgesTruncated: boolean
 }

@@ -4265,7 +4265,7 @@ const HANDLERS_TYPED = {
       (properties.get(pid)?.get('space')?.['value_ref'] as string | null) ?? null
     const LINK_RE_PL = /\[\[([0-9A-Z]{26})\]\]/g
     const linkSet = new Set<string>()
-    const pageLinks: Array<{ source_id: string; target_id: string }> = []
+    const pageLinks: Array<{ source_id: string; target_id: string; ref_count: number }> = []
     for (const b of blocks.values()) {
       if (b['deleted_at']) continue
       const parentId = b['parent_id'] as string | null
@@ -4303,11 +4303,14 @@ const HANDLERS_TYPED = {
         const key = `${parentId}→${targetPageId}`
         if (!linkSet.has(key)) {
           linkSet.add(key)
-          pageLinks.push({ source_id: parentId, target_id: targetPageId })
+          pageLinks.push({ source_id: parentId, target_id: targetPageId, ref_count: 1 })
         }
       }
     }
-    return pageLinks
+    // #2298 count-then-cap — the real backend ships a `PageLinksResponse`
+    // envelope. The mock world never caps, so `total` is always the full
+    // edge count and `truncated` is always false.
+    return { edges: pageLinks, total: pageLinks.length, truncated: false }
   },
 
   // ---------------------------------------------------------------------------

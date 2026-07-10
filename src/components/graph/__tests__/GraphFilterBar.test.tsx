@@ -375,6 +375,90 @@ describe('GraphFilterBar', () => {
     expect(screen.queryByTestId('graph-filter-count')).not.toBeInTheDocument()
   })
 
+  // #2298 count-then-cap — edge-truncation notice.
+  it('renders the edge-truncation notice with shown/total when edgesTruncated is true', () => {
+    render(
+      <GraphFilterBar
+        filters={[]}
+        onFiltersChange={onFiltersChange}
+        allTags={sampleTags}
+        edgesShown={500}
+        edgesTotal={1200}
+        edgesTruncated
+      />,
+    )
+
+    expect(screen.getByTestId('graph-edges-truncated')).toHaveTextContent(
+      t('graph.filter.edgesTruncated', { shown: 500, total: 1200 }),
+    )
+  })
+
+  it('hides the edge-truncation notice when edgesTruncated is false', () => {
+    render(
+      <GraphFilterBar
+        filters={[]}
+        onFiltersChange={onFiltersChange}
+        allTags={sampleTags}
+        edgesShown={1200}
+        edgesTotal={1200}
+        edgesTruncated={false}
+      />,
+    )
+
+    expect(screen.queryByTestId('graph-edges-truncated')).not.toBeInTheDocument()
+  })
+
+  it('hides the edge-truncation notice when the counts are not provided', () => {
+    render(
+      <GraphFilterBar
+        filters={[]}
+        onFiltersChange={onFiltersChange}
+        allTags={sampleTags}
+        edgesTruncated
+      />,
+    )
+
+    expect(screen.queryByTestId('graph-edges-truncated')).not.toBeInTheDocument()
+  })
+
+  it('renders the truncation notice alongside the "showing N of M pages" count', () => {
+    const filters: GraphFilter[] = [{ type: 'status', values: ['TODO'] }]
+    render(
+      <GraphFilterBar
+        filters={filters}
+        onFiltersChange={onFiltersChange}
+        allTags={sampleTags}
+        totalCount={10}
+        filteredCount={3}
+        edgesShown={500}
+        edgesTotal={1200}
+        edgesTruncated
+      />,
+    )
+
+    expect(screen.getByTestId('graph-filter-count')).toBeInTheDocument()
+    expect(screen.getByTestId('graph-edges-truncated')).toHaveTextContent(
+      t('graph.filter.edgesTruncated', { shown: 500, total: 1200 }),
+    )
+  })
+
+  it('has no a11y violations with the edge-truncation notice shown', async () => {
+    const { container } = render(
+      <GraphFilterBar
+        filters={[]}
+        onFiltersChange={onFiltersChange}
+        allTags={sampleTags}
+        edgesShown={500}
+        edgesTotal={1200}
+        edgesTruncated
+      />,
+    )
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
   it('hides already-used dimensions from the add-filter selector', async () => {
     const user = userEvent.setup()
     const filters: GraphFilter[] = [{ type: 'status', values: ['TODO'] }]
