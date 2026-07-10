@@ -144,6 +144,37 @@ describe('property-values-cache', () => {
   })
 
   // ------------------------------------------------------------------
+  // (c-reduced) #2507 keyed eviction: an event evicts ONLY the entries for
+  //      its `changed_keys`; unrelated keys keep their cached array and fire
+  //      no refetch. This is the reduced-wakeup property for the value cache.
+  // ------------------------------------------------------------------
+  it('evicts only the changed keys and leaves unrelated keys cached (#2507)', async () => {
+    ensurePropertyValuesInvalidationListener()
+    const project = await fetchPropertyValuesOnce('project')
+    const effort = await fetchPropertyValuesOnce('effort')
+    expect(listPropertyValuesInvocationCount()).toBe(2)
+
+    // Only `project` changed.
+    fireInvalidationEvent()
+
+    // `project` is evicted; `effort` is untouched (same array reference).
+    expect(getCachedPropertyValues('project')).toBe(PROPERTY_VALUES_EMPTY)
+    expect(getCachedPropertyValues('effort')).toBe(effort)
+
+    // A consumer of `effort` reuses the cached array — no fresh IPC. Only
+    // `project` refetches.
+    const effortAgain = await fetchPropertyValuesOnce('effort')
+    expect(effortAgain).toBe(effort)
+    expect(listPropertyValuesInvocationCount()).toBe(2)
+
+    mockedInvoke.mockResolvedValueOnce(['alpha', 'beta', 'gamma'])
+    const projectAgain = await fetchPropertyValuesOnce('project')
+    expect(projectAgain).toEqual(['alpha', 'beta', 'gamma'])
+    expect(projectAgain).not.toBe(project)
+    expect(listPropertyValuesInvocationCount()).toBe(3)
+  })
+
+  // ------------------------------------------------------------------
   // (c') Invalidation that races an in-flight fetch must NOT write the
   //      stale pre-change snapshot back after the clear (#2025).
   // ------------------------------------------------------------------

@@ -9,36 +9,40 @@
  * fired while a consumer was UNMOUNTED was never observed, so a remount within
  * the cache TTL served the stale cached entry without refetching.
  *
- * Hoisting the counter and its Tauri listener to module scope fixes that: the
- * counter increments on every (debounced) mutation event regardless of mount
- * state, so the next mount within the TTL reads a higher key and refetches.
+ * Hoisting the counter and its listener registration to module scope fixes
+ * that: the counter increments on every (debounced) mutation event regardless
+ * of mount state, so the next mount within the TTL reads a higher key and
+ * refetches.
  *
- * Mirrors the lazy-listener / subscriber-set / `useSyncExternalStore` shape of
- * `src/lib/property-keys-cache.ts`. The React adapter lives in
- * `src/hooks/useBlockPropertyEvents.ts`.
+ * #2507: the counter no longer registers its own `listen()`. It is one of three
+ * consumers that used to each subscribe to `block:properties-changed`
+ * independently; all three now register a fan-out TARGET on the single
+ * module-level dispatcher in `property-change-dispatch.ts`. The counter's target
+ * stays deliberately blanket (a cheap payload-agnostic bump).
+ *
+ * The React adapter lives in `src/hooks/useBlockPropertyEvents.ts`.
  */
 
-import { listen } from '@tauri-apps/api/event'
-
 import { EVENT_PROPERTY_CHANGED } from './block-event-names'
-import { logger } from './logger'
+import {
+  _resetPropertyChangeDispatchForTest,
+  ensurePropertyChangeDispatch,
+  type PropertyChangedPayload,
+  registerPropertyChangeTarget,
+} from './property-change-dispatch'
 
 export { EVENT_PROPERTY_CHANGED }
+export type { PropertyChangedPayload }
 
 /** Debounce window: batch rapid consecutive property changes (matches the
  *  pre-#1818 per-component behavior). */
 export const DEBOUNCE_MS = 150
 
-/** Event payload matching Rust `PropertyChangedEvent`. */
-export interface PropertyChangedPayload {
-  block_id: string
-  changed_keys: string[]
-}
-
 let invalidationKey = 0
 const subscribers = new Set<() => void>()
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
-let listenerInitialized = false
+let targetRegistered = false
+let unregisterTarget: (() => void) | null = null
 
 function notify(): void {
   for (const cb of subscribers) cb()
@@ -80,43 +84,36 @@ export function recordBlockPropertyChange(): void {
 }
 
 /**
- * Lazily register the process-lifetime Tauri listener. Idempotent — once
- * registered it stays for the rest of the session (the counter is meant to
- * survive any individual component's mount/unmount, which is the whole point of
- * #1818). Mirrors the Tauri-only gate from `property-keys-cache.ts` so jsdom /
- * browser-mode dev sessions don't trigger a `transformCallback` NPE from the
- * unmocked `@tauri-apps/api/event` import.
+ * Register the blanket counter's fan-out target on the shared
+ * `block:properties-changed` dispatcher and make sure the dispatcher's single
+ * process-lifetime listener is wired up (#2507). Idempotent — the target is
+ * added once, and `ensurePropertyChangeDispatch` self-guards (and retries on a
+ * prior `listen()` failure). The counter ignores the payload (it is deliberately
+ * a blanket bump — cheap, and every consumer that reads it wants "something
+ * changed"), so the target discards its argument.
  *
- * @param onError optional handler invoked if `listen()` rejects, so the React
- *   adapter can preserve its existing `logger.warn` shape.
+ * The registration is MODULE-LEVEL and survives any individual component's
+ * mount/unmount — the whole point of #1818: a mutation that fires while a
+ * consumer is unmounted must still bump the counter so the next mount refetches.
+ *
+ * @param onError optional handler invoked if the dispatcher's `listen()`
+ *   rejects, so the React adapter can preserve its existing `logger.warn` shape.
  */
 export function ensureBlockPropertyEventsListener(onError?: (err: unknown) => void): void {
-  if (listenerInitialized) return
-  listenerInitialized = true
-  const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
-  if (!inTauri) return
-  listen<PropertyChangedPayload>(EVENT_PROPERTY_CHANGED, () => {
-    recordBlockPropertyChange()
-  }).catch((err: unknown) => {
-    // Allow a retry on a later mount if the initial subscription failed.
-    listenerInitialized = false
-    if (onError) {
-      onError(err)
-    } else {
-      logger.warn(
-        'block-property-events',
-        'failed to register property-change listener',
-        undefined,
-        err,
-      )
-    }
-  })
+  if (!targetRegistered) {
+    targetRegistered = true
+    unregisterTarget = registerPropertyChangeTarget(() => {
+      recordBlockPropertyChange()
+    })
+  }
+  ensurePropertyChangeDispatch(onError)
 }
 
 /**
  * Test-only reset. Clears the counter, any pending debounce timer, the
- * subscriber set, and the lazy-listener flag so each test starts from a clean
- * slate. Imported directly by tests; not part of the public surface.
+ * subscriber set, the fan-out target registration, and the shared dispatcher so
+ * each test starts from a clean slate. Imported directly by tests; not part of
+ * the public surface.
  */
 export function _resetBlockPropertyEventsForTest(): void {
   invalidationKey = 0
@@ -125,5 +122,10 @@ export function _resetBlockPropertyEventsForTest(): void {
     debounceTimer = null
   }
   subscribers.clear()
-  listenerInitialized = false
+  targetRegistered = false
+  if (unregisterTarget) {
+    unregisterTarget()
+    unregisterTarget = null
+  }
+  _resetPropertyChangeDispatchForTest()
 }

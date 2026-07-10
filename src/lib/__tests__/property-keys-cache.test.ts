@@ -64,10 +64,10 @@ function listPropertyKeysInvocationCount(): number {
   return mockedInvoke.mock.calls.filter((c) => c[0] === 'list_property_keys').length
 }
 
-function fireInvalidationEvent(): void {
+function fireInvalidationEvent(changedKeys: string[] = ['assignee']): void {
   const handler = eventListeners.get(EVENT_PROPERTY_CHANGED)
   if (!handler) throw new Error(`${EVENT_PROPERTY_CHANGED} listener was never registered`)
-  handler({ payload: { block_id: 'BLK01', changed_keys: ['project'] } })
+  handler({ payload: { block_id: 'BLK01', changed_keys: changedKeys } })
 }
 
 describe('property-keys-cache', () => {
@@ -122,15 +122,17 @@ describe('property-keys-cache', () => {
   })
 
   // ------------------------------------------------------------------
-  // (c) Invalidation event triggers a refetch on the next consumer
+  // (c) An event that introduces a NEW key invalidates the cache so the
+  //     next fetch refetches (#2507 keyed invalidation — the distinct-key
+  //     list can only change when a key not already known appears).
   // ------------------------------------------------------------------
-  it('block:properties-changed invalidates the cache so the next fetch refetches', async () => {
+  it('block:properties-changed with a NEW key invalidates the cache so the next fetch refetches', async () => {
     ensurePropertyKeysInvalidationListener()
-    await fetchPropertyKeysOnce('SPACE_A')
+    await fetchPropertyKeysOnce('SPACE_A') // caches ['project', 'effort']
     expect(listPropertyKeysInvocationCount()).toBe(1)
 
-    // Materializer signals that property data changed.
-    fireInvalidationEvent()
+    // A write introduces a key the cache has never seen.
+    fireInvalidationEvent(['assignee'])
 
     // Cached entry is dropped — snapshot resets to EMPTY.
     expect(getCachedPropertyKeys('SPACE_A')).toBe(PROPERTY_KEYS_EMPTY)
@@ -140,6 +142,28 @@ describe('property-keys-cache', () => {
     const refreshed = await fetchPropertyKeysOnce('SPACE_A')
     expect(refreshed).toEqual(['project', 'effort', 'assignee'])
     expect(listPropertyKeysInvocationCount()).toBe(2)
+  })
+
+  // ------------------------------------------------------------------
+  // (c-reduced) #2507 reduced-wakeup: an event whose changed_keys are ALL
+  //     already-known keys cannot change the distinct-key list, so the
+  //     cache is left intact and NO refetch fires on the next consumer.
+  // ------------------------------------------------------------------
+  it('block:properties-changed with only already-known keys does NOT invalidate (no refetch)', async () => {
+    ensurePropertyKeysInvalidationListener()
+    const cached = await fetchPropertyKeysOnce('SPACE_A') // caches ['project', 'effort']
+    expect(listPropertyKeysInvocationCount()).toBe(1)
+
+    // A write only touches keys the cache already knows about.
+    fireInvalidationEvent(['project', 'effort'])
+
+    // Cache untouched — same array reference, still populated.
+    expect(getCachedPropertyKeys('SPACE_A')).toBe(cached)
+
+    // The next consumer reuses the cached array without a fresh IPC.
+    const again = await fetchPropertyKeysOnce('SPACE_A')
+    expect(again).toBe(cached)
+    expect(listPropertyKeysInvocationCount()).toBe(1)
   })
 
   // ------------------------------------------------------------------

@@ -53,10 +53,13 @@ function listPropertyKeysInvocationCount(): number {
   return mockedInvoke.mock.calls.filter((c) => c[0] === 'list_property_keys').length
 }
 
-function fireInvalidationEvent(): void {
+// Default to a key the cache has never seen so the #2507 keyed-invalidation
+// strategy treats it as a distinct-key-list change and clears the cache. Pass
+// only already-known keys to exercise the skip-when-no-new-key path.
+function fireInvalidationEvent(changedKeys: string[] = ['assignee']): void {
   const handler = eventListeners.get('block:properties-changed')
   if (!handler) throw new Error('block:properties-changed listener was never registered')
-  handler({ payload: { block_id: 'BLK01', changed_keys: ['project'] } })
+  handler({ payload: { block_id: 'BLK01', changed_keys: changedKeys } })
 }
 
 describe('usePropertyKeysCache', () => {
@@ -123,7 +126,7 @@ describe('usePropertyKeysCache', () => {
   // ------------------------------------------------------------------
   // (c) Invalidation event clears the cache
   // ------------------------------------------------------------------
-  it('clears the cache when block:properties-changed fires', async () => {
+  it('clears the cache when block:properties-changed introduces a new key', async () => {
     const { result } = renderHook(() => usePropertyKeysCache('SPACE_A'))
     await waitFor(() => {
       expect(result.current).toEqual(['project', 'effort'])
@@ -131,13 +134,31 @@ describe('usePropertyKeysCache', () => {
     expect(listPropertyKeysInvocationCount()).toBe(1)
 
     // The Tauri listener was registered on first mount — fire the
-    // materializer event and confirm the cached entry is dropped.
+    // materializer event with a NEW key and confirm the cached entry is
+    // dropped (#2507 keyed invalidation).
     act(() => {
-      fireInvalidationEvent()
+      fireInvalidationEvent(['assignee'])
     })
 
     // Snapshot resets to empty until a fresh consumer triggers a refetch.
     expect(result.current).toEqual([])
+  })
+
+  it('does NOT clear the cache when block:properties-changed only touches known keys (#2507)', async () => {
+    const { result } = renderHook(() => usePropertyKeysCache('SPACE_A'))
+    await waitFor(() => {
+      expect(result.current).toEqual(['project', 'effort'])
+    })
+    expect(listPropertyKeysInvocationCount()).toBe(1)
+
+    // A write to an already-known key can't change the distinct-key list, so
+    // the strategy skips invalidation and the cache stays populated.
+    act(() => {
+      fireInvalidationEvent(['project'])
+    })
+
+    expect(result.current).toEqual(['project', 'effort'])
+    expect(listPropertyKeysInvocationCount()).toBe(1)
   })
 
   it('exposes invalidatePropertyKeysCache() for non-event callers', async () => {
@@ -166,9 +187,9 @@ describe('usePropertyKeysCache', () => {
     })
     expect(listPropertyKeysInvocationCount()).toBe(1)
 
-    // Materializer signals that property data changed.
+    // Materializer signals that a new property key appeared.
     act(() => {
-      fireInvalidationEvent()
+      fireInvalidationEvent(['assignee'])
     })
 
     // Third consumer mounts post-invalidation — must trigger refetch.
