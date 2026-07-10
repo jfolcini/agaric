@@ -34,5 +34,3 @@ async fn set_page_aliases_creates_and_returns_aliases() {
         "persisted aliases should match"
     );
 }
-
-NOTE_TRUNCATED_PLACEHOLDER_DO_NOT_USE
