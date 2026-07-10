@@ -2533,6 +2533,19 @@ mod log_dir_tests {
         perms.set_mode(0o500);
         std::fs::set_permissions(&parent, perms).expect("chmod readonly");
 
+        // Root bypasses DAC permission checks (CAP_DAC_OVERRIDE), so on a
+        // uid-0 runner (container/sandbox) the 0o500 parent is still
+        // writable and the unwritable-dir premise doesn't hold. Probe the
+        // actual effect instead of assuming it: if this write succeeds,
+        // skip rather than fail on an environment artifact.
+        if std::fs::write(parent.join(".dac-probe"), b"x").is_ok() {
+            eprintln!(
+                "skipping unwritable_log_dir_degrades_without_panic: \
+                 0o500 parent is still writable (running as root?)"
+            );
+            return;
+        }
+
         let log_dir = parent.join("logs");
         let appender = build_log_file_appender(&log_dir);
 
