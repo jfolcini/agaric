@@ -87,6 +87,18 @@ const KNOWN_UNWRAPPED = new Set([
   // `setTraceSampling` (which also sets the frontend-local ratio), not by a
   // `tauri.ts` wrapper, so it has no ergonomics value there; consumed directly.
   'setTraceSampling',
+  // (c) #2544 — deliberately NOT wrapped. `restore_all_deleted` /
+  // `purge_all_deleted` take no `space_id` and act on every space's trash,
+  // which is unsafe to expose from the Trash view (space-scoped list,
+  // badge, and confirmation copy). The space-safe replacements
+  // `restoreAllDeletedInSpace` / `purgeAllDeletedInSpace` (which drain
+  // `listTrash` for one space and delegate to `restoreBlocksByIds` /
+  // `purgeBlocksByIds`) are the only sanctioned way to bulk-restore/purge
+  // trash from the frontend. Leaving these bindings unwrapped is
+  // intentional friction against a future caller reaching for the
+  // unscoped command by accident.
+  'restoreAllDeleted',
+  'purgeAllDeleted',
 ])
 
 const bindingsSrc = fs.readFileSync(BINDINGS, 'utf8')

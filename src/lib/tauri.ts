@@ -1,6 +1,7 @@
 import { Channel } from '@tauri-apps/api/core'
 
 import { commands } from './bindings'
+import { PAGINATION_LIMIT } from './constants'
 import { logger } from './logger'
 import { setLogBackendSink } from './logger-transport'
 import { isMobilePlatform } from './platform'
@@ -387,16 +388,6 @@ export interface BulkTrashResponse {
   affected_count: number
 }
 
-/** Restore all soft-deleted blocks. Returns count of restored blocks. */
-export async function restoreAllDeleted(): Promise<BulkTrashResponse> {
-  return unwrap(await commands.restoreAllDeleted())
-}
-
-/** Permanently purge all soft-deleted blocks. Irreversible. */
-export async function purgeAllDeleted(): Promise<BulkTrashResponse> {
-  return unwrap(await commands.purgeAllDeleted())
-}
-
 /**
  * Restore a list of soft-deleted blocks in a single IPC.
  *
@@ -424,6 +415,80 @@ export async function restoreBlocksByIds(blockIds: string[]): Promise<number> {
 export async function purgeBlocksByIds(blockIds: string[]): Promise<number> {
   const resp = unwrap(await commands.purgeBlocksByIds(blockIds))
   return resp.affected_count
+}
+
+/**
+ * Backend cap on the `block_ids` batch accepted by `restore_blocks_by_ids`
+ * / `purge_blocks_by_ids` (`MAX_BATCH_BLOCK_IDS` in
+ * `src-tauri/src/commands/mod.rs`). Mirrored here so
+ * {@link restoreAllDeletedInSpace} / {@link purgeAllDeletedInSpace} can
+ * chunk an arbitrarily large trash into backend-accepted batches instead
+ * of surfacing `AppError::Validation` for a busy trash.
+ */
+const MAX_TRASH_BATCH_IDS = 1000
+
+/**
+ * Collect every trash-root id belonging to `spaceId` by walking
+ * `listTrash`'s cursor chain to completion — independent of whatever page
+ * / cursor position the caller's own UI list happens to be showing.
+ * Shared by {@link restoreAllDeletedInSpace} and
+ * {@link purgeAllDeletedInSpace}.
+ */
+async function collectAllTrashRootIds(spaceId: string): Promise<string[]> {
+  const ids: string[] = []
+  let cursor: string | undefined
+  for (;;) {
+    const page = await listTrash({
+      ...(cursor != null && { cursor }),
+      limit: PAGINATION_LIMIT,
+      spaceId,
+    })
+    ids.push(...page.items.map((b) => b.id))
+    if (!page.has_more || page.next_cursor == null) break
+    cursor = page.next_cursor
+  }
+  return ids
+}
+
+/**
+ * Restore every soft-deleted block in `spaceId`.
+ *
+ * #2544 — the backend's `restore_all_deleted` command is intentionally
+ * NOT called here: it takes no `space_id` and would resurrect trashed
+ * blocks across EVERY space, not just the one the Trash view displays
+ * (and the one its confirmation dialog counted). Instead this drains the
+ * already space-scoped `listTrash` cursor chain for `spaceId` (mirroring
+ * the "ignore the frontend's own load-more frontier, act on everything in
+ * trash" semantics `purge_all_deleted` used to provide, just space-scoped)
+ * and hands the resulting root ids to `restoreBlocksByIds` — the same
+ * space-safe path the per-row and multi-select restore actions already
+ * use — chunked to the backend's batch-size cap.
+ */
+export async function restoreAllDeletedInSpace(spaceId: string): Promise<BulkTrashResponse> {
+  const ids = await collectAllTrashRootIds(spaceId)
+  let affectedCount = 0
+  for (let i = 0; i < ids.length; i += MAX_TRASH_BATCH_IDS) {
+    affectedCount += await restoreBlocksByIds(ids.slice(i, i + MAX_TRASH_BATCH_IDS))
+  }
+  return { affected_count: affectedCount }
+}
+
+/**
+ * Permanently purge every soft-deleted block in `spaceId`. Irreversible.
+ *
+ * #2544 — mirrors {@link restoreAllDeletedInSpace}'s rationale: the
+ * backend's `purge_all_deleted` command is unscoped and would destroy
+ * trash in every space, not just the active one shown (and confirmed) by
+ * the Trash view's "Empty trash" dialog. Scoped here the same way, via
+ * `purgeBlocksByIds`.
+ */
+export async function purgeAllDeletedInSpace(spaceId: string): Promise<BulkTrashResponse> {
+  const ids = await collectAllTrashRootIds(spaceId)
+  let affectedCount = 0
+  for (let i = 0; i < ids.length; i += MAX_TRASH_BATCH_IDS) {
+    affectedCount += await purgeBlocksByIds(ids.slice(i, i + MAX_TRASH_BATCH_IDS))
+  }
+  return { affected_count: affectedCount }
 }
 
 /**
