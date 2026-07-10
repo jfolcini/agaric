@@ -93,6 +93,24 @@ const HISTORY_BENCH_DEVICE: &str = "bench-device";
 /// a monotonic per-op offset so ordering matches the old string ordering.
 const SLO_BASE_TS_MS: i64 = 1_736_942_400_000;
 
+/// #2508 scope item 1 — distinct tag count for `bench_tags_cache_direct_query`'s
+/// fixture. Spreading `FIXTURE_SIZE` tagged blocks across this many tags gives
+/// `DESIRED_TAGS_SQL`'s `GROUP BY tag_id` a realistic number of groups (not one
+/// dominant tag skewing the scan).
+const TAGS_CACHE_TAG_COUNT: usize = 500;
+
+/// #2508 scope item 1 — page/children shape for
+/// `bench_pages_cache_counts_direct_query`'s fixture.
+/// `PAGES_CACHE_FIXTURE_PAGES * (PAGES_CACHE_CHILDREN_PER_PAGE + 1) == FIXTURE_SIZE`
+/// (10_000 pages × 10 blocks/page = 100_000) so the DB is at the same
+/// 100K-block SLO scale as every other bench in this file.
+const PAGES_CACHE_FIXTURE_PAGES: usize = 10_000;
+const PAGES_CACHE_CHILDREN_PER_PAGE: usize = 9;
+
+/// #2508 scope item 1 — "a representative page set (e.g. 50 pages like a
+/// Pages-view page)" per the issue's scope description.
+const PAGES_CACHE_SAMPLE_SIZE: usize = 50;
+
 // ---------------------------------------------------------------------------
 // Accumulator type
 // ---------------------------------------------------------------------------
@@ -523,6 +541,136 @@ async fn seed_backlinks_for_batch(pool: &SqlitePool, n: usize) {
             .unwrap();
     }
     tx.commit().await.unwrap();
+}
+
+/// #2508 scope item 1 — attach `TAGS_CACHE_TAG_COUNT` tag blocks to the given
+/// (already-seeded) content block ids, split across BOTH `block_tags`
+/// (explicit tagging) and `block_tag_refs` (inline `#[ULID]` refs) so
+/// `DESIRED_TAGS_SQL`'s `UNION` in `bench_tags_cache_direct_query` scans real
+/// rows from both source tables, not just one. Even-indexed blocks get a
+/// `block_tags` row, odd-indexed blocks get a `block_tag_refs` row; every tag
+/// ends up with nonzero usage spread over many distinct blocks (round-robin
+/// assignment), matching the "no cache row is a lonely zero-usage tag" shape
+/// `DESIRED_TAGS_SQL`'s `LEFT JOIN … COALESCE` has to handle either way.
+async fn seed_tags_with_usage(
+    pool: &SqlitePool,
+    block_ids: &[String],
+    n_tags: usize,
+) -> Vec<String> {
+    let mut tx = pool.begin().await.unwrap();
+    let mut tag_ids = Vec::with_capacity(n_tags);
+    for i in 0..n_tags {
+        let tag_id = format!("SLOTAG{i:018}");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'tag', ?, ?)",
+        )
+        .bind(&tag_id)
+        .bind(format!("tag{i}"))
+        .bind(i as i64 + 1)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        tag_ids.push(tag_id);
+    }
+    for (i, block_id) in block_ids.iter().enumerate() {
+        let tag_id = &tag_ids[i % n_tags];
+        if i % 2 == 0 {
+            sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+                .bind(block_id)
+                .bind(tag_id)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+        } else {
+            sqlx::query("INSERT INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)")
+                .bind(block_id)
+                .bind(tag_id)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+        }
+    }
+    tx.commit().await.unwrap();
+    tag_ids
+}
+
+/// #2508 scope item 1 — fixture for `bench_pages_cache_counts_direct_query`.
+/// Seeds `n_pages` page blocks, each with `children_per_page` child blocks
+/// whose `page_id` points back at the owning page (the column the
+/// `child_block_count` subselect in
+/// `materializer/handlers/pages_cache.rs:104-120` filters on — plain
+/// `seed_pages_with_links`-style children don't set `page_id`, which would
+/// make that subselect scan zero rows). Every page's first child also links
+/// to 3 OTHER pages' own block ids (round-robin), so `inbound_link_count`
+/// sees real cross-page `block_links` rows with a live, non-NULL,
+/// different-page `src.page_id` — the exact shape that subselect's `WHERE
+/// src.page_id != pages_cache.page_id` filter is selecting for. Returns the
+/// page ids in seed order.
+async fn seed_pages_cache_fixture(
+    pool: &SqlitePool,
+    n_pages: usize,
+    children_per_page: usize,
+) -> Vec<String> {
+    let mut tx = pool.begin().await.unwrap();
+    let mut page_ids = Vec::with_capacity(n_pages);
+    let mut first_child_of = Vec::with_capacity(n_pages);
+    let mut child_counter: usize = 0;
+    for i in 0..n_pages {
+        let page_id = format!("SLOPGC{i:018}");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position, page_id) \
+             VALUES (?, 'page', ?, ?, ?)",
+        )
+        .bind(&page_id)
+        .bind(format!("Page {i}"))
+        .bind(i as i64 + 1)
+        .bind(&page_id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+
+        let mut first_child: Option<String> = None;
+        for c in 0..children_per_page {
+            let child_id = format!("SLOCHC{child_counter:018}");
+            child_counter += 1;
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+                 VALUES (?, 'content', ?, ?, ?, ?)",
+            )
+            .bind(&child_id)
+            .bind(format!("Child {c} of page {i}"))
+            .bind(&page_id)
+            .bind(c as i64 + 1)
+            .bind(&page_id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+            if first_child.is_none() {
+                first_child = Some(child_id);
+            }
+        }
+        first_child_of.push(first_child);
+        page_ids.push(page_id);
+    }
+    for (i, first_child) in first_child_of.iter().enumerate() {
+        let Some(source_child) = first_child else {
+            continue;
+        };
+        for offset in 1..=3 {
+            let target_idx = (i + offset) % n_pages;
+            if target_idx == i {
+                continue;
+            }
+            sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+                .bind(source_child)
+                .bind(&page_ids[target_idx])
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+        }
+    }
+    tx.commit().await.unwrap();
+    page_ids
 }
 
 /// Deterministic, monotonic `op_log.created_at` (epoch ms) from a seq counter.
@@ -1366,6 +1514,189 @@ fn bench_list_projected_agenda(c: &mut Criterion) {
     assert_under_budget_deferred("list_projected_agenda @ 100K", &acc, BUDGET_MS);
 }
 
+/// #2508 scope item 1 — the `DESIRED_TAGS_SQL` projection from
+/// `src/cache/tags.rs:70-87`, copied VERBATIM (that const is private to the
+/// crate's `cache::tags` module, so a bench binary — a separate crate root —
+/// cannot `use` it directly; keep this in sync with the source if it
+/// changes). This is the query `tags_cache` denormalizes: a `GROUP BY` over
+/// `block_tags ∪ block_tag_refs` joined to live tag blocks.
+///
+/// **Direction of measurement**: this times the query as a plain read — it
+/// never writes `tags_cache` — so the nightly 100K lane can compare this
+/// number against the cache's read/write-amplification cost and produce the
+/// #2508 keep-vs-drop verdict on whether `tags_cache` is still worth
+/// maintaining or whether callers could just run this SELECT live.
+const SLO_TAGS_CACHE_DIRECT_SQL: &str = "SELECT b.id, b.content, COALESCE(t.cnt, 0) AS cnt
+             FROM blocks b
+             LEFT JOIN (
+                 SELECT tag_id, COUNT(*) AS cnt FROM (
+                     SELECT bt.tag_id, bt.block_id
+                     FROM block_tags bt
+                     JOIN blocks blk ON blk.id = bt.block_id
+                     WHERE blk.deleted_at IS NULL
+                     UNION
+                     SELECT btr.tag_id, btr.source_id AS block_id
+                     FROM block_tag_refs btr
+                     JOIN blocks blk ON blk.id = btr.source_id
+                     WHERE blk.deleted_at IS NULL
+                 )
+                 GROUP BY tag_id
+             ) t ON t.tag_id = b.id
+             WHERE b.block_type = 'tag' AND b.deleted_at IS NULL AND b.content IS NOT NULL
+             ORDER BY b.id ASC";
+
+/// #2508 scope item 1 — the two `pages_cache` count subselects from
+/// `materializer/handlers/pages_cache.rs:104-120`
+/// (`recompute_pages_cache_counts_for_pages`), adapted from an `UPDATE
+/// pages_cache SET … WHERE page_id IN (…)` into a plain `SELECT … FROM
+/// blocks p WHERE p.id IN (…)` — same two correlated subqueries, same
+/// predicates, just read instead of written, and rooted on `blocks` (the
+/// live source of truth) instead of the cache table itself so this measures
+/// the direct computation `pages_cache.inbound_link_count` /
+/// `child_block_count` denormalize. The `json_each(?)` id-list binding
+/// mirrors the production function's own batching idiom.
+const SLO_PAGES_CACHE_COUNTS_DIRECT_SQL: &str = "SELECT p.id AS page_id, \
+    ( \
+        SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
+            JOIN blocks descendant ON bl.target_id = descendant.id \
+            JOIN blocks src ON src.id = bl.source_id \
+            WHERE descendant.page_id = p.id \
+              AND descendant.deleted_at IS NULL \
+              AND src.deleted_at IS NULL \
+              AND src.page_id IS NOT NULL \
+              AND src.page_id != p.id \
+    ) AS inbound_link_count, \
+    ( \
+        SELECT COUNT(*) FROM blocks descendant \
+            WHERE descendant.page_id = p.id \
+              AND descendant.deleted_at IS NULL \
+              AND descendant.id != p.id \
+    ) AS child_block_count \
+    FROM blocks p \
+    WHERE p.id IN (SELECT value FROM json_each(?))";
+
+/// `tags_cache` direct query — #2508 scope item 1. PROBLEM TIER (gated
+/// behind `SLO_INCLUDE_PROBLEM`, same `#2178`-style "confirmable probe"
+/// idiom as `bench_list_page_links`/`bench_list_projected_agenda`): this is
+/// a NEW measurement probe, not a known-over-budget command, but #2508
+/// notes the 100K fixture isn't runnable in this dev sandbox, so it rides
+/// the same nightly-only gate rather than claiming an unverified green
+/// pass. `SLO_INCLUDE_PROBLEM=1 cargo bench --bench interactive_slo` (the
+/// scheduled `bench-slo` workflow) produces the real 100K measurement this
+/// scope item asks for.
+fn bench_tags_cache_direct_query(c: &mut Criterion) {
+    const BUDGET_MS: f64 = 200.0;
+
+    if problem_skipped("tags_cache direct query @ 100K") {
+        return;
+    }
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_tags_cache_direct"));
+    let ids = rt.block_on(seed_blocks_bulk(&pool, FIXTURE_SIZE));
+    rt.block_on(seed_tags_with_usage(&pool, &ids, TAGS_CACHE_TAG_COUNT));
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    group.bench_function("tags_cache_direct_query_100k", move |b| {
+        let acc = acc_for_bench.clone();
+        let pool = pool.clone();
+        b.to_async(&rt).iter_custom(move |iters| {
+            let pool = pool.clone();
+            let acc = acc.clone();
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let rows = sqlx::query(SLO_TAGS_CACHE_DIRECT_SQL)
+                        .fetch_all(&pool)
+                        .await
+                        .unwrap();
+                    assert!(
+                        !rows.is_empty(),
+                        "tags_cache direct query returned no rows — seeding bug"
+                    );
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+
+    assert_under_budget_deferred("tags_cache direct query @ 100K", &acc, BUDGET_MS);
+}
+
+/// `pages_cache` counts direct query — #2508 scope item 1. PROBLEM TIER
+/// (gated behind `SLO_INCLUDE_PROBLEM`; see `bench_tags_cache_direct_query`
+/// doc for why a new #2508 probe rides this gate rather than an unverified
+/// green claim). Runs the live `inbound_link_count` +
+/// `child_block_count` computation as a plain `SELECT` (never an `UPDATE`)
+/// for a 50-page sample — "a representative page set … like a Pages-view
+/// page" per the issue's scope description.
+fn bench_pages_cache_counts_direct_query(c: &mut Criterion) {
+    const BUDGET_MS: f64 = 200.0;
+
+    if problem_skipped("pages_cache counts direct query @ 100K") {
+        return;
+    }
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_pages_cache_counts_direct"));
+    let page_ids = rt.block_on(seed_pages_cache_fixture(
+        &pool,
+        PAGES_CACHE_FIXTURE_PAGES,
+        PAGES_CACHE_CHILDREN_PER_PAGE,
+    ));
+    let stride = page_ids.len() / PAGES_CACHE_SAMPLE_SIZE;
+    let sample_pages: Vec<&String> = page_ids
+        .iter()
+        .step_by(stride)
+        .take(PAGES_CACHE_SAMPLE_SIZE)
+        .collect();
+    let sample_json = serde_json::to_string(&sample_pages).unwrap();
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    group.bench_function("pages_cache_counts_direct_query_100k", move |b| {
+        let acc = acc_for_bench.clone();
+        let pool = pool.clone();
+        let sample_json = sample_json.clone();
+        b.to_async(&rt).iter_custom(move |iters| {
+            let pool = pool.clone();
+            let acc = acc.clone();
+            let sample_json = sample_json.clone();
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let rows = sqlx::query(SLO_PAGES_CACHE_COUNTS_DIRECT_SQL)
+                        .bind(&sample_json)
+                        .fetch_all(&pool)
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        rows.len(),
+                        PAGES_CACHE_SAMPLE_SIZE,
+                        "pages_cache counts direct query returned unexpected row count"
+                    );
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+
+    assert_under_budget_deferred("pages_cache counts direct query @ 100K", &acc, BUDGET_MS);
+}
+
 // ===========================================================================
 // Harness
 // ===========================================================================
@@ -1387,6 +1718,8 @@ criterion_group!(
     slo_problem,
     bench_list_page_links,
     bench_list_projected_agenda,
+    bench_tags_cache_direct_query,
+    bench_pages_cache_counts_direct_query,
     problem_tier_verdict,
 );
 
