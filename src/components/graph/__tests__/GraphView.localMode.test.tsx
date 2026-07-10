@@ -85,7 +85,10 @@ beforeEach(() => {
   seedTab('hub')
   mockedInvoke.mockImplementation((cmd: string) => {
     if (cmd === 'list_all_pages_in_space') return Promise.resolve(PAGES)
-    if (cmd === 'list_page_links') return Promise.resolve(LINKS)
+    // #2298 count-then-cap — `list_page_links` ships a `PageLinksResponse`
+    // envelope (edges + true total + truncated flag).
+    if (cmd === 'list_page_links')
+      return Promise.resolve({ edges: LINKS, total: LINKS.length, truncated: false })
     if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
     return Promise.resolve(null)
   })

@@ -262,6 +262,22 @@ class MockWorker {
 
 const mockedInvoke = vi.mocked(invoke)
 
+/**
+ * Wrap raw edges in the #2298 `PageLinksResponse` count-then-cap envelope
+ * (`list_page_links` no longer returns a bare array). Uncapped by default;
+ * pass `overrides` to simulate a fetch where the backend edge cap fired.
+ */
+function linksOf(
+  edges: Array<Record<string, unknown>>,
+  overrides?: { total?: number; truncated?: boolean },
+) {
+  return {
+    edges,
+    total: overrides?.total ?? edges.length,
+    truncated: overrides?.truncated ?? false,
+  }
+}
+
 // Save original Worker so we can restore it
 const OriginalWorker = globalThis['Worker'] as typeof Worker | undefined
 
@@ -315,7 +331,7 @@ describe('GraphView', () => {
   it('shows empty state when no pages exist', async () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
-      if (cmd === 'list_page_links') return Promise.resolve([])
+      if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
       if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
@@ -339,7 +355,7 @@ describe('GraphView', () => {
 
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-      if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
+      if (cmd === 'list_page_links') return Promise.resolve(linksOf(linksResponse))
       if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
@@ -357,6 +373,80 @@ describe('GraphView', () => {
     expect(svg.tagName).toBe('svg')
     expect(svg).toHaveAttribute('aria-label', 'Page Relationships')
     expect(svg).not.toHaveAttribute('role')
+  })
+
+  // #2298 count-then-cap — the backend edge cap fired: the filter bar must
+  // surface a "showing N of M links" notice with the TRUE total, where N is
+  // the rendered (capped) edge count.
+  it('surfaces the edge-truncation notice when the backend edge cap fired (#2298)', async () => {
+    const pages = [
+      { id: 'page-1', content: 'Page One', block_type: 'page' },
+      { id: 'page-2', content: 'Page Two', block_type: 'page' },
+    ]
+    const cappedEdges = [{ source_id: 'page-1', target_id: 'page-2', ref_count: 1 }]
+
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_all_pages_in_space') return Promise.resolve(pages)
+      if (cmd === 'list_page_links')
+        return Promise.resolve(linksOf(cappedEdges, { total: 4321, truncated: true }))
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+      return Promise.resolve(null)
+    })
+
+    render(<GraphView />)
+
+    const notice = await screen.findByTestId('graph-edges-truncated')
+    expect(notice).toHaveTextContent(
+      t('graph.filter.edgesTruncated', { shown: cappedEdges.length, total: 4321 }),
+    )
+  })
+
+  it('does not render the edge-truncation notice on an uncapped fetch (#2298)', async () => {
+    const pages = [
+      { id: 'page-1', content: 'Page One', block_type: 'page' },
+      { id: 'page-2', content: 'Page Two', block_type: 'page' },
+    ]
+    const linksResponse = [{ source_id: 'page-1', target_id: 'page-2', ref_count: 1 }]
+
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_all_pages_in_space') return Promise.resolve(pages)
+      if (cmd === 'list_page_links') return Promise.resolve(linksOf(linksResponse))
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+      return Promise.resolve(null)
+    })
+
+    render(<GraphView />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('graph-edges-truncated')).not.toBeInTheDocument()
+  })
+
+  // #2298 review fix — the notice's N must be the POST-client-filter edge
+  // count (what is actually on screen), not the raw fetched set. With the
+  // dimension filter hiding every node, zero edges render, so the notice
+  // must say "Showing 0 of 4321", not "Showing 1 of 4321".
+  it('reports the client-filtered edge count as N in the truncation notice (#2298)', async () => {
+    forceEmptyFilter = true
+    const pages = [
+      { id: 'page-1', content: 'Page One', block_type: 'page' },
+      { id: 'page-2', content: 'Page Two', block_type: 'page' },
+    ]
+    const cappedEdges = [{ source_id: 'page-1', target_id: 'page-2', ref_count: 1 }]
+
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_all_pages_in_space') return Promise.resolve(pages)
+      if (cmd === 'list_page_links')
+        return Promise.resolve(linksOf(cappedEdges, { total: 4321, truncated: true }))
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+      return Promise.resolve(null)
+    })
+
+    render(<GraphView />)
+
+    const notice = await screen.findByTestId('graph-edges-truncated')
+    expect(notice).toHaveTextContent(t('graph.filter.edgesTruncated', { shown: 0, total: 4321 }))
   })
 
   it('invokes d3 APIs to set up rendering, zoom, and drag (worker path)', async () => {
@@ -384,7 +474,7 @@ describe('GraphView', () => {
 
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-      if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
+      if (cmd === 'list_page_links') return Promise.resolve(linksOf(linksResponse))
       if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
@@ -475,7 +565,7 @@ describe('GraphView', () => {
   it('has no a11y violations with empty state', async () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
-      if (cmd === 'list_page_links') return Promise.resolve([])
+      if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
       if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
@@ -502,7 +592,7 @@ describe('GraphView', () => {
 
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-      if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
+      if (cmd === 'list_page_links') return Promise.resolve(linksOf(linksResponse))
       if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
@@ -536,7 +626,7 @@ describe('GraphView', () => {
 
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-      if (cmd === 'list_page_links') return Promise.resolve([])
+      if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
       if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
@@ -565,7 +655,7 @@ describe('GraphView', () => {
 
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-      if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
+      if (cmd === 'list_page_links') return Promise.resolve(linksOf(linksResponse))
       if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
@@ -592,7 +682,7 @@ describe('GraphView', () => {
 
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-      if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
+      if (cmd === 'list_page_links') return Promise.resolve(linksOf(linksResponse))
       if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
@@ -621,7 +711,7 @@ describe('GraphView', () => {
     function mockGraphData() {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
@@ -698,7 +788,7 @@ describe('GraphView', () => {
 
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-      if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
+      if (cmd === 'list_page_links') return Promise.resolve(linksOf(linksResponse))
       if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
@@ -736,7 +826,7 @@ describe('GraphView', () => {
 
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-      if (cmd === 'list_page_links') return Promise.resolve([])
+      if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
       if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
@@ -765,7 +855,7 @@ describe('GraphView', () => {
 
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-      if (cmd === 'list_page_links') return Promise.resolve([])
+      if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
       if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
@@ -796,7 +886,7 @@ describe('GraphView', () => {
 
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-      if (cmd === 'list_page_links') return Promise.resolve([])
+      if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
       if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
       return Promise.resolve(null)
     })
@@ -828,7 +918,7 @@ describe('GraphView', () => {
 
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
@@ -848,7 +938,7 @@ describe('GraphView', () => {
       MockWorker.instances = []
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
@@ -892,7 +982,7 @@ describe('GraphView', () => {
 
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
@@ -951,7 +1041,7 @@ describe('GraphView', () => {
 
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
@@ -1004,7 +1094,7 @@ describe('GraphView', () => {
 
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
@@ -1050,7 +1140,7 @@ describe('GraphView', () => {
 
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
@@ -1117,7 +1207,7 @@ describe('GraphView', () => {
             { id: 'page-1', content: 'Page One', block_type: 'page' },
             { id: 'page-2', content: 'Page Two', block_type: 'page' },
           ])
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
@@ -1163,7 +1253,7 @@ describe('GraphView', () => {
 
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
@@ -1199,7 +1289,7 @@ describe('GraphView', () => {
 
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
@@ -1227,7 +1317,7 @@ describe('GraphView', () => {
 
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
@@ -1255,7 +1345,7 @@ describe('GraphView', () => {
 
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
@@ -1294,7 +1384,7 @@ describe('GraphView', () => {
 
         mockedInvoke.mockImplementation((cmd: string) => {
           if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-          if (cmd === 'list_page_links') return Promise.resolve([])
+          if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
           if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
           return Promise.resolve(null)
         })
@@ -1347,7 +1437,7 @@ describe('GraphView', () => {
     it('does not crash on empty response', async () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
@@ -1375,7 +1465,7 @@ describe('GraphView', () => {
         mockedInvoke.mockImplementation((cmd: string) => {
           if (cmd === 'list_all_pages_in_space')
             return Promise.resolve([{ id: 'page-1', content: 'Page One', block_type: 'page' }])
-          if (cmd === 'list_page_links') return Promise.resolve([])
+          if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
           if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
           return Promise.resolve(null)
         })
@@ -1441,7 +1531,7 @@ describe('GraphView', () => {
           has_more: false,
           total_count: null,
         })
-        resolveLinks([])
+        resolveLinks(linksOf([]))
       })
 
       // No errors logged — cancelled flag prevented state updates and error handling
@@ -1464,7 +1554,7 @@ describe('GraphView', () => {
 
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-        if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf(linksResponse))
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
@@ -1495,7 +1585,7 @@ describe('GraphView', () => {
 
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
@@ -1531,7 +1621,7 @@ describe('GraphView', () => {
 
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
@@ -1571,7 +1661,7 @@ describe('GraphView', () => {
 
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
@@ -1631,7 +1721,7 @@ describe('GraphView', () => {
 
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
@@ -1672,7 +1762,7 @@ describe('GraphView', () => {
 
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
@@ -1715,7 +1805,7 @@ describe('GraphView', () => {
 
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_tags_by_prefix')
           return Promise.resolve([
             { tag_id: 'tag-1', name: 'Work', usage_count: 5, updated_at: '' },
@@ -1750,7 +1840,7 @@ describe('GraphView', () => {
 
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_tags_by_prefix')
           return Promise.resolve([
             { tag_id: 'tag-1', name: 'Work', usage_count: 5, updated_at: '' },
@@ -1788,7 +1878,7 @@ describe('GraphView', () => {
 
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesItems)
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_tags_by_prefix')
           return Promise.resolve([
             { tag_id: 'tag-1', name: 'Work', usage_count: 5, updated_at: '' },
@@ -1821,7 +1911,7 @@ describe('GraphView', () => {
             { id: 'page-1', content: 'Page One' },
             { id: 'page-2', content: 'Page Two' },
           ])
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_tags_by_prefix') return Promise.resolve([])
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
@@ -1845,7 +1935,7 @@ describe('GraphView', () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space')
           return Promise.resolve([{ id: 'page-1', content: 'Page One' }])
-        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
         if (cmd === 'list_tags_by_prefix') return Promise.resolve([])
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
@@ -1870,7 +1960,15 @@ describe('graph cache LRU (#758 item 4)', () => {
   function makeEntry(timestamp: number) {
     // #1818: entries now also carry the invalidation counter they were fetched
     // at; the LRU tests don't exercise invalidation, so a fixed 0 is fine.
-    return { nodes: [], edges: [], timestamp, invalidationKey: 0 }
+    // #2298: entries also carry the count-then-cap edge stats.
+    return {
+      nodes: [],
+      edges: [],
+      timestamp,
+      invalidationKey: 0,
+      edgesTotal: 0,
+      edgesTruncated: false,
+    }
   }
 
   beforeEach(() => {

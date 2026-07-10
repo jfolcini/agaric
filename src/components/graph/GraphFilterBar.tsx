@@ -42,6 +42,7 @@ import {
   getGraphFilterKey,
 } from '@/lib/graph-filters'
 import { logger } from '@/lib/logger'
+import { cn } from '@/lib/utils'
 
 /**
  * LocalStorage key for persisting the user's graph filters across
@@ -121,6 +122,19 @@ export interface GraphFilterBarProps {
   totalCount?: number | undefined
   /** Optional filtered count of pages — used for the "showing N of M" label. */
   filteredCount?: number | undefined
+  /**
+   * Optional count of link edges actually on screen (post client-side
+   * dimension filtering) — the N in the "showing N of M links" truncation
+   * notice (#2298 count-then-cap).
+   */
+  edgesShown?: number | undefined
+  /**
+   * Optional TRUE total of link edges matching the fetch filters, computed
+   * independently of the backend edge cap — the M in the notice (#2298).
+   */
+  edgesTotal?: number | undefined
+  /** True when the backend edge cap fired and `edgesShown < edgesTotal` (#2298). */
+  edgesTruncated?: boolean | undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -448,6 +462,9 @@ export function GraphFilterBar({
   allTags,
   totalCount,
   filteredCount,
+  edgesShown,
+  edgesTotal,
+  edgesTruncated,
 }: GraphFilterBarProps): React.ReactElement {
   const { t } = useTranslation()
   const [popoverOpen, setPopoverOpen] = useState(false)
@@ -509,6 +526,10 @@ export function GraphFilterBar({
     typeof filteredCount === 'number' &&
     hasFilters &&
     totalCount !== filteredCount
+  // #2298 — the backend edge cap fired: surface a non-blocking "showing
+  // N of M links" notice so a partial graph is never rendered silently.
+  const showEdgesTruncated =
+    edgesTruncated === true && typeof edgesShown === 'number' && typeof edgesTotal === 'number'
 
   return (
     <fieldset
@@ -592,6 +613,23 @@ export function GraphFilterBar({
           data-testid="graph-filter-count"
         >
           {t('graph.filter.showingCount', { filtered: filteredCount, total: totalCount })}
+        </span>
+      )}
+
+      {showEdgesTruncated && (
+        <span
+          className={cn(
+            'text-xs text-muted-foreground italic',
+            // Right-align the notice when it is the only trailing item;
+            // when the "showing N of M pages" count is present it owns the
+            // `ml-auto` and this notice trails it.
+            !showingCount && 'ml-auto',
+          )}
+          aria-live="polite"
+          aria-atomic="true"
+          data-testid="graph-edges-truncated"
+        >
+          {t('graph.filter.edgesTruncated', { shown: edgesShown, total: edgesTotal })}
         </span>
       )}
     </fieldset>

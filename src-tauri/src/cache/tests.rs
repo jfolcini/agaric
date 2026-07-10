@@ -4167,10 +4167,15 @@ async fn page_link_cache_read_path_matches_legacy_query() {
     .await;
     rebuild_page_link_cache(&pool).await.unwrap();
 
-    let new_rows =
+    // #2298: the read path orders by `edge_count DESC` (strongest edges
+    // first, count-then-cap); re-sort to the legacy `(source, target)`
+    // order for the positional zip below.
+    let mut new_rows =
         crate::commands::list_page_links_inner(&pool, &crate::space::SpaceScope::Global, None)
             .await
-            .unwrap();
+            .unwrap()
+            .edges;
+    new_rows.sort();
 
     let legacy_rows: Vec<(String, String, i64)> = sqlx::query_as(
         "SELECT
@@ -4250,6 +4255,7 @@ async fn read_page_links_sorted(pool: &SqlitePool) -> Vec<(String, String, i64)>
         crate::commands::list_page_links_inner(pool, &crate::space::SpaceScope::Global, None)
             .await
             .unwrap()
+            .edges
             .into_iter()
             .map(|l| {
                 (

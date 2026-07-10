@@ -551,14 +551,18 @@ export const commands = {
 	/**  Tauri command: batch-fetch full attachment lists. Delegates to [`list_attachments_batch_inner`]. */
 	listAttachmentsBatch: (blockIds: BlockId[]) => typedError<{ [key in string]: AttachmentRow[] }, AppError>(__TAURI_INVOKE("list_attachments_batch", { blockIds })),
 	/**
-	 *  Tauri command: list all page-to-page links for graph visualization.
+	 *  Tauri command: list page-to-page links for graph visualization.
 	 * 
 	 *  `tag_ids` — when non-empty, restricts edges to
 	 *  those whose target page carries at least one of the listed tags. The
 	 *  frontend GraphView passes its active tag filter here so the backend
 	 *  no longer ships every space-wide edge for the renderer to discard.
+	 * 
+	 *  #2298 — the edge set is capped at [`PAGE_LINKS_EDGE_CAP`] (strongest
+	 *  edges first); the response carries the true `total` and a `truncated`
+	 *  flag so the FE can show a "showing N of M" affordance.
 	 */
-	listPageLinks: (scope: SpaceScope, tagIds: string[] | null) => typedError<PageLink[], AppError>(__TAURI_INVOKE("list_page_links", { scope, tagIds })),
+	listPageLinks: (scope: SpaceScope, tagIds: string[] | null) => typedError<PageLinksResponse, AppError>(__TAURI_INVOKE("list_page_links", { scope, tagIds })),
 	/**  Tauri command: save a draft for a block. Delegates to [`draft::save_draft`]. */
 	saveDraft: (blockId: BlockId, content: string) => typedError<null, AppError>(__TAURI_INVOKE("save_draft", { blockId, content })),
 	/**
@@ -2377,6 +2381,32 @@ export type PageLink = {
 	source_id: ActiveBlockId,
 	target_id: ActiveBlockId,
 	ref_count: number,
+};
+
+/**
+ *  Response of `list_page_links` (#2298 count-then-cap).
+ * 
+ *  Mirrors the `PageSubtree` (#1258) capped-list-plus-honest-signal
+ *  precedent: `edges` is the (possibly capped) edge set, `total` is the
+ *  TRUE edge count computed independently of the cap, and `truncated`
+ *  (`total > edges.len()`) tells the FE the cap fired so it can surface
+ *  a non-blocking "showing N of M" notice instead of silently rendering
+ *  a partial graph.
+ */
+export type PageLinksResponse = {
+	/**
+	 *  The (possibly capped) edge set — the strongest
+	 *  [`PAGE_LINKS_EDGE_CAP`] edges by `ref_count` (see the ordering
+	 *  note on [`list_page_links_inner_split_with_cap`]).
+	 */
+	edges: PageLink[],
+	/**
+	 *  The true count of edges matching the filters, computed
+	 *  independently of the cap. `edges.len()` is `min(total, cap)`.
+	 */
+	total: number,
+	/**  True when the cap fired and some edges were dropped from `edges`. */
+	truncated: boolean,
 };
 
 /**

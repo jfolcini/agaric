@@ -3654,7 +3654,8 @@ async fn list_page_links_returns_only_current_space_edges_feat3p4() {
         None,
     )
     .await
-    .unwrap();
+    .unwrap()
+    .edges;
     let edges_a: std::collections::HashSet<(String, String)> = scoped_a
         .iter()
         .map(|l| (l.source_id.into(), l.target_id.into()))
@@ -3703,7 +3704,8 @@ async fn list_page_links_with_none_space_id_returns_all_edges_feat3p4() {
 
     let unscoped = crate::commands::list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
-        .unwrap();
+        .unwrap()
+        .edges;
     assert_eq!(
         unscoped.len(),
         4,
@@ -3738,7 +3740,9 @@ async fn list_page_links_with_nonexistent_space_id_returns_empty_feat3p4() {
     )
     .await
     .unwrap();
-    assert!(resp.is_empty());
+    assert!(resp.edges.is_empty());
+    assert_eq!(resp.total, 0);
+    assert!(!resp.truncated);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -3785,7 +3789,8 @@ async fn list_page_links_disjointness_feat3p4() {
             None,
         )
         .await
-        .unwrap(),
+        .unwrap()
+        .edges,
     );
     let b = to_set(
         crate::commands::list_page_links_inner(
@@ -3794,7 +3799,8 @@ async fn list_page_links_disjointness_feat3p4() {
             None,
         )
         .await
-        .unwrap(),
+        .unwrap()
+        .edges,
     );
     assert!(a.is_disjoint(&b), "A and B edge sets must be disjoint");
     assert!(a.contains(&("LPL_PSA".into(), "LPL_PTA".into())));
@@ -3856,17 +3862,20 @@ async fn list_page_links_cte_parity_with_inlined_subquery_pend20f() {
         None,
     )
     .await
-    .unwrap();
+    .unwrap()
+    .edges;
     let scope_b = crate::commands::list_page_links_inner(
         &pool,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
         None,
     )
     .await
-    .unwrap();
+    .unwrap()
+    .edges;
     let unscoped = crate::commands::list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
-        .unwrap();
+        .unwrap()
+        .edges;
 
     let to_set = |v: Vec<crate::commands::PageLink>| {
         v.into_iter()

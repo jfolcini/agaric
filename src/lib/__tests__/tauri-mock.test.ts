@@ -3418,12 +3418,21 @@ describe('scope-filter parity', () => {
     const { pageId: foreignPageId } = seedForeignFixture({
       linkTarget: SEED_IDS.PAGE_GETTING_STARTED,
     })
+    // #2298 count-then-cap — the handler ships a `PageLinksResponse`
+    // envelope; the mock world never caps, so `total` mirrors the edge
+    // count and `truncated` is always false.
     const result = invoke('list_page_links', {
       scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
-    }) as Array<{ source_id: string; target_id: string }>
+    }) as {
+      edges: Array<{ source_id: string; target_id: string }>
+      total: number
+      truncated: boolean
+    }
     // No edges from the foreign page should appear under the active scope.
-    expect(result.map((e) => e.source_id)).not.toContain(foreignPageId)
-    expect(result.map((e) => e.target_id)).not.toContain(foreignPageId)
+    expect(result.edges.map((e) => e.source_id)).not.toContain(foreignPageId)
+    expect(result.edges.map((e) => e.target_id)).not.toContain(foreignPageId)
+    expect(result.total).toBe(result.edges.length)
+    expect(result.truncated).toBe(false)
   })
 
   // -------------------------------------------------------------------------

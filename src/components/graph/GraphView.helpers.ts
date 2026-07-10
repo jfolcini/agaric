@@ -77,7 +77,7 @@ export async function fetchGraphData(
   tagFilterIds: readonly string[],
   spaceId: string | null,
 ): Promise<GraphFetchResult> {
-  if (spaceId == null) return { nodes: [], edges: [] }
+  if (spaceId == null) return { nodes: [], edges: [], edgesTotal: 0, edgesTruncated: false }
   // Push the active tag filter into `list_page_links`
   // so the backend ships only edges whose **target page** carries one
   // of the requested tags. Pre-Tier-4.5 the renderer fetched every
@@ -85,12 +85,17 @@ export async function fetchGraphData(
   // post-filtered `nodeIds` set; with the push-down the response is
   // already shape-restricted to the visible subgraph.
   const linksTagIds: string[] | null = tagFilterIds.length > 0 ? [...tagFilterIds] : null
-  const [pages, links, templateIdList] = await Promise.all([
+  const [pages, linksResponse, templateIdList] = await Promise.all([
     fetchPages(tagFilterIds, spaceId),
     listPageLinks({ spaceId, tagIds: linksTagIds }),
     listTemplatePageIdsInSpace(spaceId),
   ])
 
+  // #2298 count-then-cap: `list_page_links` now ships a
+  // `PageLinksResponse` envelope — the (possibly capped) `edges` plus the
+  // TRUE `total` and a `truncated` flag so the view can surface an honest
+  // "showing N of M links" notice when the cap fired.
+  const links = linksResponse.edges
   const templateIds = new Set<string>(templateIdList)
 
   const nodeIds = new Set<string>(pages.map((p) => p.id))
@@ -104,5 +109,10 @@ export async function fetchGraphData(
       ref_count: l.ref_count,
     }))
 
-  return { nodes, edges }
+  return {
+    nodes,
+    edges,
+    edgesTotal: linksResponse.total,
+    edgesTruncated: linksResponse.truncated,
+  }
 }

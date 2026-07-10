@@ -2949,10 +2949,16 @@ describe('listProjectedAgenda', () => {
 
 describe('listPageLinks', () => {
   it('invokes list_page_links with no arguments', async () => {
-    const expected = [
-      { source_id: 'PAGE1', target_id: 'PAGE2', ref_count: 3 },
-      { source_id: 'PAGE2', target_id: 'PAGE3', ref_count: 1 },
-    ]
+    // #2298 count-then-cap — the command now ships a `PageLinksResponse`
+    // envelope (edges + true total + truncated flag), not a bare array.
+    const expected = {
+      edges: [
+        { source_id: 'PAGE1', target_id: 'PAGE2', ref_count: 3 },
+        { source_id: 'PAGE2', target_id: 'PAGE3', ref_count: 1 },
+      ],
+      total: 2,
+      truncated: false,
+    }
     mockedInvoke.mockResolvedValueOnce(expected)
 
     const result = await listPageLinks()
@@ -2968,16 +2974,29 @@ describe('listPageLinks', () => {
     expect(result).toEqual(expected)
   })
 
-  it('returns empty array when no links exist', async () => {
-    mockedInvoke.mockResolvedValueOnce([])
+  it('returns an empty envelope when no links exist', async () => {
+    mockedInvoke.mockResolvedValueOnce({ edges: [], total: 0, truncated: false })
 
     const result = await listPageLinks()
 
-    expect(result).toEqual([])
+    expect(result).toEqual({ edges: [], total: 0, truncated: false })
+  })
+
+  it('surfaces the truncated flag and true total when the edge cap fired (#2298)', async () => {
+    const expected = {
+      edges: [{ source_id: 'PAGE1', target_id: 'PAGE2', ref_count: 3 }],
+      total: 5000,
+      truncated: true,
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await listPageLinks()
+
+    expect(result).toEqual(expected)
   })
 
   it('forwards spaceId as an active scope to the binding (Phase 3)', async () => {
-    mockedInvoke.mockResolvedValueOnce([])
+    mockedInvoke.mockResolvedValueOnce({ edges: [], total: 0, truncated: false })
     await listPageLinks('SPACE_42')
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
     expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
@@ -2985,7 +3004,7 @@ describe('listPageLinks', () => {
   })
 
   it('forwards tagIds when provided via the param-object shape', async () => {
-    mockedInvoke.mockResolvedValueOnce([])
+    mockedInvoke.mockResolvedValueOnce({ edges: [], total: 0, truncated: false })
     await listPageLinks({ spaceId: 'SPACE_42', tagIds: ['TAG_A', 'TAG_B'] })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
     expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
@@ -2993,7 +3012,7 @@ describe('listPageLinks', () => {
   })
 
   it('normalises an empty tagIds array to null', async () => {
-    mockedInvoke.mockResolvedValueOnce([])
+    mockedInvoke.mockResolvedValueOnce({ edges: [], total: 0, truncated: false })
     await listPageLinks({ spaceId: 'SPACE_42', tagIds: [] })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
     expect(args['tagIds']).toBeNull()

@@ -39,6 +39,8 @@ export type {
   ImportProgressUpdate,
   MoveResponse,
   PageHeading,
+  PageLink,
+  PageLinksResponse,
   PageResponse,
   PageSort,
   PageSubtree,
@@ -100,6 +102,7 @@ import type {
   ImportProgressUpdate,
   MoveResponse,
   PageHeading,
+  PageLinksResponse,
   PageResponse,
   PageSort,
   PageSubtree,
@@ -1405,6 +1408,13 @@ export async function listPageHistory(params: {
  * Backward-compat note: callers that still pass a bare `spaceId`
  * string keep working — the legacy positional shape is detected and
  * normalised to `{ spaceId, tagIds: null }` below.
+ *
+ * #2298 count-then-cap: the response is now a `PageLinksResponse`
+ * envelope — `edges` is the (possibly capped) edge set, `total` the
+ * TRUE matching-edge count computed independently of the cap, and
+ * `truncated` signals that the cap fired so the graph view can show
+ * a non-blocking "showing N of M" notice instead of silently
+ * rendering a partial graph.
  */
 export async function listPageLinks(
   arg?:
@@ -1415,7 +1425,7 @@ export async function listPageLinks(
         spaceId?: string | null | undefined
         tagIds?: string[] | null | undefined
       },
-): Promise<Array<{ source_id: string; target_id: string; ref_count: number }>> {
+): Promise<PageLinksResponse> {
   const params = typeof arg === 'object' && arg !== null ? arg : { spaceId: arg ?? null }
   const tagIds = params.tagIds && params.tagIds.length > 0 ? params.tagIds : null
   return unwrap(await commands.listPageLinks(toSpaceScope(params.spaceId), tagIds))

@@ -72,6 +72,9 @@ export const references: Record<string, string> = {
   'graph.filter.filtersApplied': '{{count}} filter applied',
   'graph.filter.filtersApplied_other': '{{count}} filters applied',
   'graph.filter.showingCount': 'Showing {{filtered}} of {{total}} pages',
+  // #2298 count-then-cap — the backend edge cap fired; the graph renders
+  // a partial edge set and says so instead of truncating silently.
+  'graph.filter.edgesTruncated': 'Showing {{shown}} of {{total}} links — large graph truncated',
   'graph.filter.tag': 'Tag',
   'graph.filter.tagPlural': 'Tags',
   'graph.filter.tagNoTags': 'No tags available',
