@@ -48,11 +48,8 @@ export function setStarred(ids: string[], starred: boolean): void {
   } else {
     for (const id of ids) set.delete(id)
   }
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify([...set]))
-  } catch {
-    // Storage unavailable (private mode / quota / locked-down webview) —
-    // degrade to no-persist rather than throwing into the click handler.
-    // Mirrors the silent fallback in getStarredPages above.
-  }
+  // Storage-unavailable write failures (private mode / quota / locked-down
+  // webview) are logged and swallowed by setPref rather than thrown into
+  // the click handler — same silent-degrade as the single-page writers.
+  setPref(PREFS.starredPages, [...set])
 }
