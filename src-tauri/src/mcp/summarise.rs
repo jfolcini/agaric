@@ -173,13 +173,24 @@ pub fn summarise_get_block(_args: &Value, result: &Value) -> String {
 pub fn summarise_list_backlinks(args: &Value, result: &Value) -> String {
     let block_id = str_field(args, "block_id").unwrap_or("");
     let prefix = ulid_prefix(block_id);
+    // #2201 item 1b: the backend now runs the grouped COUNT queries on the
+    // FIRST page only and returns `total_count: 0` on later pages (the FE
+    // keeps the first page's total for the header). So `total_count` is only
+    // meaningful on the first page; on a paginated call it is 0 even though the
+    // page still carries groups/blocks. Treat a present-but-zero `total_count`
+    // the same as an absent one — `filter(|&t| t > 0)` drops it — so we fall
+    // back to the group-derived block count and report THIS page's inbound
+    // count instead of a misleading "0 inbound". A genuinely empty first page
+    // has no groups, so the fallback still yields 0 (empty case stays correct).
     let n = result
         .get("total_count")
         .and_then(Value::as_u64)
         .map(|u| usize::try_from(u).unwrap_or(usize::MAX))
+        .filter(|&t| t > 0)
         .or_else(|| {
             // Fallback for stub registries that return a different
-            // shape: count blocks across groups.
+            // shape (or a paginated non-first page whose `total_count` is
+            // 0 per the gating above): count blocks across groups.
             result
                 .get("groups")
                 .and_then(Value::as_array)
@@ -621,6 +632,54 @@ mod tests {
         });
         let s = summarise_list_backlinks(&args, &result);
         assert!(s.contains("3 inbound"));
+    }
+
+    /// #2201 item 1b — on a paginated (non-first) MCP `list_backlinks` call the
+    /// backend skips the grouped COUNT and returns `total_count: 0`, yet the
+    /// page still carries groups/blocks. The summary must report THIS page's
+    /// inbound count (from the groups) rather than a misleading "0 inbound".
+    #[test]
+    fn list_backlinks_falls_back_to_group_count_when_total_is_zero_on_paginated_page() {
+        let args = json!({ "block_id": ULID_A });
+        let result = json!({
+            "groups": [
+                { "page_id": ULID_B, "page_title": "SECRET_TITLE", "blocks": [{}, {}] }
+            ],
+            // Non-first page: COUNT skipped ⇒ 0 (present, not absent).
+            "total_count": 0,
+            "filtered_count": 0,
+            "has_more": false,
+            "truncated": false,
+        });
+        let s = summarise_list_backlinks(&args, &result);
+        assert!(
+            s.contains("2 inbound"),
+            "paginated page-2 summary should count the page's blocks, got: {s}"
+        );
+        assert!(
+            !s.contains("0 inbound"),
+            "must not report a misleading 0 inbound, got: {s}"
+        );
+        assert_no_secrets(&s);
+    }
+
+    /// #2201 item 1b guard — a genuinely empty FIRST page (0 backlinks ⇒ no
+    /// groups, `total_count: 0`) must still summarise as "0 inbound".
+    #[test]
+    fn list_backlinks_reports_zero_for_genuinely_empty_first_page() {
+        let args = json!({ "block_id": ULID_A });
+        let result = json!({
+            "groups": [],
+            "total_count": 0,
+            "filtered_count": 0,
+            "has_more": false,
+            "truncated": false,
+        });
+        let s = summarise_list_backlinks(&args, &result);
+        assert!(
+            s.contains("0 inbound"),
+            "genuinely empty result must report 0 inbound, got: {s}"
+        );
     }
 
     #[test]

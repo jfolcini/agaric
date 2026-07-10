@@ -139,7 +139,15 @@ export function LinkedReferences({
         }
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
-        setTotalCount(resp.total_count)
+        // #2201 item 1b: the "N references" header total is page-invariant, so
+        // keep the FIRST page's value and never overwrite it on load-more. The
+        // backend now skips the grouped COUNT queries on non-first pages and
+        // returns total_count: 0 there, so writing it on append would clobber
+        // the header to 0. Guard on the same `cursor` flag the append branch
+        // above uses (first page ⟺ no cursor).
+        if (!cursor) {
+          setTotalCount(resp.total_count)
+        }
       } catch (err) {
         logger.error(
           'LinkedReferences',

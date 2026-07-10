@@ -3575,6 +3575,149 @@ async fn eval_grouped_pagination() {
     assert!(resp2.next_cursor.is_none(), "no cursor on last page");
 }
 
+/// #2201 item 1b — the grouped COUNT queries run on the FIRST page only.
+/// The first page reports the true `total_count` / `filtered_count`; a
+/// non-first page (cursor set) skips both COUNTs and reports 0 for each,
+/// while STILL returning the correct groups / rows / cursor. The FE keeps
+/// the first-page total for the "N references" header across load-more.
+#[tokio::test]
+async fn eval_grouped_counts_only_on_first_page_2201() {
+    let (pool, _dir) = test_pool().await;
+    // TARGET plus three source pages A, B, C — one backlinking block each.
+    insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+    for ch in ['A', 'B', 'C'] {
+        let page_id = format!("PAGE_{ch}");
+        let blk_id = format!("BLK_{ch}1");
+        insert_block_with_parent(&pool, &page_id, "page", &format!("Page {ch}"), None, None).await;
+        insert_block_with_parent(
+            &pool,
+            &blk_id,
+            "content",
+            &format!("block {ch}1"),
+            Some(&page_id),
+            Some(1),
+        )
+        .await;
+        insert_block_link(&pool, &blk_id, "TARGET").await;
+    }
+
+    // First page (limit=2): counts are computed and correct.
+    let page1 = PageRequest::new(None, Some(2)).unwrap();
+    let resp1 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page1, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        resp1.total_count, 3,
+        "first page reports the true total_count"
+    );
+    assert_eq!(
+        resp1.filtered_count, 3,
+        "first page reports the true filtered_count"
+    );
+    assert_eq!(resp1.groups.len(), 2, "first page has 2 groups (A, B)");
+    assert_eq!(resp1.groups[0].page_id, "PAGE_A");
+    assert_eq!(resp1.groups[1].page_id, "PAGE_B");
+    assert!(resp1.has_more, "a third group (C) remains");
+    let cursor = resp1.next_cursor.expect("has_more implies a cursor");
+
+    // Second page (cursor set): counts are SKIPPED and reported as 0, but the
+    // page's groups / rows / cursor are unchanged.
+    let page2 = PageRequest::new(Some(cursor), Some(2)).unwrap();
+    let resp2 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page2, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        resp2.total_count, 0,
+        "non-first page skips the total_count COUNT and reports 0"
+    );
+    assert_eq!(
+        resp2.filtered_count, 0,
+        "non-first page skips the filtered_count COUNT and reports 0"
+    );
+    // Groups / rows still correct on the non-first page.
+    assert_eq!(
+        resp2.groups.len(),
+        1,
+        "second page returns the last group (C)"
+    );
+    assert_eq!(resp2.groups[0].page_id, "PAGE_C", "resumes at PAGE_C");
+    assert_eq!(
+        resp2.groups[0].blocks.len(),
+        1,
+        "PAGE_C group has its single backlinking block"
+    );
+    assert_eq!(
+        resp2.groups[0].blocks[0].id, "BLK_C1",
+        "the block on the non-first page is still the correct row"
+    );
+    assert!(!resp2.has_more, "no more groups after PAGE_C");
+    assert!(resp2.next_cursor.is_none(), "no cursor on the last page");
+}
+
+/// #2201 item 1b — non-first-page count-skip must hold WITH an active filter
+/// too: the first page runs the narrowing `filtered_count` COUNT, a later page
+/// skips it and reports `filtered_count: 0` while still paginating correctly.
+#[tokio::test]
+async fn eval_grouped_counts_only_on_first_page_with_filter_2201() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+    // Every source block carries property `k=v` so a HasProperty-style filter
+    // keeps all of them (filtered_count == total_count on the first page), and
+    // the filter fragment exercises the `Some(cf)` first-page COUNT branch.
+    for ch in ['A', 'B', 'C'] {
+        let page_id = format!("PAGE_{ch}");
+        let blk_id = format!("BLK_{ch}1");
+        insert_block_with_parent(&pool, &page_id, "page", &format!("Page {ch}"), None, None).await;
+        insert_block_with_parent(
+            &pool,
+            &blk_id,
+            "content",
+            &format!("block {ch}1"),
+            Some(&page_id),
+            Some(1),
+        )
+        .await;
+        insert_block_link(&pool, &blk_id, "TARGET").await;
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'k', 'v')",
+        )
+        .bind(&blk_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let filters = vec![BacklinkFilter::PropertyIsSet {
+        key: "k".to_string(),
+    }];
+
+    let page1 = PageRequest::new(None, Some(2)).unwrap();
+    let resp1 =
+        eval_backlink_query_grouped(&pool, "TARGET", Some(filters.clone()), None, &page1, None)
+            .await
+            .unwrap();
+    assert_eq!(resp1.total_count, 3, "first page total_count with filter");
+    assert_eq!(
+        resp1.filtered_count, 3,
+        "first page filtered_count runs the narrowing COUNT"
+    );
+    assert!(resp1.has_more);
+    let cursor = resp1.next_cursor.expect("has_more implies a cursor");
+
+    let page2 = PageRequest::new(Some(cursor), Some(2)).unwrap();
+    let resp2 = eval_backlink_query_grouped(&pool, "TARGET", Some(filters), None, &page2, None)
+        .await
+        .unwrap();
+    assert_eq!(resp2.total_count, 0, "non-first page skips total_count");
+    assert_eq!(
+        resp2.filtered_count, 0,
+        "non-first page skips the filtered_count COUNT even with a filter"
+    );
+    assert_eq!(resp2.groups.len(), 1, "second page still returns PAGE_C");
+    assert_eq!(resp2.groups[0].page_id, "PAGE_C");
+    assert!(!resp2.has_more);
+}
+
 /// #625 — grouped pagination must NOT silently terminate when the cursor's
 /// own group vanishes between page requests. Reproduction: page through with
 /// limit=1, delete the cursor group's only backlink (so it disappears from the
@@ -6425,10 +6568,17 @@ async fn eval_backlink_query_grouped_paginates_correctly() {
             );
             assert_eq!(group.blocks.len(), 1, "each fixture page has one backlink");
         }
-        assert_eq!(
-            resp.total_count, 5,
-            "5 backlinks across the fixture (one per page)"
-        );
+        if iteration == 0 {
+            assert_eq!(
+                resp.total_count, 5,
+                "first page reports the true total_count (5 backlinks, one per page)"
+            );
+        } else {
+            assert_eq!(
+                resp.total_count, 0,
+                "#2201 item 1b: non-first pages skip the COUNT and report total_count 0"
+            );
+        }
         cursor = resp.next_cursor;
         if !resp.has_more {
             assert!(
@@ -6485,17 +6635,31 @@ async fn eval_grouped_keyset_per_page_cost_is_bounded_2042() {
     loop {
         pages += 1;
         assert!(pages <= 100, "pagination must terminate");
+        let is_first_page = cursor.is_none();
         let page = PageRequest::new(cursor, Some(page_size)).unwrap();
         let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
             .await
             .unwrap();
 
-        // Counts are vault-wide and stable across every page.
-        assert_eq!(resp.total_count, total_links, "total_count stable per page");
-        assert_eq!(
-            resp.filtered_count, total_links,
-            "filtered_count stable per page (no filter)"
-        );
+        // #2201 item 1b: counts are computed on the FIRST page only (the header
+        // total is page-invariant and the FE keeps it across load-more). On a
+        // later page both COUNTs are skipped and reported as 0.
+        if is_first_page {
+            assert_eq!(
+                resp.total_count, total_links,
+                "first page reports the true total_count"
+            );
+            assert_eq!(
+                resp.filtered_count, total_links,
+                "first page reports the true filtered_count (no filter)"
+            );
+        } else {
+            assert_eq!(resp.total_count, 0, "non-first page skips total_count");
+            assert_eq!(
+                resp.filtered_count, 0,
+                "non-first page skips filtered_count"
+            );
+        }
 
         if resp.has_more {
             assert_eq!(
