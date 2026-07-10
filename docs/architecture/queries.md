@@ -70,7 +70,7 @@ Every list IPC is **cursor-paginated**, never offset-paginated. The cursor is op
 
 The one carve-out is `undo_page_op_inner OFFSET N` — used internally to walk N steps back in the op log. Not user-facing; not over IPC.
 
-`SafeLimit` branded type at the FE boundary clamps every list call to `[1, 500]` (`MAX_PAGE_SIZE = 200` default). The brand prevents accidental Number passthrough; backend re-clamps as defence in depth.
+Out-of-range limits are **loudly rejected, never silently clamped** (limit-clamp-followup Phase 1): the backend surfaces `AppError::Validation` for any limit outside its cap — `PageRequest::new` accepts `[1, 200]` (`MAX_PAGE_SIZE`); `list_blocks` and `search_blocks` cap at 100 (`MAX_SEARCH_RESULTS` for the latter); `list_projected_agenda` at 500. On the frontend, the `SafeLimit` branded type (`src/lib/safe-limit.ts`, Phase 3) makes every pagination-aware IPC wrapper reject a plain `number` at compile time: literals go through `safeLimit()` / the per-IPC cap helpers, which throw at the call site on a bad value, and dynamically-derived limits go through `clampLimit()` — the one deliberate clamping path, for restored/computed values that should degrade rather than throw mid-render. The result: a bad literal fails at compile time or at its call site, never as a silently truncated result set.
 
 ## N+1 IPC mitigation
 

@@ -128,4 +128,4 @@ The full inventory lives in [`docs/UI-MAP.md`](../UI-MAP.md). The architecture-r
 - `src/components/` — domain components.
 - `src/components/<Feature>/` — per-feature sub-component directories (FormattingToolbar, SpaceManageDialog, properties/PropertyRowEditor, …).
 
-The decomposition pattern (a "god component" with a `biome-ignore` for cognitive complexity → orchestrator + per-concern children + a containing hook) is documented in `docs/UX.md § UI primitives`.
+The decomposition pattern (a "god component" with an `oxlint-disable-next-line eslint/complexity` suppression → orchestrator + per-concern children + a containing hook) is documented in `docs/UX.md § UI primitives`.
