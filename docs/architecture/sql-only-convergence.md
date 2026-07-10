@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # Converging the `sql_only` apply fallback with the projection helpers
 
-**Issue:** #1057 · **Status:** instrumentation landed (#1212); apply-path convergence is a reviewed follow-up.
+**Issue:** #1057 · **Status:** CONVERGED — instrumentation landed in #1212; the apply-path collapse (#2249 / #2250 / #2325) then executed the convergence: both LOCAL and REMOTE apply funnel through `apply_op_projected`, the `EngineUninit` fallback arm is **retired** (engine state is threaded into the handlers, so "engine not installed" is unrepresentable), and `SpaceUnresolved` is the *only* remaining `sql_only` trigger. The plan below is kept as the design record; read "Part 2" as *done*, with the per-branch targets realised inside `apply_op_projected`'s handlers rather than as standalone helpers.
 
 ## Why this exists
 

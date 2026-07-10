@@ -38,7 +38,7 @@ How the system is built. Companion to:
 
 1. **Local-first.** SQLite on disk; no cloud, no accounts.
 2. **Event-sourced.** Every state change is an append-only op log entry. Materialized views are derivable; the op log is the truth.
-3. **CRDT convergence.** Loro engine fans out every op into per-space CRDT state. Concurrent edits converge automatically; no merge dialog, no conflict UI.
+3. **CRDT convergence.** Loro engine fans out every op into per-space CRDT state. Concurrent edits converge automatically; no merge dialog, no conflict UI. One honest boundary: character-level merge applies to edits *committed as ops*. In-progress typing is frontend-local until blur (principle 4), so two devices editing the **same block simultaneously** converge at block granularity — the later blur's content wins for the overlap, with the superseded version preserved in `op_log` for history/undo. See `architecture/editor-and-content.md` § FE / BE authority boundary.
 4. **Single roving editor.** Exactly one block hosts a TipTap editor at a time; everything else renders static.
 5. **Type-safe IPC.** Every Tauri command flows through specta-generated TypeScript. The `agaric_commands!` macro is the single source of truth — handler and bindings cannot drift.
 6. **Per-space partitioning.** The native, indexed `blocks.space_id` column (migration 0086, #533) is the sole source of truth for space membership — with a `spaces` registry FK (0089), and `space` forbidden as a `block_properties` key (0088 `key_not_reserved` CHECK). An `is_space = 'true'` property still marks a space's own page. Lists, search, agenda, backlinks, history, journals all scope to the active space via the `b.space_id = ?N` filter.

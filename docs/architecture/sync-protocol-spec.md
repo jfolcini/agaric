@@ -44,7 +44,9 @@ Two distinct serde-tagged enums travel on the wire:
   `#[serde(tag = "kind", rename_all = "snake_case")]`, producing
   `{"kind":"snapshot",…}` / `{"kind":"update",…}`.
 
-Bulk binary payloads (snapshot blobs, attachment file bytes) are **not**
+Bulk binary payloads (snapshot blobs, attachment file bytes, and
+over-threshold `LoroSync` payloads — see
+[`SyncMessage::LoroSyncChunked`](#syncmessagelorosyncchunked)) are **not**
 JSON. They travel as WebSocket binary frames after a JSON control message,
 each frame at most `BINARY_FRAME_CHUNK_SIZE` (5 MB) — see
 [Binary-frame transfer](#binary-frame-transfer).
@@ -57,7 +59,8 @@ Defined in `src-tauri/src/sync_constants.rs` and (per-connection) in
 | Constant | Value | Meaning |
 | --- | --- | --- |
 | `SyncConnection::MAX_MSG_SIZE` | 10,000,000 bytes | Hard cap on any single WebSocket frame (text or binary). |
-| `BINARY_FRAME_CHUNK_SIZE` | 5,000,000 bytes | Chunk unit for snapshot + attachment binary frames; kept under `MAX_MSG_SIZE` for framing headroom. |
+| `BINARY_FRAME_CHUNK_SIZE` | 5,000,000 bytes | Chunk unit for snapshot + attachment + chunked-LoroSync binary frames; kept under `MAX_MSG_SIZE` for framing headroom. |
+| `LORO_INLINE_MAX_BYTES` | 2,400,000 bytes | Threshold above which a `LoroSync` payload's `bytes` leave the inline JSON envelope and ride chunked binary frames instead (`LoroSyncChunked`, #611). Sized so the worst-case JSON inflation of an inline payload (a `Vec<u8>` serialises as a number array, up to 4 chars/byte) stays under `MAX_MSG_SIZE`. |
 | `HANDSHAKE_TIMEOUT` | 120 s | Per-`handle_message` budget on both session loops. |
 | `SyncConnection::RECV_TIMEOUT` | (see `connection.rs`) | Overall idle receive guard, kept strictly larger than `HANDSHAKE_TIMEOUT`. |
 
@@ -70,11 +73,16 @@ All variants below are arms of the `SyncMessage` enum in
 ### `SyncMessage::HeadExchange`
 
 ```text
-HeadExchange { heads: Vec<DeviceHead> }
+HeadExchange { heads: Vec<DeviceHead>,
+               loro_vvs: Vec<SpaceVersionVector>,   // #[serde(default)]
+               engine_format_version: u32 }          // #[serde(default)]
 ```
 
-The first message of every session, sent in both directions exactly once.
-`DeviceHead` (a `struct` in `types.rs`) is the per-device frontier:
+The first message of every session, sent by the **initiator only**, exactly
+once. The responder does **not** reply with its own `HeadExchange` — it
+replies with the streaming phase directly (see
+[Handshake sequence](#handshake-sequence)). `DeviceHead` (a `struct` in
+`types.rs`) is the per-device frontier:
 
 ```text
 DeviceHead { device_id: String, seq: i64, hash: String }
@@ -83,6 +91,34 @@ DeviceHead { device_id: String, seq: i64, hash: String }
 `heads` is the latest `(device_id, seq, hash)` tuple per device known to the
 sender's op log, computed by `operations::get_local_heads`.
 
+`loro_vvs` carries the initiator's per-space Loro version vectors so the
+responder can stream an incremental `LoroSyncMessage::Update` (the delta
+since the initiator's vv) instead of a full snapshot (#1230). It is
+`#[serde(default)]` for wire back-compat: an older initiator omits it and
+the responder falls back to a full `Snapshot` per space.
+
+`engine_format_version` advertises the sender's
+`loro::engine::ENGINE_FORMAT_VERSION` so the responder can reject an
+incompatible peer up front, before any raw-byte Loro merge (#2130). Also
+`#[serde(default)]`: a legacy peer deserializes as `0`, which falls through
+to the import-time format guards.
+
+**Frontier semantics — two frontiers, two different jobs.** The op-log
+`heads` and the Loro `loro_vvs` answer different questions and are not
+redundant. Since #490-M1 the op log is strictly device-local (a remote
+device's ops never land in it), so the receiver resolves the advertised
+`heads` **only for its own `device_id`** — the check
+(`operations::check_reset_required`, #602) detects *own-lineage loss*
+("the peer knows a seq/hash of MINE that my log no longer contains", e.g.
+after compaction or data loss) and triggers the snapshot fallback.
+Cross-device staleness is NOT judged from `heads`; that is the `loro_vvs`
+job — the version vectors shape the per-space delta and the
+`from_vv`-reachability gate in `apply_remote` catches an unbridgeable gap
+(see [`SnapshotFallbackRequested`](#snapshotfallbackrequested)). An in-code
+TODO (#87 §10.5) tracks retiring the op-log-seq heads check in favour of
+persisted per-peer version vectors, which would collapse both jobs onto one
+frontier type.
+
 ### `SyncMessage::LoroSync`
 
 ```text
@@ -90,9 +126,10 @@ LoroSync { msg: LoroSyncMessage, is_last: bool }
 ```
 
 The sole streaming-phase payload. Carries one `LoroSyncMessage` per
-`SpaceId`, sent zero-or-more times in either direction. `is_last: true`
-marks the final per-space message of a batch and tells the receiver to
-transition to completion.
+`SpaceId`, sent zero-or-more times by the **responder only** (the streamer;
+see the pull-model note under [Handshake sequence](#handshake-sequence)).
+`is_last: true` marks the final per-space message of a batch and tells the
+receiver to transition to completion.
 
 `LoroSyncMessage` (in `loro_sync_types.rs`) has two variants:
 
@@ -116,16 +153,59 @@ Update   { protocol_version: u8, space_id: SpaceId,
 - `LoroVersionVector` is a type alias for `Vec<u8>` — opaque Loro-encoded
   version-vector bytes, not parsed by the wire layer.
 
+### `SyncMessage::LoroSyncChunked`
+
+```text
+LoroSyncChunked { header: LoroSyncChunkedHeader, is_last: bool }
+
+LoroSyncChunkedHeader (serde tag "kind", snake_case):
+  Snapshot { protocol_version: u8, space_id: SpaceId, size_bytes: u64 }
+  Update   { protocol_version: u8, space_id: SpaceId,
+             from_vv: LoroVersionVector, size_bytes: u64 }
+```
+
+The chunked-binary transport encoding of `LoroSync` (#611). An inline
+`LoroSyncMessage.bytes` serialises as a JSON number array (~3.6× inflation,
+worst case 4 chars/byte), and a single text frame is capped at
+`MAX_MSG_SIZE` (10 MB) — so a growing space payload would eventually exceed
+the cap and permanently break sync. Payloads larger than
+`LORO_INLINE_MAX_BYTES` (2,400,000 bytes) therefore travel out-of-band: the
+sender emits this JSON envelope carrying a header-only mirror of the
+`LoroSyncMessage` (`bytes` replaced by `size_bytes`; `from_vv` stays inline
+— version vectors are tiny), followed by exactly `size_bytes` of raw Loro
+bytes in chunked binary frames — the same machinery as the snapshot-blob
+and attachment-file sub-flows.
+
+**Never reaches the protocol orchestrator.** The wire layer
+(`sync_daemon::wire::send_sync_message` / `recv_sync_message`) splits an
+over-threshold `LoroSync` into header + binary frames on send and
+reassembles them back into a plain `SyncMessage::LoroSync` on receive; the
+state machine only ever sees `LoroSync`. A `LoroSyncChunked` arriving at
+`handle_message` indicates a transport-dispatch regression and fails the
+session loudly (same contract as `SnapshotOffer`). `protocol_version` is
+validated by `apply_remote` after reassembly — there is no separate
+header-level check, so version-mismatch handling stays in one place.
+
+**Compatibility.** A pre-#611 peer does not know this envelope and fails
+the session with a deserialize error on receiving one. That is strictly no
+worse than the status quo: the chunked path is only taken for payloads
+whose inline JSON would have blown the old peer's 10 MB receive cap anyway;
+every payload an old peer could successfully receive still rides the
+unchanged inline shape.
+
 ### `SyncMessage::SyncComplete`
 
 ```text
 SyncComplete { last_hash: String }
 ```
 
-Per-side terminal of the delta phase, sent once per side after that side has
-streamed its final `LoroSync`. `last_hash` is the sender's new
-frontier-of-record, written to `peer_refs` to bookmark the next session's
-starting point.
+Terminal of the delta phase, sent once by the **puller** (the initiator)
+after it has applied the responder's final `LoroSync { is_last: true }` —
+or directly by a responder with zero registered spaces (the empty-stream
+short-circuit). `last_hash` is the sender's new frontier-of-record; the
+puller records `synced_at` + the bookmark in `peer_refs` (#610 — the
+streamer deliberately does *not*, so the reverse-direction session stays
+due).
 
 ### `SyncMessage::ResetRequired`
 
@@ -255,52 +335,58 @@ with a `HANDSHAKE_TIMEOUT` per `handle_message` call.
 
 ### Normal (delta) flow
 
+A session is a **pull**: data flows responder → initiator only (#610). The
+initiator advertises its frontier; the responder streams the delta; the
+initiator applies and confirms. Bidirectional convergence comes from the
+*reverse* session — each daemon initiates its own pull on its own schedule —
+not from bidirectional streaming within one session.
+
 ```text
-Initiator                                  Responder
+Initiator (puller)                         Responder (streamer)
    │                                           │
-   │ start() → HeadExchange { heads }          │
+   │ start() → HeadExchange                    │
+   │   { heads, loro_vvs, engine_format_v }    │
    ├──────────────────────────────────────────►
-   │            (responder recv_json, identifies peer from heads,
-   │             validates against TLS cert CN)
+   │            (responder identifies peer from heads, validates
+   │             against TLS cert CN, gates engine_format_version,
+   │             runs check_reset_required on OWN-device heads)
    │                                           │
-   │      HeadExchange { heads }               │  responder replies in kind,
-   ◄──────────────────────────────────────────┤  then begins its own stream
-   │      LoroSync { msg, is_last:false } ...  │
-   ◄──────────────────────────────────────────┤  (one per SpaceId; full
-   │      LoroSync { msg, is_last:true }       │   Snapshot under peer_vv=None)
-   ◄──────────────────────────────────────────┤
+   │      LoroSync { msg, is_last:false } ...  │  one per SpaceId:
+   ◄──────────────────────────────────────────┤  incremental Update against
+   │      LoroSync { msg, is_last:true }       │  the initiator's advertised
+   ◄──────────────────────────────────────────┤  vv; full Snapshot for a
+   │ (applies each via apply_remote)           │  space it didn't advertise
    │                                           │
-   │ (initiator likewise streams its spaces)   │
-   │ LoroSync ... LoroSync { is_last:true }    │
-   ├──────────────────────────────────────────►
-   │                                           │
-   │      SyncComplete { last_hash }           │
-   ◄─────────────────────────────────────────►┤  (each side, after its
-   │ SyncComplete { last_hash }                │   final LoroSync)
-   ├──────────────────────────────────────────►
-   │              [ file-transfer phase ]      │
+   │ SyncComplete { last_hash }                │  puller records synced_at +
+   ├──────────────────────────────────────────►  peer_refs bookmark; the
+   │              [ file-transfer phase ]      │  streamer does not (#610)
 ```
 
 Mechanics worth pinning:
 
-- The initiator sends the first `HeadExchange`; the responder reads it
-  first, derives the peer identity from the advertised heads, and rejects
-  the session with `Error` if the `device_id` does not match the TLS
+- The initiator sends the session's only `HeadExchange`; the responder
+  derives the peer identity from the advertised heads and rejects the
+  session with `Error` if the `device_id` does not match the TLS
   certificate CN it is connected to (the B-34 check in `server.rs`).
-- On receiving the remote's `HeadExchange`, each side calls
+- On receiving the `HeadExchange`, the responder calls
   `head_exchange_outgoing_loro`, which builds one `LoroSync` per registered
-  space (full `Snapshot`, since `peer_vv` is `None` under the current
-  protocol) and queues all but the first into `pending_loro_messages`. The
-  driver loop drains the queue via `next_message()` after each
-  `handle_message`.
-- Empty-stream short-circuit: a peer with zero registered spaces replies
-  `SyncComplete` directly from `ExchangingHeads` rather than emitting a
-  zero-byte `LoroSync`.
-- `is_last: true` on the final per-space `LoroSync` drives the receiver to
-  `Complete` and prompts its own `SyncComplete`, which carries the local
-  head hash and is recorded into `peer_refs` inside a single
-  `BEGIN IMMEDIATE` transaction (`upsert_peer_ref_in_tx` +
-  `complete_sync_in_tx`).
+  space — an incremental `Update` against the initiator's advertised
+  version vector for that space, or a full `Snapshot` for a space the
+  initiator didn't advertise (#1230) — and queues all but the first into
+  `pending_loro_messages`. The driver loop drains the queue via
+  `next_message()` after each `handle_message`. Over-threshold payloads are
+  re-encoded as `LoroSyncChunked` by the wire layer transparently.
+- Empty-stream short-circuit: a responder with zero registered spaces
+  replies `SyncComplete` directly from `ExchangingHeads` rather than
+  emitting a zero-byte `LoroSync`; the initiator (which never streamed)
+  records the pull.
+- `is_last: true` on the final per-space `LoroSync` drives the initiator to
+  `Complete` and prompts its `SyncComplete`, which carries the local head
+  hash and is recorded into `peer_refs` inside a single `BEGIN IMMEDIATE`
+  transaction (`upsert_peer_ref_in_tx` + `complete_sync_in_tx`).
+- `synced_at` bookkeeping is puller-only (#610): a responder that streamed
+  must not advance `synced_at` for the initiator, or it would starve the
+  reverse-direction session's scheduling.
 
 ### Reconnect flow
 
