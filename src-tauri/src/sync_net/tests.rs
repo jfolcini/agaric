@@ -119,6 +119,7 @@ fn sync_message_roundtrip_head_exchange() {
         }],
         loro_vvs: vec![],
         engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+        op_log_replication: false,
     };
     let json = serde_json::to_string(&msg).unwrap();
     let parsed: SyncMessage = serde_json::from_str(&json).unwrap();
@@ -513,6 +514,7 @@ async fn tls_roundtrip_json_exchange() {
         }],
         loro_vvs: vec![],
         engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+        op_log_replication: false,
     };
     client.send_json(&msg).await.unwrap();
 
@@ -1377,6 +1379,7 @@ async fn mtls_full_handshake_both_sides_see_peer_identity() {
             }],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await
         .unwrap();
@@ -1407,6 +1410,7 @@ async fn mtls_full_handshake_both_sides_see_peer_identity() {
             }],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await
         .unwrap();

@@ -211,6 +211,41 @@ pub(crate) async fn collect_tables(
 /// the latest op), STOP — that is a wire-format change that requires
 /// explicit user approval per AGENTS.md "Architectural Stability". The
 /// current shape is correct for what `up_to_hash` is used for.
+///
+/// # #2481 phase 1 — deliberately UNFILTERED on `is_replicated` (known future risk)
+///
+/// Unlike boot replay / the apply cursor / the compaction floor
+/// (`recovery::replay`), this query does NOT add `WHERE is_replicated = 0`.
+/// That is intentional for `compact_op_log`'s DELETE frontier: per the
+/// #2481 design (issue body, "Compaction: foreign-device ops age out under
+/// the same 90-day snapshot-frontier policy"), replicated foreign-device
+/// audit rows are meant to be purged by the same retention sweep as
+/// locally-authored ones, so `up_to_seqs` including them there is correct.
+///
+/// BUT `up_to_seqs` has a second consumer:
+/// `sync_daemon::snapshot_transfer::snapshot_covers_remote_heads` treats
+/// `up_to_seqs[device]` as a proxy for "this snapshot's materialized SQL/Loro
+/// STATE reflects `device`'s edits up to this seq." That equivalence holds
+/// today only because op_log is (pre-#2481) strictly single-device — every
+/// entry in the map so far is the local device's own audit-and-state trail,
+/// and those two are the same thing for a single device. Once a real caller of
+/// `dag::insert_replicated_op` exists (no production path calls it yet —
+/// #2481 phase 1 is ingest-only), `up_to_seqs` for a REPLICATED foreign
+/// device seq is audit bookkeeping only and says nothing about whether this
+/// device's Loro-merged state actually incorporates that device's edits
+/// (audit-only replication is explicitly decoupled from state by design).
+/// That reintroduces both a spurious-failure risk (a real coverage mismatch
+/// on unrelated audit bookkeeping wrongly fails `snapshot_covers_remote_heads`
+/// and declines a perfectly good snapshot) and, more seriously, a false-
+/// coverage risk (a device with a high replicated audit seq for X but no
+/// actual Loro merge of X's state could pass the covering check and have its
+/// snapshot accepted as if it carried X's contributions). Resolve this before
+/// wiring the send/receive sub-flow that would let replicated rows actually
+/// exist in production — either split `up_to_seqs` into a state-covering
+/// variant (`is_replicated = 0`) used only by `snapshot_covers_remote_heads`
+/// and an unfiltered variant used only by the compaction purge, or fold this
+/// into the #87 §10.5 vv-based head/reset redesign this file already
+/// TODOs toward.
 pub(crate) async fn collect_frontier(
     conn: &mut SqliteConnection,
 ) -> Result<(BTreeMap<String, i64>, String), AppError> {

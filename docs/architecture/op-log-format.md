@@ -212,12 +212,23 @@ the rationale.
 
 ## Validity rules
 
-These are the checks `dag::insert_remote_op` runs on an op record before
-landing it (mirrored by `verify_op_record` for the hash-only check). As
-noted above, `insert_remote_op` has no production caller today — this is
-the validity profile that will govern #2481's audit-only replication
-ingest once phase 1 lands, and today it is exercised only by tests
-(`dag/tests.rs`, `op_log/tests/origin.rs`):
+These are the checks the remote-op ingest core (`dag::insert_remote_op`)
+runs on an op record before landing it (mirrored by `verify_op_record`
+for the hash-only check). There are **two ingest profiles** sharing this
+verification recipe (#2481 phase 1):
+
+- **Strict** (`dag::insert_remote_op`) — the dormant Wave 1B remote-merge
+  path; unresolved parents are a hard error. No production caller today;
+  exercised only by tests (`dag/tests.rs`, `op_log/tests/origin.rs`).
+- **Audit** (`dag::insert_replicated_op`) — the #2481 audit-only
+  replication ingest; identical hash / NUL / payload / idempotency checks,
+  but the parent-gap relaxation in rule 2 below applies, the row is stamped
+  `is_replicated = 1`, and the transfer-carried `origin` attribution is
+  preserved. Audit rows are **never applied to state** and are kept out of
+  boot replay / the materializer by the `is_replicated = 0` filter
+  (migration 0099).
+
+The rules:
 
 1. **Hash matches.** Recompute the preimage from
    `(device_id, seq, parent_seqs, op_type, payload)` exactly as above and
@@ -229,18 +240,19 @@ ingest once phase 1 lands, and today it is exercised only by tests
    breaks the hash — readers do **not** separately re-validate that
    `parent_seqs` is in canonical sorted order.
 
-2. **Parents resolve.** Every `[device_id, seq]` entry in `parent_seqs`
-   must already exist as a row in `op_log` before this row is landed
-   (`dag::insert_remote_op` rejects dangling pointers with
-   `"dag.parent_seqs.unresolved"`). The genesis op has no parents. This
-   rule — cross-peer parent resolution — is the part of this document that
-   is currently dead-path in production: compaction cannot break an
-   ingest that never runs. #2481 phase 1 plans a relaxation here for the
-   audit-only replication case: an unresolved parent caused by the
-   *peer's own* compaction of its early history will land with a `warn!`
-   breadcrumb instead of being rejected, since the replicated log is not
-   load-bearing for state. That relaxation is not implemented yet; this
-   rule as written is what the code does today.
+2. **Parents resolve — profile-dependent (audit-mode relaxation, #2481).**
+   Every `[device_id, seq]` entry in `parent_seqs` must already exist as a
+   row in `op_log` before this row is landed. The genesis op has no
+   parents.
+   - Under the **Strict** profile (`insert_remote_op`) a dangling pointer
+     is rejected with `"dag.parent_seqs.unresolved"`.
+   - Under the **Audit** profile (`insert_replicated_op`) an unresolved
+     parent caused by the *peer's own* compaction of its early history
+     **lands with a `warn!` breadcrumb instead of being rejected**, since
+     the replicated log is audit-only and never load-bearing for state, and
+     per-device ordered delivery (records are shipped and ingested in `seq`
+     order) makes such a gap attributable to compaction only. This is the
+     implemented audit-mode validity profile as of #2481 phase 1.
 
 3. **Idempotent insert.** Insertion is keyed on the `(device_id, seq)`
    primary key with `INSERT OR IGNORE`, so duplicate delivery of the same

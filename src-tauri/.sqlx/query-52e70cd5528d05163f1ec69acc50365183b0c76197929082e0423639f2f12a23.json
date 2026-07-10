@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT COUNT(DISTINCT device_id) AS \"n!: i64\" FROM op_log",
+  "query": "SELECT COUNT(*) as \"n!: i64\" FROM op_log WHERE is_replicated = 0 AND seq > ?",
   "describe": {
     "columns": [
       {
@@ -11,11 +11,11 @@
       }
     ],
     "parameters": {
-      "Right": 0
+      "Right": 1
     },
     "nullable": [
       false
     ]
   },
-  "hash": "5f600240577cb3e8ad03922813f9a20cd20a05593939b8ce87f27627b9984c04"
+  "hash": "52e70cd5528d05163f1ec69acc50365183b0c76197929082e0423639f2f12a23"
 }

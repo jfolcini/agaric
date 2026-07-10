@@ -119,6 +119,104 @@ pub async fn check_reset_required(
     Ok(false)
 }
 
+/// #2481 phase 1 — collect the op records to replicate to a peer as
+/// append-only **audit metadata** (`SyncMessage::OpLogBatch`).
+///
+/// For every device frontier we hold in our local op_log — our own device
+/// plus any foreign device whose ops we previously replicated — this returns
+/// every op the peer lacks, i.e. `seq > the peer's advertised frontier for
+/// that device` (or *all* of that device's ops when the peer advertised no
+/// frontier for it). The peer's advertised frontiers come from its
+/// `HeadExchange.heads` (now extended to every device it holds, #2481).
+///
+/// Records are returned in `(device_id, seq)` order so the receiver ingests
+/// each device's history in seq order — the ordering
+/// [`crate::dag::insert_replicated_op`]'s audit-mode parent-gap relaxation
+/// relies on to attribute a gap to peer-side compaction.
+///
+/// `origin` is carried verbatim (it is not part of the hash preimage — see
+/// `op-log-format.md`), so cross-device attribution travels with the op. This
+/// deliberately includes replicated (`is_replicated = 1`) rows we already hold
+/// so a frontier propagates transitively; the records are audit-only on the
+/// receiver too, so re-shipping them is safe.
+pub async fn collect_ops_for_peer(
+    pool: &SqlitePool,
+    peer_heads: &[DeviceHead],
+) -> Result<Vec<OpTransfer>, AppError> {
+    use std::collections::HashMap;
+
+    // Peer's advertised frontier per device. A device the peer did not list
+    // maps to 0 ("peer has none of this device's ops"), so every op qualifies.
+    let peer_frontier: HashMap<&str, i64> = peer_heads
+        .iter()
+        .map(|h| (h.device_id.as_str(), h.seq))
+        .collect();
+
+    let rows = sqlx::query!(
+        "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at, origin \
+         FROM op_log \
+         ORDER BY device_id ASC, seq ASC",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = Vec::new();
+    for r in rows {
+        let peer_seq = peer_frontier
+            .get(r.device_id.as_str())
+            .copied()
+            .unwrap_or(0);
+        if r.seq > peer_seq {
+            out.push(OpTransfer {
+                device_id: r.device_id,
+                seq: r.seq,
+                parent_seqs: r.parent_seqs,
+                hash: r.hash,
+                op_type: r.op_type,
+                payload: r.payload,
+                created_at: r.created_at,
+                origin: r.origin,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// #2481 phase 1 — partition op transfers into `OpLogBatch`-sized groups.
+///
+/// Each returned batch serializes to under `max_bytes` (the caller passes
+/// [`crate::sync_constants::LORO_INLINE_MAX_BYTES`]) so it travels inline on
+/// the wire, riding the same size discipline as `LoroSync` (#611). Op records
+/// are inherently small (a single text edit), so in practice a batch holds
+/// many records and no single record approaches the cap; a lone record that
+/// somehow exceeds `max_bytes` still ships in its own batch rather than being
+/// dropped (it cannot be split further, and the receiver's per-message cap is
+/// the backstop).
+///
+/// Returns an empty `Vec` when there is nothing to replicate (the caller then
+/// sends no `OpLogBatch` at all).
+pub fn batch_ops_for_wire(records: Vec<OpTransfer>, max_bytes: usize) -> Vec<Vec<OpTransfer>> {
+    let mut batches: Vec<Vec<OpTransfer>> = Vec::new();
+    let mut current: Vec<OpTransfer> = Vec::new();
+    let mut current_bytes: usize = 0;
+
+    for rec in records {
+        // Cheap upper-bound estimate of this record's inline JSON footprint:
+        // the serialized length plus a small per-element envelope allowance.
+        let rec_bytes = serde_json::to_string(&rec).map_or(0, |s| s.len()) + 2;
+        if !current.is_empty() && current_bytes + rec_bytes > max_bytes {
+            batches.push(std::mem::take(&mut current));
+            current_bytes = 0;
+        }
+        current_bytes += rec_bytes;
+        current.push(rec);
+    }
+    if !current.is_empty() {
+        batches.push(current);
+    }
+    batches
+}
+
 /// Complete a sync session — update peer_refs with the final hashes.
 pub async fn complete_sync(
     pool: &SqlitePool,

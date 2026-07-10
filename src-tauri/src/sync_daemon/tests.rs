@@ -1003,6 +1003,7 @@ async fn handle_incoming_sync_rejects_sync_with_self() {
             }],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await
         .unwrap();
@@ -1256,6 +1257,7 @@ async fn handle_incoming_sync_rejects_unpaired_device() {
             }],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await
         .unwrap();
@@ -1597,6 +1599,7 @@ async fn inmem_handle_incoming_sync_rejects_self() {
             }],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await
         .unwrap();
@@ -1660,6 +1663,7 @@ async fn inmem_handle_incoming_sync_rejects_unidentifiable_peer() {
             heads: vec![],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await
         .unwrap();
@@ -1720,6 +1724,7 @@ async fn inmem_handle_incoming_sync_rejects_unpaired() {
             }],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await
         .unwrap();
@@ -1789,6 +1794,7 @@ async fn inmem_handle_incoming_sync_rejects_busy_peer() {
             }],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await
         .unwrap();
@@ -1884,6 +1890,7 @@ async fn inmem_handle_incoming_sync_admits_first_connection_while_pairing_pendin
             }],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await
         .unwrap();
@@ -1967,6 +1974,7 @@ async fn inmem_handle_incoming_sync_rejects_unpaired_without_pending_marker() {
             }],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await
         .unwrap();
@@ -2049,6 +2057,7 @@ async fn handle_incoming_sync_aborts_on_cancel_and_releases_lock() {
             }],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await
         .unwrap();
@@ -2185,6 +2194,7 @@ async fn inmem_handle_incoming_sync_rejects_cert_cn_mismatch() {
             ],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await
         .unwrap();
@@ -2266,6 +2276,7 @@ async fn inmem_handle_incoming_sync_rejects_cert_hash_mismatch() {
             ],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await
         .unwrap();
@@ -2355,6 +2366,7 @@ async fn inmem_handle_incoming_sync_rejects_certless_claim_of_pinned_peer_800() 
             }],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await
         .unwrap();
@@ -4106,6 +4118,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
             heads: vec![init_self_head, stale_resp_head],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await
         .unwrap();
@@ -5779,6 +5792,7 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
                 vv: a_vv.clone(),
             }],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await
         .expect("responder handle_message")
@@ -5831,6 +5845,7 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
             heads: vec![head],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await
         .expect("responder handle_message")
@@ -7268,6 +7283,7 @@ async fn issue2140_connection_drop_mid_stream_fails_then_recovers() {
             heads,
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         }),
     )
     .await
@@ -7671,6 +7687,7 @@ async fn issue2140_backoff_advances_on_failure_and_clears_on_success() {
             heads,
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         }),
     )
     .await

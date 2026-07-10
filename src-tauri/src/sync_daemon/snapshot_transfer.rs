@@ -142,6 +142,21 @@ pub(crate) enum OfferOutcome {
 /// fine: that just means the snapshot saw ops the remote has not yet
 /// observed, which is expected (the post-snapshot delta path will
 /// stream those to the remote on the next session).
+///
+/// # #2481 phase 1 — `snapshot_seqs` provenance caveat (known future risk)
+///
+/// `snapshot_seqs` is `collect_frontier`'s `up_to_seqs`, which is
+/// deliberately unfiltered on `op_log.is_replicated` (see that function's
+/// doc comment in `snapshot::create`) so the compaction purge also ages out
+/// replicated foreign-device audit rows. That means once a production
+/// caller of `dag::insert_replicated_op` exists (none does yet — #2481
+/// phase 1 is ingest-only), a per-device seq in this map is NOT reliably
+/// "this snapshot's materialized state reflects that device's edits up to
+/// this seq" for a *replicated* device — audit-log replication is
+/// explicitly decoupled from Loro state merge by design. Wiring the
+/// send/receive sub-flow that would let replicated rows exist in production
+/// must resolve this before `snapshot_seqs` can be trusted here for a
+/// foreign device (see the TODO in `collect_frontier`).
 fn snapshot_covers_remote_heads(
     snapshot_seqs: &BTreeMap<String, i64>,
     remote_heads: &[DeviceHead],

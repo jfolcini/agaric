@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT MAX(device_min) as \"floor: i64\"\n           FROM (SELECT MIN(seq) AS device_min FROM op_log GROUP BY device_id)",
+  "query": "SELECT MAX(device_min) as \"floor: i64\"\n           FROM (SELECT MIN(seq) AS device_min FROM op_log\n                 WHERE is_replicated = 0 GROUP BY device_id)",
   "describe": {
     "columns": [
       {
@@ -17,5 +17,5 @@
       true
     ]
   },
-  "hash": "55e53ab62117a64b04b951421faa3ae3ca85e0269488b36ab0110ccd8ad4a82d"
+  "hash": "943cd72d0c44ea9015bbb68030875a18fdc15040ca2933bd665d4c75ff221629"
 }
