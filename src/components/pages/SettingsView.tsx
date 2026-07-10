@@ -43,11 +43,8 @@ import { KeyboardTab } from '@/components/settings/KeyboardTab'
 import { NotificationsTab } from '@/components/settings/NotificationsTab'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { dispatchBugReport } from '@/lib/bug-report-events'
-import {
-  getSettingsTabFromUrl,
-  SETTINGS_ACTIVE_TAB_KEY,
-  setSettingsTabInUrl,
-} from '@/lib/url-state'
+import { getPref, PREFS, setPref } from '@/lib/preferences'
+import { getSettingsTabFromUrl, setSettingsTabInUrl } from '@/lib/url-state'
 import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation'
 
@@ -82,10 +79,6 @@ const TAB_IDS: SettingsTab[] = [
   'help',
 ]
 
-// #754 — canonical key constant lives in `@/lib/url-state`; aliased to
-// keep the existing read/write sites readable.
-const ACTIVE_TAB_KEY = SETTINGS_ACTIVE_TAB_KEY
-
 /**
  * Load the active tab. Resolution order:
  *   1. `?settings=<tab>` query param — enables shareable deep links.
@@ -100,13 +93,9 @@ const ACTIVE_TAB_KEY = SETTINGS_ACTIVE_TAB_KEY
 function readActiveTab(): SettingsTab {
   const fromUrl = getSettingsTabFromUrl(TAB_IDS as readonly string[])
   if (fromUrl !== null) return fromUrl as SettingsTab
-  try {
-    const stored = localStorage.getItem(ACTIVE_TAB_KEY)
-    if (stored !== null && (TAB_IDS as readonly string[]).includes(stored)) {
-      return stored as SettingsTab
-    }
-  } catch {
-    // localStorage unavailable
+  const stored = getPref(PREFS.settingsActiveTab)
+  if (stored !== '' && (TAB_IDS as readonly string[]).includes(stored)) {
+    return stored as SettingsTab
   }
   return 'general'
 }
@@ -204,11 +193,7 @@ export function SettingsView(): React.ReactElement {
   // specific tab. localStorage covers cross-window restoration; the URL
   // covers per-window deep links.
   useEffect(() => {
-    try {
-      localStorage.setItem(ACTIVE_TAB_KEY, activeTab)
-    } catch {
-      // localStorage unavailable
-    }
+    setPref(PREFS.settingsActiveTab, activeTab)
     setSettingsTabInUrl(activeTab)
   }, [activeTab])
 
