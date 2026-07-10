@@ -143,6 +143,52 @@ describe('useBlockStore', () => {
       useBlockStore.getState().setFocused('A')
       expect(useBlockStore.getState().selectedBlockIds).toEqual([])
     })
+
+    // #2465 — the reverse direction of the same exclusivity rule: selecting
+    // must clear an in-progress edit, not just the other way around. See
+    // `src/stores/__tests__/store-invariants.test.ts` for the general,
+    // action-set-wide version of this contract.
+    describe('selecting clears an in-progress edit (#2465)', () => {
+      beforeEach(() => {
+        useBlockStore.setState({ focusedBlockId: 'EDITING_BLOCK' })
+      })
+
+      it('toggleSelected clears focusedBlockId', () => {
+        useBlockStore.getState().toggleSelected('A')
+        expect(useBlockStore.getState().focusedBlockId).toBeNull()
+      })
+
+      it('rangeSelect clears focusedBlockId', () => {
+        useBlockStore.getState().rangeSelect('B', ['A', 'B', 'C'])
+        expect(useBlockStore.getState().focusedBlockId).toBeNull()
+      })
+
+      it('selectAll clears focusedBlockId', () => {
+        useBlockStore.getState().selectAll(['A', 'B', 'C'])
+        expect(useBlockStore.getState().focusedBlockId).toBeNull()
+      })
+
+      it('setSelected with a non-empty selection clears focusedBlockId', () => {
+        useBlockStore.getState().setSelected(['A'])
+        expect(useBlockStore.getState().focusedBlockId).toBeNull()
+      })
+
+      it('setSelected([]) (empty) does NOT disturb an unrelated in-progress edit', () => {
+        useBlockStore.getState().setSelected([])
+        expect(useBlockStore.getState().focusedBlockId).toBe('EDITING_BLOCK')
+      })
+
+      it('selectAll([]) (empty page) does NOT disturb an unrelated in-progress edit', () => {
+        useBlockStore.getState().selectAll([])
+        expect(useBlockStore.getState().focusedBlockId).toBe('EDITING_BLOCK')
+      })
+
+      it('extendSelection clears focusedBlockId when it actually extends', () => {
+        useBlockStore.setState({ focusedBlockId: 'EDITING_BLOCK', selectedBlockIds: ['B'] })
+        useBlockStore.getState().extendSelection('down', ['A', 'B', 'C'])
+        expect(useBlockStore.getState().focusedBlockId).toBeNull()
+      })
+    })
   })
 
   // ---------------------------------------------------------------------------

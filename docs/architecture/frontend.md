@@ -8,8 +8,8 @@ How the UI is wired together. Companion to [`docs/UI-MAP.md`](../UI-MAP.md) (sur
 State lives in Zustand stores under `src/stores/`. One store per concern:
 
 - `boot.ts` — boot lifecycle (`booting` / `ready` / `error`).
-- `blocks.ts` — global block focus + multi-selection. Holds `focusedBlockId` and `selectedBlockIds: string[]`.
-- `page-blocks.ts` — **per-page factory**. `createPageBlockStore(pageId)` mints an independent store wrapped in `PageBlockStoreProvider`; the module-level `pageBlockRegistry` lets siblings reach in by `pageId`. Dependencies flow one way: page-block stores → global focus, never the reverse.
+- `blocks.ts` — global block focus + multi-selection. Holds `focusedBlockId` and `selectedBlockIds: string[]`. Edit/select-mode exclusivity and the selection-clear-on-navigation lifecycle are pinned mechanically by `src/stores/__tests__/store-invariants.test.ts` (#2465).
+- `page-blocks.ts` — **per-page factory**. `createPageBlockStore(pageId)` mints an independent store wrapped in `PageBlockStoreProvider`; the module-level `pageBlockRegistry` lets siblings reach in by `pageId`. Dependencies flow one way: page-block stores → global focus, never the reverse — enforced mechanically by the `store-layering` prek hook (`scripts/check-store-layering.mjs`, #2465).
 - `journal.ts` — date cursor + mode (`daily` / `weekly` / `monthly` / `agenda`). Per-space slice: `currentDateBySpace`, `modeBySpace`.
 - `navigation.ts` — `currentView`, `selectedBlockId`, `currentViewBySpace`. (Tab state lives in `tabs.ts`.)
 - `tabs.ts` — page-stack per tab + active tab. Per-space slice: `tabsBySpace`.
