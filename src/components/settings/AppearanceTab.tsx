@@ -29,6 +29,7 @@ import { type ThemePreference, useTheme } from '@/hooks/useTheme'
 import { useWeekStart } from '@/hooks/useWeekStart'
 import { formatJournalTitle } from '@/lib/date-utils'
 import { notify } from '@/lib/notify'
+import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 
 /**
  * Theme select uses 'system' as the user-facing alias for the internal 'auto'
@@ -52,7 +53,6 @@ const JOURNAL_DATE_FORMAT_LABELS: Record<JournalDateFormat, string> = {
   'EEE, MMM d': 'settings.journalDateFormatWeekday',
 }
 
-const FONT_SIZE_KEY = 'agaric-font-size'
 type FontSize = 'small' | 'medium' | 'large'
 
 const FONT_SIZE_CSS: Record<FontSize, string> = {
@@ -62,13 +62,7 @@ const FONT_SIZE_CSS: Record<FontSize, string> = {
 }
 
 function readFontSize(): FontSize {
-  try {
-    const stored = localStorage.getItem(FONT_SIZE_KEY)
-    if (stored === 'small' || stored === 'medium' || stored === 'large') return stored
-  } catch {
-    // localStorage unavailable
-  }
-  return 'medium'
+  return readPreference(PREFERENCES.fontSize)
 }
 
 function applyFontSize(size: FontSize) {
@@ -113,11 +107,7 @@ export function AppearanceTab(): React.ReactElement {
   const handleFontSizeChange = useCallback((value: string) => {
     const size = value as FontSize
     setFontSize(size)
-    try {
-      localStorage.setItem(FONT_SIZE_KEY, size)
-    } catch {
-      // localStorage unavailable
-    }
+    writePreference(PREFERENCES.fontSize, size)
   }, [])
 
   // Week-start coercion. Select values are strings; the hook

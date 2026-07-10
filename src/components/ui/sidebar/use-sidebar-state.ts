@@ -1,6 +1,7 @@
 import * as React from 'react'
 
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 
 /**
  * State hook for the Sidebar primitive.
@@ -23,7 +24,6 @@ export const SIDEBAR_COOKIE_NAME = 'sidebar_state'
 export const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
 export const SIDEBAR_WIDTH_DEFAULT = 150
 export const SIDEBAR_WIDTH_MIN = 120
-export const SIDEBAR_WIDTH_STORAGE_KEY = 'sidebar_width'
 
 export interface SidebarState {
   state: 'expanded' | 'collapsed'
@@ -53,28 +53,21 @@ export function useSidebarState({
   const isMobile = useIsMobile()
   const [openMobile, setOpenMobile] = React.useState(false)
 
-  // Sidebar width state — persisted in localStorage
+  // Sidebar width state — persisted in localStorage. `readPreference` returns
+  // the `-1` sentinel (see PREFERENCES.sidebarWidth) when the key is
+  // absent/corrupt, which always fails the `>= SIDEBAR_WIDTH_MIN` check
+  // below and falls through to `SIDEBAR_WIDTH_DEFAULT`, same as the
+  // pre-registry code.
   const [sidebarWidth, _setSidebarWidth] = React.useState(() => {
-    try {
-      const stored = localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)
-      if (stored) {
-        const parsed = Number(stored)
-        if (parsed >= SIDEBAR_WIDTH_MIN) return Math.min(parsed, window.innerWidth * 0.5)
-      }
-    } catch {
-      // localStorage unavailable
-    }
+    const stored = readPreference(PREFERENCES.sidebarWidth)
+    if (stored >= SIDEBAR_WIDTH_MIN) return Math.min(stored, window.innerWidth * 0.5)
     return SIDEBAR_WIDTH_DEFAULT
   })
   const setSidebarWidth = React.useCallback((width: number) => {
     const maxWidth = Math.floor(window.innerWidth * 0.5)
     const clamped = Math.max(SIDEBAR_WIDTH_MIN, Math.min(maxWidth, width))
     _setSidebarWidth(clamped)
-    try {
-      localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(clamped))
-    } catch {
-      // localStorage unavailable
-    }
+    writePreference(PREFERENCES.sidebarWidth, clamped)
   }, [])
 
   const [isResizing, setIsResizing] = React.useState(false)

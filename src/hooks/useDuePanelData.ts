@@ -35,6 +35,7 @@ import { formatDate } from '@/lib/date-utils'
 import { notify } from '@/lib/notify'
 
 import { logger } from '../lib/logger'
+import { PREFERENCES, readPreference } from '../lib/preferences'
 import type { BlockRow, PageResponse, ProjectedAgendaEntry, ResolvedBlock } from '../lib/tauri'
 import {
   batchResolve,
@@ -244,14 +245,7 @@ export function useDuePanelData({
   const [overdueBlocks, setOverdueBlocks] = useState<BlockRow[]>([])
   const [upcomingBlocks, setUpcomingBlocks] = useState<BlockRow[]>([])
 
-  const warningDays = useMemo(() => {
-    try {
-      const stored = localStorage.getItem('agaric:deadlineWarningDays')
-      return stored ? Number.parseInt(stored, 10) : 0
-    } catch {
-      return 0
-    }
-  }, [])
+  const warningDays = useMemo(() => readPreference(PREFERENCES.deadlineWarningDays), [])
 
   const todayStr = useToday()
   const isToday = date === todayStr

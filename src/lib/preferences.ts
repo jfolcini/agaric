@@ -18,7 +18,20 @@
  *   `key` verbatim.
  * - `scope: 'space'` — one value per (device, space). The effective key is
  *   `${key}:${spaceId}`; callers must pass the active `spaceId`.
+ * - `scope: 'page'` — one value per (device, page). Same key computation as
+ *   `'space'` (`${key}:${pageKey}`) but keyed by a page root id instead of a
+ *   space id — e.g. per-page collapsed-block state (`PREFERENCES.blockCollapse`).
+ *   This is a distinct axis from device/sync scope (see module docstring,
+ *   "Adding a preference"): it documents WHICH runtime id partitions the
+ *   value, not whether it syncs.
  *
+ * `readPreference`/`writePreference`/`hasPreference`/`removePreference` all
+ * take the same optional second argument (a `spaceId` for `'space'`, a
+ * `pageKey` for `'page'`, ignored for `'device'`) — one accessor family
+ * covers both keyed axes, so a new per-space or per-page preference never
+ * needs a parallel "family" API.
+ *
+
  * ## Storage format (no envelope)
  *
  * Values are stored in the **same bare format the key already used** — no
@@ -48,6 +61,30 @@
  *      (silent — invalid stored data is expected after a format change).
  *   4. Write throws (quota, private mode) → swallow + warn.
  *
+ * `readPreference` never hands back a *shared reference* to `defaultValue`
+ * on the "nothing stored" branch — several migrated call sites (starred
+ * pages, tag colors, recent-searches/-commands, block-collapse ids) read a
+ * fresh array/object and mutate it in place (`pages.push(id)`) before
+ * writing it back, exactly like the pre-registry code (which always parsed
+ * a fresh value out of `JSON.parse`). Returning `defaultValue` by reference
+ * would let that in-place mutation corrupt the shared default for every
+ * future "key absent" read across every caller of that `PreferenceDefinition`
+ * — `cloneDefault` (shallow; every default here is a flat array or a flat
+ * string-keyed record) keeps the "always a fresh value" contract for the
+ * default branch too.
+ *
+ * `hasPreference` answers "is there ANY stored value" (including one that
+ * fails to `parse`) — distinct from `readPreference(def) !== def.defaultValue`,
+ * which can't tell "never stored" apart from "stored, and happens to equal
+ * the default" (e.g. an explicitly-persisted empty array). `useBlockCollapse`
+ * needs exactly this: a page that scoped-wrote an empty collapsed-ids list
+ * (everything expanded) must not fall through to the legacy global key, so it
+ * checks `hasPreference` rather than comparing the read value to `[]`.
+ *
+ * `removePreference` clears a stored value outright (vs. writing the
+ * default) — used where "never configured" is a distinct, meaningful state
+ * from "explicitly reset" (e.g. `clearPathHistory`, `resetOnboardingSeen`).
+ *
  * ## Adding a preference
  *
  * New localStorage-backed preferences MUST be registered here as a
@@ -66,10 +103,12 @@ export interface PreferenceDefinition<T> {
   /** The localStorage key base. Kept verbatim — never re-keyed. */
   key: string
   /**
-   * `'device'` → the effective key is `key` as-is. `'space'` → the effective
-   * key is `${key}:${spaceId}` and a `spaceId` must be supplied by callers.
+   * `'device'` → the effective key is `key` as-is. `'space'` / `'page'` →
+   * the effective key is `${key}:${keyArg}` (a `spaceId` or `pageKey`
+   * respectively) and callers must supply that second argument. See the
+   * module docstring's "Scope" section.
    */
-  scope: 'device' | 'space'
+  scope: 'device' | 'space' | 'page'
   /**
    * Contract metadata describing the current on-disk shape. NOT a stored
    * envelope. Bump this (and add a `migrate`) when the raw format changes.
@@ -92,49 +131,62 @@ export interface PreferenceDefinition<T> {
 /**
  * Compute the effective localStorage key for a definition.
  *
- * - `device` scope: `def.key` verbatim (`spaceId` is ignored).
- * - `space` scope: `${def.key}:${spaceId}`. If a space-scoped definition is
- *   used without a `spaceId`, we take the safe route — warn and fall back to
+ * - `device` scope: `def.key` verbatim (`keyArg` is ignored).
+ * - `space` / `page` scope: `${def.key}:${keyArg}`. If a keyed definition is
+ *   used without a `keyArg`, we take the safe route — warn and fall back to
  *   the bare `def.key` rather than throwing into a render/click path.
  */
-export function effectiveKey<T>(def: PreferenceDefinition<T>, spaceId?: string): string {
-  if (def.scope === 'space') {
-    if (spaceId === undefined || spaceId === '') {
-      logger.warn(
-        `preference:${def.key}`,
-        'Space-scoped preference used without a spaceId; falling back to bare key',
-        { key: def.key },
-      )
-      return def.key
-    }
-    return `${def.key}:${spaceId}`
+export function effectiveKey<T>(def: PreferenceDefinition<T>, keyArg?: string): string {
+  if (def.scope === 'device') return def.key
+  if (keyArg === undefined || keyArg === '') {
+    const argName = def.scope === 'space' ? 'spaceId' : 'pageKey'
+    logger.warn(
+      `preference:${def.key}`,
+      `${def.scope === 'space' ? 'Space' : 'Page'}-scoped preference used without a ${argName}; falling back to bare key`,
+      { key: def.key },
+    )
+    return def.key
   }
-  return def.key
+  return `${def.key}:${keyArg}`
+}
+
+/**
+ * Shallow-clone a default value before handing it back to a caller. See the
+ * module docstring's "Failure discipline" section for why — array/object
+ * defaults are single literals shared across every "key absent" read, and
+ * several migrated call sites mutate the returned value in place before
+ * writing it back. Shallow is sufficient: every default in this module is a
+ * flat array or a flat string-keyed record.
+ */
+function cloneDefault<T>(value: T): T {
+  if (Array.isArray(value)) return [...value] as T
+  if (value !== null && typeof value === 'object') return { ...(value as object) } as T
+  return value
 }
 
 /**
  * Read a preference value directly (non-hook). SSR-safe; applies `migrate`
  * before `parse`; falls back to `def.defaultValue` on any failure.
  */
-export function readPreference<T>(def: PreferenceDefinition<T>, spaceId?: string): T {
-  if (typeof window === 'undefined') return def.defaultValue
-  const key = effectiveKey(def, spaceId)
+export function readPreference<T>(def: PreferenceDefinition<T>, keyArg?: string): T {
+  if (typeof window === 'undefined') return cloneDefault(def.defaultValue)
+  const key = effectiveKey(def, keyArg)
   try {
     const raw = localStorage.getItem(key)
-    if (raw === null) return def.defaultValue
+    if (raw === null) return cloneDefault(def.defaultValue)
     try {
       const migrated = def.migrate ? def.migrate(raw) : raw
       // migrate → null means "discard the legacy value".
-      if (migrated === null) return def.defaultValue
+      if (migrated === null) return cloneDefault(def.defaultValue)
       return def.parse(migrated)
     } catch {
       // Invalid / undecodable stored data — fall back silently. Expected on
       // the first read after a format change (see module docstring).
-      return def.defaultValue
+      return cloneDefault(def.defaultValue)
     }
   } catch (err) {
     logger.warn(`preference:${def.key}`, 'Failed to read localStorage preference', { key }, err)
-    return def.defaultValue
+    return cloneDefault(def.defaultValue)
   }
 }
 
@@ -142,13 +194,46 @@ export function readPreference<T>(def: PreferenceDefinition<T>, spaceId?: string
  * Write a preference value directly (non-hook). SSR-safe; swallows and warns
  * on any storage failure (quota, private mode, locked-down webview).
  */
-export function writePreference<T>(def: PreferenceDefinition<T>, value: T, spaceId?: string): void {
+export function writePreference<T>(def: PreferenceDefinition<T>, value: T, keyArg?: string): void {
   if (typeof window === 'undefined') return
-  const key = effectiveKey(def, spaceId)
+  const key = effectiveKey(def, keyArg)
   try {
     localStorage.setItem(key, def.serialize(value))
   } catch (err) {
     logger.warn(`preference:${def.key}`, 'Failed to write localStorage preference', { key }, err)
+  }
+}
+
+/**
+ * True when the key has ANY stored value (including one that fails to
+ * `parse`). Distinct from `readPreference(def) !== def.defaultValue` — a
+ * caller that needs to tell "never stored" apart from "stored, and happens
+ * to equal the default" (e.g. an explicitly-persisted empty array) should
+ * use this instead. SSR-safe; a read throw degrades to `false` (+ warn)
+ * rather than propagating.
+ */
+export function hasPreference<T>(def: PreferenceDefinition<T>, keyArg?: string): boolean {
+  if (typeof window === 'undefined') return false
+  const key = effectiveKey(def, keyArg)
+  try {
+    return localStorage.getItem(key) !== null
+  } catch (err) {
+    logger.warn(`preference:${def.key}`, 'Failed to read localStorage preference', { key }, err)
+    return false
+  }
+}
+
+/**
+ * Remove a preference's stored value outright (as opposed to writing
+ * `defaultValue` back). SSR-safe; swallows and warns on any storage failure.
+ */
+export function removePreference<T>(def: PreferenceDefinition<T>, keyArg?: string): void {
+  if (typeof window === 'undefined') return
+  const key = effectiveKey(def, keyArg)
+  try {
+    localStorage.removeItem(key)
+  } catch (err) {
+    logger.warn(`preference:${def.key}`, 'Failed to remove localStorage preference', { key }, err)
   }
 }
 
@@ -160,9 +245,9 @@ export function writePreference<T>(def: PreferenceDefinition<T>, value: T, space
  */
 export function usePreference<T>(
   def: PreferenceDefinition<T>,
-  spaceId?: string,
+  keyArg?: string,
 ): [T, (value: T | ((prev: T) => T)) => void] {
-  const key = effectiveKey(def, spaceId)
+  const key = effectiveKey(def, keyArg)
   // `useLocalStoragePreference` only invokes `parse` on the initial read
   // (its `useState` initializer), so composing `migrate` here means the
   // legacy → current transform runs exactly on mount. A `null` from
@@ -173,7 +258,11 @@ export function usePreference<T>(
     if (migrated === null) throw new Error('preference migrate: discarded legacy value')
     return def.parse(migrated)
   }
-  return useLocalStoragePreference<T>(key, def.defaultValue, {
+  // `cloneDefault` — see the module docstring's "Failure discipline" section:
+  // the `useState` initializer inside `useLocalStoragePreference` falls back
+  // to this value by reference on "key absent", same hazard as
+  // `readPreference`'s default branch.
+  return useLocalStoragePreference<T>(key, cloneDefault(def.defaultValue), {
     parse,
     serialize: def.serialize,
     source: `preference:${def.key}`,
@@ -267,6 +356,350 @@ const SORT_PREFERENCE: PreferenceDefinition<SortOption> = {
   serialize: identity,
 }
 
+// ── JSON helpers for entries whose wire format is a plain
+// `JSON.stringify`/`JSON.parse` round-trip. ─────────────────────────────
+const jsonParse = <T>(raw: string): T => JSON.parse(raw) as T
+const jsonSerialize = <T>(value: T): string => JSON.stringify(value)
+
+/**
+ * `agaric-gesture-coachmark-seen` — first-run mobile gesture coach-mark
+ * dismissed (`src/lib/gesture-coachmark.ts`). Legacy format: presence of
+ * ANY value means "seen" (always written as the literal string `'true'`,
+ * but the original reader was `!!raw`).
+ */
+const GESTURE_COACHMARK_SEEN_PREFERENCE: PreferenceDefinition<boolean> = {
+  key: 'agaric-gesture-coachmark-seen',
+  scope: 'device',
+  version: 1,
+  defaultValue: false,
+  parse: () => true,
+  serialize: () => 'true',
+}
+
+/**
+ * `agaric-onboarding-done` — first-run welcome modal dismissed
+ * (`src/lib/onboarding.ts`). Same presence-means-seen legacy format as
+ * `gestureCoachmarkSeen`.
+ */
+const ONBOARDING_DONE_PREFERENCE: PreferenceDefinition<boolean> = {
+  key: 'agaric-onboarding-done',
+  scope: 'device',
+  version: 1,
+  defaultValue: false,
+  parse: () => true,
+  serialize: () => 'true',
+}
+
+/**
+ * `agaric:space-onboarding-seen-v1` — manage-spaces dialog onboarding banner
+ * dismissed (`src/components/SpaceManageDialog/SpaceOnboardingHint.tsx`). Do
+ * NOT rename — pre-existing users have this exact key set; renaming would
+ * re-show the banner after upgrade. Exact-match `'true'` (not mere
+ * presence) — mirrors the original reader.
+ */
+const SPACE_ONBOARDING_SEEN_PREFERENCE: PreferenceDefinition<boolean> = {
+  key: 'agaric:space-onboarding-seen-v1',
+  scope: 'device',
+  version: 1,
+  defaultValue: false,
+  parse: (raw) => raw === 'true',
+  serialize: () => 'true',
+}
+
+/** `tag-colors` — tag id -> CSS color/accent-token map (`src/lib/tag-colors.ts`). */
+const TAG_COLORS_PREFERENCE: PreferenceDefinition<Record<string, string>> = {
+  key: 'tag-colors',
+  scope: 'device',
+  version: 1,
+  defaultValue: {} as Record<string, string>,
+  parse: (raw) => {
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
+    const result: Record<string, string> = {}
+    for (const [k, v] of Object.entries(parsed)) {
+      if (typeof v === 'string') result[k] = v
+    }
+    return result
+  },
+  serialize: jsonSerialize<Record<string, string>>,
+}
+
+/**
+ * `pinned_search_scope` — pinned default segment for the mobile search sheet
+ * (`src/lib/pinned-search-scope.ts`). Empty string on disk = "no pin".
+ */
+const PINNED_SEARCH_SCOPE_PREFERENCE: PreferenceDefinition<'in-page' | 'all-pages' | null> = {
+  key: 'pinned_search_scope',
+  scope: 'device',
+  version: 1,
+  defaultValue: null,
+  parse: (raw) => {
+    if (raw === 'in-page' || raw === 'all-pages') return raw
+    throw new Error(`invalid pinned search scope: ${raw}`)
+  },
+  serialize: (value) => value ?? '',
+}
+
+/**
+ * `agaric-emoji-picker-enabled` — inline `:` emoji picker enabled
+ * (`src/lib/editor-preferences.ts`). Default true (absent/corrupt -> on).
+ * Legacy semantics: anything other than a JSON-encoded `false` counts as
+ * enabled.
+ */
+const EMOJI_PICKER_ENABLED_PREFERENCE: PreferenceDefinition<boolean> = {
+  key: 'agaric-emoji-picker-enabled',
+  scope: 'device',
+  version: 1,
+  defaultValue: true,
+  parse: (raw) => (JSON.parse(raw) as unknown) !== false,
+  serialize: jsonSerialize<boolean>,
+}
+
+/**
+ * `agaric-tab-indents-blocks` — Tab/Shift+Tab indents blocks
+ * (`src/lib/editor-preferences.ts`). Default true.
+ */
+const TAB_INDENTS_BLOCKS_PREFERENCE: PreferenceDefinition<boolean> = {
+  key: 'agaric-tab-indents-blocks',
+  scope: 'device',
+  version: 1,
+  defaultValue: true,
+  parse: (raw) => (JSON.parse(raw) as unknown) !== false,
+  serialize: jsonSerialize<boolean>,
+}
+
+/** `starred-pages` — starred (favorited) page ids (`src/lib/starred-pages.ts`). */
+const STARRED_PAGES_PREFERENCE: PreferenceDefinition<string[]> = {
+  key: 'starred-pages',
+  scope: 'device',
+  version: 1,
+  defaultValue: [] as string[],
+  parse: (raw) => {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((item): item is string => typeof item === 'string')
+  },
+  serialize: jsonSerialize<string[]>,
+}
+
+/**
+ * `agaric:quickCaptureShortcut` — user-configured global-shortcut
+ * accelerator (`src/lib/quick-capture-shortcut.ts`). Empty string sentinel =
+ * "not set".
+ */
+const QUICK_CAPTURE_SHORTCUT_PREFERENCE: PreferenceDefinition<string> = {
+  key: 'agaric:quickCaptureShortcut',
+  scope: 'device',
+  version: 1,
+  defaultValue: '',
+  parse: (raw) => raw,
+  serialize: (value) => value,
+}
+
+/**
+ * `sidebar_width` — sidebar drag-resize width in px
+ * (`src/components/ui/sidebar/use-sidebar-state.ts`). `-1` sentinel = "not
+ * stored" (distinct from a genuine below-minimum value).
+ */
+const SIDEBAR_WIDTH_PREFERENCE: PreferenceDefinition<number> = {
+  key: 'sidebar_width',
+  scope: 'device',
+  version: 1,
+  defaultValue: -1,
+  parse: (raw) => {
+    const n = Number(raw)
+    if (!Number.isFinite(n)) throw new Error('not a number')
+    return n
+  },
+  serialize: (value) => String(value),
+}
+
+/**
+ * `agaric:searchFilterSyntaxToast:v1` — one-time "filter syntax is live"
+ * toast shown (`src/components/SearchPanel/useFilterSyntaxIntroToast.ts`).
+ */
+const FILTER_SYNTAX_INTRO_TOAST_SHOWN_PREFERENCE: PreferenceDefinition<boolean> = {
+  key: 'agaric:searchFilterSyntaxToast:v1',
+  scope: 'device',
+  version: 1,
+  defaultValue: false,
+  parse: () => true,
+  serialize: () => '1',
+}
+
+/** `agaric-font-size` — editor/UI font size (`src/components/settings/AppearanceTab.tsx`). */
+const FONT_SIZE_PREFERENCE: PreferenceDefinition<'small' | 'medium' | 'large'> = {
+  key: 'agaric-font-size',
+  scope: 'device',
+  version: 1,
+  defaultValue: 'medium',
+  parse: (raw) => {
+    if (raw === 'small' || raw === 'medium' || raw === 'large') return raw
+    throw new Error(`invalid font size: ${raw}`)
+  },
+  serialize: (value) => value,
+}
+
+/**
+ * `agaric:deadlineWarningDays` — overdue-warning lead time in days
+ * (`src/hooks/useDuePanelData.ts`,
+ * `src/components/agenda/DeadlineWarningSection.tsx`). Legacy on-disk
+ * format is a bare integer (not JSON).
+ */
+const DEADLINE_WARNING_DAYS_PREFERENCE: PreferenceDefinition<number> = {
+  key: 'agaric:deadlineWarningDays',
+  scope: 'device',
+  version: 1,
+  defaultValue: 0,
+  parse: (raw) => {
+    const n = Number.parseInt(raw, 10)
+    if (!Number.isFinite(n)) throw new Error('not a number')
+    return n
+  },
+  serialize: (value) => String(value),
+}
+
+/**
+ * `agaric:last-update-check` — ISO timestamp of the last successful update
+ * check (`src/hooks/useUpdateCheck.ts`). `null` = never checked.
+ */
+const LAST_UPDATE_CHECK_PREFERENCE: PreferenceDefinition<string | null> = {
+  key: 'agaric:last-update-check',
+  scope: 'device',
+  version: 1,
+  defaultValue: null,
+  parse: (raw) => raw,
+  serialize: (value) => value ?? '',
+}
+
+/**
+ * `agaric-settings-active-tab` — Settings panel's active tab
+ * (`src/lib/url-state.ts`). Validated against `SettingsTab` by
+ * `SettingsView` (this module deliberately stays feature-agnostic). Empty
+ * string sentinel = "not stored".
+ */
+const SETTINGS_ACTIVE_TAB_PREFERENCE: PreferenceDefinition<string> = {
+  key: 'agaric-settings-active-tab',
+  scope: 'device',
+  version: 1,
+  defaultValue: '',
+  parse: (raw) => raw,
+  serialize: (value) => value,
+}
+
+/**
+ * `collapsed_ids` — pre-#752 GLOBAL collapsed-block-id list
+ * (`src/hooks/useBlockCollapse.ts`). Read-only migration fallback; never
+ * written again. Distinct effective key from `blockCollapse` below despite
+ * the same base `key` — this one is `device`-scoped (bare key), the other
+ * `page`-scoped (`collapsed_ids:<pageKey>`).
+ */
+const BLOCK_COLLAPSE_LEGACY_PREFERENCE: PreferenceDefinition<string[]> = {
+  key: 'collapsed_ids',
+  scope: 'device',
+  version: 1,
+  defaultValue: [] as string[],
+  parse: jsonParse<string[]>,
+  serialize: jsonSerialize<string[]>,
+}
+
+/**
+ * `agaric:pathHistory:v1:<spaceId>` — per-space MRU of `path:`/`not-path:`
+ * globs (`src/lib/path-history.ts`). Space-keyed: pass the space id as the
+ * second argument to `readPreference`/`writePreference`/`removePreference`.
+ */
+const PATH_HISTORY_PREFERENCE: PreferenceDefinition<string[]> = {
+  key: 'agaric:pathHistory:v1',
+  scope: 'space',
+  version: 1,
+  defaultValue: [] as string[],
+  parse: (raw) => {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((item): item is string => typeof item === 'string')
+  },
+  serialize: jsonSerialize<string[]>,
+}
+
+/**
+ * `recent_searches:<spaceId>` — per-space MRU of recent search terms
+ * (`src/lib/recent-searches.ts`). Space-keyed.
+ */
+const RECENT_SEARCHES_PREFERENCE: PreferenceDefinition<string[]> = {
+  key: 'recent_searches',
+  scope: 'space',
+  version: 1,
+  defaultValue: [] as string[],
+  parse: (raw) => {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
+  },
+  serialize: jsonSerialize<string[]>,
+}
+
+/** A recently-run command entry (`src/lib/recent-commands.ts`). */
+export interface RecentCommand {
+  /** Stable command id (e.g. `go-settings`, `search-everywhere`). */
+  id: string
+  /** ISO timestamp of the most recent run. */
+  runAt: string
+}
+
+function parseRecentCommands(raw: string): RecentCommand[] {
+  const parsed: unknown = JSON.parse(raw)
+  if (!Array.isArray(parsed)) return []
+  return parsed.filter(
+    (item): item is RecentCommand =>
+      item !== null &&
+      typeof item === 'object' &&
+      typeof (item as Record<string, unknown>)['id'] === 'string' &&
+      typeof (item as Record<string, unknown>)['runAt'] === 'string',
+  )
+}
+
+/**
+ * `recent_commands:<spaceId>` — per-space MRU of recently-run command-palette
+ * ids (`src/lib/recent-commands.ts`). Space-keyed.
+ */
+const RECENT_COMMANDS_PALETTE_PREFERENCE: PreferenceDefinition<RecentCommand[]> = {
+  key: 'recent_commands',
+  scope: 'space',
+  version: 1,
+  defaultValue: [] as RecentCommand[],
+  parse: parseRecentCommands,
+  serialize: jsonSerialize<RecentCommand[]>,
+}
+
+/**
+ * `recent_slash:<spaceId>` — #1105 the slash menu reuses `recent-commands.ts`
+ * under its own namespace (distinct key prefix) so palette and slash command
+ * ids never collide. Same shape/cap/move-to-top semantics as
+ * `recentCommandsPalette`.
+ */
+const RECENT_COMMANDS_SLASH_PREFERENCE: PreferenceDefinition<RecentCommand[]> = {
+  key: 'recent_slash',
+  scope: 'space',
+  version: 1,
+  defaultValue: [] as RecentCommand[],
+  parse: parseRecentCommands,
+  serialize: jsonSerialize<RecentCommand[]>,
+}
+
+/**
+ * `collapsed_ids:<pageKey>` — collapsed block ids, keyed by page root id
+ * (#752, `src/hooks/useBlockCollapse.ts`). Page-keyed (not space-keyed) —
+ * see `blockCollapseLegacy` above for the pre-#752 global fallback.
+ */
+const BLOCK_COLLAPSE_PREFERENCE: PreferenceDefinition<string[]> = {
+  key: 'collapsed_ids',
+  scope: 'page',
+  version: 1,
+  defaultValue: [] as string[],
+  parse: jsonParse<string[]>,
+  serialize: jsonSerialize<string[]>,
+}
+
 /**
  * Central registry of every localStorage-backed app preference. New keys go
  * here (see module docstring) so preferences stay discoverable in one place.
@@ -274,4 +707,25 @@ const SORT_PREFERENCE: PreferenceDefinition<SortOption> = {
 export const PREFERENCES = {
   density: DENSITY_PREFERENCE,
   sort: SORT_PREFERENCE,
+  gestureCoachmarkSeen: GESTURE_COACHMARK_SEEN_PREFERENCE,
+  onboardingDone: ONBOARDING_DONE_PREFERENCE,
+  spaceOnboardingSeen: SPACE_ONBOARDING_SEEN_PREFERENCE,
+  tagColors: TAG_COLORS_PREFERENCE,
+  pinnedSearchScope: PINNED_SEARCH_SCOPE_PREFERENCE,
+  emojiPickerEnabled: EMOJI_PICKER_ENABLED_PREFERENCE,
+  tabIndentsBlocks: TAB_INDENTS_BLOCKS_PREFERENCE,
+  starredPages: STARRED_PAGES_PREFERENCE,
+  quickCaptureShortcut: QUICK_CAPTURE_SHORTCUT_PREFERENCE,
+  sidebarWidth: SIDEBAR_WIDTH_PREFERENCE,
+  filterSyntaxIntroToastShown: FILTER_SYNTAX_INTRO_TOAST_SHOWN_PREFERENCE,
+  fontSize: FONT_SIZE_PREFERENCE,
+  deadlineWarningDays: DEADLINE_WARNING_DAYS_PREFERENCE,
+  lastUpdateCheck: LAST_UPDATE_CHECK_PREFERENCE,
+  settingsActiveTab: SETTINGS_ACTIVE_TAB_PREFERENCE,
+  blockCollapseLegacy: BLOCK_COLLAPSE_LEGACY_PREFERENCE,
+  pathHistory: PATH_HISTORY_PREFERENCE,
+  recentSearches: RECENT_SEARCHES_PREFERENCE,
+  recentCommandsPalette: RECENT_COMMANDS_PALETTE_PREFERENCE,
+  recentCommandsSlash: RECENT_COMMANDS_SLASH_PREFERENCE,
+  blockCollapse: BLOCK_COLLAPSE_PREFERENCE,
 } as const

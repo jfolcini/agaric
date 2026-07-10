@@ -476,6 +476,39 @@ pass_filenames = false
 files = "^scripts/check-raw-invoke\\.mjs$"
 stages = ["pre-commit"]
 
+# no-raw-local-storage (#2466): app code must declare a device/space/page-
+# local preference in the typed registry (`src/lib/preferences.ts`,
+# PREFERENCES) and read/write it via `readPreference`/`writePreference`/
+# `usePreference`/`hasPreference`/`removePreference`, not a raw
+# `localStorage.getItem/setItem/removeItem/clear` bypass. Grandfather
+# exemptions (pre-#2466 call sites intentionally not migrated in that pass —
+# useSyncExternalStore + synthetic-StorageEvent hooks, the keyboard-config
+# parse cache, etc.) live in the script with a per-file rationale.
+# pass_filenames=false — the script does its own scoped walk of src/.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "no-raw-local-storage"
+name = "No raw localStorage calls in app code (#2466)"
+entry = "node scripts/check-raw-local-storage.mjs"
+language = "system"
+pass_filenames = false
+files = "^src/.*\\.(ts|tsx)$"
+stages = ["pre-commit"]
+
+# Self-test the no-raw-local-storage guard's own exit behavior (raw call
+# FAILS, registry accessor / commented / exempt / variable-indirection
+# PASS) whenever the guard script itself changes, so a regression that
+# defangs it can't land.
+[[repos.hooks]]
+id = "no-raw-local-storage-selftest"
+name = "No raw localStorage guard self-test"
+entry = "node scripts/check-raw-local-storage.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-raw-local-storage\\.mjs$"
+stages = ["pre-commit"]
+
 # snapshot-redaction: scan every `*.snap` file under `src/` and
 # `src-tauri/` for unredacted ULIDs (26-char Crockford base32),
 # blake3 hashes (64-char lowercase hex), ISO-8601 timestamps with a

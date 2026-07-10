@@ -17,9 +17,8 @@
  * against that drift.
  */
 
+import { PREFERENCES, readPreference, writePreference } from './preferences'
 import { accentVar } from './space-accent'
-
-const STORAGE_KEY = 'tag-colors'
 
 /**
  * Preset color palette — re-keyed (#1099) onto the themed per-space
@@ -119,28 +118,15 @@ export function migrateTagColors(colors: Record<string, string>): {
  * shape is persisted back once so subsequent reads are stable.
  */
 export function getTagColors(): Record<string, string> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return {}
-    const parsed: unknown = JSON.parse(raw)
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
-    const result: Record<string, string> = {}
-    for (const [k, v] of Object.entries(parsed)) {
-      if (typeof v === 'string') result[k] = v
-    }
-    const { colors, changed } = migrateTagColors(result)
-    if (changed) {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(colors))
-      } catch {
-        // Storage unavailable — return the migrated map in-memory anyway so
-        // rendering re-themes this session; persistence retries next read.
-      }
-    }
-    return colors
-  } catch {
-    return {}
+  const result = readPreference(PREFERENCES.tagColors)
+  const { colors, changed } = migrateTagColors(result)
+  if (changed) {
+    // Storage-unavailable write failures are logged and swallowed by
+    // writePreference — the migrated map above is returned in-memory anyway
+    // so rendering re-themes this session; persistence retries next read.
+    writePreference(PREFERENCES.tagColors, colors)
   }
+  return colors
 }
 
 /** Get the color for a specific tag. Returns undefined if not set. */
@@ -148,28 +134,22 @@ export function getTagColor(tagId: string): string | undefined {
   return getTagColors()[tagId]
 }
 
-/** Set the color for a tag in localStorage. */
+/**
+ * Set the color for a tag in localStorage. Storage-unavailable write
+ * failures (private mode / quota / locked-down webview) are logged and
+ * swallowed by `writePreference` rather than thrown into the click handler.
+ */
 export function setTagColor(tagId: string, color: string): void {
   const colors = getTagColors()
   colors[tagId] = color
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(colors))
-  } catch {
-    // Storage unavailable (private mode / quota / locked-down webview) —
-    // degrade to no-persist rather than throwing into the click handler.
-    // Mirrors the silent fallback in getTagColors above.
-  }
+  writePreference(PREFERENCES.tagColors, colors)
 }
 
-/** Remove the color for a tag from localStorage. */
+/** Remove the color for a tag from localStorage (see `setTagColor`). */
 export function clearTagColor(tagId: string): void {
   const colors = getTagColors()
   delete colors[tagId]
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(colors))
-  } catch {
-    // Storage unavailable — degrade to no-persist (see setTagColor).
-  }
+  writePreference(PREFERENCES.tagColors, colors)
 }
 
 /**
