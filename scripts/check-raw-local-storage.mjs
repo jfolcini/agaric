@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────
 // No-raw-localStorage guard (#2466).
 //
 // `src/lib/preferences.ts` is the typed preferences registry: every
@@ -12,7 +12,7 @@
 // guard forbids the raw pattern in NEW app code so the registry stays
 // the single place a preference's storage key is declared.
 //
-// ─── Detection ────────────────────────────────────────────────
+// ─── Detection ──────────────────────────────────────────────────────
 //
 // Flags `localStorage.<method>(` and `window.localStorage.<method>(` for
 // `getItem` / `setItem` / `removeItem` / `clear`. Comments are stripped
@@ -23,7 +23,7 @@
 // handful of one-time legacy-key migration readers that pre-date this
 // guard.
 //
-// ─── Scope / exemptions ──────────────────────────────
+// ─── Scope / exemptions ─────────────────────────────────────────────
 //
 // Scans `src/**/*.{ts,tsx}`, excluding test files (`*.test.ts[x]`,
 // `__tests__/`, `/tests/`). Two kinds of exemption:
@@ -48,7 +48,7 @@
 //        node scripts/check-raw-local-storage.mjs --self-test
 // Exit:  0 = clean, 1 = at least one violation, 2 = repo layout /
 //        self-test failure.
-// ────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────
 
 import fs from 'node:fs'
 import os from 'node:os'
@@ -94,7 +94,7 @@ const EXEMPT_FILES = Object.freeze(
 // `localStorage.<method>(` or `window.localStorage.<method>(`.
 const RAW_STORAGE_RE = /\b(?:window\.)?localStorage\.(getItem|setItem|removeItem|clear)\s*\(/g
 
-// ─── helpers ────────────────────────────────────────────
+// ─── helpers ────────────────────────────────────────────────────────
 
 function toPosix(p) {
   return p.split(path.sep).join('/')
@@ -158,7 +158,7 @@ function scanSource(src) {
   return violations
 }
 
-// ─── analysis ───────────────────────────────────────────
+// ─── analysis ───────────────────────────────────────────────────────
 
 /**
  * Analyze all source files under `srcDir` for raw-localStorage
@@ -181,7 +181,7 @@ function analyze({ root, srcDir }) {
   return { violations, scanned }
 }
 
-// ─── main ──────────────────────────────────────────────────────
+// ─── main ───────────────────────────────────────────────────────────
 
 if (process.argv.includes('--self-test')) {
   runSelfTest()
@@ -220,7 +220,7 @@ function runGuard() {
   console.log(`OK: ${scanned} source file(s) scanned, no raw localStorage calls in app code`)
 }
 
-// ─── self-test ───────────────────────────────────────────
+// ─── self-test ──────────────────────────────────────────────────────
 //
 // Drives analyze() against a synthetic src tree so the guard's exit
 // behavior is itself verified: a raw call FAILS, a registry accessor
