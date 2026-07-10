@@ -197,11 +197,12 @@ async fn validate_move_in_tx(
 ///
 /// Called back-to-back within one tx, each invocation reads the state the
 /// PREVIOUS move committed in-tx (`apply_op_projected` writes the engine + SQL
-/// AND runs the inline count/page-id maintenance synchronously — `chunk = None`),
-/// which is exactly what preserves the #774 slot
-/// semantics for a batch: parking block[k] at slot `start+k` drops block[k+1]
-/// at `start+k+1` immediately after it. Any `?` propagation rolls the WHOLE
-/// transaction back (nothing moved) because the caller never reaches commit.
+/// AND runs the inline count/page-id maintenance synchronously — `chunk = None`).
+/// The batch caller (`move_blocks_batch_inner`) relies on this in-tx visibility:
+/// each member's destination slot is computed so the N sequential moves settle
+/// into ONE contiguous run (Refs #914 / Closes #2305). Any `?` propagation rolls
+/// the WHOLE transaction back (nothing moved) because the caller never reaches
+/// commit.
 ///
 /// See [`move_block_inner`]'s original inline body for the full rationale on
 /// each step; the comments are preserved verbatim below.
@@ -341,7 +342,9 @@ pub async fn move_block(
 }
 
 /// Atomically move an ORDERED list of block subtrees under a single new parent,
-/// landing them at consecutive slots starting at `new_index` (#2274).
+/// landing them as ONE contiguous run at base position `new_index` among the
+/// target parent's non-selected children (#2274; contiguous-run semantics per
+/// Refs #914 / Closes #2305).
 ///
 /// This is the batched arity of [`move_block_inner`]: instead of the frontend
 /// firing N sequential `move_block` IPCs (each its own IMMEDIATE tx + writer-lock
@@ -357,12 +360,16 @@ pub async fn move_block(
 ///   convergence stay per-op — no new "batch move" op type is invented) and
 ///   drives the same engine-apply + dense-rank reprojection path a single
 ///   `move_block` uses. A single `commit_and_dispatch` at the end drains every
-///   enqueued op in order.
-/// - **#774 slot preservation IN-tx:** because each move applies to the engine +
-///   SQL synchronously before the next runs, block[k] parked at slot
-///   `new_index + k` is visible to block[k+1]'s move at slot `new_index + k + 1`,
-///   which drops it immediately after — an order-preserving contiguous run,
-///   identical to the old sequential single-move loop.
+///   enqueued op in order. Only the destination SLOT each op carries is computed
+///   specially (see the loop below) — the wire format is unchanged.
+/// - **Contiguous-run placement (Refs #914 / Closes #2305):** the selection lands
+///   as one contiguous run, in selection order, among the target parent's
+///   NON-selected children — a remove-then-splice outcome. Landing each member at
+///   a naive `new_index + k` slot does NOT achieve this when the selection
+///   interleaves with non-moved siblings (the #2305 bug: [A,B,C,D] move [A,C] →
+///   B,A,D,C instead of the promised contiguous B,D,A,C). The loop below pins an
+///   ANCHOR and derives each member's slot so the N sequential engine moves +
+///   dense-rank reprojections settle into a contiguous run.
 /// - **All-or-nothing:** any per-move rejection (missing block/parent, cycle —
 ///   target inside a moved subtree — or depth-cap violation) propagates via `?`,
 ///   which drops the tx before commit and rolls the WHOLE batch back. Nothing
@@ -411,8 +418,9 @@ pub async fn move_blocks_batch_inner(
     // engine mutation, keeps the engine in lockstep with the rolled-back tx.
     //
     // This pre-pass is equivalent to the per-iteration checks the apply loop
-    // below still runs (so #774 consecutive-slot semantics are untouched):
-    // every batch member moves under the SAME target parent, and a
+    // below still runs (the contiguous-run slot arithmetic changes only the
+    // destination index, never the validation): every batch member moves under
+    // the SAME target parent, and a
     // successful earlier move never alters the target's ancestor chain (a
     // member ON that chain fails the cycle probe here first) nor deepens
     // another member's subtree — so a batch that passes this pass cannot be
@@ -424,19 +432,119 @@ pub async fn move_blocks_batch_inner(
         validate_move_in_tx(&mut tx, id.as_str(), new_parent_id.as_deref()).await?;
     }
 
+    // #2305 (Refs #914 / Closes #2305): CONTIGUOUS-RUN placement. Land the whole
+    // selection as one run, in selection order, among the target parent's
+    // NON-selected children, at base position `start_index` (0-based, counted over
+    // the non-selected siblings). We still append one `move_block` op per block
+    // (wire format unchanged, undo/sync stay per-op) and drive the shared per-op
+    // engine-apply + dense-rank reproject pipeline — ONLY the destination slot each
+    // op carries changes.
+    //
+    // `apply_move_block_to(index)` treats `index` as a LIVE-sibling slot among the
+    // OTHER children (moved node excluded). Because the members move one at a time,
+    // a not-yet-moved selected member still occupying the group shifts a naive
+    // `start_index + k` slot — the #2305 bug (interleaved selections landed
+    // non-contiguous, e.g. [A,B,C,D] move [A,C] → B,A,D,C). Instead we pin an
+    // ANCHOR (the non-selected child the run lands BEFORE) and send each member to
+    // the live-slot immediately before it; stacking them there in selection order
+    // builds the contiguous run. Each member's slot is derived up-front from the
+    // pre-batch ordering (an immutable snapshot):
+    //
+    //   slot_k = p + k + |{ j > k : sel_j is currently a child of the target
+    //                              parent and positioned before the anchor }|
+    //
+    //     * p     non-selected children before the anchor (fixed — never move),
+    //     * k     the already-placed members sel_0..sel_{k-1} (all now before it),
+    //     * tail  the not-yet-moved members still in their original pre-anchor
+    //             slot (sel_k itself excluded).
+    //
+    // When the run appends past the last non-selected child (`p == non_selected`)
+    // there is no anchor: every member is appended to the end in order (still a
+    // contiguous run). A single-block batch reduces to `slot = p` — identical to
+    // `move_block` at slot `start_index` (the degenerate case).
+
+    // Pre-batch ordering of the target parent's LIVE children (position ASC, id
+    // ASC — the canonical sibling order the engine reprojects to). Read ONCE; every
+    // per-member slot is computed against this immutable snapshot. Runtime query
+    // (no sqlx macro) so no `.sqlx` cache entry is needed.
+    let ordered_children: Vec<String> = match new_parent_id.as_deref() {
+        Some(pid) => {
+            sqlx::query_scalar::<_, String>(
+                "SELECT id FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+                 ORDER BY position ASC, id ASC",
+            )
+            .bind(pid)
+            .fetch_all(&mut **tx)
+            .await?
+        }
+        None => {
+            sqlx::query_scalar::<_, String>(
+                "SELECT id FROM blocks WHERE parent_id IS NULL AND deleted_at IS NULL \
+                 ORDER BY position ASC, id ASC",
+            )
+            .fetch_all(&mut **tx)
+            .await?
+        }
+    };
+    let selected: std::collections::HashSet<&str> =
+        block_ids.iter().map(crate::ulid::BlockId::as_str).collect();
+    // Index of each target-group child in the pre-batch ordering. Selected members
+    // NOT currently under the target parent (a cross-parent move) are simply absent
+    // — they contribute nothing to the anchor arithmetic below, which is correct
+    // (they enter the group fresh, after every existing child).
+    let orig_index: std::collections::HashMap<&str, usize> = ordered_children
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.as_str(), i))
+        .collect();
+    let non_selected_count = ordered_children
+        .iter()
+        .filter(|s| !selected.contains(s.as_str()))
+        .count();
+    // `p` — the run's base position among the non-selected children (clamped).
+    let p = usize::try_from(start_index)
+        .unwrap_or(usize::MAX)
+        .min(non_selected_count);
+    // `anchor_pos` — the pre-batch index the run lands BEFORE. When `p` is inside
+    // the non-selected children it is the index of the p-th non-selected child;
+    // when the run appends past the last non-selected child (`p ==
+    // non_selected_count`) there is no anchor, so the "before" boundary is the end
+    // of the group. Using `len()` as the sentinel end unifies the two cases: the
+    // slot formula below stays CONSECUTIVE for a non-interleaved run (so the
+    // engine-less SQL-only fallback — which takes the slot as the position
+    // verbatim, no reproject — still lands dense ranks), while an interleaved run
+    // gets each member's slot bumped past the not-yet-moved members ahead of it so
+    // the engine path settles them into one contiguous run.
+    let anchor_pos = if p < non_selected_count {
+        ordered_children
+            .iter()
+            .filter(|s| !selected.contains(s.as_str()))
+            .nth(p)
+            .and_then(|anchor| orig_index.get(anchor.as_str()).copied())
+            .unwrap_or(ordered_children.len())
+    } else {
+        ordered_children.len()
+    };
+
     let mut responses = Vec::with_capacity(block_ids.len());
-    for (k, id) in block_ids.into_iter().enumerate() {
-        // Consecutive destination slots: block[k] → slot `start_index + k`.
-        // In-tx, the previous move is already committed to the engine + SQL, so
-        // this slot is read against the post-prior-move state (#774 semantics).
-        // (`k` is bounded by `MAX_BATCH_BLOCK_IDS`, so the conversion is
-        // infallible in practice; saturate defensively rather than wrap.)
-        let slot = start_index.saturating_add(i64::try_from(k).unwrap_or(i64::MAX));
+    for (k, id) in block_ids.iter().enumerate() {
+        // Not-yet-moved members (j > k) still sitting before the anchor boundary.
+        let later_before_anchor = ((k + 1)..block_ids.len())
+            .filter(|&j| {
+                orig_index
+                    .get(block_ids[j].as_str())
+                    .is_some_and(|&idx| idx < anchor_pos)
+            })
+            .count();
+        let slot = i64::try_from(p)
+            .unwrap_or(i64::MAX)
+            .saturating_add(i64::try_from(k).unwrap_or(i64::MAX))
+            .saturating_add(i64::try_from(later_before_anchor).unwrap_or(i64::MAX));
         let response = move_block_in_tx(
             &mut tx,
             materializer.loro_state(),
             device_id,
-            id.into_string(),
+            id.clone().into_string(),
             new_parent_id.clone(),
             slot,
         )
@@ -449,8 +557,9 @@ pub async fn move_blocks_batch_inner(
 
 /// Tauri command: batched intra-page reorder/reparent (#2274). See
 /// [`move_blocks_batch_inner`]. `block_ids` are moved, in the given order, under
-/// `new_parent_id` (a real block id, or `None` for top-level) at consecutive
-/// slots starting at the 0-based `new_index`.
+/// `new_parent_id` (a real block id, or `None` for top-level) as ONE contiguous
+/// run at base position `new_index` (0-based, counted over the target parent's
+/// non-selected children — Refs #914 / Closes #2305).
 #[tauri::command]
 #[specta::specta]
 pub async fn move_blocks_batch(

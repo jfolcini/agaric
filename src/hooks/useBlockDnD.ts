@@ -202,28 +202,16 @@ export function useBlockDnD({
     [collapsedVisible, activeId, activeDescendants, otherMovingSubtrees],
   )
 
-  // R12 — slot basis for the multi-drag drop. The backend computes the FIRST
-  // root's slot while the other (yet-unmoved) selected roots still sit in
-  // their source groups (#774 per-move slot semantics, replayed by
-  // `reconcileBatchMove`), so those roots must stay COUNTABLE for
-  // `computeDropIndex` even though they are hidden from projection/rendering.
-  // Their descendants stay excluded — a legal destination parent is outside
-  // every moving subtree, so a moving root's descendant can never be its
-  // child and cannot affect the count.
-  const slotItems = useMemo(() => {
-    if (!isMultiDrag) return visibleItems
-    const rootSet = new Set(dragRoots)
-    return collapsedVisible.filter(
-      (b) => !activeDescendants.has(b.id) && (rootSet.has(b.id) || !otherMovingSubtrees.has(b.id)),
-    )
-  }, [
-    isMultiDrag,
-    visibleItems,
-    collapsedVisible,
-    activeDescendants,
-    otherMovingSubtrees,
-    dragRoots,
-  ])
+  // Slot basis for the multi-drag drop. Contiguous-run semantics (Refs #914 /
+  // Closes #2305): the whole selection lands as ONE run among the NON-moving
+  // siblings, so the drop slot must be counted over the non-moving blocks only —
+  // i.e. the run's base insertion position. This is exactly `visibleItems` (the
+  // active root stays as the drag placeholder — `computeDropIndex` excludes it
+  // via its `activeId` arg, and needs it present to resolve drop direction —
+  // while every OTHER moving root and all moving subtrees are excluded). The
+  // former #774 basis re-added the other moving roots to match the old
+  // sequential per-move slots; contiguous-run counts them out.
+  const slotItems = visibleItems
 
   // Height of the dragged subtree (max descendant depth − root depth), so the
   // projection can't offer a depth whose descendants would exceed
@@ -400,11 +388,12 @@ export function useBlockDnD({
           )
           return
         }
-        // The drop slot is computed for the active block as if it alone moved;
-        // the other roots land contiguously after it (moveBlocks fans out the
-        // consecutive slots). #400: 0-based sibling slot under projected parent.
-        // R12 — counted over `slotItems` (other moving roots stay countable,
-        // matching the backend's per-move slot basis; see the memo).
+        // Contiguous-run semantics (Refs #914 / Closes #2305): `newIndex` is the
+        // run's base position among the NON-moving siblings — moveBlocks lands
+        // the whole selection there as one contiguous run, in selection order.
+        // #400: 0-based sibling slot under projected parent. R12 — counted over
+        // `slotItems` (== `visibleItems`; every other moving root and its
+        // subtree are excluded — see the memo above).
         const newIndex = computeDropIndex(slotItems, projected.parentId, over.id as string, blockId)
         restoreFocusOnSuccess('moveBlocks', moveBlocks(dragRoots, projected.parentId, newIndex))
         return

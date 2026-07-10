@@ -3149,23 +3149,22 @@ async fn local_move_inheritance_sql_fallback_arm_1392() {
     mat.shutdown();
 }
 
-/// #2274 ENGINE-path ground truth for a SAME-parent batched move whose
+/// #2274/#2305 ENGINE-path ground truth for a SAME-parent batched move whose
 /// selection INTERLEAVES with non-moved siblings.
 ///
-/// `move_blocks_batch` loops the per-move pipeline at slots `newIndex + k`,
-/// each computed against the state the PREVIOUS move left (the #774 in-tx
-/// sequential semantics). When a selected block sits BETWEEN the drop slot and
-/// a later selected block, that is NOT the same as "remove all selected, then
-/// splice the run at `newIndex` among the remaining siblings":
+/// Contiguous-run semantics (Refs #914 / Closes #2305): `move_blocks_batch`
+/// lands the selection as ONE contiguous run, in selection order, among the
+/// target parent's NON-selected children at base position `newIndex` — a
+/// remove-then-splice outcome:
 ///
-///   S1 > [A, B, C, D]; batch-move [A, C] to slot 2:
-///     k=0: A → slot 2 among {B, C, D}  ⇒ B, C, A, D
-///     k=1: C → slot 3 among {B, A, D}  ⇒ clamp(3 → tail) ⇒ B, A, D, C
+///   S1 > [A, B, C, D]; batch-move [A, C] at base position 2:
+///     non-selected = [B, D]; base position 2 == append past D ⇒ B, D, A, C
 ///
-/// The FE's `reconcileBatchMove` must reproduce THIS order (a remove-then-
-/// splice reconcile would compute B, D, A, C and silently diverge from the
-/// backend until the next reload). Mirrored FE-side in
-/// `page-blocks.test.ts` ("interleaved same-parent selection").
+/// The old sequential per-move slots produced B, A, D, C (the #2305 bug — a
+/// non-contiguous run that violated #914's promise). The FE's
+/// `reconcileBatchMove` and the tauri-mock handler must reproduce THIS order;
+/// mirrored FE-side in `page-blocks.test.ts` ("interleaved same-parent
+/// selection").
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn move_blocks_batch_interleaved_same_parent_engine_ground_truth_2274() {
     let s1 = seed_label_to_id("S1");
@@ -3222,8 +3221,8 @@ async fn move_blocks_batch_interleaved_same_parent_engine_ground_truth_2274() {
     .unwrap();
     assert_eq!(
         order,
-        vec![b.clone(), a.clone(), d.clone(), c.clone()],
-        "sequential per-move slots (engine path): B, A, D, C"
+        vec![b.clone(), d.clone(), a.clone(), c.clone()],
+        "contiguous-run (engine path): B, D, A, C"
     );
 
     // Dense 1-based ranks — proves the engine reproject ran (fallback leaves
@@ -3251,8 +3250,11 @@ async fn move_blocks_batch_interleaved_same_parent_engine_ground_truth_2274() {
 /// `new_op_ref` oldest-original-first, as the FE redo stack does — #659) must
 /// land the batch layout back; and a second grouped undo must restore the
 /// original layout again. The full Ctrl+Z / Ctrl+Y / Ctrl+Z trace with settled
-/// layout assertions, on the INTERLEAVED fixture whose sequential ground truth
-/// is pinned above (B, A, D, C).
+/// layout assertions, on the INTERLEAVED fixture whose contiguous-run ground
+/// truth is pinned above (B, D, A, C). The reverse of each `move_block` op is
+/// reconstructed from the block's OWN prior op (`find_prior_position`), so the
+/// grouped undo restores the exact pre-batch layout INDEPENDENT of how the
+/// forward batch computed slots (Closes #2305 undo story).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batched_move_undo_group_redo_undo_roundtrip_engine_2274() {
     let s1 = seed_label_to_id("S1");
@@ -3353,8 +3355,8 @@ async fn batched_move_undo_group_redo_undo_roundtrip_engine_2274() {
             .iter()
             .map(|(id, _)| id.clone())
             .collect::<Vec<_>>(),
-        vec![b.clone(), a.clone(), d.clone(), c.clone()],
-        "sequential per-move slots (engine path): B, A, D, C"
+        vec![b.clone(), d.clone(), a.clone(), c.clone()],
+        "contiguous-run (engine path): B, D, A, C"
     );
 
     // ── Ctrl+Z: ONE grouped undo reverts the WHOLE 2-op batch ────────────
@@ -3438,6 +3440,455 @@ async fn batched_move_undo_group_redo_undo_roundtrip_engine_2274() {
         layout(&pool).await,
         before,
         "undoing the redo group restores the original layout"
+    );
+    mat.shutdown();
+}
+
+/// #2305 (Refs #914) — a non-contiguous DOWNWARD same-parent selection lands as
+/// a CONTIGUOUS run, in selection order, at the base position among the target
+/// parent's non-selected children. Exercises the anchor arithmetic's tail term
+/// (a not-yet-moved selected member sits before the anchor at k=0). ENGINE path.
+///
+/// S1 > [A, B, C, D, E]; batch-move [A, C] at base position 2:
+///   non-selected = [B, D, E]; anchor = E (the 2nd non-selected) ⇒ B, D, A, C, E
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_batch_noncontiguous_downward_same_parent_contiguous_2305() {
+    let s1 = seed_label_to_id("S1");
+    let a = seed_label_to_id("BA");
+    let b = seed_label_to_id("BB");
+    let c = seed_label_to_id("BC");
+    let d = seed_label_to_id("BD");
+    let e = seed_label_to_id("BE");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "BA", "block_type": "content", "content": "A",    "parent_id": "S1", "position": 1}),
+        json!({"id": "BB", "block_type": "content", "content": "B",    "parent_id": "S1", "position": 2}),
+        json!({"id": "BC", "block_type": "content", "content": "C",    "parent_id": "S1", "position": 3}),
+        json!({"id": "BD", "block_type": "content", "content": "D",    "parent_id": "S1", "position": 4}),
+        json!({"id": "BE", "block_type": "content", "content": "E",    "parent_id": "S1", "position": 5}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+
+    crate::commands::move_blocks_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![a.as_str().into(), c.as_str().into()],
+        Some(s1.as_str().into()),
+        2,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let rows: Vec<(String, Option<i64>)> = sqlx::query_as(
+        "SELECT id, position FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+         ORDER BY position ASC, id ASC",
+    )
+    .bind(&s1)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>(),
+        vec![b.clone(), d.clone(), a.clone(), c.clone(), e.clone()],
+        "contiguous run B, D, [A, C], E"
+    );
+    // Tree invariant: dense, gap-free 1-based ranks after reprojection.
+    assert_eq!(
+        rows.iter().map(|(_, p)| *p).collect::<Vec<_>>(),
+        vec![Some(1), Some(2), Some(3), Some(4), Some(5)],
+        "dense 1-based ranks (no gaps / collisions)"
+    );
+    mat.shutdown();
+}
+
+/// #2305 (Refs #914) — a selection SPANNING TWO source parents lands as a
+/// contiguous run in the destination parent's middle, and each vacated source
+/// group is left dense. ENGINE path.
+///
+/// S1 > [P{X, Y}, G{C}, A]; batch-move [A, C] under P at base position 1:
+///   P's non-selected = [X, Y]; anchor = Y ⇒ P > [X, A, C, Y]; G and S1 collapse.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_batch_cross_parent_selection_contiguous_2305() {
+    let s1 = seed_label_to_id("S1");
+    let p = seed_label_to_id("BP");
+    let g = seed_label_to_id("BG");
+    let x = seed_label_to_id("BX");
+    let y = seed_label_to_id("BY");
+    let a = seed_label_to_id("BA");
+    let c = seed_label_to_id("BC");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "BP", "block_type": "content", "content": "P",    "parent_id": "S1", "position": 1}),
+        json!({"id": "BX", "block_type": "content", "content": "X",    "parent_id": "BP", "position": 1}),
+        json!({"id": "BY", "block_type": "content", "content": "Y",    "parent_id": "BP", "position": 2}),
+        json!({"id": "BG", "block_type": "content", "content": "G",    "parent_id": "S1", "position": 2}),
+        json!({"id": "BC", "block_type": "content", "content": "C",    "parent_id": "BG", "position": 1}),
+        json!({"id": "BA", "block_type": "content", "content": "A",    "parent_id": "S1", "position": 3}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+
+    // The batch preserves the caller-supplied run order (the FE sorts by
+    // document position first); pass [A, C] and assert that exact run lands.
+    crate::commands::move_blocks_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![a.as_str().into(), c.as_str().into()],
+        Some(p.as_str().into()),
+        1,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let under = |parent: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "SELECT id FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+                 ORDER BY position ASC, id ASC",
+            )
+            .bind(&parent)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(
+        under(p.clone()).await,
+        vec![x.clone(), a.clone(), c.clone(), y.clone()],
+        "contiguous run spliced into P: X, [A, C], Y"
+    );
+    // Source groups collapse dense: S1 keeps only P, G; G is now empty.
+    assert_eq!(
+        under(s1.clone()).await,
+        vec![p.clone(), g.clone()],
+        "S1 loses A"
+    );
+    assert!(under(g.clone()).await.is_empty(), "G loses C");
+    mat.shutdown();
+}
+
+/// #2305 (Refs #914) — grouped undo of a contiguous-run batch restores the
+/// EXACT pre-batch layout (ids AND dense positions). The reverse of each
+/// `move_block` op comes from the block's own prior op, so undo is independent
+/// of the forward slot arithmetic. ENGINE path, non-contiguous downward fixture.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_batch_undo_restores_exact_original_layout_2305() {
+    let s1 = seed_label_to_id("S1");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    let seed_page = json!({"id": "S1", "block_type": "page", "content": "Home", "parent_id": null, "position": 1});
+    insert_seed_block(&pool, &seed_page).await;
+    assign_all_to_test_space(&pool).await;
+    seed_block_into_engine(state, &seed_page);
+
+    // Children born via REAL create ops (a DIFFERENT device, so the DEV move
+    // group is bounded) — undo needs each block's prior placement in the op_log.
+    const OTHER_DEV: &str = "cmd-test-device-OTHER-2305";
+    let mut ids = Vec::new();
+    for (i, label) in ["A", "B", "C", "D", "E"].iter().enumerate() {
+        let blk = crate::commands::create_block_inner(
+            &pool,
+            OTHER_DEV,
+            &mat,
+            "content".into(),
+            (*label).into(),
+            Some(s1.as_str().into()),
+            Some(i64::try_from(i).unwrap()),
+        )
+        .await
+        .unwrap();
+        ids.push(blk.id.clone().into_string());
+    }
+    settle(&mat).await;
+    let (a, c) = (ids[0].clone(), ids[2].clone());
+
+    // Backdate the creates 10 s (H-13 bypass sentinel) so the cross-device
+    // `(created_at, seq, device_id)` prior lookup is unambiguous.
+    sqlx::query("INSERT INTO _op_log_mutation_allowed (token) VALUES (1)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE op_log SET created_at = created_at - 10000 WHERE device_id = ?")
+        .bind(OTHER_DEV)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM _op_log_mutation_allowed")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let layout = |pool: &SqlitePool| {
+        let pool = pool.clone();
+        let s1 = s1.clone();
+        async move {
+            sqlx::query_as::<_, (String, Option<i64>)>(
+                "SELECT id, position FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+                 ORDER BY position ASC, id ASC",
+            )
+            .bind(&s1)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let before = layout(&pool).await;
+
+    // Non-contiguous downward run [A, C] at base position 2 ⇒ B, D, A, C, E.
+    crate::commands::move_blocks_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![a.as_str().into(), c.as_str().into()],
+        Some(s1.as_str().into()),
+        2,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        layout(&pool)
+            .await
+            .iter()
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            ids[1].clone(),
+            ids[3].clone(),
+            ids[0].clone(),
+            ids[2].clone(),
+            ids[4].clone()
+        ],
+        "contiguous run B, D, A, C, E"
+    );
+
+    // ONE grouped undo reverts the whole 2-op batch → EXACT original layout.
+    let undo = crate::commands::undo_page_group_inner(&pool, DEV, &mat, s1.clone(), 0, 500)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        undo.len(),
+        2,
+        "both moves share device + window → one group"
+    );
+    assert_eq!(
+        layout(&pool).await,
+        before,
+        "grouped undo restores the EXACT pre-batch layout (ids + dense ranks)"
+    );
+    mat.shutdown();
+}
+
+/// #2305 (Refs #914) — ADVERSARIAL: two SEPARATE single-block moves that swap
+/// a block each BETWEEN two parents (A: P1→P2, B: P2→P1), issued back-to-back
+/// by the same device, get grouped into ONE `undo_page_group_inner` batch
+/// (#2190 same-device/within-window grouping — NOT a single `move_blocks_batch`
+/// call, so this is a DIFFERENT code path than the fixtures above). Both
+/// reverses are `MoveBlock` on distinct block ids, so the new ascending
+/// `(parent, slot)` application order in `revert_ops_in_tx` activates instead
+/// of newest-first LIFO.
+///
+/// `reverse_move_block` computes each block's re-insertion slot against the
+/// CURRENT live children of its ORIGINAL parent — which, at the time the
+/// ascending-order pass reaches the first reverse, still contains the OTHER
+/// swapped block (its own reverse hasn't run yet). That not-yet-reverted
+/// member is a foreign "intruder" sitting in the frame; if it happens to sit
+/// BEFORE the target insertion slot, the insertion index is off by one and the
+/// restored block lands one slot too early — even though the two blocks never
+/// interact within a single `move_blocks_batch` call. This must still
+/// reconstruct the EXACT pre-move layout in BOTH parents.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_group_cross_parent_swap_restores_exact_layout_2305() {
+    let s1 = seed_label_to_id("S1");
+    let p1 = seed_label_to_id("P1");
+    let p2 = seed_label_to_id("P2");
+    let x = seed_label_to_id("BX");
+    let y = seed_label_to_id("BY");
+    let z = seed_label_to_id("BZ");
+    let w = seed_label_to_id("BW");
+    let v = seed_label_to_id("BV");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    // X, Y, Z, W, V never move and are never reverted, so they can be raw
+    // fixture seeds. A and B DO get reverted, and the reverse machinery
+    // (`find_prior_position`) needs a real prior op in `op_log` to reconstruct
+    // where each came from — so they are born via a REAL `create_block_inner`
+    // call on a DIFFERENT device (bounding the DEV undo group at exactly the
+    // two swap moves below).
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "P1", "block_type": "content", "content": "P1",   "parent_id": "S1", "position": 1}),
+        json!({"id": "BX", "block_type": "content", "content": "X",    "parent_id": "P1", "position": 1}),
+        json!({"id": "BY", "block_type": "content", "content": "Y",    "parent_id": "P1", "position": 3}),
+        json!({"id": "BZ", "block_type": "content", "content": "Z",    "parent_id": "P1", "position": 4}),
+        json!({"id": "P2", "block_type": "content", "content": "P2",   "parent_id": "S1", "position": 2}),
+        json!({"id": "BW", "block_type": "content", "content": "W",    "parent_id": "P2", "position": 1}),
+        json!({"id": "BV", "block_type": "content", "content": "V",    "parent_id": "P2", "position": 3}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+
+    const OTHER_DEV: &str = "cmd-test-device-OTHER-2305-swap";
+    let a = crate::commands::create_block_inner(
+        &pool,
+        OTHER_DEV,
+        &mat,
+        "content".into(),
+        "A".into(),
+        Some(p1.as_str().into()),
+        Some(1),
+    )
+    .await
+    .unwrap()
+    .id
+    .into_string();
+    let b = crate::commands::create_block_inner(
+        &pool,
+        OTHER_DEV,
+        &mat,
+        "content".into(),
+        "B".into(),
+        Some(p2.as_str().into()),
+        Some(1),
+    )
+    .await
+    .unwrap()
+    .id
+    .into_string();
+    settle(&mat).await;
+
+    // Backdate the OTHER_DEV creates 10 s (H-13 bypass sentinel) so the
+    // cross-device `(created_at, seq, device_id)` prior lookup is unambiguous,
+    // matching `move_blocks_batch_undo_restores_exact_original_layout_2305`.
+    sqlx::query("INSERT INTO _op_log_mutation_allowed (token) VALUES (1)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE op_log SET created_at = created_at - 10000 WHERE device_id = ?")
+        .bind(OTHER_DEV)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM _op_log_mutation_allowed")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let under = |parent: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "SELECT id FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+                 ORDER BY position ASC, id ASC",
+            )
+            .bind(&parent)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let p1_before = under(p1.clone()).await;
+    let p2_before = under(p2.clone()).await;
+    assert_eq!(p1_before, vec![x.clone(), a.clone(), y.clone(), z.clone()]);
+    assert_eq!(p2_before, vec![w.clone(), b.clone(), v.clone()]);
+
+    // Move 1: A leaves P1, lands at the front of P2.
+    crate::commands::blocks::move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        a.as_str().into(),
+        Some(p2.as_str().into()),
+        0,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Move 2: B leaves P2, lands at the front of P1 (same device, same
+    // window — both moves group into one undo).
+    crate::commands::blocks::move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b.as_str().into(),
+        Some(p1.as_str().into()),
+        0,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Sanity: the forward swap landed as expected before touching undo.
+    assert_eq!(
+        under(p1.clone()).await,
+        vec![b.clone(), x.clone(), y.clone(), z.clone()],
+        "forward: B now fronts P1"
+    );
+    assert_eq!(
+        under(p2.clone()).await,
+        vec![a.clone(), w.clone(), v.clone()],
+        "forward: A now fronts P2, B has left"
+    );
+
+    // ONE grouped undo reverts both moves (distinct-block MoveBlock group).
+    let undo = crate::commands::undo_page_group_inner(&pool, DEV, &mat, s1.clone(), 0, 1_000_000)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        undo.len(),
+        2,
+        "both swap moves share device + window → one group"
+    );
+
+    assert_eq!(
+        under(p1.clone()).await,
+        p1_before,
+        "grouped undo must restore P1's EXACT original layout (X, A, Y, Z)"
+    );
+    assert_eq!(
+        under(p2.clone()).await,
+        p2_before,
+        "grouped undo must restore P2's EXACT original layout (W, B, V)"
     );
     mat.shutdown();
 }

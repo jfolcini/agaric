@@ -2148,37 +2148,64 @@ const HANDLERS_TYPED = {
     }
   },
 
-  // #2274 — batched multi-select drag reparent/reorder. Moves the ordered
-  // `blockIds` under `newParentId` at consecutive slots `newIndex, newIndex+1,
-  // …` inside one logical transaction, applying the SAME per-move steps as
-  // `move_block` in sequence (so block[k] parked at slot `newIndex+k` is visible
-  // to block[k+1]'s slot — #774 semantics). Returns one MoveResponse per moved
-  // root, in input order. Throws (rolling the whole batch back, mock-side) on an
-  // empty list or a missing block.
+  // #2274 — batched multi-select drag reparent/reorder. Contiguous-run semantics
+  // (Refs #914 / Closes #2305): the ordered `blockIds` land as ONE contiguous run
+  // among `newParentId`'s NON-selected children, at base position `newIndex`
+  // (0-based, counted over the non-selected siblings) — a remove-then-splice,
+  // matching the Rust backend's engine ground truth. Emits one `move_block` op
+  // per block (wire format unchanged) and returns one MoveResponse per moved root
+  // in input order. Throws (rolling the whole batch back, mock-side) on an empty
+  // list or a missing block. Semantic parity with `move_blocks_batch_inner`
+  // (#2463) — keep this splice in lockstep with the backend loop.
   move_blocks_batch: (args) => {
     const a = args as Record<string, unknown>
     const blockIds = (a['blockIds'] as string[]) ?? []
     const newParentId = (a['newParentId'] as string | null) ?? null
-    const startIndex = (a['newIndex'] as number) ?? 0
+    const newIndex = (a['newIndex'] as number) ?? 0
     if (blockIds.length === 0) {
       throw validationRejection('block_ids list cannot be empty')
     }
-    const out: Array<{ block_id: string; new_parent_id: string | null; new_position: number }> = []
-    blockIds.forEach((blockId, k) => {
+    const movedSet = new Set(blockIds)
+    const cmp = (x: Record<string, unknown>, y: Record<string, unknown>) => {
+      const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+      const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+      if (px !== py) return px - py
+      return (x['id'] as string).localeCompare(y['id'] as string)
+    }
+    /** Live children of `parent` in (position, id) order, excluding the moved run. */
+    const remainingChildren = (parent: string | null) =>
+      [...blocks.values()]
+        .filter(
+          (s) =>
+            ((s['parent_id'] as string | null) ?? null) === parent &&
+            !s['deleted_at'] &&
+            !movedSet.has(s['id'] as string),
+        )
+        .toSorted(cmp)
+        .map((s) => s['id'] as string)
+    // Pre-mutation capture of each moved block's old parent + 1-based slot (for
+    // the op breadcrumb); also validates existence up-front (all-or-nothing).
+    const oldParentOf = new Map<string, string | null>()
+    const oldPositionOf = new Map<string, number>()
+    for (const blockId of blockIds) {
       const b = blocks.get(blockId)
       if (!b) throw notFoundRejection(`block '${blockId}' not found`)
       const oldParentId = (b['parent_id'] as string | null) ?? null
+      oldParentOf.set(blockId, oldParentId)
       const oldSiblings = [...blocks.values()]
         .filter(
           (s) => ((s['parent_id'] as string | null) ?? null) === oldParentId && !s['deleted_at'],
         )
-        .toSorted((x, y) => {
-          const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
-          const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
-          if (px !== py) return px - py
-          return (x['id'] as string).localeCompare(y['id'] as string)
-        })
-      const oldPosition = oldSiblings.findIndex((s) => s['id'] === blockId) + 1
+        .toSorted(cmp)
+      oldPositionOf.set(blockId, oldSiblings.findIndex((s) => s['id'] === blockId) + 1)
+    }
+
+    // Remove-then-splice: build the destination group and dense-renumber it.
+    const base = remainingChildren(newParentId)
+    const p = Math.max(0, Math.min(newIndex, base.length))
+    const destOrder = [...base.slice(0, p), ...blockIds, ...base.slice(p)]
+    for (const blockId of blockIds) {
+      const b = blocks.get(blockId) as Record<string, unknown>
       b['parent_id'] = newParentId
       if (newParentId) {
         const newParent = blocks.get(newParentId)
@@ -2192,19 +2219,31 @@ const HANDLERS_TYPED = {
         b['page_id'] = null
       }
       refreshDescendantPageIds(blockId)
-      // Consecutive destination slots: block[k] → slot `startIndex + k`.
-      insertAtSlotAndRenumber(newParentId, blockId, startIndex + k)
-      if (oldParentId !== newParentId) renumberSiblings(oldParentId)
-      const newPosition = b['position'] as number
+    }
+    destOrder.forEach((id, i) => {
+      ;(blocks.get(id) as Record<string, unknown>)['position'] = i + 1
+    })
+    // Dense-renumber every vacated source group (a parent a moved id left, other
+    // than the destination — already renumbered above).
+    const sourceParents = new Set<string | null>()
+    for (const blockId of blockIds) {
+      const from = oldParentOf.get(blockId) ?? null
+      if (from !== newParentId) sourceParents.add(from)
+    }
+    for (const sp of sourceParents) renumberSiblings(sp)
+
+    const out: Array<{ block_id: string; new_parent_id: string | null; new_position: number }> = []
+    for (const blockId of blockIds) {
+      const newPosition = (blocks.get(blockId) as Record<string, unknown>)['position'] as number
       pushOp('move_block', {
         block_id: blockId,
         new_parent_id: newParentId,
         new_position: newPosition,
-        old_parent_id: oldParentId,
-        old_position: oldPosition,
+        old_parent_id: oldParentOf.get(blockId) ?? null,
+        old_position: oldPositionOf.get(blockId) ?? 0,
       })
       out.push({ block_id: blockId, new_parent_id: newParentId, new_position: newPosition })
-    })
+    }
     return out
   },
 

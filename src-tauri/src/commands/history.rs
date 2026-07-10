@@ -155,11 +155,42 @@ async fn reverse_move_preflight(
 /// EVERY sibling's SQL position from it — so leaving the engine on the
 /// pre-undo order would make the NEXT forward move in the group silently
 /// re-apply the undone move over SQL.
+///
+/// `extra_exclude` (#2305 cross-parent-swap fix): block ids to exclude from
+/// the target sibling-group baseline IN ADDITION to `p.block_id` itself.
+/// `revert_ops_in_tx`'s ascending-`(parent, slot)` batch path passes the
+/// CROSS-FRAME subset of the distinct-move group here — every group member
+/// whose OWN reverse targets a parent DIFFERENT from `p`'s — because the
+/// target-group query below reads LIVE state, and such a sibling (its own
+/// reverse hasn't run yet) may currently be sitting inside `p`'s target parent
+/// (e.g. two separate moves that swap a block each BETWEEN two parents: A:
+/// P1→P2, B: P2→P1, grouped into one undo — B is a permanent contaminant of
+/// P1's frame until B's own reverse moves it OUT, since B's reverse never
+/// inserts it back into P1). Left unexcluded, that member pollutes the
+/// insertion index computed from `p.new_index`/`p.new_position` (which were
+/// recorded against the ORIGINAL, group-member-free sibling set) and can land
+/// the restored block one slot off — REGARDLESS of application order, LIFO or
+/// ascending (verified empirically:
+/// `undo_group_cross_parent_swap_restores_exact_layout_2305` in
+/// `conformance.rs` fails under both orderings without this exclusion).
+///
+/// A group member sharing `p`'s OWN target parent must NOT be excluded: for a
+/// genuine single-parent multi-select batch undo (multiple members all
+/// reverting back to the SAME parent), the ascending-order insertion-sort
+/// correctness relies on an earlier-processed same-parent sibling already
+/// occupying its FINAL resting slot when a later sibling's baseline is read
+/// (the standard array-from-permutation reconstruction) — excluding it too
+/// would double-count/collide slots. (Caught empirically: a naive whole-group
+/// exclusion regressed `move_blocks_batch_undo_restores_exact_original_layout_2305`
+/// and `batched_move_undo_group_redo_undo_roundtrip_engine_2274`.) The
+/// single-op call site (`apply_reverse_in_tx`) passes an empty set — the
+/// self-exclusion below is unconditional.
 async fn reverse_move_block(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &crate::op::MoveBlockPayload,
+    extra_exclude: &std::collections::HashSet<&str>,
 ) -> Result<(), AppError> {
     let new_parent_id_str = p.new_parent_id.as_ref().map(BlockId::as_str);
     let move_block_id_str = p.block_id.as_str();
@@ -217,15 +248,19 @@ async fn reverse_move_block(
     // of a same-ranked sibling (caught by the batched-move undo→redo→undo
     // trace in `conformance.rs`).
     // dynamic-sql: test-only fixture/verification query (differential enumeration test, #2190 review).
+    // `extra_exclude` (#2305) is filtered IN RUST rather than folded into the
+    // SQL `WHERE` so the caller can pass an arbitrarily large distinct-move
+    // group without building a dynamic `NOT IN (...)` list.
     let mut target_group: Vec<String> = sqlx::query_scalar::<_, String>(
         "SELECT id FROM blocks \
-         WHERE parent_id IS ? AND deleted_at IS NULL AND id != ? \
+         WHERE parent_id IS ? AND deleted_at IS NULL \
          ORDER BY position ASC, id ASC",
     )
     .bind(new_parent_id_str)
-    .bind(move_block_id_str)
     .fetch_all(&mut **tx)
     .await?;
+    target_group
+        .retain(|id| id.as_str() != move_block_id_str && !extra_exclude.contains(id.as_str()));
     let group_len = i64::try_from(target_group.len()).unwrap_or(i64::MAX);
     let slot = p
         .new_index
@@ -508,7 +543,7 @@ pub async fn apply_reverse_in_tx(
             // `reverse_move_block` so the dense reprojection (which replaces the
             // provisional `new_position` with the settled 1-based rank) cannot be
             // separated from the raw write.
-            reverse_move_block(tx, state, device_id, p).await?;
+            reverse_move_block(tx, state, device_id, p, &std::collections::HashSet::new()).await?;
         }
         // AddTag and RemoveTag are intentionally idempotent: INSERT OR IGNORE
         // silently handles duplicates, and the DELETE below does not check
@@ -813,17 +848,112 @@ async fn revert_ops_in_tx(
         ));
     }
 
-    // Sort newest-first (by created_at DESC, seq DESC, device_id DESC)
+    // Sort newest-first (by created_at DESC, seq DESC, device_id DESC). This is
+    // the RESULTS order the caller returns (the FE redo stack + activity feed
+    // depend on it) AND the default APPLICATION order (LIFO — the correct inverse
+    // when a later op in the group depends on an earlier op's effect on the SAME
+    // entity, e.g. a block moved twice).
     reverses.sort_by(|a, b| {
         b.2.cmp(&a.2) // created_at DESC
             .then_with(|| b.0.seq.cmp(&a.0.seq)) // seq DESC
             .then_with(|| b.0.device_id.cmp(&a.0.device_id)) // device_id DESC
     });
 
-    // Phase 2: Apply all reverses inside the caller's IMMEDIATE transaction.
-    let mut results = Vec::with_capacity(reverses.len());
+    // #2305 (Refs #914): APPLICATION order may differ from RESULTS order. The
+    // per-op reverse of a move restores the block to a slot recorded in the
+    // ORIGINAL tree frame; applying a group of DISTINCT-block move reverses
+    // newest-first does NOT reconstruct the pre-batch layout after a
+    // contiguous-run batch move — a not-yet-restored member displaces the target
+    // slot of the one being restored (e.g. undoing [A,B,C,D] → B,D,A,C would land
+    // C after D). Applying the reverses in ASCENDING (parent, slot) order —
+    // insertion-sort order — instead restores each member to its original index
+    // against an already-rebuilt prefix, reproducing the EXACT original tree.
+    //
+    // This reorder is sound ONLY for a group of MoveBlock reverses on DISTINCT
+    // blocks (a multi-select drag undo): distinct blocks moved once each are
+    // independent, so no LIFO dependency exists, and inserting each at its
+    // recorded original index in ascending order is the standard array-from-
+    // permutation reconstruction. Any other group (a same-block move sequence
+    // that needs LIFO, or a mixed group) keeps the newest-first order. The
+    // RESULTS Vec is re-sorted newest-first below regardless, so the redo stack
+    // is unaffected.
+    let distinct_move_group = reverses.len() > 1
+        && reverses
+            .iter()
+            .all(|(_, p, _, _)| matches!(p, OpPayload::MoveBlock(_)))
+        && {
+            let mut ids: Vec<&str> = reverses
+                .iter()
+                .filter_map(|(_, p, _, _)| match p {
+                    OpPayload::MoveBlock(m) => Some(m.block_id.as_str()),
+                    _ => None,
+                })
+                .collect();
+            let n = ids.len();
+            ids.sort_unstable();
+            ids.dedup();
+            ids.len() == n
+        };
+    // #2305 cross-parent-swap fix: block_id -> the reverse-target parent it
+    // will land under, for every member of a distinct-move group. Threaded
+    // down to `reverse_move_block` (per-op, see the apply loop below) so a
+    // sibling group member whose OWN reverse targets a DIFFERENT parent — and
+    // which may currently be sitting inside THIS op's target parent because
+    // its own reverse hasn't run yet — never pollutes this op's live-sibling
+    // insertion index. A group member sharing the SAME target parent must stay
+    // VISIBLE (not excluded): the ascending-order insertion-sort correctness
+    // (see the doc block above) relies on each earlier-processed same-parent
+    // sibling already occupying its final resting slot when a later sibling's
+    // baseline is read; excluding it too would double-count/collide slots
+    // (this was caught empirically —
+    // `move_blocks_batch_undo_restores_exact_original_layout_2305` and
+    // `batched_move_undo_group_redo_undo_roundtrip_engine_2274` both regressed
+    // under a naive whole-group exclusion). See `reverse_move_block`'s doc
+    // comment.
+    let group_target_parent: std::collections::HashMap<&str, Option<&str>> = if distinct_move_group
+    {
+        reverses
+            .iter()
+            .filter_map(|(_, p, _, _)| match p {
+                OpPayload::MoveBlock(m) => Some((
+                    m.block_id.as_str(),
+                    m.new_parent_id.as_ref().map(BlockId::as_str),
+                )),
+                _ => None,
+            })
+            .collect()
+    } else {
+        std::collections::HashMap::new()
+    };
 
-    for (op_ref, reverse_payload, _created_at, reversed_op_type) in reverses {
+    // Application order = indices into `reverses`.
+    let mut apply_order: Vec<usize> = (0..reverses.len()).collect();
+    if distinct_move_group {
+        // Ascending (parent, 0-based slot); ties by original seq for determinism.
+        let key = |idx: usize| -> (String, i64, i64) {
+            match &reverses[idx].1 {
+                OpPayload::MoveBlock(m) => (
+                    m.new_parent_id
+                        .as_ref()
+                        .map(|b| b.as_str().to_owned())
+                        .unwrap_or_default(),
+                    m.new_index
+                        .unwrap_or_else(|| m.new_position.saturating_sub(1)),
+                    reverses[idx].0.seq,
+                ),
+                _ => (String::new(), 0, reverses[idx].0.seq),
+            }
+        };
+        apply_order.sort_by_key(|&i| key(i));
+    }
+
+    // Phase 2: Apply all reverses inside the caller's IMMEDIATE transaction.
+    // Collected in APPLICATION order tagged with the original op's `created_at`,
+    // then re-sorted newest-first to preserve the returned-order contract.
+    let mut results_tagged: Vec<(i64, UndoResult)> = Vec::with_capacity(reverses.len());
+
+    for idx in apply_order {
+        let (op_ref, reverse_payload, created_at, reversed_op_type) = &reverses[idx];
         // Preflight state-dependent reverses against the CURRENT (in-tx) tree
         // BEFORE appending: a reverse move whose reconstructed prior parent is
         // gone/tombstoned, or that would form a `parent_id` cycle, is
@@ -832,7 +962,7 @@ async fn revert_ops_in_tx(
         // point-in-time restore path SKIPS the op (#2020); the interactive
         // paths (`skip_non_reversible = false`) abort the whole batch with the
         // same classified error — the tx rolls back, nothing is applied.
-        if let OpPayload::MoveBlock(p) = &reverse_payload
+        if let OpPayload::MoveBlock(p) = reverse_payload
             && let Err(e) = reverse_move_preflight(tx, p).await
         {
             if skip_non_reversible && reverse::is_skippable_non_reversible(&e) {
@@ -856,26 +986,55 @@ async fn revert_ops_in_tx(
         // the DeleteBlock arm stamps it into `blocks.deleted_at`, and the
         // cohort invariant `op.created_at == blocks.deleted_at` (#1549) is
         // what lets a later undo/redo of this reverse find its rows.
-        let op_ts = reverse_op_timestamp(&reverse_payload);
+        let op_ts = reverse_op_timestamp(reverse_payload);
         let op_record =
             op_log::append_local_undo_op_in_tx(tx, device_id, reverse_payload.clone(), op_ts)
                 .await?;
 
-        apply_reverse_in_tx(tx, state, device_id, &reverse_payload, op_ts).await?;
+        // #2305: a distinct-move group's MoveBlock reverses bypass
+        // `apply_reverse_in_tx` and call `reverse_move_block` directly so
+        // OTHER group members targeting a DIFFERENT parent than this op are
+        // excluded from the target sibling-group baseline — see
+        // `reverse_move_block`'s doc comment. Same-target-parent siblings stay
+        // visible (not excluded), preserving the ascending-order insertion-sort
+        // correctness for a genuine single-parent multi-select batch undo.
+        if distinct_move_group && let OpPayload::MoveBlock(p) = reverse_payload {
+            let this_target = p.new_parent_id.as_ref().map(BlockId::as_str);
+            let cross_frame_exclude: std::collections::HashSet<&str> = group_target_parent
+                .iter()
+                .filter(|&(&id, &target)| id != p.block_id.as_str() && target != this_target)
+                .map(|(&id, _)| id)
+                .collect();
+            reverse_move_block(tx, state, device_id, p, &cross_frame_exclude).await?;
+        } else {
+            apply_reverse_in_tx(tx, state, device_id, reverse_payload, op_ts).await?;
+        }
 
-        results.push(UndoResult {
-            reversed_op: op_ref,
-            reversed_op_type,
-            new_op_ref: OpRef {
-                device_id: op_record.device_id.clone(),
-                seq: op_record.seq,
+        results_tagged.push((
+            *created_at,
+            UndoResult {
+                reversed_op: op_ref.clone(),
+                reversed_op_type: reversed_op_type.clone(),
+                new_op_ref: OpRef {
+                    device_id: op_record.device_id.clone(),
+                    seq: op_record.seq,
+                },
+                new_op_type,
+                is_redo: false,
             },
-            new_op_type,
-            is_redo: false,
-        });
+        ));
 
         tx.enqueue_background(op_record);
     }
+
+    // Re-sort results newest-first (created_at DESC, seq DESC, device_id DESC) —
+    // the returned-order contract, independent of the application order above.
+    results_tagged.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| b.1.reversed_op.seq.cmp(&a.1.reversed_op.seq))
+            .then_with(|| b.1.reversed_op.device_id.cmp(&a.1.reversed_op.device_id))
+    });
+    let results: Vec<UndoResult> = results_tagged.into_iter().map(|(_, r)| r).collect();
 
     Ok((results, non_reversible_skipped))
 }

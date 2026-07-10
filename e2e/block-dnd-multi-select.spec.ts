@@ -22,8 +22,9 @@ import {
  * As with the single-block mouse spec, correctness is asserted on the recorded
  * IPC payloads. #2274 batched the multi-select drag: the WHOLE selection moves
  * through ONE `move_blocks_batch` IPC (ordered ids + the 0-based `newIndex`
- * start slot), replacing the old per-root `move_block` loop. A single-block
- * drag still issues a plain `move_block`.
+ * base position, landing the selection as a contiguous run — Refs #914 / Closes
+ * #2305), replacing the old per-root `move_block` loop. A single-block drag still
+ * issues a plain `move_block`.
  */
 
 const PAGE = 'Getting Started'
@@ -126,8 +127,9 @@ test.describe('Block drag-and-drop (multi-select, #914)', () => {
     await expect.poll(async () => (await batchMoveCalls(page)).length).toBeGreaterThanOrEqual(1)
     const call = (await batchMoveCalls(page))[0]
     // GS_1 precedes GS_2 in the document, so the batch carries [GS_1, GS_2] in
-    // that order — the backend lands them at consecutive slots newIndex,
-    // newIndex + 1 under the single requested parent (#2274).
+    // that order — the backend lands them as ONE contiguous run at base position
+    // newIndex among the target parent's non-selected children (#2274; Refs #914
+    // / Closes #2305).
     expect(call?.blockIds).toEqual([gs1, gs2])
     expect(call?.newIndex).toBeDefined()
   })
