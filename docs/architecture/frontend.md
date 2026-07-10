@@ -143,6 +143,20 @@ Tabs, recent pages, active view, journal date, journal mode, journal template, s
 
 Drafts, undo stacks (per-page, not per-space — `useUndoStore` is not space-partitioned by design), keyboard customisations, theme, sidebar width, link preview cache.
 
+### Preferences registry (device scope, not synced)
+
+`localStorage` is a SECOND persistence tier, distinct from the SQL tier and from the Zustand `persist`-backed stores above. `src/lib/preferences.ts` (#2466) is its typed registry: every device-local preference is declared once — key, type, default, version, scope — with `getPref`/`setPref`/`getKeyedPref`/`setKeyedPref` accessors that never throw (corrupt/missing → default). `scripts/check-raw-local-storage.mjs` fails a raw `localStorage.getItem`/`setItem` call outside a small grandfathered list, so a new preference has to go through the registry.
+
+The contract:
+
+- **Device scope, never synced.** Every registry entry is `scope: 'device'`. These preferences do not travel with a space between devices — a per-device UI preference (theme, sidebar width, recent searches) belongs here; a preference that should follow the user's *data* belongs in a block property or a backend table instead.
+- **Naming.** New keys should be `agaric:`-namespaced (`agaric:<feature>[:vN]`). Pre-registry bare keys (`theme-preference`, `tag-colors`, `sidebar_width`, …) are grandfathered — renaming one discards every existing user's stored value, so don't without a migration.
+- **Versioning.** `version` is where a future incompatible shape change attaches a migration branch inside the entry's `parse`.
+- **Multi-window coherence.** The registry itself does not broadcast writes across windows — a real `localStorage` write already fires a native `storage` event in every OTHER window. A caller that needs same-tab reactivity (the tab that made the write) still owns its own `useSyncExternalStore` + synthetic `StorageEvent` dispatch, same as before the registry existed (`useTheme`, `useWeekStart`, `useJournalDateFormat`, `useExternalImagePolicy`).
+- **Per-space partitioning is a separate axis.** Some device-local preferences are ALSO partitioned per space (recent searches/commands, path history, per-page block-collapse state) via a `PrefFamily` keyed by `activeSpaceKey()` / a page id — see `PREFS.recentSearches` / `PREFS.pathHistory` / `PREFS.blockCollapse`. That's about which space's history you're looking at, not about device/sync scope.
+
+Migration off raw `localStorage` calls is opportunistic, not exhaustive — see `preferences.ts`'s file header for exactly which pre-#2466 call sites are migrated vs. still cataloged-only (and why). Zustand-`persist`-backed stores (`tabs.ts`, `navigation.ts`, `journal.ts`, `recent-pages.ts`, `search-history.ts`, `pageBrowserFilters.ts`, `useDebugStore.ts`) are explicitly OUT of the registry's scope: they already carry their own versioned envelope and migrate function via `persist` middleware.
+
 ## Reduced motion + a11y
 
 See `docs/UX.md § Accessibility` for the canonical rule. Frontend specifics: hooks that drive motion (`useScrollToFocus`, `useAutoScrollOnDrag`, `useKeyboardNavigableList`) check `prefers-reduced-motion` and skip the smooth path. Roving tabindex is used in `SearchablePopover`, `RecentPagesStrip`, `TabBar` — exactly one `tabindex=0` per group, arrows move it.
