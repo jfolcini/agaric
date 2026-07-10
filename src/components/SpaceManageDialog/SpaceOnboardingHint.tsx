@@ -17,9 +17,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import { logger } from '@/lib/logger'
-
-const LOG_MODULE = 'components/SpaceManageDialog/SpaceOnboardingHint'
+import { PREFERENCES, readPreference, removePreference, writePreference } from '@/lib/preferences'
 
 /**
  * Storage key for the onboarding-seen flag. **Do not change the value**
@@ -27,10 +25,12 @@ const LOG_MODULE = 'components/SpaceManageDialog/SpaceOnboardingHint'
  * changing the string would re-show the banner once after upgrade.
  *
  * Pre- this was derived at runtime from the i18n bundle key
- * `space.onboardingSeenKey`. The new const matches the previously-seeded
- * value `agaric:space-onboarding-seen-v1` exactly.
+ * `space.onboardingSeenKey`. The const matches the previously-seeded
+ * value `agaric:space-onboarding-seen-v1` exactly. Sourced from
+ * `PREFERENCES.spaceOnboardingSeen` (#2466) — the single source of truth
+ * for the literal key string.
  */
-export const ONBOARDING_STORAGE_KEY = 'agaric:space-onboarding-seen-v1'
+export const ONBOARDING_STORAGE_KEY = PREFERENCES.spaceOnboardingSeen.key
 
 /**
  * Read the dismissal flag for the onboarding hint. Returns `false`
@@ -38,19 +38,11 @@ export const ONBOARDING_STORAGE_KEY = 'agaric:space-onboarding-seen-v1'
  * hint at worst shows once per session.
  */
 export function readOnboardingSeen(): boolean {
-  try {
-    return localStorage.getItem(ONBOARDING_STORAGE_KEY) === 'true'
-  } catch {
-    return false
-  }
+  return readPreference(PREFERENCES.spaceOnboardingSeen)
 }
 
 function writeOnboardingSeen(): void {
-  try {
-    localStorage.setItem(ONBOARDING_STORAGE_KEY, 'true')
-  } catch (err) {
-    logger.warn(LOG_MODULE, 'failed to persist onboarding-dismissed flag', undefined, err)
-  }
+  writePreference(PREFERENCES.spaceOnboardingSeen, true)
 }
 
 /**
@@ -59,11 +51,7 @@ function writeOnboardingSeen(): void {
  * The in-app way to undo a `Got it` dismissal.
  */
 export function resetOnboardingSeen(): void {
-  try {
-    localStorage.removeItem(ONBOARDING_STORAGE_KEY)
-  } catch (err) {
-    logger.warn(LOG_MODULE, 'failed to reset onboarding-dismissed flag', undefined, err)
-  }
+  removePreference(PREFERENCES.spaceOnboardingSeen)
 }
 
 interface SpaceOnboardingHintProps {
