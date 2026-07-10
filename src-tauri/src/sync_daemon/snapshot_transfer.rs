@@ -1,5 +1,34 @@
 //! Snapshot-driven catch-up for the sync orchestrator.
 //!
+//! ## #2503 — Loro-snapshot catch-up (merge, not wipe)
+//!
+//! When a catch-up needs a full-state transfer (the initiator's Loro
+//! version vector is unreachable from the responder's — own-lineage loss
+//! per #2502, or an unbridgeable delta caught by the receiver-side
+//! `apply_remote` reachability gate), the **production** path now ships the
+//! responder's per-space **Loro snapshots** (the engine's truth) and the
+//! initiator *merges* them into its own engine via
+//! [`crate::sync_protocol::loro_sync::apply_remote`], then reprojects SQL
+//! from the merged engine state. The initiator's unsynced local content
+//! **survives** and syncs back out — inverting the #2474 data-loss
+//! contract of the old CBOR RESET.
+//!
+//! * Responder: [`try_offer_loro_snapshot_catchup`] streams
+//!   `SyncMessage::LoroSync { LoroSyncMessage::Snapshot, .. }` per space.
+//! * Initiator: [`try_receive_snapshot_catchup`] dispatches on the first
+//!   post-`ResetRequired` message — a `LoroSync` routes to
+//!   [`receive_loro_snapshot_catchup`] (merge); a legacy `SnapshotOffer`
+//!   routes to the CBOR wipe-and-replace path below (accept-old back-compat).
+//!
+//! The legacy CBOR `SnapshotOffer`/`SnapshotAccept` **offer** path
+//! (`apply_snapshot` wipe RESET) is retained only to (a) simulate a
+//! pre-#2503 peer in tests and (b) accept an offer from a not-yet-upgraded
+//! peer on the receive side. Production never *sends* a `SnapshotOffer`.
+//! Wire-compat: **send-new / accept-old** — see
+//! `docs/architecture/sync-protocol-spec.md`.
+//!
+//! ## Legacy CBOR flow (still used for accept-old / the compaction artifact)
+//!
 //! When a peer's head-exchange check finds that its local op log cannot
 //! satisfy the remote's advertised heads (typically because the local
 //! log has been compacted past the remote's frontier), the responder
@@ -69,7 +98,6 @@
 //! matches the way normal delta catch-up works when a peer reappears
 //! after a long offline period.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -77,14 +105,28 @@ use sqlx::SqlitePool;
 use tokio::io::AsyncWriteExt;
 
 use crate::error::AppError;
+use crate::loro::registry::LoroEngineRegistry;
 use crate::materializer::Materializer;
 use crate::peer_refs;
-use crate::snapshot::{apply_snapshot, get_latest_snapshot_with_frontier};
+use crate::snapshot::apply_snapshot;
 use crate::sync_constants::BINARY_FRAME_CHUNK_SIZE;
 use crate::sync_events::{SyncEvent, SyncEventSink};
 use crate::sync_files::app_data_dir_from_pool;
 use crate::sync_net::SyncConnection;
-use crate::sync_protocol::{DeviceHead, SyncMessage};
+use crate::sync_protocol::SyncMessage;
+use crate::sync_protocol::loro_sync::{self, ApplyOutcome};
+use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
+
+// #2503: the legacy CBOR `SnapshotOffer` catch-up path is retained ONLY to
+// simulate a pre-#2503 peer in tests (production never sends it — the offer
+// side now streams Loro snapshots). These imports back the `#[cfg(test)]`
+// offer + covering-check helpers below.
+#[cfg(test)]
+use crate::snapshot::get_latest_snapshot_with_frontier;
+#[cfg(test)]
+use crate::sync_protocol::DeviceHead;
+#[cfg(test)]
+use std::collections::BTreeMap;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -104,6 +146,10 @@ pub(crate) const MAX_SNAPSHOT_SIZE: u64 = 256 * 1024 * 1024;
 // ---------------------------------------------------------------------------
 
 /// Result of a responder-side snapshot offer attempt.
+///
+/// #2503: legacy CBOR offer path, test-only (production streams Loro
+/// snapshots — see [`try_offer_loro_snapshot_catchup`]).
+#[cfg(test)]
 #[derive(Debug, PartialEq)]
 pub(crate) enum OfferOutcome {
     /// No complete snapshot was available locally; the responder
@@ -157,6 +203,9 @@ pub(crate) enum OfferOutcome {
 /// send/receive sub-flow that would let replicated rows exist in production
 /// must resolve this before `snapshot_seqs` can be trusted here for a
 /// foreign device (see the TODO in `collect_frontier`).
+///
+/// #2503: test-only (backs the legacy CBOR offer path).
+#[cfg(test)]
 fn snapshot_covers_remote_heads(
     snapshot_seqs: &BTreeMap<String, i64>,
     remote_heads: &[DeviceHead],
@@ -181,6 +230,11 @@ fn snapshot_covers_remote_heads(
 /// Returns [`OfferOutcome::NoSnapshot`] when `log_snapshots` has no
 /// complete row — in that case the caller should close the session
 /// (matching pre-existing behavior).
+///
+/// #2503: the legacy CBOR offer, retained test-only to simulate a
+/// pre-#2503 responder (production streams Loro snapshots — see
+/// [`try_offer_loro_snapshot_catchup`]).
+#[cfg(test)]
 #[tracing::instrument(skip_all, err)]
 pub(crate) async fn try_offer_snapshot_catchup(
     conn: &mut SyncConnection,
@@ -366,6 +420,9 @@ impl SnapshotTransferProgress<'_> {
 /// [`sync_files`](crate::sync_files). A zero-length snapshot is delivered
 /// as a single empty frame so the receiver's frame accounting terminates
 /// cleanly. A terminal `"complete"` tick is emitted once all bytes ship.
+///
+/// #2503: test-only (backs the legacy CBOR offer path).
+#[cfg(test)]
 async fn send_snapshot_bytes(
     conn: &mut SyncConnection,
     compressed: &[u8],
@@ -385,6 +442,134 @@ async fn send_snapshot_bytes(
     .await?;
     progress.emit("complete", total);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Responder side — Loro-snapshot catch-up (#2503, production path)
+// ---------------------------------------------------------------------------
+
+/// Byte length of a [`LoroSyncMessage`]'s inline CRDT payload (for progress
+/// / accounting). Both variants carry the raw Loro bytes.
+fn loro_msg_payload_len(msg: &LoroSyncMessage) -> u64 {
+    match msg {
+        LoroSyncMessage::Snapshot { bytes, .. } | LoroSyncMessage::Update { bytes, .. } => {
+            bytes.len() as u64
+        }
+    }
+}
+
+/// Result of the responder-side Loro-snapshot catch-up (#2503).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct LoroCatchupSent {
+    /// Number of per-space Loro snapshots streamed to the initiator.
+    pub(crate) spaces_sent: usize,
+    /// Total CRDT payload bytes streamed (sum of per-space snapshot sizes).
+    pub(crate) bytes_sent: u64,
+}
+
+/// Stream full per-space **Loro snapshots** to the initiator after the
+/// responder's main loop reached [`SyncState`](crate::sync_protocol::SyncState)`::ResetRequired`
+/// (#2503).
+///
+/// This replaces the legacy CBOR `SnapshotOffer`/`SnapshotAccept` RESET
+/// sub-flow. Rather than ship a zstd-CBOR blob of SQL tables that the
+/// initiator applied by **wiping + replacing** its core tables — destroying
+/// any unsynced local edits (the #2474 data-loss contract) — the responder
+/// now exports each registered space's `LoroDoc` snapshot
+/// (`ExportMode::Snapshot`, the engine's truth) and streams it over the same
+/// chunked-binary transport the normal streaming phase uses
+/// ([`crate::sync_daemon::wire::send_sync_message`]).
+///
+/// The initiator imports each snapshot into its own engine with Loro's
+/// **merge** semantics ([`crate::sync_protocol::loro_sync::apply_remote`]) and
+/// reprojects SQL from the merged engine state — so the initiator's own
+/// unsynced local content survives and syncs back out on the next session.
+///
+/// Full snapshots (not incremental updates) are always sent: `ResetRequired`
+/// means the initiator's version vector is unreachable, so an
+/// `ExportMode::updates(from_vv)` delta could not be applied. A full snapshot
+/// merges cleanly against any receiver state.
+///
+/// Wire-compat (#2503): a NEW responder always SENDS Loro snapshots. An OLD
+/// (pre-#2503) initiator expecting a `SnapshotOffer` will fail this catch-up
+/// and retry — see the deprecation note in
+/// `docs/architecture/sync-protocol-spec.md`.
+#[tracing::instrument(skip_all, err)]
+pub(crate) async fn try_offer_loro_snapshot_catchup(
+    conn: &mut SyncConnection,
+    pool: &SqlitePool,
+    registry: &LoroEngineRegistry,
+    event_sink: &Arc<dyn SyncEventSink>,
+    device_id: &str,
+    remote_device_id: &str,
+) -> Result<LoroCatchupSent, AppError> {
+    let space_ids = registry.space_ids();
+
+    // Build one full snapshot per registered space. `None` peer-vv forces
+    // `ExportMode::Snapshot` (engine truth) rather than an incremental delta.
+    // The #1257 freshness gate may refuse a space whose engine is stale vs
+    // SQL (returns `None`); that space is skipped and reconciled by a later
+    // rebuild — never shipped as a half-truth.
+    let sql_deleted = loro_sync::read_sql_soft_deleted_ids(pool).await?;
+    let mut messages: Vec<LoroSyncMessage> = Vec::new();
+    for sid in &space_ids {
+        match loro_sync::prepare_outgoing(registry, sid, device_id, None, &sql_deleted).await? {
+            Some(msg) => messages.push(msg),
+            None => {
+                tracing::warn!(
+                    space_id = %sid.as_str(),
+                    peer_id = %remote_device_id,
+                    "loro-snapshot catch-up: freshness gate refused space export; skipping"
+                );
+            }
+        }
+    }
+
+    if messages.is_empty() {
+        // Nothing to catch the initiator up with. Send a terminal
+        // `SyncComplete` so it stops waiting on the wire; it records this
+        // as a non-progress event and retries on the next scheduled sync.
+        tracing::info!(
+            peer_id = %remote_device_id,
+            "loro-snapshot catch-up: responder has no exportable space state to offer"
+        );
+        conn.send_json(&SyncMessage::SyncComplete {
+            last_hash: String::new(),
+        })
+        .await?;
+        return Ok(LoroCatchupSent {
+            spaces_sent: 0,
+            bytes_sent: 0,
+        });
+    }
+
+    tracing::info!(
+        peer_id = %remote_device_id,
+        spaces = messages.len(),
+        "loro-snapshot catch-up: streaming full per-space snapshots"
+    );
+    event_sink.on_sync_event(SyncEvent::Progress {
+        state: "loro_snapshot_offered".into(),
+        remote_device_id: remote_device_id.to_string(),
+        ops_received: 0,
+        ops_sent: 0,
+    });
+
+    let total = messages.len();
+    let mut bytes_sent = 0u64;
+    for (idx, msg) in messages.into_iter().enumerate() {
+        let is_last = idx + 1 == total;
+        bytes_sent += loro_msg_payload_len(&msg);
+        // `send_sync_message` picks the inline or chunked-binary transport
+        // per payload size (#611), so an arbitrarily large space snapshot
+        // never blows the JSON text-frame cap.
+        super::wire::send_sync_message(conn, &SyncMessage::LoroSync { msg, is_last }).await?;
+    }
+
+    Ok(LoroCatchupSent {
+        spaces_sent: total,
+        bytes_sent,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -485,8 +670,30 @@ pub(crate) async fn try_receive_snapshot_catchup(
     expected_remote_id: Option<&str>,
     engine_reload: Option<EngineReloadCtx<'_>>,
 ) -> Result<CatchupOutcome, AppError> {
-    let offer: SyncMessage = conn.recv_json().await?;
-    let (size_bytes, expected_blob_blake3) = match offer {
+    // #2503: read the responder's first post-ResetRequired message through
+    // the wire layer so a chunked LoroSync (a large Loro snapshot) is
+    // reassembled. Dispatch on its kind:
+    //   * `LoroSync`      → NEW peer streaming full per-space Loro snapshots;
+    //                       import + MERGE them (unsynced local edits survive)
+    //                       and reproject SQL — the #2503 catch-up.
+    //   * `SnapshotOffer` → legacy (pre-#2503) peer offering a zstd-CBOR SQL
+    //                       snapshot RESET; accepted for back-compat via the
+    //                       wipe-and-replace path below (accept-old).
+    let (size_bytes, expected_blob_blake3) = match super::wire::recv_sync_message(conn).await? {
+        SyncMessage::LoroSync { msg, is_last } => {
+            return receive_loro_snapshot_catchup(
+                conn,
+                pool,
+                materializer,
+                event_sink,
+                remote_device_id,
+                expected_remote_id,
+                engine_reload,
+                msg,
+                is_last,
+            )
+            .await;
+        }
         SyncMessage::SnapshotOffer {
             size_bytes,
             blob_blake3,
@@ -808,6 +1015,182 @@ pub(crate) async fn try_receive_snapshot_catchup(
     Ok(CatchupOutcome::Applied {
         bytes_received: size_bytes,
         up_to_hash,
+    })
+}
+
+/// #2503 — receive + MERGE full per-space Loro snapshots from a peer after
+/// the initiator's main loop reached
+/// [`SyncState`](crate::sync_protocol::SyncState)`::ResetRequired`.
+///
+/// This is the "merge, not wipe" catch-up. Each inbound
+/// [`LoroSyncMessage::Snapshot`] is imported into THIS device's per-space
+/// engine via [`crate::sync_protocol::loro_sync::apply_remote`], which merges
+/// (Loro CRDT semantics — the initiator's unsynced local content is preserved,
+/// not destroyed) and reprojects the changed blocks into SQL. In contrast to
+/// the legacy CBOR path in [`try_receive_snapshot_catchup`] there is:
+///   * NO core-table wipe (SQL is reprojected from the merged engine),
+///   * NO engine registry reload / drop (the live engines are merged in place),
+///   * NO `reset_count` / peer-epoch bump (no reset occurred — #2046 is a
+///     legacy-CBOR-only concern now).
+///
+/// `engine_reload` supplies the live registry + local device id the merge
+/// applies against; it is REQUIRED here (the legacy CBOR path can run without
+/// it, but a merge cannot). A `None` is a programmer error → `InvalidOperation`.
+///
+/// Residual (#2503 open q1): if an inbound snapshot forks our own
+/// `(peer, counter)` space (a corrupt / pre-epoch-reset local doc — #792),
+/// `apply_remote` returns `SnapshotFallbackRequested`. A pure merge cannot heal
+/// that without an engine-only reset (not yet implemented); it surfaces as an
+/// error so the session records a failure and retries, rather than silently
+/// corrupting state.
+#[tracing::instrument(skip_all, err)]
+#[allow(clippy::too_many_arguments)]
+async fn receive_loro_snapshot_catchup(
+    conn: &mut SyncConnection,
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    event_sink: &Arc<dyn SyncEventSink>,
+    remote_device_id: &str,
+    expected_remote_id: Option<&str>,
+    engine_reload: Option<EngineReloadCtx<'_>>,
+    first_msg: LoroSyncMessage,
+    first_is_last: bool,
+) -> Result<CatchupOutcome, AppError> {
+    let EngineReloadCtx {
+        registry,
+        device_id,
+    } = engine_reload.ok_or_else(|| {
+        AppError::InvalidOperation(
+            "loro-snapshot catch-up requires a live engine registry to merge into; \
+             none was provided"
+                .into(),
+        )
+    })?;
+
+    event_sink.on_sync_event(SyncEvent::Progress {
+        state: "loro_snapshot_merging".into(),
+        remote_device_id: remote_device_id.to_string(),
+        ops_received: 0,
+        ops_sent: 0,
+    });
+
+    let mut bytes_received = 0u64;
+    let mut changed_page_ids: Vec<String> = Vec::new();
+    let mut loro_msg = first_msg;
+    let mut is_last = first_is_last;
+    loop {
+        bytes_received += loro_msg_payload_len(&loro_msg);
+        // Merge semantics: `apply_remote` imports the snapshot into our
+        // engine (preserving unsynced local content) and reprojects the
+        // changed blocks into SQL inside its own transaction.
+        match loro_sync::apply_remote(pool, registry, device_id, loro_msg).await? {
+            ApplyOutcome::Imported {
+                changed_blocks,
+                purged_blocks,
+                changed_page_ids: pids,
+                ..
+            } => {
+                for pid in pids {
+                    if !changed_page_ids.contains(&pid) {
+                        changed_page_ids.push(pid);
+                    }
+                }
+                // Non-fatal: the projection already committed inside
+                // apply_remote; a queue-closed error must not unwind the
+                // catch-up (mirrors the orchestrator's LoroSync arm).
+                if let Err(e) = materializer
+                    .enqueue_inbound_sync_rebuilds(&changed_blocks, &purged_blocks)
+                    .await
+                {
+                    tracing::warn!(
+                        peer_id = %remote_device_id,
+                        error = %e,
+                        "loro-snapshot catch-up: failed to enqueue inbound-sync cache rebuilds"
+                    );
+                }
+            }
+            ApplyOutcome::SnapshotFallbackRequested { space_id, reason } => {
+                return Err(AppError::InvalidOperation(format!(
+                    "loro-snapshot catch-up: peer snapshot for space {space} could not be merged \
+                     ({reason}); local engine likely forked its own (peer,counter) space (#792) — \
+                     engine-only reset is not yet implemented (#2503 open q1)",
+                    space = space_id.as_str(),
+                )));
+            }
+        }
+        if is_last {
+            break;
+        }
+        match super::wire::recv_sync_message(conn).await? {
+            SyncMessage::LoroSync { msg, is_last: il } => {
+                loro_msg = msg;
+                is_last = il;
+            }
+            other => {
+                return Err(AppError::InvalidOperation(format!(
+                    "loro-snapshot catch-up: expected another LoroSync frame, got {:?}",
+                    std::mem::discriminant(&other)
+                )));
+            }
+        }
+    }
+
+    // Resolve the peer identity for bookkeeping (mirrors the CBOR path /
+    // SyncComplete fallback): prefer the session-level id, else the daemon's
+    // mTLS/mDNS `expected_remote_id`; refuse an empty-keyed row.
+    let resolved_peer_id: &str = if !remote_device_id.is_empty() {
+        remote_device_id
+    } else if let Some(expected) = expected_remote_id.filter(|s| !s.is_empty()) {
+        expected
+    } else {
+        return Err(AppError::InvalidOperation(
+            "loro-snapshot catch-up completed with empty remote_device_id and no \
+             expected_remote_id; refusing to record peer_refs row keyed by empty string"
+                .into(),
+        ));
+    };
+
+    // `last_hash` is our own post-merge local frontier hash — this catch-up
+    // is a PULL (we received, did not send), so it advances the pull
+    // bookkeeping exactly like a normal LoroSync completion. There is no
+    // reset: `reset_count` is NOT bumped.
+    let last_hash = crate::sync_protocol::get_local_heads(pool)
+        .await?
+        .into_iter()
+        .find(|h| h.device_id == device_id)
+        .map(|h| h.hash)
+        .unwrap_or_default();
+
+    let bookkeeping = async {
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+        peer_refs::upsert_peer_ref_in_tx(&mut tx, resolved_peer_id).await?;
+        peer_refs::update_on_sync_in_tx(&mut tx, resolved_peer_id, &last_hash, "").await?;
+        tx.commit().await?;
+        Ok::<(), AppError>(())
+    };
+    if let Err(e) = bookkeeping.await {
+        tracing::warn!(
+            peer_id = %resolved_peer_id,
+            error = %e,
+            "loro-snapshot catch-up: failed to record merge in peer_refs (non-fatal)"
+        );
+    }
+
+    tracing::info!(
+        peer_id = %resolved_peer_id,
+        bytes_received,
+        "loro-snapshot catch-up complete: merged peer state, SQL reprojected"
+    );
+    event_sink.on_sync_event(SyncEvent::Complete {
+        remote_device_id: remote_device_id.to_string(),
+        ops_received: 0,
+        ops_sent: 0,
+        changed_page_ids,
+    });
+
+    Ok(CatchupOutcome::Applied {
+        bytes_received,
+        up_to_hash: last_hash,
     })
 }
 
@@ -2853,5 +3236,193 @@ mod tests {
 
         materializer.shutdown();
         resp_materializer.shutdown();
+    }
+
+    // -----------------------------------------------------------------
+    // #2503 — Loro-snapshot catch-up (merge, not wipe)
+    // -----------------------------------------------------------------
+
+    /// #2503 end-to-end at the sub-flow layer: a responder far ahead in a
+    /// space, an initiator holding an UNSYNCED local edit in the same space.
+    /// The Loro-snapshot catch-up (`try_offer_loro_snapshot_catchup` ↔
+    /// `try_receive_snapshot_catchup`) MERGES the responder's snapshot into
+    /// the initiator's engine and reprojects SQL. Post-session the initiator
+    /// holds the UNION of both blocks — the local edit SURVIVES (inverting the
+    /// #2474 wipe contract) — and no `reset_count` bump occurs (a merge is a
+    /// pull, not a reset).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn loro_snapshot_catchup_merges_and_preserves_unsynced_local_2503() {
+        use crate::loro::registry::LoroEngineRegistry;
+        use crate::space::SpaceId;
+
+        const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        let space = SpaceId::from_trusted(SPACE);
+
+        // Responder: engine holds the far-ahead block (no SQL row needed —
+        // the offer exports from the engine registry, not from SQL tables).
+        let (resp_pool, _resp_dir) = test_pool().await;
+        let resp_registry = LoroEngineRegistry::new();
+        {
+            let mut g = resp_registry.for_space(&space, REMOTE_DEV).unwrap();
+            g.engine_mut()
+                .apply_create_block("RESPBLOCK001", "content", "responder ahead", None, 0)
+                .unwrap();
+        }
+
+        // Initiator: engine + SQL hold an UNSYNCED local block under a
+        // DISTINCT device id (so its Loro PeerID differs — no #792 self-fork
+        // when it imports the responder's snapshot).
+        let (init_pool, _init_dir) = test_pool().await;
+        let init_mat = Materializer::new(init_pool.clone());
+        let init_registry = LoroEngineRegistry::new();
+        {
+            let mut g = init_registry.for_space(&space, LOCAL_DEV).unwrap();
+            g.engine_mut()
+                .apply_create_block("INITLOCAL001", "content", "unsynced local", None, 0)
+                .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position) \
+             VALUES (?, 'content', 'unsynced local', 1)",
+        )
+        .bind("INITLOCAL001")
+        .execute(&init_pool)
+        .await
+        .unwrap();
+
+        let (mut server_conn, mut client_conn) = test_connection_pair().await;
+        let resp_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+        let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+        // Drive both sides concurrently on one task (borrows, no 'static).
+        let (offer_res, recv_res) = tokio::join!(
+            try_offer_loro_snapshot_catchup(
+                &mut server_conn,
+                &resp_pool,
+                &resp_registry,
+                &resp_sink,
+                REMOTE_DEV, // responder's own device id
+                LOCAL_DEV,  // the initiator, as the responder sees it
+            ),
+            try_receive_snapshot_catchup(
+                &mut client_conn,
+                &init_pool,
+                &init_mat,
+                &init_sink,
+                REMOTE_DEV, // the peer (responder)
+                None,
+                Some(EngineReloadCtx {
+                    registry: &init_registry,
+                    device_id: LOCAL_DEV,
+                }),
+            ),
+        );
+
+        let sent = offer_res.expect("responder offer must succeed");
+        assert_eq!(
+            sent.spaces_sent, 1,
+            "responder must stream exactly one space snapshot"
+        );
+        let outcome = recv_res.expect("initiator merge catch-up must succeed");
+        assert!(
+            matches!(outcome, CatchupOutcome::Applied { .. }),
+            "expected Applied, got {outcome:?}"
+        );
+
+        init_mat.flush_background().await.unwrap();
+
+        // ── SQL union: both blocks present ───────────────────────────────
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+            .fetch_one(&init_pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            count, 2,
+            "initiator SQL must hold the UNION: its unsynced local block + the \
+             merged responder block"
+        );
+        for (id, content) in [
+            ("INITLOCAL001", "unsynced local"),
+            ("RESPBLOCK001", "responder ahead"),
+        ] {
+            let got: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(&init_pool)
+                .await
+                .unwrap_or_else(|_| panic!("block {id} must exist in initiator SQL after merge"));
+            assert_eq!(got, content, "block {id} content must survive the merge");
+        }
+
+        // ── Engine union: both blocks live in the merged engine ──────────
+        {
+            let mut g = init_registry.for_space(&space, LOCAL_DEV).unwrap();
+            let engine = g.engine_mut();
+            assert!(
+                engine.read_block("INITLOCAL001").unwrap().is_some(),
+                "#2503: the initiator's unsynced local edit must survive in the engine"
+            );
+            assert!(
+                engine.read_block("RESPBLOCK001").unwrap().is_some(),
+                "#2503: the responder's block must be merged into the engine"
+            );
+        }
+
+        // ── Merge is a pull, not a reset ─────────────────────────────────
+        let peer = peer_refs::get_peer_ref(&init_pool, REMOTE_DEV)
+            .await
+            .unwrap()
+            .expect("peer_refs row must exist after the merge catch-up");
+        assert!(
+            peer.synced_at.is_some(),
+            "synced_at must be populated after the merge (it is a pull)"
+        );
+        assert_eq!(
+            peer.reset_count, 0,
+            "#2503: a Loro-snapshot MERGE must NOT bump reset_count (no reset occurred)"
+        );
+
+        // ── loro_doc_state was NOT wiped — the merged engine persists ─────
+        // (The legacy CBOR path would have zeroed these; the merge leaves the
+        // sidecar intact, only writing the write-ahead inbox for the import.)
+        init_mat.shutdown();
+    }
+
+    /// #2503: a responder whose engine registry is empty has nothing to
+    /// export — it sends a terminal `SyncComplete` and reports `spaces_sent: 0`
+    /// rather than streaming a zero-space payload.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn loro_snapshot_catchup_empty_registry_offers_nothing_2503() {
+        use crate::loro::registry::LoroEngineRegistry;
+
+        let (resp_pool, _resp_dir) = test_pool().await;
+        let resp_registry = LoroEngineRegistry::new();
+        let (mut server_conn, mut client_conn) = test_connection_pair().await;
+        let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+        let (offer_res, first) = tokio::join!(
+            try_offer_loro_snapshot_catchup(
+                &mut server_conn,
+                &resp_pool,
+                &resp_registry,
+                &sink,
+                REMOTE_DEV,
+                LOCAL_DEV,
+            ),
+            async { client_conn.recv_json::<SyncMessage>().await },
+        );
+
+        let sent = offer_res.expect("offer must succeed even with nothing to send");
+        assert_eq!(
+            sent,
+            LoroCatchupSent {
+                spaces_sent: 0,
+                bytes_sent: 0
+            },
+            "empty registry must report nothing sent"
+        );
+        assert!(
+            matches!(first.expect("recv"), SyncMessage::SyncComplete { .. }),
+            "empty offer must terminate with SyncComplete so the initiator stops waiting"
+        );
     }
 }

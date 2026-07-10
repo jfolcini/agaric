@@ -460,62 +460,89 @@ that reuses the previously pinned certificate and the `peer_refs` bookmark:
 
 ### Snapshot-fallback flow
 
-When the responder cannot satisfy the initiator's heads with a delta replay,
-the session exits the delta loop in `ResetRequired` and hands off to
-`snapshot_transfer.rs`. The initiator runs `try_receive_snapshot_catchup`;
-the responder runs `try_offer_snapshot_catchup`.
+As of **#2503** this catch-up is a **Loro-snapshot merge**, not a CBOR
+wipe-and-replace. When the responder cannot satisfy the initiator's heads with
+a delta replay, the session exits the delta loop in `ResetRequired` and hands
+off to `snapshot_transfer.rs`. The responder ships its per-space `LoroDoc`
+snapshots (the engine's truth) and the initiator *merges* them into its own
+engine, then reprojects SQL from the merged state. The initiator's unsynced
+local content **survives** — the exact inversion of the pre-#2503 CBOR-wipe
+data-loss contract (#2474).
+
+The initiator runs `try_receive_snapshot_catchup` (which dispatches on the
+first message); the responder runs `try_offer_loro_snapshot_catchup`.
 
 ```text
 Initiator                                  Responder
-   │ HeadExchange { heads }                    │
+   │ HeadExchange { heads, loro_vvs }          │
    ├──────────────────────────────────────────►
    │                                           │  check_reset_required == true
-   │      ResetRequired { reason }             │  (log compacted past heads)
+   │      ResetRequired { reason }             │  (own-lineage VV loss, #2502)
    ◄──────────────────────────────────────────┤
    │ (delta loop breaks; both enter sub-flow)  │
-   │                                           │  get_latest_snapshot()
-   │                                           │  + covering check:
-   │                                           │    if snapshot frontier <
-   │      Error { message }   (stale)     │    remote head → Error, abort
-   ◄──────────────────────────────────────────┤
-   │      SnapshotOffer { size_bytes }         │  otherwise offer
-   ◄──────────────────────────────────────────┤
-   │ (cap check: size_bytes > 256 MB?)         │
-   │      SnapshotReject  → session ends       │
-   ├──────────────────────────────────────────►
-   │      SnapshotAccept                       │  (under cap)
-   ├──────────────────────────────────────────►
-   │      <binary frames × ⌈size/5 MB⌉>        │  send_binary_chunked
-   ◄──────────────────────────────────────────┤
-   │ apply_snapshot() (BEGIN IMMEDIATE +       │
-   │   defer_foreign_keys; wipe + restore),    │
-   │ advance peer_refs.last_hash = up_to_hash  │
+   │                                           │  for each registered space:
+   │                                           │    prepare_outgoing(None) →
+   │                                           │    LoroSyncMessage::Snapshot
+   │   LoroSync { Snapshot, is_last } × spaces │  send_sync_message (chunked
+   ◄──────────────────────────────────────────┤   binary path #611 for large)
+   │ apply_remote() per space:                 │
+   │   engine.import(snapshot)  ← MERGE        │
+   │   reproject changed blocks → SQL          │
+   │ (unsynced local content preserved)        │
+   │ advance peer_refs.last_hash (a PULL;      │
+   │   NO reset_count bump, NO engine wipe)    │
 ```
 
 Notes:
 
-- If the responder has no complete snapshot in `log_snapshots`,
-  `try_offer_snapshot_catchup` returns `NoSnapshot` and the session closes
-  with no catch-up.
-- The covering check (`snapshot_covers_remote_heads`) guards against a
-  snapshot whose `up_to_seqs` is behind any advertised remote head; on
-  mismatch the responder sends `Error` rather than silently rolling the
-  initiator back.
-- The initiator streams received bytes to a temp file (bounded by the 256 MB
-  cap), then decodes + applies via `crate::snapshot::apply_snapshot`, whose
-  restore is atomic. See
-  [`crdt-and-recovery.md`](crdt-and-recovery.md) for snapshot atomicity.
-- Post-snapshot the initiator's `op_log` is wiped, so the next scheduled
-  session advertises empty heads and picks up post-snapshot deltas via a
-  normal `HeadExchange` — no recursive session restart.
+- The responder always sends **full snapshots** (`prepare_outgoing` with
+  `peer_vv = None`): `ResetRequired` means the initiator's VV is unreachable,
+  so an incremental `Update` could not be applied — a full snapshot merges
+  cleanly against any receiver state.
+- No covering check / `256 MB` cap / `SnapshotReject` is needed: a Loro merge
+  is monotonic (it never rolls the receiver back), so the CBOR-era guards are
+  gone from the production path.
+- If the responder has no exportable space state, it sends a terminal
+  `SyncComplete` and the session closes with no catch-up (a non-progress
+  event; the next scheduled sync retries).
+- Large space snapshots ride the chunked-binary transport
+  (`sync_daemon::wire::send_sync_message`, #611), so there is no per-message
+  size cap on the Loro path.
+- No `op_log` wipe, no engine registry reload, no peer-epoch bump: the merge
+  is applied against the live engines in place.
+
+#### Wire compatibility (send-new / accept-old)
+
+`SnapshotOffer` / `SnapshotAccept` / `SnapshotReject` are **retained** as wire
+variants for one-sided back-compat, but production **never sends** a
+`SnapshotOffer`:
+
+- **New responder → any initiator**: always streams `LoroSync { Snapshot }`.
+  A pre-#2503 initiator expecting a `SnapshotOffer` fails the catch-up and
+  retries (**forward-incompatible**, documented deprecation — resolves once
+  both devices upgrade).
+- **Old responder → new initiator**: an old peer still offers a CBOR
+  `SnapshotOffer`; `try_receive_snapshot_catchup` peeks the first message and
+  routes a `SnapshotOffer` into the legacy `apply_snapshot` wipe-and-replace
+  path (**accept-old**), preserving convergence during a rolling upgrade.
+
+The legacy CBOR `apply_snapshot` RESET (and its #2474 data-loss contract) thus
+survives only on the accept-old receive branch and as the compaction artifact;
+it is no longer reachable from the production *offer* path. The offer-side CBOR
+helpers (`try_offer_snapshot_catchup`, the `snapshot_covers_remote_heads`
+covering check) are retained `#[cfg(test)]` only, to simulate a legacy peer.
 
 #### Fate of the initiator's local state (#2474)
 
-`apply_snapshot` wipes the initiator's `op_log` (and Loro sidecar state)
-wholesale, so on the caught-up device **content converges to the snapshot
-but the local paper trail — page history, activity feed, undo/redo,
-per-op origin/`is_undo` attribution — is destroyed** (see
-[crdt-and-recovery.md](crdt-and-recovery.md) § "What a catch-up RESET
+The loss below applies **only to the legacy CBOR accept-old branch** (#2503).
+On the Loro-merge path the initiator's unsynced local content is preserved by
+Loro's merge semantics and its history is re-pulled per #2481 phase 3.
+
+Under the legacy CBOR `apply_snapshot` RESET, it wipes the initiator's
+`op_log` (and Loro sidecar state) wholesale, so on the caught-up device
+**content converges to the snapshot but the local paper trail — page history,
+activity feed, undo/redo, per-op origin/`is_undo` attribution — is destroyed**
+(see [crdt-and-recovery.md](crdt-and-recovery.md) § "What a catch-up RESET
 costs the caught-up device" for the full contract and the pinning tests).
 The at-risk *content* is any op the initiator authored locally that it
 had not yet pushed to some peer before this reset. A session is a
