@@ -890,11 +890,13 @@ async fn restore_page_to_op_includes_op_present_at_tx_open() {
 }
 
 /// Verify that ops belonging to a purged block are not discovered by the
-/// recursive CTE used inside `restore_page_to_op_inner`.  The CTE walks
-/// the live `blocks` table; once a block is purged it is no longer in
-/// that table, so its ops are never reached and `non_reversible_skipped`
-/// stays 0 — the purge's non-reversibility is invisible to the walker,
-/// not "skipped" in the sense of encountering and deciding to pass over.
+/// page-subtree walk used inside `restore_page_to_op_inner` (#2201: the
+/// materialized `collect_subtree_ids_unbounded` walk, previously an inline
+/// recursive CTE).  The walk reads the `blocks` table; once a block is
+/// purged it is no longer in that table, so its ops are never reached and
+/// `non_reversible_skipped` stays 0 — the purge's non-reversibility is
+/// invisible to the walker, not "skipped" in the sense of encountering and
+/// deciding to pass over.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn restore_page_to_op_purged_block_ops_not_in_cte_scope() {
     let (pool, _dir) = test_pool().await;
@@ -983,6 +985,96 @@ async fn restore_page_to_op_purged_block_ops_not_in_cte_scope() {
         get_block_inner(&pool, b1.id).await.unwrap().content,
         Some("keep".into()),
         "b1 should revert to original"
+    );
+}
+
+/// #2201: the materialized page-subtree walk must include DELETED
+/// descendants. The restore's ops-to-revert scan intentionally does NOT
+/// filter `deleted_at IS NULL` (see the NOTE in `restore_page_to_op_inner`):
+/// restoring to a point before a delete means un-deleting that block, so
+/// the walk must still reach it to sweep its ops. A walk using the
+/// `Active` filter (the delete-cascade shape) would silently drop both the
+/// child's edit and its delete from the revert set.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_page_to_op_sweeps_ops_on_deleted_descendants() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Page".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "original".into(),
+        Some(page.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Target = the point right after the child was created.
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
+    let target_seq = ops.last().unwrap().seq;
+
+    // AFTER the target: edit the child, then soft-DELETE it. At restore
+    // time the child row is tombstoned, so only a deleted-inclusive
+    // subtree walk can discover these two ops.
+    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "edited".into())
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+    delete_block_inner(&pool, DEV, &mat, child.id.clone())
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let result = restore_page_to_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.id.to_string(),
+        DEV.into(),
+        target_seq,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    assert_eq!(
+        result.ops_reverted, 2,
+        "both the edit and the delete on the (now-deleted) child must be \
+         swept — the page-subtree walk must include deleted blocks"
+    );
+    assert_eq!(
+        result.non_reversible_skipped, 0,
+        "edit_block and delete_block are both reversible"
+    );
+
+    let restored = get_block_inner(&pool, child.id).await.unwrap();
+    assert!(
+        restored.deleted_at.is_none(),
+        "child must be un-deleted by the restore (delete op reverted)"
+    );
+    assert_eq!(
+        restored.content,
+        Some("original".into()),
+        "child content must revert to its pre-target state (edit op reverted)"
     );
 }
 
