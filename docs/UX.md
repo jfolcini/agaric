@@ -77,6 +77,7 @@ To add a shortcut: append a `ShortcutBinding` entry to `catalog.ts` (`id`, `keys
 - **Two-tier undo/redo.** In-editor (ProseMirror history, scoped to one edit session). Page-level (`UndoStore` over the op log, reversed by `reverse.rs`). The page-level undo coalesces ops within `UNDO_GROUP_WINDOW_MS`; the redo stack is capped at `MAX_REDO_STACK`. Both constants live in `src/stores/undo.ts`.
 - **Optimistic updates pattern.** Capture `previousContent`, apply optimistic write, await IPC, on rejection restore previous + `toast.error()`. Never leave the UI in a state that diverges from the backend.
 - **Multi-select.** `Ctrl/Cmd+click` toggles, `Shift+click` extends, `Ctrl+A` selects all visible. Batch operations must filter out descendants of already-selected ancestors to avoid double-deletes. Guard against concurrent batch invocations with a `batchInProgress` ref.
+- **Multi-select drag = contiguous-run drop.** Dragging a multi-selection moves the whole selection as ONE contiguous run, in document order, spliced among the target parent's non-selected children (`move_blocks_batch` remove-then-splice — Refs #914 / Closes #2305). `newIndex` is the run's base position over the non-moving siblings, not a per-block slot.
 
 ## Editor architecture
 

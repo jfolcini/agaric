@@ -76,23 +76,36 @@ interface StructuralMoveSpec {
  * #2274 — surgically reconcile the flat tree after a batched `move_blocks_batch`
  * IPC, WITHOUT a blind full `load()`.
  *
- * Given the commit-time `state`, the authoritative per-root `resp`, the moved
- * ids (already in destination order), the requested destination parent and the
- * 0-based `newIndex`, this REPLAYS the backend's per-move pipeline: move k
- * inserts block[k] at slot `newIndex + k` among the destination parent's
- * then-current OTHER children (baseline sibling order derived from the
- * rendered flat-array order — see the `posOf` seeding below — slot clamped to
- * the group size), densely renumbering the touched groups after each step —
- * exactly the state block[k+1]'s move is computed against in the backend's
- * single tx (#774). A remove-all-then-splice shortcut is NOT equivalent when
- * the selection interleaves with non-moved siblings in the destination group
- * (e.g. [A,B,C,D], move [A,C] to slot 2 → backend yields B,A,D,C, a splice
- * would yield B,D,A,C) — see the Rust ground-truth test
+ * Contiguous-run semantics (Refs #914 / Closes #2305): the selection lands as
+ * ONE contiguous run, in destination order, among the target parent's
+ * NON-selected children — a remove-then-splice. Given the commit-time `state`,
+ * the authoritative per-root `resp`, the moved ids (already in destination
+ * order), the requested destination parent and the 0-based `newIndex` (the run's
+ * base position among the non-selected children), this:
+ *
+ *  1. builds `base` = the destination parent's current children EXCLUDING the
+ *     moved ids, in RENDERED FLAT-ARRAY ORDER (see the array-order rationale
+ *     below), then splices the run in at `p = clamp(newIndex, 0, base.length)` —
+ *     `base[0..p] ++ orderedIds ++ base[p..]`;
+ *  2. dense-renumbers that destination group and each VACATED source group;
+ *  3. rebuilds the flattened, depth-annotated tree via `buildFlatTree` (which
+ *     recomputes each block's depth from its new parent chain — descendants of a
+ *     moved root travel with it automatically because they still point at it via
+ *     `parent_id`).
+ *
+ * This matches the backend's contiguous-run engine ground truth (e.g. [A,B,C,D]
+ * move [A,C] at base position 2 → B,D,A,C), pinned by the Rust test
  * `move_blocks_batch_interleaved_same_parent_engine_ground_truth_2274`.
- * Finally it rebuilds the flattened, depth-annotated tree via `buildFlatTree`
- * (which recomputes each block's depth from its new parent chain — descendants
- * of a moved root travel with it automatically because they still point at it
- * via `parent_id`).
+ *
+ * The `base`/source groups are derived from the RENDERED flat-array order, not
+ * the stored `position` integers: the optimistic same-parent movers (#404
+ * `reorder`, `moveUp`, `moveDown`) keep the ARRAY order authoritative but rewrite
+ * only the moved block's `position` to the backend's PROVISIONAL rank, leaving
+ * sibling integers stale (duplicated, or even sorting out of order after stacked
+ * moves). Within a sibling group ascending flat-array index IS the sibling order
+ * (`state.blocks` is a DFS flatten and `buildFlatTree`'s position sort is
+ * stable), so array order reproduces exactly the dense baseline the backend
+ * splices against.
  *
  * Because every block in a page store belongs to the SAME page, an intra-page
  * batch move never changes any block's `page_id`, so it is left untouched.
@@ -127,75 +140,51 @@ export function reconcileBatchMove(
     if (!byId.has(id)) return null
   }
 
-  // Working copy of every block's (parent, position) — mutated as the replay
-  // walks the moves, exactly like the backend's in-tx state.
-  const parentOf = new Map<string, string | null>(blocks.map((b) => [b.id, b.parent_id ?? null]))
-
-  // Seed each block's rank from its DENSE RANK IN THE FLAT-ARRAY ORDER, not
-  // from the stored `position` integers. The optimistic same-parent movers
-  // (#404 `reorder`, `moveUp`, `moveDown`) keep the ARRAY order authoritative
-  // but rewrite only the moved block's `position` to the backend's PROVISIONAL
-  // rank, leaving sibling integers stale (duplicated, or even sorting out of
-  // order after stacked moves). The backend has no such ties — it dense-
-  // renumbers every touched group in-tx — so replaying against the stale
-  // integers with an id tie-break silently committed a sibling order diverging
-  // from the DB after any optimistic reorder. Within a sibling group,
-  // ascending flat-array index IS the sibling order (`state.blocks` is a DFS
-  // flatten and `buildFlatTree`'s position sort is stable), so dense
-  // array-derived ranks reproduce exactly the baseline the backend replays
-  // against.
+  const movedSet = new Set(orderedIds)
+  // Pre-move parent of each block (for grouping the vacated source parents).
+  const oldParentOf = new Map<string, string | null>(blocks.map((b) => [b.id, b.parent_id ?? null]))
+  // Final parent + rank of every block, mutated below.
+  const parentOf = new Map<string, string | null>(oldParentOf)
   const posOf = new Map<string, number | null>()
-  const groupRank = new Map<string | null, number>()
-  for (const b of blocks) {
-    const p = b.parent_id ?? null
-    const rank = (groupRank.get(p) ?? 0) + 1
-    groupRank.set(p, rank)
-    posOf.set(b.id, rank)
-  }
 
-  // `(position, id)` comparator over the working copy. Ranks are dense and
-  // unique per sibling group, so the id tie-break is defensive only.
-  const cmp = (a: string, b: string) => {
-    const pa = posOf.get(a) ?? Number.MAX_SAFE_INTEGER
-    const pb = posOf.get(b) ?? Number.MAX_SAFE_INTEGER
-    if (pa !== pb) return pa - pb
-    return a.localeCompare(b)
-  }
-  /** Live children of `parent` in the working copy, excluding `except`. */
-  const childrenOf = (parent: string | null, except: string) => {
-    const out: string[] = []
-    for (const b of blocks) {
-      if (b.id !== except && (parentOf.get(b.id) ?? null) === parent) out.push(b.id)
-    }
-    return out.toSorted(cmp)
-  }
+  /** Children of `parent` in RENDERED flat-array order, excluding the moved ids. */
+  const remainingChildren = (parent: string | null) =>
+    blocks
+      .filter((b) => !movedSet.has(b.id) && (oldParentOf.get(b.id) ?? null) === parent)
+      .map((b) => b.id)
 
-  // Replay move k: insert block[k] at slot `newIndex + k` among the
-  // destination's then-current OTHER children (clamped), dense-renumber the
-  // destination group, and collapse the vacated source group (when different).
-  orderedIds.forEach((id, k) => {
-    const oldParent = parentOf.get(id) ?? null
-    const others = childrenOf(wantParent, id)
-    const slot = Math.max(0, Math.min(newIndex + k, others.length))
-    const destGroup = [...others.slice(0, slot), id, ...others.slice(slot)]
-    parentOf.set(id, wantParent)
-    destGroup.forEach((bid, i) => posOf.set(bid, i + 1))
-    if (oldParent !== wantParent) {
-      childrenOf(oldParent, id).forEach((bid, i) => posOf.set(bid, i + 1))
-    }
-  })
+  // Remove-then-splice: land the whole run at base position `p` among the
+  // destination parent's non-selected children, in destination order.
+  const base = remainingChildren(wantParent)
+  const p = Math.max(0, Math.min(newIndex, base.length))
+  const destGroup = [...base.slice(0, p), ...orderedIds, ...base.slice(p)]
+  for (const id of orderedIds) parentOf.set(id, wantParent)
+  destGroup.forEach((bid, i) => posOf.set(bid, i + 1))
+
+  // Dense-renumber every VACATED source group (a parent a moved id left, other
+  // than the destination — the destination was already renumbered above).
+  const sourceParents = new Set<string | null>()
+  for (const id of orderedIds) {
+    const from = oldParentOf.get(id) ?? null
+    if (from !== wantParent) sourceParents.add(from)
+  }
+  for (const sp of sourceParents) {
+    remainingChildren(sp).forEach((bid, i) => posOf.set(bid, i + 1))
+  }
 
   // Materialise the updated bag and rebuild. A block re-allocates when its
   // (parent, rank) changed — including blocks whose stored `position` was a
-  // stale optimistic leftover, which this pass heals to the dense rank.
+  // stale optimistic leftover, which this pass heals to the dense rank. Blocks
+  // in untouched sibling groups keep their reference (posOf has no entry → the
+  // stored position is preserved).
   const updatedBag: FlatBlock[] = []
   for (const b of blocks) {
-    const p = parentOf.get(b.id) ?? null
-    const pos = posOf.get(b.id) ?? null
+    const par = parentOf.get(b.id) ?? null
+    const pos = posOf.has(b.id) ? (posOf.get(b.id) ?? null) : (b.position ?? null)
     updatedBag.push(
-      p === (b.parent_id ?? null) && pos === (b.position ?? null)
+      par === (b.parent_id ?? null) && pos === (b.position ?? null)
         ? b
-        : { ...b, parent_id: p, position: pos },
+        : { ...b, parent_id: par, position: pos },
     )
   }
   const flat = buildFlatTree(updatedBag, rootParentId)

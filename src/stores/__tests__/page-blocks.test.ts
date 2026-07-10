@@ -3638,26 +3638,22 @@ describe('PageBlockStore', () => {
       expect(batchCall()).toEqual({ blockIds: ['A', 'B'], newParentId: 'PAGE_1', newIndex: 2 })
       // Reconciled surgically from the response — NO blind reload.
       expect(reloaded()).toBe(false)
-      // The reconcile REPLAYS the backend's sequential per-move slots (#774):
-      //   k=0: A → slot 2 among [B,C,D] ⇒ B,C,A,D
-      //   k=1: B → slot 3 among [C,A,D] ⇒ C,A,D,B
-      // (NOT a remove-then-splice C,D,A,B — see the Rust ground-truth test
-      // `move_blocks_batch_interleaved_same_parent_engine_ground_truth_2274`.)
-      expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'A', 'D', 'B'])
+      // Contiguous-run remove-then-splice (Refs #914 / Closes #2305): base
+      // position 2 over the non-selected children [C,D] appends the run ⇒
+      // C,D,A,B — matching the Rust ground-truth test
+      // `move_blocks_batch_interleaved_same_parent_engine_ground_truth_2274`.
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'D', 'A', 'B'])
       // blocksById stays in lockstep with the flat array.
       expect([...store.getState().blocksById.keys()].toSorted()).toEqual(['A', 'B', 'C', 'D'])
       expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
     })
 
-    it('replays the backend per-move slot semantics for an INTERLEAVED same-parent selection', async () => {
-      // [A,B,C,D] under one parent; move the non-contiguous selection [A,C] to
-      // slot 2. The backend loops per-move slots in-tx:
-      //   k=0: A → slot 2 among [B,C,D] ⇒ B,C,A,D
-      //   k=1: C → slot 3 among [B,A,D] ⇒ B,A,D,C
+    it('lands a CONTIGUOUS run for an INTERLEAVED same-parent selection', async () => {
+      // [A,B,C,D] under one parent; move the non-contiguous selection [A,C] at
+      // base position 2. Contiguous-run remove-then-splice (Refs #914 / Closes
+      // #2305): non-selected = [B,D], base position 2 appends the run ⇒ B,D,A,C.
       // Engine-path ground truth pinned by the Rust test
       // `move_blocks_batch_interleaved_same_parent_engine_ground_truth_2274`.
-      // A remove-then-splice reconcile would compute B,D,A,C and silently
-      // diverge from the backend until the next reload.
       store.setState({
         blocks: [
           makeBlock({ id: 'A', position: 1, parent_id: 'PAGE_1', depth: 0 }),
@@ -3672,7 +3668,7 @@ describe('PageBlockStore', () => {
       await store.getState().moveBlocks(['A', 'C'], 'PAGE_1', 2)
 
       expect(reloaded()).toBe(false)
-      expect(store.getState().blocks.map((b) => b.id)).toEqual(['B', 'A', 'D', 'C'])
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['B', 'D', 'A', 'C'])
       // Dense 1-based positions, mirroring the backend reprojection.
       expect(store.getState().blocks.map((b) => b.position)).toEqual([1, 2, 3, 4])
     })
@@ -3705,11 +3701,9 @@ describe('PageBlockStore', () => {
       await store.getState().moveBlocks(['B', 'C'], 'PAGE_1', 3)
 
       expect(reloaded()).toBe(false)
-      // Backend ground truth (replay against its dense in-tx order B,C,D,A):
-      //   k=0: B → slot 3 among [C,D,A] ⇒ C,D,A,B
-      //   k=1: C → slot 4 (clamped to 3) among [D,A,B] ⇒ D,A,B,C
-      // A stale `(position, id)` baseline breaks the D=4/A=4 tie by id (A<D),
-      // replays against [B,C,A,D] and silently commits A,D,B,C instead.
+      // Contiguous-run: base = non-selected in ARRAY order [D,A]; base position 3
+      // clamps to append ⇒ D,A,B,C. A stale `(position, id)` baseline would break
+      // the D=4/A=4 tie by id (A<D), derive base [A,D] and commit A,D,B,C instead.
       expect(store.getState().blocks.map((b) => b.id)).toEqual(['D', 'A', 'B', 'C'])
       // The reconcile re-densifies the touched group, healing the stale ranks.
       expect(store.getState().blocks.map((b) => b.position)).toEqual([1, 2, 3, 4])
@@ -3736,8 +3730,9 @@ describe('PageBlockStore', () => {
       await store.getState().moveBlocks(['D'], 'PAGE_1', 3)
 
       expect(reloaded()).toBe(false)
-      // Backend ground truth: D → slot 3 among its dense order [C,B,A] ⇒
-      // C,B,A,D. The stale baseline would commit B,C,A,D.
+      // Contiguous-run: base = non-selected in ARRAY order [C,B,A]; append ⇒
+      // C,B,A,D. A stale `(position, id)` baseline would derive base [B,C,A]
+      // (B=C=3, tie by id) and commit B,C,A,D instead.
       expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'B', 'A', 'D'])
     })
 

@@ -1787,11 +1787,14 @@ describe('useBlockDnD', () => {
         expect(ids).not.toContain('R2b')
       })
 
-      it('keeps the other (yet-unmoved) roots countable in the computeDropIndex slot basis', () => {
-        // #774 — the backend computes the FIRST root's slot while the other
-        // selected roots still sit in their source groups, so they must stay
-        // countable for the slot even though they are hidden from projection.
-        // Their descendants stay excluded (never children of a legal parent).
+      it('counts the drop slot over NON-moving siblings only (contiguous-run base position)', () => {
+        // Contiguous-run (Refs #914 / Closes #2305): the whole selection lands as
+        // ONE run among the non-moving siblings, so the drop slot is counted over
+        // the non-moving blocks only — every moving root (and its subtree) is
+        // excluded from the slot basis. Only the active root stays as the drag
+        // placeholder (computeDropIndex excludes it via its `activeId` arg). The
+        // former #774 basis re-added the other roots to match the old sequential
+        // per-move slots; that coupling is gone.
         mockRealDescendants()
         mockedComputeSelectionRoots.mockReturnValue(['R1', 'R2'])
         const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
@@ -1810,10 +1813,9 @@ describe('useBlockDnD', () => {
         expect(params.moveBlocks).toHaveBeenCalledWith(['R1', 'R2'], null, 2)
         const slotCall = mockedComputeDropIndex.mock.calls.at(-1) as [typeof forest, ...unknown[]]
         const slotIds = slotCall[0].map((b) => b.id)
-        expect(slotIds).toContain('R2') // countable at slot time
-        expect(slotIds).not.toContain('R2a')
-        expect(slotIds).not.toContain('R2b')
-        expect(slotIds).not.toContain('R1a')
+        // The other moving root R2 and every moving subtree are excluded; only
+        // the active root R1 and the non-moving sibling X remain countable.
+        expect(slotIds).toEqual(['R1', 'X'])
       })
     })
 

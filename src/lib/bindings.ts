@@ -67,8 +67,9 @@ export const commands = {
 	/**
 	 *  Tauri command: batched intra-page reorder/reparent (#2274). See
 	 *  [`move_blocks_batch_inner`]. `block_ids` are moved, in the given order, under
-	 *  `new_parent_id` (a real block id, or `None` for top-level) at consecutive
-	 *  slots starting at the 0-based `new_index`.
+	 *  `new_parent_id` (a real block id, or `None` for top-level) as ONE contiguous
+	 *  run at base position `new_index` (0-based, counted over the target parent's
+	 *  non-selected children — Refs #914 / Closes #2305).
 	 */
 	moveBlocksBatch: (blockIds: string[], newParentId: string | null, newIndex: number) => typedError<MoveResponse[], AppError>(__TAURI_INVOKE("move_blocks_batch", { blockIds, newParentId, newIndex })),
 	/**
