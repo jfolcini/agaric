@@ -699,6 +699,61 @@ describe('LinkedReferences', () => {
     expect(screen.getByText('block 2')).toBeInTheDocument()
   })
 
+  // 14a. (#2201 item 1b) The backend now skips the grouped COUNT queries on
+  // non-first pages and returns `total_count: 0` there. The "N references"
+  // header total is page-invariant, so the FE must keep the FIRST page's value
+  // across load-more (setTotalCount is guarded to the first page). Regression:
+  // without the guard, load-more clobbers the header to "0 References".
+  it('pagination: header keeps first-page total after load more (total_count 0 on page 2)', async () => {
+    const user = userEvent.setup()
+    const page1 = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: 'cursor_page2',
+      has_more: true,
+      total_count: 2,
+      filtered_count: 2,
+      truncated: false,
+    }
+    // Page 2 mirrors the new backend contract: COUNTs skipped ⇒ 0.
+    const page2 = {
+      groups: [makeGroup('P2', 'Page Two', [{ id: 'B2', content: 'block 2' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 0,
+      filtered_count: 0,
+      truncated: false,
+    }
+    let callCount = 0
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+      if (cmd === 'list_backlinks_grouped') {
+        callCount++
+        return callCount === 1 ? page1 : page2
+      }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'list_property_keys') return []
+      if (cmd === 'list_tags_by_prefix') return []
+      return emptyGrouped
+    })
+
+    renderLinkedReferences({ pageId: 'PAGE1' })
+
+    // First page: header shows the true total.
+    expect(await screen.findByText('2 References')).toBeInTheDocument()
+
+    const loadMoreBtn = await screen.findByRole('button', {
+      name: /load more references/i,
+    })
+    await user.click(loadMoreBtn)
+
+    // Page 2's block renders (proving the load-more resolved)...
+    expect(await screen.findByText('block 2')).toBeInTheDocument()
+    expect(screen.getByText('block 1')).toBeInTheDocument()
+
+    // ...and the header STILL shows the first-page total — NOT "0 References".
+    expect(screen.getByText('2 References')).toBeInTheDocument()
+    expect(screen.queryByText('0 References')).not.toBeInTheDocument()
+  })
+
   // 14b. (#1529) load-more merging the SAME page_id must NOT mutate the
   // prior-render group object. The updater builds a fresh group via
   // `{ ...existing, blocks: [...existing.blocks, ...newGroup.blocks] }`
