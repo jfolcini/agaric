@@ -2,7 +2,7 @@
  * Tests for BlockTree picker integration.
  *
  * Validates:
- *  - searchTags callback calls list_tags_by_prefix and maps to PickerItem[]
+ *  - searchTags callback lists space-scoped tags and maps to PickerItem[]
  *  - searchPages callback calls list_blocks with blockType='page' and filters
  *  - Correct PickerItem mapping (id + label)
  *  - Edge cases: empty results, null content
@@ -419,7 +419,7 @@ describe('BlockTree picker wiring', () => {
     expect(typeof capturedSearchPages).toBe('function')
   })
 
-  it('searchTags calls list_tags_by_prefix with the query as prefix', async () => {
+  it('searchTags lists tags via the space-scoped command (#2543)', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
@@ -439,10 +439,7 @@ describe('BlockTree picker wiring', () => {
 
     const results = await capturedSearchTags?.('imp')
 
-    expect(mockedInvoke).toHaveBeenCalledWith('list_tags_by_prefix', {
-      prefix: 'imp',
-      limit: null,
-    })
+    expect(mockedInvoke).toHaveBeenCalledWith('list_all_tags_in_space', expect.anything())
     expect(results).toEqual([
       expect.objectContaining({ id: '__create__', label: 'imp', isCreate: true }),
       expect.objectContaining({ id: 'TAG_01', label: 'important' }),
@@ -2160,7 +2157,7 @@ describe('BlockTree resolve cache preload', () => {
     )
     expect(pageCalls).toHaveLength(0)
 
-    const tagCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_tags_by_prefix')
+    const tagCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_all_tags_in_space')
     expect(tagCalls).toHaveLength(0)
   })
 
