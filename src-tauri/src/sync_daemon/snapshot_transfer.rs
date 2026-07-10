@@ -502,6 +502,7 @@ pub(crate) async fn try_offer_loro_snapshot_catchup(
     event_sink: &Arc<dyn SyncEventSink>,
     device_id: &str,
     remote_device_id: &str,
+    peer_accepts_zstd: bool,
 ) -> Result<LoroCatchupSent, AppError> {
     let space_ids = registry.space_ids();
 
@@ -563,7 +564,12 @@ pub(crate) async fn try_offer_loro_snapshot_catchup(
         // `send_sync_message` picks the inline or chunked-binary transport
         // per payload size (#611), so an arbitrarily large space snapshot
         // never blows the JSON text-frame cap.
-        super::wire::send_sync_message(conn, &SyncMessage::LoroSync { msg, is_last }).await?;
+        super::wire::send_sync_message(
+            conn,
+            &SyncMessage::LoroSync { msg, is_last },
+            peer_accepts_zstd,
+        )
+        .await?;
     }
 
     Ok(LoroCatchupSent {
@@ -3303,6 +3309,7 @@ mod tests {
                 &resp_sink,
                 REMOTE_DEV, // responder's own device id
                 LOCAL_DEV,  // the initiator, as the responder sees it
+                false,      // raw wire encoding — compression is orthogonal here
             ),
             try_receive_snapshot_catchup(
                 &mut client_conn,
@@ -3407,6 +3414,7 @@ mod tests {
                 &sink,
                 REMOTE_DEV,
                 LOCAL_DEV,
+                false, // raw wire encoding — compression is orthogonal here
             ),
             async { client_conn.recv_json::<SyncMessage>().await },
         );

@@ -504,6 +504,7 @@ async fn handle_incoming_sync_inner(
             &event_sink,
             &device_id,
             &remote_id,
+            peer_accepts_zstd,
         )
         .await
         {
