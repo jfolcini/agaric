@@ -219,35 +219,64 @@ export interface Projection {
 }
 
 /**
- * Compute the projected drop position for a sortable tree drag.
+ * Result of {@link simulateProjection} — the structural post-move simulation
+ * that depends ONLY on `items`, `activeId`, `overId` (and the structural
+ * `rootParentId` / `subtreeHeight`), NOT on the horizontal drag offset.
  *
- * The algorithm:
- * 1. Simulate moving the active item to the over item's position.
- * 2. Compute projected depth from the horizontal drag offset.
- * 3. Clamp to [minDepth, maxDepth] based on surrounding items.
- * 4. Walk backwards to find the parent at (depth - 1).
+ * The expensive work (array clone + two splices + `findIndex` scans) lives here
+ * so a horizontal pointer tick — which only moves the drag offset — can reuse a
+ * memoized sim and rerun just the cheap depth/parent tail ({@link projectDepth}).
+ * `getProjection` composes the two and is byte-identical to the old monolith.
+ *
+ * Three shapes, discriminated by `kind`:
+ * - `fixed`   — an offset-independent early return (missing active/over id). The
+ *               projection is fully determined, the tail returns it verbatim.
+ * - `sentinel`— drop after the last row; the tail derives end depth/parent from
+ *               the offset against `rest`/`lastItem`/`maxEndDepth`.
+ * - `normal`  — the spliced post-move array; the tail derives depth/parent from
+ *               the offset against `previousItem`/`nextItem`/`depthCeiling`.
+ */
+export type ProjectionSim =
+  | { kind: 'fixed'; projection: Projection }
+  | {
+      kind: 'sentinel'
+      rest: FlatBlock[]
+      lastItem: FlatBlock | undefined
+      maxEndDepth: number
+      rootParentId: string | null
+    }
+  | {
+      kind: 'normal'
+      clonedItems: FlatBlock[]
+      projectedIndex: number
+      previousItem: FlatBlock | undefined
+      nextItem: FlatBlock | undefined
+      activeItem: FlatBlock
+      depthCeiling: number
+      rootParentId: string | null
+    }
+
+/**
+ * Structural half of the projection (step 1): simulate moving the active item to
+ * the over item's position. This is the EXPENSIVE part — array clone + splices +
+ * `findIndex` — and depends ONLY on `items`, `activeId`, `overId`, `rootParentId`
+ * and `subtreeHeight`, so it can be memoized across horizontal drag ticks.
  *
  * @param items       Flattened tree (excluding descendants of active item during drag).
  * @param activeId    ID of the item being dragged.
  * @param overId      ID of the item being dragged over.
- * @param dragOffset  Horizontal drag offset in pixels.
- * @param indentWidth Pixels per indent level (e.g. 24).
  * @param rootParentId The parent_id of root-level items (null for top-level).
+ * @param subtreeHeight Height of the dragged subtree (max descendant depth −
+ *   active depth), so the projection never offers a depth whose descendants would
+ *   exceed MAX_BLOCK_DEPTH and be rejected by the backend (#928). 0 for a leaf.
  */
-export function getProjection(
+export function simulateProjection(
   items: FlatBlock[],
   activeId: string,
   overId: string,
-  dragOffset: number,
-  indentWidth: number,
   rootParentId: string | null = null,
-  /**
-   * Height of the dragged subtree (max descendant depth − active depth), so the
-   * projection never offers a depth whose descendants would exceed
-   * MAX_BLOCK_DEPTH and be rejected by the backend (#928). 0 for a leaf.
-   */
   subtreeHeight = 0,
-): Projection {
+): ProjectionSim {
   // The deepest depth the DRAGGED HEAD may legally occupy: its tallest
   // descendant must still satisfy `headDepth + subtreeHeight <= MAX_BLOCK_DEPTH
   // - 1` (0-based). Clamp to ≥0 so a pathologically tall subtree still projects.
@@ -263,13 +292,19 @@ export function getProjection(
   // `overIndex === -1` is intentional when `overId === SENTINEL_ID` and is
   // handled by the sentinel branch below.
   if (activeIndex < 0) {
-    return { depth: 0, parentId: rootParentId, maxDepth: 0, minDepth: 0 }
+    return {
+      kind: 'fixed',
+      projection: { depth: 0, parentId: rootParentId, maxDepth: 0, minDepth: 0 },
+    }
   }
 
   const activeItem = items[activeIndex]
 
   if (!activeItem) {
-    return { depth: 0, parentId: rootParentId, maxDepth: 0, minDepth: 0 }
+    return {
+      kind: 'fixed',
+      projection: { depth: 0, parentId: rootParentId, maxDepth: 0, minDepth: 0 },
+    }
   }
 
   // Sentinel: drop after last item — compute depth/parent from drag offset.
@@ -278,11 +313,67 @@ export function getProjection(
   // ancestor. Without this exclusion, dragging the LAST block onto the
   // sentinel with a rightward offset projected the block as a child of ITSELF
   // (an own-parent move the backend always rejects). Found by the
-  // tree-utils property suite.
+  // tree-utils property suite. The offset-dependent depth/parent math runs in
+  // the tail ({@link projectDepth}); here we only stage the structural inputs.
   if (overId === SENTINEL_ID) {
     const rest = items.filter((item) => item.id !== activeId)
     const lastItem = rest.at(-1)
     const maxEndDepth = Math.min(lastItem ? lastItem.depth + 1 : 0, depthCeiling)
+    return { kind: 'sentinel', rest, lastItem, maxEndDepth, rootParentId }
+  }
+
+  if (overIndex < 0) {
+    return {
+      kind: 'fixed',
+      projection: { depth: 0, parentId: rootParentId, maxDepth: 0, minDepth: 0 },
+    }
+  }
+
+  // Simulate the array after moving active to over's position
+  const clonedItems = [...items]
+  const [moved] = clonedItems.splice(activeIndex, 1)
+  clonedItems.splice(overIndex > activeIndex ? overIndex - 1 : overIndex, 0, moved as FlatBlock)
+
+  // The item is now at this index in the cloned array
+  const projectedIndex = overIndex > activeIndex ? overIndex - 1 : overIndex
+
+  const previousItem: FlatBlock | undefined = clonedItems[projectedIndex - 1]
+  const nextItem: FlatBlock | undefined = clonedItems[projectedIndex + 1]
+
+  return {
+    kind: 'normal',
+    clonedItems,
+    projectedIndex,
+    previousItem,
+    nextItem,
+    activeItem,
+    depthCeiling,
+    rootParentId,
+  }
+}
+
+/**
+ * Offset-dependent half of the projection (steps 2–4): compute the projected
+ * depth from the horizontal drag offset, clamp to [minDepth, maxDepth] (and the
+ * MAX_BLOCK_DEPTH ceiling), and resolve the parent id from the already-simulated
+ * neighbors. This is the CHEAP tail — no array clone — and is the only part that
+ * must rerun as the pointer moves horizontally.
+ *
+ * @param sim         The structural simulation from {@link simulateProjection}.
+ * @param dragOffset  Horizontal drag offset in pixels.
+ * @param indentWidth Pixels per indent level (e.g. 24).
+ */
+export function projectDepth(
+  sim: ProjectionSim,
+  dragOffset: number,
+  indentWidth: number,
+): Projection {
+  if (sim.kind === 'fixed') {
+    return sim.projection
+  }
+
+  if (sim.kind === 'sentinel') {
+    const { rest, lastItem, maxEndDepth, rootParentId } = sim
     // Use drag offset to allow indentation even at the end
     const effectiveOffset =
       Math.abs(dragOffset) > DEAD_ZONE_PX ? dragOffset - Math.sign(dragOffset) * DEAD_ZONE_PX : 0
@@ -300,20 +391,15 @@ export function getProjection(
     return { depth: endDepth, parentId: endParentId, maxDepth: maxEndDepth, minDepth: 0 }
   }
 
-  if (overIndex < 0) {
-    return { depth: 0, parentId: rootParentId, maxDepth: 0, minDepth: 0 }
-  }
-
-  // Simulate the array after moving active to over's position
-  const clonedItems = [...items]
-  const [moved] = clonedItems.splice(activeIndex, 1)
-  clonedItems.splice(overIndex > activeIndex ? overIndex - 1 : overIndex, 0, moved as FlatBlock)
-
-  // The item is now at this index in the cloned array
-  const projectedIndex = overIndex > activeIndex ? overIndex - 1 : overIndex
-
-  const previousItem: FlatBlock | undefined = clonedItems[projectedIndex - 1]
-  const nextItem: FlatBlock | undefined = clonedItems[projectedIndex + 1]
+  const {
+    clonedItems,
+    projectedIndex,
+    previousItem,
+    nextItem,
+    activeItem,
+    depthCeiling,
+    rootParentId,
+  } = sim
 
   // Dead zone: ignore small horizontal movements to prevent accidental indent
   const effectiveOffset =
@@ -365,6 +451,37 @@ export function getProjection(
   }
 
   return { depth, parentId: getParentId(), maxDepth, minDepth }
+}
+
+/**
+ * Compute the projected drop position for a sortable tree drag.
+ *
+ * Thin wrapper composing the two halves so any caller's behavior is
+ * byte-identical to the pre-split monolith:
+ * 1. {@link simulateProjection} — simulate moving the active item to the over
+ *    item's position (the expensive, offset-independent clone/splice).
+ * 2. {@link projectDepth} — compute projected depth from the horizontal drag
+ *    offset, clamp to [minDepth, maxDepth], and walk back to the parent.
+ *
+ * @param items       Flattened tree (excluding descendants of active item during drag).
+ * @param activeId    ID of the item being dragged.
+ * @param overId      ID of the item being dragged over.
+ * @param dragOffset  Horizontal drag offset in pixels.
+ * @param indentWidth Pixels per indent level (e.g. 24).
+ * @param rootParentId The parent_id of root-level items (null for top-level).
+ * @param subtreeHeight Height of the dragged subtree; see {@link simulateProjection}.
+ */
+export function getProjection(
+  items: FlatBlock[],
+  activeId: string,
+  overId: string,
+  dragOffset: number,
+  indentWidth: number,
+  rootParentId: string | null = null,
+  subtreeHeight = 0,
+): Projection {
+  const sim = simulateProjection(items, activeId, overId, rootParentId, subtreeHeight)
+  return projectDepth(sim, dragOffset, indentWidth)
 }
 
 // ── Position computation ─────────────────────────────────────────────────

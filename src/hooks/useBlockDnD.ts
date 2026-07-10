@@ -30,9 +30,10 @@ import {
   computeSelectionRoots,
   type FlatBlock,
   getDragDescendants,
-  getProjection,
   type Projection,
+  projectDepth,
   SENTINEL_ID,
+  simulateProjection,
 } from '../lib/tree-utils'
 import { useAutoScrollOnDrag } from './useAutoScrollOnDrag'
 import { useIsTouch } from './useIsTouch'
@@ -245,19 +246,22 @@ export function useBlockDnD({
     return h
   }, [activeId, isMultiDrag, dragRoots, collapsedVisible])
 
-  // Projection of where the dragged item would land
-  const projected = useMemo(() => {
+  // Projection, split so a horizontal pointer tick doesn't re-clone the visible
+  // array (#2200). The expensive structural simulation (array clone + splices +
+  // findIndex) is memoized on the STRUCTURAL inputs only — NOT `offsetLeft` — so
+  // every horizontal drag move reuses it and only reruns the cheap depth/parent
+  // tail below. The composed result is identical to a single `getProjection` call.
+  const projectionSim = useMemo(() => {
     if (!activeId || !overId) return null
-    return getProjection(
-      visibleItems,
-      activeId,
-      overId,
-      offsetLeft,
-      indentWidth,
-      rootParentId,
-      subtreeHeight,
-    )
-  }, [activeId, overId, offsetLeft, visibleItems, rootParentId, subtreeHeight, indentWidth])
+    return simulateProjection(visibleItems, activeId, overId, rootParentId, subtreeHeight)
+  }, [activeId, overId, visibleItems, rootParentId, subtreeHeight])
+
+  // Cheap offset-dependent tail: reruns on horizontal movement but reuses the
+  // memoized structural sim above.
+  const projected = useMemo(() => {
+    if (!projectionSim) return null
+    return projectDepth(projectionSim, offsetLeft, indentWidth)
+  }, [projectionSim, offsetLeft, indentWidth])
 
   // #923 — direction of the projected drop relative to the over-row. The drop
   // lands AFTER the over-row when the active block currently sits ABOVE it in

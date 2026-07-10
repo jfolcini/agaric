@@ -31,13 +31,54 @@ vi.mock('@dnd-kit/sortable', () => ({
   sortableKeyboardCoordinates: vi.fn(),
 }))
 
-vi.mock('../../lib/tree-utils', () => ({
-  getDragDescendants: vi.fn(() => new Set<string>()),
-  getProjection: vi.fn(() => null),
-  computeDropIndex: vi.fn(() => 0),
-  computeSelectionRoots: vi.fn(() => []),
-  SENTINEL_ID: '__drop-after-last__',
-}))
+// #2200 — `getProjection` was split into `simulateProjection` (structural, memoized
+// off the horizontal offset) + `projectDepth` (cheap offset tail). The hook now
+// calls those two. To keep every existing `mockedGetProjection` assertion valid,
+// the mock routes the split back through a single `getProjection` spy: the sim
+// packages the structural args, and `projectDepth` replays them into
+// `getProjection(items, activeId, overId, dragOffset, indentWidth, rootParentId,
+// subtreeHeight)` — the exact pre-split signature and return value.
+vi.mock('../../lib/tree-utils', () => {
+  const getProjection = vi.fn(() => null)
+  return {
+    getDragDescendants: vi.fn(() => new Set<string>()),
+    getProjection,
+    simulateProjection: vi.fn(
+      (
+        items: unknown,
+        activeId: unknown,
+        overId: unknown,
+        rootParentId: unknown,
+        subtreeHeight: unknown,
+      ) => ({ items, activeId, overId, rootParentId, subtreeHeight }),
+    ),
+    projectDepth: vi.fn(
+      (
+        sim: {
+          items: unknown
+          activeId: unknown
+          overId: unknown
+          rootParentId: unknown
+          subtreeHeight: unknown
+        },
+        dragOffset: unknown,
+        indentWidth: unknown,
+      ) =>
+        (getProjection as (...args: unknown[]) => unknown)(
+          sim.items,
+          sim.activeId,
+          sim.overId,
+          dragOffset,
+          indentWidth,
+          sim.rootParentId,
+          sim.subtreeHeight,
+        ),
+    ),
+    computeDropIndex: vi.fn(() => 0),
+    computeSelectionRoots: vi.fn(() => []),
+    SENTINEL_ID: '__drop-after-last__',
+  }
+})
 
 vi.mock('@/components/editor/SortableBlock', () => ({
   INDENT_WIDTH: 24,
