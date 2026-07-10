@@ -1077,4 +1077,132 @@ describe('DataTab', () => {
       expect(mockImportMarkdown.mock.calls[0]?.[4]).toBeNull()
     })
   })
+
+  // #1282 — Evernote `.enex` import. Each note in the picked file is parsed in
+  // the browser and handed to the shared `importMarkdown` IPC as one page.
+  describe('Evernote .enex import (#1282)', () => {
+    const okResult = (title = 'note') => ({
+      page_title: title,
+      blocks_created: 2,
+      properties_set: 0,
+      warnings: [],
+    })
+
+    /** A minimal two-note ENEX document. */
+    const twoNoteEnex = () => {
+      const content = (enml: string) => `<![CDATA[<en-note>${enml}</en-note>]]>`
+      return (
+        `<?xml version="1.0" encoding="UTF-8"?><en-export>` +
+        `<note><title>Alpha</title><content>${content('<h1>A</h1><p>body</p>')}</content>` +
+        `<created>20210102T030405Z</created><tag>Multi Word</tag></note>` +
+        `<note><title>Beta</title><content>${content('<p>b</p>')}</content></note>` +
+        `</en-export>`
+      )
+    }
+
+    it('renders the enex input and button', () => {
+      render(<DataTab />)
+      expect(screen.getByTestId('import-enex-input')).toBeInTheDocument()
+      const btn = screen.getByTestId('import-enex-button')
+      expect(btn).toBeInTheDocument()
+      expect(btn).toHaveTextContent('Import Evernote (.enex)')
+      // The input only accepts `.enex`.
+      expect(screen.getByTestId('import-enex-input')).toHaveAttribute('accept', '.enex')
+    })
+
+    it('clicking the enex button opens the enex input', async () => {
+      const user = userEvent.setup()
+      render(<DataTab />)
+      const input = screen.getByTestId('import-enex-input') as HTMLInputElement
+      const clickSpy = vi.spyOn(input, 'click')
+      await user.click(screen.getByTestId('import-enex-button'))
+      expect(clickSpy).toHaveBeenCalled()
+    })
+
+    it('calls importMarkdown once per note with the converted markdown', async () => {
+      mockImportMarkdown.mockResolvedValue(okResult())
+
+      render(<DataTab />)
+      const input = screen.getByTestId('import-enex-input') as HTMLInputElement
+      const file = new File([twoNoteEnex()], 'export.enex', { type: 'application/xml' })
+      Object.defineProperty(input, 'files', { value: [file] })
+
+      await act(async () => {
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+
+      // Two notes → two importMarkdown calls (one page each).
+      await waitFor(() => expect(mockImportMarkdown).toHaveBeenCalledTimes(2))
+
+      // First call: filename derived from the note title, converted markdown,
+      // active space, a progress callback, and no vault files (undefined).
+      const [content0, filename0, spaceId0, onProgress0, vaultFiles0] = mockImportMarkdown.mock
+        .calls[0] as [string, string, string, unknown, unknown]
+      expect(filename0).toBe('Alpha.md')
+      expect(spaceId0).toBe(DEFAULT_TEST_SPACE.id)
+      expect(typeof onProgress0).toBe('function')
+      expect(vaultFiles0).toBeUndefined()
+      // Frontmatter + tag token + converted body all present.
+      expect(content0).toContain('source: evernote')
+      expect(content0).toContain('#[[Multi Word]]')
+      expect(content0).toContain('# A')
+
+      expect(mockImportMarkdown.mock.calls[1]?.[1]).toBe('Beta.md')
+    })
+
+    it('aggregates block counts across notes and shows a success result', async () => {
+      mockImportMarkdown
+        .mockResolvedValueOnce({ ...okResult('Alpha'), blocks_created: 3 })
+        .mockResolvedValueOnce({ ...okResult('Beta'), blocks_created: 4 })
+
+      render(<DataTab />)
+      const input = screen.getByTestId('import-enex-input') as HTMLInputElement
+      const file = new File([twoNoteEnex()], 'export.enex', { type: 'application/xml' })
+      Object.defineProperty(input, 'files', { value: [file] })
+
+      await act(async () => {
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+
+      // 3 + 4 = 7 blocks aggregated across the two notes.
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith(
+          'Imported 7 blocks from 2 files',
+          expect.anything(),
+        )
+      })
+    })
+
+    it('surfaces an error notify when a file fails to parse', async () => {
+      render(<DataTab />)
+      const input = screen.getByTestId('import-enex-input') as HTMLInputElement
+      // Malformed XML → parseEnex throws.
+      const bad = new File(['<en-export><note><title>oops</note>'], 'broken.enex', {
+        type: 'application/xml',
+      })
+      Object.defineProperty(input, 'files', { value: [bad] })
+
+      await act(async () => {
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(
+          'Could not read broken.enex: not a valid Evernote export.',
+        )
+      })
+      // No note ever reached the IPC.
+      expect(mockImportMarkdown).not.toHaveBeenCalled()
+      // The parse failure is logged at ERROR with a filename-distinct message.
+      expect(mockLoggerError).toHaveBeenCalled()
+    })
+
+    it('has no a11y violations with the enex control present', async () => {
+      const { container } = render(<DataTab />)
+      await waitFor(async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      })
+    })
+  })
 })

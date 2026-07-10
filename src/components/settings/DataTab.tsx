@@ -8,7 +8,7 @@
  *  - Export: download all pages as a ZIP of Markdown files
  */
 
-import { Download, FolderUp, Upload } from 'lucide-react'
+import { Download, FileUp, FolderUp, Upload } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -16,6 +16,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { isAppError } from '@/lib/app-error'
+import { enexNoteToMarkdown, parseEnex, sanitizeNoteTitleToFilename } from '@/lib/enex-import'
 import { downloadBlob, exportGraphAsZip } from '@/lib/export-graph'
 import { formatBytes } from '@/lib/format'
 import { scanAttachmentRefs } from '@/lib/import-attachments'
@@ -201,6 +202,10 @@ export function DataTab(): React.ReactElement {
   // its `.md`-only single-file/multi-file behaviour; this one populates
   // `file.webkitRelativePath` to drive the #1446 folder→namespace mapping.
   const folderInputRef = useRef<HTMLInputElement>(null)
+  // #1282 — hidden input for the Evernote `.enex` importer. Kept separate
+  // from the `.md`/folder inputs since each `.enex` file expands into one
+  // page PER note (ENML → Markdown), a different iteration unit than a file.
+  const enexInputRef = useRef<HTMLInputElement>(null)
   // #1927 — abort flag checked between files so a large vault import can
   // be stopped. A ref (not state) so the running loop reads the latest
   // value without re-subscribing/re-rendering each tick.
@@ -475,6 +480,179 @@ export function DataTab(): React.ReactElement {
     [t, goToImportedPage],
   )
 
+  // #1282 — Evernote `.enex` import. Frontend-only: each picked `.enex` file
+  // is parsed in the browser (`parseEnex`), and each note it contains is
+  // converted to Markdown (`enexNoteToMarkdown`) and handed to the SAME
+  // `importMarkdown` IPC as the `.md` path — one note → one page. A single
+  // file therefore expands into many import units. Progress/notify/error
+  // handling mirrors `handleFileImport`; a note has no sibling assets so
+  // `vaultFiles` is always omitted (attachment ingestion is deferred).
+  const handleEnexImport = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files
+      if (!files || files.length === 0) return
+
+      const activeSpaceId = useSpaceStore.getState().currentSpaceId
+      if (activeSpaceId == null) {
+        notify.error(t('data.importSpaceNotReady'))
+        e.target.value = ''
+        return
+      }
+
+      setImporting(true)
+      setImportResult(null)
+      setBlocksProcessed(0)
+      setBytesProcessed(0)
+      cancelRef.current = false
+
+      const fileArray = Array.from(files)
+      const failedFiles: FailedFile[] = []
+      // Flatten every note across every picked file into a single unit list
+      // (name = page filename, content = composed markdown). A file that
+      // fails to parse is recorded as a failure and surfaced immediately,
+      // mirroring the per-file error pattern the `.md` path uses.
+      const units: { name: string; content: string }[] = []
+      for (const file of fileArray) {
+        try {
+          const xml = await file.text()
+          for (const note of parseEnex(xml)) {
+            units.push({
+              name: `${sanitizeNoteTitleToFilename(note.title)}.md`,
+              content: enexNoteToMarkdown(note),
+            })
+          }
+        } catch (err) {
+          logger.error(
+            'DataSettingsTab',
+            `enex parse failed: ${file.name}`,
+            { fileName: file.name },
+            err,
+          )
+          notify.error(t('data.importEnexParseFailed', { name: file.name }))
+          failedFiles.push({ name: file.name, reason: importErrorReason(err) })
+        }
+      }
+
+      setTotalFiles(units.length)
+
+      let totalBlocks = 0
+      let totalProps = 0
+      let totalBytes = 0
+      const allWarnings: string[] = []
+      let succeededFiles = 0
+      let lastTitle = ''
+      let cancelled = false
+
+      for (const [i, unit] of units.entries()) {
+        if (cancelRef.current) {
+          cancelled = true
+          break
+        }
+        setCurrentFileIndex(i + 1)
+        setCurrentFileName(unit.name)
+        setCurrentFileBlocksDone(0)
+        setCurrentFileBlocksTotal(0)
+        try {
+          const result = await importMarkdown(
+            unit.content,
+            unit.name,
+            activeSpaceId,
+            (update) => {
+              switch (update.kind) {
+                case 'started': {
+                  setCurrentFileBlocksDone(0)
+                  setCurrentFileBlocksTotal(update.blocks_total)
+                  break
+                }
+                case 'progress': {
+                  setCurrentFileBlocksDone(update.blocks_done)
+                  setCurrentFileBlocksTotal(update.blocks_total)
+                  break
+                }
+                case 'complete': {
+                  setCurrentFileBlocksDone(update.blocks_created)
+                  break
+                }
+              }
+            },
+            // A note carries no sibling attachments (deferred), so no vault files.
+            undefined,
+          )
+          totalBlocks += result.blocks_created
+          totalProps += result.properties_set
+          allWarnings.push(...result.warnings)
+          succeededFiles += 1
+          lastTitle = result.page_title
+        } catch (err) {
+          logger.error(
+            'DataSettingsTab',
+            `enex note import failed: ${unit.name}`,
+            { fileName: unit.name },
+            err,
+          )
+          failedFiles.push({ name: unit.name, reason: importErrorReason(err) })
+        }
+        // Approximate byte progress from the composed markdown length.
+        totalBytes += unit.content.length
+        setBlocksProcessed(totalBlocks)
+        setBytesProcessed(totalBytes)
+      }
+
+      const navTitle = totalBlocks > 0 ? lastTitle : null
+
+      setImportResult({
+        pageTitle: units.length === 1 ? lastTitle : null,
+        fileCount: units.length,
+        blocksCreated: totalBlocks,
+        propertiesSet: totalProps,
+        warnings: allWarnings,
+        failures: failedFiles,
+        navTitle,
+      })
+      setDetailsExpanded(false)
+      setCurrentFileIndex(null)
+      setCurrentFileName('')
+      setTotalFiles(0)
+      setCurrentFileBlocksDone(0)
+      setCurrentFileBlocksTotal(0)
+      setImporting(false)
+      cancelRef.current = false
+
+      e.target.value = ''
+
+      const viewAction =
+        navTitle != null
+          ? {
+              label: t('data.importViewAction'),
+              onClick: () => {
+                void goToImportedPage(navTitle, activeSpaceId)
+              },
+            }
+          : undefined
+
+      if (cancelled) {
+        notify(t('data.importCancelled', { count: succeededFiles }))
+      } else if (totalBlocks === 0) {
+        // Nothing imported. A parse failure already fired its own error toast
+        // above; only surface the generic fallbacks when there is more to say.
+        if (failedFiles.length > 0) {
+          notify.error(t('data.importAllFailed', { count: failedFiles.length }))
+        } else {
+          notify.error(t('data.importNoContent'))
+        }
+      } else if (failedFiles.length > 0) {
+        notify.retry(t('data.importFailuresHeading', { count: failedFiles.length }), () =>
+          enexInputRef.current?.click(),
+        )
+      } else {
+        notify.success(t('data.importedMessage', { totalBlocks, count: succeededFiles }), {
+          action: viewAction,
+        })
+      }
+    },
+    [t, goToImportedPage],
+  )
+
   const handleExportAll = useCallback(async () => {
     setExporting(true)
     try {
@@ -577,6 +755,30 @@ export function DataTab(): React.ReactElement {
               data-testid="import-folder-button"
             >
               <FolderUp className="h-3.5 w-3.5" /> {t('data.importFolderButton')}
+            </Button>
+            {/* #1282 — Evernote `.enex` import affordance. Same gating + flow
+                as the files button; each note in the picked file(s) becomes a
+                page via the shared `importMarkdown` IPC. */}
+            <input
+              type="file"
+              accept=".enex"
+              multiple
+              ref={enexInputRef}
+              className="hidden"
+              onChange={handleEnexImport}
+              data-testid="import-enex-input"
+              aria-label={t('data.importEnexButton')}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => enexInputRef.current?.click()}
+              disabled={importing || currentSpaceId == null}
+              title={currentSpaceId == null ? t('data.importSpaceNotReady') : undefined}
+              aria-describedby={currentSpaceId == null ? importHintId : undefined}
+              data-testid="import-enex-button"
+            >
+              <FileUp className="h-3.5 w-3.5" /> {t('data.importEnexButton')}
             </Button>
             {/* #1927 — Cancel is only shown while a run is in flight. It
                 sets the abort flag the file loop checks between files. */}
