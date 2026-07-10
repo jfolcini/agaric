@@ -283,6 +283,20 @@ export const commands = {
 	 */
 	setTodoStateBatch: (blockIds: BlockId[], state: string | null) => typedError<number, AppError>(__TAURI_INVOKE("set_todo_state_batch", { blockIds, state })),
 	/**
+	 *  Tauri command: batch-set one allowlisted property on multiple blocks.
+	 * 
+	 *  Delegates to [`set_property_batch_inner`] — the generalisation of
+	 *  [`set_todo_state_batch`] across the four reserved column-backed keys
+	 *  (`todo_state`, `priority`, `due_date`, `scheduled_date`). A single
+	 *  IMMEDIATE tx covers every per-block write; `value = None` clears the
+	 *  property.
+	 * 
+	 *  Emits one `EVENT_PROPERTY_CHANGED` per input block (carrying the changed
+	 *  `key`) so existing per-block listeners keep firing without protocol
+	 *  changes — mirroring the `set_todo_state_batch` emit loop.
+	 */
+	setPropertyBatch: (blockIds: BlockId[], key: string, value: string | null) => typedError<number, AppError>(__TAURI_INVOKE("set_property_batch", { blockIds, key, value })),
+	/**
 	 *  Tauri command: set priority on a block. Delegates to [`set_priority_inner`].
 	 * 
 	 *  Emits `EVENT_PROPERTY_CHANGED` after a successful set so the

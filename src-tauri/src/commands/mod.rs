@@ -145,9 +145,10 @@ pub use properties::{
     get_property_def, get_property_def_inner, get_property_inner, list_property_defs,
     list_property_defs_inner, list_property_keys, list_property_keys_inner, list_property_values,
     list_property_values_inner, set_due_date, set_due_date_inner, set_priority, set_priority_inner,
-    set_property, set_property_inner, set_scheduled_date, set_scheduled_date_inner, set_todo_state,
-    set_todo_state_batch, set_todo_state_batch_inner, set_todo_state_inner,
-    update_property_def_options, update_property_def_options_inner,
+    set_property, set_property_batch, set_property_batch_inner, set_property_inner,
+    set_scheduled_date, set_scheduled_date_inner, set_todo_state, set_todo_state_batch,
+    set_todo_state_batch_inner, set_todo_state_inner, update_property_def_options,
+    update_property_def_options_inner,
 };
 pub use queries::{
     DateFilter, DateOp, MatchOffset, NamedDateRange, PropertyFilter, SearchBlockRow, SearchFilter,

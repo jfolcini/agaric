@@ -107,6 +107,7 @@ import {
   setPeerAddress,
   setPriority,
   setProperty,
+  setPropertyBatch,
   setScheduledDate,
   setTodoState,
   setTodoStateBatch,
@@ -2038,6 +2039,32 @@ describe('thin fixed-field commands', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state_batch', {
       blockIds: ['B1', 'B2'],
       state: null,
+    })
+  })
+
+  it('setPropertyBatch passes the id list + key + value through to set_property_batch', async () => {
+    mockedInvoke.mockResolvedValueOnce(3)
+
+    const result = await setPropertyBatch(['B1', 'B2', 'B3'], 'todo_state', 'DONE')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('set_property_batch', {
+      blockIds: ['B1', 'B2', 'B3'],
+      key: 'todo_state',
+      value: 'DONE',
+    })
+    expect(result).toBe(3)
+  })
+
+  it('setPropertyBatch sends null value to clear', async () => {
+    mockedInvoke.mockResolvedValueOnce(2)
+
+    await setPropertyBatch(['B1', 'B2'], 'due_date', null)
+
+    expect(mockedInvoke).toHaveBeenCalledWith('set_property_batch', {
+      blockIds: ['B1', 'B2'],
+      key: 'due_date',
+      value: null,
     })
   })
 

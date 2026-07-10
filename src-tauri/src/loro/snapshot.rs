@@ -304,16 +304,21 @@ pub async fn reload_registry_from_db(
 ///
 /// Returns the number of spaces successfully snapshotted.
 pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) -> usize {
-    // Issue #153 / #2205 — `snapshot_all_engines` collects the per-space
-    // engine `Arc`s under the registry's map lock, then per space takes
-    // that engine's own lock only for the O(1) `LoroDoc` *handle* clone,
-    // and runs each (comparatively slow) snapshot export with no lock
-    // held at all. Engine applies are therefore blocked only for the
-    // O(1) handle clone of their own space, never for the O(spaces x
-    // export) serialization. A `LoroDoc` clone is a reference clone
-    // (shared underlying doc), so this does NOT double peak memory — see
-    // `LoroEngineRegistry::snapshot_all_engines` for the full rationale
-    // and the (unchanged) cross-space consistency contract.
+    // Issue #153 / #2205 / #2201 — `snapshot_dirty_engines` collects the
+    // per-space engine `Arc`s of ONLY the dirty spaces under the registry's
+    // locks, then per space takes that engine's own lock for the O(1)
+    // `LoroDoc` *handle* clone, and runs each (comparatively slow) snapshot
+    // export with no lock held at all. Engine applies are therefore blocked
+    // only for the O(1) handle clone of their own space, never for the
+    // O(spaces x export) serialization. A `LoroDoc` clone is a reference
+    // clone (shared underlying doc), so this does NOT double peak memory —
+    // see `LoroEngineRegistry::snapshot_dirty_engines` for the full
+    // rationale and the (unchanged) cross-space consistency contract.
+    //
+    // #2201 — only spaces mutated since their last successful persist are
+    // re-encoded; a clean space keeps its existing `loro_doc_state` row
+    // (still accurate for its unchanged engine, and backfilled by op-log /
+    // sync-inbox replay on boot regardless).
     // /C2: read the watermark BEFORE acquiring the engine lock,
     // so it is a safe lower bound for every engine exported in this pass —
     // the lock-time cursor can only be >= this value, and each engine
@@ -326,26 +331,31 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
     // wiped table — the exact #779 resurrection this save exists to
     // prevent. Re-checked before every write below.
     let generation = registry.generation();
-    let pairs = registry.snapshot_all_engines();
+    let pairs = registry.snapshot_dirty_engines();
 
     let mut ok = 0usize;
-    for (space_id, bytes_result) in pairs {
+    for (space_id, mark_stamp, bytes_result) in pairs {
         if registry.generation() != generation {
             tracing::warn!(
                 space_id = %space_id,
                 "loro:save_all_engines: registry cleared mid-save (snapshot \
                  RESET, #607); aborting — these handles predate the reset \
-                 and must not be persisted over the wiped loro_doc_state",
+                 and must not be persisted over the wiped loro_doc_state. \
+                 Dirty flags are left set (no per-space clear below), so the \
+                 post-reset engines re-persist on a later tick",
             );
             return ok;
         }
         let bytes = match bytes_result {
             Ok(b) => b,
             Err(e) => {
+                // #2201 — export failed: this space's current state was NOT
+                // persisted, so LEAVE it dirty (skip the conditional clear)
+                // and let the next tick retry.
                 tracing::warn!(
                     space_id = %space_id,
                     error = %e,
-                    "loro:save_all_engines: export_snapshot failed; skipping space",
+                    "loro:save_all_engines: export_snapshot failed; leaving space dirty",
                 );
                 continue;
             }
@@ -363,25 +373,25 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
         .execute(pool)
         .await;
         match res {
-            Ok(_) => ok += 1,
+            Ok(_) => {
+                // #2201 — persist succeeded: clear THIS space's dirty flag,
+                // but only if it was not re-marked since we captured
+                // `mark_stamp` (a racing `for_space` overwrote it with a
+                // strictly greater stamp and must be re-persisted next tick).
+                registry.clear_dirty_if_unchanged(&space_id, mark_stamp);
+                ok += 1;
+            }
             Err(e) => {
+                // #2201 — INSERT failed: LEAVE the space dirty (skip the
+                // conditional clear) so the next tick retries it.
                 tracing::warn!(
                     space_id = %space_id,
                     error = %e,
-                    "loro:save_all_engines: INSERT OR REPLACE failed; skipping space",
+                    "loro:save_all_engines: INSERT OR REPLACE failed; leaving space dirty",
                 );
             }
         }
     }
-    // Issue #157 sub-item I — reset the dirty-engines proxy
-    // counter so subsequent `loro_snapshot_if_dirty` ticks observe
-    // "clean" until the next `for_space` call. Reset on success-or-
-    // skip is correct: a per-space failure path above doesn't leave
-    // the engine in a state that needs re-snapshotting (the prior
-    // snapshot is still valid; only THAT engine's incremental delta
-    // is missing, which the next mutation will mark dirty again
-    // through `for_space`).
-    registry.clear_dirty();
     ok
 }
 
@@ -773,6 +783,203 @@ mod tests {
         hydrated.import(&bytes).expect("import");
         let snap = hydrated.read_block("BLOCK_A").unwrap().unwrap();
         assert_eq!(snap.content, "in A");
+    }
+
+    /// #2201 — the periodic tick re-encodes ONLY changed spaces. After both
+    /// spaces are persisted once, mutating A alone must re-encode A and leave
+    /// B's `loro_doc_state` row byte-for-byte untouched (proven via its
+    /// `updated_at`), and the pass reports exactly one space persisted.
+    #[tokio::test]
+    async fn save_all_engines_persists_only_dirty_spaces_2201() {
+        let (pool, _dir) = fresh_pool().await;
+        let registry = LoroEngineRegistry::new();
+        let space_a = SpaceId::from_trusted(SPACE_A);
+        let space_b = SpaceId::from_trusted(SPACE_B);
+
+        for (space, id) in [(&space_a, "BLOCK_A"), (&space_b, "BLOCK_B")] {
+            let mut g = registry.for_space(space, "device-1").expect("for_space");
+            g.engine_mut()
+                .apply_create_block(id, "content", id, None, 0)
+                .expect("create");
+        }
+
+        // First pass persists BOTH dirty spaces and clears both flags.
+        let n = save_all_engines(&pool, &registry).await;
+        assert_eq!(n, 2, "first pass persists both dirty spaces");
+        assert_eq!(registry.dirty_count(), 0, "both spaces clean after persist");
+
+        // Capture B's row so a later rewrite would be observable.
+        let b_updated_before: i64 =
+            sqlx::query_scalar("SELECT updated_at FROM loro_doc_state WHERE space_id = ?")
+                .bind(space_b.as_str())
+                .fetch_one(&pool)
+                .await
+                .expect("b row");
+
+        // `now_ms` is ms-resolution — sleep so a rewrite of B would advance it.
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+
+        // Mutate ONLY space A.
+        {
+            let mut g = registry
+                .for_space(&space_a, "device-1")
+                .expect("for_space a");
+            g.engine_mut()
+                .apply_create_block("BLOCK_A2", "content", "again", None, 1)
+                .expect("create");
+        }
+        assert_eq!(registry.dirty_count(), 1, "only A dirty after mutating A");
+
+        // Second pass must re-encode ONLY A.
+        let n = save_all_engines(&pool, &registry).await;
+        assert_eq!(n, 1, "second pass persists only the dirty space (A), not B");
+        assert_eq!(registry.dirty_count(), 0, "A clean after its persist");
+
+        let b_updated_after: i64 =
+            sqlx::query_scalar("SELECT updated_at FROM loro_doc_state WHERE space_id = ?")
+                .bind(space_b.as_str())
+                .fetch_one(&pool)
+                .await
+                .expect("b row after");
+        assert_eq!(
+            b_updated_before, b_updated_after,
+            "a clean space must NOT be re-encoded — its row must be untouched"
+        );
+
+        // A's row is present and reflects the new block.
+        let a_bytes = load_snapshot(&pool, &space_a)
+            .await
+            .expect("load a")
+            .expect("a present");
+        let mut probe = LoroEngine::with_peer_id("device-1").expect("probe");
+        probe.import(&a_bytes).expect("import a");
+        assert!(
+            probe.read_block("BLOCK_A2").expect("read").is_some(),
+            "A's re-encoded snapshot must contain the block mutated this tick"
+        );
+    }
+
+    /// #2201 — a per-space persist FAILURE leaves that space dirty so the
+    /// next tick retries it (never silently clears a flag whose state was not
+    /// persisted). The INSERT is forced to fail by dropping the target table;
+    /// the in-memory export still succeeds, only the write fails.
+    #[tokio::test]
+    async fn save_all_engines_persist_failure_keeps_space_dirty_2201() {
+        let (pool, _dir) = fresh_pool().await;
+        let registry = LoroEngineRegistry::new();
+        let space_a = SpaceId::from_trusted(SPACE_A);
+        {
+            let mut g = registry.for_space(&space_a, "device-1").expect("for_space");
+            g.engine_mut()
+                .apply_create_block("BLOCK_A", "content", "in A", None, 0)
+                .expect("create");
+        }
+        assert_eq!(registry.dirty_count(), 1, "A dirty after mutation");
+
+        // Force the INSERT OR REPLACE to fail (the watermark read targets a
+        // different table, so collection + export still succeed).
+        sqlx::query("DROP TABLE loro_doc_state")
+            .execute(&pool)
+            .await
+            .expect("drop table");
+
+        let n = save_all_engines(&pool, &registry).await;
+        assert_eq!(n, 0, "no space is counted persisted when the INSERT fails");
+        assert_eq!(
+            registry.dirty_count(),
+            1,
+            "a failed persist must LEAVE the space dirty for the next tick"
+        );
+    }
+
+    /// #2201 — convergence/liveness smoke test: a writer hammers space A while
+    /// save passes run on a multi-thread runtime, exercising the no-deadlock
+    /// guarantee (the registry never holds two of its locks at once) and
+    /// confirming the system converges — after the writer joins, one final
+    /// drained pass persists A's full final state and the loaded snapshot
+    /// contains every block the writer created.
+    ///
+    /// Scope note: this does NOT by itself prove the stamp-race defense (a
+    /// flag wrongly cleared mid-persist would still be masked here, because
+    /// the writer's final `for_space` re-marks A dirty and Loro exports a full
+    /// snapshot each pass, so the final state persists regardless). The actual
+    /// "clear must not drop an unpersisted mark" contract is pinned by the two
+    /// dedicated unit tests — `concurrent_remark_during_persist_keeps_space_dirty_2201`
+    /// and `clear_race_does_not_drop_unpersisted_dirty_flag_2201`. The
+    /// concern-1 durability case (a snapshot never written at all) is not
+    /// testable at this layer: the op_log / loro_sync_inbox WAL is the durable
+    /// source of truth and boot replay backfills any stale/missing snapshot.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn save_all_engines_concurrent_mutation_not_lost_2201() {
+        use std::sync::Arc;
+
+        const WRITES: usize = 100;
+
+        let (pool, _dir) = fresh_pool().await;
+        let registry = Arc::new(LoroEngineRegistry::new());
+        let space_a = SpaceId::from_trusted(SPACE_A);
+
+        // Seed + persist so A starts clean.
+        {
+            let mut g = registry.for_space(&space_a, "device-1").expect("seed");
+            g.engine_mut()
+                .apply_create_block("SEED", "content", "seed", None, 0)
+                .expect("create");
+        }
+        save_all_engines(&pool, &registry).await;
+        assert_eq!(registry.dirty_count(), 0, "A clean after seed persist");
+
+        // Writer task: append blocks to A concurrently with the save passes.
+        let writer = {
+            let registry = Arc::clone(&registry);
+            let space_a = space_a.clone();
+            tokio::task::spawn_blocking(move || {
+                for i in 0..WRITES {
+                    let id = format!("W{i:03}");
+                    let position = i64::try_from(i).expect("index fits i64") + 1;
+                    let mut g = registry.for_space(&space_a, "device-1").expect("for_space");
+                    g.engine_mut()
+                        .apply_create_block(&id, "content", &id, None, position)
+                        .expect("create");
+                }
+            })
+        };
+
+        // Interleave save passes with the writer.
+        for _ in 0..20 {
+            let _ = save_all_engines(&pool, &registry).await;
+            tokio::task::yield_now().await;
+        }
+        writer.await.expect("writer task");
+
+        // Final drained pass persists whatever remained dirty.
+        let _ = save_all_engines(&pool, &registry).await;
+        assert_eq!(
+            registry.dirty_count(),
+            0,
+            "no dirty flag may linger after the final drained pass"
+        );
+
+        // The persisted snapshot must reflect the writer's FULL final state.
+        let bytes = load_snapshot(&pool, &space_a)
+            .await
+            .expect("load")
+            .expect("present");
+        let mut probe = LoroEngine::with_peer_id("device-1").expect("probe");
+        probe.import(&bytes).expect("import");
+        assert!(
+            probe.read_block("SEED").expect("read").is_some(),
+            "seed block must survive"
+        );
+        for i in 0..WRITES {
+            assert!(
+                probe
+                    .read_block(&format!("W{i:03}"))
+                    .expect("read")
+                    .is_some(),
+                "the final persisted snapshot must contain every concurrently-written block",
+            );
+        }
     }
 
     /// Smoke test for the `#[cfg(test)]` `tokio::spawn` seam in

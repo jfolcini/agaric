@@ -15,23 +15,13 @@
 
 import { useCallback } from 'react'
 
-import { useLocalStoragePreference } from './useLocalStoragePreference'
+import { type DensityMode, PREFERENCES, usePreference } from '../lib/preferences'
 
-export type DensityMode = 'compact' | 'regular' | 'expanded'
-
-const DENSITY_STORAGE_KEY = 'page-browser-density'
-const DEFAULT_DENSITY: DensityMode = 'regular'
-
-const ALL_DENSITIES: ReadonlyArray<DensityMode> = ['compact', 'regular', 'expanded']
-
-function parseDensity(raw: string): DensityMode {
-  if ((ALL_DENSITIES as readonly string[]).includes(raw)) return raw as DensityMode
-  throw new Error(`invalid density: ${raw}`)
-}
-
-function serializeDensity(value: DensityMode): string {
-  return value
-}
+// `DensityMode` is defined in the preferences registry (it annotates
+// `PREFERENCES.density`) and re-exported here so this hook's public API is
+// unchanged. Owning the type there keeps the import graph acyclic — the
+// import-cycle guard counts `import type` edges too.
+export type { DensityMode }
 
 /**
  * Per-mode row height in pixels. Drives the virtualizer's
@@ -52,15 +42,7 @@ export interface UsePageBrowserDensityReturn {
 }
 
 export function usePageBrowserDensity(): UsePageBrowserDensityReturn {
-  const [density, setDensityRaw] = useLocalStoragePreference<DensityMode>(
-    DENSITY_STORAGE_KEY,
-    DEFAULT_DENSITY,
-    {
-      parse: parseDensity,
-      serialize: serializeDensity,
-      source: 'usePageBrowserDensity',
-    },
-  )
+  const [density, setDensityRaw] = usePreference(PREFERENCES.density)
 
   const setDensity = useCallback(
     (value: DensityMode) => {

@@ -143,6 +143,10 @@ Tabs, recent pages, active view, journal date, journal mode, journal template, s
 
 Drafts, undo stacks (per-page, not per-space — `useUndoStore` is not space-partitioned by design), keyboard customisations, theme, sidebar width, link preview cache.
 
+### Preferences registry (device-scoped, non-synced)
+
+`src/lib/preferences.ts` is the typed, central registry of `localStorage`-backed preferences (e.g. `page-browser-density`, `page-browser-sort`). The contract is **per-device, non-synced**: these values live only in `localStorage` and deliberately never sync between devices — same posture as `tag-colors.ts` / `starred-pages.ts`. Each `PreferenceDefinition` declares `scope` (`device` → bare key; `space` → `${key}:${spaceId}`), a `version` (contract metadata, not a stored envelope), and `parse`/`serialize`/optional `migrate` (migrate-on-read, `tag-colors` style). Consume via `usePreference` (which wraps `useLocalStoragePreference`) or the pure `readPreference` / `writePreference` helpers. New preference keys MUST be added to the registry rather than reaching into `localStorage` ad hoc, so all preferences stay discoverable with one naming/versioning/migration contract.
+
 ## Reduced motion + a11y
 
 See `docs/UX.md § Accessibility` for the canonical rule. Frontend specifics: hooks that drive motion (`useScrollToFocus`, `useAutoScrollOnDrag`, `useKeyboardNavigableList`) check `prefers-reduced-motion` and skip the smooth path. Roving tabindex is used in `SearchablePopover`, `RecentPagesStrip`, `TabBar` — exactly one `tabindex=0` per group, arrows move it.

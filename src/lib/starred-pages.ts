@@ -42,3 +42,29 @@ export function toggleStarred(pageId: string): void {
     // Mirrors the silent fallback in getStarredPages above.
   }
 }
+
+/**
+ * Bulk-set the starred state of many pages in one write.
+ *
+ * Adds every id in `ids` when `starred` is true, or removes every id when
+ * `starred` is false, then persists the resulting array to localStorage
+ * ONCE (not per id). Duplicate ids and no-op ids (already starred / already
+ * absent) are handled idempotently; an empty `ids` list is a no-op that
+ * still rewrites the unchanged array. Shares the silent-degrade-on-failure
+ * behavior of the single-page writers above.
+ */
+export function setStarred(ids: string[], starred: boolean): void {
+  const set = new Set(getStarredPages())
+  if (starred) {
+    for (const id of ids) set.add(id)
+  } else {
+    for (const id of ids) set.delete(id)
+  }
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([...set]))
+  } catch {
+    // Storage unavailable (private mode / quota / locked-down webview) —
+    // degrade to no-persist rather than throwing into the click handler.
+    // Mirrors the silent fallback in getStarredPages above.
+  }
+}

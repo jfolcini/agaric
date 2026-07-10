@@ -3351,6 +3351,50 @@ const HANDLERS_TYPED = {
     return updated
   },
 
+  // Batch set/clear an ALLOWLISTED reserved property across N blocks in one
+  // tx (mirror of the backend `set_property_batch`). Only
+  // `todo_state`/`priority`/`due_date`/`scheduled_date` are accepted — any
+  // other key is rejected (the backend allowlist). The op payload's typed
+  // value column is routed by key: `todo_state`/`priority` → `value_text`,
+  // `due_date`/`scheduled_date` → `value_date`. A `null` value clears the
+  // property, emitted as an op with no `value_*` field (matching the
+  // single-row clear). Missing / soft-deleted ids are silently skipped
+  // (lenient batch semantic); an empty id list is a hard error.
+  set_property_batch: (args) => {
+    const a = args as Record<string, unknown>
+    const inputIds = (a['blockIds'] as string[]) ?? []
+    if (inputIds.length === 0) {
+      throw validationRejection('block_ids list cannot be empty')
+    }
+    const key = a['key'] as string
+    const value = (a['value'] as string | null) ?? null
+    // Allowlist + value-column routing (mirror the backend's reserved keys).
+    const valueColumn: Record<string, 'value_text' | 'value_date'> = {
+      todo_state: 'value_text',
+      priority: 'value_text',
+      due_date: 'value_date',
+      scheduled_date: 'value_date',
+    }
+    const column = valueColumn[key]
+    if (!column) {
+      throw validationRejection(`property key '${key}' is not settable in batch`)
+    }
+    let updated = 0
+    for (const id of inputIds) {
+      const b = blocks.get(id)
+      if (!b || b['deleted_at']) continue
+      // Keep the mock block row in sync so downstream reads observe the set,
+      // mirroring the per-key single handlers (todo_state/priority/…).
+      b[key] = value
+      const op: Record<string, unknown> = { block_id: id, key }
+      // `null` → clear: emit no `value_*` field (single-row clear parity).
+      if (value !== null) op[column] = value
+      pushOp('set_property', op)
+      updated++
+    }
+    return updated
+  },
+
   set_priority: (args) => {
     const a = args as Record<string, unknown>
     const b = blocks.get(a['blockId'] as string)

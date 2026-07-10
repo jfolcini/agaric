@@ -5318,6 +5318,369 @@ async fn import_export_namespace_and_wikilink_round_trip_1446() {
 }
 
 // ======================================================================
+// #1282 (Obsidian slice) — an Obsidian wiki-link may carry a `#heading` or
+// `#^blockId` sub-anchor addressing a location INSIDE the target page. The
+// importer strips the anchor and resolves/creates the BASE page (exactly like a
+// plain `[[page]]`), surfacing an aggregate "anchors were dropped" warning. An
+// anchor-only `[[#heading]]` (empty base) is left literal with no page created.
+// ======================================================================
+
+/// #1282 — `[[Target#Some Heading]]` resolves to the `Target` PAGE (the
+/// `#Some Heading` sub-anchor is stripped): a `Target` page is created and the
+/// token is rewritten to `[[<Target ULID>]]`. The lossy anchor drop surfaces one
+/// aggregate warning with count 1.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_wikilink_heading_anchor_resolves_to_base_page_1282() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- See [[Target#Some Heading]] now".into(),
+        Some("File.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // The base `Target` page was created (anchor stripped) — exactly one.
+    let target_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Target' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // The content block's `[[Target#Some Heading]]` token resolved to the base
+    // page ULID.
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND deleted_at IS NULL \
+         ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        content.contains(&format!("[[{target_id}]]")),
+        "heading-anchored wiki-link must resolve to the base `Target` ULID; got {content:?}"
+    );
+    // No unresolved literal anchor token survives.
+    assert!(
+        !content.contains("[[Target#Some Heading]]"),
+        "the original anchored token must not survive; got {content:?}"
+    );
+
+    // The lossy anchor drop is surfaced exactly once (count 1).
+    assert!(
+        result.warnings.iter().any(|w| w
+            == "1 wikilink block/heading anchors were dropped; links resolve to \
+                 the page (Obsidian block-anchor targeting is not yet supported)"),
+        "a dropped-anchor warning with count 1 must be surfaced; warnings={:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
+
+/// #1282 — `[[Target#^block123]]` (a block-id sub-anchor) resolves to the SAME
+/// base `Target` page as a heading anchor: the `#^block123` is stripped and the
+/// token rewrites to `[[<Target ULID>]]`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_wikilink_blockid_anchor_resolves_to_base_page_1282() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- See [[Target#^block123]] now".into(),
+        Some("File.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let target_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Target' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND deleted_at IS NULL \
+         ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        content.contains(&format!("[[{target_id}]]")),
+        "block-id-anchored wiki-link must resolve to the base `Target` ULID; got {content:?}"
+    );
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("anchors were dropped")),
+        "a dropped-anchor warning must be surfaced; warnings={:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
+
+/// #1282 — two links sharing a base but with different anchors
+/// (`[[Target#h1]]` + `[[Target#h2]]`) resolve to ONE `Target` page (a single
+/// create, not two), and BOTH rewrite to the same `[[<ULID>]]`. The dropped
+/// anchors are counted per DISTINCT token → 2.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_wikilink_shared_base_anchors_single_create_1282() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- A [[Target#h1]] and B [[Target#h2]]".into(),
+        Some("File.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // EXACTLY one `Target` page (the shared base was created once).
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND content = 'Target' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 1,
+        "the shared base `Target` must be created exactly once"
+    );
+
+    let target_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Target' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND deleted_at IS NULL \
+         ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    // Both anchored tokens resolved to the SAME base ULID.
+    let hits = content.matches(&format!("[[{target_id}]]")).count();
+    assert_eq!(
+        hits, 2,
+        "both `[[Target#h1]]` and `[[Target#h2]]` must resolve to the same base ULID; got {content:?}"
+    );
+
+    // Two distinct dropped-anchor tokens → count 2.
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.starts_with("2 wikilink block/heading anchors were dropped")),
+        "the dropped-anchor warning must count 2 distinct tokens; warnings={:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
+
+/// #1282 regression guard — a plain `[[Target]]` (NO `#`) still resolves exactly
+/// as before: it creates/links the `Target` page and rewrites to `[[<ULID>]]`,
+/// and emits NO dropped-anchor warning (zero-regression for Logseq / plain
+/// Markdown page links).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_wikilink_plain_no_anchor_unchanged_1282() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- Plain [[Target]] link".into(),
+        Some("File.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let target_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Target' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND deleted_at IS NULL \
+         ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        content.contains(&format!("[[{target_id}]]")),
+        "plain `[[Target]]` must resolve to the base ULID; got {content:?}"
+    );
+    assert!(
+        !result
+            .warnings
+            .iter()
+            .any(|w| w.contains("anchors were dropped")),
+        "a plain page link must NOT emit a dropped-anchor warning; warnings={:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
+
+/// #1282 — an anchor-only `[[#heading]]` (EMPTY base, an intra-note anchor with
+/// no page target) is left LITERAL: no page is created (never an empty-titled
+/// page) and a per-occurrence "no page target" warning is surfaced.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_wikilink_empty_base_left_literal_1282() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    // Count pre-existing pages so we can assert NONE were created by the import.
+    let pages_before: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- Anchor [[#heading]] only".into(),
+        Some("File.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Only the imported page itself is new — the `[[#heading]]` link created no
+    // target page (and certainly no empty-titled page).
+    let pages_after: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        pages_after,
+        pages_before + 1,
+        "only the imported `File` page must be created; the empty-base link creates none"
+    );
+    let empty_pages: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND content = '' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(empty_pages, 0, "no empty-titled page may be created");
+    // The empty-base link must not have created ANY page target — neither the
+    // pre-#1282 bogus `#heading`-titled page nor a `heading`-titled page.
+    let anchor_pages: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' \
+         AND content IN ('#heading', 'heading') AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        anchor_pages, 0,
+        "an anchor-only `[[#heading]]` must create no page target"
+    );
+
+    // The page-link pass must NOT have resolved the empty-base token to a page
+    // ULID: the `[[…]]` is left for the (pre-existing, out-of-scope) tag pass,
+    // so the block never contains a `[[<26-char ULID>]]` page ref from it.
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND deleted_at IS NULL \
+         ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let page_ref_re = regex::Regex::new(r"\[\[[0-9A-Z]{26}\]\]").unwrap();
+    assert!(
+        !page_ref_re.is_match(&content),
+        "the empty-base link must not resolve to a page ULID ref; got {content:?}"
+    );
+
+    // A "no page target" warning is surfaced, and NOT the anchors-dropped one.
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("no page target") && w.contains("[[#heading]]")),
+        "the empty-base link must surface a 'no page target' warning; warnings={:?}",
+        result.warnings
+    );
+    assert!(
+        !result
+            .warnings
+            .iter()
+            .any(|w| w.contains("anchors were dropped")),
+        "an empty-base link is not a dropped anchor; warnings={:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
+
+// ======================================================================
 // #1922 — additive coverage for previously-untested import-path behaviors.
 // These PIN the CURRENT behavior end-to-end (no production change); a
 // regression that alters them now fails CI.

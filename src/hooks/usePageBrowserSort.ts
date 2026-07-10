@@ -18,8 +18,8 @@ import { useCallback } from 'react'
 
 import { getRecentPagesForSpace } from '@/stores/recent-pages'
 
+import { PREFERENCES, type SortOption, usePreference } from '../lib/preferences'
 import type { BlockRow, PageWithMetadataRow } from '../lib/tauri'
-import { useLocalStoragePreference } from './useLocalStoragePreference'
 
 /**
  * Sort options. 3 legacy + 4 new.
@@ -35,44 +35,13 @@ import { useLocalStoragePreference } from './useLocalStoragePreference'
  * Only the 4 server-derived modes round-trip via the IPC's `sort`
  * parameter; `recent` and `created` reuse the `default` SQL ordering
  * and re-sort the loaded page client-side.
+ *
+ * The type is defined in the preferences registry (it annotates
+ * `PREFERENCES.sort`) and re-exported here so this hook's public API is
+ * unchanged. Owning it there keeps the import graph acyclic — the
+ * import-cycle guard counts `import type` edges too.
  */
-export type SortOption =
-  | 'alphabetical'
-  | 'recent'
-  | 'created'
-  | 'recently-modified'
-  | 'most-linked'
-  | 'most-content'
-  | 'default'
-
-const SORT_STORAGE_KEY = 'page-browser-sort'
-const DEFAULT_SORT: SortOption = 'alphabetical'
-
-const ALL_SORTS: ReadonlyArray<SortOption> = [
-  'alphabetical',
-  'recent',
-  'created',
-  'recently-modified',
-  'most-linked',
-  'most-content',
-  'default',
-]
-
-/**
- * Legacy storage format is the bare option string (e.g. `alphabetical`),
- * not JSON-encoded. Match that by parsing/serialising the bare value
- * with an allowlist guard so anything outside the known options falls
- * back to the default. Unknown future values throw → consumer's catch
- * surfaces the default via `useLocalStoragePreference`'s reset path.
- */
-function parseSort(raw: string): SortOption {
-  if ((ALL_SORTS as readonly string[]).includes(raw)) return raw as SortOption
-  throw new Error(`invalid sort option: ${raw}`)
-}
-
-function serializeSort(value: SortOption): string {
-  return value
-}
+export type { SortOption }
 
 /**
  * The IPC's `PageSort` enum subset. Only the 3 server-derived sorts
@@ -136,15 +105,7 @@ export interface UsePageBrowserSortReturn {
 }
 
 export function usePageBrowserSort(): UsePageBrowserSortReturn {
-  const [sortOption, setSortOptionRaw] = useLocalStoragePreference<SortOption>(
-    SORT_STORAGE_KEY,
-    DEFAULT_SORT,
-    {
-      parse: parseSort,
-      serialize: serializeSort,
-      source: 'usePageBrowserSort',
-    },
-  )
+  const [sortOption, setSortOptionRaw] = usePreference(PREFERENCES.sort)
 
   const setSortOption = useCallback(
     (value: SortOption) => {
