@@ -15,20 +15,13 @@
 
 import { useCallback } from 'react'
 
-import { DENSITY_PREFERENCE, type DensityMode, usePreference } from '../lib/preferences'
+import { type DensityMode, PREFERENCES, usePreference } from '../lib/preferences'
 
 // `DensityMode` is defined in the preferences registry (it annotates
-// `DENSITY_PREFERENCE`) and re-exported here so this hook's public API is
+// `PREFERENCES.density`) and re-exported here so this hook's public API is
 // unchanged. Owning the type there keeps the import graph acyclic — the
 // import-cycle guard counts `import type` edges too.
 export type { DensityMode }
-
-/**
- * Default density. The canonical definition (key, scope, version, parse,
- * serialize) lives in the preferences registry (`src/lib/preferences.ts`);
- * this re-exposes its default for local documentation.
- */
-export const DEFAULT_DENSITY: DensityMode = DENSITY_PREFERENCE.defaultValue
 
 /**
  * Per-mode row height in pixels. Drives the virtualizer's
@@ -49,7 +42,7 @@ export interface UsePageBrowserDensityReturn {
 }
 
 export function usePageBrowserDensity(): UsePageBrowserDensityReturn {
-  const [density, setDensityRaw] = usePreference(DENSITY_PREFERENCE)
+  const [density, setDensityRaw] = usePreference(PREFERENCES.density)
 
   const setDensity = useCallback(
     (value: DensityMode) => {

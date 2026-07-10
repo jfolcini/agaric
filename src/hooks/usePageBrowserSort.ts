@@ -18,7 +18,7 @@ import { useCallback } from 'react'
 
 import { getRecentPagesForSpace } from '@/stores/recent-pages'
 
-import { SORT_PREFERENCE, type SortOption, usePreference } from '../lib/preferences'
+import { PREFERENCES, type SortOption, usePreference } from '../lib/preferences'
 import type { BlockRow, PageWithMetadataRow } from '../lib/tauri'
 
 /**
@@ -37,18 +37,11 @@ import type { BlockRow, PageWithMetadataRow } from '../lib/tauri'
  * and re-sort the loaded page client-side.
  *
  * The type is defined in the preferences registry (it annotates
- * `SORT_PREFERENCE`) and re-exported here so this hook's public API is
+ * `PREFERENCES.sort`) and re-exported here so this hook's public API is
  * unchanged. Owning it there keeps the import graph acyclic — the
  * import-cycle guard counts `import type` edges too.
  */
 export type { SortOption }
-
-/**
- * Default sort. The canonical definition (key, scope, version, parse,
- * serialize) lives in the preferences registry (`src/lib/preferences.ts`);
- * this re-exposes its default for local documentation.
- */
-export const DEFAULT_SORT: SortOption = SORT_PREFERENCE.defaultValue
 
 /**
  * The IPC's `PageSort` enum subset. Only the 3 server-derived sorts
@@ -112,7 +105,7 @@ export interface UsePageBrowserSortReturn {
 }
 
 export function usePageBrowserSort(): UsePageBrowserSortReturn {
-  const [sortOption, setSortOptionRaw] = usePreference(SORT_PREFERENCE)
+  const [sortOption, setSortOptionRaw] = usePreference(PREFERENCES.sort)
 
   const setSortOption = useCallback(
     (value: SortOption) => {
