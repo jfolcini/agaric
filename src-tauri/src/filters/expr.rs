@@ -138,8 +138,12 @@ pub trait CompileExpr: Projection + Sized {
     fn compile_expr(&self, expr: &FilterExpr) -> WhereClause {
         match expr {
             FilterExpr::Leaf { primitive } => self.compile(primitive),
-            FilterExpr::And { children } => self.combine(children, " AND ", "1=1"),
-            FilterExpr::Or { children } => self.combine(children, " OR ", "1=0"),
+            // AND conjuncts are cost-ordered (cheapest first) so index-backed
+            // clauses gate the row set before full-scan ones run — the tree
+            // twin of the flat cost-order the Pages path applies in
+            // `compile_pages_filters`. OR is NOT reordered (see below).
+            FilterExpr::And { children } => self.combine(children, " AND ", "1=1", true),
+            FilterExpr::Or { children } => self.combine(children, " OR ", "1=0", false),
             FilterExpr::Not { child } => {
                 let c = self.compile_expr(child);
                 if c.is_unsupported() {
@@ -158,13 +162,39 @@ pub trait CompileExpr: Projection + Sized {
     /// Compile + AND/OR-join the children, parenthesising each fragment.
     /// Empty list yields the supplied identity (`1=1` for AND, `1=0` for OR).
     /// Propagates `unsupported` if any child is unsupported.
-    fn combine(&self, children: &[FilterExpr], joiner: &str, identity: &str) -> WhereClause {
+    ///
+    /// When `cost_order` is set (the AND path only, #2201), the children are
+    /// STABLE-sorted by [`child_cost`] ascending — cheapest first — BEFORE
+    /// compiling, so index-backed conjuncts narrow the row set before
+    /// full-scan ones run, exactly as the Pages path sorts its flat primitive
+    /// vec (`compile_pages_filters`). This is a **behaviour-preserving**
+    /// optimisation: AND is commutative and its join is a set-intersection, so
+    /// REORDERING the conjuncts can never change the result set — only the
+    /// evaluation order/speed (even a suboptimal order stays correct). Each
+    /// child's compiled fragment carries its OWN binds and we move the
+    /// (fragment, binds) pair as a unit, so the positional `?` placeholders
+    /// stay matched to their binds. OR is a union whose disjuncts are NOT a
+    /// gate for one another, so it is left in declaration order (`cost_order =
+    /// false`); NOT wraps a single child and has nothing to reorder.
+    fn combine(
+        &self,
+        children: &[FilterExpr],
+        joiner: &str,
+        identity: &str,
+        cost_order: bool,
+    ) -> WhereClause {
         if children.is_empty() {
             return WhereClause::new(identity.to_string(), Vec::new());
         }
+        let mut ordered: Vec<&FilterExpr> = children.iter().collect();
+        if cost_order {
+            // STABLE sort: equal-cost children keep declaration order, so the
+            // compiled output stays deterministic for a given input tree.
+            ordered.sort_by_key(|c| child_cost(c));
+        }
         let mut sql = String::new();
         let mut binds: Vec<Bind> = Vec::new();
-        for (i, child) in children.iter().enumerate() {
+        for (i, child) in ordered.iter().enumerate() {
             let c = self.compile_expr(child);
             if c.is_unsupported() {
                 return WhereClause::unsupported();
@@ -178,6 +208,38 @@ pub trait CompileExpr: Projection + Sized {
             binds.extend(c.binds);
         }
         WhereClause::new(sql, binds)
+    }
+}
+
+/// Conservative cost estimate for ordering AND conjuncts cheapest-first
+/// (#2201). Because `combine` works over a [`FilterExpr`] TREE — not the flat
+/// `Vec<FilterPrimitive>` the Pages path sorts — a composite child needs an
+/// AGGREGATE estimate, not just a leaf `cost_hint`:
+///
+/// - **Leaf** → its [`FilterPrimitive::cost_hint`] (the same 0..=3 SQL-plan
+///   scale the Pages path sorts on; lower = cheaper).
+/// - **`And`** → the MIN child cost. An intersection can gate on its cheapest
+///   conjunct, so an `And` is at least as cheap to start as its cheapest
+///   child.
+/// - **`Or`** → the MAX child cost. A union must evaluate every disjunct to
+///   decide membership, so it is only as cheap as its most expensive branch —
+///   the conservative choice (never UNDER-estimates a composite's cost).
+/// - **`Not`** → the child's cost. Negation wraps the child in
+///   `NOT COALESCE(…)` and does not change which index/scan runs.
+///
+/// Empty `And`/`Or` compile to the constant identities `1=1` / `1=0`, which
+/// are free — cost 0.
+///
+/// This is only a HEURISTIC for ordering; correctness never depends on it
+/// (reordering AND is result-preserving regardless), so a rough estimate is
+/// fine. It recurses over the same tree shape as `compile_expr`, so the
+/// caller's [`FilterExpr::validate_depth`] gate bounds this recursion too.
+fn child_cost(expr: &FilterExpr) -> u8 {
+    match expr {
+        FilterExpr::Leaf { primitive } => primitive.cost_hint(),
+        FilterExpr::And { children } => children.iter().map(child_cost).min().unwrap_or(0),
+        FilterExpr::Or { children } => children.iter().map(child_cost).max().unwrap_or(0),
+        FilterExpr::Not { child } => child_cost(child),
     }
 }
 
@@ -385,5 +447,157 @@ mod tests {
         assert!(expr.validate_depth().is_ok());
         // A bare leaf is the shallowest valid tree.
         assert!(tag("A").validate_depth().is_ok());
+    }
+
+    // ── #2201 — cost-ordering the AND children ─────────────────────────
+
+    /// A `PathGlob` leaf — `cost_hint == 2`, an expensive full-scan clause,
+    /// used opposite the cheap index-backed `tag` (`cost_hint == 0`).
+    fn glob(p: &str) -> FilterExpr {
+        FilterExpr::leaf(FilterPrimitive::PathGlob {
+            pattern: p.to_string(),
+            exclude: false,
+        })
+    }
+
+    /// `child_cost` maps a leaf to its `cost_hint` and aggregates composites:
+    /// `And` = MIN child, `Or` = MAX child, `Not` = child, empty = 0.
+    #[test]
+    fn child_cost_aggregates_the_tree() {
+        // Leaf → its own cost_hint.
+        assert_eq!(child_cost(&tag("A")), 0);
+        assert_eq!(child_cost(&glob("x")), 2);
+        // And → MIN (an intersection can gate on its cheapest conjunct).
+        assert_eq!(
+            child_cost(&FilterExpr::And {
+                children: vec![glob("x"), tag("A")],
+            }),
+            0
+        );
+        // Or → MAX (a union must evaluate its most expensive disjunct).
+        assert_eq!(
+            child_cost(&FilterExpr::Or {
+                children: vec![glob("x"), tag("A")],
+            }),
+            2
+        );
+        // Not → the child's cost (negation does not change the scan).
+        assert_eq!(
+            child_cost(&FilterExpr::Not {
+                child: Box::new(glob("x"))
+            }),
+            2
+        );
+        // Empty combinators compile to constant identities — cost 0.
+        assert_eq!(child_cost(&FilterExpr::And { children: vec![] }), 0);
+        assert_eq!(child_cost(&FilterExpr::Or { children: vec![] }), 0);
+    }
+
+    /// ORDERING: a cheap conjunct is emitted before an expensive one
+    /// regardless of declaration order — the compiled AND places `tag`
+    /// (cost 0) ahead of `PathGlob` (cost 2).
+    #[test]
+    fn and_cost_orders_cheap_conjunct_first() {
+        let cheap = SearchProjection.compile(&FilterPrimitive::Tag { tag: "A".into() });
+        let dear = SearchProjection.compile(&FilterPrimitive::PathGlob {
+            pattern: "x".into(),
+            exclude: false,
+        });
+        // Declaration order is EXPENSIVE-then-CHEAP; the cost-order must flip
+        // it to CHEAP-then-EXPENSIVE.
+        let wc = SearchProjection.compile_expr(&FilterExpr::And {
+            children: vec![glob("x"), tag("A")],
+        });
+        assert_eq!(wc.sql, format!("({}) AND ({})", cheap.sql, dear.sql));
+        // Binds move WITH their fragment: cheap leaf's binds come first.
+        let mut want = cheap.binds.clone();
+        want.extend(dear.binds.clone());
+        assert_eq!(wc.binds, want);
+    }
+
+    /// RESULT-EQUIVALENCE: AND is commutative, so the SAME children in DIFFERENT
+    /// declaration orders compile to the IDENTICAL WhereClause (SQL + binds) —
+    /// hence the exact same query, hence the same result set. Reordering is
+    /// behaviour-preserving.
+    #[test]
+    fn and_is_order_independent() {
+        let forward = SearchProjection.compile_expr(&FilterExpr::And {
+            children: vec![tag("A"), glob("x")],
+        });
+        let reversed = SearchProjection.compile_expr(&FilterExpr::And {
+            children: vec![glob("x"), tag("A")],
+        });
+        assert_eq!(forward.sql, reversed.sql);
+        assert_eq!(forward.binds, reversed.binds);
+    }
+
+    /// STABILITY: equal-cost conjuncts keep their declaration order (the sort
+    /// is stable), so output stays deterministic and does not reorder by
+    /// content. Two same-cost `tag` leaves stay in the order given.
+    #[test]
+    fn and_stable_sort_preserves_equal_cost_order() {
+        let a = SearchProjection.compile(&FilterPrimitive::Tag { tag: "A".into() });
+        let b = SearchProjection.compile(&FilterPrimitive::Tag { tag: "B".into() });
+        let ab = SearchProjection.compile_expr(&FilterExpr::And {
+            children: vec![tag("A"), tag("B")],
+        });
+        assert_eq!(ab.sql, format!("({}) AND ({})", a.sql, b.sql));
+        let ba = SearchProjection.compile_expr(&FilterExpr::And {
+            children: vec![tag("B"), tag("A")],
+        });
+        assert_eq!(ba.sql, format!("({}) AND ({})", b.sql, a.sql));
+    }
+
+    /// A COMPOSITE child is ordered by its aggregate estimate: an `Or` of two
+    /// expensive globs (aggregate MAX = 2) is emitted AFTER a cheap `tag`
+    /// (cost 0), even though the `Or` is declared first.
+    #[test]
+    fn and_orders_composite_child_by_aggregate_cost() {
+        let wc = SearchProjection.compile_expr(&FilterExpr::And {
+            children: vec![
+                FilterExpr::Or {
+                    children: vec![glob("x"), glob("y")],
+                },
+                tag("A"),
+            ],
+        });
+        let tag_sql = SearchProjection
+            .compile(&FilterPrimitive::Tag { tag: "A".into() })
+            .sql;
+        let or_sql = {
+            let x = SearchProjection
+                .compile(&FilterPrimitive::PathGlob {
+                    pattern: "x".into(),
+                    exclude: false,
+                })
+                .sql;
+            let y = SearchProjection
+                .compile(&FilterPrimitive::PathGlob {
+                    pattern: "y".into(),
+                    exclude: false,
+                })
+                .sql;
+            format!("({x}) OR ({y})")
+        };
+        assert_eq!(wc.sql, format!("({tag_sql}) AND ({or_sql})"));
+    }
+
+    /// OR is NOT reordered: cost-ordering is an AND-only gating optimisation.
+    /// An `Or` of expensive-then-cheap stays in declaration order.
+    #[test]
+    fn or_is_not_cost_ordered() {
+        let wc = SearchProjection.compile_expr(&FilterExpr::Or {
+            children: vec![glob("x"), tag("A")],
+        });
+        let dear = SearchProjection
+            .compile(&FilterPrimitive::PathGlob {
+                pattern: "x".into(),
+                exclude: false,
+            })
+            .sql;
+        let cheap = SearchProjection
+            .compile(&FilterPrimitive::Tag { tag: "A".into() })
+            .sql;
+        assert_eq!(wc.sql, format!("({dear}) OR ({cheap})"));
     }
 }
