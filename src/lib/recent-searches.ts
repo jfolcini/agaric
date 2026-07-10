@@ -20,30 +20,16 @@
  */
 
 import { activeSpaceKey } from './active-space'
+import { getKeyedPref, PREFS, removeKeyedPref, setKeyedPref } from './preferences'
 
-const SPACE_KEY_PREFIX = 'recent_searches'
 const MAX_RECENT_SEARCHES = 8
-
-function storageKey(): string {
-  return `${SPACE_KEY_PREFIX}:${activeSpaceKey()}`
-}
 
 /**
  * Read the recent search terms for the active space, most-recent first.
  * Returns `[]` on any read/parse failure.
  */
 export function getRecentSearches(): string[] {
-  try {
-    const raw = localStorage.getItem(storageKey())
-    if (!raw) return []
-    const parsed: unknown = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    // Defensive: drop any non-string / empty entries a hand-edited or
-    // corrupted store might contain.
-    return parsed.filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
-  } catch {
-    return []
-  }
+  return getKeyedPref(PREFS.recentSearches, activeSpaceKey())
 }
 
 /**
@@ -60,11 +46,9 @@ export function addRecentSearch(term: string): void {
   const lower = trimmed.toLowerCase()
   const existing = getRecentSearches().filter((t) => t.toLowerCase() !== lower)
   const next = [trimmed, ...existing].slice(0, MAX_RECENT_SEARCHES)
-  try {
-    localStorage.setItem(storageKey(), JSON.stringify(next))
-  } catch {
-    // Quota / unavailable — the MRU strip is a convenience, drop silently.
-  }
+  // Quota / unavailable write failures are logged and swallowed by
+  // setKeyedPref — the MRU strip is a convenience.
+  setKeyedPref(PREFS.recentSearches, next, activeSpaceKey())
 }
 
 /**
@@ -72,9 +56,5 @@ export function addRecentSearch(term: string): void {
  * "Clear" affordance).
  */
 export function clearRecentSearches(): void {
-  try {
-    localStorage.removeItem(storageKey())
-  } catch {
-    // Unavailable — nothing to clear.
-  }
+  removeKeyedPref(PREFS.recentSearches, activeSpaceKey())
 }
