@@ -4016,6 +4016,27 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     resp_mat.dispatch_op(&record).await.unwrap();
     resp_mat.flush_foreground().await.unwrap();
 
+    // #2502: mirror the op into the responder's ENGINE (dispatch_op writes only
+    // the SQL projection) so its per-space Loro vv holds one FEAT6_RESP op —
+    // the local frontier the own-lineage-loss reset check compares against.
+    let resp_space = crate::space::SpaceId::from_trusted("01HZFEAT6SPACEXXXXXXXXXXXX");
+    let resp_state = resp_mat.loro_state();
+    crate::merge::engine_apply(
+        &format!("FEAT6_RESP/{}", record.seq),
+        &OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("FEAT6BLK001"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            index: None,
+            content: "compacted-state content".into(),
+        }),
+        "FEAT6_RESP",
+        &resp_space,
+        &record.created_at.to_string(),
+        resp_state,
+    );
+
     // #602: NO op is hand-seeded into the responder's op_log for the
     // initiator's device any more. Post-#490-M1 the op_log is strictly
     // device-local (only `append_local_op*` writes it; inbound sync
@@ -4087,22 +4108,19 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     // wire protocol to exercise the same code path as
     // `run_sync_session` without the full daemon scaffolding.
     //
-    // #602: the initiator advertises its own device at seq 0 (it has no
-    // local ops — its DB is empty; the head also serves as the wire-
-    // level peer identification that production additionally gets from
-    // the TLS cert CN) plus a STALE claim on the responder's own
-    // history at seq 1. The responder's op_log is empty after the
-    // simulated compaction, so `check_reset_required`'s own-device
-    // lookup for `(FEAT6_RESP, 1)` fails — the orchestrator transitions
-    // to `ResetRequired` (the one genuine reset case the local op_log
-    // can still detect post-#490-M1: the peer observed ops we authored
-    // But no longer have). covering check then confirms the
-    // snapshot at `{FEAT6_RESP: 1}` covers the initiator's frontier
-    // (seq-0 self head is trivially covered) and lets the offer
-    // Proceed. Had the initiator claimed own ops (seq >= 1), would
-    // — correctly — refuse, because applying the snapshot wipes the
-    // initiator's op_log (see
-    // `try_offer_snapshot_catchup_sends_error_when_snapshot_behind_remote`).
+    // #602/#2502: the initiator advertises its own device at seq 0 (it has
+    // no local ops — its DB is empty; the head also serves as the wire-level
+    // peer identification that production additionally gets from the TLS cert
+    // CN) plus a STALE op-log claim on the responder's history at seq 1 (for
+    // the covering check). #2502 retired the op-log-seq reset lookup: the
+    // reset is now driven by a Loro-VV own-lineage check, so the initiator
+    // also advertises a crafted `loro_vvs` claiming MORE FEAT6_RESP-authored
+    // ops than the responder's engine holds — the responder's engine cannot
+    // produce them, so the orchestrator transitions to `ResetRequired` (the
+    // genuine own-lineage-loss case: the peer observed ops we authored but no
+    // longer have). The covering check then confirms the snapshot at
+    // `{FEAT6_RESP: 1}` covers the initiator's op-log frontier (seq-0 self
+    // head is trivially covered) and lets the offer proceed.
     let init_self_head = DeviceHead {
         device_id: "FEAT6_INIT".into(),
         seq: 0,
@@ -4113,10 +4131,30 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
         seq: 1, // present in snapshot's frontier; absent from compacted op_log
         hash: "fake_resp_hash".into(),
     };
+    // #2502: op-log compaction alone no longer forces a reset — state
+    // causality is judged from Loro VVs. Advertise a crafted vv claiming the
+    // responder authored MORE ops (5) than its engine holds (1), so the
+    // responder's own-lineage-loss check trips ResetRequired. The stale op-log
+    // head above is retained because the snapshot-covering check
+    // (`snapshot_covers_remote_heads`) still keys off the advertised
+    // `heads` — the audit-replication cursor, per #2481.
+    let crafted_resp_vv = {
+        let mut craft =
+            crate::loro::engine::LoroEngine::with_peer_id("FEAT6_RESP").expect("craft engine");
+        for i in 0..5_i64 {
+            craft
+                .apply_create_block(&format!("01HZFEAT6CRAFT{i:012}"), "content", "x", None, i)
+                .expect("craft op");
+        }
+        craft.version_vector()
+    };
     client_conn
         .send_json(&SyncMessage::HeadExchange {
             heads: vec![init_self_head, stale_resp_head],
-            loro_vvs: vec![],
+            loro_vvs: vec![crate::sync_protocol::types::SpaceVersionVector {
+                space_id: resp_space.clone(),
+                vv: crafted_resp_vv,
+            }],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
         })
@@ -7555,9 +7593,10 @@ async fn issue2140_snapshot_fallback_on_real_compaction_over_real_socket() {
     tx.commit().await.unwrap();
 
     // ── Initiator: a STALE row authored under the responder's device so it
-    //    advertises `{RESP: 1}` and NO own-device ops (so the snapshot's
-    //    frontier covers it). This is the real-orchestrator equivalent of
-    //    feat6's hand-crafted `stale_resp_head`.
+    //    advertises op-log head `{RESP: 1}` (and NO own-device ops), so the
+    //    snapshot's `{RESP: 1}` frontier covers it and the covering check lets
+    //    the offer proceed. This is the real-orchestrator equivalent of feat6's
+    //    hand-crafted `stale_resp_head`.
     append_local_op_at(
         &init.pool,
         RESP_DEV,
@@ -7573,6 +7612,33 @@ async fn issue2140_snapshot_fallback_on_real_compaction_over_real_socket() {
     )
     .await
     .unwrap();
+
+    // #2502: op-log compaction alone no longer forces a reset — state causality
+    // is judged from Loro VVs. Materialise SIX RESP-authored ops into the
+    // INITIATOR's ENGINE (in the snapshot's space) so the initiator advertises a
+    // Loro vv claiming more RESP-authored ops than the responder's engine holds
+    // (one). That is the own-lineage-loss signal the responder's VV reset check
+    // trips on, driving ResetRequired → snapshot catch-up. These engine ops are
+    // deliberately kept OUT of the op_log (so the advertised head stays
+    // `{RESP: 1}` for the covering check) and are wiped by the snapshot apply.
+    let snap_space = crate::space::SpaceId::from_trusted("01HZ2140SNAPSPACEXXXXXXXXX");
+    for i in 0..6 {
+        crate::merge::engine_apply(
+            &format!("{RESP_DEV}/{}", i + 1),
+            &OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: crate::ulid::BlockId::from_trusted(&format!("01HZ2140INITCLAIM{i:09}")),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(1),
+                index: None,
+                content: "init lineage claim".into(),
+            }),
+            RESP_DEV,
+            &snap_space,
+            "1736942399000",
+            &init.state,
+        );
+    }
 
     // Drive the real-socket session. The reused helper asserts internally
     // that neither side errored; ResetRequired catch-up returns Ok(()).

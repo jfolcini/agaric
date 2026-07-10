@@ -168,98 +168,135 @@ async fn get_local_heads_plan_uses_index_seeks() {
     );
 }
 
-// ── check_reset_required (#602) ─────────────────────────────────────
+// ── check_reset_required — VV-based own-lineage loss (#2502, #602) ───
 
-/// #602 regression, unit level: a head advertised for a REMOTE device
-/// must NOT trigger a reset, no matter that it is absent from the
-/// local op_log — post-#490-M1 remote ops never land there (only
-/// `append_local_op*` writes the op_log), so the absence carries no
-/// information. Pre-fix this returned `true`, degenerating every
-/// session between two edited devices into ResetRequired.
-#[tokio::test]
-async fn check_reset_required_ignores_remote_device_heads() {
-    let (pool, _dir) = test_pool().await;
+/// A test space id for the version-vector comparisons below.
+fn crr_space() -> crate::space::SpaceId {
+    crate::space::SpaceId::from_trusted("01HZCRRSPACEXXXXXXXXXXXXXX")
+}
 
-    // Local device has one op of its own.
-    append_local_op_at(&pool, "local-dev", test_create_payload("CRRBLK1"), FIXED_TS)
-        .await
-        .unwrap();
+/// Build a per-space `SpaceVersionVector` whose Loro vv carries `ops`
+/// ops authored by `device_id` (its own current-epoch PeerID). The vv is
+/// keyed by `peer_id_from_device_id(device_id)`, and its counter grows
+/// monotonically with `ops`, so more ops → a strictly higher own-counter.
+fn crafted_space_vv(
+    device_id: &str,
+    ops: usize,
+    space: &crate::space::SpaceId,
+) -> SpaceVersionVector {
+    let mut engine = crate::loro::engine::LoroEngine::with_peer_id(device_id).expect("set peer id");
+    for i in 0..ops {
+        let id = format!("01HZ0000000000000000{i:06}");
+        let pos = i64::try_from(i).expect("op index fits i64");
+        engine
+            .apply_create_block(&id, "content", "x", None, pos)
+            .expect("create block");
+    }
+    SpaceVersionVector {
+        space_id: space.clone(),
+        vv: engine.version_vector(),
+    }
+}
 
-    // Remote advertises its OWN head — never present in our op_log.
-    let remote_heads = vec![DeviceHead {
-        device_id: "remote-dev".into(),
-        seq: 7,
-        hash: "remote-hash".into(),
-    }];
+/// #2502/#602: the peer being ahead only for *other* peer ids (normal —
+/// they simply hold more state) must NOT trigger a reset. The op-log-seq
+/// lookup this replaced would have mis-fired on exactly this shape (#602).
+#[test]
+fn check_reset_required_ignores_other_peer_ids() {
+    let space = crr_space();
+    let own = crate::loro::engine::peer_id_from_device_id("local-dev");
 
-    let reset = check_reset_required(&pool, "local-dev", &remote_heads)
-        .await
-        .unwrap();
+    // We hold one op of our own; the peer advertises a vv carrying only a
+    // DIFFERENT device's ops (nothing of ours).
+    let local = vec![crafted_space_vv("local-dev", 1, &space)];
+    let peer = vec![crafted_space_vv("remote-dev", 3, &space)];
+
+    let reset = check_reset_required(own, &local, &peer).unwrap();
     assert!(
         !reset,
-        "#602: a remote device's head must not be resolved against the \
-         local op_log — it can never be there post-#490-M1"
+        "#602: the peer being ahead for another device's peer id is a normal \
+         pull, never a reset"
     );
 }
 
-/// The genuine reset case the local op_log CAN detect: the remote
-/// claims to have observed ops WE authored at a seq we no longer have
-/// (compaction past the peer's frontier / own-history loss).
-#[tokio::test]
-async fn check_reset_required_detects_own_history_loss() {
-    let (pool, _dir) = test_pool().await;
+/// The genuine reset case, now in VV space: the peer's advertised vv claims
+/// ops WE authored (our own peer id) beyond what our engine can produce —
+/// own-lineage loss (history/tail lost, older-backup restore).
+#[test]
+fn check_reset_required_detects_own_lineage_loss() {
+    let space = crr_space();
+    let own = crate::loro::engine::peer_id_from_device_id("local-dev");
 
-    // Local device has seq 1 only; the remote claims it observed our
-    // seq 5 — we lost (or never had) that history.
-    append_local_op_at(&pool, "local-dev", test_create_payload("CRRBLK2"), FIXED_TS)
-        .await
-        .unwrap();
+    // We can produce 1 op of our own; the peer claims to have seen 3 of ours.
+    let local = vec![crafted_space_vv("local-dev", 1, &space)];
+    let peer = vec![crafted_space_vv("local-dev", 3, &space)];
 
-    let remote_heads = vec![DeviceHead {
-        device_id: "local-dev".into(),
-        seq: 5,
-        hash: "claimed-own-hash".into(),
-    }];
-
-    let reset = check_reset_required(&pool, "local-dev", &remote_heads)
-        .await
-        .unwrap();
+    let reset = check_reset_required(own, &local, &peer).unwrap();
     assert!(
         reset,
-        "an own-device head we cannot satisfy must still trigger reset \
-         (compaction / own-history loss)"
+        "a peer claiming more of OUR OWN ops than our engine holds must reset \
+         (own-lineage loss)"
     );
 }
 
-/// An own-device head we DO satisfy must not trigger a reset; a seq-0
-/// claim ("I have observed none of your ops") is trivially covered.
-#[tokio::test]
-async fn check_reset_required_satisfied_and_zero_seq_heads_pass() {
-    let (pool, _dir) = test_pool().await;
+/// An own-peer claim we DO satisfy (equal counters) must not reset, and a
+/// peer vv carrying none of our ops (counter 0 for our peer) is trivially
+/// covered — the VV analogue of the retired "seq-0 head" case.
+#[test]
+fn check_reset_required_satisfied_and_no_own_ops_pass() {
+    let space = crr_space();
+    let other_space = crate::space::SpaceId::from_trusted("01HZCRRSPACE2XXXXXXXXXXXXX");
+    let own = crate::loro::engine::peer_id_from_device_id("local-dev");
 
-    append_local_op_at(&pool, "local-dev", test_create_payload("CRRBLK3"), FIXED_TS)
-        .await
-        .unwrap();
-
-    let remote_heads = vec![
-        DeviceHead {
-            device_id: "local-dev".into(),
-            seq: 1,
-            hash: "own-hash".into(),
-        },
-        DeviceHead {
-            device_id: "fresh-peer".into(),
-            seq: 0,
-            hash: String::new(),
-        },
+    // We hold 2 of our ops; the peer advertises exactly 2 of ours (equal, not
+    // greater) plus a second space carrying only a foreign device's ops.
+    let local = vec![crafted_space_vv("local-dev", 2, &space)];
+    let peer = vec![
+        crafted_space_vv("local-dev", 2, &space),
+        crafted_space_vv("fresh-peer", 2, &other_space),
     ];
 
-    let reset = check_reset_required(&pool, "local-dev", &remote_heads)
-        .await
-        .unwrap();
+    let reset = check_reset_required(own, &local, &peer).unwrap();
     assert!(
         !reset,
-        "satisfied own-device head + seq-0 peer head must not reset"
+        "an equal own-peer counter + a space with none of our ops must not reset"
+    );
+}
+
+/// A space the peer advertises (claiming our ops) that we do not hold at all
+/// locally reads as local counter 0 → any positive own claim is a loss.
+#[test]
+fn check_reset_required_missing_local_space_is_loss() {
+    let space = crr_space();
+    let own = crate::loro::engine::peer_id_from_device_id("local-dev");
+
+    // We hold NO local vv for the space; the peer claims we authored 2 ops in
+    // it — we lost the whole space's own-lineage.
+    let local: Vec<SpaceVersionVector> = Vec::new();
+    let peer = vec![crafted_space_vv("local-dev", 2, &space)];
+
+    let reset = check_reset_required(own, &local, &peer).unwrap();
+    assert!(
+        reset,
+        "a peer claiming our ops in a space we hold no local vv for must reset"
+    );
+}
+
+/// Cross-version back-compat: an older peer advertises no `loro_vvs`
+/// (`HeadExchange.loro_vvs` is `#[serde(default)]` → empty). With nothing to
+/// compare against, no reset is signalled — the streamer proceeds normally and
+/// the receiver-side reachability gate remains the safety net. This is the
+/// key property that keeps old-peer ↔ new-peer sessions working.
+#[test]
+fn check_reset_required_empty_peer_vvs_never_resets() {
+    let space = crr_space();
+    let own = crate::loro::engine::peer_id_from_device_id("local-dev");
+    let local = vec![crafted_space_vv("local-dev", 3, &space)];
+
+    let reset = check_reset_required(own, &local, &[]).unwrap();
+    assert!(
+        !reset,
+        "an older peer advertising no version vectors must never trigger a reset"
     );
 }
 

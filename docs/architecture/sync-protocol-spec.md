@@ -103,25 +103,55 @@ incompatible peer up front, before any raw-byte Loro merge (#2130). Also
 `#[serde(default)]`: a legacy peer deserializes as `0`, which falls through
 to the import-time format guards.
 
-**Frontier semantics — two frontiers, two different jobs.** The op-log
-`heads` and the Loro `loro_vvs` answer different questions and are not
-redundant. Since #490-M1 the op log is strictly device-local (a remote
-device's ops never land in it), so the receiver resolves the advertised
-`heads` **only for its own `device_id`** — the check
-(`operations::check_reset_required`, #602) detects *own-lineage loss*
-("the peer knows a seq/hash of MINE that my log no longer contains", e.g.
-after compaction or data loss) and triggers the snapshot fallback.
-Cross-device staleness is NOT judged from `heads`; that is the `loro_vvs`
-job — the version vectors shape the per-space delta and the
-`from_vv`-reachability gate in `apply_remote` catches an unbridgeable gap
-(see [`SnapshotFallbackRequested`](#snapshotfallbackrequested)). An in-code
-TODO (`sync_protocol/operations.rs:92-96`, #87 §10.5) tracks retiring the
-op-log-seq heads check in favour of persisted per-peer version vectors,
-which would collapse both jobs onto one frontier type — **tracked by #2502**,
-which schedules persisting `peer_refs.loro_vv_bytes` and dropping the
-op-log-seq lookup from `check_reset_required` entirely. This section
-documents the dual system as it exists **today**; #2502 is the forward
-pointer for its planned retirement, not a description of current behavior.
+**Frontier semantics — Loro VVs are the sole state-causality signal
+(#2502).** The op-log `heads` and the Loro `loro_vvs` answer different
+questions. Since #490-M1 the op log is strictly device-local, and per
+issue #2481 it also carries *foreign* device frontiers as append-only
+audit metadata — so `heads` is an **audit/replication cursor** ("which of your op
+records do I already hold"), never a state-causality signal. All
+state-reset decisions are made from Loro VVs:
+
+- The receiver-side `from_vv`-reachability gate in `apply_remote` catches an
+  unbridgeable incremental-`Update` gap (the peer's declared floor is ahead
+  of the receiver's `oplog_vv()`) — see
+  [`SnapshotFallbackRequested`](#snapshotfallbackrequested).
+- The streamer-side, handshake-time `operations::check_reset_required`
+  detects **own-lineage loss**: it compares the peer's advertised `loro_vvs`
+  against the local engine's per-space VVs for **our own current-epoch Loro
+  `PeerID`** only. A peer claiming more of *our own* authored ops than our
+  engine can produce means we lost our own tail (compaction/history loss,
+  older-backup restore) → `ResetRequired`. The peer being ahead for *other*
+  peer ids is a normal pull, never a reset. Restricting to our own peer id
+  also prevents a post-reset device (fresh-epoch `PeerID` at counter 0) from
+  looping.
+
+Both funnel into the single `ResetRequired` → snapshot-catch-up recovery
+path. #2502 retired the previous op-log-`(device_id, seq)` reset lookup
+entirely (it conflated the audit cursor with state causality and produced
+the #602 forever-backoff bug); `heads` retains its two surviving,
+non-decision jobs — remote-device identification and the defensive
+`snapshot_covers_remote_heads` covering check in the snapshot sub-flow.
+
+**Persisted per-peer version vectors (`peer_refs.loro_vv_bytes`, #2502).**
+On session completion the streamer persists the peer's advertised
+per-space `loro_vvs` (a serialized `Vec<SpaceVersionVector>`) to
+`peer_refs.loro_vv_bytes` (migration 0100, a nullable BLOB — never on the
+wire). On the next session, when the initiator advertises *no* vv for a
+space (an older peer, or the every-tick churn case), the streamer falls
+back to this persisted frontier as the incremental-`Update` export floor
+instead of shipping a full `Snapshot` — removing the last excuse for the
+full-snapshot churn (#610). A stale/ahead persisted floor is safe: the
+receiver's reachability gate catches an unbridgeable delta and falls back
+to a snapshot.
+
+**Cross-version compatibility (old peer ↔ new peer).** Nothing on the wire
+changed — `loro_vvs` was already `#[serde(default)]` and the persisted VV
+is local-only. An older peer that advertises no `loro_vvs` yields an empty
+peer-vv list, so the own-lineage reset check trivially returns "no reset"
+and the streamer proceeds normally (using its persisted floor if it has
+one); genuine state-divergence with that peer is still caught by the
+receiver-side reachability gate. New peer ↔ new peer additionally gets the
+handshake-time own-lineage check and the churn-cutting export floor.
 
 **Divergence within one device: op_log ahead of engine (#2475).** The
 dangerous divergence isn't heads-vs-VVs in flight between two devices —
@@ -546,9 +576,11 @@ How peers compare and request missing ops:
   advertised version vectors. The initiator collects its per-space VVs
   (`collect_local_loro_vvs`) and ships them in `HeadExchange.loro_vvs`; the
   responder looks up each space's advertised vv and passes
-  `peer_vv = Some(vv)` to emit an incremental `Update`. It falls back to
-  `peer_vv = None` (full `Snapshot`) only for a space the initiator didn't
-  advertise — one it lacks, or an older peer that sent no VVs
+  `peer_vv = Some(vv)` to emit an incremental `Update`. For a space the
+  initiator did not advertise, the responder falls back to the peer's
+  **persisted** frontier from `peer_refs.loro_vv_bytes` (the vv it advertised
+  at the last completed session, #2502/#610) as the export floor, and only
+  when neither is available does it ship a full `Snapshot` (`peer_vv = None`)
   (`src-tauri/src/sync_protocol/session_state_machine.rs`, `loro_sync.rs`).
 - **Receiver** (`loro_sync::apply_remote`): for an `Update`, before any
   engine import it reads the local engine's current version vector
