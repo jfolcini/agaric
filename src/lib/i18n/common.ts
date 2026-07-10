@@ -331,6 +331,11 @@ export const common: Record<string, string> = {
   // #1927 — second affordance: a `webkitdirectory` picker so a whole
   // folder/vault can be imported (folder hierarchy → page namespace).
   'data.importFolderButton': 'Import Folder',
+  // #1282 — third affordance: import Evernote `.enex` exports. Each note in
+  // the file becomes its own page (ENML → Markdown, frontend-only).
+  'data.importEnexButton': 'Import Evernote (.enex)',
+  // #1282 — a `.enex` file whose XML could not be parsed.
+  'data.importEnexParseFailed': 'Could not read {{name}}: not a valid Evernote export.',
   // #1927 — Cancel a long-running multi-file/vault import between files.
   'data.importCancelButton': 'Cancel',
   // #1927 — partial result after the user cancels a multi-file import.
