@@ -6,6 +6,26 @@
 //! - Lowest Common Ancestor (LCA) for edit chains
 //! - Text extraction at a given op
 //! - Edit head discovery across devices
+//!
+//! ## Production status (#2473 / #2481)
+//!
+//! [`insert_remote_op`] and [`append_merge_op`] have **no production
+//! callers today**. Post-#490-M1 the local `op_log` is strictly
+//! device-local (see `sync_protocol::operations::check_reset_required`):
+//! inbound sync lands remote state via the Loro CRDT engine import + SQL
+//! projection and never inserts a peer's ops into this table. The only
+//! current callers of this module's remote-ingest functions are tests
+//! (`dag/tests.rs`, `op_log/tests/origin.rs`).
+//!
+//! This is retained deliberately, not dead code awaiting removal: #2481
+//! (DECIDED, option (a) — audit-only op-log replication) designates
+//! [`insert_remote_op`] as the phase-1 ingest point for replicated op
+//! records. Under that design, records are hash-verified and stored for
+//! cross-device History/attribution but are **never applied to state**
+//! — state continues to flow exclusively through Loro CRDT sync. See
+//! #2481 for the full plan, including the audit-mode relaxation where an
+//! unresolved `parent_seqs` pointer caused by a peer's own compaction
+//! lands with a `warn!` breadcrumb instead of being rejected.
 use std::collections::HashSet;
 
 use sqlx::SqlitePool;
@@ -397,6 +417,18 @@ fn parse_parent_seqs_canonical(parent_seqs_json: &str) -> Result<Vec<(String, i6
 /// cheap, allocation-local sort that costs nothing for the already-canonical
 /// common case and repairs the rare legacy/peer row, without touching the
 /// hash-bearing stored bytes.
+///
+/// ## Production status (#2473 / #2481)
+///
+/// No production code path calls this function today; only tests do
+/// (`dag/tests.rs`, `op_log/tests/origin.rs`). The local `op_log` is
+/// strictly device-local post-#490-M1 (see
+/// `sync_protocol::operations::check_reset_required`) — production sync
+/// never reaches this function. It is kept as the deliberate, planned
+/// ingest point for #2481 phase 1 (audit-only op-log replication):
+/// replicated op records will be hash-verified and stored here for
+/// cross-device History/attribution, but never applied to state — state
+/// remains exclusively Loro-CRDT-sourced.
 pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bool, AppError> {
     // #1600 — Reject any raw NUL byte in a hashed field *before* the op
     // reaches the hash recipe. The `\0` delimiter is the wire-format
