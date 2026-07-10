@@ -22,12 +22,12 @@ Every `sqlx::query!` / `sqlx::query_as!` is validated at compile time against th
 
 Runtime `sqlx::query()` (no macro) is restricted to genuinely-dynamic SQL: recursive CTEs, FTS5 query builders, snapshot ops, sync protocol fan-out. The `check-dynamic-sql` prek hook (#646) enforces this: it counts runtime `sqlx::query(`/`query_as(`/`query_scalar(` sites per production file against a checked-in baseline (`src-tauri/dynamic-sql-baseline.txt`) and fails any file that grows past its baseline unless every dynamic site in it carries an adjacent `// dynamic-sql: <reason>` marker. Existing sites are grandfathered; the gate applies back-pressure toward the compile-checked macro forms for new code.
 
-## ULID + RFC3339 type-level contracts
+## ULID + timestamp type-level contracts
 
 Two invariants ride at the type level:
 
 - **ULID uppercase Crockford-Base32** — `BlockId::Deserialize` / `::new` / `::from_trusted` all normalise. The op-log blake3 preimage is hash-stable only when this normalisation is, so the contract is enforced at construction. Lowercase ULIDs round-trip back to uppercase before storage.
-- **`now_rfc3339()` returns a lex-monotonic `Z`-suffix string.** Millisecond precision. Reverse-op queries rely on lex-comparing timestamps; without the `Z` suffix lex comparison would diverge from chronological order.
+- **Timestamps that get compared are INTEGER epoch-ms, not strings.** `op_log.created_at` is `INTEGER` epoch-ms (migration 0079, #109 Phase 2), sourced from `crate::db::now_ms()` and compared **numerically** — the reverse-op "find prior op" queries rely on that intrinsic integer ordering, so there is no lex-collation or `Z`-suffix hazard. `now_rfc3339()` (a lex-monotonic `Z`-suffix string, millisecond precision) is retained only for legacy TEXT columns not yet migrated (e.g. `property_definitions.created_at`) and for log/display output; new tables take epoch-ms per the AGENTS.md timestamp-encoding rule.
 
 Both contracts are documented at the construction site and enforced by tests.
 

@@ -13,7 +13,7 @@ The system has two halves: a **logical data model** (everything is a block; refe
 | CRDT | Loro (per-space `LoroDoc` engines) |
 | State | Zustand (per-feature stores; per-page stores via factory + context) |
 | Bindings | `tauri-specta` (`agaric_commands!` macro is the single source) |
-| Lint / format | Biome (no ESLint / Prettier) |
+| Lint / format | OXC (oxlint + oxfmt) — no ESLint / Prettier / Biome |
 
 **Rejected:** Electron (size), CodeMirror (cell model worse for outliner), Diesel (sync-only), ESLint+Prettier (Biome is one tool). See [`rejected.md`](rejected.md) for the full library-rejection catalogue.
 
@@ -72,7 +72,7 @@ If a property type is ever introduced that is *semantically* a large exact integ
 
 Convergence is CRDT-based: every op is **eventually** applied into the per-space `LoroEngine` (`src-tauri/src/loro/`), and the engine resolves concurrent writes deterministically — same op inputs produce identical state on every replica. The legacy three-way merge / `is_conflict` model is gone.
 
-There are, however, **two distinct apply paths** (see "Apply-cursor semantics" below for the full reconciliation). The **engine-apply path** (`apply_op` / `BatchApplyOps`, reached by boot replay and remote/sync import) feeds the op into the `LoroEngine` and advances the apply cursor in the same transaction. The **live local command path** (`CommandTx::commit_and_dispatch`) instead materializes the SQL `blocks` row synchronously and fires only background cache rebuilds — it does **not** touch the engine inline; boot replay re-applies that session's ops into the engine afterwards (idempotently). So "every op fans out into the engine" is true over the lifetime of the data, not synchronously on the local write.
+Both apply paths now funnel through **one collapsed entry point**, `apply_op_projected` (`src-tauri/src/materializer/handlers/apply.rs`; the #2250/#2325 convergence): it re-derives the payload from the appended op record and runs the same engine-apply + SQL projection on both. The paths differ **only** in the `advance_cursor` flag. The **cursor-advancing path** (`apply_op` / `BatchApplyOps`, reached by boot replay and remote/sync import) passes `true` — engine-apply and cursor advance share the transaction. The **live local command path** passes `false` from inside its own `CommandTx`: the engine is applied and the SQL row projected synchronously in the command's transaction, then `commit_and_dispatch` fires background cache rebuilds. Local writes therefore reach the engine eagerly; the deliberately-unadvanced cursor keeps boot replay re-applying the prior session's ops idempotently as a safety net (see "Apply-cursor semantics" below). One asymmetry remains: a delete/restore's *descendant cohort* fans out to the engine **post-commit** (`dispatch_delete_descendants` / `dispatch_restore_descendants`), so SQL can lead the engine for those descendants for the instants between commit and fan-out. The `sql_only` fallback survives only for the `SpaceUnresolved` trigger (see [sql-only-convergence.md](sql-only-convergence.md)); the `EngineUninit` arm is retired in production.
 
 ## Database
 
@@ -118,17 +118,19 @@ ULIDs are normalised to uppercase Crockford-Base32 in the preimage (and in every
 Synchronous primary-state materialization, not pure CQRS. Every op is dual-written: into `op_log` AND into the affected core tables (`blocks`, `block_properties`, `block_tags`, …) in **one** transaction. Background cache rebuilds queue up after the core write commits.
 
 ```text
-applyOp(op):
+apply_op_projected(op, advance_cursor):
   BEGIN IMMEDIATE
     INSERT INTO op_log (...) VALUES (...)        -- the truth
     apply op to core tables (blocks, ...)        -- primary state
-    advance materializer_apply_cursor             -- atomic with above
+    apply op to LoroEngine (per-space)           -- engine, same tx
+    reproject engine-owned ordering (dense-rank)  -- when the op moved things
+    if advance_cursor:                            -- REMOTE / boot replay only
+      advance materializer_apply_cursor           -- atomic with above
   COMMIT
-  post-commit: dispatch to LoroEngine (per-space)
   post-commit: enqueue cache rebuild tasks (background)
 ```
 
-Apply-and-advance share one transaction → crash never advances the cursor past the last applied seq.
+Apply-and-advance share one transaction → crash never advances the cursor past the last applied seq, and a crash never leaves the engine ahead of (or behind) the SQL tables — they commit or roll back together.
 
 ### Queue architecture
 
@@ -179,10 +181,8 @@ Per-draft errors are captured in a `RecoveryReport`; a single corrupt draft does
 
 ## Apply-cursor semantics
 
-`materializer_apply_cursor.materialized_through_seq` tracks **engine-apply progress, not SQL-materialization progress** (#1248). It advances *only* inside `apply_op` / the `BatchApplyOps` arm (`advance_apply_cursor`, in the same tx as the engine apply, so engine-apply + cursor are atomic). That path is reached by **boot replay**, the test-only `dispatch_op` helper, and remote apply — **not** by the live local command path.
+`materialized_through_seq` (in `materializer_apply_cursor`) tracks **replay/remote apply progress, not local write progress** (#1248, revised by #2250/#2325). Since the apply-path collapse, both the live LOCAL command path and the REMOTE/boot-replay path run the *same* function, `apply_op_projected`, which applies the op to the SQL tables **and** the per-space `LoroEngine` inside one transaction. The only difference is the `advance_cursor` flag: REMOTE apply and boot replay pass `true` (cursor advance is atomic with the apply); the live LOCAL command path passes `false`.
 
-The live LOCAL command path (`CommandTx::commit_and_dispatch`) writes the SQL `blocks` row synchronously inside its own transaction and then fires only background cache-rebuild tasks; it never enqueues an `ApplyOp`, never touches the per-space `LoroEngine`, and **never advances this cursor**. Consequently, during a live session `op_log.seq` climbs while `materialized_through_seq` stays pinned at the prior-boot replay watermark.
+Because local ops never advance the cursor, during a live session `op_log.seq` climbs while `materialized_through_seq` stays pinned at the prior-boot replay watermark. A clean boot is therefore **not** a crash-only tail replay: `replay_unmaterialized_ops` re-applies the *whole prior session's* local ops (`WHERE seq > cursor`). This is expected and safe because re-apply is idempotent (`INSERT OR IGNORE` + per-op-type idempotency guards), and it is what makes the boot replay a standing safety net — if a live engine apply was ever lost (e.g. a bug rolled back the engine but not the log, which the shared transaction is designed to prevent), the next boot re-converges it. The `heal_orphaned_apply_cursor` path evaluates routinely (not only after a crash) and is safe for the same idempotency reason.
 
-This means a clean boot is **not** a crash-only tail replay. `replay_unmaterialized_ops` re-applies the *whole prior session's* ops **into the engine** (`WHERE seq > cursor`), which is expected and safe because re-apply is idempotent (`INSERT OR IGNORE` + per-op-type idempotency guard). The `heal_orphaned_apply_cursor` path therefore evaluates routinely (not only after a crash), and is likewise safe for the same idempotency reason.
-
-Advancing the cursor to reflect SQL materialization would require routing local ops through engine-apply — tracked separately in **#1257**. Until then this is a documentation/semantics distinction, not a correctness bug (boot replay re-converges the engine regardless).
+Advancing the cursor on local writes (making boot replay a true crash-only tail replay) was considered and deliberately **not** done: keeping local ops out of the cursor costs one idempotent replay pass per boot and in exchange keeps the replay path exercised on every startup rather than only after crashes. #1257 (route local ops through engine-apply) is closed — that routing is exactly what `apply_op_projected` now does.

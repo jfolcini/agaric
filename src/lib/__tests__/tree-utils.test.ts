@@ -25,7 +25,9 @@ import {
   getDragDescendants,
   getProjection,
   MAX_BLOCK_DEPTH,
+  projectDepth,
   SENTINEL_ID,
+  simulateProjection,
 } from '../tree-utils'
 
 const mockedLoggerWarn = vi.mocked(logger.warn)
@@ -670,6 +672,85 @@ describe('getProjection sentinel', () => {
     const result = getProjection(lone, 'ONLY', SENTINEL_ID, DEAD_ZONE_PX + INDENT, INDENT)
     expect(result.depth).toBe(0)
     expect(result.parentId).toBeNull()
+  })
+})
+
+// ── getProjection split: simulateProjection + projectDepth (#2200) ─────────
+
+describe('getProjection split equivalence (#2200)', () => {
+  const INDENT = 24
+
+  // A tree with two levels so the normal, sentinel, and clamp branches all fire.
+  //   [0] A  (depth 0)
+  //   [1] A1 (depth 1)
+  //   [2] A2 (depth 1)
+  //   [3] B  (depth 0)
+  //   [4] C  (depth 0)
+  const items: FlatBlock[] = [
+    mkFlat('A', null, 1, 0),
+    mkFlat('A1', 'A', 1, 1),
+    mkFlat('A2', 'A', 2, 1),
+    mkFlat('B', null, 2, 0),
+    mkFlat('C', null, 3, 0),
+  ]
+
+  // (activeId, overId, offsetLeft) combos covering: no-offset, right-indent,
+  // left-outdent, over-indent clamp, the sentinel/edge branch (with and without
+  // offset, and the last-block own-parent case), and the missing-id fixed branch.
+  const combos: [string, string, number][] = [
+    ['C', 'B', 0],
+    ['C', 'A1', INDENT * 2],
+    ['B', 'A1', -INDENT * 5],
+    ['C', 'A', INDENT * 5],
+    ['B', 'A2', INDENT],
+    ['C', SENTINEL_ID, 0],
+    ['C', SENTINEL_ID, DEAD_ZONE_PX + INDENT],
+    ['C', SENTINEL_ID, DEAD_ZONE_PX + INDENT * 9],
+    ['C', SENTINEL_ID, -(DEAD_ZONE_PX + INDENT * 5)],
+    ['A2', SENTINEL_ID, DEAD_ZONE_PX + INDENT], // last block onto sentinel
+    ['MISSING', 'B', INDENT * 3], // fixed / early-return branch
+    ['C', 'NOPE', INDENT * 3], // over id missing → fixed branch
+  ]
+
+  it('split (simulateProjection + projectDepth) equals a direct getProjection call', () => {
+    for (const [activeId, overId, offset] of combos) {
+      const reference = getProjection(items, activeId, overId, offset, INDENT)
+      const sim = simulateProjection(items, activeId, overId)
+      const split = projectDepth(sim, offset, INDENT)
+      expect(split).toEqual(reference)
+    }
+  })
+
+  it('honors rootParentId and subtreeHeight identically through the split', () => {
+    const nested: FlatBlock[] = [mkFlat('X', 'page1', 1, 0), mkFlat('Y', 'page1', 2, 0)]
+    const reference = getProjection(nested, 'Y', 'X', 0, INDENT, 'page1', 2)
+    const sim = simulateProjection(nested, 'Y', 'X', 'page1', 2)
+    expect(projectDepth(sim, 0, INDENT)).toEqual(reference)
+  })
+
+  it('reuses ONE structural sim across many horizontal offsets (memo split works)', () => {
+    // A horizontal-only change must not require re-simulating the structure: the
+    // same `sim` fed different offsets must match a fresh getProjection each time.
+    const sim = simulateProjection(items, 'C', 'A1')
+    for (const offset of [-100, -INDENT, 0, INDENT, INDENT * 2, INDENT * 10]) {
+      expect(projectDepth(sim, offset, INDENT)).toEqual(
+        getProjection(items, 'C', 'A1', offset, INDENT),
+      )
+    }
+  })
+
+  it('the structural sim is independent of the drag offset', () => {
+    // simulateProjection takes no offset argument, so changing the offset cannot
+    // alter the structural simulation — only the tail. Assert the sim value is
+    // stable and that varying the offset only moves the projected depth.
+    const sim = simulateProjection(items, 'B', 'A2')
+    expect(sim.kind).toBe('normal')
+    const flat = projectDepth(sim, 0, INDENT)
+    const indented = projectDepth(sim, INDENT, INDENT)
+    // Same structural neighbors, different offset → the outdent projects depth 1
+    // (minDepth from next item A2), the indent stays at depth 1 (its own level).
+    expect(flat.minDepth).toBe(indented.minDepth)
+    expect(flat.maxDepth).toBe(indented.maxDepth)
   })
 })
 
