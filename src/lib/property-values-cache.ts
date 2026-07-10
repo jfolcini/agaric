@@ -30,8 +30,20 @@ export { EVENT_PROPERTY_CHANGED }
 
 const instance = createPropertyChangeCache({
   fetch: (key) => listPropertyValues(key),
-  eventName: EVENT_PROPERTY_CHANGED,
   logTag: 'property-values-cache',
+  // Keyed eviction (#2507): the cache is keyed on the property *key*, and a
+  // property write's `changed_keys` are exactly those cache keys — so a change
+  // to `project` can only stale the `project` value list, never `effort`'s.
+  // Evict just the changed keys instead of clearing the whole cache. Fall back
+  // to a blanket clear only for a payload-less event (defensive; the current
+  // backend always ships `changed_keys`).
+  onPropertyChange: (payload, api) => {
+    if (!payload) {
+      api.invalidateAll()
+      return
+    }
+    api.invalidateKeys(payload.changed_keys)
+  },
 })
 
 /** Stable empty-array reference returned before the first fetch resolves.

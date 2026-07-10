@@ -1,8 +1,8 @@
 /**
  * create-property-change-cache — generic factory for a non-React,
  * module-level cache of string-array IPC results keyed on a string, with
- * in-flight de-duplication, a subscriber set, and a lazy materializer-event
- * listener that invalidates the whole cache on `block:properties-changed`.
+ * in-flight de-duplication, a subscriber set, and an invalidation strategy
+ * driven by the shared `block:properties-changed` dispatcher.
  *
  * #2047: `property-keys-cache.ts` and `property-values-cache.ts` were
  * near-verbatim duplicates of this exact pattern, differing only in the
@@ -10,33 +10,69 @@
  * is the single implementation; both modules are now thin instantiations that
  * re-export the same public API names they always did.
  *
- * Crucially this preserves the module-level generation-counter guard added in
- * #2025: every invalidate/reset bumps `generation`, and an in-flight fetch that
- * started before the bump refuses to write its (now stale) snapshot back into
- * the cache after the clear. Each instance owns its own `generation` so the two
- * caches stay independent.
+ * #2507: this factory used to register its OWN `listen('block:properties-changed')`
+ * per instance and blanket-clear the whole cache on every event — two of the
+ * three redundant listeners the issue calls out. It now registers a fan-out
+ * TARGET on the single module-level dispatcher (`property-change-dispatch.ts`)
+ * and each instance supplies an `onPropertyChange` strategy that inspects the
+ * event payload (`{ block_id, changed_keys }`) to invalidate only what actually
+ * went stale (per-`changed_keys` eviction for the value cache; a
+ * skip-when-no-new-key check for the key cache). A blanket clear is still the
+ * default when no strategy is supplied.
+ *
+ * Race guard (#2025): every cache key carries an epoch. A blanket invalidate
+ * bumps a global epoch; a keyed eviction bumps that key's epoch. An in-flight
+ * fetch captures both epochs at start and refuses to write its (now stale)
+ * snapshot back if either advanced — so neither a full clear NOR a targeted
+ * eviction can be undone by a fetch that was already in flight when it happened.
+ * Each instance owns its own epochs so the two caches stay independent.
  */
-
-import { listen } from '@tauri-apps/api/event'
 
 import { EVENT_PROPERTY_CHANGED } from './block-event-names'
 import { logger } from './logger'
+import {
+  _resetPropertyChangeDispatchForTest,
+  ensurePropertyChangeDispatch,
+  type PropertyChangedPayload,
+  registerPropertyChangeTarget,
+} from './property-change-dispatch'
+
+/**
+ * Invalidation toolkit handed to an instance's {@link
+ * PropertyChangeCacheOptions.onPropertyChange} strategy on each event.
+ */
+export interface PropertyChangeInvalidationApi {
+  /** Drop every entry + in-flight fetch (blanket clear, bumps the global epoch). */
+  invalidateAll: () => void
+  /** Evict only the named cache keys (bumps each key's epoch); a no-op for []. */
+  invalidateKeys: (keys: string[]) => void
+  /** The union of all values currently cached across every entry. */
+  cachedValues: () => Set<string>
+}
 
 /** Options for {@link createPropertyChangeCache}. */
 export interface PropertyChangeCacheOptions {
   /** Backing IPC fetch for a given cache key. */
   fetch: (key: string) => Promise<string[]>
-  /** Tauri event whose arrival invalidates the whole cache. */
-  eventName: string
   /** Module tag used as the first `logger.warn` argument. */
   logTag: string
+  /**
+   * Keyed invalidation strategy invoked once per `block:properties-changed`
+   * event with the event payload (or `undefined` for a payload-less event) and
+   * an {@link PropertyChangeInvalidationApi}. Defaults to a blanket
+   * `invalidateAll()` — the pre-#2507 behavior.
+   */
+  onPropertyChange?: (
+    payload: PropertyChangedPayload | undefined,
+    api: PropertyChangeInvalidationApi,
+  ) => void
 }
 
 /** Public surface returned by {@link createPropertyChangeCache}. */
 export interface PropertyChangeCache {
   /** Stable empty-array reference returned before the first fetch resolves. */
   readonly empty: string[]
-  /** Drop every cached entry and pending in-flight fetch; bump generation. */
+  /** Drop every cached entry and pending in-flight fetch; bump the global epoch. */
   invalidate: () => void
   /** Read the cached entry for `key` synchronously (or the stable empty array). */
   getCached: (key: string) => string[]
@@ -44,9 +80,9 @@ export interface PropertyChangeCache {
   fetchOnce: (key: string) => Promise<string[]>
   /** Subscribe to cache mutations; returns an unsubscribe fn. */
   subscribe: (cb: () => void) => () => void
-  /** Lazily register the process-lifetime materializer-event listener. */
+  /** Lazily register the process-lifetime property-change fan-out target. */
   ensureListener: () => void
-  /** Test-only reset: clears state and the lazy-listener flag. */
+  /** Test-only reset: clears state, the target registration, and the dispatcher. */
   resetForTest: () => void
 }
 
@@ -58,23 +94,26 @@ export interface PropertyChangeCache {
 export function createPropertyChangeCache(
   options: PropertyChangeCacheOptions,
 ): PropertyChangeCache {
-  const { fetch, eventName, logTag } = options
+  const { fetch, logTag } = options
+  const onPropertyChange = options.onPropertyChange ?? ((_payload, api) => api.invalidateAll())
 
   const empty: string[] = Object.freeze([]) as unknown as string[]
   const cache = new Map<string, string[]>()
   const inFlight = new Map<string, Promise<string[]>>()
   const subscribers = new Set<() => void>()
-  let listenerInitialized = false
+
+  let targetRegistered = false
+  let unregisterTarget: (() => void) | null = null
 
   /**
-   * Monotonic generation counter. Bumped by every invalidate/reset so an
-   * in-flight fetch that started before the bump can detect that its snapshot
-   * is stale and refuse to write it back. Without this fence a fetch launched
-   * before an invalidation would `cache.set` its pre-change result *after* the
-   * clear, resurrecting a deleted entry (or omitting a freshly-added one) until
-   * the next invalidation.
+   * Epoch fences for the in-flight write-back race (#2025). `globalEpoch` is
+   * bumped by every blanket invalidate/reset (fences ALL in-flight fetches);
+   * `keyEpoch` tracks a per-key counter bumped by keyed eviction (fences only
+   * that key's in-flight fetch). A fetch captures both at start and writes back
+   * only if neither advanced.
    */
-  let generation = 0
+  let globalEpoch = 0
+  const keyEpoch = new Map<string, number>()
 
   function notify(): void {
     for (const cb of subscribers) cb()
@@ -83,16 +122,45 @@ export function createPropertyChangeCache(
   /**
    * Drop every cached entry. Pending in-flight fetches are also cleared so a
    * subsequent consumer triggers a fresh IPC instead of awaiting the now-stale
-   * promise. Exposed for the Tauri listener and for test setup.
-   *
-   * Bumping `generation` fences any in-flight fetch captured before this call
-   * so it can't repopulate the cache with its pre-change snapshot.
+   * promise. Bumping `globalEpoch` fences any in-flight fetch captured before
+   * this call so it can't repopulate the cache with its pre-change snapshot.
    */
   function invalidate(): void {
-    generation++
+    globalEpoch++
     cache.clear()
     inFlight.clear()
+    keyEpoch.clear()
     notify()
+  }
+
+  /**
+   * Evict only the named cache keys, bumping each one's epoch so an in-flight
+   * fetch for that key can't write its stale snapshot back. Other keys — and
+   * their in-flight fetches — are untouched. A no-op for an empty list.
+   */
+  function invalidateKeys(keys: string[]): void {
+    if (keys.length === 0) return
+    for (const key of keys) {
+      keyEpoch.set(key, (keyEpoch.get(key) ?? 0) + 1)
+      cache.delete(key)
+      inFlight.delete(key)
+    }
+    notify()
+  }
+
+  /** The union of every value currently cached across all entries. */
+  function cachedValues(): Set<string> {
+    const values = new Set<string>()
+    for (const entry of cache.values()) {
+      for (const value of entry) values.add(value)
+    }
+    return values
+  }
+
+  const invalidationApi: PropertyChangeInvalidationApi = {
+    invalidateAll: invalidate,
+    invalidateKeys,
+    cachedValues,
   }
 
   /**
@@ -108,8 +176,8 @@ export function createPropertyChangeCache(
    * Trigger (or join) a single in-flight `fetch(key)`. Returns a promise that
    * resolves to the cached array. A second concurrent call before the first
    * resolves shares the same promise, so two callers fire ONE IPC. After
-   * resolution the entry is cached until `invalidate()` clears it (manually or
-   * via the materializer event).
+   * resolution the entry is cached until an invalidation clears it (manually or
+   * via the dispatcher).
    *
    * Errors are swallowed to an empty array so pickers/popovers still render
    * rather than hanging in a loading state forever. The error is logged once
@@ -121,14 +189,18 @@ export function createPropertyChangeCache(
     const pending = inFlight.get(key)
     if (pending) return pending
 
-    const startGeneration = generation
+    const startGlobal = globalEpoch
+    const startKey = keyEpoch.get(key) ?? 0
+    // No blanket clear AND no eviction of this key raced the fetch.
+    const fresh = (): boolean =>
+      globalEpoch === startGlobal && (keyEpoch.get(key) ?? 0) === startKey
+
     const promise = fetch(key)
       .then((result) => {
-        // Only write back if no invalidation/reset raced this fetch.
-        // A stale snapshot from before an invalidation must not
-        // repopulate the cache (see #2025). The `.finally` below fires
-        // the subscriber notification.
-        if (generation === startGeneration) {
+        // Only write back if no invalidation/eviction raced this fetch. A
+        // stale snapshot from before an invalidation must not repopulate the
+        // cache (see #2025). The `.finally` below fires the notification.
+        if (fresh()) {
           cache.set(key, result)
         }
         return result
@@ -136,17 +208,16 @@ export function createPropertyChangeCache(
       .catch((err) => {
         logger.warn(logTag, 'failed to load property data', { key }, err)
         const fallback: string[] = []
-        if (generation === startGeneration) {
+        if (fresh()) {
           cache.set(key, fallback)
         }
         return fallback
       })
       .finally(() => {
-        // Only retire our own in-flight entry. A racing invalidation
-        // already cleared the map (and may have registered a newer
-        // fetch under the same key); deleting here would drop that
-        // newer fetch. The matching write-back above already notified.
-        if (generation === startGeneration) {
+        // Only retire our own in-flight entry. A racing invalidation already
+        // cleared/replaced the map entry; deleting here would drop a newer
+        // fetch registered under the same key. The write-back above notified.
+        if (fresh()) {
           inFlight.delete(key)
           notify()
         }
@@ -168,33 +239,40 @@ export function createPropertyChangeCache(
   }
 
   /**
-   * Lazily register the materializer-event listener. Process-lifetime — once
-   * registered it stays for the rest of the session. Mirrors the Tauri-only
-   * gate from `useSyncEvents` so jsdom / browser-mode dev sessions don't
-   * trigger a `transformCallback` NPE from the unmocked
-   * `@tauri-apps/api/event` import.
+   * Lazily register this instance's fan-out target on the shared
+   * `block:properties-changed` dispatcher and make sure the dispatcher's single
+   * process-lifetime listener is wired up. Idempotent — the target is added
+   * once, and `ensurePropertyChangeDispatch` self-guards (and retries on a prior
+   * `listen()` failure). Once registered the target stays for the session.
    */
   function ensureListener(): void {
-    if (listenerInitialized) return
-    listenerInitialized = true
-    const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
-    if (!inTauri) return
-    listen(eventName, () => {
-      invalidate()
-    }).catch((err) => {
+    if (!targetRegistered) {
+      targetRegistered = true
+      unregisterTarget = registerPropertyChangeTarget((payload) => {
+        onPropertyChange(payload, invalidationApi)
+      })
+    }
+    ensurePropertyChangeDispatch((err) => {
       logger.warn(logTag, 'failed to register property-change listener', undefined, err)
     })
   }
 
   /**
-   * Test-only reset. Clears every cached entry, drops in-flight fetches, and
-   * resets the lazy-listener flag so each test starts from a clean slate.
+   * Test-only reset. Clears every cached entry, drops in-flight fetches,
+   * unregisters the fan-out target, and resets the shared dispatcher so each
+   * test starts from a clean slate.
    */
   function resetForTest(): void {
-    generation++
+    globalEpoch++
     cache.clear()
     inFlight.clear()
-    listenerInitialized = false
+    keyEpoch.clear()
+    targetRegistered = false
+    if (unregisterTarget) {
+      unregisterTarget()
+      unregisterTarget = null
+    }
+    _resetPropertyChangeDispatchForTest()
     notify()
   }
 

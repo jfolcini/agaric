@@ -39,8 +39,26 @@ export const PROPERTY_KEYS_GLOBAL_KEY = '__global__'
 
 const instance = createPropertyChangeCache({
   fetch: () => listPropertyKeys(),
-  eventName: EVENT_PROPERTY_CHANGED,
   logTag: 'property-keys-cache',
+  // Skip-when-no-new-key (#2507): the cache holds the DISTINCT-key list, keyed
+  // on `spaceId`. A property write only changes that list when it introduces a
+  // key not already present, so when every `changed_keys` entry is already a
+  // known key we can skip the refetch entirely; a genuinely new key still
+  // triggers a blanket invalidate. A payload-less event falls back to a blanket
+  // clear. (Trade-off: deleting a key from its last remaining block leaves a
+  // momentarily-stale entry — a benign autocomplete staleness that self-heals on
+  // the next new-key event or manual `invalidatePropertyKeysCache()`.)
+  onPropertyChange: (payload, api) => {
+    if (!payload) {
+      api.invalidateAll()
+      return
+    }
+    const known = api.cachedValues()
+    const introducesNewKey = payload.changed_keys.some((key) => !known.has(key))
+    if (introducesNewKey) {
+      api.invalidateAll()
+    }
+  },
 })
 
 /** Stable empty-array reference returned before the first fetch
