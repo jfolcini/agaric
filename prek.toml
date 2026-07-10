@@ -869,8 +869,6 @@ stages = ["pre-commit", "pre-push"]
 # `python3 scripts/check-space-filter-drift.py --update-baseline`. Mirrors
 # the `space_filter_canonical.rs` parity test at pre-commit stage. Rules
 # live in scripts/check-space-filter-drift.py.
-[[repos]]
-repo = "local"
 [[repos.hooks]]
 id = "check-space-filter-drift"
 name = "space-filter drift guard (#139)"
@@ -1165,7 +1163,7 @@ language = "system"
 types = ["toml"]
 stages = ["pre-commit"]
 
-# ─── pre-push only ──────────────────────────────────────────────────
+# ─── pre-push only ────────────────────────────────────────────────
 #
 # A single chokepoint hook runs `scripts/verify-ci-equivalent.sh`,
 # which parallelizes every check `_validate.yml` runs in CI (full
@@ -1221,7 +1219,7 @@ language = "system"
 pass_filenames = false
 stages = ["pre-push"]
 
-# ─── post-commit ─────────────────────────────────────────────────
+# ─── post-commit ──────────────────────────────────────────────────
 #
 # Loud commit sentinel (#819 (7)). rtk's git-commit filter prints
 # "ok N files changed" even when a pre-commit hook ABORTS the commit
