@@ -152,19 +152,27 @@ Two-tier retry:
 
 Rebuilt by the materializer; never read-through:
 
-| Cache | What it stores | Triggered by |
-| --- | --- | --- |
-| `block_links` | `[[ULID]]` (page-link) and `((ULID))` (block-ref) tokens parsed out of block content. `#[ULID]` inline tag refs are NOT here — they go to `block_tag_refs`. | `edit_block`, `create_block` (content scan) |
-| `page_link_cache` | Page-level rollup `(source_page, target_page, edge_count)` | derived from `block_links` |
-| `block_tag_refs` | Inline `#[ULID]` references | content scan, separate from explicit tag membership |
-| `block_tag_inherited` | Materialized ancestor-tag inheritance | `add_tag` / `remove_tag` + tree moves |
-| `tags_cache` | Per-tag aggregate (usage, descendant count) | tag-touching ops |
-| `pages_cache` | Per-page aggregate | page-touching ops |
-| `agenda_cache` | Per-date task index | due / scheduled / completed property writes |
-| `projected_agenda_cache` | Future occurrences of repeating tasks | repeat-property writes |
-| `fts_blocks` (FTS5 virtual table) | Tokenised block content for search | edit_block, materializer post-commit |
+| Cache | What it stores | Triggered by | Serves stale during retry window? |
+| --- | --- | --- | --- |
+| `block_links` | `[[ULID]]` (page-link) and `((ULID))` (block-ref) tokens parsed out of block content. `#[ULID]` inline tag refs are NOT here — they go to `block_tag_refs`. | `edit_block`, `create_block` (content scan) | Yes — `ReindexBlockLinks` is a persisted per-block task |
+| `page_link_cache` | Page-level rollup `(source_page, target_page, edge_count)` | derived from `block_links` | Yes — `RebuildPageLinkCache` is a persisted global task |
+| `block_tag_refs` | Inline `#[ULID]` references | content scan, separate from explicit tag membership | Yes — `ReindexBlockTagRefs` is a persisted per-block task |
+| `block_tag_inherited` | Materialized ancestor-tag inheritance | `add_tag` / `remove_tag` + tree moves | Yes — `RebuildTagInheritanceCache` is a persisted global task |
+| `tags_cache` | Per-tag aggregate (usage, descendant count) | tag-touching ops | Yes — `RebuildTagsCache` is a persisted global task |
+| `pages_cache` | Per-page aggregate | page-touching ops | Yes — `RebuildPagesCache` is a persisted global task |
+| `agenda_cache` | Per-date task index | due / scheduled / completed property writes | Yes — `RebuildAgendaCache` is a persisted global task |
+| `projected_agenda_cache` | Future occurrences of repeating tasks | repeat-property writes | Yes — `RebuildProjectedAgendaCache` is a persisted global task |
+| `fts_blocks` (FTS5 virtual table) | Tokenised block content for search | edit_block, materializer post-commit | Yes for incremental per-block reindex (`UpdateFtsBlock` is persisted); **no** for a full reindex — `RebuildFtsIndex` is one of the "truly non-retryable" tasks and is silently dropped on failure/saturation, not queued for a later sweep |
 
 **Rebuild order is load-bearing.** `rebuild_page_ids` MUST run before `rebuild_agenda_cache` / `rebuild_projected_agenda_cache` (the date-by-page joins depend on the denormalised column). `rebuild_block_tag_refs_cache` runs before `rebuild_tags_cache`. The materializer's task graph enforces this.
+
+### Per-cache staleness contract (#2471)
+
+The staleness **bound** for every cache above is engineered, not incidental: a task that fails all in-memory retries (or is dropped by a saturated background queue) is persisted to `materializer_retry_queue` and picked up by a sweeper on an escalating backoff — 1 min → 5 min → 30 min → **1 hour cap** (`backoff_delay_for`, `src-tauri/src/materializer/retry_queue.rs:341-347`; documented at `AGENTS.md:258` "Materializer task durability"). So after a drop-then-persist event, any of the caches marked "Yes" above can lag primary state by **up to one hour**, until either a later unrelated mutation re-dispatches the same rebuild or the sweeper's own retry succeeds. Two counters on `StatusInfo` track this: `bg_dropped` (total drop-then-persist events, `src-tauri/src/materializer/metrics.rs:89`) and `bg_dropped_global` (the subset attributable to a global rebuild rather than a per-block reindex, `:90`), both surfaced by `get_status` (`src/lib/bindings.ts:3409-3422`).
+
+**Read-surface classification.** Search (`fts_blocks`, `src-tauri/src/fts/search/fetch.rs`), the agenda views (`agenda_cache` / `projected_agenda_cache`), and the tag/page aggregate counts above all read a table in this list, so all three inherit the up-to-1h bound. By contrast, page load and block content read `blocks` / `block_properties` directly (`src-tauri/src/commands/blocks/crud.rs:260`, `src-tauri/src/commands/pages/listing.rs:405`) — primary state, not a cache — so they are never affected by retry-queue staleness; a lagging search result for a block whose primary content is already up to date is possible and expected.
+
+**The counters are not yet surfaced to the user (open, #2471).** `StatusInfo.bg_dropped` / `bg_dropped_global` are wire-visible today, but `src/components/agenda/StatusPanel.tsx` — the Status view that already renders the rest of `StatusInfo` — does not read either field, so a nonzero drop count produces no status indicator. There is also no exposed Tauri command to force a retry-queue flush from the frontend (`Materializer::flush_background` exists but is only called from test code, e.g. `src-tauri/src/commands/journal.rs:546`, not from any `#[tauri::command]`). A search silently missing a recent edit is therefore indistinguishable today from the block/tag/page not existing — no cue, no manual "rebuild now" path. Surfacing this (a status indicator when `bg_dropped > 0` with pending retry-queue rows, and/or a search-results banner while `fts_blocks` has pending rebuilds, and a manual flush action) is frontend + command work tracked by #2471 and is **not** done by this documentation change.
 
 ### Crash recovery (boot)
 

@@ -115,9 +115,34 @@ Cross-device staleness is NOT judged from `heads`; that is the `loro_vvs`
 job — the version vectors shape the per-space delta and the
 `from_vv`-reachability gate in `apply_remote` catches an unbridgeable gap
 (see [`SnapshotFallbackRequested`](#snapshotfallbackrequested)). An in-code
-TODO (#87 §10.5) tracks retiring the op-log-seq heads check in favour of
-persisted per-peer version vectors, which would collapse both jobs onto one
-frontier type.
+TODO (`sync_protocol/operations.rs:92-96`, #87 §10.5) tracks retiring the
+op-log-seq heads check in favour of persisted per-peer version vectors,
+which would collapse both jobs onto one frontier type — **tracked by #2502**,
+which schedules persisting `peer_refs.loro_vv_bytes` and dropping the
+op-log-seq lookup from `check_reset_required` entirely. This section
+documents the dual system as it exists **today**; #2502 is the forward
+pointer for its planned retirement, not a description of current behavior.
+
+**Divergence within one device: op_log ahead of engine (#2475).** The
+dangerous divergence isn't heads-vs-VVs in flight between two devices —
+both frontiers on a healthy device already agree, because both are
+derived from the same locally-applied ops. It's **op_log vs. engine on
+one device**: the `sql_only` fallback path
+(`SqlOnlyFallbackReason::SpaceUnresolved`,
+`src-tauri/src/materializer/handlers/sql_only_fallback.rs:75`) writes an
+op's SQL projection without routing it through the per-space `LoroEngine`
+when the op's space hasn't resolved yet. A device that has taken this
+path has an op_log `seq` (and thus an advertised `heads` entry) ahead of
+what its own Loro engine — and therefore its own `loro_vvs` — can
+produce. That device cannot satisfy a peer's incremental-update request
+for the ops it claims to have: the peer's `from_vv`-reachability check
+sees a floor the device's own export can't back. The single-recovery-path
+design in this spec absorbs this into the same `ResetRequired` /
+`SnapshotFallbackRequested` machinery used for ordinary staleness (see
+[Snapshot-fallback flow](#snapshot-fallback-flow) and
+["Fate of the initiator's local state"](#fate-of-the-initiators-local-state-2474)
+above) — op_log-ahead-of-engine resolves via reset, the same as any other
+unbridgeable gap, not as a silently-diverging third state.
 
 ### `SyncMessage::LoroSync`
 
