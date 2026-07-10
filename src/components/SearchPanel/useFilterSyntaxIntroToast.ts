@@ -14,8 +14,8 @@ import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { notify } from '@/lib/notify'
+import { getPref, PREFS, setPref } from '@/lib/preferences'
 
-const FILTER_SYNTAX_INTRO_TOAST_FLAG = 'agaric:searchFilterSyntaxToast:v1'
 let filterSyntaxToastShownThisSession = false
 
 export function useFilterSyntaxIntroToast(): void {
@@ -23,16 +23,12 @@ export function useFilterSyntaxIntroToast(): void {
   useEffect(() => {
     if (filterSyntaxToastShownThisSession) return
     filterSyntaxToastShownThisSession = true
-    try {
-      if (localStorage.getItem(FILTER_SYNTAX_INTRO_TOAST_FLAG)) return
-      notify(t('search.filterSyntaxIntro'))
-      localStorage.setItem(FILTER_SYNTAX_INTRO_TOAST_FLAG, '1')
-    } catch {
-      // localStorage unavailable; the session-scoped flag above is what
-      // actually gates re-fires within this session, and the toast was
-      // shown once on the first mount where this branch ran — that's the
-      // best we can do without storage.
-      notify(t('search.filterSyntaxIntro'))
-    }
+    // A read/write failure (localStorage unavailable) is logged and
+    // swallowed by getPref/setPref; the session-scoped flag above is what
+    // actually gates re-fires within this session either way, so the toast
+    // still shows exactly once per session even without storage.
+    if (getPref(PREFS.filterSyntaxIntroToastShown)) return
+    notify(t('search.filterSyntaxIntro'))
+    setPref(PREFS.filterSyntaxIntroToastShown, true)
   }, [t])
 }
