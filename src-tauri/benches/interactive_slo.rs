@@ -24,12 +24,12 @@
 //!
 //! ## Problem-command gating
 //!
-//! Two commands currently violate the 200 ms budget (`list_page_links`
-//! ~1.3 s, `list_projected_agenda` ~620 ms — see the *known to exceed
-//! budget* note in `docs/architecture/operations.md` § Product SLO).
-//! Their bench fns are present in this file with the *aspirational*
-//! 200 ms budget, but are gated behind the `SLO_INCLUDE_PROBLEM` env
-//! var so they don't fail CI today. To run them locally:
+//! The problem tier now holds only measurement probes (the #2508
+//! tags_cache / pages_cache direct-query cases), gated behind the
+//! `SLO_INCLUDE_PROBLEM` env var so they don't fail CI. The two former
+//! problem commands (`list_page_links`, `list_projected_agenda`) were
+//! promoted to the green tier after the nightly lane confirmed them
+//! under budget (#2178). To run the gated probes locally:
 //!
 //! ```text
 //! SLO_INCLUDE_PROBLEM=1 cargo bench --bench interactive_slo
@@ -1394,17 +1394,13 @@ fn bench_revert_ops_50op_at_100k(c: &mut Criterion) {
 /// #2070: migration 0096 denormalised the residual `deleted_at` /
 /// `block_type = 'page'` predicates into the cache flags so the unscoped read
 /// is now a single `idx_page_link_cache_live` scan with ZERO `blocks` joins.
-/// The under-budget win is EXPECTED but not yet confirmed — the 100K bench is
-/// not runnable in the dev sandbox, so it must be verified on the nightly
-/// bench-compile lane (`SLO_INCLUDE_PROBLEM=1`). The skip-gate therefore stays
-/// IN PLACE here — this PR does not promote the row to the green tier; that
-/// flip is a separate change once the nightly lane confirms the budget.
+/// #2178: CONFIRMED on the nightly lane after the #2529 20K count-then-cap
+/// (dispatch 29122903173, main@66e4e1e): 84.14 ms @ 100K against the 200 ms
+/// budget (pre-cap samples: 557-635 ms). Promoted to the green tier; the
+/// history above records why it spent time gated.
 fn bench_list_page_links(c: &mut Criterion) {
     const BUDGET_MS: f64 = 200.0;
 
-    if problem_skipped("list_page_links @ 100K") {
-        return;
-    }
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "slo_page_links"));
@@ -1447,7 +1443,7 @@ fn bench_list_page_links(c: &mut Criterion) {
     });
     group.finish();
 
-    assert_under_budget_deferred("list_page_links @ 100K", &acc, BUDGET_MS);
+    assert_under_budget("list_page_links @ 100K", &acc, BUDGET_MS);
 }
 
 /// `list_projected_agenda` — repeating-task projection over 100K rows.
@@ -1462,17 +1458,15 @@ fn bench_list_page_links(c: &mut Criterion) {
 /// (`list_projected_agenda_on_the_fly`) now carries a superset date-overlap
 /// PREFILTER that drops blocks which provably cannot project into
 /// `[range_start, range_end]` BEFORE the Rust expansion, shrinking the
-/// expansion set. The 100K bench is not runnable in this environment, so
-/// the `problem_skipped` gate stays IN PLACE — SLO confirmation is deferred
-/// to the nightly lane, which runs the real 100K fixture against the budget.
+/// expansion set.
 ///
-/// TODO: drop the `problem_skipped` gate once the nightly lane confirms the
-/// #2069 prefilter brings `list_projected_agenda @ 100K` under the 200ms SLO.
+/// #2178: CONFIRMED on the nightly lane (dispatch 29122903173,
+/// main@66e4e1e): 181.33 ms @ 100K against the 200 ms budget (earlier
+/// samples straddled the line at 214-234 ms on runner variance). Promoted
+/// to the green tier at 91% of budget — if runner variance reds this row,
+/// see the budget re-calibration discussion in #2298.
 fn bench_list_projected_agenda(c: &mut Criterion) {
     const BUDGET_MS: f64 = 200.0;
-    if problem_skipped("list_projected_agenda @ 100K") {
-        return;
-    }
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "slo_projected_agenda"));
@@ -1511,7 +1505,7 @@ fn bench_list_projected_agenda(c: &mut Criterion) {
     });
     group.finish();
 
-    assert_under_budget_deferred("list_projected_agenda @ 100K", &acc, BUDGET_MS);
+    assert_under_budget("list_projected_agenda @ 100K", &acc, BUDGET_MS);
 }
 
 /// #2508 scope item 1 — the `DESIRED_TAGS_SQL` projection from
@@ -1712,12 +1706,12 @@ criterion_group!(
     bench_export_page_markdown,
     bench_revert_ops_50op_at_100k,
     bench_create_block,
+    bench_list_page_links,
+    bench_list_projected_agenda,
 );
 
 criterion_group!(
     slo_problem,
-    bench_list_page_links,
-    bench_list_projected_agenda,
     bench_tags_cache_direct_query,
     bench_pages_cache_counts_direct_query,
     problem_tier_verdict,
