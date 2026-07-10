@@ -1,0 +1,48 @@
+-- #2201 (Tier-3 item 6): expression index for the property-reverse lookup in
+-- reverse/property_ops.rs (`previous_property_state`).
+--
+-- The hot query is:
+--   SELECT op_type, payload FROM op_log
+--    WHERE block_id = ?1
+--      AND json_extract(payload, '$.key') = ?2
+--      AND op_type IN ('set_property', 'delete_property')
+--      AND (created_at < ?3
+--           OR (created_at = ?3 AND (seq < ?4 OR (seq = ?4 AND device_id < ?5))))
+--    ORDER BY created_at DESC, seq DESC, device_id DESC
+--    LIMIT 1;
+--
+-- `idx_op_log_block_created (block_id, created_at)` (migration 0095) covers the
+-- block_id + created_at bound, but the `json_extract(payload,'$.key')` equality
+-- has no supporting index, so SQLite evaluated it per candidate row, and the
+-- `(created_at, seq, device_id)` tie-break still forced a temp b-tree sort for
+-- the LIMIT 1.
+--
+-- This expression index leads with the two equality columns
+-- (block_id, json_extract(payload,'$.key')) then carries the FULL canonical
+-- order tuple (created_at, seq, device_id). SQLite must reference the
+-- byte-identical expression `json_extract(payload, '$.key')` to use it — the
+-- query does. With this index the planner does an equality seek on
+-- (block_id, key), walks (created_at, seq, device_id) in order, and stops at
+-- LIMIT 1 with NO temp b-tree sort.
+--
+-- EXPLAIN QUERY PLAN, before:
+--   SEARCH op_log USING INDEX idx_op_log_block_created (block_id=? AND created_at<?)
+--   USE TEMP B-TREE FOR RIGHT PART OF ORDER BY
+-- after:
+--   SEARCH op_log USING INDEX idx_op_log_block_key_created
+--     (block_id=? AND <expr>=? AND created_at<?)
+--   (no temp b-tree)
+--
+-- PARTIAL index: op_log is an append-only, very hot table and the vast majority
+-- of its rows are NOT property ops (their `json_extract(payload,'$.key')` is
+-- NULL). Restricting the index to `op_type IN ('set_property','delete_property')`
+-- keeps only the property-op minority in the b-tree, so the per-insert write
+-- cost falls on non-property appends. The hot query filters on exactly this
+-- `op_type IN (...)` set, so SQLite still uses the partial index with the same
+-- sort-free plan above. (Keep the index's WHERE in sync with that query's
+-- op_type filter — the two are intentionally coupled.)
+--
+-- Additive index only: query results are byte-identical, just faster.
+CREATE INDEX IF NOT EXISTS idx_op_log_block_key_created
+    ON op_log (block_id, json_extract(payload, '$.key'), created_at, seq, device_id)
+    WHERE op_type IN ('set_property', 'delete_property');

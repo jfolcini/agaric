@@ -391,4 +391,113 @@ mod tests_m64 {
         assert_eq!(lower.value_date, upper.value_date);
         assert_eq!(lower.value_ref, upper.value_ref);
     }
+
+    /// #2201 Tier-3 item 6: the reverse lookup gained an expression index
+    /// `idx_op_log_block_key_created` on
+    /// `(block_id, json_extract(payload,'$.key'), created_at, seq, device_id)`
+    /// (migration 0098). The index is purely additive — it must not change
+    /// which prior row `find_prior_property` selects. This drives a
+    /// `Set -> Delete -> Set` history for a single key and asserts the reverse
+    /// of every op is byte-identical to the pre-index semantics:
+    ///   * reverse of the FINAL set  -> DeleteProperty (property was absent,
+    ///     having been deleted before the final set),
+    ///   * reverse of the delete     -> SetProperty("A") (the first set),
+    ///   * reverse of the FIRST set  -> DeleteProperty (no prior op at all).
+    /// A decoy op on a different key at a later timestamp guards against the
+    /// index widening the equality seek past the `$.key` predicate.
+    #[tokio::test]
+    async fn reverse_across_set_delete_set_history_is_index_stable() {
+        let (pool, _dir) = test_pool().await;
+        let blk = || BlockId::test_id("BLK_2201_IDX");
+
+        // 1) Set space="A".
+        let first_set = append_op(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: blk(),
+                key: "space".into(),
+                value_text: Some("A".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+                value_bool: None,
+            }),
+            1_736_942_400_000,
+        )
+        .await;
+
+        // 2) Delete space.
+        let delete = append_op(
+            &pool,
+            OpPayload::DeleteProperty(DeletePropertyPayload {
+                block_id: blk(),
+                key: "space".into(),
+            }),
+            1_736_942_430_000,
+        )
+        .await;
+
+        // Decoy: a DIFFERENT key on the SAME block at a later ts. If the
+        // expression index let the `$.key` equality leak, this row could be
+        // surfaced by the ORDER BY for the `space` lookups below.
+        append_op(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: blk(),
+                key: "title".into(),
+                value_text: Some("decoy".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+                value_bool: None,
+            }),
+            1_736_942_445_000,
+        )
+        .await;
+
+        // 3) Set space="a" (final).
+        let final_set = append_op(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: blk(),
+                key: "space".into(),
+                value_text: Some("a".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+                value_bool: None,
+            }),
+            1_736_942_460_000,
+        )
+        .await;
+
+        // Reverse of the final set: prior state is ABSENT (deleted), so the
+        // reverse must be a DeleteProperty, NOT a resurrected SetProperty("A").
+        match reverse_set_property(&pool, &final_set).await.unwrap() {
+            OpPayload::DeleteProperty(p) => {
+                assert_eq!(p.block_id, "BLK_2201_IDX");
+                assert_eq!(p.key, "space");
+            }
+            other => panic!("expected DeleteProperty for final set, got {other:?}"),
+        }
+
+        // Reverse of the delete: prior is the first set, value "A".
+        match reverse_delete_property(&pool, &delete).await.unwrap() {
+            OpPayload::SetProperty(p) => {
+                assert_eq!(p.block_id, "BLK_2201_IDX");
+                assert_eq!(p.key, "space");
+                assert_eq!(p.value_text, Some("A".into()));
+            }
+            other => panic!("expected SetProperty for delete, got {other:?}"),
+        }
+
+        // Reverse of the first set: no prior op -> DeleteProperty.
+        match reverse_set_property(&pool, &first_set).await.unwrap() {
+            OpPayload::DeleteProperty(p) => {
+                assert_eq!(p.block_id, "BLK_2201_IDX");
+                assert_eq!(p.key, "space");
+            }
+            other => panic!("expected DeleteProperty for first set, got {other:?}"),
+        }
+    }
 }
