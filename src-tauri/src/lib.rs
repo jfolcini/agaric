@@ -214,6 +214,10 @@ macro_rules! agaric_commands {
             $crate::commands::sync_cmds::cancel_pairing,
             $crate::commands::sync_cmds::start_sync,
             $crate::commands::sync_cmds::cancel_sync,
+            // #2506 — mDNS-disabled status backfill for the peers/
+            // device-management surface (its `sync:mdns_disabled` listener
+            // may register after the sync daemon already emitted).
+            $crate::commands::sync_cmds::get_mdns_status,
             // Batch count commands (#604)
             $crate::commands::agenda::count_agenda_batch,
             $crate::commands::agenda::count_agenda_batch_by_source,
@@ -2073,6 +2077,17 @@ pub fn run() {
                 scheduler,
                 &lifecycle,
             );
+
+            // #2506: register the mDNS-status managed state BEFORE the daemon
+            // spawns below, so `TauriEventSink::on_sync_event` can always
+            // find it via `try_state` the moment mDNS init runs (which can
+            // happen almost immediately if peers already exist —
+            // `start_if_peers_exist_with_lifecycle` skips dormant mode).
+            // `get_mdns_status` resolves this state for a frontend that
+            // mounts after that first emission.
+            app.manage(sync_events::MdnsStatusState(std::sync::Mutex::new(
+                sync_events::MdnsStatus::default(),
+            )));
 
             // Install rustls + spawn the SyncDaemon (#382/#383/#278).
             let daemon_wiring = SyncDaemonWiring {

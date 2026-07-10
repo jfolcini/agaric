@@ -26,6 +26,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
+import { useMdnsStatus } from '@/hooks/useMdnsStatus'
 import { mapPeerRefToInfo } from '@/hooks/useSyncTrigger'
 import { useSyncWithTimeout } from '@/hooks/useSyncWithTimeout'
 import { writeText } from '@/lib/clipboard'
@@ -90,6 +91,7 @@ export function DeviceManagement(): React.ReactElement {
   const [renamePeerId, setRenamePeerId] = useState<string | null>(null)
   const [, setTick] = useState(0)
   const { execute: executeSyncWithTimeout } = useSyncWithTimeout()
+  const mdnsStatus = useMdnsStatus()
 
   // #437: Auto-clear stale errors after 10 seconds
   useEffect(() => {
@@ -301,6 +303,22 @@ export function DeviceManagement(): React.ReactElement {
                   </Button>
                 </dd>
               </dl>
+
+              {/* #2506 — mDNS-disabled banner. Only rendered once the daemon
+                  has actually reported a failed init (live event or
+                  mount-time backfill); the always-on hint below covers the
+                  general "mDNS might be unavailable" case. */}
+              {mdnsStatus.disabled && (
+                <p
+                  className="mdns-disabled-hint text-xs text-destructive mb-4"
+                  // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level banner with mb-4 stacking; native <output> is inline-level and would collapse it
+                  role="status"
+                  data-testid="mdns-disabled-hint"
+                >
+                  <Globe className="inline h-3 w-3 mr-1 align-text-bottom" />
+                  {t('device.mdnsDisabledHint', { reason: mdnsStatus.reason ?? '' })}
+                </p>
+              )}
 
               {/* Manual IP hint */}
               <p className="manual-ip-hint text-xs text-muted-foreground mb-4">

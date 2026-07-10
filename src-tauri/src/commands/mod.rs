@@ -167,9 +167,10 @@ pub use spaces::{
 pub use sync_cmds::{
     cancel_pairing, cancel_pairing_inner, cancel_sync, cancel_sync_inner, confirm_pairing,
     confirm_pairing_inner, delete_peer_ref, delete_peer_ref_inner, get_device_id,
-    get_device_id_inner, get_peer_ref, get_peer_ref_inner, list_peer_refs, list_peer_refs_inner,
-    set_peer_address, set_peer_address_inner, start_pairing, start_pairing_armed_inner,
-    start_pairing_inner, start_sync, start_sync_inner, update_peer_name, update_peer_name_inner,
+    get_device_id_inner, get_mdns_status, get_peer_ref, get_peer_ref_inner, list_peer_refs,
+    list_peer_refs_inner, set_peer_address, set_peer_address_inner, start_pairing,
+    start_pairing_armed_inner, start_pairing_inner, start_sync, start_sync_inner, update_peer_name,
+    update_peer_name_inner,
 };
 pub use tags::{
     add_tag, add_tag_inner, add_tags_by_ids, add_tags_by_ids_inner, list_all_tags_in_space,
@@ -271,9 +272,9 @@ pub use spaces::{
 #[doc(hidden)]
 pub use sync_cmds::{
     __specta__fn__cancel_pairing, __specta__fn__cancel_sync, __specta__fn__confirm_pairing,
-    __specta__fn__delete_peer_ref, __specta__fn__get_device_id, __specta__fn__get_peer_ref,
-    __specta__fn__list_peer_refs, __specta__fn__set_peer_address, __specta__fn__start_pairing,
-    __specta__fn__start_sync, __specta__fn__update_peer_name,
+    __specta__fn__delete_peer_ref, __specta__fn__get_device_id, __specta__fn__get_mdns_status,
+    __specta__fn__get_peer_ref, __specta__fn__list_peer_refs, __specta__fn__set_peer_address,
+    __specta__fn__start_pairing, __specta__fn__start_sync, __specta__fn__update_peer_name,
 };
 #[doc(hidden)]
 pub use tags::{
@@ -362,8 +363,8 @@ pub use spaces::{__cmd__create_page_in_space, __cmd__create_space, __cmd__list_s
 #[doc(hidden)]
 pub use sync_cmds::{
     __cmd__cancel_pairing, __cmd__cancel_sync, __cmd__confirm_pairing, __cmd__delete_peer_ref,
-    __cmd__get_device_id, __cmd__get_peer_ref, __cmd__list_peer_refs, __cmd__set_peer_address,
-    __cmd__start_pairing, __cmd__start_sync, __cmd__update_peer_name,
+    __cmd__get_device_id, __cmd__get_mdns_status, __cmd__get_peer_ref, __cmd__list_peer_refs,
+    __cmd__set_peer_address, __cmd__start_pairing, __cmd__start_sync, __cmd__update_peer_name,
 };
 #[doc(hidden)]
 pub use tags::{

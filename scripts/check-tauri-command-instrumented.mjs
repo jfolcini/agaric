@@ -73,6 +73,7 @@ const ALLOWLIST = new Map([
   ['mcp.rs:mcp_disconnect_all', 'fire-and-forget disconnect signal, returns Ok(())'],
   ['mcp.rs:mcp_rw_disconnect_all', 'fire-and-forget disconnect signal, returns Ok(())'],
   ['recovery.rs:get_recovery_status', 'clones a lock-guarded boot-status value'],
+  ['sync_cmds.rs:get_mdns_status', 'clones a lock-guarded mDNS-status value (#2506)'],
 
   // ── Instrumented via a cross-module helper the in-file resolver can't see ──
   [

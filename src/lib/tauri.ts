@@ -37,6 +37,7 @@ export type {
   GroupSpec,
   HistoryEntry,
   ImportProgressUpdate,
+  MdnsStatus,
   MoveResponse,
   PageHeading,
   PageResponse,
@@ -98,6 +99,7 @@ import type {
   GroupedBacklinkResponse,
   HistoryEntry,
   ImportProgressUpdate,
+  MdnsStatus,
   MoveResponse,
   PageHeading,
   PageResponse,
@@ -2323,6 +2325,17 @@ export async function flushAllDrafts(): Promise<FlushAllDraftsResult> {
  */
 export async function getRecoveryStatus(): Promise<RecoveryStatus> {
   return unwrap(await commands.getRecoveryStatus())
+}
+
+/**
+ * #2506: read the current mDNS peer-discovery status. Used by
+ * `useMdnsStatus` to backfill the "discovery unavailable" signal on
+ * mount — the sync daemon can emit `sync:mdns_disabled` before the
+ * webview registers its listener (same boot race `getRecoveryStatus`
+ * covers for `recovery:degraded`), so the live event can be missed.
+ */
+export async function getMdnsStatus(): Promise<MdnsStatus> {
+  return unwrap(await commands.getMdnsStatus())
 }
 
 /** Delete a draft for a block (e.g. after a successful normal save). */

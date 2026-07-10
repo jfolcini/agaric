@@ -3,7 +3,7 @@
 //! The [`SyncEventSink`] trait decouples the [`SyncOrchestrator`](crate::sync_protocol::SyncOrchestrator)
 //! from Tauri, allowing tests to capture events without an `AppHandle`.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use specta::Type;
 
 // ---------------------------------------------------------------------------
@@ -140,6 +140,37 @@ pub const EVENT_SYNC_ERROR: &str = "sync:error";
 /// Payload is [`SyncEvent::MdnsDisabled`].
 pub const EVENT_SYNC_MDNS_DISABLED: &str = "sync:mdns_disabled";
 
+// ---------------------------------------------------------------------------
+// mDNS status (#2506) — backfill for the peers/device-management surface
+// ---------------------------------------------------------------------------
+
+/// #2506: durable, user-visible mDNS peer-discovery status.
+///
+/// Derived from the [`SyncEvent::MdnsDisabled`] event (whose `reason` field
+/// it mirrors) and returned by the `get_mdns_status` command so a frontend
+/// that mounts after the sync daemon already emitted the event (same boot
+/// race as `recovery:degraded`, see [`crate::recovery::RecoveryStatus`])
+/// can still discover the disabled state. `disabled = false` (the default)
+/// means either mDNS is working or the daemon has not attempted to
+/// initialize it yet (e.g. still dormant, waiting for the first pairing).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct MdnsStatus {
+    /// `true` once mDNS initialization has failed at least once.
+    pub disabled: bool,
+    /// The failure reason from the most recent init attempt (the same
+    /// string carried by [`SyncEvent::MdnsDisabled`]). `None` while
+    /// `disabled` is `false`.
+    pub reason: Option<String>,
+}
+
+/// #2506: managed-state holder for the current [`MdnsStatus`].
+///
+/// Written by [`TauriEventSink::on_sync_event`] whenever a
+/// `SyncEvent::MdnsDisabled` is emitted, and read by the `get_mdns_status`
+/// command. Wrapped in a `Mutex` only to satisfy `Send + Sync` for Tauri
+/// managed state — mirrors `recovery::RecoveryStatusState`.
+pub struct MdnsStatusState(pub std::sync::Mutex<MdnsStatus>);
+
 /// Event emitted when block properties change (for panel invalidation).
 pub const EVENT_PROPERTY_CHANGED: &str = "block:properties-changed";
 
@@ -178,7 +209,7 @@ pub struct TauriEventSink<R: tauri::Runtime>(pub tauri::AppHandle<R>);
 
 impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
     fn on_sync_event(&self, event: SyncEvent) {
-        use tauri::Emitter;
+        use tauri::{Emitter, Manager};
         let event_name = match &event {
             SyncEvent::Progress { .. } => EVENT_SYNC_PROGRESS,
             SyncEvent::Complete { .. } => EVENT_SYNC_COMPLETE,
@@ -196,6 +227,23 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
             // source — so this sink drops it.
             SyncEvent::SnapshotProgress { .. } => return,
         };
+
+        // #2506: persist the mDNS status into managed state BEFORE emitting
+        // so `get_mdns_status` backfills a frontend whose `sync:mdns_disabled`
+        // listener registers after this emission (the daemon can start
+        // before the webview finishes mounting, same race `recovery:degraded`
+        // has). `try_state` (not `state`) because this sink is also exercised
+        // by tests that never call `app.manage(MdnsStatusState(..))`.
+        if let SyncEvent::MdnsDisabled { reason } = &event
+            && let Some(status) = self.0.try_state::<MdnsStatusState>()
+            && let Ok(mut guard) = status.0.lock()
+        {
+            *guard = MdnsStatus {
+                disabled: true,
+                reason: Some(reason.clone()),
+            };
+        }
+
         if let Err(e) = self.0.emit(event_name, &event) {
             tracing::warn!(%event_name, error = %e, "Failed to emit sync event");
         }
@@ -687,6 +735,37 @@ mod tests {
             }
             other => panic!("expected MdnsDisabled, got {other:?}"),
         }
+    }
+
+    // ── MdnsStatus / MdnsStatusState (#2506 backfill) ───────────────
+
+    #[test]
+    fn mdns_status_default_is_not_disabled() {
+        let status = MdnsStatus::default();
+        assert!(!status.disabled);
+        assert_eq!(status.reason, None);
+    }
+
+    #[test]
+    fn mdns_status_state_round_trips_disabled() {
+        let state = MdnsStatusState(std::sync::Mutex::new(MdnsStatus {
+            disabled: true,
+            reason: Some("multicast lock missing".to_string()),
+        }));
+        let got = state.0.lock().unwrap().clone();
+        assert!(got.disabled);
+        assert_eq!(got.reason, Some("multicast lock missing".to_string()));
+    }
+
+    #[test]
+    fn mdns_status_serializes_camel_case() {
+        let status = MdnsStatus {
+            disabled: true,
+            reason: Some("sandboxed platform".to_string()),
+        };
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["disabled"], true);
+        assert_eq!(json["reason"], "sandboxed platform");
     }
 
     #[test]

@@ -3306,6 +3306,12 @@ const HANDLERS_TYPED = {
 
   cancel_sync: returnUndefined,
 
+  // #2506 — mDNS-status backfill. The mock environment has no real mDNS
+  // service, but its peer discovery is simply out of scope (not disabled)
+  // — so the mock reports the healthy default the same way a real device
+  // with working mDNS would.
+  get_mdns_status: () => ({ disabled: false, reason: null }),
+
   // ---------------------------------------------------------------------------
   // Task properties (todo/priority/due/scheduled)
   // ---------------------------------------------------------------------------
