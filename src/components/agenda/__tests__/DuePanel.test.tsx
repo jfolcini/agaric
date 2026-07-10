@@ -1384,6 +1384,78 @@ describe('DuePanel', () => {
       expect(screen.getByText(/Projected memo target/)).toBeInTheDocument()
       expect(projectedParseCount()).toBe(before)
     })
+
+    // #2200 — projected rows are rendered by a memoized <ProjectedEntryRow>
+    // (mirroring the grouped-list <BlockListItem>) so DuePanel re-renders
+    // driven by roving focus only re-render the rows whose `isFocused`
+    // changed. This guards that the memo's isFocused prop is NOT stale: the
+    // roving tab stop / focus ring must still follow ArrowDown across
+    // projected entries after the structural markup was extracted behind memo.
+    it('roving focus follows ArrowDown across memoized projected rows', async () => {
+      const user = userEvent.setup()
+      mockedListBlocks.mockResolvedValue(emptyResponse)
+      mockedListProjectedAgenda.mockResolvedValue({
+        items: [
+          {
+            block: makeBlock({
+              id: 'PROJ_A',
+              content: 'Projected A',
+              parent_id: 'PAGE_A',
+              page_id: 'PAGE_A',
+              todo_state: 'TODO',
+              due_date: '2026-04-13',
+            }),
+            projected_date: '2026-04-13',
+            source: 'due_date',
+          },
+          {
+            block: makeBlock({
+              id: 'PROJ_B',
+              content: 'Projected B',
+              parent_id: 'PAGE_B',
+              page_id: 'PAGE_B',
+              todo_state: 'TODO',
+              due_date: '2026-04-13',
+            }),
+            projected_date: '2026-04-13',
+            source: 'due_date',
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+
+      render(<DuePanel date="2026-04-13" />)
+
+      await screen.findByText(/Projected A/)
+      await screen.findByText(/Projected B/)
+
+      // flat-items order (no real blocks): [PROJ_A (0), PROJ_B (1)].
+      // focusedIndex starts at 0 → the FIRST projected row is the single tab
+      // stop and carries the focus ring; the second roves to -1.
+      let rows = screen.getAllByTestId('projected-entry')
+      expect(rows).toHaveLength(2)
+      expect(rows[0]?.getAttribute('tabindex')).toBe('0')
+      expect(rows[0]?.className).toContain('ring-2')
+      expect(rows[1]?.getAttribute('tabindex')).toBe('-1')
+      expect(rows[1]?.className).not.toContain('ring-2')
+
+      // ArrowDown moves focus to the SECOND projected row. The memoized rows
+      // must reflect the new isFocused prop (memo is not stale): the ring and
+      // the single tab stop move to row B, and row A drops both.
+      const navContainer = document.querySelector('.due-panel-content') as HTMLElement
+      navContainer.focus()
+      await user.keyboard('{ArrowDown}')
+
+      await waitFor(() => {
+        rows = screen.getAllByTestId('projected-entry')
+        expect(rows[1]?.getAttribute('tabindex')).toBe('0')
+        expect(rows[1]?.className).toContain('ring-2')
+      })
+      expect(rows[0]?.getAttribute('tabindex')).toBe('-1')
+      expect(rows[0]?.className).not.toContain('ring-2')
+    })
   })
 
   // --- Overdue blocks (#641) ---
