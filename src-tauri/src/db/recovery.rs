@@ -248,12 +248,12 @@ pub(crate) fn op_created_at_ms(row: &sqlx::sqlite::SqliteRow, fallback_ms: i64) 
 async fn persisted_engine_snapshot_count(
     executor: &mut sqlx::SqliteConnection,
 ) -> Result<i64, crate::error::AppError> {
-    let table_exists = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'loro_doc_state'"
+    let table_exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'loro_doc_state'",
     )
     .fetch_one(&mut *executor)
-    .await?
-        > 0;
+    .await?;
+    let table_exists = table_exists > 0;
 
     if !table_exists {
         return Ok(0);
