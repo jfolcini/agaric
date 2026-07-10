@@ -142,14 +142,35 @@ pub async fn apply_snapshot<R: std::io::Read>(
     materializer: &Materializer,
     compressed_reader: R,
 ) -> Result<SnapshotData, AppError> {
-    // The reader is consumed entirely inside `decode_snapshot`
-    // (zstd-streaming + ciborium) before we acquire the write lock,
-    // so the only memory in flight from this point on is the parsed
-    // `SnapshotData` itself — never the compressed bytes nor the
-    // decompressed CBOR. Production callers feed a `std::fs::File`
-    // opened on a temp file the binary stream was written into;
-    // tests still pass `&bytes[..]` (slice impls `Read`).
-    let data = decode_snapshot(compressed_reader)?;
+    // The reader is consumed entirely before we acquire the write lock.
+    //
+    // #2200: the CPU-heavy decode (blake3 checksum + zstd decompress +
+    // ciborium parse) runs on the blocking pool so a large snapshot does
+    // not stall the async runtime. `spawn_blocking` needs a
+    // `Send + 'static` payload, but the public `R: Read` bound is
+    // deliberately loose (callers pass `&bytes[..]` slices as well as
+    // `std::fs::File`), so we first drain the reader into an owned
+    // `Vec<u8>` on this task and hand that buffer to the blocking task.
+    // Memory note: this materialises the *compressed* bytes (the
+    // smallest artifact in the pipeline, and already a `Vec` for every
+    // DB-loaded caller via `get_latest_snapshot`); the decompressed
+    // CBOR still streams inside `decode_snapshot` and the only other
+    // allocation remains the parsed `SnapshotData` itself. The decode
+    // happens strictly BEFORE the write transaction below is opened, so
+    // no DB connection, transaction, or lock is held across the
+    // `spawn_blocking` await — same ordering as before.
+    let compressed = {
+        // (`read_to_end` resolves via the `R: Read` bound.)
+        let mut reader = compressed_reader;
+        let mut buf = Vec::new();
+        reader
+            .read_to_end(&mut buf)
+            .map_err(|e| AppError::Snapshot(format!("snapshot read: {e}")))?;
+        buf
+    };
+    let data = tokio::task::spawn_blocking(move || decode_snapshot(&compressed[..]))
+        .await
+        .map_err(|e| AppError::Snapshot(format!("snapshot decode task failed: {e}")))??;
 
     // F04: BEGIN IMMEDIATE — acquire write lock upfront (consistent with
     // Every other write path in the codebase). route through

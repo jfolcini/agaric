@@ -270,6 +270,10 @@ impl SyncOrchestrator {
             // replication so a capable peer may stream us `OpLogBatch`. An
             // older peer omits/ignores this flag and never sends the variant.
             op_log_replication: true,
+            // #2200: advertise support for zstd-compressed chunked LoroSync
+            // payloads so a capable responder may compress its stream. An
+            // older peer omits/ignores this flag and always sends raw.
+            loro_chunk_zstd: true,
         })
     }
 
@@ -401,6 +405,11 @@ impl SyncOrchestrator {
                 // decides whether to stream `OpLogBatch`), not by this
                 // per-session core. Ignored here.
                 op_log_replication: _,
+                // #2200: the peer's zstd capability is consumed by the
+                // sync-daemon transport layer (`sync_daemon::server` threads
+                // it into `wire::send_sync_message`), not by this
+                // per-session core. Ignored here.
+                loro_chunk_zstd: _,
             } => {
                 // Gate raw-byte Loro merges by engine format before doing any
                 // import work (#2130). An incompatible peer is rejected up

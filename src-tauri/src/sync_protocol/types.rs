@@ -269,6 +269,19 @@ pub enum SyncMessage {
     /// unknown-variant message an older peer cannot deserialize. Both sides
     /// gate their op-log audit exchange on having observed this flag from the
     /// other side.
+    ///
+    /// `loro_chunk_zstd` is the #2200 capability handshake for
+    /// zstd-compressed chunked LoroSync payloads. `true` means "I can
+    /// decompress a [`SyncMessage::LoroSyncChunked`] whose
+    /// `compressed_size_bytes` is set". Same back-compat contract as
+    /// `op_log_replication`: `#[serde(default)]` (→ `false`), so an older
+    /// initiator omits it and the responder streams the pre-#2200 raw
+    /// chunked payload, and an older responder ignores the unknown field
+    /// (it never sends compressed payloads anyway). Only the initiator
+    /// needs to advertise it: `LoroSync` payloads flow strictly
+    /// responder → initiator (the responder is the streamer), and the
+    /// initiator's `HeadExchange` is the one message the responder sees
+    /// before streaming.
     HeadExchange {
         heads: Vec<DeviceHead>,
         #[serde(default)]
@@ -277,6 +290,8 @@ pub enum SyncMessage {
         engine_format_version: u32,
         #[serde(default)]
         op_log_replication: bool,
+        #[serde(default)]
+        loro_chunk_zstd: bool,
     },
     /// Loro-CRDT-based sync wire envelope.
     ///
@@ -306,9 +321,27 @@ pub enum SyncMessage {
     /// Position in the message sequence: identical to `LoroSync`
     /// (step 2 above) — it *is* a `LoroSync`, merely re-encoded for
     /// transport.
+    ///
+    /// `compressed_size_bytes` (#2200) announces that the binary payload
+    /// following this header is **zstd-compressed**: exactly
+    /// `compressed_size_bytes` bytes travel on the wire, and they must
+    /// decompress to exactly `header.size_bytes()` bytes of raw Loro
+    /// payload (`size_bytes` keeps its pre-#2200 meaning — the
+    /// *uncompressed* payload length — which doubles as the receiver's
+    /// exact decompression-size bound). `None` means the payload is raw,
+    /// exactly the pre-#2200 encoding.
+    ///
+    /// Back-compat: the field is additive (`#[serde(default)]`, skipped
+    /// when `None`), so the uncompressed envelope stays byte-identical to
+    /// the pre-#2200 shape. A sender only sets it after the peer
+    /// advertised `HeadExchange { loro_chunk_zstd: true, .. }` — a peer
+    /// that did not advertise the capability never receives a compressed
+    /// payload it would misread as raw Loro bytes.
     LoroSyncChunked {
         header: LoroSyncChunkedHeader,
         is_last: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        compressed_size_bytes: Option<u64>,
     },
     /// #2481 phase 1 — audit-only op-log replication batch. Streams op
     /// records the peer lacks (`seq > the peer's advertised per-device

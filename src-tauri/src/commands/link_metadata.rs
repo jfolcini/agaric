@@ -1,12 +1,72 @@
 //! Link metadata command handlers.
 
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex, PoisonError};
+
 use sqlx::SqlitePool;
 use tauri::State;
+use tokio::sync::watch;
 
 use super::sanitize_internal_error;
 use crate::db::{ReadPool, WritePool};
 use crate::error::AppError;
 use crate::link_metadata::{self, LinkMetadata};
+
+// ---------------------------------------------------------------------------
+// #2200 — in-process single-flight for cold-URL fetches
+// ---------------------------------------------------------------------------
+//
+// A note pasted N times (or N link previews of the same URL rendering at
+// once) issues N concurrent `fetch_link_metadata` calls. Pre-#2200 each of
+// them independently missed the cache, fetched the page over HTTP, and
+// upserted — N network round-trips and N write-pool acquisitions for one
+// piece of data. The single-flight map below collapses them: the first
+// caller for a URL becomes the *leader* and performs the fetch + upsert;
+// every concurrent caller for the same URL becomes a *follower* that awaits
+// the leader's broadcast result on a `tokio::sync::watch` channel.
+//
+// Invariants (each pinned by a test in the module below):
+//   * the map lock is a plain `std::sync::Mutex` held only for map
+//     lookup/insert/remove — NEVER across the network await;
+//   * the entry is removed when the leader finishes, on success, error,
+//     AND panic (`InflightGuard`'s `Drop` runs during unwind), so a failed
+//     fetch can never leave a poisoned entry that blocks later retries;
+//   * followers of a leader that panicked before publishing observe the
+//     closed channel and loop back to become the new leader.
+
+/// Result broadcast from the single-flight leader to its followers. The
+/// error side is flattened to the `Display` string because [`AppError`] is
+/// not `Clone` (it wraps `sqlx::Error` / `std::io::Error`).
+type SharedFetch = Result<LinkMetadata, String>;
+
+/// In-flight fetches keyed by requested URL. The stored `Receiver` starts
+/// at `None` and is flipped to `Some(result)` exactly once by the leader.
+static INFLIGHT: LazyLock<Mutex<HashMap<String, watch::Receiver<Option<SharedFetch>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Removes the leader's in-flight entry on scope exit — including error
+/// returns and panics — so no stuck entry can outlive its fetch.
+struct InflightGuard {
+    url: String,
+}
+
+impl Drop for InflightGuard {
+    fn drop(&mut self) {
+        // A poisoned lock can only mean another thread panicked inside the
+        // short, await-free critical section; the map itself is still
+        // structurally sound, so recover it rather than propagate.
+        INFLIGHT
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&self.url);
+    }
+}
+
+/// Single-flight role decided under the map lock.
+enum FlightRole {
+    Leader(watch::Sender<Option<SharedFetch>>),
+    Follower(watch::Receiver<Option<SharedFetch>>),
+}
 
 /// Fetch metadata for a URL (HTTP fetch + store in cache).
 /// Returns cached metadata if fresh (< 7 days), otherwise fetches from network.
@@ -16,6 +76,11 @@ use crate::link_metadata::{self, LinkMetadata};
 /// from the writer pool. The `write_pool` is acquired only for the final
 /// `upsert` after a fresh fetch, keeping write contention with the
 /// materializer to the minimum necessary footprint.
+///
+/// **#2200:** cold/stale fetches for the same URL are deduplicated by an
+/// in-process single-flight (see the module note above): concurrent callers
+/// for one URL trigger exactly one HTTP fetch and one upsert; the rest
+/// await and share the leader's result.
 #[tracing::instrument(skip(read_pool, write_pool, url), err)]
 pub async fn fetch_link_metadata_inner(
     read_pool: &SqlitePool,
@@ -29,11 +94,69 @@ pub async fn fetch_link_metadata_inner(
     {
         return Ok(cached);
     }
-    // Cache miss or stale — fetch from network (no DB usage), then
-    // acquire the write pool *only* for the upsert.
-    let meta = link_metadata::fetch_metadata(&url).await?;
-    link_metadata::upsert(write_pool, &meta).await?;
-    Ok(meta)
+
+    // Cache miss or stale — single-flight the network fetch. The loop only
+    // repeats when a leader panicked before publishing (its guard already
+    // removed the entry), in which case one follower is promoted to leader.
+    loop {
+        let role = {
+            let mut map = INFLIGHT.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(rx) = map.get(&url) {
+                FlightRole::Follower(rx.clone())
+            } else {
+                let (tx, rx) = watch::channel(None);
+                map.insert(url.clone(), rx);
+                FlightRole::Leader(tx)
+            }
+            // Map lock drops here — before any await below.
+        };
+
+        match role {
+            FlightRole::Leader(tx) => {
+                // Entry removal is tied to this guard's Drop so it happens
+                // on success, error, and panic alike.
+                let _guard = InflightGuard { url: url.clone() };
+                // Fetch from network (no DB usage), then acquire the write
+                // pool *only* for the upsert — unchanged from pre-#2200.
+                let result = async {
+                    let meta = link_metadata::fetch_metadata(&url).await?;
+                    link_metadata::upsert(write_pool, &meta).await?;
+                    Ok::<_, AppError>(meta)
+                }
+                .await;
+                // Publish to followers before `_guard` drops. The map still
+                // holds a receiver here, so the send cannot fail; ignore the
+                // result defensively anyway.
+                let _ = tx.send(Some(
+                    result
+                        .as_ref()
+                        .map(Clone::clone)
+                        .map_err(ToString::to_string),
+                ));
+                return result;
+            }
+            FlightRole::Follower(mut rx) => {
+                match rx.wait_for(Option::is_some).await {
+                    Ok(published) => {
+                        let shared = published
+                            .as_ref()
+                            .cloned()
+                            .expect("wait_for(Option::is_some) yielded a Some value");
+                        drop(published);
+                        // A shared error keeps the leader's message but loses
+                        // its variant (AppError is not Clone). The entry is
+                        // already gone (or about to be) so the NEXT call for
+                        // this URL retries from scratch.
+                        return shared.map_err(AppError::Internal);
+                    }
+                    // Sender dropped without publishing: the leader panicked
+                    // and its guard removed the entry. Retry — this caller
+                    // (or another follower) becomes the new leader.
+                    Err(_) => continue,
+                }
+            }
+        }
+    }
 }
 
 /// Get cached metadata only (no network fetch).
@@ -378,6 +501,142 @@ mod tests {
         assert_eq!(
             row_count, 0,
             "no cache row should have been written for an unreachable URL"
+        );
+    }
+
+    // ==================================================================
+    // #2200 single-flight tests
+    // ==================================================================
+
+    /// #2200: N concurrent cold fetches of the SAME URL must collapse into
+    /// exactly one HTTP request; every caller receives the leader's result.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_cold_fetches_single_flight_one_request_2200() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let (pool, _dir) = test_pool().await;
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/single-flight"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(
+                        "<html><head><title>Deduped</title></head></html>"
+                            .as_bytes()
+                            .to_vec(),
+                        "text/html; charset=utf-8",
+                    )
+                    // Hold the response long enough that every spawned
+                    // caller has passed its cache check and joined the
+                    // flight before the leader completes.
+                    .set_delay(std::time::Duration::from_millis(500)),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let url = format!("{}/single-flight", server.uri());
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let pool = pool.clone();
+            let url = url.clone();
+            handles.push(tokio::spawn(async move {
+                fetch_link_metadata_inner(&pool, &pool, url).await
+            }));
+        }
+        for h in handles {
+            let meta = h
+                .await
+                .expect("caller task must not panic")
+                .expect("every concurrent caller must get the shared result");
+            assert_eq!(
+                meta.title.as_deref(),
+                Some("Deduped"),
+                "all callers must see the single fetched result"
+            );
+        }
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(
+            requests.len(),
+            1,
+            "#2200: 8 concurrent identical cold URLs must produce exactly ONE \
+             HTTP request (single-flight)"
+        );
+
+        // The flight is over — its map entry must be gone.
+        assert!(
+            !INFLIGHT.lock().unwrap().contains_key(&url),
+            "single-flight entry must be removed on completion"
+        );
+    }
+
+    /// #2200 error path: a transport-level fetch failure must remove the
+    /// single-flight entry (no poisoned stuck entries), and a subsequent
+    /// call for the same URL must retry over the network — the server sees
+    /// that second attempt.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn failed_fetch_clears_single_flight_and_retry_reaches_server_2200() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let (pool, _dir) = test_pool().await;
+
+        // Reserve a port, then drop the listener so the first fetch hits a
+        // closed port and fails at the connection level. (A non-2xx response
+        // is NOT an error for `fetch_metadata` — it returns Ok with flags —
+        // so only a transport failure exercises the error path.)
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let url = format!("http://{addr}/retry-2200");
+
+        let err = fetch_link_metadata_inner(&pool, &pool, url.clone())
+            .await
+            .expect_err("fetch against a closed port must fail");
+        assert!(
+            format!("{err}").to_lowercase().contains("error"),
+            "transport failure must surface as an error, got: {err}"
+        );
+
+        // The failure must not leave a stuck in-flight entry.
+        assert!(
+            !INFLIGHT.lock().unwrap().contains_key(&url),
+            "#2200: a failed fetch must remove its single-flight entry so \
+             later calls can retry"
+        );
+
+        // Bring a server up on the SAME address and call again: the retry
+        // must go back to the network (no poisoned entry, no cached error)
+        // and reach the server.
+        let listener = std::net::TcpListener::bind(addr).unwrap();
+        let server = MockServer::builder().listener(listener).start().await;
+        Mock::given(method("GET"))
+            .and(path("/retry-2200"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(
+                    "<html><head><title>Recovered</title></head></html>"
+                        .as_bytes()
+                        .to_vec(),
+                    "text/html; charset=utf-8",
+                ),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let meta = fetch_link_metadata_inner(&pool, &pool, url.clone())
+            .await
+            .expect("retry after a failed fetch must succeed");
+        assert_eq!(meta.title.as_deref(), Some("Recovered"));
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(
+            requests.len(),
+            1,
+            "#2200: the retry (the 2nd overall attempt) is the request the \
+             server sees — the failed first attempt must not block it"
         );
     }
 

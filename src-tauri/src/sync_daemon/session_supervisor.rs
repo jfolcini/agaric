@@ -983,8 +983,15 @@ pub(crate) async fn run_sync_session(
     // #611: all session-loop sends/recvs go through `wire::{send,recv}_sync_message`
     // so over-threshold LoroSync payloads ride the chunked binary path instead of
     // blowing the 10 MB JSON text-frame cap.
+    // #2200: the initiator never zstd-compresses its sends. The chunked
+    // LoroSync payloads compression targets flow strictly responder →
+    // initiator (only the responder streams LoroSync), and the responder
+    // never advertises a capability the initiator could observe — so
+    // `peer_accepts_zstd` is hard-wired `false` on this side. The
+    // initiator advertises ITS decompression support in the
+    // `HeadExchange` built by `orch.start()` (`loro_chunk_zstd: true`).
     let first_msg = orch.start().await?;
-    wire::send_sync_message(conn, &first_msg).await?;
+    wire::send_sync_message(conn, &first_msg, false).await?;
 
     // Exchange messages until terminal state
     while !orch.is_terminal() {
@@ -1003,10 +1010,10 @@ pub(crate) async fn run_sync_session(
                 ))
             })??;
         if let Some(response) = response {
-            wire::send_sync_message(conn, &response).await?;
+            wire::send_sync_message(conn, &response, false).await?;
             // Drain any pending op batches (B-3)
             while let Some(batch) = orch.next_message() {
-                wire::send_sync_message(conn, &batch).await?;
+                wire::send_sync_message(conn, &batch, false).await?;
             }
         } else {
             let state = &orch.session().state;

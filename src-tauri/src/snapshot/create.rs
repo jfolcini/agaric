@@ -308,7 +308,21 @@ pub async fn create_snapshot(pool: &SqlitePool, device_id: &str) -> Result<Strin
         tables,
     };
 
-    let encoded = encode_snapshot(&data)?;
+    // #2200: the CBOR + zstd encode is pure CPU and can take hundreds of
+    // milliseconds on a large vault — run it on the blocking pool so it
+    // does not stall the async runtime. This sits between the read tx
+    // (committed above) and the write tx (opened below), so no DB
+    // connection, transaction, or lock is held across this await —
+    // exactly the same window the encode occupied before. `data` is
+    // moved in and returned so the borrow is `'static`; the encode
+    // itself stays byte-for-byte identical (`encode_snapshot` is
+    // unchanged and deterministic).
+    let (data, encoded) = tokio::task::spawn_blocking(move || {
+        let encoded = encode_snapshot(&data)?;
+        Ok::<_, AppError>((data, encoded))
+    })
+    .await
+    .map_err(|e| AppError::Snapshot(format!("snapshot encode task failed: {e}")))??;
 
     // Fold the INSERT(pending) + UPDATE(complete) pair into a single
     // `BEGIN IMMEDIATE` transaction so no other connection ever observes
@@ -451,7 +465,17 @@ pub async fn compact_op_log(
         tables,
     };
 
-    let encoded = encode_snapshot(&data)?;
+    // #2200: run the pure-CPU encode on the blocking pool (see
+    // `create_snapshot` above). Phase 1's read tx is already committed
+    // and Phase 3's write tx is not yet open, so nothing DB-related is
+    // held across this await — the three-phase lock discipline this
+    // function documents is preserved unchanged.
+    let (data, encoded) = tokio::task::spawn_blocking(move || {
+        let encoded = encode_snapshot(&data)?;
+        Ok::<_, AppError>((data, encoded))
+    })
+    .await
+    .map_err(|e| AppError::Snapshot(format!("snapshot encode task failed: {e}")))??;
 
     // ── Phase 3: Write (brief BEGIN IMMEDIATE transaction) ───────────
     // Only the INSERT, UPDATE, DELETE, and cleanup happen under the

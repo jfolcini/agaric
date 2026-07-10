@@ -182,6 +182,21 @@ async fn handle_incoming_sync_inner(
     // initiator's advertised heads to run a covering check — the retired
     // CBOR offer's `remote_heads` capture is gone.
 
+    // #2200: capture the initiator's zstd capability BEFORE the
+    // orchestrator consumes `first_msg`. Every responder-side
+    // `wire::send_sync_message` below threads this flag so chunked
+    // LoroSync payloads are zstd-compressed exactly when the peer
+    // advertised it can decompress them; an older initiator omits the
+    // field (`serde(default)` → false) and receives the pre-#2200 raw
+    // encoding.
+    let peer_accepts_zstd = matches!(
+        &first_msg,
+        SyncMessage::HeadExchange {
+            loro_chunk_zstd: true,
+            ..
+        }
+    );
+
     // ── Per-peer mutual exclusion ─────────────────────────────────────────
     // We can only identify the peer after seeing the HeadExchange.
     let _peer_guard = if let SyncMessage::HeadExchange { ref heads, .. } = first_msg {
@@ -427,10 +442,10 @@ async fn handle_incoming_sync_inner(
     // ── Process first message ─────────────────────────────────────────────
     let response = orch.handle_message(first_msg).await?;
     if let Some(resp) = response {
-        super::wire::send_sync_message(&mut conn, &resp).await?;
+        super::wire::send_sync_message(&mut conn, &resp, peer_accepts_zstd).await?;
         // Drain any pending op batches (B-3)
         while let Some(batch) = orch.next_message() {
-            super::wire::send_sync_message(&mut conn, &batch).await?;
+            super::wire::send_sync_message(&mut conn, &batch, peer_accepts_zstd).await?;
         }
     }
 
@@ -457,10 +472,10 @@ async fn handle_incoming_sync_inner(
             })??;
 
         if let Some(resp) = response {
-            super::wire::send_sync_message(&mut conn, &resp).await?;
+            super::wire::send_sync_message(&mut conn, &resp, peer_accepts_zstd).await?;
             // Drain any pending op batches (B-3)
             while let Some(batch) = orch.next_message() {
-                super::wire::send_sync_message(&mut conn, &batch).await?;
+                super::wire::send_sync_message(&mut conn, &batch, peer_accepts_zstd).await?;
             }
         } else {
             let state = &orch.session().state;

@@ -6302,3 +6302,65 @@ async fn applying_the_same_snapshot_twice_is_reapplied_not_deduped_2474() {
 
     mat.shutdown();
 }
+
+/// #2200: `create_snapshot` now runs `encode_snapshot` on the blocking pool
+/// (`tokio::task::spawn_blocking`) and `apply_snapshot` runs
+/// `decode_snapshot` there too. Neither move may change the bytes or the
+/// decoded data: the stored blob must be byte-identical to a direct in-line
+/// `encode_snapshot` of the same collected data (encoding is deterministic),
+/// and the async round-trip (create → stored blob → apply) must return a
+/// `SnapshotData` identical to a direct in-line `decode_snapshot`.
+#[tokio::test]
+async fn spawn_blocking_encode_decode_round_trip_identical_2200() {
+    let (pool, _dir) = test_pool().await;
+    let device_id = "dev-2200";
+
+    insert_block(&pool, "BLOCK-2200", "spawn_blocking round-trip").await;
+    insert_op_at(&pool, device_id, "BLOCK-2200", 1_735_689_600_000).await;
+
+    // Async path: the encode happens inside spawn_blocking.
+    let snap_id = create_snapshot(&pool, device_id).await.unwrap();
+    let (stored_id, stored) = get_latest_snapshot(&pool).await.unwrap().unwrap();
+    assert_eq!(
+        stored_id, snap_id,
+        "latest snapshot must be the one just created"
+    );
+
+    // Direct path: collect the same data and encode in-line on this thread.
+    // (`create_snapshot` only writes to `log_snapshots`, which is not part
+    // of the collected tables or the op frontier, so this collection sees
+    // exactly the data the create call encoded.)
+    let mut conn = pool.acquire().await.unwrap();
+    let tables = collect_tables(&mut conn).await.unwrap();
+    let (up_to_seqs, up_to_hash) = collect_frontier(&mut conn).await.unwrap();
+    drop(conn);
+    let data = SnapshotData {
+        schema_version: SCHEMA_VERSION,
+        snapshot_device_id: device_id.to_string(),
+        up_to_seqs,
+        up_to_hash,
+        tables,
+    };
+    let direct = encode_snapshot(&data).unwrap();
+    assert_eq!(
+        stored, direct,
+        "#2200: the spawn_blocking encode must produce byte-identical output \
+         to a direct in-line encode"
+    );
+
+    // Decode side: apply_snapshot (spawn_blocking decode) must return the
+    // same SnapshotData as a direct in-line decode of the same blob.
+    let direct_decoded = decode_snapshot(&stored[..]).unwrap();
+    let (dst_pool, _dst_dir) = test_pool().await;
+    let dst_mat = test_materializer(&dst_pool);
+    let restored = apply_snapshot(&dst_pool, &dst_mat, &stored[..])
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_string(&restored).unwrap(),
+        serde_json::to_string(&direct_decoded).unwrap(),
+        "#2200: the spawn_blocking decode must equal a direct decode \
+         (compared via JSON — SnapshotData has no PartialEq)"
+    );
+    dst_mat.shutdown();
+}

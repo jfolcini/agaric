@@ -35,6 +35,27 @@
 //! helpers. The snapshot and file-transfer sub-flows keep their plain
 //! `send_json`/`recv_json` calls — their message kinds never carry
 //! Loro payloads.
+//!
+//! ## Chunked-payload zstd compression (#2200)
+//!
+//! Loro export bytes are highly compressible (structured CBOR-like
+//! framing, repeated container ids), so the chunked binary payload is
+//! zstd-compressed when — and only when — the peer advertised
+//! `HeadExchange { loro_chunk_zstd: true, .. }`. The compressed form is
+//! announced by `LoroSyncChunked::compressed_size_bytes: Some(n)`; the
+//! header's `size_bytes` keeps its pre-#2200 meaning (the
+//! *uncompressed* payload length) and doubles as the receiver's exact
+//! decompression-size bound — the decode buffer is capped at
+//! `size_bytes` (itself capped at [`MAX_LORO_SYNC_PAYLOAD_SIZE`]
+//! before any frame is read), so a decompression bomb is rejected
+//! cleanly instead of allocating unbounded memory (mirrors the
+//! `snapshot::codec` #428 guard, with an exact bound instead of a
+//! ratio bound because the true size is known here). An incompressible
+//! payload (zstd output not strictly smaller) falls back to the raw
+//! pre-#2200 encoding, so `compressed_size_bytes < size_bytes` always
+//! holds on the wire and is enforced on receive. The inline path is
+//! untouched — it must stay byte-identical for old-peer interop, and
+//! small payloads gain little from compression anyway.
 
 use crate::error::AppError;
 use crate::sync_constants::{
@@ -44,12 +65,32 @@ use crate::sync_net::SyncConnection;
 use crate::sync_protocol::SyncMessage;
 use crate::sync_protocol::loro_sync_types::LoroSyncChunkedHeader;
 
+/// zstd level for chunked LoroSync payloads (#2200). Matches the
+/// snapshot blob encoder (`snapshot::codec::encode_snapshot`, level 3):
+/// same order-of-magnitude payloads, same latency/ratio trade-off.
+const LORO_CHUNK_ZSTD_LEVEL: i32 = 3;
+
+/// Cap the zstd decompression window at 2^27 = 128 MB, mirroring
+/// `snapshot::codec::DECODER_WINDOW_LOG_MAX`. Our own level-3 encoder
+/// uses a far smaller window; this just refuses a frame whose header
+/// demands an outsized window allocation before decoding starts.
+const LORO_CHUNK_ZSTD_WINDOW_LOG_MAX: u32 = 27;
+
 /// Send one [`SyncMessage`], choosing the transport encoding.
 ///
 /// * `LoroSync` with payload `> LORO_INLINE_MAX_BYTES` → chunked
-///   header + binary frames.
+///   header + binary frames; the binary payload is zstd-compressed
+///   when `peer_accepts_zstd` is set (#2200 — the peer advertised
+///   `HeadExchange { loro_chunk_zstd: true, .. }`) and the compressed
+///   form is strictly smaller than the raw payload.
 /// * Everything else (including small `LoroSync`) → one JSON text
 ///   frame, identical to the pre-#611 wire format.
+///
+/// `peer_accepts_zstd` MUST be `false` unless the peer's capability
+/// has actually been observed — a peer that never advertised
+/// `loro_chunk_zstd` would consume the compressed bytes as raw Loro
+/// payload and fail the import on every session (a permanent
+/// mixed-version sync break).
 ///
 /// `LoroSyncChunked` is a transport-internal encoding produced only by
 /// this module; callers must always pass the plain `LoroSync` form, so
@@ -57,6 +98,7 @@ use crate::sync_protocol::loro_sync_types::LoroSyncChunkedHeader;
 pub(crate) async fn send_sync_message(
     conn: &mut SyncConnection,
     msg: &SyncMessage,
+    peer_accepts_zstd: bool,
 ) -> Result<(), AppError> {
     match msg {
         SyncMessage::LoroSync { msg: loro, is_last } => {
@@ -78,12 +120,35 @@ pub(crate) async fn send_sync_message(
                     header.size_bytes(),
                 )));
             }
+            // #2200: compress for a capable peer. Falls back to the raw
+            // encoding when zstd does not strictly shrink the payload
+            // (already-compressed content), so the receiver-side
+            // `compressed_size_bytes < size_bytes` invariant holds by
+            // construction. Compression runs inline on the session task,
+            // matching the snapshot codec's convention (level-3 zstd on
+            // a bounded payload; the session is a dedicated exchange,
+            // not a shared executor hot path).
+            let compressed = if peer_accepts_zstd {
+                let c = zstd::bulk::compress(payload, LORO_CHUNK_ZSTD_LEVEL).map_err(|e| {
+                    AppError::InvalidOperation(format!(
+                        "[sync_daemon::wire] zstd compression of LoroSync payload failed: {e}"
+                    ))
+                })?;
+                (c.len() < payload.len()).then_some(c)
+            } else {
+                None
+            };
+            let (wire_payload, compressed_size_bytes): (&[u8], Option<u64>) = match &compressed {
+                Some(c) => (c.as_slice(), Some(c.len() as u64)),
+                None => (payload, None),
+            };
             conn.send_json(&SyncMessage::LoroSyncChunked {
                 header,
                 is_last: *is_last,
+                compressed_size_bytes,
             })
             .await?;
-            conn.send_binary_chunked(payload, BINARY_FRAME_CHUNK_SIZE)
+            conn.send_binary_chunked(wire_payload, BINARY_FRAME_CHUNK_SIZE)
                 .await
         }
         SyncMessage::LoroSyncChunked { .. } => Err(AppError::InvalidOperation(
@@ -95,21 +160,74 @@ pub(crate) async fn send_sync_message(
     }
 }
 
+/// Decompress a #2200 zstd chunked payload, bounding the decoded size
+/// at exactly `expected_len` (the header's `size_bytes`, already
+/// validated `<= MAX_LORO_SYNC_PAYLOAD_SIZE` by the caller).
+///
+/// Decompression-bomb guard: the decode buffer's capacity IS the
+/// bound — `zstd::bulk::Decompressor::decompress` fails when the frame
+/// produces more than `expected_len` bytes, so a bomb is rejected
+/// after at most one over-cap write attempt instead of allocating its
+/// advertised size. A short result (frame decoded to fewer bytes than
+/// the header promised) is equally an error: `size_bytes` is the
+/// authoritative payload length the reassembled `LoroSync` must have.
+fn decompress_loro_chunk(compressed: &[u8], expected_len: u64) -> Result<Vec<u8>, AppError> {
+    let capacity = usize::try_from(expected_len).map_err(|_| {
+        AppError::InvalidOperation(format!(
+            "[sync_daemon::wire] LoroSyncChunked size_bytes {expected_len} exceeds usize"
+        ))
+    })?;
+    let mut decompressor = zstd::bulk::Decompressor::new().map_err(|e| {
+        AppError::InvalidOperation(format!(
+            "[sync_daemon::wire] zstd decompressor init failed: {e}"
+        ))
+    })?;
+    decompressor
+        .window_log_max(LORO_CHUNK_ZSTD_WINDOW_LOG_MAX)
+        .map_err(|e| {
+            AppError::InvalidOperation(format!("[sync_daemon::wire] zstd window cap failed: {e}"))
+        })?;
+    let bytes = decompressor.decompress(compressed, capacity).map_err(|e| {
+        AppError::InvalidOperation(format!(
+            "[sync_daemon::wire] zstd decompression of LoroSyncChunked payload failed \
+             (expected at most {expected_len} bytes): {e}"
+        ))
+    })?;
+    if bytes.len() as u64 != expected_len {
+        return Err(AppError::InvalidOperation(format!(
+            "[sync_daemon::wire] LoroSyncChunked payload decompressed to {} bytes but the \
+             header advertised size_bytes {expected_len}",
+            bytes.len(),
+        )));
+    }
+    Ok(bytes)
+}
+
 /// Receive one [`SyncMessage`], reassembling the chunked transport
 /// encoding back into a plain [`SyncMessage::LoroSync`].
 ///
 /// On a `LoroSyncChunked` header this consumes exactly
-/// `header.size_bytes()` of follow-up binary frames (rejecting
-/// over-run, wrong frame types, and headers advertising more than
-/// [`MAX_LORO_SYNC_PAYLOAD_SIZE`] — the latter *before* reading any
+/// `header.size_bytes()` (raw) or `compressed_size_bytes` (#2200,
+/// zstd) of follow-up binary frames — rejecting over-run, wrong frame
+/// types, and headers advertising more than
+/// [`MAX_LORO_SYNC_PAYLOAD_SIZE`] or a `compressed_size_bytes` not
+/// strictly smaller than `size_bytes`, all *before* reading any
 /// payload frame, so a runaway header cannot trigger a large
-/// allocation). All other message kinds — including the unchanged
-/// pre-#611 inline `LoroSync` shape — pass through untouched, which is
-/// what keeps old-build peers decodable.
+/// allocation. A compressed payload is accepted regardless of what we
+/// advertised (decompression support is unconditional in this build);
+/// the decoded size is bounded at exactly `size_bytes` — see
+/// [`decompress_loro_chunk`]. All other message kinds — including the
+/// unchanged pre-#611 inline `LoroSync` shape and a pre-#2200 peer's
+/// raw chunked encoding — pass through untouched, which is what keeps
+/// old-build peers decodable.
 pub(crate) async fn recv_sync_message(conn: &mut SyncConnection) -> Result<SyncMessage, AppError> {
     let msg: SyncMessage = conn.recv_json().await?;
     match msg {
-        SyncMessage::LoroSyncChunked { header, is_last } => {
+        SyncMessage::LoroSyncChunked {
+            header,
+            is_last,
+            compressed_size_bytes,
+        } => {
             let size_bytes = header.size_bytes();
             if size_bytes > MAX_LORO_SYNC_PAYLOAD_SIZE {
                 return Err(AppError::InvalidOperation(format!(
@@ -117,7 +235,26 @@ pub(crate) async fn recv_sync_message(conn: &mut SyncConnection) -> Result<SyncM
                      (max {MAX_LORO_SYNC_PAYLOAD_SIZE})",
                 )));
             }
-            let bytes = conn.receive_binary_chunked(size_bytes).await?;
+            let bytes = match compressed_size_bytes {
+                None => conn.receive_binary_chunked(size_bytes).await?,
+                Some(compressed_size) => {
+                    // #2200: the sender only compresses when it strictly
+                    // shrinks the payload, so an equal-or-larger claim is
+                    // malformed. Enforcing it here also transitively
+                    // bounds the compressed-frame allocation below
+                    // `MAX_LORO_SYNC_PAYLOAD_SIZE` (via `size_bytes`,
+                    // checked above) before any frame is read.
+                    if compressed_size >= size_bytes {
+                        return Err(AppError::InvalidOperation(format!(
+                            "[sync_daemon::wire] LoroSyncChunked header advertises \
+                             compressed_size_bytes {compressed_size} >= size_bytes \
+                             {size_bytes}; the compressed encoding must be strictly smaller",
+                        )));
+                    }
+                    let compressed = conn.receive_binary_chunked(compressed_size).await?;
+                    decompress_loro_chunk(&compressed, size_bytes)?
+                }
+            };
             Ok(SyncMessage::LoroSync {
                 msg: header.into_message(bytes),
                 is_last,
@@ -152,11 +289,19 @@ mod tests {
     /// Round-trip one message through `send_sync_message` /
     /// `recv_sync_message` over an in-memory pair, driving both ends
     /// concurrently (the duplex buffer is only 64 KB).
+    /// `peer_accepts_zstd = false` — the pre-#2200 raw wire encoding.
     async fn roundtrip(msg: SyncMessage) -> SyncMessage {
+        roundtrip_with(msg, false).await
+    }
+
+    /// [`roundtrip`] with the #2200 zstd capability flag under test
+    /// control.
+    async fn roundtrip_with(msg: SyncMessage, peer_accepts_zstd: bool) -> SyncMessage {
         let (mut a, mut b) = test_connection_pair().await;
-        let (sent, received) = tokio::join!(send_sync_message(&mut a, &msg), async {
-            recv_sync_message(&mut b).await
-        });
+        let (sent, received) =
+            tokio::join!(send_sync_message(&mut a, &msg, peer_accepts_zstd), async {
+                recv_sync_message(&mut b).await
+            });
         sent.expect("send must succeed");
         received.expect("recv must succeed")
     }
@@ -264,6 +409,7 @@ mod tests {
                 loro_vvs: vec![],
                 engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
                 op_log_replication: false,
+                loro_chunk_zstd: false,
             },
             SyncMessage::SyncComplete {
                 last_hash: "abc123".into(),
@@ -281,12 +427,14 @@ mod tests {
     /// A small `LoroSync` sent through `send_sync_message` produces
     /// the exact pre-#611 inline JSON shape — `type: "LoroSync"` with
     /// `bytes` as a plain number array — so an old-build peer decodes
-    /// it untouched.
+    /// it untouched. `peer_accepts_zstd = true` deliberately: even for
+    /// a #2200-capable peer, the inline path must stay byte-identical
+    /// (compression applies only to the chunked binary payload).
     #[tokio::test]
     async fn small_payload_keeps_pre_611_inline_wire_shape() {
         let msg = snapshot_msg(vec![0x10, 0x20, 0xff], true);
         let (mut a, mut b) = test_connection_pair().await;
-        let (sent, raw) = tokio::join!(send_sync_message(&mut a, &msg), async {
+        let (sent, raw) = tokio::join!(send_sync_message(&mut a, &msg, true), async {
             b.recv_json::<serde_json::Value>().await
         });
         sent.expect("send must succeed");
@@ -335,14 +483,17 @@ mod tests {
         assert_eq!(received.expect("decode old shape"), expected);
     }
 
-    /// An over-threshold send produces the chunked header envelope on
-    /// the wire (pin the transport shape the receiver dispatches on).
+    /// An over-threshold send to a NON-#2200 peer produces the chunked
+    /// header envelope on the wire (pin the transport shape the
+    /// receiver dispatches on) — with NO `compressed_size_bytes` key at
+    /// all, so the envelope stays byte-compatible with the pre-#2200
+    /// shape a post-#611 old peer decodes.
     #[tokio::test]
     async fn large_payload_produces_chunked_header_envelope() {
         let payload_len = LORO_INLINE_MAX_BYTES + 5;
         let msg = snapshot_msg(vec![0x42; payload_len], false);
         let (mut a, mut b) = test_connection_pair().await;
-        let (sent, result) = tokio::join!(send_sync_message(&mut a, &msg), async {
+        let (sent, result) = tokio::join!(send_sync_message(&mut a, &msg, false), async {
             let header = b.recv_json::<serde_json::Value>().await?;
             // Drain the binary payload so the sender completes.
             let bytes = b.receive_binary_chunked(payload_len as u64).await?;
@@ -356,6 +507,11 @@ mod tests {
         assert_eq!(
             header["header"]["size_bytes"],
             serde_json::json!(payload_len)
+        );
+        assert!(
+            header.get("compressed_size_bytes").is_none(),
+            "#2200: the raw chunked envelope must not carry a compressed_size_bytes key \
+             (skip_serializing_if keeps the pre-#2200 shape), got: {header}"
         );
         assert_eq!(bytes.len(), payload_len);
     }
@@ -374,6 +530,7 @@ mod tests {
                 size_bytes: MAX_LORO_SYNC_PAYLOAD_SIZE + 1,
             },
             is_last: true,
+            compressed_size_bytes: None,
         };
         a.send_json(&header).await.expect("header send");
         let err = recv_sync_message(&mut b)
@@ -397,6 +554,7 @@ mod tests {
                 size_bytes: 10,
             },
             is_last: true,
+            compressed_size_bytes: None,
         };
         a.send_json(&header).await.expect("header send");
         a.send_binary(&[0u8; 20]).await.expect("over-run frame");
@@ -421,6 +579,7 @@ mod tests {
                 size_bytes: 10,
             },
             is_last: true,
+            compressed_size_bytes: None,
         };
         a.send_json(&header).await.expect("header send");
         a.send_json(&SyncMessage::SnapshotAccept)
@@ -447,8 +606,9 @@ mod tests {
                 size_bytes: 1,
             },
             is_last: true,
+            compressed_size_bytes: None,
         };
-        let err = send_sync_message(&mut a, &msg)
+        let err = send_sync_message(&mut a, &msg, false)
             .await
             .expect_err("LoroSyncChunked must not be sendable directly");
         assert!(err.to_string().contains("transport-internal"));
@@ -465,12 +625,276 @@ mod tests {
         // pages), so this stays fast.
         let over_cap = usize::try_from(MAX_LORO_SYNC_PAYLOAD_SIZE + 1).expect("64-bit usize");
         let msg = snapshot_msg(vec![0u8; over_cap], true);
-        let err = send_sync_message(&mut a, &msg)
+        let err = send_sync_message(&mut a, &msg, false)
             .await
             .expect_err("over-cap payload must fail at the source");
         assert!(
             err.to_string().contains("too large to send"),
             "must be the sender-side cap error, got: {err}"
+        );
+    }
+
+    // ── #2200: zstd-compressed chunked payloads ───────────────────────
+
+    /// Round-trips with the peer's zstd capability advertised, across
+    /// the size spectrum: empty and small payloads (which stay on the
+    /// untouched inline path), a large compressible payload (chunked +
+    /// compressed), and a multi-frame payload larger than the raw
+    /// per-message cap.
+    #[tokio::test]
+    async fn zstd_roundtrips_empty_small_and_large_payloads() {
+        for bytes in [
+            vec![],
+            vec![0x01],
+            vec![0x10, 0x20, 0xff],
+            // Large + compressible → the compressed chunked path.
+            vec![0xab; LORO_INLINE_MAX_BYTES + 1],
+            // Larger than MAX_MSG_SIZE raw, patterned so a chunk-
+            // reassembly ordering bug cannot slip through equality.
+            (0..12_000_000u32).map(|i| (i % 251) as u8).collect(),
+        ] {
+            let msg = snapshot_msg(bytes, true);
+            assert_eq!(roundtrip_with(msg.clone(), true).await, msg);
+        }
+    }
+
+    /// Update variant (with `from_vv`) over the compressed chunked
+    /// path.
+    #[tokio::test]
+    async fn zstd_update_variant_roundtrips_chunked() {
+        let msg = SyncMessage::LoroSync {
+            msg: LoroSyncMessage::Update {
+                protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+                space_id: test_space_id(),
+                from_vv: vec![0xde, 0xad, 0xbe, 0xef],
+                bytes: vec![0xab; LORO_INLINE_MAX_BYTES + 17],
+            },
+            is_last: false,
+        };
+        assert_eq!(roundtrip_with(msg.clone(), true).await, msg);
+    }
+
+    /// An over-threshold send to a #2200-capable peer produces the
+    /// compressed envelope: `compressed_size_bytes` set (and strictly
+    /// smaller than `size_bytes`), exactly that many binary bytes on
+    /// the wire, and those bytes zstd-decompress back to the payload.
+    #[tokio::test]
+    async fn zstd_large_payload_produces_compressed_envelope() {
+        let payload_len = LORO_INLINE_MAX_BYTES + 5;
+        let payload = vec![0x42; payload_len];
+        let msg = snapshot_msg(payload.clone(), false);
+        let (mut a, mut b) = test_connection_pair().await;
+        let (sent, result) = tokio::join!(send_sync_message(&mut a, &msg, true), async {
+            let header = b.recv_json::<serde_json::Value>().await?;
+            let compressed_len = header["compressed_size_bytes"]
+                .as_u64()
+                .ok_or_else(|| AppError::InvalidOperation("no compressed_size_bytes".into()))?;
+            // Drain exactly the advertised compressed bytes so the
+            // sender completes.
+            let bytes = b.receive_binary_chunked(compressed_len).await?;
+            Ok::<_, AppError>((header, bytes))
+        });
+        sent.expect("send must succeed");
+        let (header, wire_bytes) = result.expect("header + payload recv must succeed");
+        assert_eq!(header["type"], serde_json::json!("LoroSyncChunked"));
+        assert_eq!(
+            header["header"]["size_bytes"],
+            serde_json::json!(payload_len),
+            "size_bytes must keep its pre-#2200 meaning: the UNCOMPRESSED length"
+        );
+        let compressed_len = header["compressed_size_bytes"]
+            .as_u64()
+            .expect("compressed envelope must carry compressed_size_bytes");
+        assert!(
+            compressed_len < payload_len as u64,
+            "constant payload must compress strictly smaller ({compressed_len} vs {payload_len})"
+        );
+        assert_eq!(wire_bytes.len() as u64, compressed_len);
+        let decompressed = zstd::bulk::decompress(&wire_bytes, payload_len)
+            .expect("wire bytes must be a valid zstd frame");
+        assert_eq!(decompressed, payload);
+    }
+
+    /// An incompressible payload falls back to the raw encoding even
+    /// for a zstd-capable peer (`compressed_size_bytes` absent, raw
+    /// bytes on the wire) — zstd would only inflate it.
+    #[tokio::test]
+    async fn zstd_incompressible_payload_falls_back_to_raw() {
+        // xorshift-ish PRNG bytes: high-entropy, so level-3 zstd cannot
+        // shrink them below input size + frame overhead.
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let payload: Vec<u8> = (0..LORO_INLINE_MAX_BYTES + 9)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state.to_le_bytes()[3]
+            })
+            .collect();
+        let payload_len = payload.len();
+        let msg = snapshot_msg(payload.clone(), true);
+        let (mut a, mut b) = test_connection_pair().await;
+        let (sent, result) = tokio::join!(send_sync_message(&mut a, &msg, true), async {
+            let header = b.recv_json::<serde_json::Value>().await?;
+            let bytes = b.receive_binary_chunked(payload_len as u64).await?;
+            Ok::<_, AppError>((header, bytes))
+        });
+        sent.expect("send must succeed");
+        let (header, wire_bytes) = result.expect("header + payload recv must succeed");
+        assert!(
+            header.get("compressed_size_bytes").is_none(),
+            "incompressible payload must fall back to the raw encoding, got: {header}"
+        );
+        assert_eq!(
+            wire_bytes, payload,
+            "raw fallback must ship the payload verbatim"
+        );
+    }
+
+    /// Mixed-version fallback, old sender → new receiver: a pre-#2200
+    /// peer's chunked envelope (hand-built JSON with NO
+    /// `compressed_size_bytes` field) followed by raw binary frames
+    /// still decodes.
+    #[tokio::test]
+    async fn old_peer_raw_chunked_shape_still_decodes() {
+        let payload = vec![0x5a; 64];
+        let old_shape: serde_json::Value = serde_json::json!({
+            "type": "LoroSyncChunked",
+            "header": {
+                "kind": "snapshot",
+                "protocol_version": 1,
+                "space_id": "01HZ00000000000000000000SP",
+                "size_bytes": payload.len(),
+            },
+            "is_last": true,
+        });
+        let (mut a, mut b) = test_connection_pair().await;
+        let (sent, received) = tokio::join!(
+            async {
+                a.send_json(&old_shape).await?;
+                a.send_binary(&payload).await
+            },
+            async { recv_sync_message(&mut b).await }
+        );
+        sent.expect("send must succeed");
+        let expected = snapshot_msg(payload, true);
+        assert_eq!(received.expect("decode old raw chunked shape"), expected);
+    }
+
+    /// A compressed header whose `compressed_size_bytes` is not
+    /// strictly smaller than `size_bytes` is rejected before any
+    /// binary frame is read.
+    #[tokio::test]
+    async fn compressed_size_not_smaller_is_rejected_before_payload() {
+        let (mut a, mut b) = test_connection_pair().await;
+        let header = SyncMessage::LoroSyncChunked {
+            header: LoroSyncChunkedHeader::Snapshot {
+                protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+                space_id: test_space_id(),
+                size_bytes: 10,
+            },
+            is_last: true,
+            compressed_size_bytes: Some(10),
+        };
+        a.send_json(&header).await.expect("header send");
+        let err = recv_sync_message(&mut b)
+            .await
+            .expect_err("compressed_size_bytes >= size_bytes must be rejected");
+        assert!(
+            err.to_string().contains("strictly smaller"),
+            "must be the compressed-size sanity error, got: {err}"
+        );
+    }
+
+    /// Decompression-bomb guard: a tiny compressed frame that expands
+    /// past the header-advertised `size_bytes` is rejected by the
+    /// exact-size decode bound (never allocating the bomb's true
+    /// size).
+    #[tokio::test]
+    async fn zstd_payload_expanding_past_advertised_size_is_rejected() {
+        // 8 MB of zeroes compresses to well under 1 KB — a bomb
+        // relative to the 2.4 MB the header admits to.
+        let bomb = zstd::bulk::compress(&vec![0u8; 8_000_000], 3).expect("compress bomb");
+        let advertised = (LORO_INLINE_MAX_BYTES + 1) as u64;
+        assert!(
+            (bomb.len() as u64) < advertised,
+            "bomb must fit the header claim"
+        );
+        let (mut a, mut b) = test_connection_pair().await;
+        let header = SyncMessage::LoroSyncChunked {
+            header: LoroSyncChunkedHeader::Snapshot {
+                protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+                space_id: test_space_id(),
+                size_bytes: advertised,
+            },
+            is_last: true,
+            compressed_size_bytes: Some(bomb.len() as u64),
+        };
+        a.send_json(&header).await.expect("header send");
+        a.send_binary(&bomb).await.expect("bomb frame send");
+        let err = recv_sync_message(&mut b)
+            .await
+            .expect_err("over-expanding zstd payload must be rejected");
+        assert!(
+            err.to_string().contains("decompression"),
+            "must be the bounded-decompression error, got: {err}"
+        );
+    }
+
+    /// A frame that decompresses to FEWER bytes than the header
+    /// advertised is rejected too — `size_bytes` is the authoritative
+    /// reassembled payload length.
+    #[tokio::test]
+    async fn zstd_payload_decompressing_short_is_rejected() {
+        let actual_len = LORO_INLINE_MAX_BYTES + 1;
+        let compressed =
+            zstd::bulk::compress(&vec![0xabu8; actual_len], 3).expect("compress payload");
+        let (mut a, mut b) = test_connection_pair().await;
+        let header = SyncMessage::LoroSyncChunked {
+            header: LoroSyncChunkedHeader::Snapshot {
+                protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+                space_id: test_space_id(),
+                // Advertise more than the frame actually holds.
+                size_bytes: (actual_len + 1) as u64,
+            },
+            is_last: true,
+            compressed_size_bytes: Some(compressed.len() as u64),
+        };
+        a.send_json(&header).await.expect("header send");
+        a.send_binary(&compressed)
+            .await
+            .expect("payload frame send");
+        let err = recv_sync_message(&mut b)
+            .await
+            .expect_err("short-decompressing payload must be rejected");
+        assert!(
+            err.to_string().contains("advertised size_bytes"),
+            "must be the exact-length mismatch error, got: {err}"
+        );
+    }
+
+    /// Garbage bytes where a zstd frame was announced fail cleanly.
+    #[tokio::test]
+    async fn garbage_zstd_payload_is_rejected() {
+        let garbage = vec![0x00u8; 128];
+        let (mut a, mut b) = test_connection_pair().await;
+        let header = SyncMessage::LoroSyncChunked {
+            header: LoroSyncChunkedHeader::Snapshot {
+                protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+                space_id: test_space_id(),
+                size_bytes: (LORO_INLINE_MAX_BYTES + 1) as u64,
+            },
+            is_last: true,
+            compressed_size_bytes: Some(garbage.len() as u64),
+        };
+        a.send_json(&header).await.expect("header send");
+        a.send_binary(&garbage).await.expect("garbage frame send");
+        let err = recv_sync_message(&mut b)
+            .await
+            .expect_err("non-zstd payload bytes must be rejected");
+        assert!(
+            err.to_string().contains("decompression"),
+            "must be the zstd decode error, got: {err}"
         );
     }
 
