@@ -10,7 +10,7 @@
 import { notifyUnknownNodeTypeToast } from '../editor/markdown-serialize-toast'
 import { parse, serialize } from '../editor/markdown-serializer'
 import type { BlockLevelNode } from '../editor/types'
-import { type FlatBlock, getDragDescendants } from './tree-utils'
+import { buildIndexById, type FlatBlock, getDragDescendants } from './tree-utils'
 
 // ── splitBlock helpers ───────────────────────────────────────────────────
 
@@ -122,8 +122,12 @@ export function computeIndentedBlocks(
     )
 
   const remaining = arr.filter((b) => !movedSet.has(b.id))
-  const prevSibDescendants = getDragDescendants(remaining, prevSibling.id)
-  let insertAt = remaining.findIndex((b) => b.id === prevSibling.id) + 1
+  // `remaining` is scanned twice below for prevSibling's slot (getDragDescendants
+  // + the insertion anchor). Build the id→index map once so both become O(1)
+  // lookups (#2041/#2200 — mirrors the dedent/moveDown conversion).
+  const remainingIndex = buildIndexById(remaining)
+  const prevSibDescendants = getDragDescendants(remaining, prevSibling.id, remainingIndex)
+  let insertAt = (remainingIndex.get(prevSibling.id) ?? -1) + 1
   while (
     insertAt < remaining.length &&
     prevSibDescendants.has((remaining[insertAt] as FlatBlock).id)

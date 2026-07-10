@@ -272,6 +272,28 @@ describe('computeIndentedBlocks', () => {
     expect(result).not.toBe(input)
   })
 
+  // #2200 — the prevSibling-descendants skip-loop and the insertion anchor now
+  // share one id→index map over `remaining` instead of scanning it twice for
+  // the same id (#2041/#2200, mirrors the dedent/moveDown conversion).
+  // Untouched entries must keep their exact object reference either way.
+  it('#2200 — preserves untouched entries by reference, not just by value', () => {
+    const a = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+    const a1 = makeBlock({ id: 'A1', position: 0, parent_id: 'A', depth: 1 })
+    const a2 = makeBlock({ id: 'A2', position: 1, parent_id: 'A', depth: 1 })
+    const b = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
+    const c = makeBlock({ id: 'C', position: 2, parent_id: null, depth: 0 })
+
+    const result = computeIndentedBlocks([a, a1, a2, b, c], 'B', a)
+
+    expect(result.map((x) => x.id)).toEqual(['A', 'A1', 'A2', 'B', 'C'])
+    expect(result[0]).toBe(a)
+    expect(result[1]).toBe(a1)
+    expect(result[2]).toBe(a2)
+    expect(result[4]).toBe(c)
+    // The moved block gets a new object (re-parented/re-depthed).
+    expect(result[3]).not.toBe(b)
+  })
+
   it('handles indenting a block that appears after the prevSibling subtree', () => {
     // A with existing children [A1, A2, A3], then B at root.
     const a = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })

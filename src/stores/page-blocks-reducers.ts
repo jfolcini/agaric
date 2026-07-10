@@ -215,20 +215,27 @@ export function createReducers({
     edit: async (blockId: string, content: string) => {
       const { rootParentId, blocksById } = get()
       const previousContent = blocksById.get(blockId)?.content
-      // Single-block-edit hot path (perf-review Tier 1 #2): re-allocating the
-      // entire Map per keystroke fans out to every mounted EditableBlock on a
+      // Single-block-edit hot path (perf-review Tier 1 #2, #2200): re-allocating
+      // the entire Map per keystroke fans out to every mounted EditableBlock on a
       // 2000-block page. Derive `blocksById` from the previous Map and touch
       // only the edited key — full-scan `buildBlocksById` is reserved for
-      // bulk paths (see invariant comment on `buildBlocksById`).
+      // bulk paths (see invariant comment on `buildBlocksById`). Likewise for
+      // `blocks`: locate the edited slot once (`findIndex`, short-circuits at
+      // the match) and copy-on-write only that index (`slice()` + a single
+      // assignment) instead of walking the WHOLE array through a per-element
+      // `.map()` callback on every keystroke. Unchanged entries keep their
+      // exact prior object reference either way (`.map()`'s `return b` already
+      // did that) — the win is dropping the N-callback-invocation walk, not
+      // the top-level array copy: the array reference still MUST change so
+      // Zustand/React see the update, and downstream per-row `React.memo`
+      // (SortableBlock/EditableBlock) keys off each BLOCK OBJECT's identity,
+      // which this preserves for every entry but the edited one.
       set((state) => {
-        let edited: FlatBlock | null = null
-        const blocks = state.blocks.map((b) => {
-          if (b.id !== blockId) return b
-          const next = { ...b, content }
-          edited = next
-          return next
-        })
-        if (edited == null) return { blocks }
+        const idx = state.blocks.findIndex((b) => b.id === blockId)
+        if (idx < 0) return {}
+        const edited = { ...(state.blocks[idx] as FlatBlock), content }
+        const blocks = state.blocks.slice()
+        blocks[idx] = edited
         return { blocks, blocksById: cloneBlocksByIdWith(state.blocksById, [edited]) }
       })
       try {
@@ -250,7 +257,12 @@ export function createReducers({
             const cur = state.blocksById.get(blockId)
             if (!cur || cur.content !== content) return {}
             const normalized = { ...cur, content: resp.content }
-            const blocks = state.blocks.map((b) => (b.id === blockId ? normalized : b))
+            // Same single-slot copy-on-write as the optimistic update above —
+            // avoid the full `.map()` walk for a one-block touch.
+            const idx = state.blocks.findIndex((b) => b.id === blockId)
+            if (idx < 0) return {}
+            const blocks = state.blocks.slice()
+            blocks[idx] = normalized
             return { blocks, blocksById: cloneBlocksByIdWith(state.blocksById, [normalized]) }
           })
         }
@@ -267,14 +279,13 @@ export function createReducers({
           set((state) => {
             const cur = state.blocksById.get(blockId)
             if (!cur || cur.content !== content) return {}
-            let restored: FlatBlock | null = null
-            const blocks = state.blocks.map((b) => {
-              if (b.id !== blockId) return b
-              const next = { ...b, content: previousContent }
-              restored = next
-              return next
-            })
-            if (restored == null) return { blocks }
+            const restored = { ...cur, content: previousContent }
+            // Same single-slot copy-on-write as the optimistic update above —
+            // avoid the full `.map()` walk for a one-block touch.
+            const idx = state.blocks.findIndex((b) => b.id === blockId)
+            if (idx < 0) return {}
+            const blocks = state.blocks.slice()
+            blocks[idx] = restored
             return { blocks, blocksById: cloneBlocksByIdWith(state.blocksById, [restored]) }
           })
         }
@@ -442,6 +453,12 @@ export function createReducers({
                 b.id === blockId ? Object.assign({}, b, { position: resp.new_position }) : b,
               )
             const remaining = cur.filter((b) => !movedSet.has(b.id))
+            // `remaining` can be scanned twice below for the same anchor id
+            // (getDragDescendants + the insertion anchor lookup) across the
+            // branches. Build the id→index map once so every anchor lookup
+            // here becomes an O(1) `.get()` instead of a `.findIndex()` scan
+            // (#2041/#2200 — mirrors the dedent/moveDown conversion).
+            const remainingIndex = buildIndexById(remaining)
 
             // The flat index in `remaining` of the (newIndex)-th same-parent
             // sibling; if newIndex is past the last sibling, insert after the last
@@ -453,8 +470,8 @@ export function createReducers({
             if (newIndex >= siblingsRemaining.length) {
               const lastSib = siblingsRemaining.at(-1)
               if (lastSib) {
-                const lastSibDesc = getDragDescendants(remaining, lastSib.id)
-                insertAt = remaining.findIndex((b) => b.id === lastSib.id) + 1
+                const lastSibDesc = getDragDescendants(remaining, lastSib.id, remainingIndex)
+                insertAt = (remainingIndex.get(lastSib.id) ?? -1) + 1
                 while (
                   insertAt < remaining.length &&
                   lastSibDesc.has((remaining[insertAt] as FlatBlock).id)
@@ -464,11 +481,11 @@ export function createReducers({
               } else {
                 // No remaining siblings — insert right after the parent, or at the
                 // start of the list when at root level.
-                insertAt = parentId == null ? 0 : remaining.findIndex((b) => b.id === parentId) + 1
+                insertAt = parentId == null ? 0 : (remainingIndex.get(parentId) ?? -1) + 1
               }
             } else {
               const anchor = siblingsRemaining[newIndex] as FlatBlock
-              insertAt = remaining.findIndex((b) => b.id === anchor.id)
+              insertAt = remainingIndex.get(anchor.id) ?? -1
             }
 
             const newBlocks = [...remaining]
@@ -564,7 +581,12 @@ export function createReducers({
     indent: (blockId: string) =>
       enqueueMove(blockId, async (): Promise<boolean> => {
         const { blocks, rootParentId } = get()
-        const idx = blocks.findIndex((b) => b.id === blockId)
+        // `blocks` is scanned twice below for `blockId`'s slot (this findIndex
+        // + getDragDescendants' internal lookup). Build the id→index map once
+        // so both become O(1) lookups (#2041/#2200 — mirrors the
+        // dedent/moveDown/reorder conversion).
+        const blocksIndex = buildIndexById(blocks)
+        const idx = blocksIndex.get(blockId) ?? -1
         if (idx <= 0) return false
         const block = blocks[idx]
         const prevSibling = findPrevSiblingAt(blocks, idx)
@@ -574,7 +596,7 @@ export function createReducers({
         // block's deepest descendant past MAX_BLOCK_DEPTH. After indent the
         // block sits at `prevSibling.depth + 1`; its subtree height carries the
         // rest. Short-circuit before the backend depth-limit rejection.
-        const descendants = getDragDescendants(blocks, blockId)
+        const descendants = getDragDescendants(blocks, blockId, blocksIndex)
         let subtreeHeight = 0
         for (const b of blocks) {
           if (descendants.has(b.id)) subtreeHeight = Math.max(subtreeHeight, b.depth - block.depth)
@@ -854,6 +876,15 @@ export function createReducers({
                     b.id === blockId ? Object.assign({}, b, { position: resp.new_position }) : b,
                   )
                 const remaining = cur.filter((b) => !movedSet.has(b.id))
+                // #2041/#2200 — unlike dedent/moveDown/reorder, this inserts
+                // BEFORE `prevSibling`'s own slot: in a DFS-flattened array a
+                // block's descendants always sit AFTER it, so landing at
+                // `prevSibling`'s index already lands before its whole subtree
+                // — no `getDragDescendants` skip-loop, hence no second scan of
+                // `remaining` to fold into a shared `buildIndexById` map here.
+                // A single `.findIndex` is the cheapest correct lookup; building
+                // an id→index Map to serve exactly one lookup would cost O(n)
+                // to save nothing (verified — left as-is intentionally).
                 const insertAt = remaining.findIndex((b) => b.id === prevSibling.id)
                 const newBlocks = [...remaining]
                 newBlocks.splice(insertAt, 0, ...movedItems)
