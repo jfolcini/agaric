@@ -11,23 +11,25 @@ import { useTranslation } from 'react-i18next'
 import { Input } from '@/components/ui/input'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { notify } from '@/lib/notify'
+import { PREFS } from '@/lib/preferences'
 
 const DEADLINE_WARNING_MIN = 0
 const DEADLINE_WARNING_MAX = 90
 
 export function DeadlineWarningSection(): React.ReactElement {
   const { t } = useTranslation()
-  const [days, setDays] = useLocalStoragePreference<number>('agaric:deadlineWarningDays', 0, {
-    // Legacy on-disk format is a bare integer (e.g. "5"), not JSON.
-    // Number.parseInt covers both bare and JSON-encoded ints.
-    parse: (raw) => {
-      const n = Number.parseInt(raw, 10)
-      if (!Number.isFinite(n)) throw new Error('not a number')
-      return n
+  // Key/parse/serialize sourced from PREFS.deadlineWarningDays (#2466) so
+  // this stays in lock-step with useDuePanelData's read of the same key —
+  // previously the two independently duplicated the parse logic.
+  const [days, setDays] = useLocalStoragePreference<number>(
+    PREFS.deadlineWarningDays.key,
+    PREFS.deadlineWarningDays.defaultValue,
+    {
+      parse: PREFS.deadlineWarningDays.parse,
+      serialize: PREFS.deadlineWarningDays.serialize,
+      source: 'DeadlineWarningSection',
     },
-    serialize: String,
-    source: 'DeadlineWarningSection',
-  })
+  )
 
   const handleChange = useCallback(
     (value: number) => {
