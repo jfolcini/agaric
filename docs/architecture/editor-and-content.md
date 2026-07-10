@@ -120,6 +120,28 @@ Marking a repeating task DONE rolls it forward: a synthetic new occurrence is ge
 
 The block tree uses an `IntersectionObserver` placeholder pattern (`SortableBlockWrapper`): offscreen blocks become zero-height placeholders to preserve scroll position, while keeping the React tree mounted. The focused block is never virtualised — its editor state must survive scroll. DnD overlays the placeholder pattern with `WhileDragging` measurement so drag-and-drop sees real depths.
 
+Note the phrase "keeping the React tree mounted": the IntersectionObserver pattern above is a *paint* optimization, not a *mount* one. An offscreen block stops painting, but its `SortableBlockWrapper` fiber, hooks, and listeners stay live. On a large flat page (or one the user hasn't collapsed) that means one mounted fiber per block regardless of viewport — see § Mount envelope below for the FE-side bound on that.
+
+## Mount envelope (#2467)
+
+The backend has a precise, bench-validated envelope (`docs/architecture/operations.md` § Memory footprint & scaling envelope; `interactive_slo.rs` gates CI at 100K blocks/space) and a hard per-page load cap (`PAGE_SUBTREE_MAX_BLOCKS = 10_000` in `commands/pages/listing.rs`, surfaced to the user via `blockTree.truncatedNotice`). Until #2467, the frontend had no counterpart: every block `load_page_subtree` returned was mounted as a React component, so a page anywhere near the backend's 10K cap meant 10K mounted fibers — the "full-tree mounting" cliff the frontend architecture review flagged.
+
+**What exists today (this slice):** `useBlockMountLimit` (`src/hooks/useBlockMountLimit.ts`) caps how many of the collapse-filtered rows actually mount, applied in `BlockTree.tsx` immediately after `useBlockCollapse` and before zoom/DnD/keyboard-nav — everything downstream of that point only ever sees the capped set, so the mount cap composes with collapse instead of conflicting with it.
+
+- **`INITIAL_MOUNT_LIMIT = 500`** rows mount on first render of a page.
+- **`MOUNT_LIMIT_STEP = 500`** more rows mount per click on the boundary row (`BlockListRenderer`'s `block-tree-mount-boundary`), which reports how many rows remain hidden (`blockTree.mountBoundary`, i18n-pluralised).
+- Rows beyond the limit are **not mounted at all** — not placeholders, absent from the DOM — until revealed. The limit resets when the page changes (`rootParentId`), mirroring the per-page collapse-state reset (#752); BlockTree is not remounted on page switch (journal week/month views swap pages in place), so without the reset an expanded limit on one large page would leak into the next.
+
+**These numbers are a conservative safety rail, not a measured cliff.** #2467's "Measure" phase — an e2e/bench fixture at 1K / 5K / 10K blocks/page recording mount time, keystroke latency, and splice cost — has not been run. There is no browser-measured per-block mount cost or keystroke-latency-vs-block-count curve backing `500`; it was chosen only as "comfortably below the ~10K fiber cliff, comfortably above typical page sizes" so it stays invisible for the vast majority of pages. Treat it as provisional until real numbers exist, the same epistemic stance `operations.md` takes on the (also unmeasured) per-device peak-RAM-at-N-blocks figure.
+
+**What this does NOT cover** (left for later phases, per #2467's suggested scope):
+
+- **No true virtualization.** Rows within the cap still cost a full mounted fiber each; this only bounds the ceiling, it doesn't reduce steady-state cost below it. Real windowed rendering (DOM recycling) for non-focused static rows remains open.
+- **No fold-aware lazy loading via `load_page_subtree` depth limits.** The backend command is unchanged — it still returns (and the store still holds) every block up to `PAGE_SUBTREE_MAX_BLOCKS` in one shot; the mount cap only bounds what renders from that already-loaded set. Adding a `limit`/depth parameter to `load_page_subtree` so the backend itself streams a page incrementally is a natural next phase and was deliberately left alone here (Rust command surface, out of scope for this slice).
+- **No store-level chunking.** `usePageBlockStore`'s `blocks` array still holds the full loaded set; only the render path is capped.
+- **Batch metadata IPCs are not scoped to the mounted set.** `useViewportWindow`'s `windowedBlocks` (properties/attachments/link-resolve batching, #1268) conservatively treats any never-measured block as "in window" — including mount-cap-excluded blocks, which are never measured because they're never mounted. This is a pre-existing characteristic shared with manually-collapsed subtrees (same gap, smaller blast radius before this change); scoping it to the mounted set is a cheap, low-risk follow-up.
+- **DnD across the mount boundary is not specially handled.** Dropping "after the last mounted row" is a valid position (it lands immediately before the first hidden block), so no special-casing was needed for the common case, but dragging a mounted block whose subtree extends past the boundary won't visually carry its unmounted descendants during the drag (the backend move itself is still correct — children move via `parent_id`, independent of what the FE had mounted).
+
 ## Zoom-in
 
 Block zoom is a per-block focus mode. The breadcrumb in the page header shows `Page › Section › Block`; clicking a breadcrumb segment zooms out. Zoom state is ephemeral (not persisted, not synced) — closing the page or navigating away resets to the page root.

@@ -66,6 +66,16 @@ export interface BlockListRendererProps {
   // ── Collapse / tree state ──────────────────────────────────────────
   hasChildrenSet: Set<string>
   collapsedIds: Set<string>
+
+  // ── Mount envelope (#2467) ──────────────────────────────────────────
+  /**
+   * Count of rows past the mount limit (`useBlockMountLimit`) that are not
+   * in `visibleItems` at all — not placeholders, simply unmounted. Zero for
+   * the vast majority of pages (below the cap).
+   */
+  hiddenMountCount: number
+  /** Reveals the next batch of hidden rows (mounts them). */
+  onExpandMount: () => void
 }
 
 export function BlockListRenderer({
@@ -84,6 +94,8 @@ export function BlockListRenderer({
   onContainerPointerDown,
   hasChildrenSet,
   collapsedIds,
+  hiddenMountCount,
+  onExpandMount,
 }: BlockListRendererProps): React.ReactElement {
   const { t } = useTranslation()
 
@@ -263,6 +275,12 @@ export function BlockListRenderer({
                   />
                 )
               })}
+              {/* #2467 — mount-envelope boundary. Rows beyond the mount limit
+                are not mounted at all (not placeholders); this affordance lets
+                the user reveal (mount) the next batch on demand. */}
+              {!loading && hiddenMountCount > 0 && (
+                <MountBoundaryRow hiddenCount={hiddenMountCount} onExpand={onExpandMount} />
+              )}
               {/* Sentinel droppable zone for dropping after last block */}
               {!loading && visibleItems.length > 0 && (
                 <SentinelDropZone activeId={activeId} overId={overId} projected={projected} />
@@ -322,6 +340,35 @@ function DragIndentGuides({
         )
       })}
     </div>
+  )
+}
+
+// ── Mount envelope boundary (#2467) ─────────────────────────────────────
+
+/**
+ * Renders where the mounted row list ends and the deferred (unmounted) tail
+ * begins. Clicking it mounts the next batch — the same "nothing renders
+ * until asked for" contract as expanding a collapsed block, just keyed on
+ * position in the flat list instead of collapse state.
+ */
+function MountBoundaryRow({
+  hiddenCount,
+  onExpand,
+}: {
+  hiddenCount: number
+  onExpand: () => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  return (
+    <li className="list-none m-0 p-0" data-testid="block-tree-mount-boundary">
+      <button
+        type="button"
+        className="w-full rounded-lg border border-dashed border-border bg-transparent p-2 text-sm text-muted-foreground hover:bg-accent"
+        onClick={onExpand}
+      >
+        {t('blockTree.mountBoundary', { count: hiddenCount })}
+      </button>
+    </li>
   )
 }
 
