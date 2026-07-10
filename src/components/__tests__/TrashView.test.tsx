@@ -1239,18 +1239,25 @@ describe('TrashView', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('calls purgeAllDeleted on Empty Trash confirmation', async () => {
+  // #2544 — Empty Trash must scope to the active space: it must never call
+  // the unscoped `purge_all_deleted` command, and must purge exactly the
+  // ids the space-scoped `list_trash` reported (mirroring the per-row /
+  // multi-select `purge_blocks_by_ids` path), not some other set.
+  it('calls purge_blocks_by_ids (never purge_all_deleted) with the space-scoped ids on Empty Trash confirmation', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_trash')
         return {
-          items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
+          items: [
+            makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 }),
+            makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 }),
+          ],
           next_cursor: null,
           has_more: false,
           total_count: null,
         }
       if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_all_deleted') return { affected_count: 5 }
+      if (cmd === 'purge_blocks_by_ids') return { affected_count: 2 }
       return undefined
     })
 
@@ -1265,7 +1272,107 @@ describe('TrashView', () => {
     await user.click(yesBtn)
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('purge_all_deleted')
+      expect(mockedInvoke).toHaveBeenCalledWith('purge_blocks_by_ids', {
+        blockIds: ['B1', 'B2'],
+      })
+    })
+    expect(mockedInvoke).not.toHaveBeenCalledWith('purge_all_deleted')
+  })
+
+  // #2544 (core regression) — models a real two-space backend: `list_trash`
+  // filters its fixture by the requested `scope.space_id`, so a block
+  // trashed in a DIFFERENT space than the active one must never appear in
+  // the ids handed to `purge_blocks_by_ids`. Before the fix, Empty Trash
+  // called the unscoped `purge_all_deleted` command, which would have
+  // purged 'OTHER_SPACE_BLOCK' too.
+  it('never includes another space’s trashed block id when emptying the active space’s trash', async () => {
+    const user = userEvent.setup()
+    const trashFixture = [
+      {
+        ...makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 }),
+        space: 'SPACE_TEST',
+      },
+      {
+        ...makeBlock({
+          id: 'OTHER_SPACE_BLOCK',
+          content: 'other space item',
+          deleted_at: 1736812800000,
+        }),
+        space: 'SPACE_OTHER',
+      },
+    ]
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_trash') {
+        const { scope } = args as { scope: { kind: string; space_id?: string } }
+        const items = trashFixture.filter((b) => b.space === scope.space_id)
+        return { items, next_cursor: null, has_more: false, total_count: null }
+      }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'purge_blocks_by_ids') return { affected_count: 1 }
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    await user.click(screen.getByTestId('trash-empty-trash-btn'))
+    await user.click(screen.getByRole('button', { name: /Yes/i }))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('purge_blocks_by_ids', { blockIds: ['B1'] })
+    })
+    // The other space's tombstone must never be sent to purge.
+    expect(mockedInvoke).not.toHaveBeenCalledWith(
+      'purge_blocks_by_ids',
+      expect.objectContaining({ blockIds: expect.arrayContaining(['OTHER_SPACE_BLOCK']) }),
+    )
+  })
+
+  // #2544 — a busy trash spans multiple `list_trash` pages beyond what the
+  // view has loaded (`hasMore`); Empty Trash must still purge every page's
+  // worth of ids for the active space, not just the first loaded page.
+  // Empty Trash's own space-scoped drain (`collectAllTrashRootIds`) walks
+  // the cursor chain independently of the view's own mount-time load, so
+  // the mock routes on the `cursor` argument rather than call order: both
+  // the initial mount load AND the drain's own first page land on the
+  // `cursor: null` branch, then the drain's follow-up page lands on
+  // `cursor: 'CUR'`.
+  it('drains every list_trash page for the active space before purging', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_trash') {
+        const { cursor, scope } = args as { cursor: string | null; scope: unknown }
+        expect(scope).toEqual({ kind: 'active', space_id: 'SPACE_TEST' })
+        if (cursor == null) {
+          return {
+            items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
+            next_cursor: 'CUR',
+            has_more: true,
+            total_count: null,
+          }
+        }
+        return {
+          items: [makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 })],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }
+      }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'purge_blocks_by_ids') return { affected_count: 2 }
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    await user.click(screen.getByTestId('trash-empty-trash-btn'))
+    await user.click(screen.getByRole('button', { name: /Yes/i }))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('purge_blocks_by_ids', {
+        blockIds: ['B1', 'B2'],
+      })
     })
   })
 
@@ -1280,7 +1387,7 @@ describe('TrashView', () => {
           total_count: null,
         }
       if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_all_deleted') return { affected_count: 5 }
+      if (cmd === 'purge_blocks_by_ids') return { affected_count: 5 }
       return undefined
     })
 
@@ -1306,7 +1413,7 @@ describe('TrashView', () => {
           total_count: null,
         }
       if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_all_deleted') throw new Error('DB error')
+      if (cmd === 'purge_blocks_by_ids') throw new Error('DB error')
       return undefined
     })
 
@@ -1337,18 +1444,24 @@ describe('TrashView', () => {
     ).toBeInTheDocument()
   })
 
-  it('calls restoreAllDeleted on Restore All confirmation', async () => {
+  // #2544 — Restore All must scope to the active space: it must never
+  // call the unscoped `restore_all_deleted` command, and must restore
+  // exactly the ids the space-scoped `list_trash` reported.
+  it('calls restore_blocks_by_ids (never restore_all_deleted) with the space-scoped ids on Restore All confirmation', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_trash')
         return {
-          items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
+          items: [
+            makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 }),
+            makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 }),
+          ],
           next_cursor: null,
           has_more: false,
           total_count: null,
         }
       if (cmd === 'batch_resolve') return []
-      if (cmd === 'restore_all_deleted') return { affected_count: 3 }
+      if (cmd === 'restore_blocks_by_ids') return { affected_count: 2 }
       return undefined
     })
 
@@ -1364,7 +1477,104 @@ describe('TrashView', () => {
     await user.click(restoreBtn)
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('restore_all_deleted')
+      expect(mockedInvoke).toHaveBeenCalledWith('restore_blocks_by_ids', {
+        blockIds: ['B1', 'B2'],
+      })
+    })
+    expect(mockedInvoke).not.toHaveBeenCalledWith('restore_all_deleted')
+  })
+
+  // #2544 (core regression) — mirrors the Empty Trash cross-space test:
+  // `list_trash` filters its fixture by the requested `scope.space_id`, so
+  // a block trashed in a DIFFERENT space must never be resurrected by
+  // Restore All. Before the fix, this called the unscoped
+  // `restore_all_deleted` command, which would have restored
+  // 'OTHER_SPACE_BLOCK' too.
+  it('never includes another space’s trashed block id when restoring the active space’s trash', async () => {
+    const user = userEvent.setup()
+    const trashFixture = [
+      {
+        ...makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 }),
+        space: 'SPACE_TEST',
+      },
+      {
+        ...makeBlock({
+          id: 'OTHER_SPACE_BLOCK',
+          content: 'other space item',
+          deleted_at: 1736812800000,
+        }),
+        space: 'SPACE_OTHER',
+      },
+    ]
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_trash') {
+        const { scope } = args as { scope: { kind: string; space_id?: string } }
+        const items = trashFixture.filter((b) => b.space === scope.space_id)
+        return { items, next_cursor: null, has_more: false, total_count: null }
+      }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'restore_blocks_by_ids') return { affected_count: 1 }
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    await user.click(screen.getByTestId('trash-restore-all-btn'))
+    const dialog = screen.getByRole('alertdialog')
+    await user.click(within(dialog).getByRole('button', { name: /^Restore$/i }))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('restore_blocks_by_ids', { blockIds: ['B1'] })
+    })
+    // The other space's tombstone must never be sent to restore.
+    expect(mockedInvoke).not.toHaveBeenCalledWith(
+      'restore_blocks_by_ids',
+      expect.objectContaining({ blockIds: expect.arrayContaining(['OTHER_SPACE_BLOCK']) }),
+    )
+  })
+
+  // #2544 — mirrors the Empty Trash drain test: Restore All must walk every
+  // `list_trash` page for the active space, not just the first loaded page.
+  // See the Empty Trash drain test above for why this routes on the
+  // `cursor` argument rather than call order.
+  it('drains every list_trash page for the active space before restoring', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_trash') {
+        const { cursor, scope } = args as { cursor: string | null; scope: unknown }
+        expect(scope).toEqual({ kind: 'active', space_id: 'SPACE_TEST' })
+        if (cursor == null) {
+          return {
+            items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
+            next_cursor: 'CUR',
+            has_more: true,
+            total_count: null,
+          }
+        }
+        return {
+          items: [makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 })],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }
+      }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'restore_blocks_by_ids') return { affected_count: 2 }
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    await user.click(screen.getByTestId('trash-restore-all-btn'))
+    const dialog = screen.getByRole('alertdialog')
+    await user.click(within(dialog).getByRole('button', { name: /^Restore$/i }))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('restore_blocks_by_ids', {
+        blockIds: ['B1', 'B2'],
+      })
     })
   })
 
@@ -1379,7 +1589,7 @@ describe('TrashView', () => {
           total_count: null,
         }
       if (cmd === 'batch_resolve') return []
-      if (cmd === 'restore_all_deleted') return { affected_count: 3 }
+      if (cmd === 'restore_blocks_by_ids') return { affected_count: 3 }
       return undefined
     })
 
@@ -1406,7 +1616,7 @@ describe('TrashView', () => {
           total_count: null,
         }
       if (cmd === 'batch_resolve') return []
-      if (cmd === 'restore_all_deleted') throw new Error('DB error')
+      if (cmd === 'restore_blocks_by_ids') throw new Error('DB error')
       return undefined
     })
 
@@ -1735,7 +1945,7 @@ describe('TrashView screen reader announcements', () => {
           total_count: null,
         }
       if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_all_deleted') return { affected_count: 5 }
+      if (cmd === 'purge_blocks_by_ids') return { affected_count: 5 }
       return undefined
     })
 
@@ -1762,7 +1972,7 @@ describe('TrashView screen reader announcements', () => {
           total_count: null,
         }
       if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_all_deleted') throw new Error('DB error')
+      if (cmd === 'purge_blocks_by_ids') throw new Error('DB error')
       return undefined
     })
 

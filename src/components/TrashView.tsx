@@ -39,10 +39,10 @@ import { logger } from '../lib/logger'
 import type { BlockRow, PageResponse } from '../lib/tauri'
 import {
   listTrash,
-  purgeAllDeleted,
+  purgeAllDeletedInSpace,
   purgeBlock,
   purgeBlocksByIds,
-  restoreAllDeleted,
+  restoreAllDeletedInSpace,
   restoreBlock,
   restoreBlocksByIds,
 } from '../lib/tauri'
@@ -263,9 +263,16 @@ export function TrashView(): React.ReactElement {
     }
   }, [selected, reload, clearSelection, t])
 
+  // #2544 — "Empty trash" must only touch the active space's tombstones:
+  // the view, its badge, and this very dialog's item count are all
+  // space-scoped, so the destructive action behind them must be too.
+  // `currentSpaceId == null` mirrors `queryFn`'s guard above — with no
+  // active space there is nothing loaded (and the header button that
+  // triggers this is hidden), but guard defensively anyway.
   const handleEmptyTrash = useCallback(async () => {
+    if (currentSpaceId == null) return
     try {
-      const result = await purgeAllDeleted()
+      const result = await purgeAllDeletedInSpace(currentSpaceId)
       reload()
       clearSelection()
       setConfirmEmptyTrash(false)
@@ -278,11 +285,14 @@ export function TrashView(): React.ReactElement {
       notify.error(t('trash.emptyTrashFailed'))
       announce(t('announce.emptyTrashFailed'))
     }
-  }, [reload, clearSelection, t])
+  }, [currentSpaceId, reload, clearSelection, t])
 
+  // #2544 — same space-scoping as handleEmptyTrash: "Restore all" must not
+  // resurrect trashed blocks in spaces other than the one this view shows.
   const handleRestoreAll = useCallback(async () => {
+    if (currentSpaceId == null) return
     try {
-      const result = await restoreAllDeleted()
+      const result = await restoreAllDeletedInSpace(currentSpaceId)
       reload()
       clearSelection()
       setConfirmRestoreAll(false)
@@ -295,7 +305,7 @@ export function TrashView(): React.ReactElement {
       notify.error(t('trash.restoreAllFailed'))
       announce(t('announce.restoreAllFailed'))
     }
-  }, [reload, clearSelection, t])
+  }, [currentSpaceId, reload, clearSelection, t])
 
   // ── Scroll focused item into view ────────────────────────────────
   // #740 — the list is virtualized inside `TrashListView`, which now owns

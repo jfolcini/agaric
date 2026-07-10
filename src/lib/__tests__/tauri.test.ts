@@ -83,7 +83,7 @@ import {
   logFrontend,
   moveBlock,
   paginationLimit,
-  purgeAllDeleted,
+  purgeAllDeletedInSpace,
   purgeBlock,
   purgeBlocksByIds,
   queryBacklinksFiltered,
@@ -95,7 +95,7 @@ import {
   redoPageOp,
   removeTag,
   resolvePageByAlias,
-  restoreAllDeleted,
+  restoreAllDeletedInSpace,
   restoreBlock,
   restoreBlocksByIds,
   restorePageToOp,
@@ -2646,46 +2646,141 @@ describe('exportPageMarkdown', () => {
 })
 
 // ---------------------------------------------------------------------------
-// restoreAllDeleted
+// restoreAllDeletedInSpace / purgeAllDeletedInSpace
 // ---------------------------------------------------------------------------
+//
+// #2544 — these replace the old unscoped `restoreAllDeleted` /
+// `purgeAllDeleted` wrappers, which invoked backend commands with no
+// `space_id` and acted on every space's trash. The space-scoped versions
+// drain `listTrash`'s cursor chain for the given space and hand the
+// collected root ids to `restoreBlocksByIds` / `purgeBlocksByIds` — the
+// unscoped `restore_all_deleted` / `purge_all_deleted` commands must never
+// be invoked from these wrappers.
 
-describe('restoreAllDeleted', () => {
-  it('invokes restore_all_deleted with no arguments', async () => {
-    const expected = { affected_count: 5 }
-    mockedInvoke.mockResolvedValueOnce(expected)
+describe('restoreAllDeletedInSpace', () => {
+  it('drains listTrash for the space and restores the collected root ids', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_trash') {
+        expect(args).toEqual({
+          cursor: null,
+          limit: 50,
+          scope: { kind: 'active', space_id: 'SPACE_A' },
+        })
+        return { items: [{ id: 'A1' }, { id: 'A2' }], next_cursor: null, has_more: false }
+      }
+      if (cmd === 'restore_blocks_by_ids') return { affected_count: 2 }
+      throw new Error(`unexpected invoke: ${cmd}`)
+    })
 
-    const result = await restoreAllDeleted()
+    const result = await restoreAllDeletedInSpace('SPACE_A')
 
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('restore_all_deleted')
-    expect(result).toEqual(expected)
+    expect(mockedInvoke).toHaveBeenCalledWith('restore_blocks_by_ids', {
+      blockIds: ['A1', 'A2'],
+    })
+    expect(mockedInvoke).not.toHaveBeenCalledWith('restore_all_deleted')
+    expect(result).toEqual({ affected_count: 2 })
   })
 
-  it('propagates errors from invoke', async () => {
+  it('follows the cursor chain across multiple pages before restoring', async () => {
+    let call = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_trash') {
+        call++
+        return call === 1
+          ? { items: [{ id: 'P1' }], next_cursor: 'CUR', has_more: true }
+          : { items: [{ id: 'P2' }], next_cursor: null, has_more: false }
+      }
+      if (cmd === 'restore_blocks_by_ids') return { affected_count: 2 }
+      throw new Error(`unexpected invoke: ${cmd}`)
+    })
+
+    const result = await restoreAllDeletedInSpace('SPACE_A')
+
+    expect(mockedInvoke).toHaveBeenCalledWith('restore_blocks_by_ids', {
+      blockIds: ['P1', 'P2'],
+    })
+    expect(result).toEqual({ affected_count: 2 })
+  })
+
+  it('returns affected_count 0 without calling restoreBlocksByIds when the space has no trash', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_trash') return { items: [], next_cursor: null, has_more: false }
+      throw new Error(`unexpected invoke: ${cmd}`)
+    })
+
+    const result = await restoreAllDeletedInSpace('SPACE_A')
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith('restore_blocks_by_ids', expect.anything())
+    expect(result).toEqual({ affected_count: 0 })
+  })
+
+  it('chunks batches larger than the backend cap into multiple restore_blocks_by_ids calls', async () => {
+    const ids = Array.from({ length: 1500 }, (_, i) => `B${i}`)
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_trash')
+        return { items: ids.map((id) => ({ id })), next_cursor: null, has_more: false }
+      if (cmd === 'restore_blocks_by_ids') return { affected_count: 1000 }
+      throw new Error(`unexpected invoke: ${cmd}`)
+    })
+
+    const result = await restoreAllDeletedInSpace('SPACE_A')
+
+    const restoreCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'restore_blocks_by_ids')
+    expect(restoreCalls).toHaveLength(2)
+    const call0Args = restoreCalls[0]?.[1] as { blockIds: string[] } | undefined
+    const call1Args = restoreCalls[1]?.[1] as { blockIds: string[] } | undefined
+    expect(call0Args?.blockIds).toHaveLength(1000)
+    expect(call1Args?.blockIds).toHaveLength(500)
+    expect(result).toEqual({ affected_count: 2000 })
+  })
+
+  it('propagates errors from listTrash', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('db error'))
-    await expect(restoreAllDeleted()).rejects.toThrow('db error')
+    await expect(restoreAllDeletedInSpace('SPACE_A')).rejects.toThrow('db error')
   })
 })
 
-// ---------------------------------------------------------------------------
-// purgeAllDeleted
-// ---------------------------------------------------------------------------
+describe('purgeAllDeletedInSpace', () => {
+  it('drains listTrash for the space and purges the collected root ids', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_trash') {
+        expect(args).toEqual({
+          cursor: null,
+          limit: 50,
+          scope: { kind: 'active', space_id: 'SPACE_B' },
+        })
+        return { items: [{ id: 'B1' }], next_cursor: null, has_more: false }
+      }
+      if (cmd === 'purge_blocks_by_ids') return { affected_count: 1 }
+      throw new Error(`unexpected invoke: ${cmd}`)
+    })
 
-describe('purgeAllDeleted', () => {
-  it('invokes purge_all_deleted with no arguments', async () => {
-    const expected = { affected_count: 8 }
-    mockedInvoke.mockResolvedValueOnce(expected)
+    const result = await purgeAllDeletedInSpace('SPACE_B')
 
-    const result = await purgeAllDeleted()
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('purge_all_deleted')
-    expect(result).toEqual(expected)
+    expect(mockedInvoke).toHaveBeenCalledWith('purge_blocks_by_ids', { blockIds: ['B1'] })
+    expect(mockedInvoke).not.toHaveBeenCalledWith('purge_all_deleted')
+    expect(result).toEqual({ affected_count: 1 })
   })
 
-  it('propagates errors from invoke', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('db error'))
-    await expect(purgeAllDeleted()).rejects.toThrow('db error')
+  it('returns affected_count 0 without calling purgeBlocksByIds when the space has no trash', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_trash') return { items: [], next_cursor: null, has_more: false }
+      throw new Error(`unexpected invoke: ${cmd}`)
+    })
+
+    const result = await purgeAllDeletedInSpace('SPACE_B')
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith('purge_blocks_by_ids', expect.anything())
+    expect(result).toEqual({ affected_count: 0 })
+  })
+
+  it('propagates errors from purgeBlocksByIds', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_trash') return { items: [{ id: 'B1' }], next_cursor: null, has_more: false }
+      if (cmd === 'purge_blocks_by_ids') throw new Error('db error')
+      throw new Error(`unexpected invoke: ${cmd}`)
+    })
+    await expect(purgeAllDeletedInSpace('SPACE_B')).rejects.toThrow('db error')
   })
 })
 
