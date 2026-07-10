@@ -18,31 +18,22 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { getKeyedPref, getPref, hasKeyedPref, PREFS, setKeyedPref } from '../lib/preferences'
 import type { FlatBlock } from '../lib/tree-utils'
-
-const LEGACY_STORAGE_KEY = 'collapsed_ids'
-
-function storageKeyFor(pageKey: string): string {
-  return `collapsed_ids:${pageKey}`
-}
 
 /**
  * Load persisted collapsed ids for a page. Scoped key first; falls back to
  * the legacy global key (pre-#752 data) so existing users keep their
- * collapse state until the page's first scoped write.
+ * collapse state until the page's first scoped write. `hasKeyedPref`
+ * (not merely "the scoped list is non-empty") mirrors the original
+ * presence check — a page that scoped-wrote an empty list (everything
+ * expanded) must NOT fall through to the legacy list.
  */
 function loadCollapsedIds(pageKey: string | null | undefined): Set<string> {
-  try {
-    if (pageKey) {
-      const scoped = localStorage.getItem(storageKeyFor(pageKey))
-      if (scoped) return new Set(JSON.parse(scoped) as string[])
-    }
-    const legacy = localStorage.getItem(LEGACY_STORAGE_KEY)
-    if (legacy) return new Set(JSON.parse(legacy) as string[])
-  } catch {
-    // localStorage unavailable / corrupt JSON
+  if (pageKey && hasKeyedPref(PREFS.blockCollapse, pageKey)) {
+    return new Set(getKeyedPref(PREFS.blockCollapse, pageKey))
   }
-  return new Set()
+  return new Set(getPref(PREFS.blockCollapseLegacy))
 }
 
 export interface UseBlockCollapseOptions {
@@ -104,16 +95,13 @@ export function useBlockCollapse(
       setCollapsedIdsRaw((prev) => {
         const next = updater(prev)
         if (pageKey) {
-          try {
-            // #752 — prune to ids that still exist on this page so deleted
-            // blocks (and ids inherited from the legacy global key) can't
-            // accumulate forever.
-            const known = new Set(blocksRef.current.map((b) => b.id))
-            const pruned = [...next].filter((id) => known.has(id))
-            localStorage.setItem(storageKeyFor(pageKey), JSON.stringify(pruned))
-          } catch {
-            // localStorage unavailable
-          }
+          // #752 — prune to ids that still exist on this page so deleted
+          // blocks (and ids inherited from the legacy global key) can't
+          // accumulate forever. Storage-unavailable failures are logged
+          // and swallowed by setKeyedPref.
+          const known = new Set(blocksRef.current.map((b) => b.id))
+          const pruned = [...next].filter((id) => known.has(id))
+          setKeyedPref(PREFS.blockCollapse, pruned, pageKey)
         }
         return next
       })
