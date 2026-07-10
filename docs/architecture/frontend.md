@@ -23,6 +23,37 @@ State lives in Zustand stores under `src/stores/`. One store per concern:
 
 **`useStore.getState()` inside async callbacks is intentional** — it reads fresh state instead of the closure snapshot. Don't refactor it to a hook call.
 
+## Store-action failure contract
+
+Page-block store actions (`src/stores/page-blocks-reducers.ts`, wired into the factory in `src/stores/page-blocks.ts`) never reject. Every mutating action — `createBelow`, `edit`, `remove`, `splitBlock`, `reorder`, `moveToParent`, `moveBlocks`, `indent`/`dedent`/`moveUp`/`moveDown`, `pasteBlocks` — wraps its `invoke()` call in its own `try/catch`, and on failure: (1) logs a structured error (`logger.error('page-blocks', ...)`), (2) shows a user-visible toast (`notify.error(i18n.t('error.xFailed'))`), (3) rolls back whatever optimistic write it applied (e.g. `edit` restores `previousContent` only if the live content still matches what it wrote — `page-blocks-reducers.ts` lines 259-283), and (4) **resolves, never rejects** — `false`/`void`, or (for the id-returning `createBelow`/`pasteBlocks`) `null`/`[]` (empty or partial) on failure.
+
+This is #2462 off the FE↔BE boundary review, filed after the #2451 audit found every keyboard handler's failure path was dead code (built for a throw-on-failure contract the store never had) and every existing failure test mocked the store as throwing — the #2407 class, where a Backspace-merge permanently deleted a source block whose merged content never actually saved. The regression test for that fix lives in `src/hooks/__tests__/useBlockKeyboardHandlers.test.ts` under `describe('merge honors edit() resolving false (store contract)')` — it mocks `edit: vi.fn(async () => false)`, never `mockRejectedValue`. **Any new failure-path test must mock the store the same way**: `mockResolvedValue(false)` / `vi.fn(async () => false)`, never `mockRejectedValue` — a rejecting mock tests a contract the store doesn't implement.
+
+### Boolean vs void — and why
+
+Actions whose result gates a caller's follow-up decision resolve a **boolean**; actions whose only observable effect is the mutation itself resolve **void**. From the JSDoc on `PageBlockState` in `src/stores/page-blocks-types.ts`:
+
+- **`boolean`**: `edit`, `splitBlock`, `indent`, `dedent`, `moveUp`, `moveDown` — `true` on success, `false` on a caught backend error (or, for the movers, a legitimate no-op). `edit`'s `false` is what `useBlockKeyboardHandlers`' merge handlers gate `remove()` on (the #2407 fix): don't delete the source block of a merge unless the merged content actually landed. `splitBlock` mirrors `edit`'s resolve-false contract end-to-end so the blur path (`useEditorBlur.ts` → `discardDraft`) can forward its outcome and keep the crash-recovery draft row alive when the first-line write failed — `useDraftAutosave.ts`'s `discardDraftFor` gates the delete on `ok === false`.
+- **`void`**: `load`, `remove`, `reorder`, `moveToParent`, `moveBlocks` — the mutation either lands or it doesn't, and (today) no caller needs the resolved value itself to branch on. `remove`'s void resolution is the outstanding straggler the issue calls out: two call sites in `src/components/editor/BlockTree.tsx` (around lines 696-704 and 714-728) need to know whether `remove`/`moveBlocks` actually succeeded (the #1342 reparent-before-delete sequencing for merges), so they wrap the store action, re-check the post-call state against the store, and **throw** if the mutation didn't happen — a local adapter converting the void-either-way contract into a throw for that one try/catch-based caller. This wrapper is the exception that proves the rule: it exists at exactly two call sites because those two callers need a signal the store doesn't otherwise expose, not because throwing is the general contract.
+
+### The toast funnel — two layers, same shape
+
+`docs/architecture/tooling.md` names `reportIpcError` (`src/lib/report-ipc-error.ts`) as "the canonical IPC-error funnel," and component/hook-level `catch` blocks (`EditableBlock.tsx`, `BlockPropertyDrawer.tsx`, `useSearchResults.ts`, etc.) do call it directly. Store actions **do not** — `reportIpcError` takes the `TFunction` returned by `useTranslation()`, which requires a component render context the vanilla Zustand store (created outside React, in `createPageBlockStore`) doesn't have. Instead every reducer inlines the same two-step shape by hand: `logger.error('page-blocks', ..., err)` + `notify.error(i18n.t('error.xFailed'))`, using the standalone `i18n.t` export rather than a hook-bound `t`. Same log-then-toast contract, different call surface for the same structural reason (no React context inside a store factory) — not a second, divergent error path.
+
+### `pool_busy` retry policy
+
+`pool_busy` is a first-class `AppError` kind (`src/lib/app-error.ts`) for transient sqlx connection-pool exhaustion. Every mutating IPC call inside `page-blocks-reducers.ts`, plus the autosave writes in `src/hooks/useDraftAutosave.ts` and the failed-save draft re-save in `EditableBlock.tsx`, wraps its `invoke()` in `retryOnPoolBusy` (three attempts, 0/50/150 ms backoff) **before** the surrounding `try/catch`. The policy is uniform, not per-call-site: `retryOnPoolBusy` re-throws every non-`pool_busy` error immediately, and once its own retries are exhausted it throws the last `pool_busy` `AppError` too — at which point it's handled by that action's ordinary catch block exactly like any other backend failure (logged, generic `error.xFailed` toast, rollback). No FE path surfaces `pool_busy` to the user as a distinct case; `isPoolBusy` is used in exactly one place (`useDraftAutosave.ts`) purely to label a post-exhaustion log line, not to branch the user-facing outcome.
+
+### What a new store action must do
+
+1. Wrap the `invoke()` call (via `retryOnPoolBusy` if it's a plain write) in `try/catch`. Never let an IPC rejection propagate out of the action.
+2. On failure: `logger.error('page-blocks', ...)`, then `notify.error(i18n.t('error.<action>Failed'))` — add the i18n key.
+3. Roll back the optimistic update, guarded so a newer in-flight write for the same block isn't clobbered (see `edit`'s `cur.content !== content` check).
+4. Resolve `true`/`false` if any caller will ever need to gate follow-up work on the outcome (draft discard, cascading delete, announcing success to assistive tech); resolve `void` only if truly nothing downstream depends on knowing whether the write landed. Document the choice in the action's JSDoc in `page-blocks-types.ts`, matching the existing entries.
+5. Never `throw`.
+
+**The one-line rule for callers:** never wrap a store action call in `try/catch` — branch on its resolved value instead. A store action that appears to reject is either a test double built for the wrong contract, or a call-site wrapper (like `BlockTree.tsx`'s `remove`/`moveBlocks`) explicitly converting a void result into a throw for a specific downstream need — not evidence that the store itself rejects.
+
 ## ViewDispatcher (no router)
 
 `src/components/pages/ViewDispatcher.tsx` is the single source of truth for which view renders. It switches on `useNavigationStore.currentView` (a 12-value enum: `journal | search | pages | tags | properties | trash | status | history | templates | settings | graph | page-editor`).
