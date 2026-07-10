@@ -50,7 +50,7 @@ import { useSpaceStore } from '../stores/space'
 import { useBlockPropertyEvents } from './useBlockPropertyEvents'
 import { useToday } from './useToday'
 
-// ── ULID reference extraction (B-53) ────────────────────────────────
+// ── ULID reference extraction (B-53) ──────────────────────────────────
 /** Matches [[ULID]], #[ULID], and ((ULID)) refs inside block content. */
 const ULID_REF_RE = /(?:\[\[|#\[|\(\()([0-9A-Z]{26})(?:\]\]|\]|\)\))/g
 
@@ -80,7 +80,7 @@ export function clearProjectedCache(): void {
   projectedCache.clear()
 }
 
-// ── Pure helpers ──────────────────────────────────
+// ── Pure helpers ───────────────────────────────────────────
 // Factored out of doFetch/fetchBlocks to keep oxlint eslint/complexity
 // bounded. Each helper is side-effect-free and independently testable.
 
