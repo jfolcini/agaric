@@ -232,9 +232,13 @@ pub fn encode_snapshot(data: &SnapshotData) -> Result<Vec<u8>, AppError> {
 /// per-frame chunk inside `receive_binary_streaming`.
 ///
 /// `R: Read` is intentionally NOT bounded by `Send` or `'static`:
-/// `decode_snapshot` consumes the reader entirely on the calling
-/// task; no spawn-blocking is involved, so the looser bound is
-/// correct.
+/// `decode_snapshot` consumes the reader entirely and synchronously on
+/// whatever thread calls it, so the looser bound is correct. Callers that
+/// want to keep the CPU-bound decode off the async runtime (e.g.
+/// [`crate::snapshot::apply_snapshot`], #2200) buffer the compressed bytes
+/// into an owned `Vec` first and run `decode_snapshot(&buf[..])` inside
+/// `tokio::task::spawn_blocking` — the owned buffer, not the borrowed
+/// reader, is what crosses the thread boundary.
 #[must_use = "decoded snapshot data must be applied or inspected"]
 pub fn decode_snapshot<R: Read>(mut reader: R) -> Result<SnapshotData, AppError> {
     // #1586: peek the leading bytes to classify the format. A new-format blob

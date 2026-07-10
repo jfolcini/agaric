@@ -277,6 +277,21 @@ pub enum SyncMessage {
         engine_format_version: u32,
         #[serde(default)]
         op_log_replication: bool,
+        /// #2200 — additive capability handshake for zstd-compressed
+        /// chunked LoroSync payloads. `#[serde(default)]` (→ `false`) for
+        /// wire back-compat: a peer predating this field omits it and
+        /// deserializes as `false`, and an older peer that receives it
+        /// ignores the unknown field. The responder only ships a
+        /// `LoroSyncChunked { compressed: true, .. }` frame after the
+        /// initiator advertised `wire_compression: true` here — a peer
+        /// that understands the #611 chunked framing but not compression
+        /// never advertises the flag and so is never sent compressed
+        /// bytes it would misread as raw Loro. The initiator advertises
+        /// `true` (it can always decompress on receive); the compression
+        /// decision is taken solely on the responder → initiator
+        /// streaming direction (the only side that emits `LoroSync`).
+        #[serde(default)]
+        wire_compression: bool,
     },
     /// Loro-CRDT-based sync wire envelope.
     ///
@@ -309,6 +324,20 @@ pub enum SyncMessage {
     LoroSyncChunked {
         header: LoroSyncChunkedHeader,
         is_last: bool,
+        /// #2200 — the binary payload that follows is a single zstd frame
+        /// wrapping the raw Loro bytes, so the receiver must decompress it
+        /// (bounded by [`crate::sync_constants::MAX_LORO_SYNC_PAYLOAD_SIZE`])
+        /// before reassembly. `header.size_bytes()` counts the *compressed*
+        /// bytes on the wire (what `receive_binary_chunked` consumes);
+        /// after decompression the receiver holds the raw payload.
+        ///
+        /// `#[serde(default)]` (→ `false`) for wire back-compat: the sender
+        /// only sets `true` when the peer advertised
+        /// `HeadExchange { wire_compression: true }`, so a #611-only peer
+        /// that ignores this field always receives raw bytes
+        /// (`compressed: false`) and decodes them unchanged.
+        #[serde(default)]
+        compressed: bool,
     },
     /// #2481 phase 1 — audit-only op-log replication batch. Streams op
     /// records the peer lacks (`seq > the peer's advertised per-device

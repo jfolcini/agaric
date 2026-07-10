@@ -1,12 +1,154 @@
 //! Link metadata command handlers.
 
+use std::collections::HashMap;
+use std::future::Future;
+use std::sync::{Arc, Mutex, OnceLock};
+
 use sqlx::SqlitePool;
 use tauri::State;
+use tokio::sync::watch;
 
 use super::sanitize_internal_error;
 use crate::db::{ReadPool, WritePool};
 use crate::error::AppError;
 use crate::link_metadata::{self, LinkMetadata};
+
+// ---------------------------------------------------------------------------
+// #2200 — fetch_link_metadata single-flight dedup
+// ---------------------------------------------------------------------------
+//
+// Before #2200, M concurrent `fetch_link_metadata` calls for the same cold URL
+// (e.g. every renderer that mentions the link firing on first paint) each ran
+// an independent HTTP fetch + cache upsert — M network round-trips and M
+// writer-pool acquisitions for one result. The single-flight coordinator below
+// collapses concurrent identical-URL fetches onto ONE execution: the first
+// caller leads (spawns the fetch), the rest await the shared result via a
+// `watch` channel.
+//
+// Design notes:
+//   * The fetch runs in a detached `tokio::spawn` so it completes (and cleans
+//     up its map entry) even if every awaiting caller is cancelled — followers
+//     never end up orphaned waiting on a future no one drives.
+//   * The map entry is removed BEFORE the result is published, so a call that
+//     arrives after completion re-fetches. Errors are therefore never cached
+//     beyond the in-flight window (failure-then-retry works); only the DB
+//     cache (populated on success by `upsert`) persists a hit.
+//   * The map is bounded (`MAX_INFLIGHT`): once that many distinct URLs are in
+//     flight, extra cold URLs bypass dedup and fetch directly rather than
+//     growing the map without bound under a pathological fan-out.
+//   * `AppError` is not `Clone`, so the shared result is an
+//     `Arc<Result<LinkMetadata, AppError>>` and each waiter reconstructs an
+//     owned error via [`clone_link_error`] (message + kind preserved for the
+//     string-carrying variants that link fetches actually produce).
+
+/// Shared, cloneable outcome of one in-flight fetch.
+type SharedResult = Arc<Result<LinkMetadata, AppError>>;
+
+/// Upper bound on distinct URLs tracked for dedup at once. Beyond this, extra
+/// cold URLs bypass the in-flight map (fetch directly) so it can't grow
+/// unbounded. 256 comfortably covers a page's worth of distinct links while
+/// bounding worst-case memory.
+const MAX_INFLIGHT: usize = 256;
+
+fn inflight() -> &'static Mutex<HashMap<String, watch::Receiver<Option<SharedResult>>>> {
+    static MAP: OnceLock<Mutex<HashMap<String, watch::Receiver<Option<SharedResult>>>>> =
+        OnceLock::new();
+    MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Reconstruct an owned [`AppError`] from a shared reference. `AppError` is not
+/// `Clone` (it wraps non-`Clone` sources like `sqlx::Error`), so followers of a
+/// failed single-flight fetch rebuild the error: the string-carrying variants
+/// that link fetches actually emit (network failures are
+/// `AppError::InvalidOperation`) are preserved verbatim; source-bearing
+/// variants fall back to their `Display` string under `InvalidOperation`,
+/// which keeps the human-readable cause intact.
+fn clone_link_error(err: &AppError) -> AppError {
+    match err {
+        AppError::InvalidOperation(m) => AppError::InvalidOperation(m.clone()),
+        AppError::NotFound(m) => AppError::NotFound(m.clone()),
+        AppError::Conflict(m) => AppError::Conflict(m.clone()),
+        AppError::Validation { code, message } => AppError::Validation {
+            code: *code,
+            message: message.clone(),
+        },
+        AppError::Internal(m) => AppError::Internal(m.clone()),
+        other => AppError::InvalidOperation(other.to_string()),
+    }
+}
+
+/// Run `fetch` for `url` under process-wide single-flight. Concurrent callers
+/// for the same URL await a single execution; the result is shared, but errors
+/// are NOT cached beyond the in-flight window. When more than [`MAX_INFLIGHT`]
+/// distinct URLs are already in flight, `fetch` runs directly (no dedup) to
+/// keep the map bounded.
+async fn single_flight_fetch<F, Fut>(url: String, fetch: F) -> Result<LinkMetadata, AppError>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<LinkMetadata, AppError>> + Send + 'static,
+{
+    // Decide the role while holding the (std, `!Send`) mutex in a tight scope
+    // with NO await inside, so the guard is provably dropped before any await
+    // and this future stays `Send`.
+    enum Plan {
+        Lead(
+            watch::Sender<Option<SharedResult>>,
+            watch::Receiver<Option<SharedResult>>,
+        ),
+        Follow(watch::Receiver<Option<SharedResult>>),
+        Bypass,
+    }
+    let plan = {
+        let mut map = inflight().lock().expect("inflight map mutex poisoned");
+        if let Some(existing) = map.get(&url) {
+            Plan::Follow(existing.clone())
+        } else if map.len() >= MAX_INFLIGHT {
+            Plan::Bypass
+        } else {
+            let (tx, rx) = watch::channel(None);
+            map.insert(url.clone(), rx.clone());
+            Plan::Lead(tx, rx)
+        }
+    };
+
+    let mut rx = match plan {
+        // Bounded: bypass dedup entirely rather than grow the map.
+        Plan::Bypass => return fetch().await,
+        Plan::Follow(rx) => rx,
+        Plan::Lead(tx, rx) => {
+            // Detached so the fetch (and its map cleanup) completes regardless
+            // of any single awaiting caller being dropped.
+            let fut = fetch();
+            let key = url.clone();
+            tokio::spawn(async move {
+                let result: SharedResult = Arc::new(fut.await);
+                // Remove BEFORE publishing so a call arriving after completion
+                // re-fetches — errors are never cached past this window.
+                inflight()
+                    .lock()
+                    .expect("inflight map mutex poisoned")
+                    .remove(&key);
+                let _ = tx.send(Some(result));
+            });
+            rx
+        }
+    };
+
+    loop {
+        if let Some(shared) = rx.borrow_and_update().as_ref().cloned() {
+            return match shared.as_ref() {
+                Ok(meta) => Ok(meta.clone()),
+                Err(e) => Err(clone_link_error(e)),
+            };
+        }
+        if rx.changed().await.is_err() {
+            // Sender dropped without publishing — the spawned task panicked.
+            return Err(AppError::Internal(
+                "link metadata single-flight task dropped before publishing a result".into(),
+            ));
+        }
+    }
+}
 
 /// Fetch metadata for a URL (HTTP fetch + store in cache).
 /// Returns cached metadata if fresh (< 7 days), otherwise fetches from network.
@@ -29,11 +171,20 @@ pub async fn fetch_link_metadata_inner(
     {
         return Ok(cached);
     }
-    // Cache miss or stale — fetch from network (no DB usage), then
-    // acquire the write pool *only* for the upsert.
-    let meta = link_metadata::fetch_metadata(&url).await?;
-    link_metadata::upsert(write_pool, &meta).await?;
-    Ok(meta)
+    // Cache miss or stale — fetch from network (no DB usage), then acquire the
+    // write pool *only* for the upsert. #2200: route the fetch+upsert through
+    // the single-flight coordinator so M concurrent callers for the same cold
+    // URL collapse onto one network round-trip + one upsert instead of racing.
+    // `SqlitePool` is a cheap `Arc` clone, so the owned captures below keep the
+    // spawned fetch `'static` without duplicating any real connection state.
+    let write_pool = write_pool.clone();
+    let fetch_url = url.clone();
+    single_flight_fetch(url, move || async move {
+        let meta = link_metadata::fetch_metadata(&fetch_url).await?;
+        link_metadata::upsert(&write_pool, &meta).await?;
+        Ok(meta)
+    })
+    .await
 }
 
 /// Get cached metadata only (no network fetch).
@@ -460,5 +611,139 @@ mod tests {
     fn is_stale_future_timestamp() {
         let future = crate::db::now_ms() + MS_PER_DAY;
         assert!(!is_stale(future, 7), "a future timestamp is never stale");
+    }
+
+    // ==================================================================
+    // #2200 single-flight dedup tests
+    // ==================================================================
+
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    fn dummy_meta(url: &str) -> LinkMetadata {
+        LinkMetadata {
+            url: url.to_string(),
+            title: Some("t".to_string()),
+            favicon_url: None,
+            description: None,
+            fetched_at: crate::db::now_ms(),
+            auth_required: false,
+            not_found: false,
+        }
+    }
+
+    /// Concurrent callers for the same URL must share ONE fetch: the counting
+    /// closure fires exactly once across 8 simultaneous requests.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn single_flight_dedups_concurrent_identical_urls() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let url = "https://single-flight.test/dedup".to_string();
+
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let calls = calls.clone();
+            let url_outer = url.clone();
+            handles.push(tokio::spawn(async move {
+                super::single_flight_fetch(url_outer.clone(), move || {
+                    let calls = calls.clone();
+                    let url_inner = url_outer.clone();
+                    async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        // Hold the in-flight window open long enough for all
+                        // concurrent callers to register as followers.
+                        tokio::time::sleep(Duration::from_millis(150)).await;
+                        Ok(dummy_meta(&url_inner))
+                    }
+                })
+                .await
+            }));
+        }
+
+        for h in handles {
+            let meta = h
+                .await
+                .expect("task must not panic")
+                .expect("fetch must succeed");
+            assert_eq!(meta.url, url, "every caller gets the shared metadata");
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "8 concurrent identical-URL fetches must collapse onto a single execution"
+        );
+    }
+
+    /// A failed fetch must NOT be cached in the in-flight map: the next call
+    /// re-runs a fresh fetch (which here succeeds), proving the error window
+    /// closed with the leader's completion.
+    #[tokio::test]
+    async fn single_flight_failure_then_retry_runs_fresh_fetch() {
+        let url = "https://single-flight.test/retry".to_string();
+
+        let r1 = super::single_flight_fetch(url.clone(), || async {
+            Err(AppError::InvalidOperation(
+                "boom: simulated fetch failure".into(),
+            ))
+        })
+        .await;
+        assert!(r1.is_err(), "first fetch must surface the error");
+        assert!(
+            format!("{}", r1.unwrap_err()).contains("boom"),
+            "the leader's error must propagate faithfully"
+        );
+
+        // The map entry was removed before publishing, so this leads a brand-new
+        // fetch rather than replaying the cached failure.
+        let url_for_ok = url.clone();
+        let r2 =
+            super::single_flight_fetch(
+                url.clone(),
+                move || async move { Ok(dummy_meta(&url_for_ok)) },
+            )
+            .await;
+        assert!(
+            r2.is_ok(),
+            "a retry after failure must run a fresh fetch, not replay the cached error"
+        );
+        assert_eq!(r2.unwrap().url, url);
+    }
+
+    /// Concurrent followers of a FAILING leader all receive the (reconstructed)
+    /// error — the failure is fanned out, then the window closes.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn single_flight_failure_fans_out_to_followers() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let url = "https://single-flight.test/fail-fanout".to_string();
+
+        let mut handles = Vec::new();
+        for _ in 0..6 {
+            let calls = calls.clone();
+            let url_outer = url.clone();
+            handles.push(tokio::spawn(async move {
+                super::single_flight_fetch(url_outer, move || {
+                    let calls = calls.clone();
+                    async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        tokio::time::sleep(Duration::from_millis(150)).await;
+                        Err(AppError::InvalidOperation("shared failure".into()))
+                    }
+                })
+                .await
+            }));
+        }
+
+        for h in handles {
+            let res = h.await.expect("task must not panic");
+            assert!(
+                res.is_err(),
+                "every follower must observe the shared failure"
+            );
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the failing fetch must still run exactly once for all followers"
+        );
     }
 }

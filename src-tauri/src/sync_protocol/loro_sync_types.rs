@@ -211,6 +211,17 @@ impl LoroSyncChunkedHeader {
         }
     }
 
+    /// Override the advertised wire byte count. Used by the transport
+    /// layer (#2200) after zstd-compressing the payload, so the header
+    /// reports the *compressed* length the receiver reads off the wire
+    /// rather than the raw length [`split`](Self::split) initialised it
+    /// with.
+    pub fn set_size_bytes(&mut self, n: u64) {
+        match self {
+            Self::Snapshot { size_bytes, .. } | Self::Update { size_bytes, .. } => *size_bytes = n,
+        }
+    }
+
     /// Reassemble the full [`LoroSyncMessage`] from this header plus
     /// the received payload bytes (receiver side). The wire layer
     /// guarantees `bytes.len() == self.size_bytes()` (exact-count

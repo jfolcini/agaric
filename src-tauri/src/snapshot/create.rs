@@ -308,7 +308,18 @@ pub async fn create_snapshot(pool: &SqlitePool, device_id: &str) -> Result<Strin
         tables,
     };
 
-    let encoded = encode_snapshot(&data)?;
+    // Offload the CPU-bound CBOR+zstd encode to a blocking thread so it
+    // never stalls the async runtime (#2200). `data` is moved in and handed
+    // back out alongside the encoded bytes because the write phase below
+    // still reads `data.up_to_seqs`; SnapshotData is owned/`Send`, so the
+    // round-trip is a cheap move (no clone of the derived-row Vecs).
+    let (encoded, data) = tokio::task::spawn_blocking(move || {
+        let encoded = encode_snapshot(&data);
+        (encoded, data)
+    })
+    .await
+    .map_err(|e| AppError::Snapshot(format!("snapshot encode task panicked: {e}")))?;
+    let encoded = encoded?;
 
     // Fold the INSERT(pending) + UPDATE(complete) pair into a single
     // `BEGIN IMMEDIATE` transaction so no other connection ever observes
@@ -451,7 +462,18 @@ pub async fn compact_op_log(
         tables,
     };
 
-    let encoded = encode_snapshot(&data)?;
+    // Phase 2 (cont.): offload the CPU-bound CBOR+zstd encode to a blocking
+    // thread so a large snapshot never stalls the async runtime (#2200).
+    // `data` is handed back out because Phase 3 still iterates
+    // `data.up_to_seqs` for the seq-bounded purge; the move is cheap
+    // (SnapshotData is owned/`Send`).
+    let (encoded, data) = tokio::task::spawn_blocking(move || {
+        let encoded = encode_snapshot(&data);
+        (encoded, data)
+    })
+    .await
+    .map_err(|e| AppError::Snapshot(format!("snapshot encode task panicked: {e}")))?;
+    let encoded = encoded?;
 
     // ── Phase 3: Write (brief BEGIN IMMEDIATE transaction) ───────────
     // Only the INSERT, UPDATE, DELETE, and cleanup happen under the
