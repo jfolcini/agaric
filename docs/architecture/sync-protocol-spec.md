@@ -454,6 +454,57 @@ Notes:
   session advertises empty heads and picks up post-snapshot deltas via a
   normal `HeadExchange` — no recursive session restart.
 
+#### Fate of the initiator's local state (#2474)
+
+`apply_snapshot` wipes the initiator's `op_log` (and Loro sidecar state)
+wholesale, so on the caught-up device **content converges to the snapshot
+but the local paper trail — page history, activity feed, undo/redo,
+per-op origin/`is_undo` attribution — is destroyed** (see
+[crdt-and-recovery.md](crdt-and-recovery.md) § "What a catch-up RESET
+costs the caught-up device" for the full contract and the pinning tests).
+The at-risk *content* is any op the initiator authored locally that it
+had not yet pushed to some peer before this reset. A session is a
+**pull** (data flows responder -> initiator only, #610 above — see the
+explicit "only the puller receives LoroSync, the streamer never reaches
+this arm" comment on the `SyncMessage::LoroSync` handler in
+`session_state_machine.rs`), so **the initiator never pushes anything to
+the responder within the failing session itself, on either trigger**:
+
+- **Heads-triggered** (`check_reset_required == true` in the state
+  machine): the responder's own-device check fails, so it replies
+  `ResetRequired` **instead of** reaching its outgoing head-exchange —
+  no `LoroSync` is ever queued or sent. (Post-#490-M1 device-local
+  op_logs make this trigger near-vestigial — a peer rarely advertises
+  heads about *your* device; see #2475.)
+- **VV-triggered** (`ApplyOutcome::SnapshotFallbackRequested`): fires
+  only on the **initiator**, while it is importing a responder `Update`
+  (the responder itself never reaches the `LoroSync`-handling arm — it
+  only ever sends). The responder may well have streamed several other
+  spaces successfully before the failing one aborts the loop, but that
+  traffic moves responder -> initiator, same as the normal flow — it
+  does not push anything from the initiator toward the responder. Those
+  interim imports are moot for the initiator's own unsynced ops, and
+  are themselves wiped moments later by the RESET's unconditional
+  `loro_doc_state` DELETE (pinned by
+  `apply_snapshot_wipes_loro_doc_state_and_engines_reload_empty_2474`)
+  — the snapshot the initiator goes on to apply re-supplies the same
+  responder content anyway.
+
+Neither trigger is more "lossy" than the other for the initiator's own
+unsynced local ops: they have no peer copy in either case, and are gone
+the moment `apply_snapshot` wipes `op_log`. Surviving a reset requires
+an unrelated, separately-timed **reverse-direction session** (the
+initiator acting as responder for this peer, on its own schedule, per
+"Bidirectional convergence comes from the *reverse* session" above) to
+have already pushed those ops out beforehand — an orthogonal,
+unguaranteed timing dependency, not a property of which trigger fired.
+
+The device-local reset (history/undo/attribution loss + engine re-key)
+is **unconditional** — identical regardless of trigger — because it is a
+property of `apply_snapshot` itself, pinned by
+`apply_snapshot_resets_undo_and_history_surface_2474` and siblings in
+`src-tauri/src/snapshot/tests.rs`.
+
 ## Version-vector format and exchange
 
 The version vector is Loro-internal and opaque to the wire layer. The type
