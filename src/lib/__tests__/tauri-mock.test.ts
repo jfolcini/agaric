@@ -1573,10 +1573,11 @@ describe('list_trash', () => {
 
 describe('undo_page_op edge cases', () => {
   it('throws when no undoable ops exist', () => {
-    // Fresh state — no ops have been performed
+    // Fresh state — no ops have been performed. #2463: message now mirrors
+    // `undo_page_op_inner`'s `NotFound` text (`src-tauri/src/commands/history.rs`).
     expect(() =>
       invoke('undo_page_op', { pageId: SEED_IDS.PAGE_GETTING_STARTED, undoDepth: 0 }),
-    ).toThrow('no undoable op found')
+    ).toThrow('no op found at undo_depth')
   })
 
   it('throws when undoDepth exceeds available ops', () => {
@@ -1585,10 +1586,11 @@ describe('undo_page_op edge cases', () => {
       content: 'only-op',
       parentId: SEED_IDS.PAGE_GETTING_STARTED,
     })
-    // undoDepth=0 should work (there's 1 op), but undoDepth=1 should fail
+    // undoDepth=0 should work (there's 1 op), but undoDepth=1 should fail.
+    // #2463: message now mirrors `undo_page_op_inner`'s `NotFound` text.
     expect(() =>
       invoke('undo_page_op', { pageId: SEED_IDS.PAGE_GETTING_STARTED, undoDepth: 1 }),
-    ).toThrow('no undoable op found')
+    ).toThrow('no op found at undo_depth')
   })
 
   it('undo of edit_block restores previous content', () => {
@@ -1610,8 +1612,10 @@ describe('undo_page_op edge cases', () => {
 
 describe('redo_page_op edge cases', () => {
   it('throws when referencing a non-existent op seq', () => {
+    // #2463: message now mirrors `redo_page_op_inner`'s `NotFound` text
+    // (`src-tauri/src/commands/history.rs`) — `op_log (device, seq)`.
     expect(() => invoke('redo_page_op', { undoDeviceId: 'mock-device', undoSeq: 99999 })).toThrow(
-      'op not found for redo',
+      'op_log (mock-device, 99999)',
     )
   })
 
@@ -2266,9 +2270,11 @@ describe('property definition commands', () => {
   })
 
   it('update_property_def_options throws for non-existent key', () => {
+    // #2463: message now mirrors `update_property_def_options_inner`'s
+    // `NotFound` text (`src-tauri/src/commands/properties.rs`).
     expect(() =>
       invoke('update_property_def_options', { key: 'nonexistent', options: '[]' }),
-    ).toThrow('property definition not found')
+    ).toThrow("property definition 'nonexistent'")
   })
 
   it('delete_property_def removes a definition', () => {

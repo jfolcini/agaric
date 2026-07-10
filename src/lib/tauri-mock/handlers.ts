@@ -42,9 +42,84 @@ import {
  * parameter type pins `kind` (and the optional validation `code`) to the
  * specta-generated string-literal unions — a typo'd kind or code in a mock
  * handler is now a type-check error instead of a silently-dead branch.
+ *
+ * ---------------------------------------------------------------------------
+ * SEMANTIC-PARITY CONTRACT (#2463)
+ * ---------------------------------------------------------------------------
+ *
+ * `check-tauri-mock-parity.mjs` (the `tauri-mock-parity` prek hook) only
+ * enforces handler PRESENCE — every command in `bindings.ts` has a key in
+ * `HANDLERS`. It says nothing about whether a handler's FAILURE path matches
+ * what the real backend sends over the wire. That gap is this file's analog
+ * of the backend's old `sql_only.rs` fallback (`docs/architecture/sql-only-convergence.md`):
+ * a second implementation that can silently diverge from production and let
+ * tests pin the WRONG contract while production breaks (see #2407, the
+ * "throwing mocks pinning a contract the store doesn't have" failure mode, in
+ * miniature).
+ *
+ * The rule, going forward:
+ *
+ * 1. **Error-shape parity.** Any mock failure that models a real backend
+ *    rejection — i.e. a condition the corresponding `#[tauri::command]` in
+ *    `src-tauri/src/commands/**` would also reject, such as a missing block,
+ *    an empty batch-id list, a stale cursor — MUST reject with the
+ *    `{ kind, message, code? }` `AppError` wire shape via `appErrorRejection`
+ *    (or the `notFoundRejection` / `validationRejection` shorthands below),
+ *    never a bare `throw new Error(...)`. A bare `Error` fails `isAppError`,
+ *    so `isNotFound` / `isValidation` / `isPoolBusy` / `isConflict` /
+ *    `isCancellation` (`src/lib/app-error.ts`) all silently return `false` —
+ *    a component under test takes its generic-failure branch in the mock and
+ *    its specific-kind branch in production, and the test proves nothing.
+ * 2. **`kind` must be a real, UNSANITIZED `AppErrorKind`.** The backend's
+ *    `sanitize_internal_error` (`src-tauri/src/commands/mod.rs`) collapses
+ *    `database` / `migration` / `io` / `json` / `channel` / `internal` /
+ *    `snapshot` into a generic `internal` kind with a correlation id before
+ *    they ever reach the wire — a mock has no SQL layer to fail, so it must
+ *    never fabricate one of those seven kinds directly. The kinds the mock
+ *    legitimately produces (because the frontend branches on them) are:
+ *    `not_found`, `validation` (optionally with a `ValidationCode`, e.g.
+ *    `RequiresRefresh` for cursor rejection — see the pages-metadata cursor
+ *    handler below), `pool_busy`, `conflict`, `non_reversible`, and
+ *    `cancelled`. Grep `err.kind ===` / `isPoolBusy` / `isNotFound` /
+ *    `isConflict` / `isValidation` / `isCancellation` across `src/` for the
+ *    current call sites that depend on this.
+ * 3. **Look up the real kind before adding a new handler's failure path.**
+ *    Find the backend command in `src-tauri/src/commands/**` and read which
+ *    `AppError` variant it returns for that condition (grep the command name,
+ *    or its `_inner` twin) — don't guess. `AppError::NotFound` → `not_found`,
+ *    `AppError::validation(...)` / `AppError::validation_coded(...)` →
+ *    `validation`, etc. (`src-tauri/src/error.rs` is the source of truth for
+ *    the `kind()` mapping.)
+ * 4. **Exception: mock-only bookkeeping invariants.** A handful of throws in
+ *    this file guard invariants of the MOCK's own bookkeeping (a corrupt
+ *    `opLog` entry, an undo/redo chain missing its stashed sibling handler)
+ *    that have no real-backend counterpart — they can only fire if the mock
+ *    itself is broken, never via a real IPC round-trip. Those may stay bare
+ *    `throw new Error(...)`; each is commented `// mock-internal invariant`
+ *    at the call site. `plugin:*` rejections (`dispatch`'s "plugin not
+ *    found" branch, and `PLUGIN_HANDLERS`) are ALSO deliberately bare: an
+ *    unregistered Tauri plugin is a Tauri-core-level rejection, not an
+ *    app-level `AppError` — the real runtime doesn't wrap it in `{kind,
+ *    message}` either.
+ *
+ * Mechanical enforcement: `src/lib/tauri-mock/__tests__/error-shape-conformance.test.ts`
+ * drives representative handlers through their failure modes and asserts the
+ * rejected value round-trips through `isAppError` / `isNotFound` /
+ * `isValidation` / `validationCode` — extend it when you add a new modeled
+ * failure path.
  */
 function appErrorRejection(err: AppError): Error & AppError {
   return Object.assign(new Error(err.message), err)
+}
+
+/** Shorthand for a mock `not_found` rejection — mirrors `AppError::NotFound` (#2463 kind-parity rule). */
+function notFoundRejection(message: string): Error & AppError {
+  return appErrorRejection({ kind: 'not_found', message })
+}
+
+/** Shorthand for a mock uncoded `validation` rejection — mirrors `AppError::validation(...)` (#2463 kind-parity rule). */
+function validationRejection(message: string): Error & AppError {
+  return appErrorRejection({ kind: 'validation', message })
 }
 
 /**
@@ -1216,7 +1291,9 @@ const HANDLERS_TYPED = {
     const rootProps = properties.get(rootBlockId)
     const rootSpace = rootProps?.get('space')
     if (rootSpace?.['value_ref'] !== spaceId) {
-      throw new Error(`block '${rootBlockId}' not in current space '${spaceId}'`)
+      // #2463 — mirrors `load_page_subtree_inner`'s `Validation` rejection
+      // (`src-tauri/src/commands/pages/listing.rs`), not `not_found`.
+      throw validationRejection(`block '${rootBlockId}' not in current space '${spaceId}'`)
     }
     const items: Record<string, unknown>[] = []
     for (const b of blocks.values()) {
@@ -1545,7 +1622,7 @@ const HANDLERS_TYPED = {
     const a = args as Record<string, unknown>
     const specs = (a['specs'] as Array<Record<string, unknown>>) ?? []
     if (specs.length === 0) {
-      throw new Error('specs list cannot be empty')
+      throw validationRejection('specs list cannot be empty')
     }
     const out: Record<string, unknown>[] = []
     for (const spec of specs) {
@@ -1735,7 +1812,7 @@ const HANDLERS_TYPED = {
   edit_block: (args) => {
     const a = args as Record<string, unknown>
     const b = blocks.get(a['blockId'] as string)
-    if (!b) throw new Error('not found')
+    if (!b) throw notFoundRejection(`block '${a['blockId'] as string}' not found`)
     const oldContent = b['content'] as string | null
     b['content'] = a['toText'] as string
     pushOp('edit_block', {
@@ -1816,7 +1893,7 @@ const HANDLERS_TYPED = {
     const a = args as Record<string, unknown>
     const inputIds = (a['blockIds'] as string[]) ?? []
     if (inputIds.length === 0) {
-      throw new Error('block_ids list cannot be empty')
+      throw validationRejection('block_ids list cannot be empty')
     }
     const now = new Date().toISOString()
     // Resolve live roots (skip missing or already-deleted).
@@ -1971,7 +2048,7 @@ const HANDLERS_TYPED = {
   get_block: (args) => {
     const a = args as Record<string, unknown>
     const b = blocks.get(a['blockId'] as string)
-    if (!b) throw new Error('not found')
+    if (!b) throw notFoundRejection(`block '${a['blockId'] as string}' not found`)
     return b
   },
 
@@ -2006,7 +2083,7 @@ const HANDLERS_TYPED = {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const b = blocks.get(blockId)
-    if (!b) throw new Error('not found')
+    if (!b) throw notFoundRejection(`block '${blockId}' not found`)
     const oldParentId = (b['parent_id'] as string | null) ?? null
     // #958 — record `old_position` as the block's 1-based DENSE RANK among its
     // current siblings, NOT its raw stored `position`. The seed stores some
@@ -2084,12 +2161,12 @@ const HANDLERS_TYPED = {
     const newParentId = (a['newParentId'] as string | null) ?? null
     const startIndex = (a['newIndex'] as number) ?? 0
     if (blockIds.length === 0) {
-      throw new Error('block_ids list cannot be empty')
+      throw validationRejection('block_ids list cannot be empty')
     }
     const out: Array<{ block_id: string; new_parent_id: string | null; new_position: number }> = []
     blockIds.forEach((blockId, k) => {
       const b = blocks.get(blockId)
-      if (!b) throw new Error('not found')
+      if (!b) throw notFoundRejection(`block '${blockId}' not found`)
       const oldParentId = (b['parent_id'] as string | null) ?? null
       const oldSiblings = [...blocks.values()]
         .filter(
@@ -2161,7 +2238,7 @@ const HANDLERS_TYPED = {
     const inputIds = (a['blockIds'] as string[]) ?? []
     const tagId = a['tagId'] as string
     if (inputIds.length === 0) {
-      throw new Error('block_ids list cannot be empty')
+      throw validationRejection('block_ids list cannot be empty')
     }
     let count = 0
     for (const blockId of inputIds) {
@@ -2184,7 +2261,7 @@ const HANDLERS_TYPED = {
     const inputIds = (a['blockIds'] as string[]) ?? []
     const spaceId = a['spaceId'] as string
     if (inputIds.length === 0) {
-      throw new Error('block_ids list cannot be empty')
+      throw validationRejection('block_ids list cannot be empty')
     }
     let count = 0
     for (const blockId of inputIds) {
@@ -2345,6 +2422,8 @@ const HANDLERS_TYPED = {
     const findGroup = HANDLERS['find_undo_group']
     const undoOp = HANDLERS['undo_page_op']
     if (!findGroup || !undoOp) {
+      // mock-internal invariant (#2463) — `HANDLERS` is malformed if this
+      // fires; it has no real-backend counterpart, so it stays a bare Error.
       throw new Error('undo_page_group mock: missing sibling handler')
     }
     const groupSize = findGroup({ pageId: a['pageId'], depth, windowMs }) as number
@@ -2904,9 +2983,11 @@ const HANDLERS_TYPED = {
       (o) => !o.op_type.startsWith('undo_') && !o.op_type.startsWith('redo_'),
     )
     const targetIndex = undoableOps.length - 1 - undoDepth
-    if (targetIndex < 0) throw new Error('no undoable op found')
+    // #2463 — mirrors `undo_page_op_inner`'s `NotFound` rejection
+    // (`src-tauri/src/commands/history.rs`) when `undo_depth` overruns history.
+    if (targetIndex < 0) throw notFoundRejection(`no op found at undo_depth ${undoDepth}`)
     const target = undoableOps[targetIndex]
-    if (!target) throw new Error('no undoable op found')
+    if (!target) throw notFoundRejection(`no op found at undo_depth ${undoDepth}`)
 
     const payload = JSON.parse(target.payload) as Record<string, unknown>
     let reverseOpType = 'edit_block'
@@ -2986,14 +3067,22 @@ const HANDLERS_TYPED = {
     // #659 provenance check (`op_log.is_undo`; the mock's equivalent marker
     // is the `undo_` op_type prefix stamped by the undo handlers).
     const undoOp: MockOpLogEntry | undefined = opLog.find((o) => o.seq === undoSeq)
-    if (!undoOp) throw new Error('op not found for redo')
+    // #2463 — mirrors `redo_page_op_inner`'s two rejections
+    // (`src-tauri/src/commands/history.rs`): a missing op_log row is
+    // `NotFound`, a non-undo provenance ref is `Validation` (#659).
+    if (!undoOp) throw notFoundRejection(`op_log (${a['undoDeviceId'] as string}, ${undoSeq})`)
     if (!undoOp.op_type.startsWith('undo_')) {
-      throw new Error(
+      throw validationRejection(
         `redo target (${undoOp.device_id}, ${undoOp.seq}) is a '${undoOp.op_type}' op that was ` +
           'not produced by undo — refusing to reverse a forward op via redo (#659)',
       )
     }
     const originalOp = (JSON.parse(undoOp.payload) as { reversed: MockOpLogEntry }).reversed
+    // mock-internal invariant (#2463) — the mock stashes the reversed op
+    // inline on its own `undo_*` op_log entry; a missing `reversed` payload
+    // means the mock corrupted its own bookkeeping, which has no real-backend
+    // counterpart (the backend recomputes the reverse from `op_log` on every
+    // call via `reverse::compute_reverse`, it never stores it).
     if (!originalOp) throw new Error('undo op carries no reversed payload')
 
     const payload = JSON.parse(originalOp.payload) as Record<string, unknown>
@@ -3185,7 +3274,7 @@ const HANDLERS_TYPED = {
   set_todo_state: (args) => {
     const a = args as Record<string, unknown>
     const b = blocks.get(a['blockId'] as string)
-    if (!b) throw new Error('not found')
+    if (!b) throw notFoundRejection(`block '${a['blockId'] as string}' not found`)
     const fromState = (b['todo_state'] as string | null) ?? null
     b['todo_state'] = (a['state'] as string | null) ?? null
     pushOp('set_todo_state', {
@@ -3205,7 +3294,7 @@ const HANDLERS_TYPED = {
     const a = args as Record<string, unknown>
     const inputIds = (a['blockIds'] as string[]) ?? []
     if (inputIds.length === 0) {
-      throw new Error('block_ids list cannot be empty')
+      throw validationRejection('block_ids list cannot be empty')
     }
     const newState = (a['state'] as string | null) ?? null
     let updated = 0
@@ -3226,7 +3315,7 @@ const HANDLERS_TYPED = {
   set_priority: (args) => {
     const a = args as Record<string, unknown>
     const b = blocks.get(a['blockId'] as string)
-    if (!b) throw new Error('not found')
+    if (!b) throw notFoundRejection(`block '${a['blockId'] as string}' not found`)
     const fromLevel = (b['priority'] as string | null) ?? null
     b['priority'] = (a['level'] as string | null) ?? null
     pushOp('set_priority', {
@@ -3240,7 +3329,7 @@ const HANDLERS_TYPED = {
   set_due_date: (args) => {
     const a = args as Record<string, unknown>
     const b = blocks.get(a['blockId'] as string)
-    if (!b) throw new Error('not found')
+    if (!b) throw notFoundRejection(`block '${a['blockId'] as string}' not found`)
     const fromDate = (b['due_date'] as string | null) ?? null
     b['due_date'] = (a['date'] as string | null) ?? null
     pushOp('set_due_date', {
@@ -3254,7 +3343,7 @@ const HANDLERS_TYPED = {
   set_scheduled_date: (args) => {
     const a = args as Record<string, unknown>
     const b = blocks.get(a['blockId'] as string)
-    if (!b) throw new Error('not found')
+    if (!b) throw notFoundRejection(`block '${a['blockId'] as string}' not found`)
     const fromDate = (b['scheduled_date'] as string | null) ?? null
     b['scheduled_date'] = (a['date'] as string | null) ?? null
     pushOp('set_scheduled_date', {
@@ -3546,7 +3635,9 @@ const HANDLERS_TYPED = {
     const historicalCreatedAt = a['historicalCreatedAt']
     const block = blocks.get(blockId)
     if (!block || block['deleted_at']) {
-      throw new Error(`block '${blockId}' not found or soft-deleted (cannot diff against current)`)
+      throw notFoundRejection(
+        `block '${blockId}' not found or soft-deleted (cannot diff against current)`,
+      )
     }
     const current = (block['content'] as string | null | undefined) ?? ''
     // Walk the op log for the most recent edit_block / create_block at
@@ -3571,7 +3662,7 @@ const HANDLERS_TYPED = {
       }
     })
     if (candidates.length === 0) {
-      throw new Error(
+      throw notFoundRejection(
         `no create_block or edit_block op for '${blockId}' at or before seq ${historicalSeq}`,
       )
     }
@@ -3635,7 +3726,7 @@ const HANDLERS_TYPED = {
     const a = args as Record<string, unknown>
     const key = a['key'] as string
     const def = propertyDefs.get(key)
-    if (!def) throw new Error('property definition not found')
+    if (!def) throw notFoundRejection(`property definition '${key}'`)
     def['options'] = a['options'] as string
     return { ...def }
   },
@@ -3744,7 +3835,7 @@ const HANDLERS_TYPED = {
     const a = args as Record<string, unknown>
     const pid = a['pageId'] as string
     const page = blocks.get(pid)
-    if (!page) throw new Error('not found')
+    if (!page) throw notFoundRejection(`page '${pid}' not found`)
     const children = [...blocks.values()]
       .filter((b) => b['parent_id'] === pid && !(b['deleted_at'] as string | null))
       .toSorted((x, y) => ((x['position'] as number) ?? 0) - ((y['position'] as number) ?? 0))
@@ -4307,7 +4398,7 @@ const HANDLERS_TYPED = {
     const a = args as Record<string, unknown>
     const ids = (a['ids'] as string[]) ?? []
     if (ids.length === 0) {
-      throw new Error('ids list cannot be empty')
+      throw validationRejection('ids list cannot be empty')
     }
     const out: Record<string, unknown>[] = []
     for (const id of ids) {
