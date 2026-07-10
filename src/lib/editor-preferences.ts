@@ -6,8 +6,10 @@
  * change takes effect on the next keystroke, no editor remount needed.
  */
 
+import { getPref, PREFS } from './preferences'
+
 /** Inline `:` emoji picker enable/disable (#130). Default: enabled. */
-export const EMOJI_PICKER_ENABLED_KEY = 'agaric-emoji-picker-enabled'
+export const EMOJI_PICKER_ENABLED_KEY = PREFS.emojiPickerEnabled.key
 
 /**
  * Whether the inline `:` emoji picker is enabled. Defaults to `true` (absent
@@ -15,12 +17,7 @@ export const EMOJI_PICKER_ENABLED_KEY = 'agaric-emoji-picker-enabled'
  * has explicitly turned it off.
  */
 export function isEmojiPickerEnabled(): boolean {
-  try {
-    const raw = localStorage.getItem(EMOJI_PICKER_ENABLED_KEY)
-    return raw === null ? true : (JSON.parse(raw) as boolean) !== false
-  } catch {
-    return true
-  }
+  return getPref(PREFS.emojiPickerEnabled)
 }
 
 /**
@@ -34,7 +31,7 @@ export function isEmojiPickerEnabled(): boolean {
  * editor is never a keyboard trap: Escape exits the block (focus returns to the
  * document), so Tab can move focus away again.
  */
-export const TAB_INDENTS_BLOCKS_KEY = 'agaric-tab-indents-blocks'
+export const TAB_INDENTS_BLOCKS_KEY = PREFS.tabIndentsBlocks.key
 
 /**
  * Whether Tab/Shift+Tab indent blocks. Defaults to `true` (absent key) and on
@@ -42,10 +39,5 @@ export const TAB_INDENTS_BLOCKS_KEY = 'agaric-tab-indents-blocks'
  * explicitly turned it off for accessibility.
  */
 export function isTabIndentEnabled(): boolean {
-  try {
-    const raw = localStorage.getItem(TAB_INDENTS_BLOCKS_KEY)
-    return raw === null ? true : (JSON.parse(raw) as boolean) !== false
-  } catch {
-    return true
-  }
+  return getPref(PREFS.tabIndentsBlocks)
 }
