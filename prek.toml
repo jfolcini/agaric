@@ -11,7 +11,13 @@
 # prek 0.3.8: `prek install` with this key writes all five shims; run
 # `prek install -f` once on an existing clone to add the new commit-msg
 # shim.
-default_install_hook_types = ["pre-commit", "commit-msg", "prepare-commit-msg", "pre-push", "post-commit"]
+default_install_hook_types = [
+    "pre-commit",
+    "commit-msg",
+    "prepare-commit-msg",
+    "pre-push",
+    "post-commit",
+]
 
 [[repos]]
 repo = "builtin"
@@ -26,31 +32,53 @@ hooks = [
     # comments and a trailing blank line, so these two whitespace fixers strip
     # them and make `specta_tests::ts_bindings_up_to_date` fail (committed !=
     # generated). Exclude the generated file from both, like the other formatters.
-    { id = "trailing-whitespace", exclude = "(\\.(png|ico|icns|svg)$|^src/lib/bindings\\.ts$)", stages = ["pre-commit"] },
-    { id = "end-of-file-fixer", exclude = "(\\.(png|ico|icns|svg)$|^src/lib/bindings\\.ts$)", stages = ["pre-commit"] },
-    { id = "check-yaml", stages = ["pre-commit"] },
-    { id = "check-toml", stages = ["pre-commit"] },
-    { id = "check-json", exclude = "(tsconfig.*\\.json$|\\.sqlx/)", stages = ["pre-commit"] },
-    { id = "check-merge-conflict", stages = ["pre-commit"] },
+    { id = "trailing-whitespace", exclude = "(\\.(png|ico|icns|svg)$|^src/lib/bindings\\.ts$)", stages = [
+        "pre-commit",
+    ] },
+    { id = "end-of-file-fixer", exclude = "(\\.(png|ico|icns|svg)$|^src/lib/bindings\\.ts$)", stages = [
+        "pre-commit",
+    ] },
+    { id = "check-yaml", stages = [
+        "pre-commit",
+    ] },
+    { id = "check-toml", stages = [
+        "pre-commit",
+    ] },
+    { id = "check-json", exclude = "(tsconfig.*\\.json$|\\.sqlx/)", stages = [
+        "pre-commit",
+    ] },
+    { id = "check-merge-conflict", stages = [
+        "pre-commit",
+    ] },
     { id = "check-added-large-files", args = [
         "--maxkb=500",
-    ], exclude = "^docs/session-log/", stages = ["pre-commit"] },
+    ], exclude = "^docs/session-log/", stages = [
+        "pre-commit",
+    ] },
     { id = "no-commit-to-branch", args = [
         "--branch=main",
     ], stages = [
         "pre-push",
     ] },
-    { id = "detect-private-key", exclude = "^src-tauri/src/(sync_cert\\.rs|sync_net/tests\\.rs|sync_daemon/tests\\.rs)$|^SESSION-LOG\\.md$|^docs/session-log/", stages = ["pre-commit"] },
+    { id = "detect-private-key", exclude = "^src-tauri/src/(sync_cert\\.rs|sync_net/tests\\.rs|sync_daemon/tests\\.rs)$|^SESSION-LOG\\.md$|^docs/session-log/", stages = [
+        "pre-commit",
+    ] },
     # Catch the "I added a script but forgot chmod +x" / "I marked a non-executable as +x" class of mistake.
     # scripts/ mixes .sh, .mjs, and .py files that all rely on shebangs + +x bits. `*.rs` is excluded
     # because Rust's inner-attribute syntax `#![...]` looks like a shebang to this builtin and gives
     # unactionable false positives on every test module under src-tauri/src/commands/tests/.
-    { id = "check-shebang-scripts-are-executable", exclude = "\\.rs$", stages = ["pre-commit"] },
-    { id = "check-executables-have-shebangs", stages = ["pre-commit"] },
+    { id = "check-shebang-scripts-are-executable", exclude = "\\.rs$", stages = [
+        "pre-commit",
+    ] },
+    { id = "check-executables-have-shebangs", stages = [
+        "pre-commit",
+    ] },
     # Normalise CRLF leakage from non-Linux contributors.
     { id = "mixed-line-ending", args = [
         "--fix=lf",
-    ], stages = ["pre-commit"] },
+    ], stages = [
+        "pre-commit",
+    ] },
 ]
 
 # Secret scanning (gitleaks)
@@ -476,6 +504,39 @@ pass_filenames = false
 files = "^scripts/check-raw-invoke\\.mjs$"
 stages = ["pre-commit"]
 
+# no-raw-local-storage (#2466): app code must declare a device-local
+# preference in the typed registry (`src/lib/preferences.ts`, PREFS /
+# PREF_CATALOG) and read/write it via `getPref`/`setPref`/`getKeyedPref`/
+# `setKeyedPref`, not a raw `localStorage.getItem/setItem/removeItem/clear`
+# bypass. Grandfather exemptions (pre-#2466 call sites intentionally not
+# migrated in that pass — useSyncExternalStore + synthetic-StorageEvent
+# hooks, the keyboard-config parse cache, etc.) live in the script with a
+# per-file rationale. pass_filenames=false — the script does its own
+# scoped walk of src/.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "no-raw-local-storage"
+name = "No raw localStorage calls in app code (#2466)"
+entry = "node scripts/check-raw-local-storage.mjs"
+language = "system"
+pass_filenames = false
+files = "^src/.*\\.(ts|tsx)$"
+stages = ["pre-commit"]
+
+# Self-test the no-raw-local-storage guard's own exit behavior (raw call
+# FAILS, registry accessor / commented / exempt / variable-indirection
+# PASS) whenever the guard script itself changes, so a regression that
+# defangs it can't land.
+[[repos.hooks]]
+id = "no-raw-local-storage-selftest"
+name = "No raw localStorage guard self-test"
+entry = "node scripts/check-raw-local-storage.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-raw-local-storage\\.mjs$"
+stages = ["pre-commit"]
+
 # snapshot-redaction: scan every `*.snap` file under `src/` and
 # `src-tauri/` for unredacted ULIDs (26-char Crockford base32),
 # blake3 hashes (64-char lowercase hex), ISO-8601 timestamps with a
@@ -808,6 +869,8 @@ stages = ["pre-commit", "pre-push"]
 # `python3 scripts/check-space-filter-drift.py --update-baseline`. Mirrors
 # the `space_filter_canonical.rs` parity test at pre-commit stage. Rules
 # live in scripts/check-space-filter-drift.py.
+[[repos]]
+repo = "local"
 [[repos.hooks]]
 id = "check-space-filter-drift"
 name = "space-filter drift guard (#139)"
