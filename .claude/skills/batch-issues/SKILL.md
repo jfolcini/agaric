@@ -59,6 +59,21 @@ merge sweep.
 Pick **one** of: a `plan` issue (group its sub-items into a 3-6 item batch), a non-`plan`
 issue (ship as its own PR), or a code-scanning/Dependabot alert. Leave the rest for later.
 
+### Cross-session claim convention
+
+Multiple Claude sessions may work this backlog in parallel. Sessions cannot talk to each
+other directly — coordinate through GitHub state:
+
+- **Before starting an issue, skip it if any claim exists:** an `in-progress` label on
+  the issue, an open PR referencing it, or a remote `claude/*` branch mentioning its
+  number.
+- **When you pick an issue:** immediately add the `in-progress` label (create it if
+  missing) and comment "Claimed — working on this in a Claude session."
+- **When done or abandoning:** remove the label. The open PR then serves as the ongoing
+  claim; the label only covers the window before a PR exists.
+- **Claim collision** (a claim appeared between your check and yours landing): back off,
+  remove your claim, and pick a different issue.
+
 For discovery, prefer a read-only **Explore agent** (cheaper than general-purpose) to sweep
 the backlog, `docs/FEATURE-MAP.md`, and `docs/features/*.md` for how a feature fits the
 system (related commands, stores, components, tables) — avoids blind spots while planning.
