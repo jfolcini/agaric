@@ -1332,6 +1332,21 @@ export async function setTodoStateBatch(blockIds: string[], state: string | null
   return unwrap(await commands.setTodoStateBatch(blockIds, state))
 }
 
+/**
+ * Batch set/clear an ALLOWLISTED reserved property on N blocks in one tx.
+ * Allowed keys: `todo_state`, `priority`, `due_date`, `scheduled_date`.
+ * Pass `value = null` to clear the property. Returns the number of live
+ * blocks updated (missing / soft-deleted ids are skipped). Single IPC,
+ * mirroring `setTodoStateBatch`.
+ */
+export async function setPropertyBatch(
+  blockIds: string[],
+  key: string,
+  value: string | null,
+): Promise<number> {
+  return unwrap(await commands.setPropertyBatch(blockIds, key, value))
+}
+
 /** Set or clear the priority level on a block. Pass null to clear. */
 export async function setPriority(blockId: string, level: string | null): Promise<BlockRow> {
   return unwrap(await commands.setPriority(blockId, level))

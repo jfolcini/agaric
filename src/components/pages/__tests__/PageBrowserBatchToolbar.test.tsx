@@ -14,7 +14,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -22,9 +22,21 @@ import { axe } from 'vitest-axe'
 
 import { PageBrowserBatchToolbar } from '@/components/pages/PageBrowserBatchToolbar'
 import { t } from '@/lib/i18n'
+import { getStarredPages } from '@/lib/starred-pages'
+import { setPropertyBatch } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
+// Partial-mock the typed tauri lib so the bulk set-property path can be
+// asserted directly (ids/key/value) without threading through `invoke`. All
+// OTHER wrappers (trash/tag/space) keep their real implementation and still
+// hit the mocked `invoke`.
+vi.mock('@/lib/tauri', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/tauri')>()
+  return { ...actual, setPropertyBatch: vi.fn() }
+})
+
 const mockedInvoke = vi.mocked(invoke)
+const mockedSetPropertyBatch = vi.mocked(setPropertyBatch)
 const mockedToastSuccess = vi.mocked(toast.success)
 const mockedToastError = vi.mocked(toast.error)
 
@@ -54,6 +66,7 @@ function renderToolbar(overrides: Partial<Parameters<typeof PageBrowserBatchTool
 
 beforeEach(() => {
   vi.clearAllMocks()
+  localStorage.clear()
   useSpaceStore.setState({
     currentSpaceId: 'SPACE_TEST',
     availableSpaces: [
@@ -175,6 +188,167 @@ describe('PageBrowserBatchToolbar', () => {
     expect(onClearSelection).toHaveBeenCalledTimes(1)
     expect(onMutated).toHaveBeenCalledTimes(1)
     expect(mockedToastSuccess).toHaveBeenCalledWith(t('pageBrowser.batch.moved', { count: 3 }))
+  })
+
+  it('Set property: choosing todo_state=DONE fires setPropertyBatch, clears + refreshes + notifies', async () => {
+    const user = userEvent.setup()
+    mockedSetPropertyBatch.mockResolvedValueOnce(3)
+    const { onClearSelection, onMutated } = renderToolbar()
+
+    await user.click(screen.getByTestId('page-batch-set-property-btn'))
+
+    const propertySelect = await screen.findByRole('combobox', {
+      name: t('pageBrowser.batch.propertyPlaceholder'),
+    })
+    await user.selectOptions(propertySelect, 'todo_state')
+
+    const valueSelect = await screen.findByRole('combobox', {
+      name: t('pageBrowser.batch.valuePlaceholder'),
+    })
+    await user.selectOptions(valueSelect, 'DONE')
+
+    await user.click(screen.getByTestId('page-batch-property-confirm'))
+
+    await waitFor(() => {
+      expect(mockedSetPropertyBatch).toHaveBeenCalledWith(SELECTED, 'todo_state', 'DONE')
+    })
+    expect(onClearSelection).toHaveBeenCalledTimes(1)
+    expect(onMutated).toHaveBeenCalledTimes(1)
+    expect(mockedToastSuccess).toHaveBeenCalledWith(
+      t('pageBrowser.batch.propertySet', { count: 3 }),
+    )
+  })
+
+  it('Set property: a date key routes a date value through setPropertyBatch', async () => {
+    const user = userEvent.setup()
+    mockedSetPropertyBatch.mockResolvedValueOnce(2)
+    renderToolbar()
+
+    await user.click(screen.getByTestId('page-batch-set-property-btn'))
+
+    const propertySelect = await screen.findByRole('combobox', {
+      name: t('pageBrowser.batch.propertyPlaceholder'),
+    })
+    await user.selectOptions(propertySelect, 'due_date')
+
+    const dateInput = await screen.findByTestId('page-batch-property-date')
+    fireEvent.change(dateInput, { target: { value: '2026-07-10' } })
+
+    await user.click(screen.getByTestId('page-batch-property-confirm'))
+
+    await waitFor(() => {
+      expect(mockedSetPropertyBatch).toHaveBeenCalledWith(SELECTED, 'due_date', '2026-07-10')
+    })
+  })
+
+  it('Set property: the Clear value option sends null to clear the property', async () => {
+    const user = userEvent.setup()
+    mockedSetPropertyBatch.mockResolvedValueOnce(3)
+    renderToolbar()
+
+    await user.click(screen.getByTestId('page-batch-set-property-btn'))
+
+    const propertySelect = await screen.findByRole('combobox', {
+      name: t('pageBrowser.batch.propertyPlaceholder'),
+    })
+    await user.selectOptions(propertySelect, 'priority')
+
+    const valueSelect = await screen.findByRole('combobox', {
+      name: t('pageBrowser.batch.valuePlaceholder'),
+    })
+    await user.selectOptions(valueSelect, '__clear__')
+
+    await user.click(screen.getByTestId('page-batch-property-confirm'))
+
+    await waitFor(() => {
+      expect(mockedSetPropertyBatch).toHaveBeenCalledWith(SELECTED, 'priority', null)
+    })
+  })
+
+  it('Set property: surfaces an error toast and does NOT clear on failure', async () => {
+    const user = userEvent.setup()
+    mockedSetPropertyBatch.mockRejectedValueOnce(new Error('backend boom'))
+    const { onClearSelection, onMutated } = renderToolbar()
+
+    await user.click(screen.getByTestId('page-batch-set-property-btn'))
+    const propertySelect = await screen.findByRole('combobox', {
+      name: t('pageBrowser.batch.propertyPlaceholder'),
+    })
+    await user.selectOptions(propertySelect, 'todo_state')
+    const valueSelect = await screen.findByRole('combobox', {
+      name: t('pageBrowser.batch.valuePlaceholder'),
+    })
+    await user.selectOptions(valueSelect, 'TODO')
+    await user.click(screen.getByTestId('page-batch-property-confirm'))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(t('pageBrowser.batch.setPropertyFailed'))
+    })
+    expect(onClearSelection).not.toHaveBeenCalled()
+    expect(onMutated).not.toHaveBeenCalled()
+  })
+
+  it('the set-property picker has no a11y violations', async () => {
+    const user = userEvent.setup()
+    const { container } = renderToolbar()
+    await user.click(screen.getByTestId('page-batch-set-property-btn'))
+    await screen.findByRole('combobox', { name: t('pageBrowser.batch.propertyPlaceholder') })
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: t('pageBrowser.batch.propertyPlaceholder') }),
+      'todo_state',
+    )
+    await screen.findByRole('combobox', { name: t('pageBrowser.batch.valuePlaceholder') })
+    await waitFor(
+      async () => {
+        expect(await axe(container)).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
+  })
+
+  it('renders a Star button (no page starred yet) and stars the whole selection + clears on click', async () => {
+    const user = userEvent.setup()
+    const { onClearSelection, onMutated } = renderToolbar()
+
+    const starBtn = screen.getByTestId('page-batch-star-btn')
+    expect(starBtn).toBeInTheDocument()
+    expect(screen.queryByTestId('page-batch-unstar-btn')).not.toBeInTheDocument()
+
+    await user.click(starBtn)
+
+    // Pure-FE: the whole selection is now starred in localStorage, selection
+    // clears, and no backend mutation / list-refresh is triggered.
+    expect(getStarredPages()).toEqual(SELECTED)
+    expect(onClearSelection).toHaveBeenCalledTimes(1)
+    expect(onMutated).not.toHaveBeenCalled()
+    expect(mockedInvoke).not.toHaveBeenCalled()
+  })
+
+  it('renders an Unstar button when every selected page is already starred and unstars on click', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem('starred-pages', JSON.stringify(SELECTED))
+    const { onClearSelection } = renderToolbar()
+
+    const unstarBtn = screen.getByTestId('page-batch-unstar-btn')
+    expect(unstarBtn).toBeInTheDocument()
+    expect(screen.queryByTestId('page-batch-star-btn')).not.toBeInTheDocument()
+
+    await user.click(unstarBtn)
+
+    expect(getStarredPages()).toEqual([])
+    expect(onClearSelection).toHaveBeenCalledTimes(1)
+  })
+
+  it('the star toggle control has no a11y violations', async () => {
+    const { container } = renderToolbar()
+    const starBtn = screen.getByTestId('page-batch-star-btn')
+    expect(starBtn).toHaveAccessibleName(t('pageBrowser.batch.starSelected'))
+    await waitFor(
+      async () => {
+        expect(await axe(container)).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
   })
 
   it('has no a11y violations', async () => {

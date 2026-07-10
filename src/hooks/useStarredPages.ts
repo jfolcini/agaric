@@ -20,7 +20,7 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 
-import { getStarredPages, toggleStarred } from '../lib/starred-pages'
+import { getStarredPages, setStarred, toggleStarred } from '../lib/starred-pages'
 
 /** Window event name broadcast on every successful toggle. */
 const STARRED_PAGES_CHANGED_EVENT = 'starred-pages-changed'
@@ -32,6 +32,12 @@ export interface UseStarredPagesReturn {
   isStarred: (pageId: string) => boolean
   /** Toggle a page's starred state and broadcast the change to other instances. */
   toggle: (pageId: string) => void
+  /**
+   * Bulk-set the starred state of many pages in one write, then broadcast the
+   * change once so other instances re-read. Mirrors `toggle`'s
+   * write-before-dispatch ordering.
+   */
+  setMany: (ids: string[], starred: boolean) => void
 }
 
 function readStarredSet(): ReadonlySet<string> {
@@ -67,5 +73,13 @@ export function useStarredPages(): UseStarredPagesReturn {
     window.dispatchEvent(new CustomEvent(STARRED_PAGES_CHANGED_EVENT))
   }, [])
 
-  return { starredIds, isStarred, toggle }
+  const setMany = useCallback((ids: string[], starred: boolean) => {
+    // Same write-before-dispatch ordering as `toggle`: the lib write is fully
+    // synchronous, so a single broadcast after it lets other instances re-read
+    // the fresh set. One dispatch covers the whole batch.
+    setStarred(ids, starred)
+    window.dispatchEvent(new CustomEvent(STARRED_PAGES_CHANGED_EVENT))
+  }, [])
+
+  return { starredIds, isStarred, toggle, setMany }
 }

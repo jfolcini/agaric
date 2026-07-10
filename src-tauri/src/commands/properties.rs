@@ -533,6 +533,178 @@ pub async fn set_todo_state_batch_inner(
     Ok(updated)
 }
 
+/// The set of property keys `set_property_batch` is allowed to write.
+///
+/// This is a **security boundary**: the batch command routes an untrusted
+/// `(key, value)` pair into a typed `blocks` column, so only the four
+/// reserved column-backed keys may be set in bulk. Arbitrary keys are
+/// rejected up-front — a batch write must never become a channel for
+/// injecting undeclared custom properties across N blocks under one lock.
+const SET_PROPERTY_BATCH_ALLOWED_KEYS: &[&str] =
+    &["todo_state", "priority", "due_date", "scheduled_date"];
+
+/// Batch-set one allowlisted property `(key, value)` on N blocks in a
+/// single IMMEDIATE tx — the generalisation of
+/// [`set_todo_state_batch_inner`] across the four reserved column-backed
+/// keys (`todo_state`, `priority`, `due_date`, `scheduled_date`).
+///
+/// `value = None` CLEARS the property (all `value_*` columns null), same
+/// clear semantics as the single-row inners. `value = Some(_)` routes to
+/// the correct typed column by key:
+/// - `todo_state` / `priority` → `value_text`, with the same
+///   `property_definitions` option-list fallback validation the single-row
+///   (`set_todo_state_inner` / `set_priority_inner`) and
+///   `set_todo_state_batch_inner` paths run.
+/// - `due_date` / `scheduled_date` → `value_date`, with the same ISO
+///   `YYYY-MM-DD` format check the single-row date inners run (also
+///   re-enforced by `validate_property_value` inside `set_property_in_tx`).
+///
+/// Tolerance / atomicity match `set_todo_state_batch_inner`: missing or
+/// soft-deleted ids in the input list are silently skipped (best-effort
+/// across the surviving subset), while caller errors (non-allowlisted key,
+/// empty list, oversize list, invalid value) abort the whole tx before any
+/// write lands. Returns the number of blocks actually updated.
+///
+/// Like the todo batch, this path deliberately does NOT run recurrence /
+/// completion-timestamp transitions — it is a bulk multi-select reflex.
+#[instrument(skip(pool, device_id, materializer, block_ids), err)]
+pub async fn set_property_batch_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_ids: Vec<BlockId>,
+    key: String,
+    value: Option<String>,
+) -> Result<i64, AppError> {
+    // Security boundary: reject any key outside the reserved column-backed
+    // allowlist BEFORE opening the tx, so a bad key writes nothing.
+    if !SET_PROPERTY_BATCH_ALLOWED_KEYS.contains(&key.as_str()) {
+        return Err(AppError::validation(format!(
+            "set_property_batch: key '{key}' is not settable in batch; \
+             allowed keys: {}",
+            SET_PROPERTY_BATCH_ALLOWED_KEYS.join(", ")
+        )));
+    }
+
+    if block_ids.is_empty() {
+        return Err(AppError::validation(
+            "block_ids list cannot be empty".into(),
+        ));
+    }
+    crate::commands::ensure_batch_within_cap("block_ids", block_ids.len())?;
+
+    // Pre-tx value-shape validation, mirroring the single-row inners
+    // (`set_todo_state_inner` / `set_priority_inner` length check;
+    // `set_due_date_inner` / `set_scheduled_date_inner` ISO-date check).
+    let is_text_key = matches!(key.as_str(), "todo_state" | "priority");
+    match key.as_str() {
+        "todo_state" | "priority" => {
+            if let Some(ref v) = value
+                && (v.is_empty() || v.len() > 50)
+            {
+                return Err(AppError::validation(format!(
+                    "{key} must be 1-50 characters"
+                )));
+            }
+        }
+        "due_date" | "scheduled_date" => {
+            if let Some(ref d) = value
+                && !is_valid_iso_date(d)
+            {
+                return Err(AppError::validation(format!(
+                    "{key} must be YYYY-MM-DD format, got '{d}'"
+                )));
+            }
+        }
+        // Unreachable: the allowlist guard above already rejected any other
+        // key. Kept as a defensive no-op rather than `unreachable!` so a
+        // future allowlist edit that forgets the routing branch degrades to
+        // a clean write attempt (still bounded by `set_property_in_tx`
+        // validation) instead of a panic under the writer lock.
+        _ => {}
+    }
+
+    // One IMMEDIATE tx covers every per-block write (op_log + blocks
+    // column). Either every property change commits or none of them.
+    let mut tx = CommandTx::begin_immediate(pool, "set_property_batch").await?;
+
+    // Reserved-key option-list fallback validation for the two text keys,
+    // mirroring `set_todo_state_batch_inner` / `set_priority_inner`. Read
+    // once for the whole batch (single SELECT, regardless of N). Branch into
+    // two compile-checked `query!` macros with literal keys (both already in
+    // the `.sqlx/` cache) rather than one runtime query on the dynamic `key`,
+    // so this stays schema-validated at build time with no new cache entry.
+    if is_text_key && let Some(ref v) = value {
+        let (def_exists, defaults): (bool, &[&str]) = if key == "todo_state" {
+            let row =
+                sqlx::query!("SELECT options FROM property_definitions WHERE key = 'todo_state'")
+                    .fetch_optional(&mut **tx)
+                    .await?;
+            (row.is_some(), &["TODO", "DOING", "DONE"])
+        } else {
+            let row =
+                sqlx::query!("SELECT options FROM property_definitions WHERE key = 'priority'")
+                    .fetch_optional(&mut **tx)
+                    .await?;
+            (row.is_some(), &["1", "2", "3"])
+        };
+        validate_reserved_property_value(def_exists, &key, v, defaults)?;
+    }
+
+    // Route the single value to the correct typed column: text keys →
+    // `value_text`, date keys → `value_date`. `None` leaves both null,
+    // which `set_property_in_tx` treats as a clear.
+    let value_text = if is_text_key { value.clone() } else { None };
+    let value_date = if is_text_key { None } else { value.clone() };
+
+    // Resolve which target blocks are live in ONE membership query (no
+    // per-block existence SELECT in the loop). Skip-on-miss semantics: a row
+    // deleted between the FE selection and this call is absent from `alive`
+    // and cleanly skipped.
+    let block_ids_json = serde_json::to_string(&block_ids)?;
+    let alive: std::collections::HashSet<String> = sqlx::query_scalar!(
+        r#"SELECT id FROM blocks
+           WHERE id IN (SELECT value FROM json_each(?)) AND deleted_at IS NULL"#,
+        block_ids_json
+    )
+    .fetch_all(&mut **tx)
+    .await?
+    .into_iter()
+    .collect();
+
+    let mut updated: i64 = 0;
+    for block_id in block_ids {
+        if !alive.contains(block_id.as_str()) {
+            continue;
+        }
+
+        // Reuse the canonical per-row helper so reserved-key validation,
+        // op_log append, and the materialised `blocks` column write all
+        // share the single source of truth. Discard the returned row (the
+        // batch wrapper surfaces no per-block payload) and queue the op
+        // record for post-commit dispatch.
+        let (_row, op_record) = crate::commands::blocks::set_property_in_tx(
+            &mut tx,
+            materializer.loro_state(),
+            device_id,
+            block_id.into_string(),
+            &key,
+            value_text.clone(),
+            None,
+            value_date.clone(),
+            None,
+            None,
+        )
+        .await?;
+        tx.enqueue_background(op_record);
+        updated += 1;
+    }
+
+    tx.commit_and_dispatch(materializer).await?;
+
+    Ok(updated)
+}
+
 /// Set the priority on a block (level value or clear).
 ///
 /// Priority levels are user-configurable through the
@@ -1286,6 +1458,48 @@ pub async fn set_todo_state_batch(
     // the listener side already debounces / re-reads.
     for id in block_ids_for_emit {
         emit_property_changed_event(&app, id.into_string(), vec!["todo_state".to_string()]);
+    }
+    Ok(updated)
+}
+
+/// Tauri command: batch-set one allowlisted property on multiple blocks.
+///
+/// Delegates to [`set_property_batch_inner`] — the generalisation of
+/// [`set_todo_state_batch`] across the four reserved column-backed keys
+/// (`todo_state`, `priority`, `due_date`, `scheduled_date`). A single
+/// IMMEDIATE tx covers every per-block write; `value = None` clears the
+/// property.
+///
+/// Emits one `EVENT_PROPERTY_CHANGED` per input block (carrying the changed
+/// `key`) so existing per-block listeners keep firing without protocol
+/// changes — mirroring the `set_todo_state_batch` emit loop.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_property_batch(
+    app: tauri::AppHandle,
+    ctx: State<'_, WriteCtx>,
+    block_ids: Vec<BlockId>,
+    key: String,
+    value: Option<String>,
+) -> Result<i64, AppError> {
+    let block_ids_for_emit = block_ids.clone();
+    let key_for_emit = key.clone();
+    let updated = set_property_batch_inner(
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
+        block_ids,
+        key,
+        value,
+    )
+    .await
+    .map_err(sanitize_internal_error)?;
+    // Emit per-block change events so the existing per-block listeners
+    // receive the same signal shape they got from the single-row path. The
+    // inner already skipped missing rows silently; emitting for ids that did
+    // not actually update is harmless (listeners debounce / re-read).
+    for id in block_ids_for_emit {
+        emit_property_changed_event(&app, id.into_string(), vec![key_for_emit.clone()]);
     }
     Ok(updated)
 }

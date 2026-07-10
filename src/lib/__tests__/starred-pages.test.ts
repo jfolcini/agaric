@@ -9,9 +9,9 @@
  *  - Graceful handling of corrupted/missing data
  */
 
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getStarredPages, isStarred, toggleStarred } from '../starred-pages'
+import { getStarredPages, isStarred, setStarred, toggleStarred } from '../starred-pages'
 
 beforeEach(() => {
   localStorage.removeItem('starred-pages')
@@ -92,6 +92,58 @@ describe('starred-pages', () => {
       toggleStarred('P1')
       const raw = localStorage.getItem('starred-pages')
       expect(raw).toBe(JSON.stringify(['P1']))
+    })
+  })
+
+  describe('setStarred', () => {
+    it('adds every id when starred=true', () => {
+      setStarred(['P1', 'P2', 'P3'], true)
+      expect(getStarredPages()).toEqual(['P1', 'P2', 'P3'])
+    })
+
+    it('removes every id when starred=false', () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['P1', 'P2', 'P3']))
+      setStarred(['P1', 'P3'], false)
+      expect(getStarredPages()).toEqual(['P2'])
+    })
+
+    it('merges added ids with the existing set without duplicating', () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['P1', 'P2']))
+      setStarred(['P2', 'P3'], true)
+      expect(getStarredPages()).toEqual(['P1', 'P2', 'P3'])
+    })
+
+    it('is idempotent when starring already-starred ids', () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['P1', 'P2']))
+      setStarred(['P1', 'P2'], true)
+      expect(getStarredPages()).toEqual(['P1', 'P2'])
+    })
+
+    it('is idempotent when unstarring absent ids', () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      setStarred(['P2', 'P3'], false)
+      expect(getStarredPages()).toEqual(['P1'])
+    })
+
+    it('dedupes repeated ids within the input', () => {
+      setStarred(['P1', 'P1', 'P1'], true)
+      expect(getStarredPages()).toEqual(['P1'])
+    })
+
+    it('handles an empty list as a no-op', () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      setStarred([], true)
+      expect(getStarredPages()).toEqual(['P1'])
+      setStarred([], false)
+      expect(getStarredPages()).toEqual(['P1'])
+    })
+
+    it('writes localStorage exactly once regardless of id count', () => {
+      const spy = vi.spyOn(localStorage, 'setItem')
+      setStarred(['P1', 'P2', 'P3', 'P4'], true)
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(spy).toHaveBeenCalledWith('starred-pages', JSON.stringify(['P1', 'P2', 'P3', 'P4']))
+      spy.mockRestore()
     })
   })
 })
