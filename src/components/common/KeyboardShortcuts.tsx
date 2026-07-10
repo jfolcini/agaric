@@ -23,9 +23,9 @@ import {
 } from '@/components/ui/sheet'
 import { getCurrentShortcuts, getShortcutKeys } from '@/lib/keyboard-config'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
+import { PREFS, setPref } from '@/lib/preferences'
 import { loadQuickCaptureShortcut } from '@/lib/quick-capture-shortcut'
 import { renderKeys } from '@/lib/render-keyboard-shortcut'
-import { SETTINGS_ACTIVE_TAB_KEY } from '@/lib/url-state'
 import { useNavigationStore } from '@/stores/navigation'
 
 interface ShortcutDef {
@@ -410,11 +410,9 @@ export function KeyboardShortcuts({
             size="sm"
             onClick={() => {
               setOpen(false)
-              try {
-                window.localStorage.setItem(SETTINGS_ACTIVE_TAB_KEY, 'keyboard')
-              } catch {
-                // storage may be disabled (private mode etc.) — ignore
-              }
+              // A write failure (storage disabled, private mode etc.) is
+              // logged and swallowed by setPref.
+              setPref(PREFS.settingsActiveTab, 'keyboard')
               // #734 — ALSO write the store handoff slot SettingsView subscribes
               // to while mounted. The localStorage write above only lands on a
               // fresh mount; when Settings is already the current view it is
