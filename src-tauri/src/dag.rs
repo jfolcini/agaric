@@ -382,6 +382,26 @@ fn parse_parent_seqs_canonical(parent_seqs_json: &str) -> Result<Vec<(String, i6
     Ok(parents)
 }
 
+/// Parent-gap policy + provenance stamp for the shared remote-op ingest core
+/// ([`ingest_remote_record`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IngestProfile {
+    /// Strict merge-ingest profile (the dormant Wave 1B remote-merge path,
+    /// [`insert_remote_op`]): an unresolved `parent_seqs` pointer is a hard
+    /// error (`"dag.parent_seqs.unresolved"`) and the row is stored as
+    /// locally-authored (`is_replicated = 0`).
+    Strict,
+    /// #2481 phase 1 audit-only replication profile ([`insert_replicated_op`]):
+    /// an unresolved `parent_seqs` pointer — the peer compacted its own early
+    /// history — lands with a `warn!` breadcrumb instead of being rejected,
+    /// since the replicated log is never load-bearing for state and
+    /// per-device ordered delivery makes such a gap attributable to
+    /// compaction only. The row is stamped `is_replicated = 1` so boot replay
+    /// and the apply-cursor bookkeeping provably never treat it as a
+    /// locally-authored op.
+    Audit,
+}
+
 /// Insert an op received from a remote device into the op_log.
 ///
 /// Uses `INSERT OR IGNORE` on the composite PK `(device_id, seq)` so that
@@ -430,6 +450,54 @@ fn parse_parent_seqs_canonical(parent_seqs_json: &str) -> Result<Vec<(String, i6
 /// cross-device History/attribution, but never applied to state — state
 /// remains exclusively Loro-CRDT-sourced.
 pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bool, AppError> {
+    // Strict merge-ingest profile: unresolved parents hard-error, the row is
+    // stored as locally-authored (`is_replicated = 0`), and `origin` keeps the
+    // column default (`"user"`).
+    ingest_remote_record(pool, record, "user", IngestProfile::Strict).await
+}
+
+/// #2481 phase 1 — ingest a replicated op record as append-only, hash-verified
+/// **audit metadata**.
+///
+/// This is the production ingest point for audit-only op-log replication
+/// (`SyncMessage::OpLogBatch`). It reuses [`insert_remote_op`]'s exact
+/// verification recipe — blake3 hash check, NUL-rejection gate, `SetProperty`
+/// domain validation, idempotent `INSERT OR IGNORE` on `(device_id, seq)`,
+/// divergence probe — via the shared [`ingest_remote_record`] core, differing
+/// only in the [`IngestProfile::Audit`] policy:
+///
+/// * an unresolved `parent_seqs` pointer (peer-side compaction of early
+///   history) lands with a `warn!` breadcrumb instead of being rejected;
+/// * the row is stamped `is_replicated = 1`;
+/// * the transfer-carried `origin` attribution is preserved verbatim.
+///
+/// The stored record is **never applied to state**: state flows exclusively
+/// through Loro CRDT sync. The `is_replicated = 1` stamp keeps the row out of
+/// boot replay (`recovery::replay`), the materializer apply pipeline, and the
+/// apply-cursor bookkeeping — see migration 0099.
+pub async fn insert_replicated_op(
+    pool: &SqlitePool,
+    transfer: &crate::sync_protocol::types::OpTransfer,
+) -> Result<bool, AppError> {
+    // `OpRecord::from` drops the transfer-carried `origin` (OpRecord does not
+    // surface it), so thread it through explicitly to the core.
+    let origin = transfer.origin.clone();
+    let record: OpRecord = transfer.clone().into();
+    ingest_remote_record(pool, &record, &origin, IngestProfile::Audit).await
+}
+
+/// Verification + insert core shared by [`insert_remote_op`] (strict merge
+/// ingest) and [`insert_replicated_op`] (#2481 audit-only replication).
+///
+/// The two callers differ ONLY in `profile` (parent-gap policy +
+/// `is_replicated` stamp) and `origin`; every integrity check below is
+/// identical so the two ingest paths cannot drift.
+async fn ingest_remote_record(
+    pool: &SqlitePool,
+    record: &OpRecord,
+    origin: &str,
+    profile: IngestProfile,
+) -> Result<bool, AppError> {
     // #1600 — Reject any raw NUL byte in a hashed field *before* the op
     // reaches the hash recipe. The `\0` delimiter is the wire-format
     // contract for the hash preimage (see `compute_op_hash`); a NUL in a
@@ -543,9 +611,34 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bo
             let expected: i64 =
                 i64::try_from(unique_parents.len()).expect("parent count fits in i64");
             if found != expected {
-                return Err(AppError::InvalidOperation(
-                    "dag.parent_seqs.unresolved".into(),
-                ));
+                match profile {
+                    IngestProfile::Strict => {
+                        return Err(AppError::InvalidOperation(
+                            "dag.parent_seqs.unresolved".into(),
+                        ));
+                    }
+                    IngestProfile::Audit => {
+                        // #2481 phase-1 audit-mode relaxation: an unresolved
+                        // parent pointer here means the *peer* compacted its
+                        // own early history before replicating this op. The
+                        // replicated log is audit-only and never load-bearing
+                        // for state, and per-device ordered delivery (sort by
+                        // seq) makes the gap attributable to compaction only —
+                        // so land the row with a breadcrumb instead of
+                        // rejecting it. See `op-log-format.md` §Validity rules
+                        // (audit-mode validity profile).
+                        tracing::warn!(
+                            device_id = %record.device_id,
+                            seq = record.seq,
+                            parents_found = found,
+                            parents_expected = expected,
+                            "op_log audit ingest: unresolved parent_seqs \
+                             (peer-side compaction of early history); landing \
+                             the replicated record with a breadcrumb rather \
+                             than rejecting (#2481)"
+                        );
+                    }
+                }
             }
         }
     }
@@ -604,10 +697,20 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bo
     // once per field.
     let (block_id, attachment_id) = extract_indexed_ids_from_payload(&record.payload);
 
+    // #2481: `origin` carries cross-device attribution (Audit profile passes
+    // the transfer-carried value; Strict keeps the `"user"` default).
+    // `is_replicated` is the isolation boundary — `1` for audit records so boot
+    // replay / materializer / apply-cursor bookkeeping provably skip them
+    // (migration 0099); `0` for the strict merge path.
+    let is_replicated: i64 = match profile {
+        IngestProfile::Strict => 0,
+        IngestProfile::Audit => 1,
+    };
+
     let result = sqlx::query!(
         "INSERT OR IGNORE INTO op_log \
-         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, attachment_id) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, attachment_id, origin, is_replicated) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         record.device_id,
         record.seq,
         record.parent_seqs,
@@ -617,6 +720,8 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bo
         record.created_at,
         block_id,
         attachment_id,
+        origin,
+        is_replicated,
     )
     .execute(&mut *tx)
     .await?;

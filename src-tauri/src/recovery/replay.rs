@@ -114,10 +114,15 @@ async fn read_apply_cursor(pool: &SqlitePool) -> Result<i64, AppError> {
     // `replay_unmaterialized_ops` enforces that downstream), so it is NOT
     // multi-device-safe in any sense beyond "the global ceiling is still
     // the right ceiling for a global cursor".
-    let max_seq: Option<i64> =
-        sqlx::query_scalar!(r#"SELECT MAX(seq) as "max_seq: i64" FROM op_log"#,)
-            .fetch_one(pool)
-            .await?;
+    // #2481: `is_replicated = 0` scopes the ceiling to locally-authored ops.
+    // Replicated audit rows (foreign devices) are never applied and never
+    // advance the cursor, so they must not raise the cursor's legitimate
+    // upper bound either.
+    let max_seq: Option<i64> = sqlx::query_scalar!(
+        r#"SELECT MAX(seq) as "max_seq: i64" FROM op_log WHERE is_replicated = 0"#,
+    )
+    .fetch_one(pool)
+    .await?;
     let max_seq = max_seq.unwrap_or(0);
 
     if cursor > max_seq {
@@ -176,9 +181,14 @@ pub(super) async fn compacted_floor_above(
     // (`MIN(seq)`), then take the MAX of those per-device minima. That
     // largest per-device head is the binding compaction floor — a rewind
     // below it leaves at least one device's purged head unrecoverable.
+    // #2481: `is_replicated = 0` — the compaction floor is a statement about
+    // this device's OWN authored history (what a cursor rewind can rebuild
+    // from the local Loro engines). Replicated foreign audit rows are never
+    // rebuilt into engine state, so they must not participate in the floor.
     let floor: Option<i64> = sqlx::query_scalar!(
         r#"SELECT MAX(device_min) as "floor: i64"
-           FROM (SELECT MIN(seq) AS device_min FROM op_log GROUP BY device_id)"#
+           FROM (SELECT MIN(seq) AS device_min FROM op_log
+                 WHERE is_replicated = 0 GROUP BY device_id)"#
     )
     .fetch_one(pool)
     .await?;
@@ -231,10 +241,13 @@ pub(super) async fn heal_orphaned_apply_cursor(pool: &SqlitePool) -> Result<bool
         return Ok(false);
     }
 
-    let max_seq: i64 = sqlx::query_scalar!(r#"SELECT MAX(seq) as "max_seq: i64" FROM op_log"#,)
-        .fetch_one(pool)
-        .await?
-        .unwrap_or(0);
+    // #2481: locally-authored ops only (see `read_apply_cursor`).
+    let max_seq: i64 = sqlx::query_scalar!(
+        r#"SELECT MAX(seq) as "max_seq: i64" FROM op_log WHERE is_replicated = 0"#,
+    )
+    .fetch_one(pool)
+    .await?
+    .unwrap_or(0);
     if max_seq == 0 {
         return Ok(false);
     }
@@ -350,10 +363,16 @@ pub async fn replay_unmaterialized_ops(
     // loudly rather than silently diverge. The full fix (a per-device cursor +
     // `WHERE device_id = ? AND seq > ?` replay) is deferred to when
     // multi-device sync ships (schema migration, AGENTS.md arch-stability gate).
-    let distinct_devices: i64 =
-        sqlx::query_scalar!(r#"SELECT COUNT(DISTINCT device_id) AS "n!: i64" FROM op_log"#)
-            .fetch_one(pool)
-            .await?;
+    // #2481: `is_replicated = 0` — count only locally-authored devices. A
+    // replicated foreign device's audit rows legitimately live in op_log now
+    // (audit-only replication) but are NEVER replayed, so they must not trip
+    // the #412 single-device guard. This is the isolation boundary that lets
+    // replicated records coexist in op_log without breaking boot replay.
+    let distinct_devices: i64 = sqlx::query_scalar!(
+        r#"SELECT COUNT(DISTINCT device_id) AS "n!: i64" FROM op_log WHERE is_replicated = 0"#
+    )
+    .fetch_one(pool)
+    .await?;
     if distinct_devices > 1 {
         tracing::error!(
             distinct_devices,
@@ -373,7 +392,7 @@ pub async fn replay_unmaterialized_ops(
     // The reader pool would be marginally cheaper but the writer pool
     // is the one we own at boot — see fn-level docs.
     let total: i64 = sqlx::query_scalar!(
-        r#"SELECT COUNT(*) as "n!: i64" FROM op_log WHERE seq > ?"#,
+        r#"SELECT COUNT(*) as "n!: i64" FROM op_log WHERE is_replicated = 0 AND seq > ?"#,
         cursor,
     )
     .fetch_one(pool)
@@ -424,11 +443,15 @@ pub async fn replay_unmaterialized_ops(
     // — no offset cursor to drift if a concurrent writer (there is
     // none at boot, but defence in depth) committed mid-walk.
     loop {
+        // #2481: `is_replicated = 0` — replay only locally-authored ops.
+        // Replicated audit rows are inert (never applied to state); this
+        // clause is what keeps them from ever being enqueued onto the
+        // materializer.
         let rows: Vec<OpRecord> = sqlx::query_as!(
             OpRecord,
             "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id \
              FROM op_log \
-             WHERE seq > ? \
+             WHERE is_replicated = 0 AND seq > ? \
              ORDER BY seq ASC, device_id ASC \
              LIMIT ?",
             last_seen,

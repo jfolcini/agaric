@@ -2106,3 +2106,215 @@ async fn cte_oracle_disjoint_chains_return_none() {
 
     assert_cte_matches_oracle(&pool, (DEV_A.into(), 2), (DEV_B.into(), 1), None).await;
 }
+
+// =====================================================================
+// insert_replicated_op — #2481 phase 1 audit-only op-log replication
+// =====================================================================
+
+use crate::sync_protocol::types::OpTransfer;
+
+/// Build a valid replicated `OpTransfer` with a correct hash and a
+/// caller-chosen `origin`.
+fn make_transfer(
+    device_id: &str,
+    seq: i64,
+    parent_seqs: Option<String>,
+    op_type: &str,
+    payload: &str,
+    origin: &str,
+) -> OpTransfer {
+    let hash = compute_op_hash(device_id, seq, parent_seqs.as_deref(), op_type, payload);
+    OpTransfer {
+        device_id: device_id.to_owned(),
+        seq,
+        parent_seqs,
+        hash,
+        op_type: op_type.to_owned(),
+        payload: payload.to_owned(),
+        created_at: FIXED_TS,
+        origin: origin.to_owned(),
+    }
+}
+
+/// Happy path: a valid replicated op lands verbatim, its `origin`
+/// attribution travels and is stored, and the row is stamped
+/// `is_replicated = 1`. Duplicate delivery is idempotent.
+#[tokio::test]
+async fn insert_replicated_op_stores_verbatim_with_origin_and_marker() {
+    let (pool, _dir) = test_pool().await;
+    let payload =
+        r#"{"block_id":"B1","block_type":"content","parent_id":null,"position":0,"content":"v1"}"#;
+    let t = make_transfer(
+        "remote-dev",
+        1,
+        None,
+        "create_block",
+        payload,
+        "agent:codex",
+    );
+
+    let inserted = insert_replicated_op(&pool, &t).await.unwrap();
+    assert!(inserted, "a fresh replicated op must insert");
+
+    // Stored verbatim; hash preserved.
+    let rec = get_op_by_seq(&ReadPool(pool.clone()), "remote-dev", 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        rec.hash, t.hash,
+        "stored hash must equal the replicated hash"
+    );
+    assert_eq!(rec.payload, t.payload, "payload stored verbatim");
+    assert_eq!(rec.op_type, "create_block");
+
+    // origin travelled + is_replicated stamped.
+    let row = sqlx::query!(
+        r#"SELECT origin as "origin!: String", is_replicated as "is_replicated!: i64"
+           FROM op_log WHERE device_id = ? AND seq = ?"#,
+        "remote-dev",
+        1i64,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        row.origin, "agent:codex",
+        "origin attribution must travel and be stored verbatim (#2481)"
+    );
+    assert_eq!(
+        row.is_replicated, 1,
+        "replicated audit rows must be stamped is_replicated=1"
+    );
+
+    // Idempotent re-delivery.
+    let again = insert_replicated_op(&pool, &t).await.unwrap();
+    assert!(!again, "duplicate delivery of the same op is a no-op");
+}
+
+/// A hash-invalid replicated record is rejected loudly and nothing lands.
+#[tokio::test]
+async fn insert_replicated_op_rejects_hash_mismatch_loudly() {
+    let (pool, _dir) = test_pool().await;
+    let mut t = make_transfer(
+        "remote-dev",
+        1,
+        None,
+        "create_block",
+        r#"{"block_id":"B1","block_type":"content","parent_id":null,"position":0,"content":"v1"}"#,
+        "user",
+    );
+    t.hash = "0".repeat(64); // tamper: no longer matches the preimage
+
+    let err = insert_replicated_op(&pool, &t).await;
+    assert!(
+        err.is_err(),
+        "a hash-invalid replicated op must be rejected"
+    );
+    assert!(
+        err.unwrap_err().to_string().contains("hash mismatch"),
+        "rejection must be the loud hash-mismatch error"
+    );
+
+    let fetched = get_op_by_seq(&ReadPool(pool.clone()), "remote-dev", 1).await;
+    assert!(
+        matches!(fetched, Err(AppError::NotFound(_))),
+        "a rejected replicated op must not land in op_log"
+    );
+}
+
+/// #2481 audit-mode parent-gap relaxation: an unresolved `parent_seqs`
+/// pointer (the peer compacted its own early history) must LAND with a
+/// breadcrumb under the audit profile — whereas the strict merge-ingest
+/// profile (`insert_remote_op`) still rejects the identical record.
+#[tokio::test]
+async fn insert_replicated_op_lands_unresolved_parent_gap_while_strict_rejects() {
+    let (pool, _dir) = test_pool().await;
+
+    // References (remote-dev, 99), which does not exist locally (compacted peer).
+    let parent_seqs = Some(r#"[["remote-dev",99]]"#.to_owned());
+    let t = make_transfer(
+        "remote-dev",
+        1,
+        parent_seqs,
+        "edit_block",
+        r#"{"block_id":"B1","to_text":"post-compaction","prev_edit":["remote-dev",99]}"#,
+        "user",
+    );
+
+    // Strict profile still rejects the identical record.
+    let strict: OpRecord = t.clone().into();
+    let strict_err = insert_remote_op(&pool, &strict).await;
+    assert!(
+        strict_err
+            .as_ref()
+            .err()
+            .is_some_and(|e| e.to_string().contains("dag.parent_seqs.unresolved")),
+        "strict profile must still reject an unresolved parent, got {strict_err:?}"
+    );
+
+    // Audit profile lands it (breadcrumb, not rejection).
+    let inserted = insert_replicated_op(&pool, &t).await.unwrap();
+    assert!(
+        inserted,
+        "#2481 audit profile lands an unresolved-parent op instead of rejecting it"
+    );
+    let rec = get_op_by_seq(&ReadPool(pool.clone()), "remote-dev", 1)
+        .await
+        .unwrap();
+    assert_eq!(rec.hash, t.hash, "the landed audit row is stored verbatim");
+}
+
+/// A replicated audit op coexists in op_log without leaking into boot
+/// replay: it does NOT trip the #412 multi-device guard, is NOT applied to
+/// the materializer, and never becomes SQL state — while the locally-authored
+/// op materializes normally.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replicated_op_is_inert_for_boot_replay_and_sql_state() {
+    use crate::materializer::Materializer;
+    use crate::recovery::replay::replay_unmaterialized_ops;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // One locally-authored op (DEV_A) — appended only, not yet materialized.
+    append_local_op_at(&pool, DEV_A, make_create("LOCALBLK", "local"), FIXED_TS)
+        .await
+        .unwrap();
+
+    // One replicated foreign audit op (DEV_B).
+    let foreign = make_transfer(
+        DEV_B,
+        1,
+        None,
+        "create_block",
+        r#"{"block_id":"FGNBLK","block_type":"content","parent_id":null,"position":0,"content":"foreign"}"#,
+        "user",
+    );
+    insert_replicated_op(&pool, &foreign).await.unwrap();
+
+    // Boot replay must NOT abort on the multi-device guard (the foreign row is
+    // is_replicated=1) and must replay ONLY the locally-authored op.
+    let report = replay_unmaterialized_ops(&pool, &mat).await.unwrap();
+    assert_eq!(
+        report.ops_replayed, 1,
+        "only the locally-authored op is replayed; the replicated audit op is inert"
+    );
+    assert!(
+        report.replay_errors.is_empty(),
+        "a replicated foreign device must not trip the #412 multi-device replay guard, got {:?}",
+        report.replay_errors,
+    );
+
+    // Exactly one block was projected into SQL — the local one. The foreign
+    // audit op never became state.
+    let block_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        block_count, 1,
+        "the replicated audit op must never be projected into SQL state"
+    );
+
+    mat.shutdown();
+}

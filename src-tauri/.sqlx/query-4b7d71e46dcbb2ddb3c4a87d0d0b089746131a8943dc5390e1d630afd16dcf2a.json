@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id FROM op_log WHERE seq > ? ORDER BY seq ASC, device_id ASC LIMIT ?",
+  "query": "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at, origin FROM op_log ORDER BY device_id ASC, seq ASC",
   "describe": {
     "columns": [
       {
@@ -81,19 +81,19 @@
         }
       },
       {
-        "name": "block_id",
+        "name": "origin",
         "ordinal": 7,
         "type_info": "Text",
         "origin": {
           "Table": {
             "table": "op_log",
-            "name": "block_id"
+            "name": "origin"
           }
         }
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 0
     },
     "nullable": [
       false,
@@ -103,8 +103,8 @@
       false,
       false,
       false,
-      true
+      false
     ]
   },
-  "hash": "6989cb7e5a657d9f0bb7bc06c6e3f0610ec266df30994bafa3f6fa6874587683"
+  "hash": "4b7d71e46dcbb2ddb3c4a87d0d0b089746131a8943dc5390e1d630afd16dcf2a"
 }

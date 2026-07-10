@@ -172,8 +172,14 @@ pub(crate) async fn apply_op_projected(
             // `(device_id, seq)` indexes `device_id`, so `MIN`/`MAX` are
             // first/last index seeks: equal MIN and MAX ⇒ the whole log is one
             // device (COALESCE handles the empty log — vacuously single-device).
+            //
+            // #2481: `is_replicated = 0` — replicated foreign audit rows
+            // legitimately live in op_log now (audit-only replication) but are
+            // never applied and never advance the cursor, so they must not trip
+            // this locally-authored-single-device invariant.
             let single_device: bool = sqlx::query_scalar!(
-                r#"SELECT COALESCE(MIN(device_id) = MAX(device_id), 1) AS "single!: bool" FROM op_log"#
+                r#"SELECT COALESCE(MIN(device_id) = MAX(device_id), 1) AS "single!: bool"
+                   FROM op_log WHERE is_replicated = 0"#
             )
             .fetch_one(&mut *tx)
             .await?;

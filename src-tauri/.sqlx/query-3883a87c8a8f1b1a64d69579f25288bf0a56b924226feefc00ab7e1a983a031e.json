@@ -1,21 +1,21 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT COUNT(*) as \"n!: i64\" FROM op_log WHERE seq > ?",
+  "query": "SELECT MAX(seq) as \"max_seq: i64\" FROM op_log WHERE is_replicated = 0",
   "describe": {
     "columns": [
       {
-        "name": "n!: i64",
+        "name": "max_seq: i64",
         "ordinal": 0,
         "type_info": "Integer",
         "origin": "Expression"
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 0
     },
     "nullable": [
-      false
+      true
     ]
   },
-  "hash": "bd8d11174689ce7af6bdb5b5c0d967f01a676e8ef7bc7c9aeb18950f3f251a6c"
+  "hash": "3883a87c8a8f1b1a64d69579f25288bf0a56b924226feefc00ab7e1a983a031e"
 }

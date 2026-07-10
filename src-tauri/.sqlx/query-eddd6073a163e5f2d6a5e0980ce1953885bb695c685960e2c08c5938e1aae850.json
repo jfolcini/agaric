@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT origin as \"origin!: String\", is_replicated as \"is_replicated!: i64\"\n           FROM op_log WHERE device_id = ? AND seq = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "origin!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "origin"
+          }
+        }
+      },
+      {
+        "name": "is_replicated!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "is_replicated"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "eddd6073a163e5f2d6a5e0980ce1953885bb695c685960e2c08c5938e1aae850"
+}

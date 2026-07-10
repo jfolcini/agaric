@@ -257,6 +257,10 @@ impl SyncOrchestrator {
             // Advertise our engine format so a peer on an incompatible format
             // is rejected up front in the responder's HeadExchange arm (#2130).
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            // #2481 phase 1: advertise support for audit-only op-log
+            // replication so a capable peer may stream us `OpLogBatch`. An
+            // older peer omits/ignores this flag and never sends the variant.
+            op_log_replication: true,
         })
     }
 
@@ -367,6 +371,14 @@ impl SyncOrchestrator {
                 | SyncMessage::FileReceived { .. }
                 | SyncMessage::FileTransferComplete,
             ) => {}
+            // OpLogBatch (#2481 phase 1) is designed to ride a dedicated
+            // sync-daemon sub-flow after the delta phase, never the
+            // per-session core — but that sub-flow isn't wired yet, so
+            // nothing intercepts it before the dispatch match below. Kept
+            // exhaustive here (state validation always accepts it through to
+            // dispatch); the dispatch match below rejects it loudly in every
+            // build (same hard-fail contract as `SnapshotOffer`).
+            (_, SyncMessage::OpLogBatch { .. }) => {}
         }
 
         match msg {
@@ -375,6 +387,11 @@ impl SyncOrchestrator {
                 heads,
                 loro_vvs,
                 engine_format_version,
+                // #2481 phase 1: the peer's audit-replication capability is
+                // consumed by the sync-daemon op-log exchange sub-flow (which
+                // decides whether to stream `OpLogBatch`), not by this
+                // per-session core. Ignored here.
+                op_log_replication: _,
             } => {
                 // Gate raw-byte Loro merges by engine format before doing any
                 // import work (#2130). An incompatible peer is rejected up
@@ -759,6 +776,30 @@ impl SyncOrchestrator {
                         .into(),
                 ))
             }
+
+            // ---- OpLogBatch (#2481 phase 1) ---------------------------------
+            // Audit-only op-log replication is DESIGNED to ride a dedicated
+            // sync-daemon sub-flow that would run after the delta phase
+            // (parallel to file transfer), ingesting records via
+            // `crate::dag::insert_replicated_op` — never through this
+            // per-session orchestrator. Unlike the file-transfer messages
+            // below, that sub-flow is NOT wired yet (#2481 phase 1 is
+            // ingest-only; no daemon code intercepts `OpLogBatch` before it
+            // would reach here), so this arm is not a backstop behind real
+            // interception — it is the only thing standing between a peer
+            // that takes our advertised `op_log_replication: true` at face
+            // value and this codebase silently dropping its audit records.
+            // Fail loudly in every build (mirrors `SnapshotOffer` /
+            // `LoroSyncChunked`, not the file-transfer degrade-in-release
+            // contract) so a stray/unsupported batch surfaces as a session
+            // error instead of vanishing.
+            SyncMessage::OpLogBatch { .. } => Err(AppError::InvalidOperation(
+                "OpLogBatch is not yet consumed by the orchestrator; #2481 \
+                 phase 1 does not wire the sync-daemon op-log exchange \
+                 sub-flow, so a peer must not stream OpLogBatch over the \
+                 main session channel"
+                    .into(),
+            )),
 
             // ---- File transfer (F-14) ---------------------------------------
             // File-transfer messages are read directly off the wire by

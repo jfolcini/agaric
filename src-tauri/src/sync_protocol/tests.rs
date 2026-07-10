@@ -554,6 +554,7 @@ fn op_transfer_from_leaves_block_id_unpopulated_l13() {
         op_type: "create_block".into(),
         payload: payload.into(),
         created_at: FIXED_TS,
+        origin: "user".into(),
     };
 
     let record: OpRecord = transfer.into();
@@ -607,6 +608,7 @@ fn sync_message_serde_roundtrip() {
             }],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         },
         SyncMessage::LoroSync {
             msg: crate::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot {
@@ -713,6 +715,7 @@ async fn orchestrator_rejects_incompatible_engine_format() {
             }],
             loro_vvs: vec![],
             engine_format_version: incompatible,
+            op_log_replication: false,
         })
         .await;
 
@@ -764,6 +767,7 @@ async fn orchestrator_accepts_legacy_and_matching_engine_format() {
                 heads: vec![],
                 loro_vvs: vec![],
                 engine_format_version: version,
+                op_log_replication: false,
             })
             .await
             .unwrap_or_else(|e| {
@@ -1049,6 +1053,7 @@ async fn orchestrator_rejects_messages_in_terminal_state() {
             heads: vec![],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await;
     assert!(
@@ -1159,6 +1164,7 @@ async fn orchestrator_rejects_messages_in_failed_terminal_state() {
             heads: vec![],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await;
 
@@ -1260,6 +1266,7 @@ async fn orchestrator_rejects_head_exchange_in_streaming_state() {
             heads: vec![],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await;
     assert!(
@@ -1416,6 +1423,7 @@ async fn orchestrator_rejects_unexpected_peer_device_id() {
             }],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await;
 
@@ -1457,6 +1465,7 @@ async fn orchestrator_accepts_matching_peer_device_id() {
             }],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await;
 
@@ -1531,6 +1540,7 @@ async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
             }],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await
         .unwrap();
@@ -1621,6 +1631,7 @@ fn serde_roundtrip_op_transfer() {
         op_type: "edit_block".into(),
         payload: r#"{"block_id":"BLK1","to_text":"hello"}"#.into(),
         created_at: 1_736_942_400_000,
+        origin: "agent:test".into(),
     };
     let json = serde_json::to_string(&transfer).expect("OpTransfer serialization must succeed");
     let deser: OpTransfer =
@@ -1638,6 +1649,7 @@ fn serde_roundtrip_op_transfer_null_parent_seqs() {
         op_type: "create_block".into(),
         payload: "{}".into(),
         created_at: 1_735_689_600_000,
+        origin: "user".into(),
     };
     let json = serde_json::to_string(&transfer)
         .expect("OpTransfer with null parent_seqs serialization must succeed");
@@ -1668,6 +1680,7 @@ fn serde_roundtrip_sync_message_head_exchange() {
         ],
         loro_vvs: vec![],
         engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+        op_log_replication: false,
     };
     let json = serde_json::to_string(&msg).expect("serialize HeadExchange");
     let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize HeadExchange");
@@ -1743,6 +1756,7 @@ fn json_shape_head_exchange_matches_wire_format() {
         }],
         loro_vvs: vec![],
         engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+        op_log_replication: false,
     };
     let json: serde_json::Value =
         serde_json::to_value(&msg).expect("SyncMessage must serialize to Value");
@@ -1774,6 +1788,7 @@ fn head_exchange_deserializes_without_loro_vvs_field() {
             heads,
             loro_vvs,
             engine_format_version,
+            op_log_replication,
         } => {
             assert_eq!(heads.len(), 1, "heads must round-trip");
             assert!(
@@ -1783,6 +1798,10 @@ fn head_exchange_deserializes_without_loro_vvs_field() {
             assert_eq!(
                 engine_format_version, 0,
                 "a missing engine_format_version field must default to 0 (legacy peer)"
+            );
+            assert!(
+                !op_log_replication,
+                "a missing op_log_replication field must default to false (#2481 old-peer)"
             );
         }
         other => panic!("expected HeadExchange, got {other:?}"),
@@ -1800,6 +1819,7 @@ fn json_shape_all_variants_have_type_tag() {
                 heads: vec![],
                 loro_vvs: vec![],
                 engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+                op_log_replication: false,
             },
         ),
         (
@@ -1932,6 +1952,7 @@ fn serde_roundtrip_empty_heads() {
         heads: vec![],
         loro_vvs: vec![],
         engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+        op_log_replication: false,
     };
     let json = serde_json::to_string(&msg).expect("serialize empty HeadExchange");
     let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize empty HeadExchange");
@@ -1974,6 +1995,7 @@ fn serde_roundtrip_many_heads() {
         heads: heads.clone(),
         loro_vvs: vec![],
         engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+        op_log_replication: false,
     };
     let json = serde_json::to_string(&msg).expect("serialize many-heads HeadExchange");
     let deser: SyncMessage =
@@ -2064,6 +2086,7 @@ async fn orchestrator_errors_on_head_exchange_during_streaming_ops() {
             heads: vec![],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await;
     assert!(
@@ -2157,6 +2180,7 @@ async fn handle_message_emits_within_sync_msg_span() {
             heads: vec![],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await;
 
@@ -2203,6 +2227,7 @@ async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
             heads: vec![],
             loro_vvs: vec![],
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
         })
         .await
         .expect("HeadExchange must not error under the engine path");
@@ -3324,4 +3349,204 @@ async fn loro_sync_e2e_inbound_purge_projects_to_sql_with_local_parity() {
     );
 
     materializer_b.shutdown();
+}
+
+// ── #2481 phase 1: audit-only op-log replication (wire + advertisement) ──
+
+/// `start()` advertises the `op_log_replication` capability so a capable
+/// peer may stream us `OpLogBatch`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn start_advertises_op_log_replication_capability_2481() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+    let msg = orch.start().await.unwrap();
+    match msg {
+        SyncMessage::HeadExchange {
+            op_log_replication, ..
+        } => assert!(
+            op_log_replication,
+            "start() must advertise op_log_replication=true (#2481)"
+        ),
+        other => panic!("expected HeadExchange, got {other:?}"),
+    }
+    materializer.shutdown();
+}
+
+/// `OpLogBatch` round-trips losslessly on the wire, carries a `type` tag,
+/// and an older peer's record without an `origin` field defaults to
+/// `"user"` (wire back-compat).
+#[test]
+fn op_log_batch_wire_round_trips_and_defaults_origin_2481() {
+    let batch = SyncMessage::OpLogBatch {
+        records: vec![OpTransfer {
+            device_id: "dev-A".into(),
+            seq: 9,
+            parent_seqs: Some(r#"[["dev-A",8]]"#.into()),
+            hash: "a".repeat(64),
+            op_type: "edit_block".into(),
+            payload: r#"{"block_id":"B1","to_text":"x","prev_edit":["dev-A",8]}"#.into(),
+            created_at: 111,
+            origin: "agent:x".into(),
+        }],
+        is_last: true,
+    };
+
+    let json = serde_json::to_string(&batch).unwrap();
+    let back: SyncMessage = serde_json::from_str(&json).unwrap();
+    assert_eq!(batch, back, "OpLogBatch must round-trip losslessly");
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(v["type"], "OpLogBatch", "OpLogBatch must carry a type tag");
+
+    // Old-peer record without `origin` deserializes to the "user" default.
+    let legacy = r#"{"type":"OpLogBatch","records":[{"device_id":"d","seq":1,"parent_seqs":null,"hash":"h","op_type":"create_block","payload":"{}","created_at":5}],"is_last":false}"#;
+    let parsed: SyncMessage = serde_json::from_str(legacy)
+        .expect("a legacy OpLogBatch record without `origin` must deserialize");
+    match parsed {
+        SyncMessage::OpLogBatch { records, is_last } => {
+            assert!(!is_last);
+            assert_eq!(
+                records[0].origin, "user",
+                "a missing `origin` must default to \"user\" (#2481 wire back-compat)"
+            );
+        }
+        other => panic!("expected OpLogBatch, got {other:?}"),
+    }
+}
+
+/// Frontier advertisement (#2481): a replicated foreign op surfaces as its
+/// own device's frontier in `get_local_heads` (so the peer learns we hold
+/// it), while the LOCAL device's own frontier is unaffected by ingest.
+#[tokio::test]
+async fn replicated_foreign_op_surfaces_in_frontier_advertisement_2481() {
+    let (pool, _dir) = test_pool().await;
+
+    // Local device authors one op.
+    append_local_op_at(&pool, "device-A", test_create_payload("LOCAL1"), FIXED_TS)
+        .await
+        .unwrap();
+
+    // A foreign device's op is replicated as audit metadata.
+    let payload = r#"{"block_id":"FGN1","block_type":"content","parent_id":null,"position":0,"content":"foreign"}"#;
+    let hash = crate::hash::compute_op_hash("device-Z", 7, None, "create_block", payload);
+    let transfer = OpTransfer {
+        device_id: "device-Z".into(),
+        seq: 7,
+        parent_seqs: None,
+        hash: hash.clone(),
+        op_type: "create_block".into(),
+        payload: payload.into(),
+        created_at: FIXED_TS,
+        origin: "user".into(),
+    };
+    crate::dag::insert_replicated_op(&pool, &transfer)
+        .await
+        .unwrap();
+
+    let heads = get_local_heads(&pool).await.unwrap();
+
+    let a = heads
+        .iter()
+        .find(|h| h.device_id == "device-A")
+        .expect("own frontier must still be present");
+    assert_eq!(
+        a.seq, 1,
+        "the local device's own frontier must be unaffected by ingest"
+    );
+
+    let z = heads
+        .iter()
+        .find(|h| h.device_id == "device-Z")
+        .expect("replicated foreign frontier must be advertised (#2481)");
+    assert_eq!(z.seq, 7);
+    assert_eq!(
+        z.hash, hash,
+        "advertised foreign frontier carries the replicated op's hash"
+    );
+}
+
+/// `collect_ops_for_peer` ships exactly the ops the peer lacks
+/// (`seq > peer frontier`, all devices), in `(device_id, seq)` order.
+#[tokio::test]
+async fn collect_ops_for_peer_ships_only_missing_ops_2481() {
+    let (pool, _dir) = test_pool().await;
+
+    for i in 1..=3 {
+        append_local_op_at(
+            &pool,
+            "device-A",
+            test_create_payload(&format!("A{i}")),
+            FIXED_TS,
+        )
+        .await
+        .unwrap();
+    }
+
+    // Peer already holds device-A through seq 2 → only seq 3 is missing.
+    let peer_heads = vec![DeviceHead {
+        device_id: "device-A".into(),
+        seq: 2,
+        hash: "x".into(),
+    }];
+    let ops = collect_ops_for_peer(&pool, &peer_heads).await.unwrap();
+    assert_eq!(
+        ops.len(),
+        1,
+        "only the one op past the peer frontier is shipped"
+    );
+    assert_eq!(ops[0].seq, 3);
+    assert_eq!(ops[0].device_id, "device-A");
+
+    // A peer that advertised nothing gets every op.
+    let all = collect_ops_for_peer(&pool, &[]).await.unwrap();
+    assert_eq!(all.len(), 3, "an empty peer frontier ships all ops");
+    assert_eq!(
+        all.iter().map(|o| o.seq).collect::<Vec<_>>(),
+        vec![1, 2, 3],
+        "ops are ordered by (device_id, seq)"
+    );
+}
+
+/// `batch_ops_for_wire` partitions records so each batch stays under the
+/// byte cap, preserves order + count, and handles the empty case.
+#[test]
+fn batch_ops_for_wire_partitions_under_cap_2481() {
+    let mk = |seq: i64| OpTransfer {
+        device_id: "d".into(),
+        seq,
+        parent_seqs: None,
+        hash: "h".repeat(64),
+        op_type: "create_block".into(),
+        payload:
+            r#"{"block_id":"B","block_type":"content","parent_id":null,"position":0,"content":"c"}"#
+                .into(),
+        created_at: 1,
+        origin: "user".into(),
+    };
+    let recs: Vec<OpTransfer> = (1..=5).map(mk).collect();
+
+    // A cap that fits exactly one record → one batch per record.
+    let one = serde_json::to_string(&recs[0]).unwrap().len() + 2;
+    let batches = batch_ops_for_wire(recs.clone(), one);
+    assert_eq!(
+        batches.len(),
+        5,
+        "a one-record cap yields one batch per record"
+    );
+    let flat: Vec<OpTransfer> = batches.into_iter().flatten().collect();
+    assert_eq!(flat.len(), 5, "no record is dropped");
+    for (i, r) in flat.iter().enumerate() {
+        assert_eq!(
+            r.seq,
+            i64::try_from(i).expect("test index fits i64") + 1,
+            "record order is preserved across batches"
+        );
+    }
+
+    // A huge cap → a single batch.
+    let single = batch_ops_for_wire(recs, 10_000_000);
+    assert_eq!(single.len(), 1, "a large cap coalesces into one batch");
+
+    // Empty input → no batches (caller then sends no OpLogBatch).
+    assert!(batch_ops_for_wire(vec![], 100).is_empty());
 }

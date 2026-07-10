@@ -43,10 +43,24 @@ pub struct SpaceVersionVector {
 /// = OpRecord;` now and re-introducing later would be more work than
 /// maintaining the two trivial structs and their `From` impls.
 ///
-/// **Invariant:** the two structs MUST stay structurally identical until
-/// a deliberate v2-shape divergence lands. Adding a new field to `OpRecord`
-/// requires the same field on `OpTransfer` and an update to both `From`
-/// impls. A `#[cfg(test)]` parity test below pins this contract.
+/// **Invariant:** the two structs MUST stay structurally identical *for the
+/// hash-bearing columns* until a deliberate v2-shape divergence lands. Adding
+/// a new hash-bearing field to `OpRecord` requires the same field on
+/// `OpTransfer` and an update to both `From` impls. A `#[cfg(test)]` parity
+/// test below pins this contract for the hash-bearing columns.
+///
+/// **`origin` is a deliberate transfer-carried, non-hashed exception (#2481).**
+/// `origin` is op-log *attribution* metadata (`user` / an agent tag; migration
+/// 0033). It is NOT part of `compute_op_hash`'s preimage (see
+/// `op-log-format.md` §Validity rules), so shipping it does not affect
+/// verification — and it is exactly the cross-device attribution #2481's
+/// audit-only replication exists to carry. It is `#[serde(default)]` (defaults
+/// to `"user"`) so the wire change is strictly back-compatible: an older peer
+/// that omits the field deserializes as `"user"`, and an older peer that
+/// receives it ignores the unknown field. `OpRecord` (the DB-read Rust struct)
+/// does not surface `origin`, so `From<OpRecord>` fills the transfer default;
+/// the audit send path builds `OpTransfer` directly from an `op_log` row that
+/// SELECTs the `origin` column, preserving the authored attribution verbatim.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OpTransfer {
     pub device_id: String,
@@ -57,6 +71,19 @@ pub struct OpTransfer {
     pub payload: String,
     /// Epoch-ms (mirrors `op_log.created_at`, INTEGER since migration 0079).
     pub created_at: i64,
+    /// Op-log attribution (`user` / agent tag; migration 0033). Not hashed;
+    /// `#[serde(default)]` → `"user"` for wire back-compat (#2481). See the
+    /// struct doc-comment.
+    #[serde(default = "default_op_origin")]
+    pub origin: String,
+}
+
+/// Default `OpTransfer::origin` for wire back-compat: an older peer that omits
+/// the field (and the `From<OpRecord>` bridge, which has no origin to carry)
+/// yields the same `"user"` default the `op_log.origin` column uses
+/// (migration 0033).
+fn default_op_origin() -> String {
+    "user".to_string()
 }
 
 // ---- Conversions ----------------------------------------------------------
@@ -75,6 +102,12 @@ impl From<OpRecord> for OpTransfer {
             op_type: r.op_type,
             payload: r.payload,
             created_at: r.created_at,
+            // `OpRecord` does not surface the `op_log.origin` column, so this
+            // bridge fills the `"user"` default. The #2481 audit send path
+            // does NOT go through here — it builds `OpTransfer` directly from
+            // an `op_log` row that SELECTs `origin`, carrying the authored
+            // attribution verbatim.
+            origin: default_op_origin(),
         }
     }
 }
@@ -194,12 +227,32 @@ pub enum SyncMessage {
     /// for wire back-compat: a peer predating this field omits it and
     /// deserializes as `0`, which the responder treats as "legacy peer" and
     /// lets fall through to the import-time format guards (#2130).
+    /// `heads` carries every device frontier held in the sender's local
+    /// op_log — its own device plus any foreign frontiers it has previously
+    /// replicated as audit metadata (#2481 phase 1). The `Vec` shape is
+    /// unchanged, so this is a pure *semantic* extension: an older peer simply
+    /// advertises fewer entries (its own device only), and
+    /// [`check_reset_required`](super::operations::check_reset_required)
+    /// already ignores every non-own-device head, so a longer list is a no-op
+    /// for the reset handshake.
+    ///
+    /// `op_log_replication` is the #2481 phase-1 capability handshake. It is
+    /// `#[serde(default)]` (→ `false`) for wire back-compat: an older peer
+    /// omits it and deserializes as `false`, and an older peer that receives
+    /// it ignores the unknown field. A peer MUST NOT send the new
+    /// [`SyncMessage::OpLogBatch`] variant to a peer that did not advertise
+    /// `op_log_replication: true` — that is how phase 1 avoids delivering an
+    /// unknown-variant message an older peer cannot deserialize. Both sides
+    /// gate their op-log audit exchange on having observed this flag from the
+    /// other side.
     HeadExchange {
         heads: Vec<DeviceHead>,
         #[serde(default)]
         loro_vvs: Vec<SpaceVersionVector>,
         #[serde(default)]
         engine_format_version: u32,
+        #[serde(default)]
+        op_log_replication: bool,
     },
     /// Loro-CRDT-based sync wire envelope.
     ///
@@ -231,6 +284,34 @@ pub enum SyncMessage {
     /// transport.
     LoroSyncChunked {
         header: LoroSyncChunkedHeader,
+        is_last: bool,
+    },
+    /// #2481 phase 1 — audit-only op-log replication batch. Streams op
+    /// records the peer lacks (`seq > the peer's advertised per-device
+    /// frontier`) as append-only, hash-verified **audit metadata**. The
+    /// receiver hands each record to
+    /// [`crate::dag::insert_replicated_op`], which blake3-verifies it and
+    /// lands it with `is_replicated = 1` — it is **never** applied to state
+    /// (state flows exclusively through Loro CRDT sync). `is_last: true`
+    /// marks the final batch of the exchange.
+    ///
+    /// **Capability-gated (back-compat).** A peer only sends this after the
+    /// other side advertised `HeadExchange { op_log_replication: true, .. }`;
+    /// an older peer never advertises the capability and therefore never
+    /// receives this variant, so it is never asked to deserialize an unknown
+    /// `type` tag. Records ride the same size discipline as `LoroSync`:
+    /// batches are kept under
+    /// [`crate::sync_constants::LORO_INLINE_MAX_BYTES`] so each travels inline
+    /// (op records are inherently small — a single text edit — so no
+    /// individual record approaches the cap).
+    ///
+    /// **Daemon sub-flow only.** Like the file-transfer variants, this rides
+    /// a dedicated exchange the sync-daemon layer runs after the delta phase;
+    /// it must **never** reach the per-session
+    /// [`SyncOrchestrator::handle_message`](super::SyncOrchestrator::handle_message)
+    /// core dispatch, which rejects it loudly (same contract as `FileRequest`).
+    OpLogBatch {
+        records: Vec<OpTransfer>,
         is_last: bool,
     },
     /// Responder side-exit: our op log was compacted past the

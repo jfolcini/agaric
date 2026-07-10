@@ -1,0 +1,39 @@
+-- #2481 phase 1 (DECIDED option a — audit-only op-log replication): add an
+-- `is_replicated` provenance flag to op_log.
+--
+-- Post-#490-M1 the op_log is strictly device-local: every row is authored by
+-- THIS device and is a legitimate input to boot replay
+-- (`recovery::replay::replay_unmaterialized_ops`, the `WHERE seq > cursor`
+-- walk) and the materializer apply pipeline. #2481 phase 1 introduces
+-- *audit-only* op replication: op records from OTHER devices arrive over the
+-- sync wire (`SyncMessage::OpLogBatch`) and are hash-verified and stored so
+-- cross-device History/attribution works — but they must NEVER be applied to
+-- state (state continues to flow exclusively through Loro CRDT sync).
+--
+-- `is_replicated = 1` is stamped by `dag::insert_replicated_op` on every
+-- foreign audit record it lands; everything else — local command ops, undo
+-- ops, redo-produced ops, recovery synthetics, and the dormant strict
+-- remote-merge ingest (`dag::insert_remote_op`) — keeps the default 0. Boot
+-- replay and the apply-cursor bookkeeping filter on `is_replicated = 0` so a
+-- replicated audit row can never be enqueued onto the materializer, can never
+-- trip the #412 multi-device replay guard, and can never inflate the apply
+-- cursor's ceiling. That filter is the isolation boundary that keeps
+-- replicated records provably inert for state.
+--
+-- Frontier advertisement (`sync_protocol::get_local_heads`) intentionally does
+-- NOT filter on this flag: a replicated foreign frontier is exactly what we
+-- want to advertise so the peer knows which of its ops we already hold.
+--
+-- Like `origin` (migration 0033) and `is_undo` (migration 0090), `is_replicated`
+-- is LOCAL provenance metadata and is intentionally NOT part of
+-- `compute_op_hash`'s preimage — two devices holding the same logical op must
+-- hash-match regardless of whether the row is locally authored or replicated.
+-- The op-log immutability triggers (0036) are unaffected: the flag is set on
+-- INSERT, never via UPDATE.
+--
+-- Backward compatibility: every row that predates this migration backfills to
+-- 0 (locally authored), which is correct — before phase 1 no op_log ever held
+-- a foreign device's ops.
+
+ALTER TABLE op_log
+    ADD COLUMN is_replicated INTEGER NOT NULL DEFAULT 0;
