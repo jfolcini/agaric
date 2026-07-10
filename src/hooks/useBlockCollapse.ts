@@ -64,7 +64,7 @@ export function useBlockCollapse(
 ): UseBlockCollapseReturn {
   const { onBeforeCollapse, pageKey = null } = options
 
-  // ── Collapse state (persisted per page in localStorage, #752) ─────────────────
+  // ── Collapse state (persisted per page in localStorage, #752) ──────
   const [collapsedIds, setCollapsedIdsRaw] = useState<Set<string>>(() => loadCollapsedIds(pageKey))
 
   // Latest collapsed ids for event-time membership reads, so toggleCollapse
@@ -109,7 +109,7 @@ export function useBlockCollapse(
     [pageKey],
   )
 
-  // ── Toggle collapse ─────────────────────────────────────────────
+  // ── Toggle collapse ────────────────────────────────────────────────
   const toggleCollapse = useCallback(
     (blockId: string) => {
       // Read prior membership from the ref (not `collapsedIds`) so this
@@ -129,7 +129,7 @@ export function useBlockCollapse(
     [onBeforeCollapse, setCollapsedIds],
   )
 
-  // ── hasChildren set ───────────────────────────────────────────
+  // ── hasChildren set ────────────────────────────────────────────────
   const hasChildrenSet = useMemo(() => {
     const set = new Set<string>()
     for (let i = 0; i < blocks.length - 1; i++) {
@@ -142,7 +142,7 @@ export function useBlockCollapse(
     return set
   }, [blocks])
 
-  // ── Visible blocks after collapse filtering ──────────────────────────
+  // ── Visible blocks after collapse filtering ────────────────────────
   const visibleBlocks = useMemo(() => {
     if (collapsedIds.size === 0) return blocks
     const result: typeof blocks = []

@@ -356,7 +356,7 @@ export function useDeepLinkRouter(): void {
  *
  * Without the `https` arm an Android App Link that cold-starts the app would
  * be captured by `getCurrent()` and silently dropped here, re-creating the
- * #741 no-op on the launch path even though live events route fine. Logs at
+ * #741 no-op on the launch path even though live events route fine.  Logs at
  * `warn` level on every rejection.
  */
 export function dispatchLaunchUrl(raw: string): void {
