@@ -683,20 +683,26 @@ pub async fn list_inherited_tags_for_block_inner(
 }
 
 /// Tauri command: add a tag to a block. Delegates to [`add_tag_inner`].
+///
+/// #2468: the response carries the produced op ref(s) (`WithOps` — a
+/// flattened, strict superset of the previous `TagResponse` shape) so the
+/// frontend undo stack can address the action by exact ref (`undo_op`).
+/// `op_refs` is empty when the tag was already present (idempotent no-op —
+/// nothing to undo).
 #[tauri::command]
 #[specta::specta]
 pub async fn add_tag(
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     tag_id: BlockId,
-) -> Result<TagResponse, AppError> {
-    add_tag_inner(
+) -> Result<WithOps<TagResponse>, AppError> {
+    capture_op_refs(add_tag_inner(
         ctx.pool(),
         ctx.device_id(),
         ctx.materializer(),
         block_id,
         tag_id,
-    )
+    ))
     .await
     .map_err(sanitize_internal_error)
 }
@@ -914,14 +920,15 @@ pub async fn remove_tag(
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     tag_id: BlockId,
-) -> Result<TagResponse, AppError> {
-    remove_tag_inner(
+) -> Result<WithOps<TagResponse>, AppError> {
+    // #2468: response carries the produced op ref(s) — see [`add_tag`].
+    capture_op_refs(remove_tag_inner(
         ctx.pool(),
         ctx.device_id(),
         ctx.materializer(),
         block_id,
         tag_id,
-    )
+    ))
     .await
     .map_err(sanitize_internal_error)
 }

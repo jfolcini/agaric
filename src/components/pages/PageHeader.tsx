@@ -358,8 +358,9 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       }
       if (newTitle === title) return
       try {
-        await editBlock(pageId, newTitle)
-        useUndoStore.getState().onNewAction(pageId)
+        // #2468 — thread the rename's op ref(s) so Ctrl+Z is ref-addressed.
+        const resp = await editBlock(pageId, newTitle)
+        useUndoStore.getState().onNewAction(pageId, resp.op_refs)
         useTabsStore.getState().replacePage(pageId, newTitle)
         useResolveStore.getState().set(pageId, newTitle, false)
         announce(t('announce.pageRenamed'))

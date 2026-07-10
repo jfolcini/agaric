@@ -6640,3 +6640,1122 @@ async fn undo_of_create_keeps_engine_in_step_for_next_move() {
     assert!(z_deleted.is_some(), "undone create must stay soft-deleted");
     mat.shutdown();
 }
+
+// ======================================================================
+// #2481 phase 2 — implicit undo is scoped to locally-authored ops
+// (`op_log.is_replicated = 0`); explicit `revert_ops` stays unfiltered.
+// ======================================================================
+
+/// Flip an existing op-log row to `is_replicated = 1`, simulating a
+/// replicated foreign audit record (migration 0099) without driving the
+/// full sync-ingest path (`dag::insert_replicated_op` requires a valid
+/// hash chain; the undo queries under test only read the flag). Uses the
+/// same immutability-trigger bypass as `set_op_log_mutation_bypass`.
+async fn mark_op_replicated(pool: &SqlitePool, device_id: &str, seq: i64) {
+    set_op_log_mutation_bypass(pool, true).await;
+    sqlx::query("UPDATE op_log SET is_replicated = 1 WHERE device_id = ? AND seq = ?")
+        .bind(device_id)
+        .bind(seq)
+        .execute(pool)
+        .await
+        .unwrap();
+    set_op_log_mutation_bypass(pool, false).await;
+}
+
+/// Ctrl+Z must skip a replicated foreign op even when it is the NEWEST op
+/// in the page's history, targeting the newest LOCAL op instead. A
+/// replicated audit row was never applied to local state (#2481 phase 1),
+/// so reversing it from the implicit undo stack would mutate state the op
+/// never produced.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_page_op_skips_replicated_foreign_op_2481() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let (page_id, child_ids) = create_page_with_children(&pool, &mat).await;
+
+    // Newest LOCAL op: edit child1.
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child_ids[0].clone().into(),
+        "edited locally".into(),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Replicated foreign op on child2, far-future timestamp so it sorts as
+    // the page's NEWEST op. Audit-only: never applied to blocks state.
+    let foreign_op = op_log::append_local_op_at(
+        &pool,
+        "device-B",
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: child_ids[1].clone().into(),
+            to_text: "foreign edit never applied".into(),
+            prev_edit: None,
+        }),
+        4_070_908_800_000,
+    )
+    .await
+    .unwrap();
+    mark_op_replicated(&pool, "device-B", foreign_op.seq).await;
+
+    // Depth 0 must resolve to the newest LOCAL op (the child1 edit), not
+    // the newer replicated foreign row.
+    let result = undo_page_op_inner(&pool, DEV, &mat, page_id, 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(
+        result.reversed_op.device_id, DEV,
+        "#2481: implicit undo must target the newest locally-authored op, \
+         not the newer replicated foreign op"
+    );
+    assert_eq!(result.reversed_op_type, "edit_block");
+
+    // child1 is back to its pre-edit content; child2 untouched (the foreign
+    // audit row was neither applied nor reversed).
+    let child1 = get_block_inner(&pool, child_ids[0].clone().into())
+        .await
+        .unwrap();
+    assert_eq!(child1.content, Some("child one".into()));
+    let child2 = get_block_inner(&pool, child_ids[1].clone().into())
+        .await
+        .unwrap();
+    assert_eq!(child2.content, Some("child two".into()));
+
+    // The replicated row itself is untouched.
+    let still_replicated: i64 =
+        sqlx::query_scalar("SELECT is_replicated FROM op_log WHERE device_id = ? AND seq = ?")
+            .bind("device-B")
+            .bind(foreign_op.seq)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(still_replicated, 1);
+    mat.shutdown();
+}
+
+/// A page whose ONLY ops are replicated has nothing implicitly undoable:
+/// `undo_page_op` returns NotFound instead of reversing a foreign audit row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_page_op_all_ops_replicated_returns_not_found_2481() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "v0".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Flip the block's single (create) op to replicated — the page's op
+    // history now consists exclusively of replicated rows.
+    let create_seq: i64 = sqlx::query_scalar(
+        "SELECT seq FROM op_log WHERE device_id = ? AND op_type = 'create_block' \
+         AND block_id = ?",
+    )
+    .bind(DEV)
+    .bind(created.id.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    mark_op_replicated(&pool, DEV, create_seq).await;
+
+    let result = undo_page_op_inner(&pool, DEV, &mat, created.id.clone().into_string(), 0).await;
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "#2481: a page with only replicated ops has no implicit undo target, \
+         got: {result:?}"
+    );
+    mat.shutdown();
+}
+
+/// Explicit History-view revert of a replicated foreign ref stays sanctioned
+/// (#2481): `revert_ops` is deliberately UNFILTERED on `is_replicated` — it
+/// appends a new local reverse op, exactly like session revert.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn revert_ops_reverts_replicated_ref_explicitly_2481() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "v0".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v1".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // Replicated foreign edit, newest in the block's history.
+    let foreign_op = op_log::append_local_op_at(
+        &pool,
+        "device-B",
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: created.id.clone(),
+            to_text: "foreign".into(),
+            prev_edit: None,
+        }),
+        4_070_908_800_000,
+    )
+    .await
+    .unwrap();
+    mark_op_replicated(&pool, "device-B", foreign_op.seq).await;
+
+    let results = revert_ops_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![OpRef {
+            device_id: "device-B".into(),
+            seq: foreign_op.seq,
+        }],
+    )
+    .await
+    .expect("#2481: explicit revert of a replicated ref must stay allowed");
+    settle(&mat).await;
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].reversed_op.device_id, "device-B");
+    assert_eq!(results[0].reversed_op.seq, foreign_op.seq);
+
+    // The reverse op is a NEW local (non-replicated) undo-flagged op.
+    let row: (i64, i64) =
+        sqlx::query_as("SELECT is_undo, is_replicated FROM op_log WHERE device_id = ? AND seq = ?")
+            .bind(&results[0].new_op_ref.device_id)
+            .bind(results[0].new_op_ref.seq)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(row.0, 1, "reverse op carries is_undo = 1");
+    assert_eq!(row.1, 0, "reverse op is locally authored");
+    mat.shutdown();
+}
+
+/// Seed a page (page + child1 + child2) whose child1 carries two DEV edits
+/// at controlled timestamps with a replicated foreign op on child2 timed
+/// BETWEEN them. Returns (page_id, child1_id, dev edit seqs (older, newer)).
+async fn seed_group_with_interleaved_replicated_op(
+    pool: &SqlitePool,
+    mat: &Materializer,
+) -> (String, String, i64, i64) {
+    let (page_id, child_ids) = create_page_with_children(pool, mat).await;
+
+    // Controlled far-future timestamps: v1 at t1, foreign at t1+1000,
+    // v2 at t1+2000. All newer than the create ops.
+    let t1: i64 = 4_070_908_800_000;
+    let v1 = op_log::append_local_op_at(
+        pool,
+        DEV,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: child_ids[0].clone().into(),
+            to_text: "v1".into(),
+            prev_edit: None,
+        }),
+        t1,
+    )
+    .await
+    .unwrap();
+    let foreign = op_log::append_local_op_at(
+        pool,
+        "device-B",
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: child_ids[1].clone().into(),
+            to_text: "foreign".into(),
+            prev_edit: None,
+        }),
+        t1 + 1000,
+    )
+    .await
+    .unwrap();
+    mark_op_replicated(pool, "device-B", foreign.seq).await;
+    let v2 = op_log::append_local_op_at(
+        pool,
+        DEV,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: child_ids[0].clone().into(),
+            to_text: "v2".into(),
+            prev_edit: None,
+        }),
+        t1 + 2000,
+    )
+    .await
+    .unwrap();
+
+    (page_id, child_ids[0].clone(), v1.seq, v2.seq)
+}
+
+/// A replicated foreign row timed BETWEEN two local same-device ops must
+/// neither join the undo group nor BREAK it: filtered out of `ordered_ops`,
+/// the two local edits stay adjacent and group together. (Unfiltered, the
+/// foreign row's device change would have capped the group at 1.)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn find_undo_group_ignores_replicated_ops_2481() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let (page_id, _child1, _v1_seq, _v2_seq) =
+        seed_group_with_interleaved_replicated_op(&pool, &mat).await;
+
+    let group = find_undo_group_inner(&pool, &page_id, 0, 1_000_000)
+        .await
+        .unwrap();
+    assert_eq!(
+        group, 2,
+        "#2481: the replicated row must not break the local group — the two \
+         DEV edits are adjacent once it is filtered out"
+    );
+
+    // The within-window gap is computed between the LOCAL ops (2000 ms),
+    // not shrunk via the filtered foreign row (1000 ms hops): a 1500 ms
+    // window must NOT bridge them.
+    let tight = find_undo_group_inner(&pool, &page_id, 0, 1500)
+        .await
+        .unwrap();
+    assert_eq!(
+        tight, 1,
+        "gap check runs between consecutive LOCAL ops (2000 ms apart)"
+    );
+    mat.shutdown();
+}
+
+/// The fused batch undo enumerates the same replicated-free group: exactly
+/// the two DEV edits are reverted (newest first); the replicated foreign row
+/// is neither reverted nor referenced.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_page_group_skips_replicated_ops_2481() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let (page_id, child1_id, v1_seq, v2_seq) =
+        seed_group_with_interleaved_replicated_op(&pool, &mat).await;
+
+    let results = undo_page_group_inner(&pool, DEV, &mat, page_id, 0, 1_000_000)
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(results.len(), 2, "group spans exactly the two DEV edits");
+    assert_eq!(results[0].reversed_op.seq, v2_seq, "newest first");
+    assert_eq!(results[0].reversed_op.device_id, DEV);
+    assert_eq!(results[1].reversed_op.seq, v1_seq);
+    assert_eq!(results[1].reversed_op.device_id, DEV);
+
+    // Reverting v2 then v1 walks child1 back to its create-time content.
+    let child1 = get_block_inner(&pool, child1_id.into()).await.unwrap();
+    assert_eq!(child1.content, Some("child one".into()));
+
+    // No reverse op was authored by (or for) the foreign device.
+    let foreign_ops: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM op_log WHERE device_id = 'device-B'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        foreign_ops, 1,
+        "the replicated audit row stays the foreign device's only op"
+    );
+    mat.shutdown();
+}
+
+// ======================================================================
+// #2468 — ref-addressed interactive undo (`undo_op` / `undo_ops`)
+// ======================================================================
+
+/// Helper: seq of the newest op of `op_type` authored by `device` for
+/// `block_id`.
+async fn newest_op_seq(pool: &SqlitePool, device: &str, op_type: &str, block_id: &str) -> i64 {
+    sqlx::query_scalar(
+        "SELECT seq FROM op_log WHERE device_id = ? AND op_type = ? AND block_id = ? \
+         ORDER BY seq DESC LIMIT 1",
+    )
+    .bind(device)
+    .bind(op_type)
+    .bind(block_id)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// Helper: total op count for `device` (append-leak assertions).
+async fn op_count(pool: &SqlitePool, device: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM op_log WHERE device_id = ?")
+        .bind(device)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// Happy path: `undo_op` reverses exactly the given ref with
+/// `undo_page_op`'s semantics — same `UndoResult` shape (`is_redo: false`,
+/// `new_op_ref` is the redo target), reverse op flagged `is_undo = 1` AND
+/// linked to the reversed ref via `reverses_*` (migration 0101).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_op_reverses_captured_ref_2468() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "v0".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v1".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // The ref the frontend would capture at notifyUndoNewAction time.
+    let edit_seq = newest_op_seq(&pool, DEV, "edit_block", created.id.as_str()).await;
+    let captured = OpRef {
+        device_id: DEV.into(),
+        seq: edit_seq,
+    };
+
+    let result = undo_op_inner(&pool, DEV, &mat, captured.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(result.reversed_op.device_id, captured.device_id);
+    assert_eq!(result.reversed_op.seq, captured.seq);
+    assert_eq!(result.reversed_op_type, "edit_block");
+    assert_eq!(result.new_op_type, "edit_block");
+    assert!(!result.is_redo);
+
+    let after = get_block_inner(&pool, created.id.clone()).await.unwrap();
+    assert_eq!(after.content, Some("v0".into()), "edit reversed");
+
+    // Reverse-op provenance: is_undo = 1 (#659), reverses_* = the captured
+    // ref (#2468, migration 0101).
+    let (is_undo, rev_dev, rev_seq): (i64, Option<String>, Option<i64>) = sqlx::query_as(
+        "SELECT is_undo, reverses_device_id, reverses_seq FROM op_log \
+         WHERE device_id = ? AND seq = ?",
+    )
+    .bind(&result.new_op_ref.device_id)
+    .bind(result.new_op_ref.seq)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(is_undo, 1);
+    assert_eq!(rev_dev.as_deref(), Some(DEV));
+    assert_eq!(rev_seq, Some(edit_seq));
+    mat.shutdown();
+}
+
+/// The #2446 race pinned dead: an op landing AFTER the ref was captured
+/// (the swipe-delete toast-undo racing a dirty editor flush) must not
+/// shift the target — the ref-addressed undo reverses the CAPTURED op,
+/// not the newest one, no matter what appended in between.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_op_ignores_newer_op_race_2446() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "v0".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v1".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // Capture the ref of the v1 edit — the user's undo intent.
+    let v1_seq = newest_op_seq(&pool, DEV, "edit_block", created.id.as_str()).await;
+    let captured = OpRef {
+        device_id: DEV.into(),
+        seq: v1_seq,
+    };
+
+    // The racing flush: a NEW op lands between ref capture and the undo
+    // IPC. Under positional addressing this shifted the offset and undid
+    // the wrong op (#2446).
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone(),
+        "v2-racing-flush".into(),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let result = undo_op_inner(&pool, DEV, &mat, captured).await.unwrap();
+    settle(&mat).await;
+
+    assert_eq!(
+        result.reversed_op.seq, v1_seq,
+        "the CAPTURED op must be the one reversed, not the newest"
+    );
+    // Reverse of the v1 edit sets the text to its prior value (v0). Had the
+    // newest op been reversed instead (the positional bug), content would
+    // read "v1".
+    let after = get_block_inner(&pool, created.id.clone()).await.unwrap();
+    assert_eq!(
+        after.content,
+        Some("v0".into()),
+        "reversing the captured v1 edit restores v0; 'v1' would mean the \
+         racing flush was undone instead (#2446 regression)"
+    );
+    mat.shutdown();
+}
+
+/// A replicated foreign ref is rejected (Validation): the interactive
+/// stack is scoped to locally-authored ops (#2481 phase 2); explicit
+/// `revert_ops` remains the sanctioned path for foreign ops.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_op_rejects_replicated_foreign_ref_2468() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "v0".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let foreign_op = op_log::append_local_op_at(
+        &pool,
+        "device-B",
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: created.id.clone(),
+            to_text: "foreign".into(),
+            prev_edit: None,
+        }),
+        4_070_908_800_000,
+    )
+    .await
+    .unwrap();
+    mark_op_replicated(&pool, "device-B", foreign_op.seq).await;
+
+    let ops_before = op_count(&pool, DEV).await;
+    let err = undo_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        OpRef {
+            device_id: "device-B".into(),
+            seq: foreign_op.seq,
+        },
+    )
+    .await
+    .expect_err("a replicated foreign ref must be rejected");
+    assert!(
+        matches!(err, AppError::Validation { .. }),
+        "expected Validation, got: {err:?}"
+    );
+    assert_eq!(
+        op_count(&pool, DEV).await,
+        ops_before,
+        "rejected undo must append nothing"
+    );
+    mat.shutdown();
+}
+
+/// A ref pointing at an UNDO op is rejected (Validation): reversing an
+/// undo op is redo's job (#659) — `undo_op` must never masquerade as redo.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_op_rejects_undo_op_ref_2468() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "v0".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v1".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let edit_seq = newest_op_seq(&pool, DEV, "edit_block", created.id.as_str()).await;
+    let undo_result = undo_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        OpRef {
+            device_id: DEV.into(),
+            seq: edit_seq,
+        },
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Feeding the undo op's own ref back into undo must be rejected.
+    let err = undo_op_inner(&pool, DEV, &mat, undo_result.new_op_ref)
+        .await
+        .expect_err("an undo-op ref must be rejected (that's redo's job)");
+    assert!(
+        matches!(err, AppError::Validation { .. }),
+        "expected Validation, got: {err:?}"
+    );
+    mat.shutdown();
+}
+
+/// Idempotence guard: a ref that is currently reversed is rejected — a
+/// double-submit (or stale stack entry) must not apply the same inverse
+/// twice.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_op_rejects_already_reversed_ref_2468() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "v0".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v1".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let edit_ref = OpRef {
+        device_id: DEV.into(),
+        seq: newest_op_seq(&pool, DEV, "edit_block", created.id.as_str()).await,
+    };
+    undo_op_inner(&pool, DEV, &mat, edit_ref.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let ops_before = op_count(&pool, DEV).await;
+    let err = undo_op_inner(&pool, DEV, &mat, edit_ref)
+        .await
+        .expect_err("an already-reversed ref must be rejected");
+    assert!(
+        matches!(err, AppError::Validation { .. }),
+        "expected Validation, got: {err:?}"
+    );
+    assert_eq!(
+        op_count(&pool, DEV).await,
+        ops_before,
+        "the rejected double-undo must append nothing"
+    );
+    // State untouched by the second attempt.
+    let after = get_block_inner(&pool, created.id.clone()).await.unwrap();
+    assert_eq!(after.content, Some("v0".into()));
+    mat.shutdown();
+}
+
+/// Cross-path stamping: a ref reversed via the POSITIONAL `undo_page_op`
+/// is equally rejected by the ref-addressed guard — every reverse-producing
+/// path stamps `reverses_*` (migration 0101), so the two addressing models
+/// share one source of truth during the frontend migration.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_op_rejects_ref_reversed_by_positional_undo_2468() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "v0".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v1".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let edit_ref = OpRef {
+        device_id: DEV.into(),
+        seq: newest_op_seq(&pool, DEV, "edit_block", created.id.as_str()).await,
+    };
+
+    // Positional undo at depth 0 reverses the edit.
+    let positional = undo_page_op_inner(&pool, DEV, &mat, created.id.clone().into_string(), 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(positional.reversed_op.seq, edit_ref.seq, "sanity");
+
+    let err = undo_op_inner(&pool, DEV, &mat, edit_ref)
+        .await
+        .expect_err("a ref already reversed positionally must be rejected");
+    assert!(
+        matches!(err, AppError::Validation { .. }),
+        "expected Validation, got: {err:?}"
+    );
+    mat.shutdown();
+}
+
+/// Undo → redo → undo: the redo op links to the undo op it reverses
+/// (`reverses_*`), returning the ORIGINAL ref to the not-currently-reversed
+/// state — so a subsequent ref-addressed undo of it is legal and works.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_op_allowed_again_after_redo_2468() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "v0".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v1".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let edit_ref = OpRef {
+        device_id: DEV.into(),
+        seq: newest_op_seq(&pool, DEV, "edit_block", created.id.as_str()).await,
+    };
+
+    // Undo the edit, then redo it back.
+    let undo_result = undo_op_inner(&pool, DEV, &mat, edit_ref.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    redo_page_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        undo_result.new_op_ref.device_id.clone(),
+        undo_result.new_op_ref.seq,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let after_redo = get_block_inner(&pool, created.id.clone()).await.unwrap();
+    assert_eq!(after_redo.content, Some("v1".into()), "redo re-applied");
+
+    // The original ref is undoable again.
+    let second = undo_op_inner(&pool, DEV, &mat, edit_ref.clone())
+        .await
+        .expect("after redo, the original ref must be undoable again");
+    settle(&mat).await;
+    assert_eq!(second.reversed_op.seq, edit_ref.seq);
+    let after = get_block_inner(&pool, created.id.clone()).await.unwrap();
+    assert_eq!(after.content, Some("v0".into()));
+    mat.shutdown();
+}
+
+/// Redo after a ref-addressed undo works exactly like redo after positional
+/// undo — the `UndoResult.new_op_ref` is a legitimate redo target.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn redo_after_ref_addressed_undo_works_2468() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "v0".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v1".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let undo_result = undo_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        OpRef {
+            device_id: DEV.into(),
+            seq: newest_op_seq(&pool, DEV, "edit_block", created.id.as_str()).await,
+        },
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let mid = get_block_inner(&pool, created.id.clone()).await.unwrap();
+    assert_eq!(mid.content, Some("v0".into()), "undo applied");
+
+    let redo = redo_page_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        undo_result.new_op_ref.device_id.clone(),
+        undo_result.new_op_ref.seq,
+    )
+    .await
+    .expect("redo of a ref-addressed undo's new_op_ref must work");
+    settle(&mat).await;
+    assert!(redo.is_redo);
+    let after = get_block_inner(&pool, created.id.clone()).await.unwrap();
+    assert_eq!(after.content, Some("v1".into()), "redo restored the edit");
+    mat.shutdown();
+}
+
+/// A NonReversible target (reverse move onto a tombstoned prior parent)
+/// aborts the interactive ref-addressed undo atomically: classified error,
+/// no reverse op appended, live state untouched — the same contract as
+/// `undo_page_op` (no skip).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_op_nonreversible_move_aborts_atomically_2468() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // A and C top-level; B under A. Move B → C, then trash A.
+    let a = create_block_inner(&pool, DEV, &mat, "page".into(), "A".into(), None, Some(1))
+        .await
+        .unwrap();
+    let c = create_block_inner(&pool, DEV, &mat, "page".into(), "C".into(), None, Some(2))
+        .await
+        .unwrap();
+    let b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "B".into(),
+        Some(a.id.clone()),
+        Some(0),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    move_block_inner(&pool, DEV, &mat, b.id.clone(), Some(c.id.clone()), 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let move_ref = OpRef {
+        device_id: DEV.into(),
+        seq: newest_op_seq(&pool, DEV, "move_block", b.id.as_str()).await,
+    };
+
+    delete_block_inner(&pool, DEV, &mat, a.id.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let ops_before = op_count(&pool, DEV).await;
+    let err = undo_op_inner(&pool, DEV, &mat, move_ref)
+        .await
+        .expect_err("reverse move onto a tombstoned prior parent must abort");
+    assert!(
+        matches!(err, AppError::NonReversible { .. }),
+        "interactive contract: NonReversible aborts (no skip), got: {err:?}"
+    );
+    assert_eq!(
+        op_count(&pool, DEV).await,
+        ops_before,
+        "the aborted undo must append nothing (tx rolled back)"
+    );
+    let (b_parent, b_deleted): (Option<String>, Option<i64>) =
+        sqlx::query_as("SELECT parent_id, deleted_at FROM blocks WHERE id = ?")
+            .bind(b.id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(b_parent.as_deref(), Some(c.id.as_str()), "B stays under C");
+    assert!(b_deleted.is_none(), "B stays live");
+    mat.shutdown();
+}
+
+/// Group form: `undo_ops` reverts an explicit ref set atomically, results
+/// newest-first, every reverse op flagged + linked — the coalesced-group
+/// analogue of `undo_page_group` without the positional walk.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_ops_reverts_ref_set_newest_first_2468() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let (_page_id, child_ids) = create_page_with_children(&pool, &mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child_ids[0].clone().into(),
+        "one-edited".into(),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child_ids[1].clone().into(),
+        "two-edited".into(),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let seq1 = newest_op_seq(&pool, DEV, "edit_block", &child_ids[0]).await;
+    let seq2 = newest_op_seq(&pool, DEV, "edit_block", &child_ids[1]).await;
+
+    // Submit oldest-first to prove the command orders results itself.
+    let results = undo_ops_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![
+            OpRef {
+                device_id: DEV.into(),
+                seq: seq1,
+            },
+            OpRef {
+                device_id: DEV.into(),
+                seq: seq2,
+            },
+        ],
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0].reversed_op.seq, seq2, "newest first");
+    assert_eq!(results[1].reversed_op.seq, seq1);
+
+    let c1 = get_block_inner(&pool, child_ids[0].clone().into())
+        .await
+        .unwrap();
+    let c2 = get_block_inner(&pool, child_ids[1].clone().into())
+        .await
+        .unwrap();
+    assert_eq!(c1.content, Some("child one".into()));
+    assert_eq!(c2.content, Some("child two".into()));
+
+    for r in &results {
+        let (is_undo, rev_seq): (i64, Option<i64>) = sqlx::query_as(
+            "SELECT is_undo, reverses_seq FROM op_log WHERE device_id = ? AND seq = ?",
+        )
+        .bind(&r.new_op_ref.device_id)
+        .bind(r.new_op_ref.seq)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(is_undo, 1);
+        assert_eq!(rev_seq, Some(r.reversed_op.seq), "reverses link stamped");
+    }
+    mat.shutdown();
+}
+
+/// Atomic abort: ONE bad ref (here: replicated foreign) rejects the WHOLE
+/// batch before anything is applied — no partial undo.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_ops_aborts_whole_batch_on_foreign_ref_2468() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "v0".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v1".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let good_seq = newest_op_seq(&pool, DEV, "edit_block", created.id.as_str()).await;
+
+    let foreign_op = op_log::append_local_op_at(
+        &pool,
+        "device-B",
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: created.id.clone(),
+            to_text: "foreign".into(),
+            prev_edit: None,
+        }),
+        4_070_908_800_000,
+    )
+    .await
+    .unwrap();
+    mark_op_replicated(&pool, "device-B", foreign_op.seq).await;
+
+    let ops_before = op_count(&pool, DEV).await;
+    let err = undo_ops_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![
+            OpRef {
+                device_id: DEV.into(),
+                seq: good_seq,
+            },
+            OpRef {
+                device_id: "device-B".into(),
+                seq: foreign_op.seq,
+            },
+        ],
+    )
+    .await
+    .expect_err("one foreign ref must reject the whole batch");
+    assert!(
+        matches!(err, AppError::Validation { .. }),
+        "expected Validation, got: {err:?}"
+    );
+    assert_eq!(
+        op_count(&pool, DEV).await,
+        ops_before,
+        "atomic abort: nothing appended"
+    );
+    let after = get_block_inner(&pool, created.id.clone()).await.unwrap();
+    assert_eq!(
+        after.content,
+        Some("v1".into()),
+        "the good ref must NOT have been reverted (atomic abort)"
+    );
+    mat.shutdown();
+}
+
+/// Nonexistent ref → NotFound (precise, names the ref).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_op_nonexistent_ref_returns_not_found_2468() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let err = undo_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        OpRef {
+            device_id: "no-such-device".into(),
+            seq: 42,
+        },
+    )
+    .await
+    .expect_err("a nonexistent ref must be NotFound");
+    assert!(
+        matches!(err, AppError::NotFound(_)),
+        "expected NotFound, got: {err:?}"
+    );
+    mat.shutdown();
+}
+
+/// Duplicate refs in one batch are rejected up front — the guard reads
+/// committed state and cannot see the first in-batch reverse, so allowing
+/// duplicates would apply the same inverse twice inside one tx.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_ops_rejects_duplicate_refs_2468() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "v0".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v1".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let seq = newest_op_seq(&pool, DEV, "edit_block", created.id.as_str()).await;
+    let r = OpRef {
+        device_id: DEV.into(),
+        seq,
+    };
+
+    let err = undo_ops_inner(&pool, DEV, &mat, vec![r.clone(), r])
+        .await
+        .expect_err("duplicate refs must be rejected");
+    assert!(
+        matches!(err, AppError::Validation { .. }),
+        "expected Validation, got: {err:?}"
+    );
+    let after = get_block_inner(&pool, created.id.clone()).await.unwrap();
+    assert_eq!(after.content, Some("v1".into()), "nothing applied");
+    mat.shutdown();
+}
+
+/// Empty ref set is a clean no-op (mirrors `revert_ops`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_ops_empty_returns_empty_2468() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let results = undo_ops_inner(&pool, DEV, &mat, vec![]).await.unwrap();
+    assert!(results.is_empty());
+    mat.shutdown();
+}

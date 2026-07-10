@@ -1362,6 +1362,9 @@ pub async fn list_property_values(
 /// Typed value fields are bundled into [`SetPropertyArgs`] so the
 /// IPC signature stays at 7 positional args (under specta's 10-arg cap).
 /// Adding `value_bool` as a 5th flat field would have exceeded the limit.
+/// #2468: the response carries the produced op ref(s) (`WithOps` — a
+/// flattened, strict superset of the previous `BlockRow` shape) so the
+/// frontend undo stack can address the action by exact ref (`undo_op`).
 #[tauri::command]
 #[specta::specta]
 pub async fn set_property(
@@ -1370,7 +1373,7 @@ pub async fn set_property(
     block_id: BlockId,
     key: String,
     value: SetPropertyArgs,
-) -> Result<BlockRow, AppError> {
+) -> Result<WithOps<BlockRow>, AppError> {
     let block_id_clone = block_id.clone().into_string();
     let key_clone = key.clone();
     // #1627: mint the type-state newtype without a pre-tx round-trip.
@@ -1378,23 +1381,27 @@ pub async fn set_property(
     // identical NotFound/Validation errors) now runs inside the write
     // transaction's existing re-validation (`set_property_in_tx`).
     let active_id = ActiveBlockId::from_trusted_active(block_id.as_str());
-    let result = set_property_inner(
-        ctx.pool(),
-        ctx.device_id(),
-        ctx.materializer(),
-        active_id,
-        key,
-        value.value_text,
-        value.value_num,
-        value.value_date,
-        value.value_ref,
-        value.value_bool,
-        None,
-    )
+    let result = capture_op_refs(async {
+        set_property_inner(
+            ctx.pool(),
+            ctx.device_id(),
+            ctx.materializer(),
+            active_id,
+            key,
+            value.value_text,
+            value.value_num,
+            value.value_date,
+            value.value_ref,
+            value.value_bool,
+            None,
+        )
+        .await
+        .map(Into::into)
+    })
     .await
     .map_err(sanitize_internal_error)?;
     emit_property_changed_event(&app, block_id_clone, vec![key_clone]);
-    Ok(result.into())
+    Ok(result)
 }
 
 /// Tauri command: set todo state on a block. Delegates to [`set_todo_state_inner`].
@@ -1587,6 +1594,12 @@ pub async fn set_scheduled_date(
 }
 
 /// Tauri command: delete a property from a block. Delegates to [`delete_property_inner`].
+///
+/// #2468: previously returned unit; now echoes `(block_id, key)` plus the
+/// produced op ref(s) (`WithOps<DeletePropertyResponse>`) so the frontend
+/// undo stack can address the action by exact ref (`undo_op`). The wire
+/// change is `null` → an object — additive for every existing caller (all
+/// current call sites discard the result).
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_property(
@@ -1594,7 +1607,7 @@ pub async fn delete_property(
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     key: String,
-) -> Result<(), AppError> {
+) -> Result<WithOps<DeletePropertyResponse>, AppError> {
     let block_id_clone = block_id.clone().into_string();
     let key_clone = key.clone();
     // #1627: mint the type-state newtype without a pre-tx round-trip.
@@ -1602,17 +1615,24 @@ pub async fn delete_property(
     // identical NotFound/Validation errors) now runs inside the write
     // transaction's existing re-validation (`delete_property_core`).
     let active_id = ActiveBlockId::from_trusted_active(block_id.as_str());
-    delete_property_inner(
-        ctx.pool(),
-        ctx.device_id(),
-        ctx.materializer(),
-        active_id,
-        key,
-    )
+    let result = capture_op_refs(async {
+        delete_property_inner(
+            ctx.pool(),
+            ctx.device_id(),
+            ctx.materializer(),
+            active_id,
+            key,
+        )
+        .await
+        .map(|()| DeletePropertyResponse {
+            block_id: block_id_clone.clone(),
+            key: key_clone.clone(),
+        })
+    })
     .await
     .map_err(sanitize_internal_error)?;
     emit_property_changed_event(&app, block_id_clone, vec![key_clone]);
-    Ok(())
+    Ok(result)
 }
 
 /// Tauri command: get all properties for a block. Delegates to [`get_properties_inner`].

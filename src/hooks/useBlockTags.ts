@@ -134,9 +134,15 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
     async (tagId: string) => {
       if (!blockId) return
       try {
-        await addTag(blockId, tagId)
+        const resp = await addTag(blockId, tagId)
         const { rootParentId } = pageStore.getState()
-        if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
+        // #2468 — thread the appended op ref(s) so undo is ref-addressed.
+        // `op_refs` is EMPTY on an idempotent no-op (tag already attached):
+        // nothing was appended, so do NOT push an undo entry — and don't
+        // invalidate redo history for an action that changed nothing.
+        if (rootParentId && resp.op_refs.length > 0) {
+          useUndoStore.getState().onNewAction(rootParentId, resp.op_refs)
+        }
         setAppliedTagIds((prev) => new Set([...prev, tagId]))
         // Adding an inherited-only tag directly promotes it to a direct tag;
         // drop it from the inherited set so it doesn't render as a duplicate
@@ -159,9 +165,13 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
     async (tagId: string) => {
       if (!blockId) return
       try {
-        await removeTag(blockId, tagId)
+        const resp = await removeTag(blockId, tagId)
         const { rootParentId } = pageStore.getState()
-        if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
+        // #2468 — see handleAddTag: skip the undo push on an idempotent
+        // no-op (`op_refs` empty — the tag was not attached).
+        if (rootParentId && resp.op_refs.length > 0) {
+          useUndoStore.getState().onNewAction(rootParentId, resp.op_refs)
+        }
         setAppliedTagIds((prev) => {
           const next = new Set(prev)
           next.delete(tagId)
@@ -185,9 +195,13 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
         setAllTags((prev) => [...prev, entry])
         useResolveStore.getState().set(resp.id, trimmed, false)
         if (blockId) {
-          await addTag(blockId, resp.id)
+          const tagResp = await addTag(blockId, resp.id)
           const { rootParentId } = pageStore.getState()
-          if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
+          // #2468 — see handleAddTag (a just-created tag can't already be
+          // attached, but honor the empty-refs no-op contract regardless).
+          if (rootParentId && tagResp.op_refs.length > 0) {
+            useUndoStore.getState().onNewAction(rootParentId, tagResp.op_refs)
+          }
           setAppliedTagIds((prev) => new Set([...prev, resp.id]))
         }
       } catch (error) {

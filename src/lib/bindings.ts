@@ -11,8 +11,12 @@ export const commands = {
 	 *  "every page has a space" invariant at the IPC boundary
 	 *  The optional `space_id` is required when
 	 *  `block_type == "page"` and ignored otherwise.
+	 * 
+	 *  #2468: the response carries the produced op ref(s) (`WithOps` — a
+	 *  flattened, strict superset of the previous `BlockRow` shape) so the
+	 *  frontend undo stack can address the action by exact ref (`undo_op`).
 	 */
-	createBlock: (blockType: string, content: string, parentId: string | null, index: number | null, scope: SpaceScope) => typedError<BlockRow, AppError>(__TAURI_INVOKE("create_block", { blockType, content, parentId, index, scope })),
+	createBlock: (blockType: string, content: string, parentId: string | null, index: number | null, scope: SpaceScope) => typedError<WithOps<BlockRow>, AppError>(__TAURI_INVOKE("create_block", { blockType, content, parentId, index, scope })),
 	/**
 	 *  Tauri command: atomically create a batch of blocks. Delegates to
 	 *  [`create_blocks_batch_inner`].
@@ -24,10 +28,16 @@ export const commands = {
 	 *  IPCs now fires 1.
 	 */
 	createBlocksBatch: (specs: CreateBlockSpec[]) => typedError<BlockRow[], AppError>(__TAURI_INVOKE("create_blocks_batch", { specs })),
-	/**  Tauri command: edit a block's content. Delegates to [`edit_block_inner`]. */
-	editBlock: (blockId: BlockId, toText: string) => typedError<BlockRow, AppError>(__TAURI_INVOKE("edit_block", { blockId, toText })),
-	/**  Tauri command: soft-delete a block and descendants. Delegates to [`delete_block_inner`]. */
-	deleteBlock: (blockId: BlockId) => typedError<DeleteResponse, AppError>(__TAURI_INVOKE("delete_block", { blockId })),
+	/**
+	 *  Tauri command: edit a block's content. Delegates to [`edit_block_inner`].
+	 *  #2468: the response carries the produced op ref(s) — see [`create_block`].
+	 */
+	editBlock: (blockId: BlockId, toText: string) => typedError<WithOps<BlockRow>, AppError>(__TAURI_INVOKE("edit_block", { blockId, toText })),
+	/**
+	 *  Tauri command: soft-delete a block and descendants. Delegates to [`delete_block_inner`].
+	 *  #2468: the response carries the produced op ref(s) — see [`create_block`].
+	 */
+	deleteBlock: (blockId: BlockId) => typedError<WithOps<DeleteResponse>, AppError>(__TAURI_INVOKE("delete_block", { blockId })),
 	/**
 	 *  Tauri command: batch-delete blocks by ids.
 	 * 
@@ -62,8 +72,12 @@ export const commands = {
 	 *  Tauri command: move a block under a new parent at a 0-based sibling slot
 	 *  (#400). `new_index` is an insertion slot among the target parent's other
 	 *  children; slot 0 is "first child" / "top". Delegates to [`move_block_inner`].
+	 * 
+	 *  #2468: the response carries the produced op ref(s) (`WithOps` — a
+	 *  flattened, strict superset of the previous `MoveResponse` shape) so the
+	 *  frontend undo stack can address the action by exact ref (`undo_op`).
 	 */
-	moveBlock: (blockId: string, newParentId: string | null, newIndex: number) => typedError<MoveResponse, AppError>(__TAURI_INVOKE("move_block", { blockId, newParentId, newIndex })),
+	moveBlock: (blockId: string, newParentId: string | null, newIndex: number) => typedError<WithOps<MoveResponse>, AppError>(__TAURI_INVOKE("move_block", { blockId, newParentId, newIndex })),
 	/**
 	 *  Tauri command: batched intra-page reorder/reparent (#2274). See
 	 *  [`move_blocks_batch_inner`]. `block_ids` are moved, in the given order, under
@@ -129,15 +143,23 @@ export const commands = {
 	 *  space and threads it through `useResolveStore.preload(spaceId)`.
 	 */
 	batchResolve: (ids: BlockId[], scope: SpaceScope) => typedError<ResolvedBlock[], AppError>(__TAURI_INVOKE("batch_resolve", { ids, scope })),
-	/**  Tauri command: add a tag to a block. Delegates to [`add_tag_inner`]. */
-	addTag: (blockId: BlockId, tagId: BlockId) => typedError<TagResponse, AppError>(__TAURI_INVOKE("add_tag", { blockId, tagId })),
+	/**
+	 *  Tauri command: add a tag to a block. Delegates to [`add_tag_inner`].
+	 * 
+	 *  #2468: the response carries the produced op ref(s) (`WithOps` — a
+	 *  flattened, strict superset of the previous `TagResponse` shape) so the
+	 *  frontend undo stack can address the action by exact ref (`undo_op`).
+	 *  `op_refs` is empty when the tag was already present (idempotent no-op —
+	 *  nothing to undo).
+	 */
+	addTag: (blockId: BlockId, tagId: BlockId) => typedError<WithOps<TagResponse>, AppError>(__TAURI_INVOKE("add_tag", { blockId, tagId })),
 	/**
 	 *  Tauri command: add ONE tag to N blocks (#81). Delegates to
 	 *  [`add_tags_by_ids_inner`]. Returns the number of blocks newly tagged.
 	 */
 	addTagsByIds: (blockIds: BlockId[], tagId: BlockId) => typedError<number, AppError>(__TAURI_INVOKE("add_tags_by_ids", { blockIds, tagId })),
 	/**  Tauri command: remove a tag from a block. Delegates to [`remove_tag_inner`]. */
-	removeTag: (blockId: BlockId, tagId: BlockId) => typedError<TagResponse, AppError>(__TAURI_INVOKE("remove_tag", { blockId, tagId })),
+	removeTag: (blockId: BlockId, tagId: BlockId) => typedError<WithOps<TagResponse>, AppError>(__TAURI_INVOKE("remove_tag", { blockId, tagId })),
 	/**  Tauri command: list backlinks for a block. Delegates to [`get_backlinks_inner`]. */
 	getBacklinks: (blockId: BlockId, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<ActiveBlockRow>, AppError>(__TAURI_INVOKE("get_backlinks", { blockId, cursor, limit, scope })),
 	/**  Tauri command: list op-log history for a block. Delegates to [`get_block_history_inner`]. */
@@ -264,8 +286,11 @@ export const commands = {
 	 *  Typed value fields are bundled into [`SetPropertyArgs`] so the
 	 *  IPC signature stays at 7 positional args (under specta's 10-arg cap).
 	 *  Adding `value_bool` as a 5th flat field would have exceeded the limit.
+	 *  #2468: the response carries the produced op ref(s) (`WithOps` — a
+	 *  flattened, strict superset of the previous `BlockRow` shape) so the
+	 *  frontend undo stack can address the action by exact ref (`undo_op`).
 	 */
-	setProperty: (blockId: BlockId, key: string, value: SetPropertyArgs) => typedError<BlockRow, AppError>(__TAURI_INVOKE("set_property", { blockId, key, value })),
+	setProperty: (blockId: BlockId, key: string, value: SetPropertyArgs) => typedError<WithOps<BlockRow>, AppError>(__TAURI_INVOKE("set_property", { blockId, key, value })),
 	/**  Tauri command: set todo state on a block. Delegates to [`set_todo_state_inner`]. */
 	setTodoState: (blockId: BlockId, state: string | null) => typedError<BlockRow, AppError>(__TAURI_INVOKE("set_todo_state", { blockId, state })),
 	/**
@@ -311,8 +336,16 @@ export const commands = {
 	setDueDate: (blockId: BlockId, date: string | null) => typedError<BlockRow, AppError>(__TAURI_INVOKE("set_due_date", { blockId, date })),
 	/**  Tauri command: set scheduled date on a block. Delegates to [`set_scheduled_date_inner`]. */
 	setScheduledDate: (blockId: BlockId, date: string | null) => typedError<BlockRow, AppError>(__TAURI_INVOKE("set_scheduled_date", { blockId, date })),
-	/**  Tauri command: delete a property from a block. Delegates to [`delete_property_inner`]. */
-	deleteProperty: (blockId: BlockId, key: string) => typedError<null, AppError>(__TAURI_INVOKE("delete_property", { blockId, key })),
+	/**
+	 *  Tauri command: delete a property from a block. Delegates to [`delete_property_inner`].
+	 * 
+	 *  #2468: previously returned unit; now echoes `(block_id, key)` plus the
+	 *  produced op ref(s) (`WithOps<DeletePropertyResponse>`) so the frontend
+	 *  undo stack can address the action by exact ref (`undo_op`). The wire
+	 *  change is `null` → an object — additive for every existing caller (all
+	 *  current call sites discard the result).
+	 */
+	deleteProperty: (blockId: BlockId, key: string) => typedError<WithOps<DeletePropertyResponse>, AppError>(__TAURI_INVOKE("delete_property", { blockId, key })),
 	/**  Tauri command: get all properties for a block. Delegates to [`get_properties_inner`]. */
 	getProperties: (blockId: BlockId) => typedError<PropertyRow[], AppError>(__TAURI_INVOKE("get_properties", { blockId })),
 	/**
@@ -339,6 +372,19 @@ export const commands = {
 	revertOps: (ops: OpRef[]) => typedError<UndoResult[], AppError>(__TAURI_INVOKE("revert_ops", { ops })),
 	/**  Tauri command: undo page op. Delegates to [`undo_page_op_inner`]. */
 	undoPageOp: (pageId: string, undoDepth: number) => typedError<UndoResult, AppError>(__TAURI_INVOKE("undo_page_op", { pageId, undoDepth })),
+	/**
+	 *  Tauri command: ref-addressed single undo (#2468). Delegates to
+	 *  [`undo_op_inner`]. The `undo_page_op` successor: the frontend passes the
+	 *  exact `OpRef` it captured when the action was performed, killing the
+	 *  positional-offset race (#2446). Same `UndoResult` contract.
+	 */
+	undoOp: (opRef: OpRef) => typedError<UndoResult, AppError>(__TAURI_INVOKE("undo_op", { opRef })),
+	/**
+	 *  Tauri command: ref-addressed group undo (#2468). Delegates to
+	 *  [`undo_ops_inner`]. The `undo_page_group` successor: a coalesced undo
+	 *  group is an explicit ref-set revert with atomic-abort semantics.
+	 */
+	undoOps: (ops: OpRef[]) => typedError<UndoResult[], AppError>(__TAURI_INVOKE("undo_ops", { ops })),
 	/**  Tauri command: redo page op. Delegates to [`redo_page_op_inner`]. */
 	redoPageOp: (undoDeviceId: string, undoSeq: number) => typedError<UndoResult, AppError>(__TAURI_INVOKE("redo_page_op", { undoDeviceId, undoSeq })),
 	/**
@@ -1729,6 +1775,16 @@ export type DatePredicate =
 export type DateRange = {
 	start: string,
 	end: string,
+};
+
+/**
+ *  #2468: echo payload for `delete_property` (previously returned unit).
+ *  Exists so the command can ride the [`WithOps`] flatten (a unit can't be
+ *  flattened) and surface the produced op ref to the frontend undo stack.
+ */
+export type DeletePropertyResponse = {
+	block_id: string,
+	key: string,
 };
 
 export type DeleteResponse = {
@@ -3831,6 +3887,27 @@ export type VaultFile = {
 	/**  Raw file bytes. */
 	bytes: number[],
 };
+
+/**
+ *  #2468: a mutating command's response plus the `OpRef`(s) of the op-log
+ *  rows the command appended, so the frontend can seed its undo stack with
+ *  exact refs at `notifyUndoNewAction` time (ref-addressed undo via
+ *  `undo_op` / `undo_ops`) instead of positional depth accounting.
+ * 
+ *  `inner` is `#[serde(flatten)]`ed, so the wire shape is a strict
+ *  SUPERSET of the pre-#2468 response (`{ ...T, op_refs }` — the specta
+ *  binding is `T & { op_refs: OpRef[] }`): existing frontend call sites
+ *  keep type-checking unchanged while migrated ones read `op_refs`.
+ * 
+ *  `op_refs` preserves append order. Single-op commands carry exactly one
+ *  entry; a command that appends nothing (possible for idempotent
+ *  tag/property no-ops) carries an empty Vec — the frontend must skip the
+ *  undo-stack push in that case (nothing was done, nothing to undo).
+ */
+export type WithOps<T> = {
+	/**  The op-log refs appended by this command, in append order. */
+	op_refs: OpRef[],
+} & T;
 
 /* Tauri Specta runtime */
 async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; data: T } | { status: "error"; error: E }> {

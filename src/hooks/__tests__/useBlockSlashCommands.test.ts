@@ -95,7 +95,19 @@ beforeEach(() => {
   // empty-query test sees an empty recents band and cross-test recents
   // never leak.
   localStorage.clear()
-  mockedInvoke.mockResolvedValue(undefined)
+  // #2468 — migrated mutations resolve `WithOps` envelopes (`op_refs`); give
+  // them wire-faithful defaults so the handlers' undo-ref capture doesn't
+  // trip on an `undefined` response.
+  mockedInvoke.mockImplementation(async (cmd: string) => {
+    if (cmd === 'edit_block') {
+      return { id: 'BLOCK_1', content: '', op_refs: [{ device_id: 'dev1', seq: 3 }] }
+    }
+    if (cmd === 'set_property') return { id: 'BLOCK_1', op_refs: [{ device_id: 'dev1', seq: 1 }] }
+    if (cmd === 'delete_property') {
+      return { block_id: 'BLOCK_1', key: 'repeat', op_refs: [{ device_id: 'dev1', seq: 2 }] }
+    }
+    return undefined
+  })
   pageStore = createPageBlockStore('PAGE_1')
   pageStore.setState({
     blocks: [makeBlock({ id: 'BLOCK_1', content: 'hello', parent_id: 'PAGE_1' })],
@@ -642,7 +654,8 @@ describe('useBlockSlashCommands undo notifications', () => {
       await result.current.handleSlashCommand({ id: 'h1', label: 'Heading 1' })
     })
 
-    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
+    // #2468 — editBlock-backed commands forward the edit's op_refs.
+    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1', [{ device_id: 'dev1', seq: 3 }])
   })
 
   it('callout slash command calls onNewAction (clears redo stack)', async () => {
@@ -653,7 +666,7 @@ describe('useBlockSlashCommands undo notifications', () => {
       await result.current.handleSlashCommand({ id: 'callout-info', label: 'Info callout' })
     })
 
-    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
+    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1', [{ device_id: 'dev1', seq: 3 }])
   })
 
   it('numbered-list slash command calls onNewAction (clears redo stack)', async () => {
@@ -664,7 +677,7 @@ describe('useBlockSlashCommands undo notifications', () => {
       await result.current.handleSlashCommand({ id: 'numbered-list', label: 'Numbered list' })
     })
 
-    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
+    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1', [{ device_id: 'dev1', seq: 3 }])
   })
 })
 

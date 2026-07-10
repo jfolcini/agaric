@@ -32,7 +32,18 @@ afterEach(() => {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockedInvoke.mockResolvedValue(undefined)
+  // #2468 — the migrated property mutations resolve `WithOps` envelopes
+  // (`op_refs` carries the appended op-log refs); give them wire-faithful
+  // defaults so the handlers' undo-ref capture path is exercised.
+  mockedInvoke.mockImplementation(async (cmd: string) => {
+    if (cmd === 'set_property') {
+      return { id: 'BLOCK_1', op_refs: [{ device_id: 'dev1', seq: 1 }] }
+    }
+    if (cmd === 'delete_property') {
+      return { block_id: 'BLOCK_1', key: 'repeat', op_refs: [{ device_id: 'dev1', seq: 2 }] }
+    }
+    return undefined
+  })
 })
 
 describe('useSlashCommandProperty — TODO state', () => {
@@ -340,6 +351,80 @@ describe('useSlashCommandProperty — repeat / repeat-limit', () => {
       blockId: 'BLOCK_1',
       key: 'repeat-until',
     })
+  })
+
+  // #2468 — the migrated property mutations forward their response `op_refs`
+  // into the undo notification (ref-addressed undo).
+  it('a set_property command forwards its op_refs to onNewAction (#2468)', async () => {
+    const onNewAction = vi.fn()
+    useUndoStore.setState({ ...useUndoStore.getState(), onNewAction })
+    const { result } = renderHook(() => useSlashCommandProperty())
+    const { ctx } = makeSyntheticCtx()
+    const handler = result.current.prefix.find(([p]) => p === 'repeat-')?.[1]
+
+    await handler?.(ctx, { id: 'repeat-daily', label: 'daily' })
+
+    // Refs from the beforeEach `set_property` envelope.
+    expect(onNewAction).toHaveBeenCalledWith('PAGE_1', [{ device_id: 'dev1', seq: 1 }])
+  })
+
+  it('repeat-remove forwards the delete_property op_refs to onNewAction (#2468)', async () => {
+    const onNewAction = vi.fn()
+    useUndoStore.setState({ ...useUndoStore.getState(), onNewAction })
+    const { result } = renderHook(() => useSlashCommandProperty())
+    const { ctx } = makeSyntheticCtx()
+    const handler = result.current.prefix.find(([p]) => p === 'repeat-')?.[1]
+
+    await handler?.(ctx, { id: 'repeat-remove', label: 'REPEAT REMOVE' })
+
+    // `delete_property` is now undoable by ref (was a `null` response).
+    expect(onNewAction).toHaveBeenCalledWith('PAGE_1', [{ device_id: 'dev1', seq: 2 }])
+  })
+
+  it('repeat-remove of an ABSENT property (empty op_refs) pushes no undo entry (#2468)', async () => {
+    const onNewAction = vi.fn()
+    useUndoStore.setState({ ...useUndoStore.getState(), onNewAction })
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'delete_property') {
+        // Idempotent no-op: nothing was appended, nothing to undo.
+        return { block_id: 'BLOCK_1', key: 'repeat', op_refs: [] }
+      }
+      return undefined
+    })
+    const { result } = renderHook(() => useSlashCommandProperty())
+    const { ctx } = makeSyntheticCtx()
+    const handler = result.current.prefix.find(([p]) => p === 'repeat-')?.[1]
+
+    await handler?.(ctx, { id: 'repeat-remove', label: 'REPEAT REMOVE' })
+
+    expect(onNewAction).not.toHaveBeenCalled()
+  })
+
+  it('repeat-limit-remove combines both delete_property op_refs into ONE notification (#2468)', async () => {
+    const onNewAction = vi.fn()
+    useUndoStore.setState({ ...useUndoStore.getState(), onNewAction })
+    let seq = 20
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'delete_property') {
+        const key = (args as { key?: string })?.key ?? ''
+        seq += 1
+        return { block_id: 'BLOCK_1', key, op_refs: [{ device_id: 'dev1', seq }] }
+      }
+      return undefined
+    })
+    const { result } = renderHook(() => useSlashCommandProperty())
+    const { ctx } = makeSyntheticCtx()
+    const handler = result.current.prefix.find(([p]) => p === 'repeat-limit-')?.[1]
+
+    await handler?.(ctx, { id: 'repeat-limit-remove', label: 'REPEAT LIMIT REMOVE' })
+
+    // Both deletes belong to one user action → ONE notification carrying both
+    // refs (they land as one coalesced undo entry).
+    expect(onNewAction).toHaveBeenCalledTimes(1)
+    expect(onNewAction).toHaveBeenCalledWith('PAGE_1', [
+      { device_id: 'dev1', seq: 21 },
+      { device_id: 'dev1', seq: 22 },
+    ])
   })
 })
 

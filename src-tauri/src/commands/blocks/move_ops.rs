@@ -321,6 +321,10 @@ async fn move_block_in_tx(
 /// Tauri command: move a block under a new parent at a 0-based sibling slot
 /// (#400). `new_index` is an insertion slot among the target parent's other
 /// children; slot 0 is "first child" / "top". Delegates to [`move_block_inner`].
+///
+/// #2468: the response carries the produced op ref(s) (`WithOps` — a
+/// flattened, strict superset of the previous `MoveResponse` shape) so the
+/// frontend undo stack can address the action by exact ref (`undo_op`).
 #[tauri::command]
 #[specta::specta]
 pub async fn move_block(
@@ -328,15 +332,15 @@ pub async fn move_block(
     block_id: String,
     new_parent_id: Option<String>,
     new_index: i64,
-) -> Result<MoveResponse, AppError> {
-    move_block_inner(
+) -> Result<WithOps<MoveResponse>, AppError> {
+    capture_op_refs(move_block_inner(
         ctx.pool(),
         ctx.device_id(),
         ctx.materializer(),
         block_id.into(),
         new_parent_id.map(Into::into),
         new_index,
-    )
+    ))
     .await
     .map_err(sanitize_internal_error)
 }
