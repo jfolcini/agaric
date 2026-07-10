@@ -2258,6 +2258,77 @@ describe('PageBlockStore', () => {
       expect(s.blocks.map((b) => b.id)).toEqual(['X', 'C', 'P'])
       expectMapMatchesArray(s)
     })
+
+    // #2543 — remove() used to compute its descendant set from the
+    // PRE-await `get()` snapshot, then filter COMMIT-time state with that
+    // stale set. Example B from the issue: a block is dedented OUT of the
+    // parent's subtree while the parent's delete_block IPC is still in
+    // flight. The backend keeps the dedented block alive (it's no longer
+    // a descendant by the time delete cascades), but the stale pre-await
+    // descendant set still contained it — the user would watch a live
+    // block vanish locally. Recomputing inside the functional updater
+    // (current state at commit time) fixes this.
+    it('remove: descendant set recomputed from commit-time state — a block dedented out of the subtree mid-flight survives', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'B', content: 'parent B', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'X', content: 'child X', position: 0, parent_id: 'B', depth: 1 }),
+        ],
+      })
+
+      const resolveDelete = deferInvoke()
+      const removePromise = store.getState().remove('B')
+
+      // X is dedented OUT of B's subtree mid-flight (simulating a
+      // completed dedent commit that landed while delete_block for B was
+      // still in flight).
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'B', content: 'parent B', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'X', content: 'child X', position: 1, parent_id: null, depth: 0 }),
+        ],
+      })
+
+      resolveDelete({ block_id: 'B', deleted_at: '2025-01-01T00:00:00Z', descendants_affected: 0 })
+      await removePromise
+
+      const s = store.getState()
+      // B is removed; X — no longer a descendant of B at commit time —
+      // survives instead of being swept away by a stale descendant set.
+      expect(s.blocks.map((b) => b.id)).toEqual(['X'])
+      expectMapMatchesArray(s)
+    })
+
+    it('remove: a block re-parented UNDER the deleted block mid-flight is cascaded from commit-time state', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'B', content: 'parent B', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'Y', content: 'other Y', position: 1, parent_id: null, depth: 0 }),
+        ],
+      })
+
+      const resolveDelete = deferInvoke()
+      const removePromise = store.getState().remove('B')
+
+      // Y is indented UNDER B mid-flight (simulating a completed indent
+      // commit that landed while delete_block for B was still in flight).
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'B', content: 'parent B', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'Y', content: 'other Y', position: 0, parent_id: 'B', depth: 1 }),
+        ],
+      })
+
+      resolveDelete({ block_id: 'B', deleted_at: '2025-01-01T00:00:00Z', descendants_affected: 1 })
+      await removePromise
+
+      const s = store.getState()
+      // Y is now a descendant of B at commit time, so it is swept away
+      // along with B — matching the backend's cascade delete instead of
+      // stranding Y locally with a dangling parent_id.
+      expect(s.blocks.map((b) => b.id)).toEqual([])
+      expectMapMatchesArray(s)
+    })
   })
 
   // ---------------------------------------------------------------------------

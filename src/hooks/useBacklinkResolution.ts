@@ -156,7 +156,18 @@ export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResol
 
     let cancelled = false
 
-    batchResolve([...idsToResolve], 'global')
+    // #2543 — scope the resolve to the CURRENT space, mirroring
+    // useBlockLinkResolve.ts's `spaceId ?? 'global'`. These ids come from
+    // scanning arbitrary [[ULID]]/#[ULID] link TARGETS, not from anything
+    // already known to belong to this space — passing the literal 'global'
+    // opted every id INTO cross-space resolution, so a foreign-space target
+    // resolved to a live, correctly-titled chip here while the exact same
+    // token in the editor body rendered as broken (no live links between
+    // spaces, ever — see stores/resolve.ts). `fillUnresolvedPlaceholders`
+    // below already turns any id the backend filters out into a
+    // deleted-placeholder, so foreign targets fall into the broken-link UX
+    // automatically once resolution is properly space-scoped.
+    batchResolve([...idsToResolve], currentSpaceId ?? 'global')
       .then((resolved) => {
         if (cancelled) return
         mergeResolvedIntoCache(resolveCache.current, resolved, idsToResolve, currentSpaceId)

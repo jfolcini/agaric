@@ -26,8 +26,8 @@ import {
   createBlock,
   createPageInSpace,
   listAllPagesInSpace,
+  listAllTagsInSpace,
   listPageAliasesByPrefix,
-  listTagsByPrefix,
   searchBlocks,
   searchBlocksLimit,
 } from '../lib/tauri'
@@ -160,18 +160,26 @@ async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise
 }
 
 /**
+ * #853 — `batchSet` keys rows by the active space at WRITE time. A stale
+ * in-flight response from the OLD space can resolve after a space switch
+ * and seed old-space rows under the NEW space's keys (silent cross-space
+ * data). Every resolve-cache writeback in this file captures the active
+ * space at request time (`requestSpaceId`) and must gate its `batchSet`
+ * behind this equality check before writing — mirrors the #732
+ * captured-space guard (`pagesListRef`'s own invalidation).
+ */
+function isRequestSpaceStillActive(requestSpaceId: string | null): boolean {
+  return (useSpaceStore.getState().currentSpaceId ?? null) === requestSpaceId
+}
+
+/**
  * Populates the resolve cache so page links show titles instead of raw ULIDs.
  *
- * #853 — `batchSet` keys rows by the active space at WRITE time. A stale
- * in-flight `searchPages` response from the OLD space can resolve after a
- * space switch and seed old-space rows under the NEW space's keys (silent
- * cross-space data). Mirror the #732 captured-space guard: the caller passes
- * the space active at request time, and we drop the seed if the active space
- * has changed since.
+ * #853 — see `isRequestSpaceStillActive` above.
  */
 function populatePageResolveCache(matches: PickerItem[], requestSpaceId: string | null): void {
   if (matches.length === 0) return
-  if ((useSpaceStore.getState().currentSpaceId ?? null) !== requestSpaceId) return
+  if (!isRequestSpaceStillActive(requestSpaceId)) return
   useResolveStore
     .getState()
     .batchSet(
@@ -340,10 +348,24 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // Strip trailing ] so @tag] resolves to "tag", not "tag]"
       const q = query.replace(/\]+$/, '').toLowerCase().trim()
 
-      const tags = await listTagsByPrefix({ prefix: q })
+      // #2543 — `listTagsByPrefix` is a space-UNSCOPED IPC (selects from
+      // `tags_cache` with no space filter), so the `#` picker used to
+      // surface every space's tags and (via the batchSet below) cache
+      // their names under the ACTIVE space's keys — a silent cross-space
+      // leak of the exact class #853/#2300 exist to prevent, even though
+      // resolve.ts documents tags as space-scoped just like pages.
+      // `listAllTagsInSpace` is the space-scoped equivalent (bounded by
+      // the space's intrinsic tag count); filtering down to the query
+      // happens client-side via the existing `matchSorter` call below,
+      // same as `searchPagesViaCache`'s cache-fallback strategy.
+      const requestSpaceId = useSpaceStore.getState().currentSpaceId
+      if (requestSpaceId == null) return []
+      const tags = await listAllTagsInSpace(requestSpaceId)
       // Populate the resolve cache so tag_ref nodes can resolve the name
       // after the block is saved (serialized as #[ULID]) and reloaded.
-      if (tags.length > 0) {
+      // #853 — gate behind the captured-space guard: a stale response from
+      // an since-abandoned space must not seed the new space's cache keys.
+      if (tags.length > 0 && isRequestSpaceStillActive(requestSpaceId)) {
         useResolveStore
           .getState()
           .batchSet(tags.map((t) => ({ id: t.tag_id, title: t.name, deleted: false })))
@@ -440,6 +462,12 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // than send a `''` that used to mean "match nothing" but now throws.
       const spaceId = useSpaceStore.getState().currentSpaceId
       if (spaceId == null) return []
+      // #2543/#853 — capture the active space at request time so a
+      // response that resolves after a space switch can't seed the
+      // resolve cache for the wrong space (mirrors the searchPages /
+      // populatePageResolveCache guard — this callback had NO guard at
+      // all before, unlike searchPages in the same file).
+      const requestSpaceId = spaceId
       const resp = await searchBlocks({ query: q, limit: searchBlocksLimit(20), spaceId })
       // Show parent page title as breadcrumb when available.
       // Compose against current space so a foreign-space
@@ -460,8 +488,8 @@ export function useBlockResolve(): UseBlockResolveReturn {
           return { id: b.id, label, icon: Hash, breadcrumb: parentTitle }
         })
 
-      // Populate resolve cache
-      if (results.length > 0) {
+      // Populate resolve cache. #853 — gate behind the captured-space guard.
+      if (results.length > 0 && isRequestSpaceStillActive(requestSpaceId)) {
         useResolveStore.getState().batchSet(
           results.map((r) => {
             const block = resp.items.find((b) => b.id === r.id)

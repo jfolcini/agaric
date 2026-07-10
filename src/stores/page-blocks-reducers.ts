@@ -296,15 +296,23 @@ export function createReducers({
     },
 
     remove: async (blockId: string) => {
-      const { blocks, rootParentId } = get()
+      const { rootParentId } = get()
       try {
         // #730 — pool_busy retry (see edit/createBelow).
         await retryOnPoolBusy(() => deleteBlock(blockId))
-        // Remove block AND its descendants from the flat tree.
-        // Few-block delete (perf invariant): touch only the removed keys on
-        // the prior Map; the remaining `n - k` entries are reused as-is.
-        const descendants = getDragDescendants(blocks, blockId)
+        // #714 — recompute the descendant set INSIDE the functional updater
+        // from `state.blocks` (current at commit time), never from the
+        // pre-await capture: a concurrent structural change (reparent,
+        // move) that lands while delete_block is in flight must be
+        // reflected in which blocks actually get removed locally. A
+        // pre-await snapshot would either strand a since-reparented block
+        // with a dangling parent (backend cascade-deleted it, FE kept it)
+        // or delete a block that was dedented OUT of this subtree mid-
+        // flight (backend kept it alive, FE would drop a live block).
+        // Few-block delete (perf invariant): touch only the removed keys
+        // on the prior Map; the remaining `n - k` entries are reused as-is.
         set((state) => {
+          const descendants = getDragDescendants(state.blocks, blockId)
           const newBlocks = state.blocks.filter((b) => b.id !== blockId && !descendants.has(b.id))
           return {
             blocks: newBlocks,

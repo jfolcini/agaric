@@ -5,7 +5,7 @@
  * - resolveBlockTitle / resolveBlockStatus (cache hit & fallback)
  * - resolveTagName / resolveTagStatus (cache hit & fallback)
  * - All four resolve callbacks re-create when store version changes
- * - searchTags delegates to listTagsByPrefix and maps results
+ * - searchTags delegates to listAllTagsInSpace (space-scoped) and maps results
  * - searchPages short-query path (cache + fallback to listAllPagesInSpace)
  * - searchPages long-query path (FTS + cache supplementation)
  * - searchPages "Create new" option logic
@@ -19,8 +19,8 @@ vi.mock('../../lib/tauri', () => ({
   createBlock: vi.fn(),
   createPageInSpace: vi.fn(),
   listAllPagesInSpace: vi.fn(),
+  listAllTagsInSpace: vi.fn(),
   listPageAliasesByPrefix: vi.fn(),
-  listTagsByPrefix: vi.fn(),
   searchBlocks: vi.fn(),
   searchBlocksLimit: (n: number) => n,
 }))
@@ -29,8 +29,8 @@ import {
   createBlock,
   createPageInSpace,
   listAllPagesInSpace,
+  listAllTagsInSpace,
   listPageAliasesByPrefix,
-  listTagsByPrefix,
   searchBlocks,
 } from '../../lib/tauri'
 import { keyFor, useResolveStore } from '../../stores/resolve'
@@ -41,7 +41,7 @@ const mockedCreateBlock = vi.mocked(createBlock)
 const mockedCreatePageInSpace = vi.mocked(createPageInSpace)
 const mockedListAllPagesInSpace = vi.mocked(listAllPagesInSpace)
 const mockedListPageAliasesByPrefix = vi.mocked(listPageAliasesByPrefix)
-const mockedListTagsByPrefix = vi.mocked(listTagsByPrefix)
+const mockedListAllTagsInSpace = vi.mocked(listAllTagsInSpace)
 const mockedSearchBlocks = vi.mocked(searchBlocks)
 
 beforeEach(() => {
@@ -251,8 +251,8 @@ describe('resolve callbacks react to store version changes', () => {
 // ── searchTags ──────────────────────────────────────────────────────────
 
 describe('searchTags', () => {
-  it('calls listTagsByPrefix and maps results to PickerItem[]', async () => {
-    mockedListTagsByPrefix.mockResolvedValueOnce([
+  it('calls listAllTagsInSpace (space-scoped) and maps results to PickerItem[]', async () => {
+    mockedListAllTagsInSpace.mockResolvedValueOnce([
       { tag_id: 'T1', name: 'project', usage_count: 5, updated_at: '2024-01-01' },
       { tag_id: 'T2', name: 'priority', usage_count: 3, updated_at: '2024-01-02' },
     ])
@@ -264,7 +264,8 @@ describe('searchTags', () => {
       items = await result.current.searchTags('pr')
     })
 
-    expect(mockedListTagsByPrefix).toHaveBeenCalledWith({ prefix: 'pr' })
+    // #2543 — space-scoped IPC, not the old space-unscoped listTagsByPrefix.
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledWith('SPACE_TEST')
     // Non-exact match, so a "Create new tag" option is prepended (F-26)
     expect(items[0]).toEqual({ id: '__create__', label: 'pr', isCreate: true })
     const tagItems = items.filter((i) => !i.isCreate)
@@ -278,7 +279,7 @@ describe('searchTags', () => {
   })
 
   it('returns only "Create new tag" option when no tags match', async () => {
-    mockedListTagsByPrefix.mockResolvedValueOnce([])
+    mockedListAllTagsInSpace.mockResolvedValueOnce([])
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -291,7 +292,7 @@ describe('searchTags', () => {
   })
 
   it('populates the resolve cache with fetched tags', async () => {
-    mockedListTagsByPrefix.mockResolvedValueOnce([
+    mockedListAllTagsInSpace.mockResolvedValueOnce([
       { tag_id: 'T10', name: 'important', usage_count: 2, updated_at: '2024-01-01' },
       { tag_id: 'T11', name: 'urgent', usage_count: 1, updated_at: '2024-01-02' },
     ])
@@ -310,7 +311,7 @@ describe('searchTags', () => {
   })
 
   it('does not call batchSet when no tags match', async () => {
-    mockedListTagsByPrefix.mockResolvedValueOnce([])
+    mockedListAllTagsInSpace.mockResolvedValueOnce([])
 
     const initialVersion = useResolveStore.getState().version
 
@@ -325,7 +326,7 @@ describe('searchTags', () => {
   })
 
   it('does NOT append "Create new tag" when exact match exists (case-insensitive)', async () => {
-    mockedListTagsByPrefix.mockResolvedValueOnce([
+    mockedListAllTagsInSpace.mockResolvedValueOnce([
       { tag_id: 'T20', name: 'project', usage_count: 5, updated_at: '2024-01-01' },
     ])
 
@@ -341,7 +342,7 @@ describe('searchTags', () => {
   })
 
   it('does NOT append "Create new tag" for empty query', async () => {
-    mockedListTagsByPrefix.mockResolvedValueOnce([
+    mockedListAllTagsInSpace.mockResolvedValueOnce([
       { tag_id: 'T30', name: 'any-tag', usage_count: 1, updated_at: '2024-01-01' },
     ])
 
@@ -357,7 +358,7 @@ describe('searchTags', () => {
   })
 
   it('preserves original casing in "Create new tag" label', async () => {
-    mockedListTagsByPrefix.mockResolvedValueOnce([])
+    mockedListAllTagsInSpace.mockResolvedValueOnce([])
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -371,7 +372,7 @@ describe('searchTags', () => {
   })
 
   it('strips trailing ] from tag query', async () => {
-    mockedListTagsByPrefix.mockResolvedValueOnce([
+    mockedListAllTagsInSpace.mockResolvedValueOnce([
       { tag_id: 'T40', name: 'todo', usage_count: 2, updated_at: '2024-01-01' },
     ])
 
@@ -382,9 +383,11 @@ describe('searchTags', () => {
       items = await result.current.searchTags('todo]')
     })
 
-    // Sends stripped prefix to listTagsByPrefix
-    expect(mockedListTagsByPrefix).toHaveBeenCalledWith({ prefix: 'todo' })
-    // Exact match after stripping — no create option
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledWith('SPACE_TEST')
+    // Exact match against the STRIPPED query ('todo', not 'todo]') — no
+    // create option. This is what actually proves the bracket was
+    // stripped before the client-side filter/exact-match check ran (the
+    // IPC itself no longer takes a query/prefix argument to inspect).
     const createOption = items.find((i) => i.isCreate)
     expect(createOption).toBeUndefined()
   })
@@ -1309,8 +1312,8 @@ describe('onCreatePage', () => {
 // ── Error handling (H-10 fix: catch in hook, return []) ─────────────────
 
 describe('error handling', () => {
-  it('searchTags returns [] when listTagsByPrefix rejects', async () => {
-    mockedListTagsByPrefix.mockRejectedValue(new Error('IPC: tags unavailable'))
+  it('searchTags returns [] when listAllTagsInSpace rejects', async () => {
+    mockedListAllTagsInSpace.mockRejectedValue(new Error('IPC: tags unavailable'))
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1573,6 +1576,138 @@ describe('searchPages — resolve-store space guard (#853)', () => {
 
     // Same space throughout → the resolve store is seeded under SPACE_TEST.
     expect(useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'PA'))?.title).toBe('Alpha')
+  })
+})
+
+// #2543 — searchTags and searchBlockRefs seed the SAME shared resolve
+// cache as searchPages but, before this fix, neither captured the request
+// space nor gated their `batchSet` writeback — the #853 guard existed only
+// for `populatePageResolveCache`. Cloned from the searchPages #853 tests
+// above.
+
+describe('searchTags — resolve-store space guard (#853)', () => {
+  it('does not seed the resolve store for the NEW space with an old-space response', async () => {
+    useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
+
+    let resolveFetch: (
+      tags: Array<{
+        tag_id: string
+        name: string
+        usage_count: number
+        updated_at: string
+      }>,
+    ) => void = () => {}
+    mockedListAllTagsInSpace.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve as typeof resolveFetch
+        }),
+    )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // Start a tag search in SPACE_TEST; keep it in flight.
+    let inFlight: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight = result.current.searchTags('al')
+    })
+
+    // Switch to SPACE_B while the SPACE_TEST fetch is still pending.
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+    })
+
+    // The OLD space's response lands AFTER the switch.
+    await act(async () => {
+      resolveFetch([{ tag_id: 'TA', name: 'alpha', usage_count: 1, updated_at: '2024-01-01' }])
+      await inFlight
+    })
+
+    // Must NOT have seeded TA under SPACE_B's key — doing so would surface
+    // space A's tag name while the user is in space B.
+    expect(useResolveStore.getState().cache.has(keyFor('SPACE_B', 'TA'))).toBe(false)
+  })
+
+  it('still seeds the resolve store when the space is unchanged', async () => {
+    useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
+    mockedListAllTagsInSpace.mockResolvedValueOnce([
+      { tag_id: 'TA', name: 'alpha', usage_count: 1, updated_at: '2024-01-01' },
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchTags('al')
+    })
+
+    expect(useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'TA'))?.title).toBe('alpha')
+  })
+})
+
+describe('searchBlockRefs — resolve-store space guard (#853)', () => {
+  function blockHit(id: string, content: string) {
+    return {
+      id,
+      block_type: 'block' as const,
+      content,
+      parent_id: null,
+      position: 0,
+      deleted_at: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+      scheduled_date: null,
+      page_id: null,
+    }
+  }
+
+  function blocksResponse(items: Array<ReturnType<typeof blockHit>>) {
+    return { items, next_cursor: null, has_more: false, total_count: null }
+  }
+
+  it('does not seed the resolve store for the NEW space with an old-space response', async () => {
+    useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
+
+    let resolveFetch: (resp: ReturnType<typeof blocksResponse>) => void = () => {}
+    mockedSearchBlocks.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve as typeof resolveFetch
+        }),
+    )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let inFlight: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight = result.current.searchBlockRefs('some block')
+    })
+
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+    })
+
+    await act(async () => {
+      resolveFetch(blocksResponse([blockHit('BRX', 'block from space A')]))
+      await inFlight
+    })
+
+    expect(useResolveStore.getState().cache.has(keyFor('SPACE_B', 'BRX'))).toBe(false)
+  })
+
+  it('still seeds the resolve store when the space is unchanged', async () => {
+    useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
+    mockedSearchBlocks.mockResolvedValueOnce(blocksResponse([blockHit('BRX', 'some block')]))
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchBlockRefs('some block')
+    })
+
+    expect(useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'BRX'))?.title).toBe(
+      'some block',
+    )
   })
 })
 
@@ -1989,7 +2124,7 @@ describe('searchPages — strategy priority ordering', () => {
 
 describe('searchTags — icons', () => {
   it('includes icon in tag picker items', async () => {
-    mockedListTagsByPrefix.mockResolvedValueOnce([
+    mockedListAllTagsInSpace.mockResolvedValueOnce([
       { tag_id: 'T100', name: 'work', usage_count: 1, updated_at: '2024-01-01' },
     ])
 
@@ -2211,7 +2346,7 @@ describe('searchBlockRefs — icons', () => {
 
 describe('searchTags — fuzzy matching', () => {
   it('matches tags via fuzzy matching, not just substring', async () => {
-    mockedListTagsByPrefix.mockResolvedValueOnce([
+    mockedListAllTagsInSpace.mockResolvedValueOnce([
       { tag_id: 'TF1', name: 'quick-notes', usage_count: 1, updated_at: '2024-01-01' },
       { tag_id: 'TF2', name: 'quarterly', usage_count: 1, updated_at: '2024-01-01' },
       { tag_id: 'TF3', name: 'unrelated', usage_count: 1, updated_at: '2024-01-01' },

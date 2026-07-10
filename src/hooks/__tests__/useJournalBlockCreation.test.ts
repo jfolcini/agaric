@@ -23,6 +23,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useBlockStore } from '../../stores/blocks'
 import { useSpaceStore } from '../../stores/space'
 import { useJournalBlockCreation } from '../useJournalBlockCreation'
 
@@ -57,6 +58,12 @@ beforeEach(() => {
   mockedLoadJournalTemplateForSpace.mockResolvedValue(null)
   mockedInsertTemplateBlocks.mockResolvedValue([])
   mockedInsertTemplateBlocksFromString.mockResolvedValue([])
+  useBlockStore.setState({
+    focusedBlockId: null,
+    selectedBlockIds: [],
+    selectionAnchorId: null,
+    selectionFocusId: null,
+  })
 })
 
 interface PageCreatedCall {
@@ -322,5 +329,151 @@ describe('useJournalBlockCreation', () => {
       ([cmd]) => cmd === 'create_page_in_space',
     ).length
     expect(createPageCallsAfterSecond).toBe(1)
+  })
+
+  // #2543 — `createdPages` is only updated AFTER the whole page-create +
+  // template-load sequence settles, so (unlike the previous test, which
+  // covers the ALREADY-created case) a genuine double-click BEFORE the
+  // first invocation resolves used to see `createdPages`/`pageMap` both
+  // empty on both calls and durably create two journal pages for the
+  // same date.
+  it('does not fire two create_page_in_space IPCs on a double-click before the first resolves', async () => {
+    const resolvers: Array<(v: string) => void> = []
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'create_page_in_space') {
+        return new Promise((resolve) => {
+          resolvers.push(resolve)
+        })
+      }
+      return null
+    })
+
+    const { result } = setup()
+
+    let p1: Promise<void> = Promise.resolve()
+    let p2: Promise<void> = Promise.resolve()
+    act(() => {
+      p1 = result.current.handleAddBlock('2025-06-15')
+      p2 = result.current.handleAddBlock('2025-06-15')
+    })
+
+    // The in-flight guard must bail the second call before it ever
+    // reaches the IPC — only one create_page_in_space request in flight.
+    expect(resolvers).toHaveLength(1)
+
+    await act(async () => {
+      resolvers[0]?.('PNEW')
+      await Promise.all([p1, p2])
+    })
+
+    const createPageCalls = mockedInvoke.mock.calls.filter(
+      ([cmd]) => cmd === 'create_page_in_space',
+    )
+    expect(createPageCalls).toHaveLength(1)
+  })
+
+  it('does not fire two create_block IPCs on a double-click before the first resolves (existing page)', async () => {
+    const resolvers: Array<(v: unknown) => void> = []
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'create_block') {
+        return new Promise((resolve) => {
+          resolvers.push(resolve)
+        })
+      }
+      return null
+    })
+
+    const { result } = setup(new Map([['2025-06-15', 'PEXIST']]))
+
+    let p1: Promise<void> = Promise.resolve()
+    let p2: Promise<void> = Promise.resolve()
+    act(() => {
+      p1 = result.current.handleAddBlock('2025-06-15')
+      p2 = result.current.handleAddBlock('2025-06-15')
+    })
+
+    expect(resolvers).toHaveLength(1)
+
+    await act(async () => {
+      resolvers[0]?.({
+        id: 'B1',
+        block_type: 'content',
+        content: '',
+        parent_id: 'PEXIST',
+        position: 1,
+      })
+      await Promise.all([p1, p2])
+    })
+
+    const createBlockCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
+    expect(createBlockCalls).toHaveLength(1)
+  })
+
+  // #2543 — the hook set focus via a raw `useBlockStore.setState({
+  // focusedBlockId })` partial, which left `selectedBlockIds` /
+  // `selectionAnchorId` / `selectionFocusId` untouched. That breaks the
+  // #2465 focus/selection mutual-exclusivity invariant: after this, the
+  // store could hold BOTH a non-null focus AND a non-empty selection —
+  // reachable in journal weekly/monthly views by multi-selecting blocks in
+  // one day's tree, then pressing "Add block" for another day.
+  it('routes focus through setFocused so the #2465 focus/selection invariant holds', async () => {
+    // Simulate a pre-existing block-select-mode selection from another
+    // day's tree.
+    useBlockStore.setState({
+      focusedBlockId: null,
+      selectedBlockIds: ['OTHER_A', 'OTHER_B'],
+      selectionAnchorId: 'OTHER_A',
+      selectionFocusId: 'OTHER_B',
+    })
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'create_block') {
+        return { id: 'B1', block_type: 'content', content: '', parent_id: 'PEXIST', position: 1 }
+      }
+      return null
+    })
+
+    const { result } = setup(new Map([['2025-06-15', 'PEXIST']]))
+
+    await act(async () => {
+      await result.current.handleAddBlock('2025-06-15')
+    })
+
+    const state = useBlockStore.getState()
+    expect(state.focusedBlockId).toBe('B1')
+    // setFocused clears selection atomically — a raw setState partial
+    // would have left the stale multi-select from the other day intact.
+    expect(state.selectedBlockIds).toEqual([])
+    expect(state.selectionAnchorId).toBeNull()
+    expect(state.selectionFocusId).toBeNull()
+  })
+
+  it('routes template-seeded focus through setFocused too (per-space template branch)', async () => {
+    useBlockStore.setState({
+      focusedBlockId: null,
+      selectedBlockIds: ['OTHER_A'],
+      selectionAnchorId: 'OTHER_A',
+      selectionFocusId: 'OTHER_A',
+    })
+
+    mockedLoadJournalTemplateForSpace.mockResolvedValue('# Daily plan\n- ')
+    mockedInsertTemplateBlocksFromString.mockResolvedValue(['ID1', 'ID2'])
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'create_page_in_space') return 'PNEW'
+      return null
+    })
+
+    const { result } = setup()
+
+    await act(async () => {
+      await result.current.handleAddBlock('2025-06-15')
+    })
+
+    const state = useBlockStore.getState()
+    expect(state.focusedBlockId).toBe('ID1')
+    expect(state.selectedBlockIds).toEqual([])
+    expect(state.selectionAnchorId).toBeNull()
+    expect(state.selectionFocusId).toBeNull()
   })
 })

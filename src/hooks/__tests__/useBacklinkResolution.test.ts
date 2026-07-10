@@ -358,4 +358,44 @@ describe('useBacklinkResolution', () => {
     })
     expect(mockedBatchResolve).not.toHaveBeenCalled()
   })
+
+  // #2543 — the effect used to pass the literal 'global' regardless of the
+  // active space, opting every id INTO cross-space resolution. A foreign-
+  // space [[ULID]]/#[ULID] target then rendered as a live, correctly-titled
+  // chip in the backlinks panel while the same token rendered broken in the
+  // editor (useBlockLinkResolve.ts scopes to `spaceId ?? 'global'`). Fixed
+  // by scoping to the current space, falling back to 'global' only when
+  // there is no active space (pre-bootstrap / trash-like surfaces).
+  it('scopes batchResolve to the active space instead of the literal global (#2543)', async () => {
+    useSpaceStore.setState({ ...initialSpaceState, currentSpaceId: 'SPACE_AAAA' })
+
+    mockedBatchResolve.mockResolvedValue([
+      { id: ULID_A, title: 'Title in A', block_type: 'page', deleted: false },
+    ])
+
+    const groups: BacklinkGroup[] = [makeGroup([{ id: 'B1', content: `[[${ULID_A}]]` }])]
+
+    renderHook(() => useBacklinkResolution(groups))
+
+    await waitFor(() => {
+      expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], 'SPACE_AAAA')
+    })
+    // The old buggy call shape must not have been made either.
+    expect(mockedBatchResolve).not.toHaveBeenCalledWith([ULID_A], 'global')
+  })
+
+  it('falls back to global scope when there is no active space', async () => {
+    // Default beforeEach state: currentSpaceId is null.
+    mockedBatchResolve.mockResolvedValue([
+      { id: ULID_A, title: 'Some Title', block_type: 'page', deleted: false },
+    ])
+
+    const groups: BacklinkGroup[] = [makeGroup([{ id: 'B1', content: `[[${ULID_A}]]` }])]
+
+    renderHook(() => useBacklinkResolution(groups))
+
+    await waitFor(() => {
+      expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], 'global')
+    })
+  })
 })

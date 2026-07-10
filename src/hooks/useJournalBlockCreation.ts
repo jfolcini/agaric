@@ -23,7 +23,7 @@
  *  - `handleAddBlock(dateStr)` — the orchestrator; idempotent against
  *    `pageMap`/`createdPages`, surface-level error reporting via notify.
  */
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { logger } from '@/lib/logger'
@@ -60,9 +60,19 @@ export function useJournalBlockCreation({
 }: UseJournalBlockCreationOpts): UseJournalBlockCreationResult {
   const { t } = useTranslation()
   const [createdPages, setCreatedPages] = useState<Map<string, string>>(new Map())
+  // #2543 — in-flight guard, mirroring useJournalAutoCreate's #755
+  // `autoCreatedRef` guard. `createdPages` is only updated AFTER the whole
+  // page-create + template-load sequence settles, so two invocations for
+  // the same dateStr fired before the first resolves (double-click on
+  // "Add block") both see no pageId and both create a page (or, on the
+  // existing-page branch, both create an empty block). Bail on the second
+  // call while the first is still in flight for that date.
+  const inFlightRef = useRef<Set<string>>(new Set())
 
   const handleAddBlock = useCallback(
     async (dateStr: string) => {
+      if (inFlightRef.current.has(dateStr)) return
+      inFlightRef.current.add(dateStr)
       try {
         let pageId = createdPages.get(dateStr) ?? pageMap.get(dateStr) ?? null
         const isNewPage = !pageId
@@ -126,7 +136,13 @@ export function useJournalBlockCreation({
             })
             await getPageStore(pageId)?.getState().load()
             if (ids.length > 0) {
-              useBlockStore.setState({ focusedBlockId: ids[0] ?? null })
+              // #2543 — route through setFocused (not a raw setState
+              // partial) so the #2465 focus/selection mutual-exclusivity
+              // invariant holds: setFocused atomically clears
+              // selectedBlockIds/selectionAnchorId/selectionFocusId along
+              // with setting focus, exactly like every other
+              // selection-populating action pays that cost in reverse.
+              useBlockStore.getState().setFocused(ids[0] ?? null)
             }
           } else {
             const { template: journalTemplate, duplicateWarning } =
@@ -140,7 +156,8 @@ export function useJournalBlockCreation({
               })
               await getPageStore(pageId)?.getState().load()
               if (ids.length > 0) {
-                useBlockStore.setState({ focusedBlockId: ids[0] ?? null })
+                // #2543 — setFocused, see comment above.
+                useBlockStore.getState().setFocused(ids[0] ?? null)
               }
             }
             // No `else` branch. When neither a per-space nor a
@@ -172,11 +189,14 @@ export function useJournalBlockCreation({
             parentId: pageId,
           })
           await getPageStore(pageId)?.getState().load()
-          useBlockStore.setState({ focusedBlockId: block.id })
+          // #2543 — setFocused, see comment above.
+          useBlockStore.getState().setFocused(block.id)
         }
       } catch (err) {
         logger.warn('useJournalBlockCreation', 'addBlock failed', undefined, err)
         notify.error(t('journal.addBlockFailed'))
+      } finally {
+        inFlightRef.current.delete(dateStr)
       }
     },
     [createdPages, pageMap, onPageCreated, t],
