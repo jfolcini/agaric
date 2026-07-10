@@ -245,7 +245,7 @@ function identity<T extends string>(value: T): string {
  * bare-string format (no JSON envelope), matching the pre-registry on-disk
  * shape so existing users' stored values keep working untouched.
  */
-export const DENSITY_PREFERENCE: PreferenceDefinition<DensityMode> = {
+const DENSITY_PREFERENCE: PreferenceDefinition<DensityMode> = {
   key: 'page-browser-density',
   scope: 'device',
   version: 1,
@@ -258,7 +258,7 @@ export const DENSITY_PREFERENCE: PreferenceDefinition<DensityMode> = {
  * `page-browser-sort` — the Pages view sort option. Device-scoped, bare-string
  * format (no JSON envelope), matching the pre-registry on-disk shape.
  */
-export const SORT_PREFERENCE: PreferenceDefinition<SortOption> = {
+const SORT_PREFERENCE: PreferenceDefinition<SortOption> = {
   key: 'page-browser-sort',
   scope: 'device',
   version: 1,
