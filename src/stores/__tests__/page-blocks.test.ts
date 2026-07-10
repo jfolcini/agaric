@@ -774,6 +774,86 @@ describe('PageBlockStore', () => {
 
       expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
     })
+
+    // ── array identity (#2200 — perf-review) ──────────────────────────────
+    // `edit()` used to rebuild `state.blocks` via a full `.map()` on every
+    // keystroke. Object identity for unchanged blocks was already preserved
+    // by that `.map()` (`return b` for non-matching entries), but it still
+    // walked and invoked a callback for every entry in the array. The
+    // slice+index-write rewrite must keep the same observable identity
+    // contract: unedited blocks keep their EXACT prior reference, the edited
+    // block gets a new object, and the top-level array reference always
+    // changes when something actually changed (so React/Zustand see the
+    // update) — but must NOT change when nothing did.
+    it('#2200 — preserves unchanged blocks by reference and only replaces the edited slot', async () => {
+      const blockA = makeBlock({ id: 'A', content: 'aaa' })
+      const blockB = makeBlock({ id: 'B', content: 'bbb' })
+      const blockC = makeBlock({ id: 'C', content: 'ccc' })
+      store.setState({ blocks: [blockA, blockB, blockC] })
+      const blocksBefore = store.getState().blocks
+      mockedInvoke.mockResolvedValueOnce({})
+
+      await store.getState().edit('B', 'bbb-edited')
+
+      const { blocks } = store.getState()
+      // Top-level array reference changes — React/Zustand need a new ref to
+      // see the update.
+      expect(blocks).not.toBe(blocksBefore)
+      // Unedited entries keep their EXACT prior object reference. Downstream
+      // per-row `React.memo` (SortableBlock/EditableBlock) keys off this
+      // per-block identity to skip re-rendering unrelated rows.
+      expect(blocks[0]).toBe(blockA)
+      expect(blocks[2]).toBe(blockC)
+      // Only the edited slot gets a new object.
+      expect(blocks[1]).not.toBe(blockB)
+      expect(blocks[1]?.content).toBe('bbb-edited')
+    })
+
+    it('#2200 — leaves the blocks array reference untouched when the target id is not found', async () => {
+      store.setState({ blocks: [makeBlock({ id: 'A', content: 'aaa' })] })
+      const blocksBefore = store.getState().blocks
+      mockedInvoke.mockRejectedValueOnce(new Error('not found'))
+
+      await store.getState().edit('NONEXISTENT', 'whatever')
+
+      // Nothing changed — no reason to hand out a new array reference (which
+      // would otherwise fan a false-positive re-render out to every
+      // subscriber of `blocks`).
+      expect(store.getState().blocks).toBe(blocksBefore)
+    })
+
+    it('#2200 — the #753 echo-adopt path also preserves unrelated blocks by reference', async () => {
+      const blockA = makeBlock({ id: 'A', content: 'old' })
+      const blockB = makeBlock({ id: 'B', content: 'bbb' })
+      store.setState({ blocks: [blockA, blockB] })
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'A',
+        block_type: 'text',
+        content: 'raw text (normalized)',
+        parent_id: null,
+        position: 0,
+        deleted_at: null,
+      })
+
+      await store.getState().edit('A', 'raw text')
+
+      const { blocks } = store.getState()
+      expect(blocks[1]).toBe(blockB)
+      expect(blocks[0]?.content).toBe('raw text (normalized)')
+    })
+
+    it('#2200 — the rollback-on-error path also preserves unrelated blocks by reference', async () => {
+      const blockA = makeBlock({ id: 'A', content: 'old' })
+      const blockB = makeBlock({ id: 'B', content: 'bbb' })
+      store.setState({ blocks: [blockA, blockB] })
+      mockedInvoke.mockRejectedValueOnce(new Error('edit failed'))
+
+      await store.getState().edit('A', 'new')
+
+      const { blocks } = store.getState()
+      expect(blocks[1]).toBe(blockB)
+      expect(blocks[0]?.content).toBe('old')
+    })
   })
 
   // ---------------------------------------------------------------------------
@@ -1584,6 +1664,38 @@ describe('PageBlockStore', () => {
       })
       // Final order: B, C, A, D.
       expect(store.getState().blocks.map((b) => b.id)).toEqual(['B', 'C', 'A', 'D'])
+    })
+
+    // #2200 — indent's splice (`computeIndentedBlocks`) now builds one
+    // id→index map over `remaining` and reuses it for both the
+    // prevSibling-descendants skip-loop and the insertion anchor, instead of
+    // scanning `remaining` twice for the same id (#2041/#2200, mirrors the
+    // dedent/moveDown conversion). Pin the behavior AND the identity contract:
+    // prevSibling already has a child of its own (exercises the skip-loop),
+    // and a trailing unrelated block must keep its exact reference.
+    it("#2200 — appends past the prev sibling's existing subtree and preserves unrelated block identity", async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const blockA1 = makeBlock({ id: 'A1', position: 0, parent_id: 'A', depth: 1 })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
+      const blockC = makeBlock({ id: 'C', position: 2, parent_id: null, depth: 0 })
+      store.setState({ blocks: [blockA, blockA1, blockB, blockC] })
+
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'B', new_parent_id: 'A', new_position: 2 })
+
+      await store.getState().indent('B')
+
+      const { blocks } = store.getState()
+      // B lands AFTER A's existing child A1 (append-as-last-child), and C
+      // (unrelated, after the indented subtree) stays put.
+      expect(blocks.map((b) => b.id)).toEqual(['A', 'A1', 'B', 'C'])
+      // A and A1 (untouched) keep their exact prior references.
+      expect(blocks[0]).toBe(blockA)
+      expect(blocks[1]).toBe(blockA1)
+      expect(blocks[3]).toBe(blockC)
+      // B itself gets a new reference (depth/parent_id/position rewritten).
+      expect(blocks[2]).not.toBe(blockB)
+      expect(blocks[2]?.parent_id).toBe('A')
+      expect(blocks[2]?.depth).toBe(1)
     })
   })
 
@@ -2531,6 +2643,39 @@ describe('PageBlockStore', () => {
       const blocks = store.getState().blocks
       expect(blocks.map((b) => b.id)).toEqual(['A', 'C', 'B'])
       expect(blocks[1]?.position).toBe(5)
+    })
+
+    // #2200 — reorder's splice now builds one id→index map over `remaining`
+    // and reuses it across every anchor lookup (the "past the last sibling"
+    // branch previously scanned `remaining` twice for the same id — once via
+    // `getDragDescendants`, once via `findIndex` — #2041/#2200, mirrors the
+    // dedent/moveDown conversion). Pin the behavior AND identity contract for
+    // that exact branch: the last remaining sibling has its own descendant
+    // (exercises the skip-loop), and unrelated blocks must keep their exact
+    // reference.
+    it("#2200 — reordering past the last sibling lands after that sibling's subtree, preserving identity", async () => {
+      // Y starts BEFORE X (slot 0) so moving it past X (slot 1, its own
+      // sibling-count-excluding-self length) is a real move, not the
+      // own-slot no-op (#928 f6).
+      const blockY = makeBlock({ id: 'Y', position: 0, parent_id: null, depth: 0 })
+      const blockX = makeBlock({ id: 'X', position: 1, parent_id: null, depth: 0 })
+      const blockX1 = makeBlock({ id: 'X1', position: 0, parent_id: 'X', depth: 1 })
+      store.setState({ blocks: [blockY, blockX, blockX1] })
+
+      // Y's only remaining root sibling is X (length 1) — newIndex 1 is past
+      // it, hitting the `lastSib` branch.
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'Y', new_parent_id: null, new_position: 2 })
+
+      await store.getState().reorder('Y', 1)
+
+      const { blocks } = store.getState()
+      // Y lands after X's whole subtree (X, X1), not spliced in between.
+      expect(blocks.map((b) => b.id)).toEqual(['X', 'X1', 'Y'])
+      // X and X1 (untouched) keep their exact prior references.
+      expect(blocks[0]).toBe(blockX)
+      expect(blocks[1]).toBe(blockX1)
+      // Y itself gets a new reference (position rewritten).
+      expect(blocks[2]).not.toBe(blockY)
     })
   })
 
