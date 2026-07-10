@@ -2183,6 +2183,10 @@ pub(crate) async fn delete_property_in_tx(
 /// "every page has a space" invariant at the IPC boundary
 /// The optional `space_id` is required when
 /// `block_type == "page"` and ignored otherwise.
+///
+/// #2468: the response carries the produced op ref(s) (`WithOps` — a
+/// flattened, strict superset of the previous `BlockRow` shape) so the
+/// frontend undo stack can address the action by exact ref (`undo_op`).
 #[tauri::command]
 #[specta::specta]
 pub async fn create_block(
@@ -2193,8 +2197,8 @@ pub async fn create_block(
     // #400: 0-based sibling slot among `parent_id`'s children; `None` appends.
     index: Option<i64>,
     scope: SpaceScope,
-) -> Result<BlockRow, AppError> {
-    create_block_inner_with_space(
+) -> Result<WithOps<BlockRow>, AppError> {
+    capture_op_refs(create_block_inner_with_space(
         ctx.pool(),
         ctx.device_id(),
         ctx.materializer(),
@@ -2203,40 +2207,47 @@ pub async fn create_block(
         parent_id,
         index,
         &scope,
-    )
+    ))
     .await
     .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: edit a block's content. Delegates to [`edit_block_inner`].
+/// #2468: the response carries the produced op ref(s) — see [`create_block`].
 #[tauri::command]
 #[specta::specta]
 pub async fn edit_block(
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     to_text: String,
-) -> Result<BlockRow, AppError> {
-    edit_block_inner(
+) -> Result<WithOps<BlockRow>, AppError> {
+    capture_op_refs(edit_block_inner(
         ctx.pool(),
         ctx.device_id(),
         ctx.materializer(),
         block_id,
         to_text,
-    )
+    ))
     .await
     .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: soft-delete a block and descendants. Delegates to [`delete_block_inner`].
+/// #2468: the response carries the produced op ref(s) — see [`create_block`].
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_block(
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
-) -> Result<DeleteResponse, AppError> {
-    delete_block_inner(ctx.pool(), ctx.device_id(), ctx.materializer(), block_id)
-        .await
-        .map_err(sanitize_internal_error)
+) -> Result<WithOps<DeleteResponse>, AppError> {
+    capture_op_refs(delete_block_inner(
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
+        block_id,
+    ))
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: restore a soft-deleted block. Delegates to [`restore_block_inner`].

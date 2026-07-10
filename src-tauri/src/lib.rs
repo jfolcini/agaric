@@ -178,6 +178,13 @@ macro_rules! agaric_commands {
             $crate::commands::history::list_page_history,
             $crate::commands::history::revert_ops,
             $crate::commands::history::undo_page_op,
+            // #2468: ref-addressed interactive undo — the frontend submits
+            // the exact OpRef(s) captured at action time instead of a
+            // positional undo_depth, killing the offset-shift race (#2446).
+            // undo_page_op / undo_page_group stay registered during the FE
+            // migration.
+            $crate::commands::history::undo_op,
+            $crate::commands::history::undo_ops,
             $crate::commands::history::redo_page_op,
             // Single-IPC undo-group sizing: replaces
             // the FE's growing-window `list_page_history` re-fetch loop

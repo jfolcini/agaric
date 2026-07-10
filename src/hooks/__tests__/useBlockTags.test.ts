@@ -259,7 +259,9 @@ describe('useBlockTags handleAddTag', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
-      if (cmd === 'add_tag') return { success: true }
+      if (cmd === 'add_tag') {
+        return { block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [{ device_id: 'dev1', seq: 7 }] }
+      }
       return undefined
     })
 
@@ -286,7 +288,9 @@ describe('useBlockTags handleAddTag', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'list_inherited_tags_for_block') return ['TAG_INH']
-      if (cmd === 'add_tag') return { success: true }
+      if (cmd === 'add_tag') {
+        return { block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [{ device_id: 'dev1', seq: 7 }] }
+      }
       return undefined
     })
 
@@ -358,7 +362,9 @@ describe('useBlockTags handleAddTag', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
-      if (cmd === 'add_tag') return { success: true }
+      if (cmd === 'add_tag') {
+        return { block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [{ device_id: 'dev1', seq: 7 }] }
+      }
       return undefined
     })
 
@@ -372,7 +378,62 @@ describe('useBlockTags handleAddTag', () => {
       await result.current.handleAddTag('TAG_1')
     })
 
-    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
+    // #2468 — the captured op ref(s) are forwarded for ref-addressed undo.
+    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1', [{ device_id: 'dev1', seq: 7 }])
+  })
+
+  it('does NOT call onNewAction on an idempotent no-op add (empty op_refs, #2468)', async () => {
+    // Tag already attached backend-side: `add_tag` appends NO op and returns
+    // `op_refs: []` — nothing to undo, so no undo entry may be pushed (and
+    // the redo stack must not be invalidated for an action that changed
+    // nothing).
+    const onNewActionSpy = vi.fn()
+    useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'add_tag') return { block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [] }
+      return undefined
+    })
+
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    await act(async () => {
+      await result.current.handleAddTag('TAG_1')
+    })
+
+    expect(onNewActionSpy).not.toHaveBeenCalled()
+    // The IPC still ran and the local UI state still reflects the tag.
+    expect(result.current.appliedTagIds.has('TAG_1')).toBe(true)
+  })
+
+  it('does NOT call onNewAction on an idempotent no-op remove (empty op_refs, #2468)', async () => {
+    const onNewActionSpy = vi.fn()
+    useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return ['TAG_1']
+      if (cmd === 'remove_tag') return { block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [] }
+      return undefined
+    })
+
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.appliedTagIds.has('TAG_1')).toBe(true)
+    })
+
+    await act(async () => {
+      await result.current.handleRemoveTag('TAG_1')
+    })
+
+    expect(onNewActionSpy).not.toHaveBeenCalled()
   })
 
   it('does not call onNewAction when addTag fails', async () => {
@@ -410,7 +471,9 @@ describe('useBlockTags handleRemoveTag', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return ['TAG_1', 'TAG_2']
-      if (cmd === 'remove_tag') return { success: true }
+      if (cmd === 'remove_tag') {
+        return { block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [{ device_id: 'dev1', seq: 8 }] }
+      }
       return undefined
     })
 
@@ -484,7 +547,9 @@ describe('useBlockTags handleRemoveTag', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return ['TAG_1']
-      if (cmd === 'remove_tag') return { success: true }
+      if (cmd === 'remove_tag') {
+        return { block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [{ device_id: 'dev1', seq: 8 }] }
+      }
       return undefined
     })
 
@@ -498,7 +563,8 @@ describe('useBlockTags handleRemoveTag', () => {
       await result.current.handleRemoveTag('TAG_1')
     })
 
-    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
+    // #2468 — the captured op ref(s) are forwarded for ref-addressed undo.
+    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1', [{ device_id: 'dev1', seq: 8 }])
   })
 
   it('does not call onNewAction when removeTag fails', async () => {
@@ -544,7 +610,9 @@ describe('useBlockTags handleCreateTag', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'create_block') return createdBlock
-      if (cmd === 'add_tag') return { success: true }
+      if (cmd === 'add_tag') {
+        return { block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [{ device_id: 'dev1', seq: 7 }] }
+      }
       return undefined
     })
 
@@ -589,7 +657,9 @@ describe('useBlockTags handleCreateTag', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'create_block') return createdBlock
-      if (cmd === 'add_tag') return { success: true }
+      if (cmd === 'add_tag') {
+        return { block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [{ device_id: 'dev1', seq: 7 }] }
+      }
       return undefined
     })
 
@@ -689,7 +759,9 @@ describe('useBlockTags handleCreateTag', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'create_block') return createdBlock
-      if (cmd === 'add_tag') return { success: true }
+      if (cmd === 'add_tag') {
+        return { block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [{ device_id: 'dev1', seq: 7 }] }
+      }
       return undefined
     })
 

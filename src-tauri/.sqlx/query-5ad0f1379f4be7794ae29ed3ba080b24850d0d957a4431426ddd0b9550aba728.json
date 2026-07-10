@@ -1,0 +1,81 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT ol.device_id AS \"device_id!: String\",\n                  ol.seq AS \"seq!: i64\",\n                  ol.op_type AS \"op_type!: String\",\n                  ol.is_undo AS \"is_undo!: i64\",\n                  ol.is_replicated AS \"is_replicated!: i64\",\n                  EXISTS(\n                      SELECT 1 FROM op_log u\n                      WHERE u.reverses_device_id = ol.device_id\n                        AND u.reverses_seq = ol.seq\n                        AND NOT EXISTS(\n                            SELECT 1 FROM op_log r\n                            WHERE r.reverses_device_id = u.device_id\n                              AND r.reverses_seq = u.seq\n                        )\n                  ) AS \"currently_reversed!: i64\"\n           FROM op_log ol\n           WHERE (ol.device_id, ol.seq) IN (\n               SELECT json_extract(value, '$[0]'),\n                      CAST(json_extract(value, '$[1]') AS INTEGER)\n               FROM json_each(?1)\n           )",
+  "describe": {
+    "columns": [
+      {
+        "name": "device_id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "device_id"
+          }
+        }
+      },
+      {
+        "name": "seq!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "op_type!: String",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "op_type"
+          }
+        }
+      },
+      {
+        "name": "is_undo!: i64",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "is_undo"
+          }
+        }
+      },
+      {
+        "name": "is_replicated!: i64",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "is_replicated"
+          }
+        }
+      },
+      {
+        "name": "currently_reversed!: i64",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "5ad0f1379f4be7794ae29ed3ba080b24850d0d957a4431426ddd0b9550aba728"
+}

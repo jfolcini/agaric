@@ -179,6 +179,8 @@ beforeEach(() => {
     due_date: null,
     scheduled_date: null,
     page_id: null,
+    // #2468 — editBlock resolves WithOps<BlockRow>.
+    op_refs: [],
   })
   mockedListTagsByPrefix.mockResolvedValue([])
   mockedListPropertyKeys.mockResolvedValue([])
@@ -850,6 +852,7 @@ describe('UnlinkedReferences', () => {
       due_date: null,
       scheduled_date: null,
       page_id: null,
+      op_refs: [],
     })
 
     renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'C++' })
@@ -881,6 +884,7 @@ describe('UnlinkedReferences', () => {
       parent_id: 'P1',
       position: 0,
       deleted_at: null,
+      op_refs: [],
       todo_state: null,
       priority: null,
       due_date: null,

@@ -68,7 +68,8 @@ const fakeBlockRow = {} as Awaited<ReturnType<typeof setProperty>>
 beforeEach(() => {
   vi.clearAllMocks()
   mockedGet.mockResolvedValue(makeProps([]))
-  mockedDelete.mockResolvedValue(undefined)
+  // #2468 — deleteProperty now resolves WithOps<DeletePropertyResponse>.
+  mockedDelete.mockResolvedValue({ block_id: 'PAGE_1', key: 'template', op_refs: [] })
   mockedSet.mockResolvedValue(fakeBlockRow)
 })
 

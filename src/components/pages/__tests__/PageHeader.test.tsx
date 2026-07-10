@@ -174,8 +174,22 @@ function setupTagMock(appliedIds: string[] = ['TAG_1'], aliases: string[] = []) 
       }
     }
     if (cmd === 'list_tags_for_block') return appliedIds
-    if (cmd === 'add_tag') return { block_id: args?.block_id, tag_id: args?.tag_id }
-    if (cmd === 'remove_tag') return { block_id: args?.block_id, tag_id: args?.tag_id }
+    // #2468 — WithOps<TagResponse>: op_refs carries the appended op ref so
+    // the hook's ref-addressed undo capture path is exercised.
+    if (cmd === 'add_tag') {
+      return {
+        block_id: args?.block_id,
+        tag_id: args?.tag_id,
+        op_refs: [{ device_id: 'dev1', seq: 7 }],
+      }
+    }
+    if (cmd === 'remove_tag') {
+      return {
+        block_id: args?.block_id,
+        tag_id: args?.tag_id,
+        op_refs: [{ device_id: 'dev1', seq: 8 }],
+      }
+    }
     if (cmd === 'create_block')
       return {
         id: 'TAG_NEW',
@@ -1347,6 +1361,7 @@ describe('PageHeader error paths', () => {
         [
           'PAGE_1',
           {
+            undoStack: [],
             redoStack: [{ device_id: 'dev1', seq: 1 }],
             undoDepth: 1,
             redoGroupSizes: [1],

@@ -34,7 +34,15 @@ afterEach(() => {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockedInvoke.mockResolvedValue(undefined)
+  // #2468 — `edit_block` (the applyContentEdit backbone) resolves a `WithOps`
+  // envelope; give it a wire-faithful default so the undo-ref capture path is
+  // exercised instead of tripping on an `undefined` response.
+  mockedInvoke.mockImplementation(async (cmd: string) => {
+    if (cmd === 'edit_block') {
+      return { id: 'BLOCK_1', content: '', op_refs: [{ device_id: 'dev1', seq: 3 }] }
+    }
+    return undefined
+  })
 })
 
 describe('useSlashCommandStructural — headings', () => {
@@ -85,7 +93,8 @@ describe('useSlashCommandStructural — headings', () => {
     const { result } = renderHook(() => useSlashCommandStructural())
     const { ctx } = makeSyntheticCtx()
     await result.current.exact['h1']?.(ctx, { id: 'h1', label: 'Heading 1' })
-    expect(onNewAction).toHaveBeenCalledWith('PAGE_1')
+    // #2468 — the edit's captured op_refs ride along for ref-addressed undo.
+    expect(onNewAction).toHaveBeenCalledWith('PAGE_1', [{ device_id: 'dev1', seq: 3 }])
   })
 })
 

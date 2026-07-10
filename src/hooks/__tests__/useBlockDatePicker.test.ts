@@ -52,7 +52,14 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockDatePic
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockedInvoke.mockResolvedValue(undefined)
+  // #2468 — `set_property` (repeat-until mode) resolves a `WithOps` envelope;
+  // give it a wire-faithful default so the undo-ref capture path is exercised.
+  mockedInvoke.mockImplementation(async (cmd: string) => {
+    if (cmd === 'set_property') {
+      return { id: 'BLOCK_1', op_refs: [{ device_id: 'dev1', seq: 11 }] }
+    }
+    return undefined
+  })
   pageStore = createPageBlockStore('PAGE_1')
   pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1' })] })
   // / H-3b — `handleDateMode` now routes through `createPageInSpace`,
@@ -411,6 +418,22 @@ describe('useBlockDatePicker undo notifications', () => {
     })
 
     expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
+  })
+
+  it('repeat-until forwards the set_property op_refs for ref-addressed undo (#2468)', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
+
+    act(() => {
+      result.current.setDatePickerMode('repeat-until')
+    })
+
+    await act(async () => {
+      await result.current.handleDatePick(new Date(2025, 11, 31))
+    })
+
+    // The refs come from the beforeEach `set_property` mock envelope.
+    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1', [{ device_id: 'dev1', seq: 11 }])
   })
 
   it('does not call onNewAction when rootParentId is null', async () => {
