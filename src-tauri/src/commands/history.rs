@@ -1124,7 +1124,7 @@ pub async fn restore_page_to_op_inner(
         // The batched walker keeps invariant #9 per batch
         // (depth<100: DESCENDANT_DEPTH_CAP, see block_descendants).
         let subtree_ids = crate::block_descendants::collect_subtree_ids_unbounded(
-            &mut **tx,
+            &mut tx,
             &page_id,
             crate::block_descendants::DescendantWalkFilter::All,
         )
