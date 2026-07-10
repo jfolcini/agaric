@@ -1,0 +1,1200 @@
+/// A per-property validation error mid-import must abort the
+/// whole transaction. No page, no blocks, no properties, no op_log
+/// entries should land in the DB. The import returns `Err(...)` rather
+/// than swallowing the failure into `result.warnings`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_aborts_on_first_validation_error_l30() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    // Baseline: post-seed snapshot. Includes the seeded space block +
+    // its `is_space = true` property row, so the post-error assertions
+    // compare against the seeded state rather than a strictly empty DB.
+    let blocks_before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let props_before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_properties")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let ops_before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log WHERE device_id = ?")
+        .bind(DEV)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // `priority` is a select-type property whose seeded options are
+    // ["1","2","3"] (migration 0014). `priority:: 99` therefore fails
+    // `set_property_in_tx`'s options-membership check on the second
+    // block, after the first block + page have already been written
+    // inside the open transaction.
+    let content = "- Block 1\n- Block 2\n  priority:: 99\n- Block 3";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        content.into(),
+        Some("AbortTest.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await;
+
+    assert!(
+        result.is_err(),
+        "import must surface the per-property validation error as Err, got: {result:?}"
+    );
+
+    // All-or-nothing: rollback restored the DB to its pre-import state.
+    let blocks_after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        blocks_after.0, blocks_before.0,
+        "no block rows should survive a rolled-back import"
+    );
+
+    let props_after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_properties")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        props_after.0, props_before.0,
+        "no block_properties rows should survive a rolled-back import"
+    );
+
+    let ops_after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log WHERE device_id = ?")
+        .bind(DEV)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        ops_after.0, ops_before.0,
+        "no op_log entries should survive a rolled-back import"
+    );
+
+    // The page row itself must not exist either — even though it was
+    // created before the failing property write, the rollback wipes it.
+    let page_exists: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND content = ?")
+            .bind("AbortTest")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        page_exists.0, 0,
+        "the page block must not exist after a rolled-back import"
+    );
+
+    mat.shutdown();
+}
+
+// ======================================================================
+// #662 — chunked import releases the writer lock between chunks
+// ======================================================================
+
+/// Build a Logseq-style markdown string with `n` top-level (depth-0)
+/// content blocks, one per line. Each is its own single-block subtree, so
+/// the import can flush a chunk at any of these boundaries.
+fn flat_markdown(n: usize) -> String {
+    let mut s = String::with_capacity(n * 12);
+    for i in 0..n {
+        s.push_str(&format!("- Block {i}\n"));
+    }
+    s
+}
+
+/// #662 — a multi-chunk import must produce the *same* tree as the
+/// single-chunk (small) path: same page, same number of content blocks,
+/// all parented to the page, all in the right space. This is the
+/// "correctness unchanged after chunking" guard — the chunk boundary is
+/// purely a lock-release point, never a data-shape change.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_multi_chunk_tree_matches_single_chunk() {
+    use crate::commands::pages::markdown::IMPORT_CHUNK_BLOCKS;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    // 2.5 chunks' worth of flat top-level blocks → at least 3 chunks, so
+    // the import commits + releases the writer lock at least twice mid-way.
+    let n = IMPORT_CHUNK_BLOCKS * 2 + IMPORT_CHUNK_BLOCKS / 2;
+    let n_i64 = i64::try_from(n).unwrap();
+    let content = flat_markdown(n);
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        content,
+        Some("BigFlat.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.page_title, "BigFlat");
+    assert_eq!(
+        result.blocks_created, n as u64,
+        "all blocks must be created across chunks"
+    );
+    assert!(result.warnings.is_empty());
+
+    // The page exists once.
+    let page: BlockRow = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId" FROM blocks WHERE block_type = 'page' AND content = 'BigFlat'"#
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Every content block landed, all parented to the page (depth-0), and
+    // all carry the page's `page_id` — identical shape to the single-chunk
+    // path, just committed across several transactions.
+    let content_blocks: Vec<BlockRow> = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId" FROM blocks WHERE block_type = 'content' ORDER BY position, id"#
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        content_blocks.len(),
+        n,
+        "every content block must be present after a multi-chunk import"
+    );
+    for b in &content_blocks {
+        assert_eq!(
+            b.parent_id.as_ref().map(crate::ulid::BlockId::as_str),
+            Some(page.id.as_str()),
+            "every depth-0 block must be a direct child of the page across chunk boundaries"
+        );
+        assert_eq!(
+            b.page_id.as_ref().map(crate::ulid::BlockId::as_str),
+            Some(page.id.as_str()),
+            "every block must carry the page's page_id regardless of which chunk wrote it"
+        );
+    }
+
+    // op_log: 1 page + 1 set_property(space) + n block creates = n + 2.
+    let op_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log WHERE device_id = ?")
+        .bind(DEV)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        op_count.0,
+        n_i64 + 2,
+        "op_log must hold every op across chunks (1 page + 1 space prop + n blocks)"
+    );
+
+    mat.shutdown();
+}
+
+/// #662 — the core lock-release guard. A progress sink performs ONE read
+/// of the committed content-block count from a *separate pool connection*,
+/// taken at the first `Progress` tick after the first chunk boundary
+/// should have flushed. Under the old single-transaction import the writer
+/// holds an uncommitted transaction for the whole run, so a separate
+/// connection sees ZERO content blocks until the final commit. Under the
+/// chunked import the first chunk has already committed (releasing the
+/// writer lock) by that tick, so the separate reader observes a strictly-
+/// positive, strictly-partial count — proving the lock was released and a
+/// chunk became durable before the import finished.
+///
+/// The read is gated to fire exactly once (an `AtomicBool`) rather than on
+/// every one of the ~`n` ticks: a nested `block_on` read per tick starves
+/// the connection pool (`PoolTimedOut`) and makes the test slow + flaky.
+/// One read at the right moment is both deterministic and cheap.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn import_markdown_commits_chunks_visible_to_separate_reader_662() {
+    use crate::commands::pages::markdown::IMPORT_CHUNK_BLOCKS;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    // 1.5 chunks → exactly two chunks. Chunk 1 commits `IMPORT_CHUNK_BLOCKS`
+    // blocks partway through; chunk 2 (the rest) commits only at the very
+    // end. So for the *entire* span chunk 2 is being written, the committed
+    // content-block count sits at exactly `IMPORT_CHUNK_BLOCKS` — a stable,
+    // strictly-partial value a separate reader is guaranteed to observe.
+    // (Kept at the minimum that proves ≥2 chunks — the per-block
+    // O(siblings) cache recompute on the import path makes larger flat
+    // imports slow.)
+    let n = IMPORT_CHUNK_BLOCKS + IMPORT_CHUNK_BLOCKS / 2;
+    let n_i64 = i64::try_from(n).unwrap();
+    let chunk_i64 = i64::try_from(IMPORT_CHUNK_BLOCKS).unwrap();
+    let content = flat_markdown(n);
+
+    // A concurrent poller on a *separate, dedicated* connection (acquired
+    // up front so it never competes with the import's pool connections for
+    // acquisition mid-run — the prior `block_in_place`-per-tick design
+    // starved the pool under parallel test load → flaky `PoolTimedOut`).
+    // It records the max committed `content` count it observes *strictly
+    // below* the total `n`, i.e. while the import has not yet finished. The
+    // poller stops once the import signals completion.
+    let done = std::sync::Arc::new(tokio::sync::Notify::new());
+    let poller_pool = pool.clone();
+    let poller_done = done.clone();
+    let poller = tokio::spawn(async move {
+        let mut conn = poller_pool
+            .acquire()
+            .await
+            .expect("dedicated reader connection should be available");
+        let mut max_partial: i64 = 0;
+        loop {
+            let visible: i64 = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM blocks WHERE block_type = 'content'",
+            )
+            .fetch_one(&mut *conn)
+            .await
+            .expect("reader count query should succeed");
+            // Only count observations made *before* the import finished
+            // (committed count still < n). Once the final chunk commits the
+            // count reaches n; that is the completed state, not a mid-import
+            // window.
+            if visible > 0 && visible < n_i64 && visible > max_partial {
+                max_partial = visible;
+            }
+            // Stop promptly once the import signals it is done, after one
+            // last read above.
+            tokio::select! {
+                () = poller_done.notified() => break,
+                () = tokio::task::yield_now() => {}
+            }
+        }
+        max_partial
+    });
+
+    let result = import_markdown_with_progress(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        content,
+        Some("LockRelease.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.blocks_created, n as u64);
+
+    // Signal the poller and collect the max partial count it observed.
+    done.notify_one();
+    let max_partial = poller.await.expect("poller task should not panic");
+
+    // The separate reader observed a whole committed chunk while the
+    // import was still mid-flight: at least one full chunk's worth of
+    // blocks, strictly fewer than the total. Under the old
+    // single-transaction import nothing commits until the very end, so a
+    // separate connection would have seen only 0 then jumped straight to
+    // `n` — `max_partial` would have stayed 0.
+    assert!(
+        max_partial >= chunk_i64,
+        "a separate reader must observe at least the first committed chunk ({chunk_i64} blocks) mid-import — proving the writer lock was released between chunks; saw {max_partial} of {n}"
+    );
+    assert!(
+        max_partial < n_i64,
+        "the observed mid-import count must be strictly partial (chunking, not a whole-import commit); saw {max_partial} of {n}"
+    );
+
+    // Final state is still complete and correct.
+    let final_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM blocks WHERE block_type = 'content'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        final_count.0, n_i64,
+        "all blocks present once the import completes"
+    );
+
+    mat.shutdown();
+}
+
+// ======================================================================
+// `import_markdown_inner` stamps `space` property
+// ======================================================================
+//
+// Pre-`import_markdown_inner` created a page block but never
+// appended a `SetProperty(key='space', value_ref=<space>)` op. Imported
+// pages were therefore invisible to space-scoped reads
+// (`list_blocks_inner`, `get_page_inner`) and broke the invariant
+// "nothing outside of spaces". The fix mirrors `create_page_in_space_inner`:
+// validate `space_id` upfront inside the same `BEGIN IMMEDIATE` tx, then
+// append the `SetProperty(space=...)` op right after the `CreateBlock` so
+// the page never lands without its space.
+
+/// Happy path: imported page must carry `space =
+/// ?space_id` in `block_properties`. Without the fix, the page would
+/// land with no `space` property at all.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_stamps_space_property() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let content = "- A simple block";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        content.into(),
+        Some("StampTest.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .expect("happy-path import must succeed");
+    assert_eq!(result.page_title, "StampTest");
+
+    // Look up the imported page by content (filename-derived title) and
+    // verify its space membership points to the requested space. Phase 2
+    // (#533): membership lives in `blocks.space_id` (the sole source of
+    // truth; the `block_properties(key='space')` row was retired in
+    // migration 0087).
+    let page_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'StampTest'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("imported page must exist");
+
+    let space_ref: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+        .bind(&page_id)
+        .fetch_one(&pool)
+        .await
+        .expect("imported page row must exist");
+    assert_eq!(
+        space_ref.as_deref(),
+        Some(TEST_SPACE_ID),
+        "imported page's `space_id` must point to the requested space \
+         (orphan-page fix)"
+    );
+
+    mat.shutdown();
+}
+
+/// Invalid space rejection: passing a ULID that does
+/// not refer to a live block carrying `is_space = 'true'` must surface as
+/// `AppError::Validation` and leave the DB unchanged. Mirrors
+/// `create_page_in_space_rejects_nonexistent_space` in spaces.rs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_rejects_invalid_space() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    // Intentionally do NOT seed a space — the validator must reject the
+    // bogus ULID before any block lands.
+
+    // Capture baseline so the assertion tolerates any seed rows the
+    // fixture (migrations, default property defs, …) may have added.
+    let blocks_before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let ops_before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log WHERE device_id = ?")
+        .bind(DEV)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let bogus = "01JXXXX0000000000000000000".to_string();
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- Block 1".into(),
+        Some("RejectTest.md".into()),
+        bogus,
+        None,
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "unknown space_id must yield AppError::Validation, got {result:?}"
+    );
+
+    // Atomicity: the validation failure must roll back the whole tx — no
+    // page row, no op_log row.
+    let blocks_after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        blocks_after.0, blocks_before.0,
+        "no block rows should land when space validation fails"
+    );
+    let ops_after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log WHERE device_id = ?")
+        .bind(DEV)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        ops_after.0, ops_before.0,
+        "no op_log entries should land when space validation fails"
+    );
+
+    mat.shutdown();
+}
+
+// ======================================================================
+// `resolve_page_by_alias_inner` SpaceScope
+// ======================================================================
+//
+// Pre-the inner took only `alias: &str` and the SQL had no
+// `space` predicate, so an alias matching a foreign-space page would
+// surface in the active space's UI (cross-space leak in SearchPanel /
+// PageBrowser). The fix takes a `&SpaceScope` and applies the same
+// `(?N IS NULL OR pa.page_id IN (SELECT bp.block_id ...))` short-circuit
+// `list_page_aliases_by_prefix_inner` already uses.
+
+/// Two pages in two spaces share a single alias. A
+/// scoped resolve must surface only the page belonging to that scope;
+/// the unscoped (Global) resolve still returns one match (the page that
+/// won the `INSERT OR IGNORE` race for the alias row).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resolve_page_by_alias_active_scope_excludes_other_spaces() {
+    let (pool, _dir) = test_pool().await;
+
+    // Seed two spaces (A and B) and a page in each.
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+    insert_block(&pool, "PAGE_A_ALIAS", "page", "Page in A", None, Some(0)).await;
+    insert_block(&pool, "PAGE_B_ALIAS", "page", "Page in B", None, Some(0)).await;
+    assign_to_space(&pool, "PAGE_A_ALIAS", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "PAGE_B_ALIAS", TEST_SPACE_B_ID).await;
+
+    // Both pages claim the same alias text. `INSERT OR IGNORE` on the
+    // unique `page_aliases.alias` column means only the first writer
+    // lands — that's enough for this test: the scope filter must surface
+    // the matching alias's page only when it belongs to that space.
+    // (For the Active(B) branch we also write the alias under PAGE_B
+    // directly so there's a row to match — bypass `set_page_aliases_inner`'s
+    // first-writer-wins behaviour by inserting both alias rows here.)
+    sqlx::query("INSERT INTO page_aliases (page_id, alias) VALUES (?, ?)")
+        .bind("PAGE_A_ALIAS")
+        .bind("shared-alias-A")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO page_aliases (page_id, alias) VALUES (?, ?)")
+        .bind("PAGE_B_ALIAS")
+        .bind("shared-alias-B")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Scoped to A: alias of A surfaces, alias of B does not.
+    let in_a = resolve_page_by_alias_inner(
+        &pool,
+        "shared-alias-A",
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        in_a.as_ref().map(|t| t.0.as_str()),
+        Some("PAGE_A_ALIAS"),
+        "Active(A) must surface the page that lives in A"
+    );
+
+    let b_from_a = resolve_page_by_alias_inner(
+        &pool,
+        "shared-alias-B",
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
+    assert!(
+        b_from_a.is_none(),
+        "Active(A) MUST NOT surface a page that lives in B \
+         (cross-space leak fix)"
+    );
+
+    // Scoped to B: mirror image — only B's alias surfaces.
+    let in_b = resolve_page_by_alias_inner(
+        &pool,
+        "shared-alias-B",
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        in_b.as_ref().map(|t| t.0.as_str()),
+        Some("PAGE_B_ALIAS"),
+        "Active(B) must surface the page that lives in B"
+    );
+
+    let a_from_b = resolve_page_by_alias_inner(
+        &pool,
+        "shared-alias-A",
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
+    )
+    .await
+    .unwrap();
+    assert!(
+        a_from_b.is_none(),
+        "Active(B) MUST NOT surface a page that lives in A \
+         (cross-space leak fix)"
+    );
+
+    // SpaceScope::Global: the unscoped path keeps pre-existing behaviour
+    // — both aliases still resolve, regardless of which space the page
+    // lives in. Confirms the filter is opt-in and does not regress the
+    // MCP / agent paths that span every space.
+    let global_a = resolve_page_by_alias_inner(&pool, "shared-alias-A", &SpaceScope::Global)
+        .await
+        .unwrap();
+    assert_eq!(
+        global_a.as_ref().map(|t| t.0.as_str()),
+        Some("PAGE_A_ALIAS"),
+        "Global must still resolve A's alias"
+    );
+    let global_b = resolve_page_by_alias_inner(&pool, "shared-alias-B", &SpaceScope::Global)
+        .await
+        .unwrap();
+    assert_eq!(
+        global_b.as_ref().map(|t| t.0.as_str()),
+        Some("PAGE_B_ALIAS"),
+        "Global must still resolve B's alias"
+    );
+}
+
+// ======================================================================
+// list_page_links (F-33)
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_returns_edges_between_pages() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Create 2 pages
+    let p1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Page One".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    let p2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Page Two".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Create a content block under p1 that links to p2
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("see [[{}]]", p2.id),
+        Some(p1.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Insert block_links entry manually (content block b1 → page p2)
+    sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(&b1.id)
+        .bind(&p2.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
+        .await
+        .unwrap();
+
+    // Should have at least one link: p1 → p2 (rolled up from b1 → p2)
+    let p1_to_p2 = links
+        .iter()
+        .find(|l| l.source_id == p1.id.as_str() && l.target_id == p2.id.as_str());
+    assert!(
+        p1_to_p2.is_some(),
+        "should find link from page 1 to page 2 (rolled up from content block)"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_excludes_deleted_pages() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let p1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Page One".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    let p2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Page Two".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("link [[{}]]", p2.id),
+        Some(p1.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Insert block_links entry manually
+    sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(&b1.id)
+        .bind(&p2.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Delete p2
+    delete_block_inner(&pool, DEV, &mat, p2.id.clone())
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
+        .await
+        .unwrap();
+    let has_deleted = links.iter().any(|l| l.target_id == p2.id.as_str());
+    assert!(!has_deleted, "should not include links to deleted pages");
+
+    mat.shutdown();
+}
+
+/// SQL/C1 (#341): an upgrading user who opens the graph/backlinks view
+/// before any edit has an empty `page_link_cache` but a populated
+/// `block_links` table (migration 0065 creates the cache empty with no
+/// backfill). The lazy rebuild that fires in that state is a
+/// DELETE+INSERT, so it MUST run on the write pool — driving it through
+/// the `query_only=ON` read pool produced "attempt to write a readonly
+/// database". This test reproduces the exact upgrade state against a
+/// real split pool (`init_pools` → `query_only` reader) and asserts the
+/// read both succeeds AND backfills the rolled-up edge.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_split_lazy_rebuild_on_readonly_pool_c1() {
+    use crate::db::init_pools;
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let db_path = dir.path().join("test.db");
+    let pools = init_pools(&db_path).await.unwrap();
+    let write = pools.write.clone();
+    let read = pools.read.clone();
+
+    // Two pages + a content block under p1 linking to p2 — written via
+    // the write pool (the read pool is query_only).
+    insert_block(&write, "PAGE-AAAA", "page", "Page A", None, Some(0)).await;
+    insert_block(&write, "PAGE-BBBB", "page", "Page B", None, Some(1)).await;
+    insert_block(
+        &write,
+        "BLCK-AAAA",
+        "content",
+        "see [[PAGE-BBBB]]",
+        Some("PAGE-AAAA"),
+        Some(0),
+    )
+    .await;
+
+    // Populate `block_links` directly (mimicking a backfilled-but-cache-
+    // empty upgrade window) and leave `page_link_cache` empty.
+    sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind("BLCK-AAAA")
+        .bind("PAGE-BBBB")
+        .execute(&write)
+        .await
+        .unwrap();
+
+    // Sanity: cache is empty before the read.
+    let cache_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM page_link_cache")
+        .fetch_one(&read)
+        .await
+        .unwrap();
+    assert_eq!(cache_rows, 0, "page_link_cache must start empty");
+
+    // The read drives the lazy rebuild. Pre-fix this returned
+    // "attempt to write a readonly database"; post-fix the rebuild lands
+    // on the write pool and the call succeeds.
+    let links =
+        crate::commands::list_page_links_inner_split(&write, &read, &SpaceScope::Global, None)
+            .await
+            .expect("split read must not write through the read pool");
+
+    let edge = links
+        .iter()
+        .find(|l| l.source_id == "PAGE-AAAA" && l.target_id == "PAGE-BBBB");
+    assert!(
+        edge.is_some(),
+        "rolled-up p1→p2 edge must be present after the lazy rebuild"
+    );
+
+    // The rebuild must have committed to the cache via the write pool.
+    let cache_rows_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM page_link_cache")
+        .fetch_one(&read)
+        .await
+        .unwrap();
+    assert_eq!(
+        cache_rows_after, 1,
+        "lazy rebuild must persist the edge to page_link_cache"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_excludes_self_links() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let p1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Page".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Create a block under p1 that links back to p1 itself
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("self [[{}]]", p1.id),
+        Some(p1.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Insert self-referential block_links entry
+    sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(&b1.id)
+        .bind(&p1.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
+        .await
+        .unwrap();
+    let self_link = links.iter().find(|l| l.source_id == l.target_id);
+    assert!(
+        self_link.is_none(),
+        "should not include self-referential links"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_empty_when_no_links() {
+    let (pool, _dir) = test_pool().await;
+    let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
+        .await
+        .unwrap();
+    assert!(links.is_empty(), "should return empty when no links exist");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_deduplicates_multiple_content_links() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Create 2 pages
+    let p1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Source Page".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    let p2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target Page".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Create 2 content blocks under p1, both linking to p2
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("first [[{}]]", p2.id),
+        Some(p1.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let b2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("second [[{}]]", p2.id),
+        Some(p1.id.clone()),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Insert block_links entries for both content blocks → p2
+    sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(&b1.id)
+        .bind(&p2.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(&b2.id)
+        .bind(&p2.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
+        .await
+        .unwrap();
+
+    // Both b1 and b2 roll up to p1 → p2; GROUP BY should collapse to 1 edge
+    let p1_to_p2_count = links
+        .iter()
+        .filter(|l| l.source_id == p1.id.as_str() && l.target_id == p2.id.as_str())
+        .count();
+    assert_eq!(
+        p1_to_p2_count, 1,
+        "GROUP BY should deduplicate multiple content blocks linking to the same target page"
+    );
+
+    let edge = links
+        .iter()
+        .find(|l| l.source_id == p1.id.as_str() && l.target_id == p2.id.as_str())
+        .unwrap();
+    assert_eq!(
+        edge.ref_count, 2,
+        "ref_count should be 2 for two content blocks linking to the same target page"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_single_link_has_ref_count_one() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let p1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Page A".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    let p2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Page B".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("link [[{}]]", p2.id),
+        Some(p1.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(&b1.id)
+        .bind(&p2.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
+        .await
+        .unwrap();
+    let edge = links
+        .iter()
+        .find(|l| l.source_id == p1.id.as_str() && l.target_id == p2.id.as_str())
+        .unwrap();
+    assert_eq!(
+        edge.ref_count, 1,
+        "single content block link should have ref_count 1"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_excludes_links_with_deleted_parent_page() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Create 2 pages
+    let p1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Source Page".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    let p2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target Page".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Create a content block under p1 that links to p2
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("link [[{}]]", p2.id),
+        Some(p1.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Insert block_links entry
+    sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(&b1.id)
+        .bind(&p2.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Verify link exists before deletion
+    let links_before = list_page_links_inner(&pool, &SpaceScope::Global, None)
+        .await
+        .unwrap();
+    let has_link = links_before
+        .iter()
+        .any(|l| l.source_id == p1.id.as_str() && l.target_id == p2.id.as_str());
+    assert!(has_link, "link should exist before deleting source page");
+
+    // Soft-delete the SOURCE page (p1)
+    delete_block_inner(&pool, DEV, &mat, p1.id.clone())
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let links_after = list_page_links_inner(&pool, &SpaceScope::Global, None)
+        .await
+        .unwrap();
+    let has_deleted_source = links_after.iter().any(|l| l.source_id == p1.id.as_str());
+    assert!(
+        !has_deleted_source,
+        "should not include links from a deleted parent page"
+    );
+
+    mat.shutdown();
+}
+
+// ======================================================================
+// CTE oracle: verify optimized list_page_links query matches the original
+// ======================================================================
+
+/// Original (pre-P-15) query preserved as a correctness oracle.
+/// Runs the old SQL and returns sorted results for comparison.
+async fn list_page_links_oracle(pool: &SqlitePool) -> Vec<PageLink> {
+    let mut rows = sqlx::query_as::<_, PageLink>(
+        "SELECT
+            COALESCE(sb.parent_id, bl.source_id) AS source_id,
+            bl.target_id AS target_id,
+            COUNT(*) AS ref_count
+         FROM block_links bl
+         JOIN blocks sb ON sb.id = bl.source_id AND sb.deleted_at IS NULL
+         JOIN blocks tb ON tb.id = bl.target_id AND tb.deleted_at IS NULL AND tb.block_type = 'page'
+         LEFT JOIN blocks pb ON pb.id = sb.parent_id
+         WHERE COALESCE(sb.parent_id, bl.source_id) != bl.target_id
+         AND (sb.parent_id IS NULL OR (pb.deleted_at IS NULL AND pb.block_type = 'page'))
+         GROUP BY 1, 2",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    rows.sort();
+    rows
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_optimized_matches_oracle() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // -- Set up a non-trivial graph covering all edge-case branches --
+
+    // 3 pages
+    let p1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Page Alpha".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let p2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Page Beta".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let p3 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Page Gamma".into(),
+        None,
+        Some(3),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Content blocks under p1
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("link to beta [[{}]]", p2.id),
+        Some(p1.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let b2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("link to gamma [[{}]]", p3.id),
+        Some(p1.id.clone()),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
