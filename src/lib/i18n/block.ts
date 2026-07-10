@@ -194,6 +194,13 @@ export const block: Record<string, string> = {
   // PAGE_SUBTREE_MAX_BLOCKS; before this, the excess was dropped silently.
   'blockTree.truncatedNotice':
     'Showing the first {{shown}} blocks of {{total}} — this page is very large. Some blocks are not displayed; consider splitting it into smaller pages.',
+  // #2467 — mount-envelope boundary row (BlockListRenderer). Rows beyond the
+  // FE mount cap (`useBlockMountLimit`) are not mounted at all; this button
+  // reveals (mounts) the next batch. Distinct from `blockTree.truncatedNotice`,
+  // which reports the BACKEND's `load_page_subtree` cap — this one reports
+  // the FRONTEND's render-mount cap over blocks the store already holds.
+  'blockTree.mountBoundary_one': 'Show {{count}} more block',
+  'blockTree.mountBoundary_other': 'Show {{count}} more blocks',
   // #1727 — SR-only drag announcement for the DnD overlay (BlockDndOverlay).
   // `movingSubtree` is pluralised on `count` (blocks being dragged); `moving`
   // covers the single-block case.

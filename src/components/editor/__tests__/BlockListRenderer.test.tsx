@@ -91,6 +91,8 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof BlockListRende
     onContainerPointerDown: noop,
     hasChildrenSet: new Set<string>(),
     collapsedIds: new Set<string>(),
+    hiddenMountCount: 0,
+    onExpandMount: noop,
     ...overrides,
   }
 }
@@ -641,6 +643,92 @@ describe('BlockListRenderer', () => {
     expect(sentinelLi).toBeInTheDocument()
     const dropIndicator = sentinelLi?.querySelector('.drop-indicator')
     expect(dropIndicator).toBeInTheDocument()
+  })
+
+  // ── Mount envelope boundary (#2467) ───────────────────────
+
+  describe('mount envelope boundary', () => {
+    it('does not render a boundary row when hiddenMountCount is 0', () => {
+      const blocks = [makeBlock({ id: 'BLK001', content: 'First' })]
+      render(
+        <BlockListRenderer {...makeProps({ visibleItems: blocks, blocks, hiddenMountCount: 0 })} />,
+      )
+
+      expect(screen.queryByTestId('block-tree-mount-boundary')).not.toBeInTheDocument()
+    })
+
+    it('renders a boundary row with the hidden count when rows are capped', () => {
+      const blocks = [makeBlock({ id: 'BLK001', content: 'First' })]
+      render(
+        <BlockListRenderer
+          {...makeProps({ visibleItems: blocks, blocks, hiddenMountCount: 700 })}
+        />,
+      )
+
+      const boundary = screen.getByTestId('block-tree-mount-boundary')
+      expect(boundary).toBeInTheDocument()
+      expect(boundary).toHaveTextContent('700')
+    })
+
+    it('positions the boundary row after the mounted rows, before the sentinel', () => {
+      const blocks = [makeBlock({ id: 'BLK001', content: 'First' })]
+      const { container } = render(
+        <BlockListRenderer {...makeProps({ visibleItems: blocks, blocks, hiddenMountCount: 5 })} />,
+      )
+
+      const tree = container.querySelector('.block-tree')
+      const children = Array.from(tree?.children ?? [])
+      const rowIdx = children.findIndex((el) => el.getAttribute('data-block-id') === 'BLK001')
+      const boundaryIdx = children.findIndex(
+        (el) => el.getAttribute('data-testid') === 'block-tree-mount-boundary',
+      )
+      const sentinelIdx = children.findIndex((el) => el.hasAttribute('aria-hidden'))
+
+      expect(rowIdx).toBeGreaterThanOrEqual(0)
+      expect(boundaryIdx).toBeGreaterThan(rowIdx)
+      expect(sentinelIdx).toBeGreaterThan(boundaryIdx)
+    })
+
+    it('calls onExpandMount when the boundary button is clicked', () => {
+      const blocks = [makeBlock({ id: 'BLK001', content: 'First' })]
+      const onExpandMount = vi.fn()
+      render(
+        <BlockListRenderer
+          {...makeProps({
+            visibleItems: blocks,
+            blocks,
+            hiddenMountCount: 3,
+            onExpandMount,
+          })}
+        />,
+      )
+
+      screen.getByTestId('block-tree-mount-boundary').querySelector('button')?.click()
+      expect(onExpandMount).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not render the boundary row while loading', () => {
+      const blocks = [makeBlock({ id: 'BLK001', content: 'First' })]
+      render(
+        <BlockListRenderer
+          {...makeProps({ visibleItems: blocks, blocks, loading: true, hiddenMountCount: 3 })}
+        />,
+      )
+
+      expect(screen.queryByTestId('block-tree-mount-boundary')).not.toBeInTheDocument()
+    })
+
+    it('has no a11y violations with a mount boundary present', async () => {
+      const blocks = [makeBlock({ id: 'BLK001', content: 'First' })]
+      const { container } = render(
+        <BlockListRenderer
+          {...makeProps({ visibleItems: blocks, blocks, hiddenMountCount: 42 })}
+        />,
+      )
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
   })
 
   // ── O(N) sibling aria walk regression tests ──────────────

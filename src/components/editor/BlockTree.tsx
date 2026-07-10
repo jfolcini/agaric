@@ -59,6 +59,7 @@ import { useBlockDatePicker } from '@/hooks/useBlockDatePicker'
 import { useBlockDnD } from '@/hooks/useBlockDnD'
 import { useBlockKeyboardHandlers } from '@/hooks/useBlockKeyboardHandlers'
 import { useBlockLinkResolve } from '@/hooks/useBlockLinkResolve'
+import { useBlockMountLimit } from '@/hooks/useBlockMountLimit'
 import { useBlockMultiSelect } from '@/hooks/useBlockMultiSelect'
 import { useBlockNavigateToLink } from '@/hooks/useBlockNavigateToLink'
 import { useBlockProperties } from '@/hooks/useBlockProperties'
@@ -180,7 +181,7 @@ export function BlockTree({
   const {
     collapsedIds,
     toggleCollapse,
-    visibleBlocks: collapsedVisible,
+    visibleBlocks: collapseFilteredVisible,
     hasChildrenSet,
   } = useBlockCollapse(blocks, {
     onBeforeCollapse: dispatch.thunks.beforeCollapse,
@@ -188,6 +189,21 @@ export function BlockTree({
     // entry per page instead of one unbounded global key).
     pageKey: rootParentId,
   })
+
+  // ── Mount envelope (#2467) ──────────────────────────────────────────
+  // Bounds how many of the collapse-filtered rows actually MOUNT as React
+  // components — a large flat (or not-yet-collapsed) page otherwise mounts
+  // every row regardless of viewport (offscreen rows only stop PAINTING,
+  // see useViewportObserver). `collapsedVisible` below is the capped result;
+  // everything downstream (zoom, DnD, keyboard nav, rendering) composes on
+  // top of it exactly as it did on the uncapped list, so the cap and the
+  // collapse mechanism stack instead of conflicting. See useBlockMountLimit
+  // for the envelope numbers and what this deliberately doesn't cover.
+  const {
+    mounted: collapsedVisible,
+    hiddenCount: hiddenMountCount,
+    expandMountLimit,
+  } = useBlockMountLimit(collapseFilteredVisible, { pageKey: rootParentId })
 
   // ── Zoom hook (state + breadcrumb + zoomed view) ───────────────────
   const {
@@ -1056,6 +1072,8 @@ export function BlockTree({
                 onContainerPointerDown={handleContainerPointerDown}
                 hasChildrenSet={hasChildrenSet}
                 collapsedIds={collapsedIds}
+                hiddenMountCount={hiddenMountCount}
+                onExpandMount={expandMountLimit}
               />
             </BlockResolversProvider>
           </BlockActionsProvider>
