@@ -16,6 +16,7 @@
  */
 
 import { logger } from './logger'
+import { PREFS } from './preferences'
 
 const SETTINGS_PARAM = 'settings'
 
@@ -25,10 +26,10 @@ const SETTINGS_PARAM = 'settings'
  * above); the deep-link router and the KeyboardShortcuts sheet's
  * "Customize" footer write it before flipping `currentView` to
  * `'settings'` so the panel lands on the requested tab on first render.
- * Previously defined in three files (one as a raw literal) — this is the
- * single source of truth.
+ * Sourced from `PREFS.settingsActiveTab` (#2466) — the single source of
+ * truth for the literal key string.
  */
-export const SETTINGS_ACTIVE_TAB_KEY = 'agaric-settings-active-tab'
+export const SETTINGS_ACTIVE_TAB_KEY = PREFS.settingsActiveTab.key
 
 /**
  * Read the `settings` query param from the current URL and validate it
