@@ -45,6 +45,16 @@ pub struct ParsedBlock {
     /// separate work; this flag is the smallest hook the tag-safety acceptance
     /// test needs.
     pub is_code: bool,
+    /// #2510 — the raw Obsidian block-anchor id (WITHOUT the leading `^`)
+    /// when this block's assembled content ended in a trailing `^block-id`
+    /// marker, stripped out of `content` by the post-parse pass in
+    /// [`parse_logseq_markdown`]. `None` for the overwhelming majority of
+    /// blocks (no trailing marker, or the block is `is_code`, which is never
+    /// scanned). Consumed by `commands::pages::markdown` to resolve an
+    /// Obsidian `[[Page#^block-id]]` / `[[#^block-id]]` wiki-link to the
+    /// OWNING block (a real Agaric `((ULID))` block-ref) instead of only the
+    /// page (#1282's fallback).
+    pub block_anchor: Option<String>,
 }
 
 /// Outcome of importing one markdown file: the created page plus aggregate
@@ -541,6 +551,7 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
                 depth,
                 properties: Vec::new(),
                 is_code: line_is_code,
+                block_anchor: None,
             });
         } else if let Some(text) = trimmed.strip_prefix("- ") {
             // Strip ((uuid)) block references -> plain text
@@ -552,6 +563,7 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
                 depth,
                 properties: Vec::new(),
                 is_code: line_is_code,
+                block_anchor: None,
             });
         } else if !line_is_code
             && let Some((key_candidate, value)) = trimmed
@@ -632,7 +644,25 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
                 depth,
                 properties: Vec::new(),
                 is_code: line_is_code,
+                block_anchor: None,
             });
+        }
+    }
+
+    // #2510 — strip a trailing Obsidian block-anchor marker (`^block-id`) off
+    // each block's now-FULLY-assembled content. Run as a POST-pass over
+    // `blocks` (not inline during the line-by-line scan above) because the
+    // marker sits at the end of the WHOLE block, and a block's content is
+    // only fully assembled once every continuation line (#682) has been
+    // appended to it. `is_code` blocks are skipped — a fenced code sample
+    // ending in `^something` is code, not an Obsidian anchor.
+    for block in &mut blocks {
+        if block.is_code {
+            continue;
+        }
+        if let (stripped, Some(anchor)) = strip_block_anchor_marker(&block.content) {
+            block.content = stripped;
+            block.block_anchor = Some(anchor);
         }
     }
 
@@ -1209,6 +1239,45 @@ fn strip_block_refs_counted(text: &str) -> (String, usize) {
     (collapsed, removed)
 }
 
+/// #2510 — matches a trailing Obsidian block-anchor marker: a `^` followed by
+/// one-or-more `[A-Za-z0-9-]` characters (the issue's own grammar,
+/// `^[A-Za-z0-9-]+`), separated from the preceding text by at least one space
+/// (or standing alone, for a block whose content IS just the marker), anchored
+/// to the ABSOLUTE END of the string so it only ever matches a genuine
+/// trailing marker — never a mid-sentence caret (`x^2`, no preceding space) or
+/// one followed by more text. This is deliberately NOT gated behind a
+/// dialect flag (Logseq vs. Obsidian) — see [`strip_block_anchor_marker`]'s
+/// doc comment for the accepted, documented false-positive tradeoff.
+static OBSIDIAN_BLOCK_ANCHOR_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:^|\s)\^([A-Za-z0-9-]+)\s*$").expect("invalid block-anchor regex")
+});
+
+/// #2510 — split a trailing Obsidian block-anchor marker (`^block-id`) off an
+/// already fully-assembled block content string. Returns `(content, None)`
+/// unchanged when no marker is present at the absolute end of `content`, or
+/// `(content_with_marker_and_its_leading_whitespace_removed, Some(id))`
+/// (`id` WITHOUT the `^`) when one is found.
+///
+/// Pure / independently testable, mirroring `split_wikilink_anchor` in
+/// `commands::pages::markdown`. Deliberately minimal, exactly like that
+/// sibling helper: no dialect flag gates the strip (design decision deferred
+/// per the #2510 issue notes — a dedicated "Import Obsidian vault" affordance
+/// is a separate, larger follow-up), so a bare `some text ^tag`-style line in
+/// Logseq / plain-Markdown content (rare, but legal outside Obsidian) is
+/// ALSO stripped here — the same accepted tradeoff #1282 documents for a page
+/// title that legitimately contains `#` (e.g. `[[C# Notes]]`).
+fn strip_block_anchor_marker(content: &str) -> (String, Option<String>) {
+    match OBSIDIAN_BLOCK_ANCHOR_RE.captures(content) {
+        Some(caps) => {
+            let whole = caps.get(0).expect("group 0 always present");
+            let id = caps[1].to_string();
+            let stripped = content[..whole.start()].trim_end().to_string();
+            (stripped, Some(id))
+        }
+        None => (content.to_string(), None),
+    }
+}
+
 /// I-Core-10: matches the same alphabet that `op::validate_set_property`
 /// enforces — `^[A-Za-z0-9_-]{1,64}$`. Used by the Logseq markdown property
 /// parser to discriminate true `key:: value` lines from free-form content
@@ -1411,6 +1480,101 @@ bare line ((jkl-012)) too";
     fn parse_empty_content() {
         let output = parse_logseq_markdown("");
         assert!(output.blocks.is_empty());
+    }
+
+    /// #2510 — `strip_block_anchor_marker` strips a TRAILING `^block-id`
+    /// marker (Obsidian's block-anchor grammar) off already-assembled block
+    /// content, requires the marker to be preceded by whitespace (or stand
+    /// alone), and leaves ordinary content — including a mid-sentence caret
+    /// with no preceding space — untouched.
+    #[test]
+    fn strip_block_anchor_marker_strips_trailing_marker_2510() {
+        // No marker at all.
+        assert_eq!(
+            strip_block_anchor_marker("plain text"),
+            ("plain text".to_string(), None)
+        );
+        // A trailing marker separated by one space.
+        assert_eq!(
+            strip_block_anchor_marker("Some block text ^block123"),
+            ("Some block text".to_string(), Some("block123".to_string()))
+        );
+        // Hyphenated id (Obsidian allows `-` in a user-chosen block id).
+        assert_eq!(
+            strip_block_anchor_marker("Body ^my-block-id"),
+            ("Body".to_string(), Some("my-block-id".to_string()))
+        );
+        // Multiple leading spaces before the marker collapse away too.
+        assert_eq!(
+            strip_block_anchor_marker("Body   ^b1"),
+            ("Body".to_string(), Some("b1".to_string()))
+        );
+        // The marker is the WHOLE content (no preceding text).
+        assert_eq!(
+            strip_block_anchor_marker("^onlyanchor"),
+            (String::new(), Some("onlyanchor".to_string()))
+        );
+        // A caret with NO preceding whitespace (`x^2`) is not a marker — the
+        // `(?:^|\s)` alternative requires either start-of-string or a space.
+        assert_eq!(
+            strip_block_anchor_marker("compute x^2"),
+            ("compute x^2".to_string(), None)
+        );
+        // A caret followed by more text is not a TRAILING marker.
+        assert_eq!(
+            strip_block_anchor_marker("see ^abc and more"),
+            ("see ^abc and more".to_string(), None)
+        );
+        // Only the LAST `^token` at the absolute end counts; an earlier
+        // mid-line caret survives untouched.
+        assert_eq!(
+            strip_block_anchor_marker("a ^b c ^final"),
+            ("a ^b c".to_string(), Some("final".to_string()))
+        );
+    }
+
+    /// #2510 — `parse_logseq_markdown` strips a bullet's trailing block-anchor
+    /// marker into `ParsedBlock::block_anchor`, leaves a block with no marker
+    /// at `None`, applies to a multi-line (#682 continuation) block only at
+    /// its FINAL assembled line, and skips an `is_code` block entirely (a
+    /// fenced sample ending in `^tag` stays literal, not stripped).
+    #[test]
+    fn parse_logseq_markdown_extracts_block_anchor_2510() {
+        let md = "\
+- A block with an anchor ^my-anchor
+- A block with no anchor
+- A multi-line block
+  continuation line ^cont-anchor
+- ```
+  code fence ending ^notananchor
+  ```";
+        let output = parse_logseq_markdown(md);
+
+        assert_eq!(output.blocks[0].content, "A block with an anchor");
+        assert_eq!(output.blocks[0].block_anchor, Some("my-anchor".to_string()));
+
+        assert_eq!(output.blocks[1].content, "A block with no anchor");
+        assert_eq!(output.blocks[1].block_anchor, None);
+
+        assert_eq!(
+            output.blocks[2].content,
+            "A multi-line block\ncontinuation line"
+        );
+        assert_eq!(
+            output.blocks[2].block_anchor,
+            Some("cont-anchor".to_string())
+        );
+
+        // The fenced block is `is_code` and must NOT have its trailing
+        // `^notananchor`-looking text stripped.
+        let code_block = &output.blocks[3];
+        assert!(code_block.is_code, "the fenced block must be flagged code");
+        assert!(
+            code_block.content.contains("^notananchor"),
+            "a code block's trailing caret must survive untouched; got {:?}",
+            code_block.content
+        );
+        assert_eq!(code_block.block_anchor, None);
     }
 
     /// #1921 — `strip_block_refs_counted` fast-paths must preserve EXACT

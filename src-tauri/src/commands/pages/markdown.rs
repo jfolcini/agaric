@@ -140,6 +140,16 @@ fn split_wikilink_anchor(name: &str) -> (&str, Option<&str>) {
     }
 }
 
+/// #2510 — true when a wiki-link sub-anchor (the text after the first `#`, as
+/// returned by [`split_wikilink_anchor`]) is an Obsidian BLOCK anchor
+/// (`^block-id`) rather than a heading anchor. Obsidian marks a block
+/// reference with a leading `^`; the id after it must be non-empty (a bare
+/// `^` with nothing following is not a valid block id and is left to fall
+/// through to the existing heading-anchor / dropped-anchor handling).
+fn obsidian_block_anchor_id(anchor: &str) -> Option<&str> {
+    anchor.strip_prefix('^').filter(|id| !id.is_empty())
+}
+
 /// Collect the DISTINCT human-readable `[[Page Name]]` names referenced across
 /// every parsed block's content (#1446 Part B). A token whose body is already a
 /// canonical `[[ULID]]` ref is skipped (it needs no resolution). Used to drive
@@ -1465,104 +1475,176 @@ pub async fn import_markdown_with_progress(
     // resolve to the base page. Surfaced as one aggregate warning (mirroring the
     // block-ref-strip warning) so the lossy anchor drop is diagnosable.
     let mut dropped_anchor_count: usize = 0;
+    // #2510 — full wiki-link token → Obsidian `^block-id` (WITHOUT the `^`),
+    // for a `[[Page#^blockId]]` / `[[#^blockId]]` link whose base is — or, for
+    // an anchor-only link, is IMPLICITLY — the page being imported. A block's
+    // ULID is not known until it is actually created in the write loop below,
+    // so these tokens are deliberately NOT inserted into `resolved_page_links`
+    // here. They are resolved to a real `((block ULID))` block-ref — or fall
+    // back to a link to THIS page, mirroring #1282's dropped-anchor fallback,
+    // when the marker is not found anywhere in the document — in a dedicated
+    // pass once every block of this document has been created (see below the
+    // block-creation loop). A CROSS-note block anchor (the base resolves to a
+    // DIFFERENT, already-existing page) is intentionally out of scope for this
+    // slice — the #2510 issue itself flags cross-note block-ref rendering as
+    // an open design question — and falls straight through to the unchanged
+    // #1282 dropped-anchor / page-link behavior below.
+    let mut pending_block_anchor_links: HashMap<String, String> = HashMap::new();
     for name in link_names {
         // #1282 — split the ORIGINAL captured token into its base page name and
         // optional `#…` sub-anchor; the map stays keyed on `name` (the full
         // token) so the rewrite still matches it verbatim.
         let (base, anchor) = split_wikilink_anchor(&name);
-        if anchor.is_some() {
-            if base.is_empty() {
-                // Anchor-only link (`[[#heading]]`): an intra-note anchor with
-                // no page target. Never create an empty-titled page — leave the
-                // token literal and surface a per-occurrence warning.
-                tracing::debug!(
-                    name = %name,
-                    "import: wiki-link has no page target (intra-note anchor) (#1282)"
-                );
-                warnings.push(format!(
-                    "wiki-link '[[{name}]]' has no page target (intra-note anchor); left as plain text"
-                ));
+        // #2510 — the `^block-id` sub-anchor id, when this is an Obsidian
+        // BLOCK anchor (as opposed to a heading anchor).
+        let block_anchor_id = anchor.and_then(obsidian_block_anchor_id);
+        if anchor.is_some() && base.is_empty() {
+            if let Some(block_id) = block_anchor_id {
+                // #2510 — intra-note block anchor (`[[#^blockId]]`): the
+                // implicit target page IS the page being imported. Defer
+                // to the post-loop resolution pass instead of the
+                // "no page target" fallback below. `block_id` is owned
+                // BEFORE `name` moves into the map (both borrow `name`
+                // transitively via `anchor` / `block_anchor_id`).
+                let block_id = block_id.to_string();
+                pending_block_anchor_links.insert(name, block_id);
                 continue;
             }
-            dropped_anchor_count += 1;
+            // Anchor-only link (`[[#heading]]`): an intra-note anchor with
+            // no page target. Never create an empty-titled page — leave the
+            // token literal and surface a per-occurrence warning.
+            tracing::debug!(
+                name = %name,
+                "import: wiki-link has no page target (intra-note anchor) (#1282)"
+            );
+            warnings.push(format!(
+                "wiki-link '[[{name}]]' has no page target (intra-note anchor); left as plain text"
+            ));
+            continue;
         }
         let base = base.to_string();
 
         // Already resolved/created this base in an earlier iteration (a shared
-        // base across anchors, or a plain `[[Page]]` seen before `[[Page#h]]`).
-        if let Some(ulid) = resolved_base_links.get(&base) {
-            resolved_page_links.insert(name, ulid.clone());
+        // base across anchors, or a plain `[[Page]]` seen before `[[Page#h]]`),
+        // or resolve against the in-memory snapshot / create-if-missing below.
+        // A base with no snapshot entry has zero same-space matches (the `[]`
+        // create-if-missing branch). `None` only for the ambiguous case (a
+        // warning is pushed at that point, below).
+        let resolved_ulid: Option<String> = if let Some(ulid) = resolved_base_links.get(&base) {
+            Some(ulid.clone())
+        } else {
+            let matches: &[String] = link_matches.get(&base).map_or(&[], Vec::as_slice);
+            match matches {
+                [single] => {
+                    resolved_base_links.insert(base, single.clone());
+                    Some(single.clone())
+                }
+                [] => {
+                    // Create the missing target page inside this chunk's
+                    // tx, then stamp its `space` ref (mirrors the
+                    // importing page above), so the new page is a
+                    // first-class member of the import's space.
+                    let (new_page, new_page_op) = create_block_in_tx(
+                        &mut tx,
+                        materializer.loro_state(),
+                        device_id,
+                        "page".into(),
+                        base.clone(),
+                        None,
+                        None,
+                    )
+                    .await?;
+                    tx.enqueue_background(new_page_op);
+                    let new_page_id = new_page.id.clone().into_string();
+                    let (_b, new_space_op) = set_property_in_tx(
+                        &mut tx,
+                        materializer.loro_state(),
+                        device_id,
+                        new_page_id.clone(),
+                        "space",
+                        None,
+                        None,
+                        None,
+                        Some(space_id.clone()),
+                        None,
+                    )
+                    .await?;
+                    tx.enqueue_background(new_space_op);
+                    resolved_base_links.insert(base, new_page_id.clone());
+                    Some(new_page_id)
+                }
+                _ => {
+                    // Ambiguous: two or more pages share this title in the
+                    // space. Never guess which was meant — leave the
+                    // token as plain text and surface a non-fatal
+                    // warning.
+                    // #1933 — per-occurrence diagnostic for this lossy
+                    // transform (the `[[Name]]` link is dropped to plain
+                    // text).
+                    tracing::debug!(
+                        name = %name,
+                        "import: ambiguous wiki-link left as plain text (#1933)"
+                    );
+                    warnings.push(format!(
+                            "wiki-link '[[{name}]]' matches multiple pages in this space; left as plain text"
+                        ));
+                    None
+                }
+            }
+        };
+        let Some(resolved_ulid) = resolved_ulid else {
+            continue;
+        };
+
+        if let Some(block_id) = block_anchor_id
+            && resolved_ulid == page_id
+        {
+            // #2510 — the base resolves to THIS importing page itself (a
+            // same-document `[[SelfTitle#^blockId]]` reference). Defer to
+            // the post-loop pass exactly like the anchor-only case above.
+            // `block_id` is owned BEFORE `name` moves (see the matching
+            // comment in the anchor-only branch above).
+            let block_id = block_id.to_string();
+            pending_block_anchor_links.insert(name, block_id);
             continue;
         }
+        // Not a same-document block anchor: either a heading anchor
+        // (`block_anchor_id` is `None`), or a CROSS-note block anchor (base
+        // resolves to a DIFFERENT, already-existing page) — out of scope for
+        // this slice. Fall through to the unchanged #1282 dropped-anchor /
+        // page-link behavior below.
 
-        // Resolve against the in-memory snapshot instead of a per-name query.
-        // A base with no snapshot entry has zero same-space matches (the `[]`
-        // create-if-missing branch).
-        let matches: &[String] = link_matches.get(&base).map_or(&[], Vec::as_slice);
-
-        match matches {
-            [single] => {
-                resolved_base_links.insert(base, single.clone());
-                resolved_page_links.insert(name, single.clone());
-            }
-            [] => {
-                // Create the missing target page inside this chunk's tx, then
-                // stamp its `space` ref (mirrors the importing page above), so
-                // the new page is a first-class member of the import's space.
-                let (new_page, new_page_op) = create_block_in_tx(
-                    &mut tx,
-                    materializer.loro_state(),
-                    device_id,
-                    "page".into(),
-                    base.clone(),
-                    None,
-                    None,
-                )
-                .await?;
-                tx.enqueue_background(new_page_op);
-                let new_page_id = new_page.id.clone().into_string();
-                let (_b, new_space_op) = set_property_in_tx(
-                    &mut tx,
-                    materializer.loro_state(),
-                    device_id,
-                    new_page_id.clone(),
-                    "space",
-                    None,
-                    None,
-                    None,
-                    Some(space_id.clone()),
-                    None,
-                )
-                .await?;
-                tx.enqueue_background(new_space_op);
-                resolved_base_links.insert(base, new_page_id.clone());
-                resolved_page_links.insert(name, new_page_id);
-            }
-            _ => {
-                // Ambiguous: two or more pages share this title in the space.
-                // Never guess which was meant — leave the token as plain text
-                // and surface a non-fatal warning.
-                // #1933 — per-occurrence diagnostic for this lossy transform
-                // (the `[[Name]]` link is dropped to plain text).
-                tracing::debug!(
-                    name = %name,
-                    "import: ambiguous wiki-link left as plain text (#1933)"
-                );
-                warnings.push(format!(
-                    "wiki-link '[[{name}]]' matches multiple pages in this space; left as plain text"
-                ));
-            }
+        if anchor.is_some() {
+            dropped_anchor_count += 1;
         }
+        resolved_page_links.insert(name, resolved_ulid);
     }
     if dropped_anchor_count > 0 {
         // #1282 — aggregate warning for the lossy anchor drop (mirrors the
         // block-ref-strip warning style). The links still resolve to the page;
-        // only the `#heading` / `#^blockId` sub-anchor targeting is not applied.
+        // only the `#heading` / cross-note `#^blockId` sub-anchor targeting is
+        // not applied.
         warnings.push(format!(
             "{dropped_anchor_count} wikilink block/heading anchors were dropped; links resolve to \
              the page (Obsidian block-anchor targeting is not yet supported)"
         ));
     }
+
+    // #2510 — Obsidian block-anchor id → the INDEX (into `parse_output.blocks`)
+    // of the block whose trailing `^block-id` marker the parser stripped (see
+    // `ParsedBlock::block_anchor`). Consumed by the block-anchor resolution
+    // pass after the block-creation loop below, once every index has a real
+    // ULID (or `None`, if that particular block was skipped). Built here
+    // (independent of block creation) so it is ready the moment the loop
+    // finishes. A duplicate anchor id within one document (a user/Obsidian
+    // authoring mistake) last-write-wins, matching a plain map insert — not
+    // worth a dedicated ambiguity warning.
+    let anchor_to_block_index: HashMap<String, usize> = parse_output
+        .blocks
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, b)| b.block_anchor.as_ref().map(|a| (a.clone(), idx)))
+        .collect();
 
     // #1924 / #1950 — resolve inbound inline tags (`#tag` and `#[[Tag With
     // Space]]`) to internal `#[ULID]` refs, creating any missing tag block
@@ -1727,7 +1809,14 @@ pub async fn import_markdown_with_progress(
     // reads committed rows) resolves cross-chunk parents fine.
     let mut parent_stack: Vec<(usize, String)> = vec![(0, page_id.clone())];
 
-    for block in &parse_output.blocks {
+    // #2510 — index-aligned with `parse_output.blocks`: the created ULID of
+    // each block, or `None` for one skipped by the #1918 recoverable-failure
+    // path. Used by the block-anchor resolution pass after this loop to map
+    // an anchor's owning `ParsedBlock` INDEX (`anchor_to_block_index`, built
+    // below) to the actual block it became.
+    let mut created_block_ids: Vec<Option<String>> = vec![None; parse_output.blocks.len()];
+
+    for (block_index, block) in parse_output.blocks.iter().enumerate() {
         // #662 — chunk-boundary flush. We may only break the import into a
         // new transaction at a top-level (depth-0) block: that guarantees
         // the chunk just closed holds whole subtrees (a parent and all its
@@ -1871,6 +1960,9 @@ pub async fn import_markdown_with_progress(
         chunk_blocks += 1;
         tx.enqueue_background(block_op);
         let new_block_id = new_block.id.clone().into_string();
+        // #2510 — record this ParsedBlock's created ULID by its original
+        // document index, for the block-anchor resolution pass below.
+        created_block_ids[block_index] = Some(new_block_id.clone());
         parent_stack.push((block.depth, new_block_id.clone()));
 
         // #1925 — record this block's detected attachment refs against its now
@@ -1945,6 +2037,156 @@ pub async fn import_markdown_with_progress(
         );
         AppError::from(e)
     })?;
+
+    // #2510 — block-anchor resolution + content rewrite phase. Runs HERE,
+    // AFTER the import writer tx has fully committed (mirrors the #1925
+    // attachment phase immediately below, for the same reason: `edit_block_inner`
+    // is pool-based and opens its OWN writer tx, which would deadlock against
+    // the still-held import tx). Every block in this document now has its
+    // final ULID (or `None`, if skipped by #1918), so a deferred
+    // `[[Page#^blockId]]` / `[[#^blockId]]` token — left LITERAL in its
+    // owning block's content by the pre-pass above — can finally be resolved:
+    //   * the anchor id matches a `^block-id` marker recorded on one of this
+    //     document's OWN blocks (`anchor_to_block_index`), and that block was
+    //     actually created → rewrite every occurrence of the token to a real
+    //     Agaric block-ref `((<block ULID>))`.
+    //   * otherwise (marker not found anywhere in this document, or its
+    //     owning block was skipped) → fall back to a link to THIS page,
+    //     mirroring #1282's dropped-anchor fallback, with a warning.
+    if !pending_block_anchor_links.is_empty() {
+        // Candidate block indices: a cheap in-memory pre-filter over the
+        // ORIGINAL parsed content (`[[` presence) so only blocks that could
+        // possibly carry a pending token are re-fetched from the database.
+        // The PRECISE match (respecting internal whitespace, the `#`/`!`
+        // guards, and canonical-ULID skip) is re-run below via the same
+        // `HUMAN_PAGE_LINK_RE` the initial rewrite pass uses, against the
+        // block's CURRENT (already tag/attachment-rewrite-eligible) content —
+        // this avoids any literal-substring drift between the captured map
+        // key (`caps[1].trim()`) and the token's actual on-disk bytes.
+        let mut resolved_block_ref_count: usize = 0;
+        let mut unresolved_block_anchor_count: usize = 0;
+
+        for (block_index, block) in parse_output.blocks.iter().enumerate() {
+            if !block.content.contains("[[") {
+                continue;
+            }
+            let Some(Some(container_id)) = created_block_ids.get(block_index) else {
+                // The containing block itself was skipped (#1918) — nothing
+                // to patch.
+                continue;
+            };
+            let current: Option<String> = match sqlx::query_scalar!(
+                "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL",
+                container_id,
+            )
+            .fetch_optional(pool)
+            .await
+            {
+                Ok(row) => row.flatten(),
+                Err(e) => {
+                    tracing::warn!(
+                        block_id = %container_id,
+                        error = %e,
+                        "import: block-anchor content re-fetch failed (#2510)"
+                    );
+                    warnings.push(format!(
+                        "block '{container_id}' block-anchor link(s) could not be resolved \
+                         (content re-fetch failed: {e})"
+                    ));
+                    continue;
+                }
+            };
+            let Some(current_content) = current else {
+                // Block vanished (concurrent delete) — nothing to rewrite.
+                continue;
+            };
+            if !current_content.contains("[[") {
+                continue;
+            }
+
+            let mut any_patched = false;
+            let new_content = HUMAN_PAGE_LINK_RE
+                .replace_all(&current_content, |caps: &regex::Captures<'_>| {
+                    let m = caps.get(0).expect("group 0 always present");
+                    let whole = m.as_str();
+                    // Same guards as `rewrite_inbound_page_links`: skip the
+                    // `#[[Tag]]` / `![[embed]]` forms and any already-internal
+                    // `[[ULID]]` ref.
+                    if current_content[..m.start()].ends_with('#')
+                        || current_content[..m.start()].ends_with('!')
+                    {
+                        return whole.to_string();
+                    }
+                    if crate::cache::PAGE_LINK_RE.is_match(whole) {
+                        return whole.to_string();
+                    }
+                    let name = caps[1].trim();
+                    let Some(anchor) = pending_block_anchor_links.get(name) else {
+                        return whole.to_string();
+                    };
+                    any_patched = true;
+                    if let Some(target_id) =
+                        anchor_to_block_index.get(anchor).and_then(|&target_idx| {
+                            created_block_ids.get(target_idx).cloned().flatten()
+                        })
+                    {
+                        // #2510 — the marker was found on one of this
+                        // document's own blocks: a real Agaric block-ref.
+                        resolved_block_ref_count += 1;
+                        format!("(({target_id}))")
+                    } else {
+                        // Marker not found anywhere in this document (or its
+                        // owning block was skipped) — #1282-style fallback: a
+                        // page link to THIS page (the resolved/implicit
+                        // target of every deferred token).
+                        unresolved_block_anchor_count += 1;
+                        format!("[[{page_id}]]")
+                    }
+                })
+                .into_owned();
+
+            if !any_patched {
+                continue;
+            }
+
+            if let Err(e) = crate::commands::blocks::crud::edit_block_inner(
+                pool,
+                device_id,
+                materializer,
+                BlockId::from_trusted(container_id),
+                new_content,
+            )
+            .await
+            {
+                tracing::warn!(
+                    block_id = %container_id,
+                    error = %e,
+                    "import: block-anchor rewrite failed (#2510)"
+                );
+                warnings.push(format!(
+                    "block '{container_id}' block-anchor link(s) could not be rewritten ({e})"
+                ));
+            }
+        }
+
+        if resolved_block_ref_count > 0 {
+            tracing::debug!(
+                resolved_block_ref_count,
+                "import: Obsidian block-anchor wiki-link(s) resolved to a block-ref (#2510)"
+            );
+        }
+        if unresolved_block_anchor_count > 0 {
+            // #2510 — mirrors #1282's dropped-anchor aggregate warning: the
+            // block-anchor marker was not found anywhere in this document
+            // (or its owning block was skipped), so the link fell back to a
+            // page link to this page instead of a block-ref.
+            warnings.push(format!(
+                "{unresolved_block_anchor_count} wikilink block-anchor(s) (`#^blockId`) could not \
+                 be matched to a block in this document; left as a page link (Obsidian \
+                 cross-note block-anchor targeting is not yet supported)"
+            ));
+        }
+    }
 
     // #1925 — attachment ingest + content rewrite phase. Runs HERE, AFTER the
     // import writer tx has fully committed and released the writer lock, so it
@@ -2319,6 +2561,23 @@ mod tests {
         assert_eq!(split_wikilink_anchor(" Page #h1"), ("Page", Some("h1")));
     }
 
+    /// #2510 — `obsidian_block_anchor_id` recognizes a `^`-prefixed sub-anchor
+    /// as an Obsidian BLOCK anchor and returns the id (without the `^`);
+    /// returns `None` for a heading anchor (no `^`) or a bare `^` with
+    /// nothing after it (not a valid block id).
+    #[test]
+    fn obsidian_block_anchor_id_recognizes_caret_prefix_2510() {
+        assert_eq!(obsidian_block_anchor_id("^block123"), Some("block123"));
+        assert_eq!(
+            obsidian_block_anchor_id("^my-block-id"),
+            Some("my-block-id")
+        );
+        // Heading anchor — no leading `^`.
+        assert_eq!(obsidian_block_anchor_id("Some Heading"), None);
+        // A bare `^` with nothing after it is not a valid block id.
+        assert_eq!(obsidian_block_anchor_id("^"), None);
+    }
+
     /// #1950 — the page-link collect/rewrite guard skips a `[[...]]` that is
     /// immediately preceded by `#` (the `#[[Tag]]` multi-word tag form), so it
     /// is neither collected as a page name nor rewritten as a page ref. A plain
@@ -2330,6 +2589,7 @@ mod tests {
             depth: 0,
             properties: Vec::new(),
             is_code: false,
+            block_anchor: None,
         }];
         // Only the un-prefixed `[[Real Page]]` is collected as a page name.
         let names = collect_inbound_page_link_names(&blocks);
@@ -2363,12 +2623,14 @@ mod tests {
                 depth: 0,
                 properties: Vec::new(),
                 is_code: false,
+                block_anchor: None,
             },
             import::ParsedBlock {
                 content: "fenced #shouldskip".to_string(),
                 depth: 0,
                 properties: Vec::new(),
                 is_code: true,
+                block_anchor: None,
             },
         ];
         let names = collect_inbound_tag_names(&blocks);

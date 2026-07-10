@@ -5681,6 +5681,384 @@ async fn import_wikilink_empty_base_left_literal_1282() {
 }
 
 // ======================================================================
+// #2510 (follow-up to #1282) — an Obsidian `^block-id` marker trailing a
+// block's line is stripped and recorded; a `[[#^block-id]]` (same-document,
+// implicit page target) or `[[SelfTitle#^block-id]]` (same-document, explicit
+// self-title) wiki-link then resolves to a real Agaric block-ref `((ULID))`
+// targeting the block that carries the marker, instead of #1282's page-link
+// fallback. A marker not found anywhere in the document, or a block-anchor
+// link whose base resolves to a DIFFERENT (cross-note) page, still falls back
+// to #1282's page-link behavior.
+// ======================================================================
+
+/// #2510 — `[[#^my-anchor]]` (anchor-only, no page name) resolves to a real
+/// block-ref `((<block ULID>))` targeting the block whose line ends in the
+/// `^my-anchor` marker — the marker is stripped from that block's own content
+/// too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_wikilink_block_anchor_same_doc_resolves_to_block_ref_2510() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- Target block content ^my-anchor\n- See [[#^my-anchor]] over there".into(),
+        Some("File.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // The marker was stripped from the owning block's own content.
+    let target_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'content' AND content = 'Target block content' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // The referencing block resolved the anchor link to a real block-ref.
+    let referencing_content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' \
+         AND content LIKE 'See%' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        referencing_content,
+        format!("See (({target_id})) over there"),
+        "the block-anchor link must resolve to a block-ref targeting the marked block"
+    );
+
+    // No "anchors were dropped" / "no page target" diagnostic — this is a
+    // clean resolution, not a fallback.
+    assert!(
+        !result.warnings.iter().any(|w| w.contains("anchor")),
+        "a successfully resolved block-anchor must not surface an anchor warning; warnings={:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
+
+/// #2510 — a FORWARD reference: the link appears BEFORE the block carrying
+/// the `^anchor` marker in document order. Resolution is deferred to a
+/// post-block-creation pass precisely so this works (a block's ULID is not
+/// known until it is created, so the naive "look up what's already written"
+/// approach would fail here).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_wikilink_block_anchor_forward_reference_resolves_2510() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- See [[#^later-anchor]] ahead\n- The marked block ^later-anchor".into(),
+        Some("File.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let target_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'content' AND content = 'The marked block' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let referencing_content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' \
+         AND content LIKE 'See%' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        referencing_content,
+        format!("See (({target_id})) ahead"),
+        "a forward block-anchor reference must still resolve to the block-ref"
+    );
+
+    assert!(
+        !result.warnings.iter().any(|w| w.contains("anchor")),
+        "a successfully resolved forward reference must not surface an anchor warning; \
+         warnings={:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
+
+/// #2510 — `[[File#^my-anchor]]` (the page name is spelled out and equals the
+/// IMPORTING page's own title, "File") is a same-document self-reference and
+/// must resolve to a block-ref exactly like the anchor-only `[[#^my-anchor]]`
+/// form.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_wikilink_block_anchor_self_title_resolves_2510() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- Target block content ^my-anchor\n- See [[File#^my-anchor]] over there".into(),
+        Some("File.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let target_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'content' AND content = 'Target block content' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let referencing_content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' \
+         AND content LIKE 'See%' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        referencing_content,
+        format!("See (({target_id})) over there"),
+        "a self-titled block-anchor link must resolve to the block-ref"
+    );
+    // No extraneous "Target block content"-titled PAGE was created — "File"
+    // resolved to the already-created IMPORTING page, not a new page.
+    let stray_pages: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND content = 'File' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        stray_pages, 1,
+        "the importing page 'File' must exist exactly once"
+    );
+    assert!(
+        !result.warnings.iter().any(|w| w.contains("anchor")),
+        "a successfully resolved self-titled block-anchor must not surface an anchor warning; \
+         warnings={:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
+
+/// #2510 — a block-anchor whose marker does NOT exist anywhere in the
+/// document falls back to a page link to the (implicit or explicit) target
+/// page — mirroring #1282's dropped-anchor fallback — and surfaces a
+/// dedicated warning.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_wikilink_block_anchor_not_found_falls_back_to_page_link_2510() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- See [[#^missing-anchor]] nowhere".into(),
+        Some("File.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let page_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'File' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let referencing_content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' \
+         AND content LIKE 'See%' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        referencing_content,
+        format!("See [[{page_id}]] nowhere"),
+        "an unresolved block-anchor must fall back to a page link to this page"
+    );
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("could not be matched to a block")),
+        "a not-found block-anchor must surface a dedicated warning; warnings={:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
+
+/// #2510 regression guard — a block-anchor link whose base resolves to a
+/// DIFFERENT, already-existing page (a cross-note reference) is UNCHANGED
+/// from #1282: the anchor is dropped and the link resolves to the base PAGE,
+/// never a block-ref (cross-note block-anchor targeting is out of scope for
+/// this slice).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_wikilink_block_anchor_cross_note_unchanged_1282_2510() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- See [[Other Page#^some-anchor]] now".into(),
+        Some("File.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let other_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Other Page' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND deleted_at IS NULL \
+         ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        content,
+        format!("See [[{other_id}]] now"),
+        "a cross-note block anchor must still resolve to the base PAGE (#1282 behavior)"
+    );
+    assert!(
+        !content.contains("(("),
+        "a cross-note block anchor must NEVER become a block-ref; got {content:?}"
+    );
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("anchors were dropped")),
+        "the #1282 dropped-anchor warning must still fire for a cross-note block anchor; \
+         warnings={:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
+
+/// #2510 — two DIFFERENT wiki-link tokens referencing the SAME `^anchor` both
+/// resolve to the SAME block-ref (dedup with the existing per-token
+/// resolution machinery — no duplicate work, no divergent targets).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_wikilink_block_anchor_dedup_same_anchor_2510() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- Target block content ^shared\n\
+         - First [[#^shared]] link\n\
+         - Second [[File#^shared]] link"
+            .into(),
+        Some("File.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let target_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'content' AND content = 'Target block content' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let first: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND content LIKE 'First%' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let second: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND content LIKE 'Second%' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(first, format!("First (({target_id})) link"));
+    assert_eq!(second, format!("Second (({target_id})) link"));
+
+    assert!(
+        !result.warnings.iter().any(|w| w.contains("anchor")),
+        "both tokens sharing one anchor must resolve cleanly; warnings={:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
+
+// ======================================================================
 // #1922 — additive coverage for previously-untested import-path behaviors.
 // These PIN the CURRENT behavior end-to-end (no production change); a
 // regression that alters them now fails CI.
