@@ -36,8 +36,8 @@
 import { useEffect } from 'react'
 
 import { logger } from '@/lib/logger'
+import { PREFERENCES, writePreference } from '@/lib/preferences'
 import { getBlock, getCurrentDeepLink } from '@/lib/tauri'
-import { SETTINGS_ACTIVE_TAB_KEY } from '@/lib/url-state'
 import { useNavigationStore } from '@/stores/navigation'
 import { useTabsStore } from '@/stores/tabs'
 
@@ -214,12 +214,9 @@ export function handleOpenSettingsPayload(payload: unknown): void {
   // initial-state reader (`readActiveTab` -> localStorage) picks up the
   // requested tab on first render.  Tab-name validation lives in
   // `readActiveTab` — an unknown tab safely falls back to `'general'`.
-  try {
-    localStorage.setItem(SETTINGS_ACTIVE_TAB_KEY, payload.tab)
-  } catch (err) {
-    logger.warn('deeplink', 'localStorage setItem failed for settings tab', undefined, err)
-    // Not fatal — the view still mounts on `'general'`.
-  }
+  // A write failure (Not fatal — the view still mounts on `'general'`) is
+  // logged and swallowed by writePreference.
+  writePreference(PREFERENCES.settingsActiveTab, payload.tab)
   try {
     // #734 — ALSO write the store handoff slot SettingsView subscribes to
     // while mounted. The localStorage write above only matters on a fresh
@@ -359,7 +356,7 @@ export function useDeepLinkRouter(): void {
  *
  * Without the `https` arm an Android App Link that cold-starts the app would
  * be captured by `getCurrent()` and silently dropped here, re-creating the
- * #741 no-op on the launch path even though live events route fine.  Logs at
+ * #741 no-op on the launch path even though live events route fine. Logs at
  * `warn` level on every rejection.
  */
 export function dispatchLaunchUrl(raw: string): void {
