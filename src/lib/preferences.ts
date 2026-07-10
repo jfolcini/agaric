@@ -256,12 +256,12 @@ export function hasKeyedPref<T, Args extends readonly unknown[]>(
   return readRaw(key, family.source ?? key) !== null
 }
 
-// ─── JSON helpers for defining PrefDef/PrefFamily entries ───────────
+// ─── JSON helpers for defining PrefDef/PrefFamily entries ─────────────
 
 const jsonParse = <T>(raw: string): T => JSON.parse(raw) as T
 const jsonSerialize = <T>(value: T): string => JSON.stringify(value)
 
-// ─── Migrated preferences ────────────────────────────────
+// ─── Migrated preferences ──────────────────────────────────────────────
 //
 // Actually read/written through `getPref`/`setPref`/`getKeyedPref`/
 // `setKeyedPref` by their owning module. Every `key` string below is
@@ -518,7 +518,7 @@ export const PREFS = {
   } satisfies PrefFamily<string[], [pageKey: string]>,
 } as const
 
-// ─── Full key catalog (migrated + cataloged) ───────────────────
+// ─── Full key catalog (migrated + cataloged) ───────────────────────────
 //
 // Documents EVERY known device-local preference key so naming/version/
 // scope is recorded centrally even for keys not yet migrated to
@@ -705,7 +705,7 @@ export const PREF_CATALOG: readonly PrefCatalogEntry[] = [
     status: 'migrated',
     notes: 'Keyed family (PREFS.blockCollapse) — one entry per page.',
   },
-  // ── Cataloged (not yet migrated — see file header) ────────────────
+  // ── Cataloged (not yet migrated — see file header) ──────────────────
   {
     key: 'theme-preference',
     type: 'ThemePreference',
