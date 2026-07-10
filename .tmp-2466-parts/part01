@@ -1,0 +1,1200 @@
+    assert!(
+        md.contains("Refs only #kept-1 and #kept-2"),
+        "referenced tag names should appear, got: {md}"
+    );
+    // The 50 unrelated tag names must not have leaked into the export
+    // — there is no syntactic path for them to (the page's content
+    // never names them), but the assertion guards against any future
+    // refactor that re-introduces a full-table fan-out.
+    for i in 0..50 {
+        let noise = format!("noise-{i}");
+        assert!(
+            !md.contains(&noise),
+            "unreferenced tag name {noise:?} should NOT appear in export"
+        );
+    }
+}
+
+/// #384 regression: exported frontmatter must
+///   (a) EXCLUDE internal/system-managed keys (space, is_space, template,
+///       created_at, repeat-*, …), and
+///   (b) RENDER value_ref (resolved to the referenced page's title) and
+///       value_num (the number) instead of dropping them to empty — the
+///       old query only projected value_text + value_date.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_frontmatter_filters_internal_and_renders_ref_num() {
+    let (pool, _dir) = test_pool().await;
+
+    const PAGE: &str = "01AAAAAAAAAAAAAAAAAAAAPAGE";
+    const REF_TARGET: &str = "01AAAAAAAAAAAAAAAAAAATARGT";
+
+    // The exported page.
+    insert_block(&pool, PAGE, "page", "Props Page", None, Some(1)).await;
+    // The page a value_ref property points at.
+    insert_block(&pool, REF_TARGET, "page", "Linked Page", None, Some(1)).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    // Seed a mix of properties on the page block.
+    let seed = |key: &'static str, col: &'static str, val: &'static str| {
+        let pool = pool.clone();
+        async move {
+            let sql =
+                format!("INSERT INTO block_properties (block_id, key, {col}) VALUES (?, ?, ?)");
+            sqlx::query(sqlx::AssertSqlSafe(sql))
+                .bind(PAGE)
+                .bind(key)
+                .bind(val)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    };
+    // User-visible text + date properties (must survive).
+    seed("status", "value_text", "active").await;
+    seed("due", "value_date", "2026-01-15").await;
+    // Numeric property (must render the number, not empty).
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_num) VALUES (?, 'effort', 3)")
+        .bind(PAGE)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Ref property (must render the target page title, not empty / ULID).
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'parent', ?)")
+        .bind(PAGE)
+        .bind(REF_TARGET)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Internal keys (must NOT leak into frontmatter). #534: `space` is
+    // column-backed on `blocks` (the single source of truth) and is now
+    // CHECK-forbidden as a `block_properties` row, so it can never reach
+    // the frontmatter query — the `space:` / `SPACEVAL` absence assertions
+    // below therefore hold by construction; no seed row is inserted for it.
+    seed("is_space", "value_text", "true").await;
+    seed("template", "value_text", "weekly").await;
+    seed("created_at", "value_text", "2020-01-01").await;
+    seed("repeat", "value_text", "daily").await;
+
+    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+
+    // Internal keys absent.
+    for internal in ["space:", "is_space:", "template:", "created_at:", "repeat:"] {
+        assert!(
+            !md.contains(internal),
+            "internal key {internal:?} must NOT appear in frontmatter, got:\n{md}"
+        );
+    }
+    assert!(
+        !md.contains("SPACEVAL"),
+        "internal 'space' value must not leak, got:\n{md}"
+    );
+
+    // User properties present, with non-empty values.
+    assert!(
+        md.contains("status: active"),
+        "text prop missing, got:\n{md}"
+    );
+    assert!(
+        md.contains("due: 2026-01-15"),
+        "date prop missing, got:\n{md}"
+    );
+    // Numeric renders the number (not empty, no trailing .0).
+    assert!(
+        md.contains("effort: 3\n"),
+        "numeric prop must render, got:\n{md}"
+    );
+    // Ref resolves to the target page title (non-empty).
+    assert!(
+        md.contains("parent: Linked Page"),
+        "value_ref must resolve to the referenced page title, got:\n{md}"
+    );
+}
+
+/// #472 — `value_bool` properties must appear in the YAML frontmatter export.
+/// Pre-fix, `FrontmatterRow` omitted `value_bool` entirely, so boolean
+/// properties silently vanished from the output.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_frontmatter_renders_bool_properties() {
+    let (pool, _dir) = test_pool().await;
+
+    const PAGE: &str = "01AAAAAAAAAAAAAAAAAAAAPAGE";
+    insert_block(&pool, PAGE, "page", "Bool Page", None, Some(1)).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    // Insert a true boolean property (value_bool = 1).
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_bool) VALUES (?, 'published', 1)",
+    )
+    .bind(PAGE)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Insert a false boolean property (value_bool = 0).
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_bool) VALUES (?, 'archived', 0)",
+    )
+    .bind(PAGE)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+
+    assert!(
+        md.contains("published: true"),
+        "value_bool = 1 must render as 'true', got:\n{md}"
+    );
+    assert!(
+        md.contains("archived: false"),
+        "value_bool = 0 must render as 'false', got:\n{md}"
+    );
+}
+
+/// #1432 — frontmatter round-trip: `export_page_markdown_inner` emits page
+/// properties as YAML frontmatter, and re-importing that markdown via
+/// `import_markdown_inner` must restamp the SAME typed page properties on the
+/// new page (closing the export↔import asymmetry where import discarded the
+/// frontmatter). Exercises every typed shape the exporter can render: text,
+/// number, date, boolean, and ref (resolved to the target page title on
+/// export and reverse-resolved to a ULID on import). Internal/reserved keys
+/// (`is_space`, `template`, …) must NOT round-trip.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_frontmatter_round_trips_typed_page_properties_1432() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    const SRC_PAGE: &str = "01AAAAAAAAAAAAAAAAAAAASRC1";
+    const REF_TARGET: &str = "01AAAAAAAAAAAAAAAAAAATARGT";
+
+    // Source page + a ref target (whose unique title the exporter renders and
+    // the importer reverse-resolves back to this ULID).
+    insert_block(&pool, SRC_PAGE, "page", "Source Page", None, Some(1)).await;
+    insert_block(&pool, REF_TARGET, "page", "Linked Target", None, Some(1)).await;
+    // The ref reverse-resolution is now SAME-SPACE-SCOPED (`AND space_id = ?`),
+    // so the target must live in the import's space (`TEST_SPACE_ID`) for the
+    // title→ULID resolution to succeed on re-import.
+    assign_to_space(&pool, REF_TARGET, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    // Declare typed property definitions so the import path coerces each
+    // frontmatter scalar into the correct `block_properties` column.
+    // NOTE: keys must NOT collide with the migration-seeded built-in defs
+    // (status/priority/effort/due_date/…); `create_property_def_inner` is
+    // `INSERT OR IGNORE`, so a colliding key would silently keep the seeded
+    // (wrong) type. These five keys are unseeded.
+    for (key, ty) in [
+        ("category", "text"),
+        ("wordcount", "number"),
+        ("reviewed_on", "date"),
+        ("published", "boolean"),
+        ("parent_ref", "ref"),
+    ] {
+        let def = create_property_def_inner(&pool, key.into(), ty.into(), None)
+            .await
+            .unwrap();
+        assert_eq!(def.value_type, ty, "def '{key}' must have type '{ty}'");
+    }
+
+    // Seed the typed properties on the source page (one column per row, as the
+    // materializer would).
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'category', 'notes')",
+    )
+    .bind(SRC_PAGE)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_num) VALUES (?, 'wordcount', 5)",
+    )
+    .bind(SRC_PAGE)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_date) VALUES (?, 'reviewed_on', '2026-03-04')")
+        .bind(SRC_PAGE).execute(&pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_bool) VALUES (?, 'published', 1)",
+    )
+    .bind(SRC_PAGE)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'parent_ref', ?)",
+    )
+    .bind(SRC_PAGE)
+    .bind(REF_TARGET)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // An internal/reserved key that must NOT round-trip.
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'template', 'weekly')",
+    )
+    .bind(SRC_PAGE)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Export → markdown with frontmatter.
+    let md = export_page_markdown_inner(&pool, SRC_PAGE).await.unwrap();
+    assert!(
+        md.contains("---\n"),
+        "export must emit a frontmatter fence, got:\n{md}"
+    );
+    assert!(
+        !md.contains("template:"),
+        "internal key must not be exported, got:\n{md}"
+    );
+
+    // Re-import the exported markdown as a NEW page.
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md.clone(),
+        Some("Reimported.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.page_title, "Reimported");
+
+    // Locate the re-imported page block.
+    let new_page_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Reimported'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Read back its page properties (excluding the import-stamped `space`).
+    #[derive(sqlx::FromRow, Debug)]
+    struct PropRow {
+        key: String,
+        value_text: Option<String>,
+        value_num: Option<f64>,
+        value_date: Option<String>,
+        value_ref: Option<String>,
+        value_bool: Option<i64>,
+    }
+    let props: Vec<PropRow> = sqlx::query_as(
+        "SELECT key, value_text, value_num, value_date, value_ref, value_bool \
+         FROM block_properties WHERE block_id = ? AND key != 'space' ORDER BY key",
+    )
+    .bind(&new_page_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    let by_key: std::collections::HashMap<&str, &PropRow> =
+        props.iter().map(|p| (p.key.as_str(), p)).collect();
+
+    // text
+    assert_eq!(
+        by_key.get("category").and_then(|p| p.value_text.as_deref()),
+        Some("notes"),
+        "text prop must round-trip into value_text; props={props:?}"
+    );
+    // number → value_num
+    assert_eq!(
+        by_key.get("wordcount").and_then(|p| p.value_num),
+        Some(5.0),
+        "number prop must round-trip into value_num; props={props:?}"
+    );
+    // date → value_date
+    assert_eq!(
+        by_key
+            .get("reviewed_on")
+            .and_then(|p| p.value_date.as_deref()),
+        Some("2026-03-04"),
+        "date prop must round-trip into value_date; props={props:?}"
+    );
+    // boolean → value_bool
+    assert_eq!(
+        by_key.get("published").and_then(|p| p.value_bool),
+        Some(1),
+        "boolean prop must round-trip into value_bool; props={props:?}"
+    );
+    // ref → value_ref reverse-resolved from the rendered title back to the ULID
+    assert_eq!(
+        by_key
+            .get("parent_ref")
+            .and_then(|p| p.value_ref.as_deref()),
+        Some(REF_TARGET),
+        "ref prop must reverse-resolve the target title to its ULID; props={props:?}"
+    );
+    // Internal key must NOT have round-tripped.
+    assert!(
+        !by_key.contains_key("template"),
+        "internal/reserved key must not re-import; props={props:?}"
+    );
+
+    mat.shutdown();
+}
+
+/// #1432 (review fix) — the frontmatter `ref` reverse-resolution must be
+/// SAME-SPACE-SCOPED. Before the fix the title→ULID lookup was app-wide:
+/// if the rendered ref title collided with a page in a DIFFERENT space,
+/// the lookup returned that foreign block id, which then flowed into
+/// `set_property_in_tx` → `validate_ref_property_cross_space`, which
+/// hard-rejected with `AppError::Validation` and ABORTED the whole import
+/// (rolling back every block). A title that merely collides across spaces
+/// must never be able to fail an otherwise-valid import.
+///
+/// This test imports a page whose frontmatter carries a `ref`-typed
+/// property whose title exists ONLY in space B (the import targets space
+/// A). It must:
+///   1. SUCCEED (no `Err`) — the foreign collision no longer aborts the
+///      import (the core review fix).
+///   2. NOT persist the cross-space title as a `value_ref` pointing at the
+///      foreign block (the bug). Because the def is `ref`-typed, an
+///      unresolvable title cannot be stored as text either (the type check
+///      rejects it), so the property is skipped with a warning rather than
+///      aborting — the human-readable title is surfaced in the warning.
+/// A sibling assertion confirms a ref title that DOES exist in the SAME
+/// space still reverse-resolves to that block's id.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_frontmatter_ref_is_space_scoped_1432() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    // Two live spaces in the same fixture; the import targets space A.
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    mark_block_as_space(&pool, TEST_SPACE_B_ID).await;
+
+    // A page in space B titled "Foreign Title". The same title does NOT
+    // exist in space A — so a same-space resolution must miss.
+    const FOREIGN_PAGE: &str = "01AAAAAAAAAAAAAAAAAAAFRGN1";
+    insert_block(&pool, FOREIGN_PAGE, "page", "Foreign Title", None, Some(1)).await;
+    assign_to_space(&pool, FOREIGN_PAGE, TEST_SPACE_B_ID).await;
+
+    // A page in space A titled "Local Title" — the same-space sibling case.
+    const LOCAL_PAGE: &str = "01AAAAAAAAAAAAAAAAAAALOCL1";
+    insert_block(&pool, LOCAL_PAGE, "page", "Local Title", None, Some(1)).await;
+    assign_to_space(&pool, LOCAL_PAGE, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    // Declare two ref-typed property defs.
+    for key in ["cross_ref", "local_ref"] {
+        let def = create_property_def_inner(&pool, key.into(), "ref".into(), None)
+            .await
+            .unwrap();
+        assert_eq!(def.value_type, "ref");
+    }
+
+    // Hand-authored markdown whose frontmatter carries:
+    //   - cross_ref: a title that ONLY exists in space B (must NOT resolve)
+    //   - local_ref: a title that exists in space A (must resolve)
+    let md = "# Imported Page\n\n---\ncross_ref: Foreign Title\nlocal_ref: Local Title\n---\n\n- a block\n";
+
+    // The import targets space A. Pre-fix this would `Err(Validation)` on
+    // the cross-space collision; post-fix it must succeed.
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md.into(),
+        Some("Imported Page.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .expect("cross-space title collision must NOT abort the import");
+    assert_eq!(result.page_title, "Imported Page");
+
+    // The unresolved cross-space ref must surface as a (non-fatal) warning,
+    // naming the title so it is never silently lost.
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("cross_ref") && w.contains("Foreign Title")),
+        "unresolved cross-space ref must warn (not abort); warnings={:?}",
+        result.warnings
+    );
+
+    let new_page_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Imported Page'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    #[derive(sqlx::FromRow, Debug)]
+    struct PropRow {
+        key: String,
+        value_text: Option<String>,
+        value_ref: Option<String>,
+    }
+    let props: Vec<PropRow> = sqlx::query_as(
+        "SELECT key, value_text, value_ref FROM block_properties \
+         WHERE block_id = ? AND key IN ('cross_ref', 'local_ref') ORDER BY key",
+    )
+    .bind(&new_page_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let by_key: std::collections::HashMap<&str, &PropRow> =
+        props.iter().map(|p| (p.key.as_str(), p)).collect();
+
+    // cross_ref: the foreign title is NOT in space A → no same-space
+    // resolution. CRITICALLY it must NOT have resolved to the foreign
+    // block id (that is the bug that aborted the whole import). It is
+    // skipped (not persisted) with a warning — never the foreign ULID.
+    if let Some(cross) = by_key.get("cross_ref") {
+        assert!(
+            cross.value_ref.as_deref() != Some(FOREIGN_PAGE),
+            "cross-space ref title must NEVER resolve to the foreign block id; got {cross:?}"
+        );
+        assert!(
+            cross.value_ref.is_none(),
+            "cross-space ref must not carry any resolved ref; got {cross:?}"
+        );
+    }
+
+    // local_ref: the title IS in space A → reverse-resolves to its ULID.
+    let local = by_key.get("local_ref").expect("local_ref must be stored");
+    assert_eq!(
+        local.value_ref.as_deref(),
+        Some(LOCAL_PAGE),
+        "same-space ref title must reverse-resolve to the block id; got {local:?}"
+    );
+    assert!(
+        local.value_text.is_none(),
+        "a resolved same-space ref must not also carry text; got {local:?}"
+    );
+
+    mat.shutdown();
+}
+
+// ======================================================================
+// Export_page_markdown — error paths
+// ======================================================================
+//
+// Pre-fix `export_page_markdown_inner` had 6 happy-path tests
+// (above) and zero error coverage.  Per AGENTS.md "Backend test
+// patterns": every command needs at least nonexistent-id → NotFound
+// and invalid-input → Validation pins so a refactor cannot silently
+// reshape the error surface.  The three tests below close that gap by
+// pinning each variant via `matches!()` (no `.contains("not found")`
+// strings — a refactor that swaps `NotFound` for `Validation` while
+// preserving the message would slip past a substring check).
+//
+// Two of the three pins surface production findings that the parent
+// Agent should triage as follow-ups (each is documented
+// inline, in the test it shows up in):
+//   1. Soft-deleted pages export as `# title\n\n` (Ok), not NotFound —
+//      `get_block_inner` does not filter `deleted_at`, and there is no
+//      explicit check inside `export_page_markdown_inner` either.
+// RESOLVED via `export_page_markdown_inner` now calls
+//      `get_active_block_inner`, which filters `deleted_at IS NULL`,
+//      so soft-deleted pages surface as `Err(NotFound)`. The test
+//      below was flipped to assert the new contract.
+//   2. Malformed page IDs (e.g. `"not-a-ulid"`) hit the
+//      `WHERE id = ?` path verbatim and fall through to NotFound,
+//      because the function never invokes `BlockId::from_string` to
+//      reject the input as Validation up front.
+
+/// Pin the NotFound variant when the page id is absent.
+/// `export_page_markdown_inner` calls `get_active_block_inner` first
+/// Which returns `AppError::NotFound` for a `WHERE id = ? AND
+/// deleted_at IS NULL` miss; if a future refactor swaps that for an
+/// `Internal` (e.g. by ignoring the result and falling through to the
+/// markdown builder), this test fails.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_inner_with_nonexistent_id_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+
+    // Valid ULID format that is guaranteed not to exist in the DB.
+    let result = export_page_markdown_inner(&pool, "01ZZZZZZZZZZZZZZZZZZZZZZZZ").await;
+
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "nonexistent page id must return AppError::NotFound, got: {result:?}"
+    );
+}
+
+/// Pin the variant when the supplied id refers to a
+/// non-page block (e.g. a `content` row).  The production code's
+/// explicit `if page.block_type != "page"` branch returns
+/// `AppError::validation("not a page".into())`; pinning the variant
+/// guards against a refactor that drops or reshapes that guard (for
+/// instance, a future signature that relaxes the page-only contract
+/// would surface as a passing `Ok(_)` here, not a silent regression).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_inner_with_non_page_block_returns_validation() {
+    let (pool, _dir) = test_pool().await;
+
+    // Insert a `content` block — explicitly NOT a page.  The export
+    // function's `block_type != "page"` branch must reject it.
+    insert_block(
+        &pool,
+        "01C0NTENTBKK00000000000001",
+        "content",
+        "not a page",
+        None,
+        Some(0),
+    )
+    .await;
+
+    let result = export_page_markdown_inner(&pool, "01C0NTENTBKK00000000000001").await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "non-page block id must return AppError::Validation, got: {result:?}"
+    );
+}
+
+/// / Pin that a soft-deleted page is no longer
+/// exportable. Pre-fix, `export_page_markdown_inner` called
+/// `get_block_inner` (no `deleted_at` filter) so a soft-deleted page
+/// exported as `# Title\n\n` with no descendants — title-only
+/// content because the descendant walk *did* filter `deleted_at IS
+/// NULL`. switched the page-row fetch to
+/// `get_active_block_inner`, which adds the same predicate, so the
+/// export now surfaces as `Err(NotFound)`. This test pins the new
+/// contract so a future regression that re-introduces the leak is
+/// caught.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_inner_with_soft_deleted_page_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Create a page and a child block via the canonical command path
+    // so `delete_block_inner` cascades correctly.
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Doomed Page".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let _child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "child block".into(),
+        Some(page.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Soft-delete the page (sets `deleted_at IS NOT NULL` on the page
+    // row and cascades to the child).
+    delete_block_inner(&pool, DEV, &mat, page.id.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let result = export_page_markdown_inner(&pool, page.id.as_str()).await;
+
+    // Soft-deleted pages must surface as NotFound, not as a
+    // partial title-only export.
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "soft-deleted page export must return AppError::NotFound, got: {result:?}"
+    );
+}
+
+/// Pin the variant returned for a malformed page id.
+/// `export_page_markdown_inner` now validates ULID format upfront via
+/// `BlockId::from_string(page_id)?`, so malformed inputs surface as
+/// `AppError::Ulid` (precise) rather than `AppError::NotFound` (imprecise,
+/// which used to come from the SQL `WHERE id = ?` lookup missing every
+/// row). Same fix applied to `get_page_inner`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_inner_with_malformed_id_returns_ulid_error() {
+    let (pool, _dir) = test_pool().await;
+
+    // Not a ULID — `BlockId::from_string("not-a-ulid")` rejects with
+    // `AppError::Ulid` upfront, before any SQL query runs.
+    let result = export_page_markdown_inner(&pool, "not-a-ulid").await;
+
+    assert!(
+        matches!(result, Err(AppError::Ulid(_))),
+        "malformed page id must surface as Ulid (upfront validation) — got: {result:?}"
+    );
+}
+
+// ======================================================================
+// import_markdown — Logseq/Markdown import (#660)
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_creates_page_and_blocks() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    // `import_markdown_inner` now requires a valid
+    // space_id. Seed the synthetic test space and stamp `is_space=true`.
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let content = "- Block 1\n  - Child 1\n  - Child 2\n- Block 2";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        content.into(),
+        Some("TestPage.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        result.page_title, "TestPage",
+        "page title should match filename"
+    );
+    assert_eq!(
+        result.blocks_created, 4,
+        "should create 4 blocks from markdown"
+    );
+    assert!(
+        result.warnings.is_empty(),
+        "import should produce no warnings"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_handles_properties() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    // Values must be in the seeded options:
+    //   priority: ["1","2","3"]; status: ["active","paused","done","archived"]
+    let content = "- Task\n  priority:: 1\n  status:: done";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        content.into(),
+        Some("Props.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        result.blocks_created, 1,
+        "should create 1 block with properties"
+    );
+    assert_eq!(result.properties_set, 2, "should set 2 properties");
+
+    mat.shutdown();
+}
+
+/// #623 — a Logseq line `due_date:: 2026-01-01` must import as a date on
+/// `blocks.due_date`, not abort the whole all-or-nothing import. Before the
+/// fix the importer passed the value as `value_text`, which
+/// `validate_property_value` rejects for the date reserved keys.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_due_date_stores_as_date() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let content = "- Pay rent\n  due_date:: 2026-01-01\n  scheduled_date:: 2026-02-02";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        content.into(),
+        Some("Dated.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .expect("a due_date:: line must NOT abort the whole import (#623)");
+
+    assert_eq!(result.blocks_created, 1, "should create the dated block");
+    assert_eq!(result.properties_set, 2, "due_date + scheduled_date");
+
+    // The content block (not the page) carries the dates on its native
+    // columns. Match on content so we skip the page block.
+    let (due, scheduled): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT due_date, scheduled_date FROM blocks WHERE content = 'Pay rent'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        due,
+        Some("2026-01-01".into()),
+        "due_date must land on blocks.due_date as a date"
+    );
+    assert_eq!(
+        scheduled,
+        Some("2026-02-02".into()),
+        "scheduled_date must land on blocks.scheduled_date as a date"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_strips_block_refs() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let content = "- See ((abc-123-def)) for details";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        content.into(),
+        None,
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        result.blocks_created, 1,
+        "should create 1 block after stripping refs"
+    );
+    assert_eq!(
+        result.page_title, "Imported Page",
+        "default page title should be used"
+    );
+
+    mat.shutdown();
+}
+
+/// #1933 — a lossy import (block-references stripped) must surface the drop
+/// as an aggregate warning on the returned `ImportResult`, end-to-end through
+/// the command core, so the loss is diagnosable (and gets logged by the
+/// completion warn path). Pre-fix, block-ref stripping was entirely silent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_block_ref_strip_surfaces_warning_1933() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let content = "- See ((abc-123)) and ((def-456)) here";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        content.into(),
+        None,
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.blocks_created, 1, "block survives the strip");
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("((block-ref))") && w.contains("stripped")),
+        "stripped block-refs must surface an aggregate warning; got {:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_empty_content() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        String::new(),
+        Some("Empty.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        result.page_title, "Empty",
+        "page title should derive from filename"
+    );
+    assert_eq!(
+        result.blocks_created, 0,
+        "empty content should create no blocks"
+    );
+
+    mat.shutdown();
+}
+
+// ======================================================================
+// #128 — import progress streaming
+// ======================================================================
+
+/// Test recorder for [`ImportProgressUpdate`] events, mirroring
+/// `sync_events::RecordingEventSink`. Captures the emitted stream so a
+/// test can assert the `Started` → `Progress`* → `Complete` contract
+/// without a Tauri `Channel`.
+#[derive(Default)]
+struct RecordingImportSink(std::sync::Mutex<Vec<crate::import::ImportProgressUpdate>>);
+
+impl crate::import::ImportProgressSink for RecordingImportSink {
+    fn emit(&self, update: crate::import::ImportProgressUpdate) {
+        self.0.lock().unwrap().push(update);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_emits_started_progress_complete() {
+    use crate::import::ImportProgressUpdate as U;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let sink = RecordingImportSink::default();
+    // 4 blocks: Block 1, Child 1, Child 2, Block 2 (matches the
+    // happy-path test above).
+    let content = "- Block 1\n  - Child 1\n  - Child 2\n- Block 2";
+    let result = import_markdown_with_progress(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        content.into(),
+        Some("Streamed.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+        Some(&sink),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.blocks_created, 4);
+
+    let events = sink.0.lock().unwrap().clone();
+    // 1 Started + 4 Progress + 1 Complete = 6 events.
+    assert_eq!(events.len(), 6, "expected Started + 4 Progress + Complete");
+
+    match &events[0] {
+        U::Started {
+            page_title,
+            blocks_total,
+        } => {
+            assert_eq!(page_title, "Streamed");
+            assert_eq!(*blocks_total, 4, "Started carries the parser block count");
+        }
+        other => panic!("first event must be Started, got {other:?}"),
+    }
+
+    // The four middle events count up 1..=4, all carrying blocks_total=4.
+    for (i, ev) in events[1..5].iter().enumerate() {
+        match ev {
+            U::Progress {
+                blocks_done,
+                blocks_total,
+            } => {
+                assert_eq!(*blocks_done, (i + 1) as u64, "Progress counts up");
+                assert_eq!(*blocks_total, 4);
+            }
+            other => panic!("event {} must be Progress, got {other:?}", i + 1),
+        }
+    }
+
+    match events.last().unwrap() {
+        U::Complete {
+            page_title,
+            blocks_created,
+            properties_set,
+        } => {
+            assert_eq!(page_title, "Streamed");
+            assert_eq!(*blocks_created, 4, "Complete mirrors ImportResult counts");
+            assert_eq!(*properties_set, 0);
+        }
+        other => panic!("last event must be Complete, got {other:?}"),
+    }
+
+    mat.shutdown();
+}
+
+/// Empty content: exactly one `Started` (blocks_total=0), zero `Progress`,
+/// and one `Complete`. The UI must still get a terminal event so it can
+/// dismiss the progress bar even when nothing was imported.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_progress_empty_file_started_then_complete() {
+    use crate::import::ImportProgressUpdate as U;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let sink = RecordingImportSink::default();
+    import_markdown_with_progress(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        String::new(),
+        Some("Empty.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+        Some(&sink),
+    )
+    .await
+    .unwrap();
+
+    let events = sink.0.lock().unwrap().clone();
+    assert_eq!(events.len(), 2, "Started + Complete, no Progress");
+    assert!(
+        matches!(
+            &events[0],
+            U::Started {
+                blocks_total: 0,
+                ..
+            }
+        ),
+        "Started must report blocks_total=0 for an empty file, got {:?}",
+        events[0]
+    );
+    assert!(
+        matches!(
+            &events[1],
+            U::Complete {
+                blocks_created: 0,
+                ..
+            }
+        ),
+        "Complete must report blocks_created=0, got {:?}",
+        events[1]
+    );
+
+    mat.shutdown();
+}
+
+/// A failed import (unknown space) emits NO events at all because the
+/// space validation happens *before* the `Started` emit... actually
+/// `Started` is emitted before the tx opens, so a space-validation
+/// failure still yields `Started` but never `Complete`. Assert that
+/// contract: a consumer that sees `Started` without a trailing `Complete`
+/// must treat the import as failed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_progress_failure_emits_no_complete() {
+    use crate::import::ImportProgressUpdate as U;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    // Deliberately do NOT mark any block as a space, so the in-tx
+    // `is_space='true'` validation fails and the import rolls back.
+    ensure_test_space(&pool).await;
+
+    let sink = RecordingImportSink::default();
+    let res = import_markdown_with_progress(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- Block 1\n- Block 2".into(),
+        Some("Fails.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+        Some(&sink),
+    )
+    .await;
+    assert!(res.is_err(), "import into a non-space must fail");
+
+    let events = sink.0.lock().unwrap().clone();
+    // `Started` fires before the tx opens; the failure happens at the
+    // in-tx space check, so no `Progress` and no `Complete`.
+    assert_eq!(
+        events.len(),
+        1,
+        "only Started before the validation failure"
+    );
+    assert!(
+        matches!(&events[0], U::Started { .. }),
+        "the single event must be Started, got {:?}",
+        events[0]
+    );
+    assert!(
+        !events.iter().any(|e| matches!(e, U::Complete { .. })),
+        "a failed import must never emit Complete"
+    );
+
+    mat.shutdown();
+}
+
+/// P-19: Verify that `import_markdown_inner` runs all block + property
+/// writes inside a single transaction by checking that:
+/// 1. All blocks are present in the DB after a successful import.
+/// 2. All properties are persisted correctly.
+/// 3. The op_log contains the expected number of entries.
+/// 4. Parent-child hierarchy is correct.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_single_transaction() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    // Values must be in the seeded options:
+    //   priority: ["1","2","3"]; status: ["active","paused","done","archived"]
+    let content = "- Parent block\n  priority:: 1\n  status:: active\n  - Child A\n  - Child B\n    - Grandchild";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        content.into(),
+        Some("TxTest.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    // Basic import stats
+    assert_eq!(result.page_title, "TxTest");
+    assert_eq!(result.blocks_created, 4, "should create 4 blocks");
+    assert_eq!(result.properties_set, 2, "should set 2 properties");
+    assert!(result.warnings.is_empty(), "should have no warnings");
+
+    // Verify page exists
+    let page: Option<BlockRow> = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId" FROM blocks WHERE block_type = 'page' AND content = 'TxTest'"#
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(page.is_some(), "page block must exist");
+    let page = page.unwrap();
+
+    // Verify all content blocks exist under the page hierarchy
+    let all_blocks: Vec<BlockRow> = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId" FROM blocks WHERE block_type = 'content' ORDER BY position"#
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(all_blocks.len(), 4, "should have 4 content blocks in DB");
+
+    // Verify parent-child: "Parent block" is child of page
+    let parent_block = all_blocks
+        .iter()
+        .find(|b| b.content.as_deref() == Some("Parent block"))
+        .expect("Parent block must exist");
+    assert_eq!(
+        parent_block
+            .parent_id
+            .as_ref()
+            .map(crate::ulid::BlockId::as_str),
+        Some(page.id.as_str()),
+        "Parent block should be child of the page"
+    );
+
+    // Verify child: "Child A" has parent = "Parent block"
+    let child_a = all_blocks
+        .iter()
+        .find(|b| b.content.as_deref() == Some("Child A"))
+        .expect("Child A must exist");
+    assert_eq!(
+        child_a.parent_id.as_ref().map(crate::ulid::BlockId::as_str),
+        Some(parent_block.id.as_str()),
+        "Child A should be child of Parent block"
+    );
+
+    // Verify grandchild: "Grandchild" has parent = "Child B"
+    let child_b = all_blocks
+        .iter()
+        .find(|b| b.content.as_deref() == Some("Child B"))
+        .expect("Child B must exist");
+    let grandchild = all_blocks
+        .iter()
+        .find(|b| b.content.as_deref() == Some("Grandchild"))
+        .expect("Grandchild must exist");
+    assert_eq!(
+        grandchild
+            .parent_id
+            .as_ref()
+            .map(crate::ulid::BlockId::as_str),
+        Some(child_b.id.as_str()),
+        "Grandchild should be child of Child B"
+    );
+
+    // Verify properties were persisted
+    // "priority" is a reserved key stored in blocks.priority column
+    let refreshed_parent: BlockRow = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId" FROM blocks WHERE id = ?"#,
+        parent_block.id
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        refreshed_parent.priority.as_deref(),
+        Some("1"),
+        "priority reserved property should be in blocks.priority"
+    );
+
+    // "status" is a custom property stored in block_properties
+    let props: Vec<(String, String)> = sqlx::query_as(
+        "SELECT key, value_text FROM block_properties WHERE block_id = ? ORDER BY key",
+    )
+    .bind(&parent_block.id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(props.len(), 1, "parent block should have 1 custom property");
+    assert_eq!(props[0].0, "status");
+    assert_eq!(props[0].1, "active");
+
+    // Verify op_log entries: 1 page + 1 set_property(space) for the
+    // Page + 4 blocks + 2 properties = 8 ops
+    let op_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log WHERE device_id = ?")
+        .bind(DEV)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        op_count.0, 8,
+        "op_log should have 8 entries (1 page + 1 set_property(space) + 4 blocks + 2 properties)"
+    );
+
+    mat.shutdown();
+}
+
