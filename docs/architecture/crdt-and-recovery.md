@@ -99,6 +99,12 @@ Per-draft errors are captured in a `RecoveryReport`; a single corrupt draft does
 
 **Materializer is constructed before recovery runs**, then passed by reference into `recover_at_boot`. Recovery's foreground enqueues use the constructed materializer.
 
+### Missing-`blocks`-table rebuild is device-local (#2504)
+
+Separate from the four-step `recover_at_boot` above, `init_pools` runs `ensure_blocks_table_exists` (`src-tauri/src/db/recovery.rs`) **before migrations**: if the `blocks` table is missing (e.g. a partial blocks-rebuild migration DROP that was not rolled back, or external corruption), it recreates a temporary `blocks` table and replays the op_log into it via `recover_blocks_from_op_log`.
+
+**Known limitation — this rebuild reconstructs only locally-authored content.** The op_log is strictly device-local (remote ops never land in it post-#490-M1), so on any device that has ever synced the replay silently omits every remote-authored block, property, and tag — the content that survives only in the per-space Loro engine snapshots (`loro_doc_state`). When those snapshots are present, `recover_blocks_from_op_log` now logs **loudly** (`tracing::error!`) that remote content is being dropped and that the convergent state remains in `loro_doc_state`, recoverable via an engine-first reprojection or a fresh peer re-sync. The complete fix — making disaster recovery **engine-first** (reproject SQL from `loro_doc_state`, then replay only the local op_log tail, keeping full-log replay as a last-resort fallback) — is tracked by #2504 and converges with the catch-up rework (#2503). Until it lands, the three-truths boundary holds: **op log = audit truth (device-local), Loro engine = state truth, SQL = query truth**; only the engine can rebuild whole synced state. Pinned by `recover_blocks_from_op_log_is_device_local_only_2504`.
+
 ## What's intentionally NOT crash-safe
 
 - Filesystem-level encryption is the user's responsibility (no SQLCipher; rejected for the overhead and key-management complexity — the SQLite DB lives where the OS encrypts the user's home directory).
