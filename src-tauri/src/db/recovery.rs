@@ -319,6 +319,16 @@ async fn persisted_engine_snapshot_count(
 /// not in these snapshots; they are replayed on top from the op_log tail by the
 /// always-on boot replay (`recovery::replay::replay_unmaterialized_ops`), so no
 /// op-log tail replay is needed here.
+///
+/// ## Derived caches
+///
+/// After the primary passes commit, the visibility-critical derived caches
+/// (`blocks.page_id`, the `fts_blocks` search index, and the tag-inheritance
+/// cache) are rebuilt full-table so the restored remote content is actually
+/// visible to page-scoped reads / search / tag filters — the live inbound-sync
+/// path rebuilds these via its post-projection materializer fan-out, which is
+/// unreachable at `init_pools` time (the materializer does not exist yet). See
+/// the rebuild block at the end of the function body for the rationale.
 pub(crate) async fn reproject_blocks_from_engine(
     pool: &SqlitePool,
 ) -> Result<bool, crate::error::AppError> {
@@ -435,6 +445,45 @@ pub(crate) async fn reproject_blocks_from_engine(
     }
 
     tx.commit().await?;
+
+    // #2504: the passes above restore the PRIMARY state (blocks / properties /
+    // tags / deleted_at) for the remote-authored content, but NOT the derived
+    // caches the live inbound-sync path rebuilds via its post-projection fan-out
+    // (`Materializer::enqueue_inbound_sync_rebuilds`). That fan-out is
+    // unreachable here — this runs inside `init_pools`, BEFORE the materializer
+    // exists. Without it the freshly-restored remote blocks land with NULL
+    // `page_id` (invisible to every `WHERE page_id = ?` page-scoped read), no
+    // `fts_blocks` row (unsearchable), and no inherited-tag rows (missing from
+    // tag-filtered reads) — recovered-but-invisible until an unrelated full
+    // cache rebuild happens to run.
+    //
+    // The boot fan-out (`spawn_boot_maintenance`) enqueues an unconditional
+    // full-table `RebuildPageIds`, but only rebuilds FTS when `fts_blocks` is
+    // EMPTY (a stale-but-non-empty index after a partial corruption never
+    // triggers it) and never rebuilds tag-inheritance unconditionally. So we
+    // cannot rely on it to cover the reprojected content. Rebuild the
+    // visibility-critical derived caches synchronously and deterministically
+    // here instead (the disaster path is rare, so the one-shot full rebuild
+    // cost is acceptable — and correctness/visibility beats deferral).
+    //
+    // Order: `page_id` first — the FTS and tag-inheritance rebuilds are
+    // independent of it, but `page_id` is the foundation other `page_id`-scoped
+    // caches (rebuilt by the boot fan-out) consume, and rebuilding it here
+    // closes the NULL-`page_id` window without waiting for the background task.
+    // All three are full-table, idempotent, and pool-only (no engine / space
+    // bootstrap dependency), so they are safe to run at init. Best-effort:
+    // a rebuild failure must NOT wedge boot — the primary content is already
+    // durably committed above, every read path degrades gracefully on a stale
+    // cache, and the boot fan-out + next-op incremental updates are a backstop.
+    if let Err(e) = crate::cache::rebuild_page_ids(pool).await {
+        tracing::warn!(error = %e, "recovery (#2504): page_id rebuild after engine reproject failed (non-fatal; boot fan-out retries)");
+    }
+    if let Err(e) = crate::fts::rebuild_fts_index(pool).await {
+        tracing::warn!(error = %e, "recovery (#2504): FTS rebuild after engine reproject failed (non-fatal; reprojected content unsearchable until next rebuild)");
+    }
+    if let Err(e) = crate::tag_inheritance::rebuild_all(pool).await {
+        tracing::warn!(error = %e, "recovery (#2504): tag-inheritance rebuild after engine reproject failed (non-fatal; inherited-tag reads stale until next rebuild)");
+    }
 
     tracing::warn!(
         spaces_reprojected,
@@ -2113,20 +2162,27 @@ mod tests {
         // Canonical uppercase ULID-shaped ids so `BlockId::from_trusted`'s
         // `to_ascii_uppercase()` normalization round-trips them unchanged
         // (production ids are already uppercase Crockford base32).
+        const REMOTE_PAGE: &str = "01HZ0000000000000000000P01";
         const REMOTE_B: &str = "01HZ0000000000000000000B01";
         const TAG_X: &str = "01HZ0000000000000000000T0X";
         const LOCAL_A: &str = "01HZ0000000000000000000L0A";
 
         let (pool, _dir) = test_pool().await;
 
-        // Device A authors a "remote" block (+ a property and a tag) into a real
-        // per-space Loro engine, and B persists A's snapshot in `loro_doc_state`.
-        // Remote ops never reach B's op_log (#490-M1), so there is deliberately
-        // no op_log row for the remote block.
+        // Device A authors a "remote" page + a content child under it (+ a
+        // property and a tag) into a real per-space Loro engine, and B persists
+        // A's snapshot in `loro_doc_state`. The content child lives UNDER the
+        // page so its `page_id` is derivable (a parentless block would resolve
+        // to NULL and could not exercise the derived-cache rebuild). Remote ops
+        // never reach B's op_log (#490-M1), so there is deliberately no op_log
+        // row for the remote content.
         let snapshot = {
             let mut engine = crate::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
             engine
-                .apply_create_block(REMOTE_B, "content", "authored on A", None, 0)
+                .apply_create_block(REMOTE_PAGE, "page", "Remote Page", None, 0)
+                .unwrap();
+            engine
+                .apply_create_block(REMOTE_B, "content", "authored on A", Some(REMOTE_PAGE), 0)
                 .unwrap();
             engine
                 .apply_set_property(REMOTE_B, "flavour", Some("vanilla"))
@@ -2224,6 +2280,51 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(local, 1, "locally-authored content must still survive");
+
+        // The reprojected remote content must be VISIBLE, not just present:
+        // the engine reproject rebuilds the visibility-critical derived caches
+        // (page_id / FTS) inline, since the live inbound-sync materializer
+        // fan-out is unreachable at init time. Without that, the restored block
+        // would land with NULL page_id (invisible to page-scoped reads) and no
+        // FTS row (unsearchable) — recovered-but-invisible.
+
+        // page_id: the remote content child resolves to its remote page, so
+        // every `WHERE page_id = ?` page-scoped read sees it.
+        let remote_page_id: Option<String> =
+            sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = ?")
+                .bind(REMOTE_B)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            remote_page_id.as_deref(),
+            Some(REMOTE_PAGE),
+            "reprojected remote block must have its page_id backfilled (page-scoped-visible)"
+        );
+
+        // FTS: the remote block is indexed in `fts_blocks`, so it is searchable.
+        let fts_indexed: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM fts_blocks WHERE block_id = ?")
+                .bind(REMOTE_B)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            fts_indexed, 1,
+            "reprojected remote block must be indexed in fts_blocks (searchable)"
+        );
+        // And it is actually returned by a trigram search on its content.
+        let fts_hit: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM fts_blocks WHERE block_id = ? AND stripped MATCH 'authored'",
+        )
+        .bind(REMOTE_B)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            fts_hit, 1,
+            "reprojected remote block must match a full-text search on its content"
+        );
     }
 
     /// #2504: with no persisted engine snapshots (a device that never synced, or
