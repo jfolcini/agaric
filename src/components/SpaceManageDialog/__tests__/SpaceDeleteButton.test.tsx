@@ -174,6 +174,54 @@ describe('SpaceDeleteButton', () => {
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('space.deleteFailed'))
     })
+
+    // Contract: on IPC failure the confirmation dialog STAYS OPEN so the user
+    // can retry without reopening the flow (recoverable failure). Radix
+    // AlertDialogAction would auto-close without the preventDefault opt-out.
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    expect(
+      screen.getByText(t('space.deleteConfirmTitle', { name: 'Personal' })),
+    ).toBeInTheDocument()
+  })
+
+  it('does not dispatch deleteBlock twice on a fast double-click of confirm', async () => {
+    // A slow (never-resolving until we allow it) IPC keeps the handler in its
+    // pending window so a second click must be ignored by the isPending guard.
+    let resolveDelete: (() => void) | undefined
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'delete_block') {
+        await new Promise<void>((res) => {
+          resolveDelete = res
+        })
+        return { affected_count: 1 }
+      }
+      return null
+    })
+    const user = userEvent.setup()
+    renderWithProvider(
+      <SpaceDeleteButton
+        spaceId="SPACE_1"
+        spaceName="Personal"
+        isLastSpace={false}
+        emptiness
+        onRefresh={() => {}}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: t('space.deleteSpaceLabel') }))
+    await screen.findByText(t('space.deleteConfirmTitle', { name: 'Personal' }))
+
+    const confirm = screen.getByRole('button', { name: t('action.delete') })
+    await user.click(confirm)
+    // Second click while the first IPC is still in flight — must be a no-op.
+    await user.click(confirm)
+
+    resolveDelete?.()
+
+    await waitFor(() => {
+      const deleteCalls = mockedInvoke.mock.calls.filter((c) => c[0] === 'delete_block')
+      expect(deleteCalls).toHaveLength(1)
+    })
   })
 })
 

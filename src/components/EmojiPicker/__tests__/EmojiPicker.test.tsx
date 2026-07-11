@@ -115,24 +115,52 @@ describe('<EmojiPicker>', () => {
     expect(onSelect).toHaveBeenCalledWith('\u{1F600}')
   })
 
-  it('shows a Frequently Used row when there is history and inserts from it', async () => {
+  it('shows a Frequently Used toolbar when there is history and inserts from it', async () => {
     const user = userEvent.setup()
     const onSelect = vi.fn()
     pushEmojiRecent('\u{1F525}')
     render(<EmojiPicker onSelect={onSelect} autoFocusSearch={false} />)
-    const frequentRow = screen.getByRole('row', { name: /frequently used emoji/i })
-    const cell = within(frequentRow).getByRole('gridcell', { name: '\u{1F525}' })
+    // #2545: the frequent strip is a labelled toolbar of plain buttons, not an
+    // orphaned grid row/gridcell (which would violate aria-required-parent).
+    const frequentToolbar = screen.getByRole('toolbar', { name: /frequently used emoji/i })
+    const cell = within(frequentToolbar).getByRole('button', { name: '\u{1F525}' })
     await user.click(cell)
     expect(onSelect).toHaveBeenCalledWith('\u{1F525}')
   })
 
-  it('hides the Frequently Used row while searching', async () => {
+  // #2545: the frequent toolbar exposes a single tab stop and moves focus with
+  // Arrow/Home/End, mirroring the tablist + skin-tone radiogroup.
+  it('roves focus across frequent-emoji buttons with arrow keys (single tab stop)', async () => {
+    const user = userEvent.setup()
+    pushEmojiRecent('\u{1F525}')
+    pushEmojiRecent('\u{1F600}')
+    render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
+    const toolbar = screen.getByRole('toolbar', { name: /frequently used emoji/i })
+    const buttons = within(toolbar).getAllByRole('button')
+    expect(buttons.length).toBeGreaterThanOrEqual(2)
+    expect(buttons.filter((b) => b.getAttribute('tabindex') === '0')).toHaveLength(1)
+
+    buttons[0]?.focus()
+    await user.keyboard('{ArrowRight}')
+    expect(buttons[1]).toHaveFocus()
+    expect(
+      within(toolbar)
+        .getAllByRole('button')
+        .filter((b) => b.getAttribute('tabindex') === '0'),
+    ).toHaveLength(1)
+    await user.keyboard('{Home}')
+    expect(buttons[0]).toHaveFocus()
+  })
+
+  it('hides the Frequently Used toolbar while searching', async () => {
     const user = userEvent.setup()
     pushEmojiRecent('\u{1F525}')
     render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
-    expect(screen.getByRole('row', { name: /frequently used emoji/i })).toBeInTheDocument()
+    expect(screen.getByRole('toolbar', { name: /frequently used emoji/i })).toBeInTheDocument()
     await user.type(screen.getByRole('searchbox', { name: /search emoji/i }), 'rocket')
-    expect(screen.queryByRole('row', { name: /frequently used emoji/i })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('toolbar', { name: /frequently used emoji/i }),
+    ).not.toBeInTheDocument()
   })
 
   it('renders a category tab per emoji group and jumps the grid on click', async () => {
@@ -242,6 +270,19 @@ describe('<EmojiPicker>', () => {
     // which surfaces as an audit failure rather than a real violation). Wait
     // for the grid's content to settle (first emoji cell present) before
     // auditing the now-stable DOM.
+    await screen.findByRole('gridcell', { name: 'grinning' })
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
+  // #2545: the showFrequent branch only renders when recents exist. The prior
+  // axe test rendered with an empty history, so the frequent strip's ARIA was
+  // never audited — which is exactly where the orphaned role="row"/"gridcell"
+  // (aria-required-parent) violation hid. Seed recents so the branch is covered.
+  it('has no axe violations with a seeded Frequently Used toolbar', async () => {
+    pushEmojiRecent('\u{1F525}')
+    const { container } = render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
+    // Ensure the frequent toolbar rendered before auditing.
+    screen.getByRole('toolbar', { name: /frequently used emoji/i })
     await screen.findByRole('gridcell', { name: 'grinning' })
     expect(await axe(container)).toHaveNoViolations()
   })

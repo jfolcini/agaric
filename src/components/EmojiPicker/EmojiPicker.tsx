@@ -138,6 +138,12 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
   // make every tab its own tab stop with no key handlers. Reuse the same
   // toolbar-pattern hook the rest of the app uses for 1D roving sets.
   const categoryRoving = useRovingTabindex()
+  // #2545: the "Frequently used" strip used to carry orphaned role="row"/
+  // role="gridcell" outside any role="grid" ancestor (aria-required-parent
+  // violation) and gave each cell its own tab stop. Model it as a labelled
+  // toolbar of plain buttons with a single roving tab stop, mirroring
+  // SkinToneSelector and the category tablist.
+  const frequentRoving = useRovingTabindex()
   const { rows, total } = useMemo(() => buildRows(query), [query])
   const isSearching = query.trim() !== ''
   const noResults = isSearching && total === 0
@@ -373,17 +379,24 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
           <p className="px-1 pb-1 text-xs font-medium text-muted-foreground">
             {t('emojiPicker.frequentlyUsed')}
           </p>
-          {/* oxlint-disable jsx-a11y/prefer-tag-over-role -- ARIA grid row + gridcells; an emoji picker is not tabular data, and <table>/<tr>/<td> here would inject table semantics + break the flex-wrap layout */}
+          {/* Toolbar of plain buttons (not grid row/cells): the strip sits
+              OUTSIDE the role="grid" scroll container below, so row/gridcell
+              here would be orphaned (axe aria-required-parent). A single roving
+              tab stop + Arrow/Home/End matches SkinToneSelector + the tablist. */}
           <div
-            className="flex flex-wrap gap-0.5"
-            role="row"
+            ref={frequentRoving.containerRef}
+            role="toolbar"
             aria-label={t('emojiPicker.frequentlyUsedRow')}
+            className="flex flex-wrap gap-0.5"
+            // Not a tab stop itself; the roving tab moves the single tabindex 0.
+            tabIndex={-1}
+            onKeyDown={frequentRoving.onKeyDown}
+            onFocus={frequentRoving.onFocus}
           >
             {frequent.slice(0, COLUMNS).map((char) => (
               <button
                 key={`frequent-${char}`}
                 type="button"
-                role="gridcell"
                 aria-label={char}
                 title={char}
                 onClick={() => {
@@ -396,7 +409,6 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
               </button>
             ))}
           </div>
-          {/* oxlint-enable jsx-a11y/prefer-tag-over-role */}
         </div>
       )}
 

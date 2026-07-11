@@ -35,6 +35,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Button, buttonVariants } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -66,17 +67,26 @@ export function SpaceDeleteButton({
 }: SpaceDeleteButtonProps): React.JSX.Element {
   const { t } = useTranslation()
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [pending, setPending] = useState(false)
 
   const handleDeleteConfirm = useCallback(async () => {
+    // Guard against a fast double-click dispatching `deleteBlock` twice while
+    // the first IPC is still in flight (mirrors ConfirmDialog's isPending gate).
+    if (pending) return
+    setPending(true)
     try {
       await deleteBlock(spaceId)
+      // Only close on success — on failure the dialog stays open (recoverable)
+      // per the documented contract at the top of this file.
       setConfirmOpen(false)
       await onRefresh()
     } catch (err) {
       logger.error(LOG_MODULE, 'delete failed', { spaceId }, err)
       notify.error(t('space.deleteFailed'))
+    } finally {
+      setPending(false)
     }
-  }, [spaceId, onRefresh, t])
+  }, [pending, spaceId, onRefresh, t])
 
   const deleteDisabledReason: string | null = isLastSpace
     ? t('space.deleteLastTooltipDisabled')
@@ -126,11 +136,22 @@ export function SpaceDeleteButton({
           </AlertDialogHeader>
           <AlertDialogFooter>
             {/* oxlint-disable-next-line jsx-a11y/no-autofocus -- intentional focus-on-open: destructive-delete confirmation focuses the safe Cancel button so an accidental Enter dismisses rather than deletes */}
-            <AlertDialogCancel autoFocus>{t('space.cancelLabel')}</AlertDialogCancel>
+            <AlertDialogCancel autoFocus disabled={pending}>
+              {t('space.cancelLabel')}
+            </AlertDialogCancel>
             <AlertDialogAction
               className={buttonVariants({ variant: 'destructive' })}
-              onClick={() => void handleDeleteConfirm()}
+              disabled={pending}
+              // Radix `AlertDialogAction` auto-closes the dialog on click.
+              // preventDefault keeps it open while the async delete is in flight
+              // so the "stay open on rejection" contract holds — `handleDeleteConfirm`
+              // closes via `setConfirmOpen(false)` only on success.
+              onClick={(e) => {
+                e.preventDefault()
+                void handleDeleteConfirm()
+              }}
             >
+              {pending && <Spinner />}
               {t('action.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
