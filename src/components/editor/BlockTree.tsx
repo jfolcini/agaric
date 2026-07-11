@@ -205,6 +205,34 @@ export function BlockTree({
     expandMountLimit,
   } = useBlockMountLimit(collapseFilteredVisible, { pageKey: rootParentId })
 
+  // ── Mount-cap exclusion set for the metadata window (#2580) ─────────────
+  // `useViewportWindow` (below) conservatively treats any never-measured
+  // block as "in window" — correct for a block that's mounted but hasn't
+  // been through the IntersectionObserver yet, wrong for a block
+  // `useBlockMountLimit` excluded from the mounted tree altogether: that
+  // block will never mount, so it will never be measured, so the
+  // conservative rule would keep issuing metadata IPCs for it forever. Name
+  // exactly the ids the mount cap dropped — `collapseFilteredVisible` (the
+  // full collapse-filtered list, pre-cap) minus `collapsedVisible` (the
+  // capped, actually-mounted list) — so the window can subtract them.
+  // Deliberately does NOT extend to collapse-hidden or zoomed-out blocks
+  // (a pre-existing, separate over-inclusion #1268/#2467 already share, see
+  // useBlockMountLimit's file header) — this stays a bounded fix for the
+  // mount-cap specifically. The focused block is carved back out even if
+  // it falls past the cap (e.g. a link-navigation jump on a huge page,
+  // before the cap has expanded to reach it): mirrors SortableBlockWrapper's
+  // "focused block is never virtualized" rule, so a focused row's metadata
+  // is never starved by this exclusion.
+  const mountCapExcludedIds = useMemo(() => {
+    if (hiddenMountCount === 0) return null
+    const mountedIds = new Set(collapsedVisible.map((b) => b.id))
+    const excluded = new Set<string>()
+    for (const b of collapseFilteredVisible) {
+      if (!mountedIds.has(b.id) && b.id !== focusedBlockId) excluded.add(b.id)
+    }
+    return excluded.size > 0 ? excluded : null
+  }, [collapseFilteredVisible, collapsedVisible, hiddenMountCount, focusedBlockId])
+
   // ── Zoom hook (state + breadcrumb + zoomed view) ───────────────────
   const {
     zoomedBlockId,
@@ -353,7 +381,10 @@ export function BlockTree({
   // uses — no parallel windowing mechanism. A block scrolled into view re-enters
   // this set and gets its metadata resolved lazily; the downstream hooks keep
   // their signature/contentSignature guards and reference-stable maps intact.
-  const windowedBlocks = useViewportWindow(viewport, blocks)
+  // #2580 — also subtract `mountCapExcludedIds`: rows the mount cap (#2467)
+  // excluded from the mounted tree entirely would otherwise sit in this
+  // window forever (never measured ⇒ never flips off-screen).
+  const windowedBlocks = useViewportWindow(viewport, blocks, mountCapExcludedIds)
 
   // ── Date picker hook ───────────────────────────────────────────────
   const {

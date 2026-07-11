@@ -255,3 +255,76 @@ describe('BlockTree mount envelope (#2467)', () => {
     )
   })
 })
+
+// =========================================================================
+// #2580 — windowedBlocks scoped to the mounted set: mount-cap-excluded rows
+// (never mounted, never measured) must not ride along in the batch metadata
+// IPCs. Drives the real `get_batch_properties` IPC (mocked `invoke`) rather
+// than asserting on internal state, mirroring `useViewportWindow.test.tsx`'s
+// batch-payload-scoping tests but through the full BlockTree wiring.
+// =========================================================================
+describe('BlockTree mount envelope x windowed metadata IPCs (#2580)', () => {
+  function mockBatchProperties(): void {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
+      if (cmd === 'get_batch_properties') {
+        const blockIds = (args as { blockIds?: string[] } | undefined)?.blockIds ?? []
+        const result: Record<string, unknown[]> = {}
+        for (const id of blockIds) result[id] = []
+        return result
+      }
+      return []
+    })
+  }
+
+  function lastBatchPropertiesIds(): string[] {
+    const calls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'get_batch_properties')
+    const last = calls.at(-1) as [string, { blockIds?: string[] }] | undefined
+    return last?.[1]?.blockIds ?? []
+  }
+
+  it('excludes mount-cap-excluded rows from the get_batch_properties IPC payload', async () => {
+    const total = INITIAL_MOUNT_LIMIT + 50
+    const blocks = makeFlatBlocks(total)
+    pageStore.setState({ blocks, loading: false })
+    mockBatchProperties()
+
+    renderBlockTree()
+    await screen.findByTestId('block-tree-mount-boundary')
+
+    await waitFor(() => {
+      expect(lastBatchPropertiesIds()).toHaveLength(INITIAL_MOUNT_LIMIT)
+    })
+
+    const ids = lastBatchPropertiesIds()
+    // The last MOUNTED row is in the batch payload...
+    expect(ids).toContain(`BLK_${INITIAL_MOUNT_LIMIT - 1}`)
+    // ...but the rows the mount cap excluded are not — they never mounted,
+    // so there is no chip to resolve and no IPC should be spent on them.
+    expect(ids).not.toContain(`BLK_${INITIAL_MOUNT_LIMIT}`)
+    expect(ids).not.toContain(`BLK_${total - 1}`)
+  })
+
+  it('includes newly-revealed rows in the IPC payload once the mount limit expands', async () => {
+    const user = userEvent.setup()
+    const total = INITIAL_MOUNT_LIMIT + 50
+    const blocks = makeFlatBlocks(total)
+    pageStore.setState({ blocks, loading: false })
+    mockBatchProperties()
+
+    renderBlockTree()
+    await screen.findByTestId('block-tree-mount-boundary')
+    await waitFor(() => {
+      expect(lastBatchPropertiesIds()).not.toContain(`BLK_${INITIAL_MOUNT_LIMIT}`)
+    })
+
+    await user.click(getBoundaryButton())
+
+    // Revealing the next batch mounts the previously-excluded rows — they
+    // must now resolve their metadata via a fresh, expanded IPC.
+    await waitFor(() => {
+      expect(lastBatchPropertiesIds()).toContain(`BLK_${INITIAL_MOUNT_LIMIT}`)
+    })
+    expect(lastBatchPropertiesIds()).toHaveLength(total)
+  })
+})

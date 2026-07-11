@@ -171,6 +171,89 @@ describe('useViewportWindow', () => {
   })
 })
 
+describe('useViewportWindow → mount-cap exclusion (#2580)', () => {
+  const blocks = [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }]
+
+  it('excludes a never-measured block named in excludedIds (mount-cap-excluded, not just pending measurement)', () => {
+    // None of A-D have been measured off-screen — the conservative rule
+    // would keep all four "in window". C and D are named as mount-cap-
+    // excluded (never mounted, never will be measured); they must be absent
+    // regardless of isOffscreen.
+    const { viewport } = makeFakeViewport([])
+    const excludedIds = new Set(['C', 'D'])
+    const { result } = renderHook(() => useViewportWindow(viewport, blocks, excludedIds))
+
+    expect(result.current.map((b) => b.id)).toEqual(['A', 'B'])
+  })
+
+  it('unions mount-cap exclusion with genuine off-screen exclusion (#1268 semantics untouched)', () => {
+    // B is measured off-screen (real scroll-away); D is mount-cap-excluded.
+    // Both must be absent, for their own independent reasons — and a block
+    // that is BOTH off-screen and mount-cap-excluded is still just absent.
+    const { viewport } = makeFakeViewport(['B'])
+    const excludedIds = new Set(['B', 'D'])
+    const { result } = renderHook(() => useViewportWindow(viewport, blocks, excludedIds))
+
+    expect(result.current.map((b) => b.id)).toEqual(['A', 'C'])
+  })
+
+  it('re-includes a block once the caller reveals it (mount limit raised → dropped from excludedIds)', () => {
+    const { viewport } = makeFakeViewport([])
+    const { result, rerender } = renderHook(
+      ({ excluded }: { excluded: Set<string> | null }) =>
+        useViewportWindow(viewport, blocks, excluded),
+      { initialProps: { excluded: new Set(['C', 'D']) as Set<string> | null } },
+    )
+    expect(result.current.map((b) => b.id)).toEqual(['A', 'B'])
+
+    // Mirrors `expandMountLimit()` growing the cap enough to mount C: the
+    // caller recomputes its excluded set without C.
+    rerender({ excluded: new Set(['D']) })
+    expect(result.current.map((b) => b.id)).toEqual(['A', 'B', 'C'])
+
+    // The cap grows past D too (or collapses entirely) — the caller passes
+    // `null`, meaning nothing is cap-excluded anymore.
+    rerender({ excluded: null })
+    expect(result.current.map((b) => b.id)).toEqual(['A', 'B', 'C', 'D'])
+  })
+
+  it('lets the caller carve the focused block back out of excludedIds so it always stays in-window', () => {
+    // Mirrors BlockTree's `mountCapExcludedIds`: it never contains
+    // `focusedBlockId`, even if that row is past the mount cap (e.g. a
+    // link-navigation jump before the cap has expanded to reach it). Here,
+    // C and D would both be cap-excluded, but the caller has already carved
+    // the focused id (D) back out before it ever reaches this hook.
+    const { viewport } = makeFakeViewport([])
+    const excludedIds = new Set(['C']) // D omitted — it's the focused block
+    const { result } = renderHook(() => useViewportWindow(viewport, blocks, excludedIds))
+
+    expect(result.current.map((b) => b.id)).toEqual(['A', 'B', 'D'])
+  })
+
+  it('leaves mounted-scrolled-away blocks unaffected by excludedIds (independent exclusion reasons)', () => {
+    // A is measured off-screen (genuinely mounted, just scrolled away) and is
+    // NOT in excludedIds — it must still be excluded via isOffscreen alone,
+    // proving the two exclusion paths are independent, not conflated.
+    const { viewport, flip } = makeFakeViewport([])
+    const excludedIds = new Set(['D'])
+    const { result } = renderHook(() => useViewportWindow(viewport, blocks, excludedIds))
+    expect(result.current.map((b) => b.id)).toEqual(['A', 'B', 'C'])
+
+    act(() => flip({ A: true }))
+    expect(result.current.map((b) => b.id)).toEqual(['B', 'C'])
+
+    act(() => flip({ A: false }))
+    expect(result.current.map((b) => b.id)).toEqual(['A', 'B', 'C'])
+  })
+
+  it('is a no-op when excludedIds is omitted (backward-compatible with the two-arg call)', () => {
+    const { viewport } = makeFakeViewport(['B'])
+    const { result } = renderHook(() => useViewportWindow(viewport, blocks))
+
+    expect(result.current.map((b) => b.id)).toEqual(['A', 'C', 'D'])
+  })
+})
+
 describe('useViewportWindow → batch IPC payload scoping (#1268)', () => {
   it('scopes the get_batch_properties IPC payload to the windowed set, not the full block list', async () => {
     const blocks = [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }]
