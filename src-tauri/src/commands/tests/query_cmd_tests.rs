@@ -1838,6 +1838,28 @@ async fn count_backlinks_batch_empty_page_ids_returns_empty() {
     );
 }
 
+/// #2542 — `count_backlinks_batch_inner` must share the
+/// [`crate::commands::MAX_BATCH_BLOCK_IDS`] cap: an over-cap `page_ids` list
+/// rejects with Validation before the runaway `json_each(?1)` scan.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_backlinks_batch_rejects_oversize() {
+    let (pool, _dir) = test_pool().await;
+
+    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
+        .map(|i| format!("ID{i}"))
+        .collect();
+    let big = count_backlinks_batch_inner(
+        &pool,
+        oversize.into_iter().map(Into::into).collect::<Vec<_>>(),
+        &SpaceScope::Global,
+    )
+    .await;
+    assert!(
+        matches!(big, Err(crate::error::AppError::Validation { .. })),
+        "oversize input must reject with Validation"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_backlinks_batch_returns_correct_counts() {
     let (pool, _dir) = test_pool().await;
@@ -1972,7 +1994,9 @@ async fn count_backlinks_batch_large_input_beyond_sqlite_param_limit() {
     // limit that the old `IN (?, ?, …)` format-string approach hit at scale.
     let (pool, _dir) = test_pool().await;
 
-    // Seed 3 real target pages with backlinks, then request counts for 1200 IDs.
+    // Seed 3 real target pages with backlinks, then request counts for 1000
+    // IDs (the `MAX_BATCH_BLOCK_IDS` cap ceiling) — still well beyond the old
+    // ~999 bind-parameter limit that the `IN (?, ?, …)` approach hit.
     insert_block(&pool, "BIG_TGT1", "page", "target 1", None, None).await;
     insert_block(&pool, "BIG_TGT2", "page", "target 2", None, None).await;
     insert_block(&pool, "BIG_SRC1", "content", "src 1", None, None).await;
@@ -1997,7 +2021,7 @@ async fn count_backlinks_batch_large_input_beyond_sqlite_param_limit() {
         .await
         .unwrap();
 
-    let mut ids: Vec<String> = (0..1200).map(|i| format!("MISSING_{i:04}")).collect();
+    let mut ids: Vec<String> = (0..998).map(|i| format!("MISSING_{i:04}")).collect();
     ids.push("BIG_TGT1".into());
     ids.push("BIG_TGT2".into());
 
@@ -4073,14 +4097,14 @@ async fn get_blocks_returns_full_rows_for_n_ids() {
     assert_eq!(c2.scheduled_date.as_deref(), Some("2026-05-09"));
 }
 
+/// #2542 — empty input is a bulk-read no-op: `get_blocks_inner` returns an
+/// empty `Vec` (not a Validation error), matching the rest of the
+/// batch-read family. Over-cap input still rejects with Validation.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn get_blocks_rejects_empty_oversize() {
+async fn get_blocks_empty_returns_empty_and_rejects_oversize() {
     let (pool, _dir) = test_pool().await;
-    let empty = get_blocks_inner(&pool, vec![]).await;
-    assert!(
-        matches!(empty, Err(crate::error::AppError::Validation { .. })),
-        "empty input must reject with Validation"
-    );
+    let empty = get_blocks_inner(&pool, vec![]).await.unwrap();
+    assert!(empty.is_empty(), "empty input must return an empty Vec");
 
     let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))

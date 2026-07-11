@@ -74,7 +74,7 @@ tx.commit_and_dispatch(&materializer).await?;
 
 Bulk commands operating on a list of block IDs (`restore_blocks_by_ids_inner`, `set_todo_state_batch_inner`, etc.) MUST:
 
-1. Reject empty `Vec` with `AppError::Validation`.
+1. Handle empty input by **kind**: bulk **writes** reject an empty `Vec` with `AppError::validation` (mutating nothing is a caller bug); bulk **reads** return the empty collection (`Ok(Vec::new())` / `Ok(HashMap::new())`) because an empty request (a page with zero blocks, an empty agenda window) is a legitimate state, not an error. Construct the error via the lowercase `AppError::validation(msg.into())` ctor — `AppError::Validation` is a struct variant (`#2251`), not a tuple, so `AppError::Validation(..)` does not compile.
 2. Reject `len() > MAX_BATCH_BLOCK_IDS` (`MAX_BATCH_BLOCK_IDS = 1000`). The constant and its shared guard helper `ensure_batch_within_cap(subject, len)` are the single source of truth in the `crate::commands` module root (`commands/mod.rs`); prefer the helper for the canonical `"{subject} length {len} exceeds maximum {MAX_BATCH_BLOCK_IDS}"` message — all `*_by_ids` sites (including `restore_blocks_by_ids` / `purge_blocks_by_ids`) now route through it.
 3. Normalise ULIDs to uppercase via `BlockId::from_trusted` or the appropriate parser.
 4. Resolve in **one query** via `json_each(?1)` — never N+1 loops.
@@ -88,13 +88,9 @@ pub async fn restore_blocks_by_ids_inner(
     block_ids: Vec<String>,
 ) -> Result<BulkRestoreResponse, AppError> {
     if block_ids.is_empty() {
-        return Err(AppError::Validation("block_ids must not be empty".into()));
+        return Err(AppError::validation("block_ids list cannot be empty".into()));
     }
-    if block_ids.len() > MAX_BATCH_BLOCK_IDS {
-        return Err(AppError::Validation(format!(
-            "block_ids must contain at most {MAX_BATCH_BLOCK_IDS} ids",
-        )));
-    }
+    crate::commands::ensure_batch_within_cap("block_ids", block_ids.len())?;
     let normalized: Vec<String> = block_ids.iter().map(|id| id.to_uppercase()).collect();
     let id_json = serde_json::to_string(&normalized)?;
     // one tx, one json_each resolve, one commit

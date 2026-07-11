@@ -506,6 +506,8 @@ pub async fn list_unlinked_references_inner(
 ///
 /// # Errors
 ///
+/// - [`AppError::Validation`] — `page_ids.len()` >
+///   [`crate::commands::MAX_BATCH_BLOCK_IDS`]
 /// - Database errors propagated from sqlx.
 #[instrument(skip(pool, page_ids), err)]
 pub async fn count_backlinks_batch_inner(
@@ -516,6 +518,7 @@ pub async fn count_backlinks_batch_inner(
     if page_ids.is_empty() {
         return Ok(HashMap::new());
     }
+    crate::commands::ensure_batch_within_cap("page_ids", page_ids.len())?;
     // `json_each(?1)` binds a JSON array of the canonical id strings.
     let id_strings: Vec<&str> = page_ids.iter().map(PageId::as_str).collect();
     let ids_json = serde_json::to_string(&id_strings)?;

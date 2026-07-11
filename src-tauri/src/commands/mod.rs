@@ -181,199 +181,6 @@ pub use tags::{
     query_by_tag_expr_inner, query_by_tags, query_by_tags_inner, remove_tag, remove_tag_inner,
 };
 
-// specta-generated type-export fns required by `collect_commands![]` in lib.rs.
-// These are created by the `#[specta::specta]` proc macro on each Tauri command handler.
-#[doc(hidden)]
-pub use agenda::{
-    __specta__fn__count_agenda_batch, __specta__fn__count_agenda_batch_by_source,
-    __specta__fn__list_projected_agenda, __specta__fn__list_undated_tasks,
-};
-#[doc(hidden)]
-pub use attachments::{
-    __specta__fn__add_attachment, __specta__fn__delete_attachment, __specta__fn__list_attachments,
-    __specta__fn__list_attachments_batch,
-};
-#[doc(hidden)]
-pub use blocks::{
-    __specta__fn__batch_resolve, __specta__fn__count_trash, __specta__fn__create_block,
-    __specta__fn__create_blocks_batch, __specta__fn__delete_block,
-    __specta__fn__delete_blocks_by_ids, __specta__fn__edit_block,
-    __specta__fn__first_child_for_blocks, __specta__fn__get_block, __specta__fn__get_blocks,
-    __specta__fn__list_blocks, __specta__fn__move_block, __specta__fn__move_blocks_to_space,
-    __specta__fn__purge_all_deleted, __specta__fn__purge_block, __specta__fn__purge_blocks_by_ids,
-    __specta__fn__restore_all_deleted, __specta__fn__restore_block,
-    __specta__fn__restore_blocks_by_ids, __specta__fn__trash_descendant_counts,
-};
-#[doc(hidden)]
-pub use bug_report::{
-    __specta__fn__collect_bug_report_metadata, __specta__fn__read_logs_for_report,
-};
-#[doc(hidden)]
-pub use compaction::{__specta__fn__compact_op_log_cmd, __specta__fn__get_compaction_status};
-#[doc(hidden)]
-pub use drafts::{
-    __specta__fn__delete_draft, __specta__fn__flush_all_drafts, __specta__fn__flush_draft,
-    __specta__fn__list_drafts, __specta__fn__save_draft,
-};
-#[doc(hidden)]
-pub use history::{
-    __specta__fn__compute_block_vs_current_diff, __specta__fn__compute_edit_diff,
-    __specta__fn__find_undo_group, __specta__fn__list_page_history, __specta__fn__redo_page_op,
-    __specta__fn__restore_page_to_op, __specta__fn__revert_ops, __specta__fn__undo_page_group,
-    __specta__fn__undo_page_op,
-};
-#[doc(hidden)]
-pub use journal::{
-    __specta__fn__get_journal_page_by_date, __specta__fn__list_journal_pages_in_range,
-    __specta__fn__quick_capture_block,
-};
-#[doc(hidden)]
-pub use link_metadata::{__specta__fn__fetch_link_metadata, __specta__fn__get_link_metadata};
-#[doc(hidden)]
-pub use logging::{__specta__fn__get_log_dir, __specta__fn__log_frontend};
-#[doc(hidden)]
-pub use mcp::{
-    __specta__fn__get_mcp_rw_socket_path, __specta__fn__get_mcp_rw_status,
-    __specta__fn__get_mcp_socket_path, __specta__fn__get_mcp_status,
-    __specta__fn__mcp_disconnect_all, __specta__fn__mcp_rw_disconnect_all,
-    __specta__fn__mcp_rw_set_enabled, __specta__fn__mcp_set_enabled,
-};
-#[doc(hidden)]
-pub use pages::{
-    __specta__fn__export_page_markdown, __specta__fn__get_page_aliases,
-    __specta__fn__import_markdown, __specta__fn__list_all_pages_in_space,
-    __specta__fn__list_page_aliases_by_prefix, __specta__fn__list_page_links,
-    __specta__fn__list_template_page_ids_in_space, __specta__fn__load_page_subtree,
-    __specta__fn__resolve_page_by_alias, __specta__fn__set_page_aliases,
-};
-#[doc(hidden)]
-pub use properties::{
-    __specta__fn__create_property_def, __specta__fn__delete_property,
-    __specta__fn__delete_property_def, __specta__fn__get_batch_properties,
-    __specta__fn__get_properties, __specta__fn__get_property, __specta__fn__get_property_def,
-    __specta__fn__list_property_defs, __specta__fn__list_property_keys,
-    __specta__fn__list_property_values, __specta__fn__set_due_date, __specta__fn__set_priority,
-    __specta__fn__set_property, __specta__fn__set_scheduled_date, __specta__fn__set_todo_state,
-    __specta__fn__set_todo_state_batch, __specta__fn__update_property_def_options,
-};
-#[doc(hidden)]
-pub use queries::{
-    __specta__fn__count_backlinks_batch, __specta__fn__filtered_blocks_query,
-    __specta__fn__get_backlinks, __specta__fn__get_status, __specta__fn__list_backlinks_grouped,
-    __specta__fn__list_unfinished_tasks, __specta__fn__list_unlinked_references,
-    __specta__fn__query_backlinks_filtered, __specta__fn__query_by_property,
-    __specta__fn__search_blocks,
-};
-#[doc(hidden)]
-pub use recovery::__specta__fn__get_recovery_status;
-#[doc(hidden)]
-pub use spaces::{
-    __specta__fn__create_page_in_space, __specta__fn__create_space, __specta__fn__list_spaces,
-};
-#[doc(hidden)]
-pub use sync_cmds::{
-    __specta__fn__cancel_pairing, __specta__fn__cancel_sync, __specta__fn__confirm_pairing,
-    __specta__fn__delete_peer_ref, __specta__fn__get_device_id, __specta__fn__get_mdns_status,
-    __specta__fn__get_peer_ref, __specta__fn__list_peer_refs, __specta__fn__set_peer_address,
-    __specta__fn__start_pairing, __specta__fn__start_sync, __specta__fn__update_peer_name,
-};
-#[doc(hidden)]
-pub use tags::{
-    __specta__fn__add_tag, __specta__fn__add_tags_by_ids, __specta__fn__list_all_tags_in_space,
-    __specta__fn__list_inherited_tags_for_block, __specta__fn__list_tags_by_prefix,
-    __specta__fn__list_tags_for_block, __specta__fn__query_by_tag_expr,
-    __specta__fn__query_by_tags, __specta__fn__remove_tag,
-};
-
-// Tauri `__cmd__` wrappers generated by `#[tauri::command]` on each handler.
-#[doc(hidden)]
-pub use agenda::{
-    __cmd__count_agenda_batch, __cmd__count_agenda_batch_by_source, __cmd__list_projected_agenda,
-    __cmd__list_undated_tasks,
-};
-#[doc(hidden)]
-pub use attachments::{
-    __cmd__add_attachment, __cmd__delete_attachment, __cmd__list_attachments,
-    __cmd__list_attachments_batch,
-};
-#[doc(hidden)]
-pub use blocks::{
-    __cmd__batch_resolve, __cmd__count_trash, __cmd__create_block, __cmd__create_blocks_batch,
-    __cmd__delete_block, __cmd__delete_blocks_by_ids, __cmd__edit_block,
-    __cmd__first_child_for_blocks, __cmd__get_block, __cmd__get_blocks, __cmd__list_blocks,
-    __cmd__move_block, __cmd__move_blocks_to_space, __cmd__purge_all_deleted, __cmd__purge_block,
-    __cmd__purge_blocks_by_ids, __cmd__restore_all_deleted, __cmd__restore_block,
-    __cmd__restore_blocks_by_ids, __cmd__trash_descendant_counts,
-};
-#[doc(hidden)]
-pub use bug_report::{__cmd__collect_bug_report_metadata, __cmd__read_logs_for_report};
-#[doc(hidden)]
-pub use compaction::{__cmd__compact_op_log_cmd, __cmd__get_compaction_status};
-#[doc(hidden)]
-pub use drafts::{
-    __cmd__delete_draft, __cmd__flush_all_drafts, __cmd__flush_draft, __cmd__list_drafts,
-    __cmd__save_draft,
-};
-#[doc(hidden)]
-pub use history::{
-    __cmd__compute_block_vs_current_diff, __cmd__compute_edit_diff, __cmd__find_undo_group,
-    __cmd__list_page_history, __cmd__redo_page_op, __cmd__restore_page_to_op, __cmd__revert_ops,
-    __cmd__undo_page_op,
-};
-#[doc(hidden)]
-pub use journal::{
-    __cmd__get_journal_page_by_date, __cmd__list_journal_pages_in_range, __cmd__quick_capture_block,
-};
-#[doc(hidden)]
-pub use link_metadata::{__cmd__fetch_link_metadata, __cmd__get_link_metadata};
-#[doc(hidden)]
-pub use logging::{__cmd__get_log_dir, __cmd__log_frontend};
-#[doc(hidden)]
-pub use mcp::{
-    __cmd__get_mcp_rw_socket_path, __cmd__get_mcp_rw_status, __cmd__get_mcp_socket_path,
-    __cmd__get_mcp_status, __cmd__mcp_disconnect_all, __cmd__mcp_rw_disconnect_all,
-    __cmd__mcp_rw_set_enabled, __cmd__mcp_set_enabled,
-};
-#[doc(hidden)]
-pub use pages::{
-    __cmd__export_page_markdown, __cmd__get_page_aliases, __cmd__import_markdown,
-    __cmd__list_all_pages_in_space, __cmd__list_page_aliases_by_prefix, __cmd__list_page_links,
-    __cmd__list_template_page_ids_in_space, __cmd__load_page_subtree, __cmd__resolve_page_by_alias,
-    __cmd__set_page_aliases,
-};
-#[doc(hidden)]
-pub use properties::{
-    __cmd__create_property_def, __cmd__delete_property, __cmd__delete_property_def,
-    __cmd__get_batch_properties, __cmd__get_properties, __cmd__get_property,
-    __cmd__get_property_def, __cmd__list_property_defs, __cmd__list_property_keys,
-    __cmd__list_property_values, __cmd__set_due_date, __cmd__set_priority, __cmd__set_property,
-    __cmd__set_scheduled_date, __cmd__set_todo_state, __cmd__set_todo_state_batch,
-    __cmd__update_property_def_options,
-};
-#[doc(hidden)]
-pub use queries::{
-    __cmd__count_backlinks_batch, __cmd__filtered_blocks_query, __cmd__get_backlinks,
-    __cmd__get_status, __cmd__list_backlinks_grouped, __cmd__list_unfinished_tasks,
-    __cmd__list_unlinked_references, __cmd__query_backlinks_filtered, __cmd__query_by_property,
-    __cmd__search_blocks,
-};
-#[doc(hidden)]
-pub use recovery::__cmd__get_recovery_status;
-#[doc(hidden)]
-pub use spaces::{__cmd__create_page_in_space, __cmd__create_space, __cmd__list_spaces};
-#[doc(hidden)]
-pub use sync_cmds::{
-    __cmd__cancel_pairing, __cmd__cancel_sync, __cmd__confirm_pairing, __cmd__delete_peer_ref,
-    __cmd__get_device_id, __cmd__get_mdns_status, __cmd__get_peer_ref, __cmd__list_peer_refs,
-    __cmd__set_peer_address, __cmd__start_pairing, __cmd__start_sync, __cmd__update_peer_name,
-};
-#[doc(hidden)]
-pub use tags::{
-    __cmd__add_tag, __cmd__add_tags_by_ids, __cmd__list_all_tags_in_space,
-    __cmd__list_inherited_tags_for_block, __cmd__list_tags_by_prefix, __cmd__list_tags_for_block,
-    __cmd__query_by_tag_expr, __cmd__query_by_tags, __cmd__remove_tag,
-};
-
 // pub(crate) helpers used by other crate modules (e.g. recurrence.rs)
 // #882: `create_block_in_tx` / `set_property_in_tx` moved to the neutral
 // `crate::domain::block_ops` layer (removing the residual
@@ -411,12 +218,17 @@ pub(crate) use crate::domain::block_ops::{MAX_BLOCK_DEPTH, MAX_CONTENT_LENGTH};
 /// single authority.
 ///
 /// This is the single source of truth for the limit across the whole
-/// `*_by_ids` / batch family (`restore_blocks_by_ids_inner`,
-/// `set_todo_state_batch_inner`, `delete_blocks_by_ids_inner`,
-/// `get_blocks_inner`, `add_tags_by_ids_inner`, `create_blocks_batch_inner`,
-/// `move_blocks_to_space_inner`, and any future `*_by_ids` siblings) so the
-/// limit is not silently inconsistent across the family. Most sites enforce
-/// it via [`ensure_batch_within_cap`].
+/// `*_by_ids` / batch family — both the write-batch commands
+/// (`restore_blocks_by_ids_inner`, `set_todo_state_batch_inner`,
+/// `delete_blocks_by_ids_inner`, `add_tags_by_ids_inner`,
+/// `create_blocks_batch_inner`, `move_blocks_to_space_inner`) and the
+/// batch-read commands (`batch_resolve_inner`, `get_blocks_inner`,
+/// `first_child_for_blocks_inner`, `get_batch_properties_inner`,
+/// `list_attachments_batch_inner`, `count_backlinks_batch_inner`,
+/// `count_agenda_batch_inner`, `count_agenda_batch_by_source_inner`,
+/// `trash_descendant_counts_inner`, and any future `*_by_ids` siblings) so
+/// the limit is not silently inconsistent across the family. Every site
+/// enforces it via [`ensure_batch_within_cap`].
 pub(crate) const MAX_BATCH_BLOCK_IDS: usize = 1000;
 
 /// Reject an over-cap batch with the canonical
