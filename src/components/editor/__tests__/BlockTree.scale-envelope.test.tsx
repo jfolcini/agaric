@@ -118,7 +118,9 @@ function makeProps(
 
 /** A flat (unnested — every block at depth 0, parent_id null) page of `n` blocks. */
 function makeFlatPage(n: number): BlockRow[] {
-  return Array.from({ length: n }, (_, i) => makeBlock({ id: `BLK_${i}`, content: `b${i}`, position: i }))
+  return Array.from({ length: n }, (_, i) =>
+    makeBlock({ id: `BLK_${i}`, content: `b${i}`, position: i }),
+  )
 }
 
 const SCALES = [1_000, 5_000, 10_000] as const
@@ -139,104 +141,100 @@ function time(fn: () => void): number {
 }
 
 describe('BlockTree scale envelope (#2467 Measure)', () => {
-  it(
-    'measures buildFlatTree / splice / mount / re-render at 1K, 5K, and 10K blocks/page',
-    () => {
-      const measurements: ScaleMeasurement[] = []
+  it('measures buildFlatTree / splice / mount / re-render at 1K, 5K, and 10K blocks/page', () => {
+    const measurements: ScaleMeasurement[] = []
 
-      for (const n of SCALES) {
-        const rows = makeFlatPage(n)
+    for (const n of SCALES) {
+      const rows = makeFlatPage(n)
 
-        // 1. buildFlatTree — group-by-parent + per-group sort + DFS flatten.
-        let flat: FlatBlock[] = []
-        const buildFlatTreeMs = time(() => {
-          flat = buildFlatTree(rows, null)
-        })
-        expect(flat).toHaveLength(n)
+      // 1. buildFlatTree — group-by-parent + per-group sort + DFS flatten.
+      let flat: FlatBlock[] = []
+      const buildFlatTreeMs = time(() => {
+        flat = buildFlatTree(rows, null)
+      })
+      expect(flat).toHaveLength(n)
 
-        // 2. Splice cost — store-array copy + insert, mirroring
-        // `createBelow`'s `computeSpliced` in page-blocks-reducers.ts.
-        const newBlock: FlatBlock = makeBlock({ id: `${n}_NEW`, content: 'new', depth: 0 })
-        let spliced: FlatBlock[] = []
-        const spliceMs = time(() => {
-          spliced = [...flat]
-          spliced.splice(Math.floor(n / 2), 0, newBlock)
-        })
-        expect(spliced).toHaveLength(n + 1)
+      // 2. Splice cost — store-array copy + insert, mirroring
+      // `createBelow`'s `computeSpliced` in page-blocks-reducers.ts.
+      const newBlock: FlatBlock = makeBlock({ id: `${n}_NEW`, content: 'new', depth: 0 })
+      let spliced: FlatBlock[] = []
+      const spliceMs = time(() => {
+        spliced = [...flat]
+        spliced.splice(Math.floor(n / 2), 0, newBlock)
+      })
+      expect(spliced).toHaveLength(n + 1)
 
-        // 3. Initial mount — real SortableBlockWrapper fibers (leaf stubbed).
-        let renderResult!: ReturnType<typeof render>
-        const mountMs = time(() => {
-          renderResult = render(
-            <BlockListRenderer {...makeProps({ visibleItems: flat, blocks: flat })} />,
-          )
-        })
-        expect(renderResult.getAllByTestId(/^sortable-block-/)).toHaveLength(n)
+      // 3. Initial mount — real SortableBlockWrapper fibers (leaf stubbed).
+      let renderResult!: ReturnType<typeof render>
+      const mountMs = time(() => {
+        renderResult = render(
+          <BlockListRenderer {...makeProps({ visibleItems: flat, blocks: flat })} />,
+        )
+      })
+      expect(renderResult.getAllByTestId(/^sortable-block-/)).toHaveLength(n)
 
-        // 4. Re-render after splice — the steady-state "one block created on
-        // a page this large" cost, as opposed to the one-time initial mount.
-        const rerenderMs = time(() => {
-          renderResult.rerender(
-            <BlockListRenderer {...makeProps({ visibleItems: spliced, blocks: spliced })} />,
-          )
-        })
-        expect(renderResult.getAllByTestId(/^sortable-block-/)).toHaveLength(n + 1)
+      // 4. Re-render after splice — the steady-state "one block created on
+      // a page this large" cost, as opposed to the one-time initial mount.
+      const rerenderMs = time(() => {
+        renderResult.rerender(
+          <BlockListRenderer {...makeProps({ visibleItems: spliced, blocks: spliced })} />,
+        )
+      })
+      expect(renderResult.getAllByTestId(/^sortable-block-/)).toHaveLength(n + 1)
 
-        renderResult.unmount()
-        cleanup()
+      renderResult.unmount()
+      cleanup()
 
-        measurements.push({ n, buildFlatTreeMs, spliceMs, mountMs, rerenderMs })
-      }
+      measurements.push({ n, buildFlatTreeMs, spliceMs, mountMs, rerenderMs })
+    }
 
-      // Print the measured envelope so `vitest run` output carries the real
-      // numbers this bench exists to produce (matches the doc table in
-      // editor-and-content.md § Mount envelope — regenerate that table from
-      // this output when re-running the bench).
-      console.table(
-        measurements.map((m) => ({
-          blocks: m.n,
-          'buildFlatTree (ms)': m.buildFlatTreeMs.toFixed(2),
-          'splice (ms)': m.spliceMs.toFixed(2),
-          'mount (ms)': m.mountMs.toFixed(2),
-          're-render (ms)': m.rerenderMs.toFixed(2),
-        })),
-      )
+    // Print the measured envelope so `vitest run` output carries the real
+    // numbers this bench exists to produce (matches the doc table in
+    // editor-and-content.md § Mount envelope — regenerate that table from
+    // this output when re-running the bench).
+    console.table(
+      measurements.map((m) => ({
+        blocks: m.n,
+        'buildFlatTree (ms)': m.buildFlatTreeMs.toFixed(2),
+        'splice (ms)': m.spliceMs.toFixed(2),
+        'mount (ms)': m.mountMs.toFixed(2),
+        're-render (ms)': m.rerenderMs.toFixed(2),
+      })),
+    )
 
-      // ── Assertions ──────────────────────────────────────────────────────
-      // Every metric must stay under a generous absolute ceiling at every
-      // scale (catches an absolute-terms regression, e.g. an accidental
-      // synchronous IPC or O(n^2) creeping into any of these paths) AND the
-      // 10K/1K ratio must stay well under what an O(n^2) blowup would produce
-      // (catches an asymptotic regression even if the 1K number also grew).
-      // Linear work over a 10x scale step costs ~10x; the ratio ceilings below
-      // give ~4-8x headroom over that before failing, matching this repo's
-      // "distinguish regimes, don't pin exact numbers" timing-test convention
-      // (see markdown-serializer.test.ts's link-scan-depth hardening test).
-      const first = measurements[0]
-      const last = measurements.at(-1)
-      if (!first || !last) throw new Error('expected measurements for every scale')
+    // ── Assertions ──────────────────────────────────────────────────────
+    // Every metric must stay under a generous absolute ceiling at every
+    // scale (catches an absolute-terms regression, e.g. an accidental
+    // synchronous IPC or O(n^2) creeping into any of these paths) AND the
+    // 10K/1K ratio must stay well under what an O(n^2) blowup would produce
+    // (catches an asymptotic regression even if the 1K number also grew).
+    // Linear work over a 10x scale step costs ~10x; the ratio ceilings below
+    // give ~4-8x headroom over that before failing, matching this repo's
+    // "distinguish regimes, don't pin exact numbers" timing-test convention
+    // (see markdown-serializer.test.ts's link-scan-depth hardening test).
+    const first = measurements[0]
+    const last = measurements.at(-1)
+    if (!first || !last) throw new Error('expected measurements for every scale')
 
-      for (const m of measurements) {
-        // Absolute ceilings, sized for CI jitter on shared hardware.
-        expect(m.buildFlatTreeMs).toBeLessThan(500)
-        expect(m.spliceMs).toBeLessThan(200)
-        expect(m.mountMs).toBeLessThan(10_000)
-        expect(m.rerenderMs).toBeLessThan(10_000)
-      }
+    for (const m of measurements) {
+      // Absolute ceilings, sized for CI jitter on shared hardware.
+      expect(m.buildFlatTreeMs).toBeLessThan(500)
+      expect(m.spliceMs).toBeLessThan(200)
+      expect(m.mountMs).toBeLessThan(10_000)
+      expect(m.rerenderMs).toBeLessThan(10_000)
+    }
 
-      // Sub-quadratic trend: 10x more blocks should not cost anywhere near
-      // 10x^2 (100x) more time. A ~40x ceiling comfortably separates linear/
-      // n-log-n growth (expected ~10-15x here) from a real O(n^2) regression.
-      const scaleFactor = last.n / first.n
-      const superlinearCeiling = scaleFactor * 4
+    // Sub-quadratic trend: 10x more blocks should not cost anywhere near
+    // 10x^2 (100x) more time. A ~40x ceiling comfortably separates linear/
+    // n-log-n growth (expected ~10-15x here) from a real O(n^2) regression.
+    const scaleFactor = last.n / first.n
+    const superlinearCeiling = scaleFactor * 4
 
-      expect(last.buildFlatTreeMs).toBeLessThan(
-        Math.max(first.buildFlatTreeMs * superlinearCeiling, 50),
-      )
-      expect(last.spliceMs).toBeLessThan(Math.max(first.spliceMs * superlinearCeiling, 50))
-      expect(last.mountMs).toBeLessThan(Math.max(first.mountMs * superlinearCeiling, 200))
-      expect(last.rerenderMs).toBeLessThan(Math.max(first.rerenderMs * superlinearCeiling, 200))
-    },
-    30_000,
-  )
+    expect(last.buildFlatTreeMs).toBeLessThan(
+      Math.max(first.buildFlatTreeMs * superlinearCeiling, 50),
+    )
+    expect(last.spliceMs).toBeLessThan(Math.max(first.spliceMs * superlinearCeiling, 50))
+    expect(last.mountMs).toBeLessThan(Math.max(first.mountMs * superlinearCeiling, 200))
+    expect(last.rerenderMs).toBeLessThan(Math.max(first.rerenderMs * superlinearCeiling, 200))
+  }, 30_000)
 })
