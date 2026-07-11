@@ -1362,4 +1362,149 @@ describe('DataTab', () => {
       })
     })
   })
+
+  // #2513 (part 2) — Joplin `.jex` import. The picked tar archive is unpacked in
+  // the browser and each note handed to the shared `importMarkdown` IPC as one
+  // page, reusing the `.enex` attachment (`vaultFiles`) plumbing.
+  describe('Joplin .jex import (#2513)', () => {
+    const okResult = (title = 'note') => ({
+      page_title: title,
+      blocks_created: 2,
+      properties_set: 0,
+      warnings: [],
+    })
+
+    const textEnc = new TextEncoder()
+
+    /** Encode a NUL-terminated octal tar header field of `len` bytes. */
+    const octalField = (n: number, len: number): string =>
+      `${n.toString(8).padStart(len - 1, '0')}\0`
+
+    /** Build a minimal USTAR archive from `{ name, data }` members. */
+    const buildTar = (members: { name: string; data: Uint8Array }[]): Uint8Array => {
+      const blocks: Uint8Array[] = []
+      for (const { name, data } of members) {
+        const header = new Uint8Array(512)
+        header.set(textEnc.encode(name).subarray(0, 100), 0)
+        header.set(textEnc.encode(octalField(data.length, 12)), 124)
+        header[156] = 0x30
+        header.set(textEnc.encode('ustar\0'), 257)
+        for (let i = 148; i < 156; i++) header[i] = 0x20
+        let sum = 0
+        for (let i = 0; i < 512; i++) sum += header[i] ?? 0
+        header.set(textEnc.encode(`${sum.toString(8).padStart(6, '0')}\0 `), 148)
+        blocks.push(header)
+        const padded = new Uint8Array(Math.ceil(data.length / 512) * 512)
+        padded.set(data)
+        blocks.push(padded)
+      }
+      blocks.push(new Uint8Array(512), new Uint8Array(512))
+      const total = blocks.reduce((n, b) => n + b.length, 0)
+      const out = new Uint8Array(total)
+      let off = 0
+      for (const b of blocks) {
+        out.set(b, off)
+        off += b.length
+      }
+      return out
+    }
+
+    const joplinItem = (content: string, props: Record<string, string>): string => {
+      const meta = Object.entries(props)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join('\n')
+      return `${content}\n\n${meta}\n`
+    }
+
+    const NOTE_ID = 'b'.repeat(32)
+    const RES_ID = 'd'.repeat(32)
+
+    /** A one-note archive whose note embeds a resource by `:/id`. */
+    const noteWithResourceJex = (): Uint8Array => {
+      const note = joplinItem(`Picture Note\n\nSee ![pic](:/${RES_ID}).`, {
+        id: NOTE_ID,
+        parent_id: '',
+        type_: '1',
+      })
+      const resMeta = joplinItem('pic.png', {
+        id: RES_ID,
+        mime: 'image/png',
+        file_extension: 'png',
+        type_: '4',
+      })
+      return buildTar([
+        { name: `${NOTE_ID}.md`, data: textEnc.encode(note) },
+        { name: `${RES_ID}.md`, data: textEnc.encode(resMeta) },
+        { name: `resources/${RES_ID}.png`, data: new Uint8Array([104, 101, 108, 108, 111]) },
+      ])
+    }
+
+    /** Dispatch a change on the jex input for `bytes` under `filename`. */
+    const importJex = async (bytes: Uint8Array, filename: string) => {
+      const input = screen.getByTestId('import-jex-input') as HTMLInputElement
+      const file = new File([bytes as BlobPart], filename, { type: 'application/octet-stream' })
+      Object.defineProperty(input, 'files', { value: [file] })
+      await act(async () => {
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+    }
+
+    it('renders the jex input and button', () => {
+      render(<DataTab />)
+      const btn = screen.getByTestId('import-jex-button')
+      expect(btn).toHaveTextContent('Import Joplin (.jex)')
+      expect(screen.getByTestId('import-jex-input')).toHaveAttribute('accept', '.jex')
+    })
+
+    it('imports each note as a page and ships resource bytes as vaultFiles', async () => {
+      mockImportMarkdown.mockResolvedValue(okResult('Picture Note'))
+
+      render(<DataTab />)
+      await importJex(noteWithResourceJex(), 'notes.jex')
+
+      await waitFor(() => expect(mockImportMarkdown).toHaveBeenCalledTimes(1))
+      const [content0, filename0, spaceId0, onProgress0, vaultFiles0] = mockImportMarkdown.mock
+        .calls[0] as [string, string, string, unknown, Array<{ path: string; bytes: number[] }>]
+      expect(filename0).toBe('Picture Note.md')
+      expect(spaceId0).toBe(DEFAULT_TEST_SPACE.id)
+      expect(typeof onProgress0).toBe('function')
+      // Joplin body is already markdown; the resource embed is rewritten and the
+      // frontmatter stamps the joplin source.
+      expect(content0).toContain('source: joplin')
+      expect(content0).toContain('![pic](pic.png)')
+      // The decoded resource bytes ("hello") ship via the vault-attachment path.
+      expect(vaultFiles0).toHaveLength(1)
+      expect(vaultFiles0[0]?.path).toBe('pic.png')
+      expect(vaultFiles0[0]?.bytes).toEqual([104, 101, 108, 108, 111])
+    })
+
+    it('labels the aggregate success toast "notes"', async () => {
+      mockImportMarkdown.mockResolvedValue({ ...okResult(), blocks_created: 5 })
+      render(<DataTab />)
+      await importJex(noteWithResourceJex(), 'notes.jex')
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith(
+          'Imported 5 blocks from 1 note',
+          expect.anything(),
+        )
+      })
+    })
+
+    it('fires a single error toast (no double) when the archive has no notes', async () => {
+      render(<DataTab />)
+      // A tar with no `.md` items yields zero notes → one parse-failure toast.
+      const empty = buildTar([{ name: 'readme.txt', data: textEnc.encode('hi') }])
+      await importJex(empty, 'empty.jex')
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(
+          'Could not read empty.jex: not a valid Joplin export.',
+        )
+      })
+      // The generic summary must NOT also fire, and exactly one error toast shows.
+      expect(toast.error).not.toHaveBeenCalledWith('All 1 file failed to import.')
+      expect(toast.error).toHaveBeenCalledTimes(1)
+      expect(mockImportMarkdown).not.toHaveBeenCalled()
+    })
+  })
 })
