@@ -8,7 +8,7 @@
  *  - Export: download all pages as a ZIP of Markdown files
  */
 
-import { Download, FileUp, FolderUp, Upload } from 'lucide-react'
+import { Download, FileUp, FolderUp, Upload, Vault } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -202,6 +202,13 @@ export function DataTab(): React.ReactElement {
   // its `.md`-only single-file/multi-file behaviour; this one populates
   // `file.webkitRelativePath` to drive the #1446 folder→namespace mapping.
   const folderInputRef = useRef<HTMLInputElement>(null)
+  // #2510 — dedicated hidden `webkitdirectory` input for the "Import Obsidian
+  // vault" affordance. It drives the exact SAME `handleFileImport` folder
+  // pipeline as `folderInputRef` (an Obsidian vault IS a folder of `.md` files);
+  // the separate, explicitly-named button/input just makes Obsidian support
+  // discoverable. No behavioural fork on the FE — the backend already resolves
+  // Obsidian wikilinks/`^block-id` anchors unconditionally on import.
+  const obsidianVaultInputRef = useRef<HTMLInputElement>(null)
   // #1282 — hidden input for the Evernote `.enex` importer. Kept separate
   // from the `.md`/folder inputs since each `.enex` file expands into one
   // page PER note (ENML → Markdown), a different iteration unit than a file.
@@ -682,6 +689,18 @@ export function DataTab(): React.ReactElement {
       ? null
       : (availableSpaces.find((s) => s.id === currentSpaceId)?.name ?? null)
 
+  // Shared gating props for every import affordance (Choose Files / Import
+  // Folder / #2510 Import Obsidian vault / Import Evernote). `import_markdown`
+  // requires a live `space_id`, so each button is disabled until a space is
+  // active and, when gated, points at the visible + AT-announced not-ready
+  // hint. Hoisted (rather than repeated inline per button) so the four buttons
+  // stay identical and the render's cyclomatic complexity does not scale with
+  // the affordance count.
+  const importGated = currentSpaceId == null
+  const importDisabled = importing || importGated
+  const importGatedTitle = importGated ? t('data.importSpaceNotReady') : undefined
+  const importGatedDescribedBy = importGated ? importHintId : undefined
+
   return (
     <div className="data-settings-tab space-y-6">
       <Card>
@@ -736,9 +755,9 @@ export function DataTab(): React.ReactElement {
               // can't fire hover events on most browsers because
               // `disabled:pointer-events-none`, so we don't rely on
               // the tooltip alone).
-              disabled={importing || currentSpaceId == null}
-              title={currentSpaceId == null ? t('data.importSpaceNotReady') : undefined}
-              aria-describedby={currentSpaceId == null ? importHintId : undefined}
+              disabled={importDisabled}
+              title={importGatedTitle}
+              aria-describedby={importGatedDescribedBy}
             >
               <Upload className="h-3.5 w-3.5" />{' '}
               {importing ? t('data.importingMessage') : t('data.importButton')}
@@ -749,12 +768,38 @@ export function DataTab(): React.ReactElement {
               variant="outline"
               size="sm"
               onClick={() => folderInputRef.current?.click()}
-              disabled={importing || currentSpaceId == null}
-              title={currentSpaceId == null ? t('data.importSpaceNotReady') : undefined}
-              aria-describedby={currentSpaceId == null ? importHintId : undefined}
+              disabled={importDisabled}
+              title={importGatedTitle}
+              aria-describedby={importGatedDescribedBy}
               data-testid="import-folder-button"
             >
               <FolderUp className="h-3.5 w-3.5" /> {t('data.importFolderButton')}
+            </Button>
+            {/* #2510 — dedicated "Import Obsidian vault" affordance. A vault is
+                a folder pick, so it reuses the SAME `webkitdirectory` input +
+                `handleFileImport` flow as the generic folder button; the
+                explicit Obsidian label/icon makes the (already-working)
+                Obsidian support discoverable. `webkitdirectory` is not in the
+                React DOM typings, so spread it as a lowercased attribute. */}
+            <input
+              type="file"
+              {...{ webkitdirectory: '', directory: '' }}
+              ref={obsidianVaultInputRef}
+              className="hidden"
+              onChange={handleFileImport}
+              data-testid="import-obsidian-input"
+              aria-label={t('data.importObsidianButton')}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => obsidianVaultInputRef.current?.click()}
+              disabled={importDisabled}
+              title={importGatedTitle}
+              aria-describedby={importGatedDescribedBy}
+              data-testid="import-obsidian-button"
+            >
+              <Vault className="h-3.5 w-3.5" /> {t('data.importObsidianButton')}
             </Button>
             {/* #1282 — Evernote `.enex` import affordance. Same gating + flow
                 as the files button; each note in the picked file(s) becomes a
@@ -773,9 +818,9 @@ export function DataTab(): React.ReactElement {
               variant="outline"
               size="sm"
               onClick={() => enexInputRef.current?.click()}
-              disabled={importing || currentSpaceId == null}
-              title={currentSpaceId == null ? t('data.importSpaceNotReady') : undefined}
-              aria-describedby={currentSpaceId == null ? importHintId : undefined}
+              disabled={importDisabled}
+              title={importGatedTitle}
+              aria-describedby={importGatedDescribedBy}
               data-testid="import-enex-button"
             >
               <FileUp className="h-3.5 w-3.5" /> {t('data.importEnexButton')}

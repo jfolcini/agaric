@@ -326,11 +326,18 @@ export const common: Record<string, string> = {
   'dialog.cancel': 'Cancel',
   'dialog.confirm': 'Confirm',
   'data.importTitle': 'Import',
-  'data.importDesc': 'Import Logseq or Markdown files as pages.',
+  'data.importDesc': 'Import Logseq, Obsidian, or Markdown files as pages.',
   'data.importButton': 'Choose Files',
   // #1927 — second affordance: a `webkitdirectory` picker so a whole
   // folder/vault can be imported (folder hierarchy → page namespace).
   'data.importFolderButton': 'Import Folder',
+  // #2510 — dedicated, discoverable Obsidian-vault affordance. Drives the
+  // SAME `webkitdirectory` folder pick + import pipeline as `importFolderButton`
+  // (wikilinks, tags, embeds, frontmatter, folders, and — since #2510 item 1 —
+  // `^block-id` anchors all resolve on import); the separate, explicitly-named
+  // button makes Obsidian support discoverable rather than hidden behind the
+  // generic "Import Folder" label.
+  'data.importObsidianButton': 'Import Obsidian Vault',
   // #1282 — third affordance: import Evernote `.enex` exports. Each note in
   // the file becomes its own page (ENML → Markdown, frontend-only).
   'data.importEnexButton': 'Import Evernote (.enex)',
