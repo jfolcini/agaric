@@ -111,6 +111,13 @@ const PAGES_CACHE_CHILDREN_PER_PAGE: usize = 9;
 /// Pages-view page)" per the issue's scope description.
 const PAGES_CACHE_SAMPLE_SIZE: usize = 50;
 
+/// #2585 — first-page size for the whole-space `MostLinked` sort probes,
+/// mirroring a real Pages-view first page. The temp-B-tree sort evaluates the
+/// key for every space page regardless of this `LIMIT`; it only bounds the
+/// returned row count. `+ 1` is the production probe-for-more pattern.
+const PAGES_MOSTLINKED_PAGE_LIMIT: usize = 50;
+const PAGES_MOSTLINKED_LIMIT_PLUS_ONE: i64 = PAGES_MOSTLINKED_PAGE_LIMIT as i64 + 1;
+
 // ---------------------------------------------------------------------------
 // Accumulator type
 // ---------------------------------------------------------------------------
@@ -673,6 +680,52 @@ async fn seed_pages_cache_fixture(
     page_ids
 }
 
+/// #2585 — fixture for the whole-space `MostLinked` sort probes. Reuses
+/// `seed_pages_cache_fixture` (10K pages x 9 children + cross-page links),
+/// assigns every block to `SLO_SPACE_ID` so the production `b.space_id = ?1`
+/// filter selects the whole set, and populates `pages_cache` for the
+/// cache-backed probe. The `pages_cache` counts are computed with the exact
+/// subqueries the columns denormalize (`recompute_all_pages_cache_counts` /
+/// migration 0069), so the materialised sort key equals what production would
+/// store — the `_LIVE` probe recomputes the same values on the fly. The
+/// space-owner page (`SLO_SPACE_ID`, `space_id IS NULL`) is excluded from both
+/// the cache fill and the queries, so it never pollutes the sorted set.
+async fn seed_pages_mostlinked_fixture(pool: &SqlitePool) {
+    seed_pages_cache_fixture(
+        pool,
+        PAGES_CACHE_FIXTURE_PAGES,
+        PAGES_CACHE_CHILDREN_PER_PAGE,
+    )
+    .await;
+    assign_all_to_slo_space(pool).await;
+    sqlx::query(
+        "INSERT INTO pages_cache (page_id, title, updated_at, inbound_link_count, child_block_count) \
+         SELECT p.id, p.content, 0, \
+             ( \
+                 SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
+                     JOIN blocks descendant ON bl.target_id = descendant.id \
+                     JOIN blocks src ON src.id = bl.source_id \
+                     WHERE descendant.page_id = p.id \
+                       AND descendant.deleted_at IS NULL \
+                       AND src.deleted_at IS NULL \
+                       AND src.page_id IS NOT NULL \
+                       AND src.page_id != p.id \
+             ), \
+             ( \
+                 SELECT COUNT(*) FROM blocks descendant \
+                     WHERE descendant.page_id = p.id \
+                       AND descendant.deleted_at IS NULL \
+                       AND descendant.id != p.id \
+             ) \
+         FROM blocks p \
+         WHERE p.block_type = 'page' AND p.deleted_at IS NULL AND p.space_id = ?",
+    )
+    .bind(SLO_SPACE_ID)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 /// Deterministic, monotonic `op_log.created_at` (epoch ms) from a seq counter.
 /// INTEGER since migration 0079 — see `SLO_BASE_TS_MS`. Strictly increasing in
 /// `seq` so the most-recent-N op selectors see a stable order.
@@ -859,6 +912,22 @@ fn assert_under_budget_deferred(cmd: &str, acc: &Acc, budget_ms: f64) {
         println!("{line}");
         PROBLEM_TIER_FAILURES.lock().unwrap().push(line);
     }
+}
+
+/// #2585 — print-only reporter for a pure counterfactual probe (no budget).
+/// The `_LIVE` MostLinked probe is EXPECTED to be slow — it exists to quantify
+/// the cost the `pages_cache` columns avoid, not to gate a regression — so it
+/// must never fail the bench. Still emits the same grep-stable
+/// `interactive_slo: {cmd} = … ms` prefix the nightly lane keys on, so the
+/// number is captured alongside the budgeted probes.
+fn report_measurement_only(cmd: &str, acc: &Acc) {
+    let iters = acc.iters();
+    assert!(
+        iters > 0,
+        "interactive_slo: {cmd} ran zero iterations (Criterion harness bug?)"
+    );
+    let mean_ms = (acc.total().as_secs_f64() * 1000.0) / iters as f64;
+    println!("interactive_slo: {cmd} = {mean_ms:.2} ms (counterfactual — no budget)");
 }
 
 /// Final member of the `slo_problem` group: fails the bench run iff any
@@ -1572,6 +1641,106 @@ const SLO_PAGES_CACHE_COUNTS_DIRECT_SQL: &str = "SELECT p.id AS page_id, \
     FROM blocks p \
     WHERE p.id IN (SELECT value FROM json_each(?))";
 
+// ---------------------------------------------------------------------------
+// #2585 — whole-space MostLinked sort probes (cache vs. live subquery)
+//
+// The #2508 probe above times a 50-page `WHERE page_id IN (…)` sample — the
+// `↗N` badge-render cost for one visible page. It does NOT measure the axis
+// that justifies the `pages_cache.{inbound_link_count,child_block_count}`
+// columns existing: the `MostLinked`/`MostContent` sort keys the ORDER BY on
+// the count, which runs as a `USE TEMP B-TREE FOR ORDER BY` — SQLite evaluates
+// the key for EVERY space page before the `LIMIT`. These two probes measure
+// exactly that, holding everything constant except the count source:
+//
+//   * `_CACHE` reads the materialised `pc.inbound_link_count` (production
+//     today), and
+//   * `_LIVE` inlines the pre-0069 `COUNT(DISTINCT) FROM block_links`
+//     correlated subquery that dropping the columns would revert to (with the
+//     current keyset architecture, which inlines the sort expression, the
+//     subquery lands in BOTH the SELECT column and the ORDER BY).
+//
+// `_LIVE` − `_CACHE` is the whole-space cost the columns actually buy — the
+// number #2508 needed and that the badge probe cannot produce.
+//
+// Both mirror `commands/pages/metadata.rs::PAGES_METADATA_BASE_SELECT` + the
+// `MostLinked` first-page (`cursor = None`) keyset; keep them in step with
+// that source (the file's hand-copied-SQL convention). `?1` = space_id,
+// `?2` = limit-plus-one. The five residual metadata subqueries
+// (`last_modified_at`, `has_*`) are carried verbatim so `_CACHE` reflects the
+// real production `MostLinked` latency, and they cancel in the delta.
+// ---------------------------------------------------------------------------
+
+/// #2585 — whole-space `MostLinked` first page reading the materialised
+/// `pc.inbound_link_count` (production shape today).
+const SLO_PAGES_MOSTLINKED_CACHE_SQL: &str = "SELECT \
+       b.id, b.block_type, b.content, b.parent_id, b.position, \
+       b.deleted_at, b.todo_state, b.priority, b.due_date, \
+       b.scheduled_date, b.page_id, \
+       (SELECT MAX(created_at) FROM op_log WHERE block_id = b.id) AS last_modified_at, \
+       COALESCE(pc.inbound_link_count, 0) AS inbound_link_count, \
+       COALESCE(pc.child_block_count, 0) AS child_block_count, \
+       EXISTS(SELECT 1 FROM block_tags WHERE block_id = b.id) AS has_tags, \
+       EXISTS(SELECT 1 FROM blocks descendant WHERE descendant.page_id = b.id \
+               AND descendant.deleted_at IS NULL AND descendant.todo_state IS NOT NULL) AS has_todo, \
+       EXISTS(SELECT 1 FROM blocks descendant WHERE descendant.page_id = b.id \
+               AND descendant.deleted_at IS NULL AND descendant.scheduled_date IS NOT NULL) AS has_scheduled, \
+       EXISTS(SELECT 1 FROM blocks descendant WHERE descendant.page_id = b.id \
+               AND descendant.deleted_at IS NULL AND descendant.due_date IS NOT NULL) AS has_due \
+   FROM blocks b \
+   LEFT JOIN pages_cache pc ON pc.page_id = b.id \
+   WHERE b.block_type = 'page' AND b.deleted_at IS NULL AND b.space_id = ?1 \
+   ORDER BY COALESCE(pc.inbound_link_count, 0) DESC, b.id ASC \
+   LIMIT ?2";
+
+/// #2585 — the same whole-space `MostLinked` first page, but with the count
+/// read live via the pre-0069 `COUNT(DISTINCT) FROM block_links` correlated
+/// subquery (no `pages_cache` join) — the shape dropping the columns reverts
+/// to. The subquery is the exact one `pages_cache.inbound_link_count`
+/// denormalizes (`SLO_PAGES_CACHE_COUNTS_DIRECT_SQL` / migration 0069), rooted
+/// on `b.id`, and appears in both the SELECT and the ORDER BY (the keyset
+/// inlines the sort expression, so today's code would double-evaluate it).
+const SLO_PAGES_MOSTLINKED_LIVE_SQL: &str = "SELECT \
+       b.id, b.block_type, b.content, b.parent_id, b.position, \
+       b.deleted_at, b.todo_state, b.priority, b.due_date, \
+       b.scheduled_date, b.page_id, \
+       (SELECT MAX(created_at) FROM op_log WHERE block_id = b.id) AS last_modified_at, \
+       ( \
+           SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
+               JOIN blocks descendant ON bl.target_id = descendant.id \
+               JOIN blocks src ON src.id = bl.source_id \
+               WHERE descendant.page_id = b.id \
+                 AND descendant.deleted_at IS NULL \
+                 AND src.deleted_at IS NULL \
+                 AND src.page_id IS NOT NULL \
+                 AND src.page_id != b.id \
+       ) AS inbound_link_count, \
+       ( \
+           SELECT COUNT(*) FROM blocks descendant \
+               WHERE descendant.page_id = b.id \
+                 AND descendant.deleted_at IS NULL \
+                 AND descendant.id != b.id \
+       ) AS child_block_count, \
+       EXISTS(SELECT 1 FROM block_tags WHERE block_id = b.id) AS has_tags, \
+       EXISTS(SELECT 1 FROM blocks descendant WHERE descendant.page_id = b.id \
+               AND descendant.deleted_at IS NULL AND descendant.todo_state IS NOT NULL) AS has_todo, \
+       EXISTS(SELECT 1 FROM blocks descendant WHERE descendant.page_id = b.id \
+               AND descendant.deleted_at IS NULL AND descendant.scheduled_date IS NOT NULL) AS has_scheduled, \
+       EXISTS(SELECT 1 FROM blocks descendant WHERE descendant.page_id = b.id \
+               AND descendant.deleted_at IS NULL AND descendant.due_date IS NOT NULL) AS has_due \
+   FROM blocks b \
+   WHERE b.block_type = 'page' AND b.deleted_at IS NULL AND b.space_id = ?1 \
+   ORDER BY ( \
+           SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
+               JOIN blocks descendant ON bl.target_id = descendant.id \
+               JOIN blocks src ON src.id = bl.source_id \
+               WHERE descendant.page_id = b.id \
+                 AND descendant.deleted_at IS NULL \
+                 AND src.deleted_at IS NULL \
+                 AND src.page_id IS NOT NULL \
+                 AND src.page_id != b.id \
+       ) DESC, b.id ASC \
+   LIMIT ?2";
+
 // ===========================================================================
 // Problem tier — measurement probes, gated behind SLO_INCLUDE_PROBLEM
 // ===========================================================================
@@ -1698,6 +1867,116 @@ fn bench_pages_cache_counts_direct_query(c: &mut Criterion) {
     assert_under_budget_deferred("pages_cache counts direct query @ 100K", &acc, BUDGET_MS);
 }
 
+/// #2585 — whole-space `MostLinked` first-page sort reading the materialised
+/// `pages_cache` column (production shape today). PROBLEM TIER (gated behind
+/// `SLO_INCLUDE_PROBLEM`; see `bench_tags_cache_direct_query` doc). This is the
+/// axis that actually justifies the count columns — the temp-B-tree sort
+/// evaluates the key for every space page before `LIMIT` — as opposed to the
+/// 50-page badge sample `bench_pages_cache_counts_direct_query` times. Pairs
+/// with `bench_pages_mostlinked_sort_live`: the delta is the columns' value.
+fn bench_pages_mostlinked_sort_cache(c: &mut Criterion) {
+    const BUDGET_MS: f64 = 200.0;
+
+    if problem_skipped("pages MostLinked sort (cache) @ 100K") {
+        return;
+    }
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_pages_mostlinked_cache"));
+    rt.block_on(seed_pages_mostlinked_fixture(&pool));
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    group.bench_function("pages_mostlinked_sort_cache_100k", move |b| {
+        let acc = acc_for_bench.clone();
+        let pool = pool.clone();
+        b.to_async(&rt).iter_custom(move |iters| {
+            let pool = pool.clone();
+            let acc = acc.clone();
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let rows = sqlx::query(SLO_PAGES_MOSTLINKED_CACHE_SQL)
+                        .bind(SLO_SPACE_ID)
+                        .bind(PAGES_MOSTLINKED_LIMIT_PLUS_ONE)
+                        .fetch_all(&pool)
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        rows.len(),
+                        PAGES_MOSTLINKED_PAGE_LIMIT + 1,
+                        "MostLinked cache sort returned unexpected row count \
+                         (fixture must hold > limit space pages)"
+                    );
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+
+    assert_under_budget_deferred("pages MostLinked sort (cache) @ 100K", &acc, BUDGET_MS);
+}
+
+/// #2585 — the same whole-space `MostLinked` first page, but computing the
+/// inbound-link count live via the pre-0069 `COUNT(DISTINCT) FROM block_links`
+/// correlated subquery (the shape dropping the count columns reverts to).
+/// PROBLEM TIER. This is a **counterfactual**, expected to be slow, so it uses
+/// `report_measurement_only` (no budget — it must never fail the bench); its
+/// value is the delta against `bench_pages_mostlinked_sort_cache`, which is
+/// the whole-space cost the materialised columns actually buy.
+fn bench_pages_mostlinked_sort_live(c: &mut Criterion) {
+    if problem_skipped("pages MostLinked sort (live subquery) @ 100K") {
+        return;
+    }
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_pages_mostlinked_live"));
+    rt.block_on(seed_pages_mostlinked_fixture(&pool));
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    group.bench_function("pages_mostlinked_sort_live_100k", move |b| {
+        let acc = acc_for_bench.clone();
+        let pool = pool.clone();
+        b.to_async(&rt).iter_custom(move |iters| {
+            let pool = pool.clone();
+            let acc = acc.clone();
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let rows = sqlx::query(SLO_PAGES_MOSTLINKED_LIVE_SQL)
+                        .bind(SLO_SPACE_ID)
+                        .bind(PAGES_MOSTLINKED_LIMIT_PLUS_ONE)
+                        .fetch_all(&pool)
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        rows.len(),
+                        PAGES_MOSTLINKED_PAGE_LIMIT + 1,
+                        "MostLinked live sort returned unexpected row count \
+                         (fixture must hold > limit space pages)"
+                    );
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+
+    report_measurement_only("pages MostLinked sort (live subquery) @ 100K", &acc);
+}
+
 // ===========================================================================
 // Harness
 // ===========================================================================
@@ -1721,6 +2000,8 @@ criterion_group!(
     bench_list_projected_agenda,
     bench_tags_cache_direct_query,
     bench_pages_cache_counts_direct_query,
+    bench_pages_mostlinked_sort_cache,
+    bench_pages_mostlinked_sort_live,
     problem_tier_verdict,
 );
 
