@@ -581,6 +581,15 @@ export const commands = {
 	 *  best-effort, so a dropped channel never aborts the import.
 	 */
 	importMarkdown: (content: string, filename: string | null, spaceId: SpaceId, vaultFiles: VaultFile[] | null, progress: Channel<ImportProgressUpdate>) => typedError<ImportResult, AppError>(__TAURI_INVOKE("import_markdown", { content, filename, spaceId, vaultFiles, progress })),
+	/**
+	 *  Tauri command: import a BibTeX / CSL-JSON bibliography into `space_id`
+	 *  as reference pages. Delegates to [`import_bibliography_inner`].
+	 * 
+	 *  `format` is `"bibtex"`, `"csl-json"`, or `null` to auto-detect. No
+	 *  progress channel in v1 — entries are tiny and the import chunk-commits
+	 *  every [`IMPORT_BIB_CHUNK_ENTRIES`] entries (#2470 writer-lock contract).
+	 */
+	importBibliography: (content: string, format: string | null, spaceId: SpaceId) => typedError<ImportBibliographyResult, AppError>(__TAURI_INVOKE("import_bibliography", { content, format, spaceId })),
 	/**  Tauri command: add an attachment to a block. Delegates to [`add_attachment_inner`]. */
 	addAttachment: (blockId: BlockId, filename: string, mimeType: string, sizeBytes: number, fsPath: string) => typedError<AttachmentRow, AppError>(__TAURI_INVOKE("add_attachment", { blockId, filename, mimeType, sizeBytes, fsPath })),
 	/**
@@ -2123,6 +2132,32 @@ export type HistoryEntry = {
 	payload: string,
 	/**  Epoch-ms (op_log.created_at is INTEGER since migration 0079). */
 	created_at: number,
+};
+
+/**
+ *  Outcome of one `import_bibliography` call. Field shapes are part of the
+ *  agreed IPC contract — do not change.
+ */
+export type ImportBibliographyResult = {
+	/**  Reference pages made durable by the import. */
+	pages_created: number,
+	/**
+	 *  Entries skipped by the dedup/idempotence rule (a page in the space
+	 *  already carries the entry's `citation-key`, or — fallback — the same
+	 *  non-empty `doi`), including duplicates within the imported file.
+	 */
+	entries_skipped: number,
+	/**
+	 *  Typed properties stamped onto the created pages (excluding the
+	 *  reserved `space` membership property).
+	 */
+	properties_set: number,
+	/**
+	 *  Non-fatal diagnostics: parser warnings (skipped directives, ignored
+	 *  fields, LaTeX kept literal, …) plus per-entry apply notices
+	 *  (dedup skips, title-collision renames, rejected property values).
+	 */
+	warnings: string[],
 };
 
 /**

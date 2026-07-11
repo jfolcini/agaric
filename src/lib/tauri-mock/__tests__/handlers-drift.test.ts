@@ -47,6 +47,17 @@ vi.mock('../../logger', () => ({
  */
 const INTENTIONALLY_NOT_MOCKED: ReadonlySet<string> = new Set<string>()
 
+/**
+ * Commands whose mock handler landed AHEAD of the Tauri Specta regen because
+ * the frontend and backend halves of an issue were built in parallel. These
+ * are excluded from the stale-handler check ONLY — the forward check (every
+ * bindings command has a handler) is unaffected. Once the regenerated
+ * `bindings.ts` exposes the command, the entry here becomes inert and should
+ * be removed. (Currently empty — `import_bibliography` (#1454) graduated when
+ * its specta regen landed.)
+ */
+const PENDING_BINDINGS: ReadonlySet<string> = new Set<string>()
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -101,7 +112,10 @@ describe('tauri-mock HANDLERS drift detection', () => {
   it('every HANDLERS key corresponds to a real command in bindings.ts', () => {
     // Reverse direction: a stale handler for a removed command is also drift.
     const stale = [...handlerKeys].filter(
-      (cmd) => !bindingsCommands.includes(cmd) && !INTENTIONALLY_NOT_MOCKED.has(cmd),
+      (cmd) =>
+        !bindingsCommands.includes(cmd) &&
+        !INTENTIONALLY_NOT_MOCKED.has(cmd) &&
+        !PENDING_BINDINGS.has(cmd),
     )
     expect(
       stale,

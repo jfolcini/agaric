@@ -4825,6 +4825,85 @@ const HANDLERS_TYPED = {
     })
     return row
   },
+
+  // DELIBERATE APPROXIMATION of the Rust bibliography importer (#1454). The
+  // real parsing contract (BibTeX field extraction, CSL-JSON mapping,
+  // duplicate skipping, per-entry warnings) lives in the backend's
+  // `import_bibliography` command — this handler parses NOTHING. It exists so
+  // the dev-preview UI (success toast counts, warnings panel, AppError toast)
+  // is exercisable in browser mode:
+  //   - Entry count is a trivial derivation, not a parse: BibTeX → the number
+  //     of `@type{` prefixes; CSL-JSON → `JSON.parse` array length, falling
+  //     back to 0 when the JSON is malformed or not an array.
+  //   - Each counted entry becomes a placeholder page ("Reference N") stamped
+  //     into the target space; no reference properties are modelled beyond
+  //     the raw `properties_set` count (one per page, for the space stamp).
+  //   - `entries_skipped` is always 0 — duplicate detection is backend-only.
+  // WARNING: mock-backed frontend tests give NO assurance about the parsing
+  // contract. Validate bibliography semantics against the Rust tests.
+  import_bibliography: (args) => {
+    const a = args as Record<string, unknown>
+    const content = (a['content'] as string) ?? ''
+    const format = (a['format'] as string | null) ?? null
+    const spaceId = (a['spaceId'] as string | undefined) ?? ''
+
+    // #2463 kind-parity — the backend rejects an empty / unknown space id
+    // with `AppError::Validation`, same as `import_markdown`. The mock's
+    // known spaces are the canonical hardcoded 'SPACE_PERSONAL' (see
+    // `list_spaces` above, which never lives in `blocks`) plus any
+    // `create_space`-created block.
+    if (spaceId !== 'SPACE_PERSONAL' && !blocks.has(spaceId)) {
+      throw validationRejection('space_id does not refer to a live space block')
+    }
+
+    // `format: null` = auto-detect. Trivial content sniff mirroring the
+    // backend's documented behaviour: BibTeX entries start with `@`,
+    // anything else is treated as CSL-JSON.
+    const effectiveFormat = format ?? (content.trim().startsWith('@') ? 'bibtex' : 'csl-json')
+
+    let entryCount = 0
+    if (effectiveFormat === 'bibtex') {
+      entryCount = (content.match(/@[A-Za-z]+\s*\{/g) ?? []).length
+    } else {
+      try {
+        const parsed: unknown = JSON.parse(content)
+        entryCount = Array.isArray(parsed) ? parsed.length : 0
+      } catch {
+        entryCount = 0
+      }
+    }
+
+    for (let i = 0; i < entryCount; i++) {
+      const pageId = fakeId()
+      blocks.set(pageId, makeBlock(pageId, 'page', `Reference ${i + 1}`, null, blocks.size))
+      if (!properties.has(pageId)) properties.set(pageId, new Map())
+      properties.get(pageId)?.set('space', {
+        block_id: pageId,
+        key: 'space',
+        value_text: null,
+        value_num: null,
+        value_date: null,
+        value_ref: spaceId,
+        value_bool: null,
+      })
+    }
+
+    // Representative non-empty warning so the result panel's warnings UI is
+    // exercised in dev-preview, mirroring the `import_markdown` mock.
+    const warnings: string[] = [
+      'dev-preview mock: bibliography entries are not parsed — pages carry placeholder titles and no reference properties',
+    ]
+    if (entryCount === 0) {
+      warnings.push('no bibliography entries detected in the file')
+    }
+
+    return {
+      pages_created: entryCount,
+      entries_skipped: 0,
+      properties_set: entryCount,
+      warnings,
+    }
+  },
 } satisfies TypedHandlers
 
 /**

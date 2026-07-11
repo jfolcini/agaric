@@ -1,4 +1,5 @@
 mod agenda_cmd_tests;
+mod bibliography_cmd_tests;
 mod block_cmd_tests;
 pub mod common;
 mod compaction_cmd_tests;
