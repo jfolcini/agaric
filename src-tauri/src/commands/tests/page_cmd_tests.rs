@@ -6218,6 +6218,353 @@ async fn import_wikilink_block_anchor_dedup_same_anchor_2510() {
 }
 
 // ======================================================================
+// #2567 (follow-up to #2510) — an Obsidian `[[Page#Heading]]` / `[[#Heading]]`
+// wiki-link resolves to the BLOCK that renders that heading, via a per-document
+// heading-text → block-ULID map (analogous to #2510's `^block-id` map). The
+// link is rewritten to the SAME block-ref `((ULID))` form so navigation reuses
+// the block-anchor scroll/focus path. Duplicate heading text resolves to the
+// FIRST occurrence. An unmatched heading preserves #1282's fallback (empty base
+// → literal + "no page target"; explicit self-title → page link + warning).
+// ======================================================================
+
+/// #2567 — `[[#My Heading]]` (anchor-only) resolves to a real block-ref
+/// `((<block ULID>))` targeting the block whose content is the `## My Heading`
+/// ATX heading — the primary same-document heading-anchor case.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_wikilink_heading_anchor_same_doc_resolves_to_block_ref_2567() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- ## My Heading\n- See [[#My Heading]] over there".into(),
+        Some("File.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let target_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'content' AND content = '## My Heading' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let referencing_content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' \
+         AND content LIKE 'See%' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        referencing_content,
+        format!("See (({target_id})) over there"),
+        "the heading-anchor link must resolve to a block-ref targeting the heading block"
+    );
+
+    assert!(
+        !result
+            .warnings
+            .iter()
+            .any(|w| w.contains("anchor") || w.contains("no page target")),
+        "a successfully resolved heading-anchor must not surface a warning; warnings={:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
+
+/// #2567 — `[[File#My Heading]]` (the page name is spelled out and equals the
+/// IMPORTING page's own title, "File") is a same-document self-reference and
+/// resolves to a block-ref exactly like the anchor-only `[[#My Heading]]` form.
+/// Also a FORWARD reference (link precedes the heading in document order),
+/// proving resolution is correctly deferred to the post-block-creation pass.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_wikilink_heading_anchor_self_title_forward_resolves_2567() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- See [[File#My Heading]] ahead\n- ## My Heading".into(),
+        Some("File.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let target_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'content' AND content = '## My Heading' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let referencing_content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' \
+         AND content LIKE 'See%' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        referencing_content,
+        format!("See (({target_id})) ahead"),
+        "a self-titled forward heading reference must resolve to the block-ref"
+    );
+    assert!(
+        !result.warnings.iter().any(|w| w.contains("anchor")),
+        "a resolved self-title heading anchor must not surface an anchor warning; warnings={:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
+
+/// #2567 — heading matching is case/whitespace-insensitive: `[[#my   heading]]`
+/// resolves to the `## My Heading` block (normalized comparison).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_wikilink_heading_anchor_normalized_match_2567() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- ## My Heading\n- See [[#my   heading]] there".into(),
+        Some("File.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let target_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'content' AND content = '## My Heading' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let referencing_content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' \
+         AND content LIKE 'See%' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        referencing_content,
+        format!("See (({target_id})) there"),
+        "a case/whitespace-differing heading anchor must still resolve"
+    );
+    assert!(
+        !result.warnings.iter().any(|w| w.contains("anchor")),
+        "warnings={:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
+
+/// #2567 — COLLISION RULE: duplicate heading text resolves to the FIRST
+/// occurrence in document order. Two `## Dup` headings exist; `[[#Dup]]` must
+/// target the earlier (smaller-ULID) one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_wikilink_heading_anchor_duplicate_first_occurrence_2567() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- ## Dup\n- body one\n- ## Dup\n- See [[#Dup]] here".into(),
+        Some("File.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Both heading blocks share the same content; document order == ULID order,
+    // so the FIRST occurrence is the smallest id.
+    let first_dup_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'content' AND content = '## Dup' \
+         AND deleted_at IS NULL ORDER BY id ASC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let referencing_content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' \
+         AND content LIKE 'See%' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        referencing_content,
+        format!("See (({first_dup_id})) here"),
+        "a duplicate heading anchor must resolve to the FIRST occurrence"
+    );
+    assert!(
+        !result.warnings.iter().any(|w| w.contains("anchor")),
+        "warnings={:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
+
+/// #2567 — an anchor-only `[[#Ghost]]` whose heading does NOT exist in the
+/// document (even though OTHER headings do) preserves #1282's behavior: the
+/// token is left LITERAL and a "no page target" warning is surfaced — never a
+/// block-ref, never a page link.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_wikilink_heading_anchor_unresolved_empty_base_literal_2567() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- ## Real Heading\n- See [[#Ghost]] nowhere".into(),
+        Some("File.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let referencing_content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' \
+         AND content LIKE 'See%' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        referencing_content, "See [[#Ghost]] nowhere",
+        "an unmatched anchor-only heading link must be left literal"
+    );
+    assert!(
+        !referencing_content.contains("(("),
+        "an unmatched heading anchor must never become a block-ref; got {referencing_content:?}"
+    );
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("no page target") && w.contains("[[#Ghost]]")),
+        "an unmatched empty-base heading link must surface a 'no page target' warning; \
+         warnings={:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
+
+/// #2567 regression guard — a heading anchor whose base resolves to a DIFFERENT,
+/// already-referenced page (a cross-note reference) is UNCHANGED from #1282: the
+/// anchor is dropped and the link resolves to the base PAGE, never a block-ref
+/// (cross-note heading targeting is out of scope for this slice). The
+/// interaction with the #2510 `#^block-id` path is unaffected.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_wikilink_heading_anchor_cross_note_unchanged_2567() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- ## My Heading\n- See [[Other Page#My Heading]] now".into(),
+        Some("File.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let other_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Other Page' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let referencing_content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' \
+         AND content LIKE 'See%' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        referencing_content,
+        format!("See [[{other_id}]] now"),
+        "a cross-note heading anchor must resolve to the base PAGE (#1282 behavior)"
+    );
+    assert!(
+        !referencing_content.contains("(("),
+        "a cross-note heading anchor must never become a block-ref; got {referencing_content:?}"
+    );
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("anchors were dropped")),
+        "the #1282 dropped-anchor warning must still fire for a cross-note heading anchor; \
+         warnings={:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
+
+// ======================================================================
 // #1922 — additive coverage for previously-untested import-path behaviors.
 // These PIN the CURRENT behavior end-to-end (no production change); a
 // regression that alters them now fails CI.

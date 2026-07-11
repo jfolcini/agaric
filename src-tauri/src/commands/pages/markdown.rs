@@ -150,6 +150,61 @@ fn obsidian_block_anchor_id(anchor: &str) -> Option<&str> {
     anchor.strip_prefix('^').filter(|id| !id.is_empty())
 }
 
+/// #2567 — extract the heading TEXT from a block whose (first line of) content
+/// is a Markdown/Obsidian ATX heading (`# Heading` … `###### Heading`). Returns
+/// the trimmed heading label WITHOUT the leading `#` run when the block's first
+/// line is a valid ATX heading (1–6 `#` followed by whitespace and non-empty
+/// text), else `None`. Only the FIRST line is inspected: a heading block may
+/// carry soft-wrapped continuation body (#682), but the heading is always its
+/// first line. A `#tag`-style token (no space after the `#`) is deliberately
+/// NOT a heading. Used to build the per-document heading-anchor map so an
+/// Obsidian `[[Page#Heading]]` / `[[#Heading]]` wiki-link can resolve to the
+/// block that renders that heading (mirroring the `^block-id` path for #2510).
+fn obsidian_heading_text(content: &str) -> Option<&str> {
+    let first_line = content.lines().next()?;
+    let trimmed = first_line.trim_start();
+    let after_hashes = trimmed.trim_start_matches('#');
+    let hash_count = trimmed.len() - after_hashes.len();
+    if hash_count == 0 || hash_count > 6 {
+        return None;
+    }
+    // ATX requires whitespace between the `#` run and the heading text; this is
+    // what separates a `## Heading` from a `#tag`.
+    let rest = after_hashes.strip_prefix([' ', '\t'])?;
+    let text = rest.trim();
+    if text.is_empty() {
+        return None;
+    }
+    Some(text)
+}
+
+/// #2567 — normalize an Obsidian heading label for anchor matching. Obsidian
+/// `[[Page#Some Heading]]` links match the heading TEXT; matching is made robust
+/// to incidental whitespace/case differences by trimming, collapsing internal
+/// whitespace runs to a single space, and lowercasing. Used to key BOTH the
+/// per-document heading map (from each heading block's text) and the lookup
+/// (from a wiki-link's `#…` sub-anchor) so they compare equal.
+fn normalize_heading_anchor(s: &str) -> String {
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// #2567 — a deferred Obsidian heading-anchor wiki-link (`[[Page#Heading]]` /
+/// `[[#Heading]]`) awaiting resolution in the post-block-creation pass, once
+/// every heading block has a real ULID. `norm` is the NORMALIZED heading label
+/// (`normalize_heading_anchor`) to look up in the per-document heading map;
+/// `empty_base` records whether the link was the anchor-only `[[#Heading]]`
+/// form, so an UNRESOLVED link restores the correct #1282 fallback: an empty
+/// base is left literal with a "no page target" warning, while an explicit
+/// self-title base (`[[Self#Heading]]`) degrades to a page link + the aggregate
+/// dropped-anchor warning.
+struct PendingHeading {
+    norm: String,
+    empty_base: bool,
+}
+
 /// Collect the DISTINCT human-readable `[[Page Name]]` names referenced across
 /// every parsed block's content (#1446 Part B). A token whose body is already a
 /// canonical `[[ULID]]` ref is skipped (it needs no resolution). Used to drive
@@ -315,6 +370,17 @@ fn collect_inbound_tag_names(blocks: &[import::ParsedBlock]) -> Vec<String> {
             if is_in_code_span(name_m.start(), &spans) {
                 continue;
             }
+            // #2567 — a `#anchor` whose `#` is immediately preceded by `[[` is a
+            // wikilink HEADING anchor (`[[#Heading]]`), NOT an inline tag. Skip
+            // it so no spurious tag is created and the `[[#Heading]]` token
+            // survives intact for the heading-anchor resolution pass. (The
+            // explicit-base form `[[Page#Heading]]` is already immune: the `#`
+            // there is preceded by a page-name char, which HUMAN_TAG_RE's
+            // boundary class never matches.)
+            let hash_pos = name_m.start() - 1;
+            if block.content[..hash_pos].ends_with("[[") {
+                continue;
+            }
             let name = name_m.as_str();
             if !name.is_empty() {
                 names.insert(name.to_string());
@@ -362,6 +428,14 @@ fn rewrite_inbound_tags(content: &str, resolved: &HashMap<String, String>) -> St
             let name_m = caps.get(2).expect("name group present");
             let name = name_m.as_str();
             if is_in_code_span(name_m.start(), &spans2) {
+                return format!("{boundary}#{name}");
+            }
+            // #2567 — leave a `[[#Heading]]` wikilink heading anchor untouched
+            // (mirrors the identical guard in `collect_inbound_tag_names`): the
+            // `#` is part of a wikilink sub-anchor, not a tag, so the token must
+            // survive verbatim for the heading-anchor resolution pass.
+            let hash_pos = name_m.start() - 1;
+            if after_multi[..hash_pos].ends_with("[[") {
                 return format!("{boundary}#{name}");
             }
             match resolved.get(name) {
@@ -1490,6 +1564,16 @@ pub async fn import_markdown_with_progress(
     // an open design question — and falls straight through to the unchanged
     // #1282 dropped-anchor / page-link behavior below.
     let mut pending_block_anchor_links: HashMap<String, String> = HashMap::new();
+    // #2567 — full wiki-link token → the deferred heading-anchor resolution for
+    // a `[[Page#Heading]]` / `[[#Heading]]` link whose base is — or, for an
+    // anchor-only link, is IMPLICITLY — the page being imported. Mirrors
+    // `pending_block_anchor_links` above: the target heading block's ULID is not
+    // known until it is created in the write loop, so these tokens are resolved
+    // to a real `((block ULID))` block-ref (or fall back per #1282) in the same
+    // post-block-creation pass. A CROSS-note heading anchor (base resolves to a
+    // DIFFERENT existing page) is out of scope for this slice and falls straight
+    // through to the unchanged #1282 dropped-anchor / page-link behavior below.
+    let mut pending_heading_anchor_links: HashMap<String, PendingHeading> = HashMap::new();
     for name in link_names {
         // #1282 — split the ORIGINAL captured token into its base page name and
         // optional `#…` sub-anchor; the map stays keyed on `name` (the full
@@ -1510,16 +1594,22 @@ pub async fn import_markdown_with_progress(
                 pending_block_anchor_links.insert(name, block_id);
                 continue;
             }
-            // Anchor-only link (`[[#heading]]`): an intra-note anchor with
-            // no page target. Never create an empty-titled page — leave the
-            // token literal and surface a per-occurrence warning.
-            tracing::debug!(
-                name = %name,
-                "import: wiki-link has no page target (intra-note anchor) (#1282)"
+            // #2567 — anchor-only heading link (`[[#Heading]]`): the implicit
+            // target page IS the page being imported. Defer to the post-loop
+            // heading-resolution pass (mirrors the block-anchor case above).
+            // `norm` is owned before `name` moves into the map. On an
+            // UNRESOLVED heading the pass restores #1282's "no page target"
+            // literal behavior (`empty_base = true`), so this is not a
+            // regression: a `[[#Heading]]` with no matching heading in the
+            // document still ends up literal + warned.
+            let norm = normalize_heading_anchor(anchor.expect("anchor.is_some() in this branch"));
+            pending_heading_anchor_links.insert(
+                name,
+                PendingHeading {
+                    norm,
+                    empty_base: true,
+                },
             );
-            warnings.push(format!(
-                "wiki-link '[[{name}]]' has no page target (intra-note anchor); left as plain text"
-            ));
             continue;
         }
         let base = base.to_string();
@@ -1608,11 +1698,32 @@ pub async fn import_markdown_with_progress(
             pending_block_anchor_links.insert(name, block_id);
             continue;
         }
-        // Not a same-document block anchor: either a heading anchor
-        // (`block_anchor_id` is `None`), or a CROSS-note block anchor (base
-        // resolves to a DIFFERENT, already-existing page) — out of scope for
-        // this slice. Fall through to the unchanged #1282 dropped-anchor /
-        // page-link behavior below.
+        // #2567 — a heading anchor (`block_anchor_id` is `None`) whose explicit
+        // base resolves to THIS importing page (`[[SelfTitle#Heading]]`, a
+        // same-document self-reference). Defer to the post-loop heading pass
+        // exactly like the block-anchor self-title case above. `norm` is owned
+        // before `name` moves. On an unresolved heading the pass falls back to a
+        // page link + the aggregate dropped-anchor warning (`empty_base = false`),
+        // matching #1282's existing self/page-base behavior.
+        if let Some(anchor_text) = anchor
+            && block_anchor_id.is_none()
+            && resolved_ulid == page_id
+        {
+            let norm = normalize_heading_anchor(anchor_text);
+            pending_heading_anchor_links.insert(
+                name,
+                PendingHeading {
+                    norm,
+                    empty_base: false,
+                },
+            );
+            continue;
+        }
+        // Not a same-document anchor: either a CROSS-note heading/block anchor
+        // (base resolves to a DIFFERENT, already-existing page) — out of scope
+        // for this slice — or an anchor that otherwise could not be matched.
+        // Fall through to the unchanged #1282 dropped-anchor / page-link
+        // behavior below.
 
         if anchor.is_some() {
             dropped_anchor_count += 1;
@@ -1645,6 +1756,28 @@ pub async fn import_markdown_with_progress(
         .enumerate()
         .filter_map(|(idx, b)| b.block_anchor.as_ref().map(|a| (a.clone(), idx)))
         .collect();
+
+    // #2567 — normalized heading text → INDEX (into `parse_output.blocks`) of
+    // the FIRST block whose content is that ATX heading. Mirrors
+    // `anchor_to_block_index` above and is consumed by the same
+    // post-block-creation resolution pass. COLLISION RULE: first occurrence
+    // wins (`or_insert`) — a repeated heading label always targets its first
+    // occurrence in document order. Obsidian's own `heading`, `heading-1`, …
+    // numeric-suffix disambiguation is intentionally NOT mirrored (kept simple
+    // and deterministic; documented here and in the issue). `is_code` blocks
+    // are skipped — a `# comment` inside a fenced code sample is not a heading.
+    let heading_to_block_index: HashMap<String, usize> = {
+        let mut map: HashMap<String, usize> = HashMap::new();
+        for (idx, b) in parse_output.blocks.iter().enumerate() {
+            if b.is_code {
+                continue;
+            }
+            if let Some(text) = obsidian_heading_text(&b.content) {
+                map.entry(normalize_heading_anchor(text)).or_insert(idx);
+            }
+        }
+        map
+    };
 
     // #1924 / #1950 — resolve inbound inline tags (`#tag` and `#[[Tag With
     // Space]]`) to internal `#[ULID]` refs, creating any missing tag block
@@ -2053,7 +2186,7 @@ pub async fn import_markdown_with_progress(
     //   * otherwise (marker not found anywhere in this document, or its
     //     owning block was skipped) → fall back to a link to THIS page,
     //     mirroring #1282's dropped-anchor fallback, with a warning.
-    if !pending_block_anchor_links.is_empty() {
+    if !pending_block_anchor_links.is_empty() || !pending_heading_anchor_links.is_empty() {
         // Candidate block indices: a cheap in-memory pre-filter over the
         // ORIGINAL parsed content (`[[` presence) so only blocks that could
         // possibly carry a pending token are re-fetched from the database.
@@ -2065,6 +2198,12 @@ pub async fn import_markdown_with_progress(
         // key (`caps[1].trim()`) and the token's actual on-disk bytes.
         let mut resolved_block_ref_count: usize = 0;
         let mut unresolved_block_anchor_count: usize = 0;
+        // #2567 — heading-anchor resolution outcomes, kept separate from the
+        // block-anchor counters above so each surfaces its own diagnostic.
+        let mut resolved_heading_ref_count: usize = 0;
+        let mut unresolved_heading_count: usize = 0;
+        let mut unresolved_empty_base_headings: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
 
         for (block_index, block) in parse_output.blocks.iter().enumerate() {
             if !block.content.contains("[[") {
@@ -2121,26 +2260,58 @@ pub async fn import_markdown_with_progress(
                         return whole.to_string();
                     }
                     let name = caps[1].trim();
-                    let Some(anchor) = pending_block_anchor_links.get(name) else {
-                        return whole.to_string();
-                    };
-                    any_patched = true;
-                    if let Some(target_id) =
-                        anchor_to_block_index.get(anchor).and_then(|&target_idx| {
-                            created_block_ids.get(target_idx).cloned().flatten()
-                        })
-                    {
-                        // #2510 — the marker was found on one of this
-                        // document's own blocks: a real Agaric block-ref.
-                        resolved_block_ref_count += 1;
-                        format!("(({target_id}))")
+                    if let Some(anchor) = pending_block_anchor_links.get(name) {
+                        any_patched = true;
+                        if let Some(target_id) =
+                            anchor_to_block_index.get(anchor).and_then(|&target_idx| {
+                                created_block_ids.get(target_idx).cloned().flatten()
+                            })
+                        {
+                            // #2510 — the marker was found on one of this
+                            // document's own blocks: a real Agaric block-ref.
+                            resolved_block_ref_count += 1;
+                            format!("(({target_id}))")
+                        } else {
+                            // Marker not found anywhere in this document (or its
+                            // owning block was skipped) — #1282-style fallback: a
+                            // page link to THIS page (the resolved/implicit
+                            // target of every deferred token).
+                            unresolved_block_anchor_count += 1;
+                            format!("[[{page_id}]]")
+                        }
+                    } else if let Some(pending) = pending_heading_anchor_links.get(name) {
+                        // #2567 — same-document heading anchor. Resolve the
+                        // normalized heading label to its owning block's ULID via
+                        // the per-document heading map + `created_block_ids`,
+                        // rewriting to the SAME block-ref form `^block-id` uses so
+                        // navigation (scroll/focus-to-block) is reused verbatim.
+                        if let Some(target_id) =
+                            heading_to_block_index
+                                .get(&pending.norm)
+                                .and_then(|&target_idx| {
+                                    created_block_ids.get(target_idx).cloned().flatten()
+                                })
+                        {
+                            any_patched = true;
+                            resolved_heading_ref_count += 1;
+                            format!("(({target_id}))")
+                        } else if pending.empty_base {
+                            // #1282 — an anchor-only `[[#Heading]]` that matched
+                            // no heading is left LITERAL (content unchanged, so
+                            // `any_patched` stays untouched) with a per-token
+                            // "no page target" warning, exactly as before #2567.
+                            unresolved_empty_base_headings.insert(name.to_string());
+                            whole.to_string()
+                        } else {
+                            // #1282 — an explicit self-title `[[Self#Heading]]`
+                            // that matched no heading degrades to a page link to
+                            // THIS page + the aggregate dropped-anchor warning.
+                            any_patched = true;
+                            unresolved_heading_count += 1;
+                            format!("[[{page_id}]]")
+                        }
                     } else {
-                        // Marker not found anywhere in this document (or its
-                        // owning block was skipped) — #1282-style fallback: a
-                        // page link to THIS page (the resolved/implicit
-                        // target of every deferred token).
-                        unresolved_block_anchor_count += 1;
-                        format!("[[{page_id}]]")
+                        whole.to_string()
                     }
                 })
                 .into_owned();
@@ -2184,6 +2355,31 @@ pub async fn import_markdown_with_progress(
                 "{unresolved_block_anchor_count} wikilink block-anchor(s) (`#^blockId`) could not \
                  be matched to a block in this document; left as a page link (Obsidian \
                  cross-note block-anchor targeting is not yet supported)"
+            ));
+        }
+        if resolved_heading_ref_count > 0 {
+            tracing::debug!(
+                resolved_heading_ref_count,
+                "import: Obsidian heading-anchor wiki-link(s) resolved to a block-ref (#2567)"
+            );
+        }
+        if unresolved_heading_count > 0 {
+            // #2567 — mirrors the block-anchor aggregate warning: an explicit
+            // self-title heading link matched no heading in this document, so it
+            // fell back to a page link instead of a block-ref.
+            warnings.push(format!(
+                "{unresolved_heading_count} wikilink heading-anchor(s) (`#Heading`) could not be \
+                 matched to a heading in this document; left as a page link (Obsidian cross-note \
+                 heading targeting is not yet supported)"
+            ));
+        }
+        for name in &unresolved_empty_base_headings {
+            // #1282 — an anchor-only `[[#Heading]]` with no matching heading is
+            // left literal; surface the same per-occurrence "no page target"
+            // diagnostic the pre-#2567 pre-pass emitted, so behavior (and the
+            // #1282 test) is unchanged for the unresolved case.
+            warnings.push(format!(
+                "wiki-link '[[{name}]]' has no page target (intra-note anchor); left as plain text"
             ));
         }
     }
@@ -2576,6 +2772,75 @@ mod tests {
         assert_eq!(obsidian_block_anchor_id("Some Heading"), None);
         // A bare `^` with nothing after it is not a valid block id.
         assert_eq!(obsidian_block_anchor_id("^"), None);
+    }
+
+    /// #2567 — `obsidian_heading_text` recognizes a block whose first line is an
+    /// ATX heading (1–6 `#` + whitespace + text) and returns the trimmed label;
+    /// a `#tag` (no space), an over-deep `#######`, an empty heading, and plain
+    /// text all return `None`. Only the first line is inspected.
+    #[test]
+    fn obsidian_heading_text_recognizes_atx_headings_2567() {
+        assert_eq!(obsidian_heading_text("# Heading"), Some("Heading"));
+        assert_eq!(obsidian_heading_text("###### Deep"), Some("Deep"));
+        assert_eq!(obsidian_heading_text("##   Padded  "), Some("Padded"));
+        // Multi-line heading block: only the first line is the heading.
+        assert_eq!(
+            obsidian_heading_text("## My Heading\nbody line"),
+            Some("My Heading")
+        );
+        // `#tag` — no space after the `#` run — is NOT a heading.
+        assert_eq!(obsidian_heading_text("#tag"), None);
+        // Seven `#` exceeds ATX's max depth of 6.
+        assert_eq!(obsidian_heading_text("####### Nope"), None);
+        // A `#` run with no following text is not a heading.
+        assert_eq!(obsidian_heading_text("## "), None);
+        // Plain content is not a heading.
+        assert_eq!(obsidian_heading_text("just text"), None);
+    }
+
+    /// #2567 — `normalize_heading_anchor` trims, collapses internal whitespace,
+    /// and lowercases so a heading block's label and a wiki-link's `#…`
+    /// sub-anchor compare equal despite incidental case/whitespace differences.
+    #[test]
+    fn normalize_heading_anchor_collapses_case_and_whitespace_2567() {
+        assert_eq!(normalize_heading_anchor("  My  Heading "), "my heading");
+        assert_eq!(
+            normalize_heading_anchor("My Heading"),
+            normalize_heading_anchor("my   heading")
+        );
+        assert_eq!(normalize_heading_anchor("A\tB"), "a b");
+    }
+
+    /// #2567 — the inline-tag pass must NOT treat a `[[#Heading]]` wikilink
+    /// heading anchor as a tag: no tag name is collected and the token is left
+    /// verbatim by the rewrite, so the heading-anchor resolution pass can match
+    /// it. A genuine `#tag` elsewhere in the same block is still collected.
+    #[test]
+    fn tag_pass_skips_wikilink_heading_anchor_2567() {
+        let blocks = vec![import::ParsedBlock {
+            content: "See [[#My Heading]] and a #realtag".to_string(),
+            depth: 0,
+            properties: Vec::new(),
+            is_code: false,
+            block_anchor: None,
+        }];
+        // Only the genuine `#realtag` is collected; the `#My` inside `[[…]]` is
+        // NOT (it is a heading anchor, not a tag).
+        let names = collect_inbound_tag_names(&blocks);
+        assert_eq!(names, vec!["realtag".to_string()], "got {names:?}");
+
+        // Rewrite: the `[[#My Heading]]` token survives untouched; the real tag
+        // is rewritten to its `#[ULID]` ref.
+        let mut resolved: HashMap<String, String> = HashMap::new();
+        resolved.insert(
+            "realtag".to_string(),
+            "01TAG00000000000000000TAG0".to_string(),
+        );
+        let out = rewrite_inbound_tags(&blocks[0].content, &resolved);
+        assert_eq!(
+            out, "See [[#My Heading]] and a #[01TAG00000000000000000TAG0]",
+            "the `[[#Heading]]` anchor must be left intact for heading resolution; got {out:?}"
+        );
     }
 
     /// #1950 — the page-link collect/rewrite guard skips a `[[...]]` that is
