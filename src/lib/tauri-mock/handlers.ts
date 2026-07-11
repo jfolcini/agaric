@@ -1176,7 +1176,10 @@ function timesReversedNet(target: MockOpLogEntry): number {
  *     foreign-device entry onto `opLog` directly);
  *   - ref to an `undo_*` op           → `validation` (undoing an undo is
  *     redo's job — `redo_page_op` takes those refs);
- *   - already-reversed op             → `validation` (net of undos/redos).
+ *   - already-reversed op             → `validation` (net of undos/redos);
+ *   - `delete_property` with no prior value → `not_found` (backend parity:
+ *     `build_reverse_delete_property` cannot compute an inverse without a
+ *     prior `set_property`, so the revert phase rejects the whole batch).
  * A `redo_*` ref is ACCEPTED — redo appends a new op that re-applies the
  * original, and the FE pushes the redo's `new_op_ref` as the next undo
  * target; its effective revert target is the stashed original op.
@@ -1208,6 +1211,20 @@ function resolveUndoTarget(opRef: { device_id: string; seq: number }): MockOpLog
       `op (${effective.device_id}, ${effective.seq}) is already reversed — ` +
         'refusing to undo it twice',
     )
+  }
+  // Backend parity: the real command appends a `delete_property` op even when
+  // the property never existed, but reversing that op is impossible — there
+  // is no prior `set_property` to restore. `build_reverse_delete_property`
+  // surfaces that as NotFound during the (pre-apply, batch-aborting) reverse
+  // computation; mirror it here so the FE sees the same failure shape.
+  if (effective.op_type === 'delete_property') {
+    const payload = JSON.parse(effective.payload) as { from_value?: unknown; key?: string }
+    if (payload.from_value == null) {
+      throw notFoundRejection(
+        `no prior set_property found for key '${payload.key ?? ''}' — ` +
+          'cannot reverse delete_property',
+      )
+    }
   }
   return effective
 }
@@ -2397,12 +2414,15 @@ const HANDLERS_TYPED = {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const tagId = a['tagId'] as string
-    // #2468 — idempotent no-op: a tag that is ALREADY attached still logs its
-    // op (LWW convergence, #622/#709 — pinned by the backend-authored
-    // `tag_add_remove` conformance fixture) but the `WithOps<TagResponse>`
-    // response carries EMPTY `op_refs`: reversing the duplicate would remove
-    // an edge an earlier op also added, so it is not an undoable ref and the
-    // FE must not push an undo entry for it.
+    // #2468 — duplicate add: the REAL `add_tag` command REJECTS it
+    // (`InvalidOperation("tag already applied")`, `add_tag_inner`). The mock
+    // stays lenient because the `tag_add_remove` conformance fixture drives
+    // the backend's op-APPLY pipeline (which logs the duplicate op for LWW
+    // convergence, #622/#709) through this one command surface. On that
+    // mock-only lenient path the `WithOps<TagResponse>` response carries
+    // EMPTY `op_refs`: reversing the duplicate would remove an edge an
+    // earlier op also added, so it is not an undoable ref and the FE must
+    // not push an undo entry for it.
     const alreadyAttached = blockTags.get(blockId)?.has(tagId) ?? false
     if (!blockTags.has(blockId)) blockTags.set(blockId, new Set())
     blockTags.get(blockId)?.add(tagId)
@@ -2418,8 +2438,10 @@ const HANDLERS_TYPED = {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const tagId = a['tagId'] as string
-    // #2468 — idempotent no-op parity (see add_tag): removing a tag that is
-    // not attached still logs the op, but surfaces no undoable ref.
+    // #2468 — unattached remove: the REAL `remove_tag` command REJECTS it
+    // (`NotFound("tag association")`, `remove_tag_inner`); the mock stays
+    // lenient (see add_tag — conformance-fixture constraint) and surfaces no
+    // undoable ref on that mock-only path.
     const wasAttached = blockTags.get(blockId)?.has(tagId) ?? false
     blockTags.get(blockId)?.delete(tagId)
     const op = pushOp('remove_tag', { block_id: blockId, tag_id: tagId })
@@ -3141,14 +3163,15 @@ const HANDLERS_TYPED = {
       from_value: fromValue,
     })
     // #2468 — previously returned `null`; now echoes `(block_id, key)` plus
-    // `op_refs` (`WithOps<DeletePropertyResponse>`). Idempotent no-op parity
-    // (mirrors add_tag/remove_tag): deleting a property that does not exist
-    // still logs the op but surfaces no undoable ref (`op_refs: []` — there
-    // is no prior value to restore, nothing to undo).
+    // `op_refs` (`WithOps<DeletePropertyResponse>`). Backend parity: the real
+    // `delete_property_core` ALWAYS appends the op — even when the property
+    // does not exist — so the ref is always surfaced. Undoing a no-prior
+    // delete then fails (`resolveUndoTarget` mirrors the backend's "no prior
+    // set_property" NotFound from `build_reverse_delete_property`).
     return {
       block_id: blockId,
       key,
-      op_refs: priorRow ? [{ device_id: op.device_id, seq: op.seq }] : [],
+      op_refs: [{ device_id: op.device_id, seq: op.seq }],
     }
   },
 
@@ -3373,7 +3396,9 @@ const HANDLERS_TYPED = {
   undo_ops: (args) => {
     const a = args as Record<string, unknown>
     const ops = (a['ops'] as Array<{ device_id: string; seq: number }> | undefined) ?? []
-    if (ops.length === 0) throw validationRejection('ops list cannot be empty')
+    // Backend parity: `undo_ops_inner` returns `Ok(vec![])` for an empty
+    // ref-set (mirrors `revert_ops_inner`) — it does NOT reject it.
+    if (ops.length === 0) return []
     const seen = new Set<string>()
     for (const ref of ops) {
       const key = `${ref.device_id}:${ref.seq}`

@@ -7345,6 +7345,73 @@ async fn undo_op_rejects_ref_reversed_by_positional_undo_2468() {
     mat.shutdown();
 }
 
+/// Mixed-style coherence, the OTHER direction: a POSITIONAL undo issued
+/// AFTER a ref-addressed undo. The frontend advances its positional anchor
+/// (`undoDepth`) for ref-addressed undos too, so a fallback
+/// `undo_page_op(depth = 1)` after one ref-undo must land on the NEXT-OLDER
+/// op — the OFFSET enumeration deliberately keeps the ref-reversed op in
+/// the walk (at offset 0), neither skipping an extra op nor double-reverting
+/// the ref-undone one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_page_op_after_ref_undo_stays_offset_coherent_2468() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "v0".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v1".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let e1_seq = newest_op_seq(&pool, DEV, "edit_block", created.id.as_str()).await;
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v2".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let e2_seq = newest_op_seq(&pool, DEV, "edit_block", created.id.as_str()).await;
+    assert!(e2_seq > e1_seq, "sanity");
+
+    // Ref-addressed undo of the newest edit (the FE pops its captured ref).
+    undo_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        OpRef {
+            device_id: DEV.into(),
+            seq: e2_seq,
+        },
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let mid = get_block_inner(&pool, created.id.clone()).await.unwrap();
+    assert_eq!(mid.content, Some("v1".into()), "ref-undo applied");
+
+    // Positional fallback at the FE's advanced anchor (1 op undone so far):
+    // offset 0 is the ref-reversed e2 (still enumerated), offset 1 is e1.
+    let positional = undo_page_op_inner(&pool, DEV, &mat, created.id.clone().into_string(), 1)
+        .await
+        .expect("positional undo after a ref-undo must target the next-older op");
+    settle(&mat).await;
+    assert_eq!(
+        positional.reversed_op.seq, e1_seq,
+        "depth 1 must reverse e1, not double-revert the ref-undone e2"
+    );
+    let after = get_block_inner(&pool, created.id.clone()).await.unwrap();
+    assert_eq!(after.content, Some("v0".into()));
+    mat.shutdown();
+}
+
 /// Undo → redo → undo: the redo op links to the undo op it reverses
 /// (`reverses_*`), returning the ORIGINAL ref to the not-currently-reversed
 /// state — so a subsequent ref-addressed undo of it is legal and works.

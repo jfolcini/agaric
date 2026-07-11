@@ -588,9 +588,12 @@ pub struct QueryByPropertyRequest {
 /// keep type-checking unchanged while migrated ones read `op_refs`.
 ///
 /// `op_refs` preserves append order. Single-op commands carry exactly one
-/// entry; a command that appends nothing (possible for idempotent
-/// tag/property no-ops) carries an empty Vec — the frontend must skip the
-/// undo-stack push in that case (nothing was done, nothing to undo).
+/// entry. The contract also admits an empty Vec ("appended nothing —
+/// nothing to undo"), which the frontend must handle by skipping the
+/// undo-stack push; note that NO currently-migrated command produces it
+/// (the tag no-ops are rejected with errors by `add_tag_inner` /
+/// `remove_tag_inner`, and `delete_property` appends its op even when the
+/// key is absent) — only the tauri-mock's lenient conformance paths do.
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct WithOps<T> {
     #[serde(flatten)]

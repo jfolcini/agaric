@@ -1,9 +1,19 @@
 # Session log — template & conventions
 
 Create one file per session at `docs/session-log/session-NNN-<slug>.md`. `NNN` is the
-next session number (zero-padded to 3 digits); `<slug>` is a short kebab-case derivation
-of the title. **One file per session, never appended to.** See
-`docs/session-log/README.md` for naming + discovery conventions.
+next session number — **NUMERIC max of existing entries + 1**, no zero-padding. Compute
+it with:
+
+```sh
+ls docs/session-log | grep -oP 'session-\K[0-9]+' | sort -n | tail -1
+```
+
+**Never derive it from plain `ls | tail`** — past session-999 that sorts
+lexicographically (`session-1000` < `session-996`) and reports a stale max; fifteen
+sessions collided on `session-1000` this way. A pre-commit guard
+(`session-log-numbering` in `prek.toml`) rejects wrong numbers at commit time.
+`<slug>` is a short kebab-case derivation of the title. **One file per session, never
+appended to.** See `docs/session-log/README.md` for naming + discovery conventions.
 
 ## Plan-issue bookkeeping
 

@@ -6,8 +6,10 @@
  *  - every migrated mutation (`create_block` / `edit_block` / `delete_block` /
  *    `move_block` / `set_property` / `delete_property` / `add_tag` /
  *    `remove_tag`) returns the ref(s) of the op-log row(s) it appended
- *    (`WithOps` wire shape), with `op_refs: []` on idempotent tag/property
- *    no-ops (nothing appended → nothing to undo);
+ *    (`WithOps` wire shape). Idempotent tag no-ops (mock-only leniency, kept
+ *    for the `tag_add_remove` conformance fixture — the REAL command rejects
+ *    them) surface `op_refs: []`; a no-prior `delete_property` appends its op
+ *    and surfaces the ref, exactly like the backend;
  *  - `undo_op` reverses EXACTLY the referenced op — newer ops landing after
  *    capture cannot shift the target (the #2446 race the migration kills);
  *  - the reject rules mirror `undo_op_inner`: unknown ref → `not_found`;
@@ -128,7 +130,7 @@ describe('#2468 — op_refs capture on migrated mutation handlers', () => {
     expect(setProp.op_refs).toEqual([{ device_id: 'mock-device', seq: opLog.at(-1)?.seq }])
   })
 
-  it('delete_property echoes (block_id, key) + op_refs; a missing property is a no-op with empty refs', () => {
+  it('delete_property echoes (block_id, key) + op_refs; a no-prior delete still surfaces its ref but is not undoable', () => {
     dispatch('set_property', {
       blockId: A,
       key: 'effort',
@@ -148,11 +150,16 @@ describe('#2468 — op_refs capture on migrated mutation handlers', () => {
     expect(resp.op_refs).toHaveLength(1)
     expect(opLog.length).toBe(opCount + 1)
 
-    // Second delete: the property no longer exists → idempotent no-op. The op
-    // is still LOGGED (LWW convergence — mirrors the backend-authored
-    // conformance fixtures) but surfaces NO undoable ref.
+    // Second delete: the property no longer exists. Backend parity
+    // (`delete_property_core`): the op is STILL appended and its ref is
+    // STILL surfaced — but undoing it fails, because there is no prior
+    // `set_property` to restore (`build_reverse_delete_property` → NotFound).
     const again = dispatch('delete_property', { blockId: A, key: 'effort' }) as WithOpsResp
-    expect(again.op_refs).toEqual([])
+    expect(again.op_refs).toHaveLength(1)
+    expect(opLog.length).toBe(opCount + 2)
+    const err = captureRejection(() => dispatch('undo_op', { opRef: again.op_refs[0] }))
+    expect(err.kind).toBe('not_found')
+    expect(err.message).toMatch(/no prior set_property/)
   })
 
   it('add_tag / remove_tag repeats surface empty op_refs (idempotent no-op)', () => {
@@ -318,8 +325,9 @@ describe('#2468 — undo_ops (atomic ref-set undo)', () => {
     expect(opLog.length).toBe(opCount)
   })
 
-  it('rejects an empty ref set and duplicate refs with validation', () => {
-    expect(captureRejection(() => dispatch('undo_ops', { ops: [] })).kind).toBe('validation')
+  it('returns [] for an empty ref set and rejects duplicate refs with validation', () => {
+    // Backend parity: `undo_ops_inner` short-circuits `Ok(vec![])` on empty.
+    expect(dispatch('undo_ops', { ops: [] })).toEqual([])
 
     const editA = dispatch('edit_block', { blockId: A, toText: 'A edited' }) as WithOpsResp
     const err = captureRejection(() =>
