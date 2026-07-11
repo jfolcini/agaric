@@ -797,13 +797,13 @@ impl Materializer {
 
     pub async fn enqueue_foreground(&self, task: MaterializeTask) -> Result<(), AppError> {
         let tx = self.fg_sender()?;
-        // / avoid the TOCTOU on `tx.capacity()` — a snapshot
-        // read followed by `send().await` is racy because the consumer can
-        // drain the channel between the check and the send, so the old
-        // `capacity() == 0` precondition under-counted real wait events.
-        // `try_send` first; on `Full` we know we are about to block on a
-        // full channel, so `fg_full_waits` correlates 1:1 with actual
-        // wait events. `Closed` still propagates as a `Channel` error.
+        // Occupancy BEFORE the send — see `enqueue_background` for why the
+        // high-water mark cannot be derived from a post-send `capacity()`
+        // read (the consumer can drain our task before we sample, racing the
+        // mark to 0). `try_send` first; on `Full` we know we are about to
+        // block on a full channel, so `fg_full_waits` correlates 1:1 with
+        // actual wait events. `Closed` still propagates as a `Channel` error.
+        let occupancy_before = FOREGROUND_CAPACITY - tx.capacity();
         match tx.try_send(task) {
             Ok(()) => {}
             Err(mpsc::error::TrySendError::Full(task)) => {
@@ -818,7 +818,7 @@ impl Materializer {
                 ));
             }
         }
-        let depth = FOREGROUND_CAPACITY - tx.capacity();
+        let depth = (occupancy_before + 1).min(FOREGROUND_CAPACITY);
         self.metrics
             .fg_high_water
             .fetch_max(depth as u64, Ordering::Relaxed);
@@ -828,13 +828,19 @@ impl Materializer {
 
     pub async fn enqueue_background(&self, task: MaterializeTask) -> Result<(), AppError> {
         let tx = self.bg_sender()?;
+        // Occupancy BEFORE the send. The high-water mark must be sampled here,
+        // not from `tx.capacity()` after the send: once a task is on the
+        // channel the consumer can drain it on another task before we read
+        // capacity, so a post-send `CAPACITY - capacity()` races to 0 and
+        // silently loses the mark (observed as a flaky `bg_high_water` under
+        // altered scheduling / coverage instrumentation). Our task adds one
+        // slot on top of `occupancy_before`, clamped to the channel bound.
+        let occupancy_before = BACKGROUND_CAPACITY - tx.capacity();
         // Mirror `enqueue_foreground`: `try_send` first so that on a full
         // channel we bump `bg_full_waits` before awaiting the blocking
         // send. This makes background backpressure on the blocking enqueue
-        // path observable in `StatusInfo` — a snapshot `capacity()` read
-        // would be racy (the consumer can drain between the check and the
-        // send), so the counter correlates 1:1 with real wait events.
-        // `Closed` still propagates as a `Channel` error.
+        // path observable in `StatusInfo` — the counter correlates 1:1 with
+        // real wait events. `Closed` still propagates as a `Channel` error.
         match tx.try_send(task) {
             Ok(()) => {}
             Err(mpsc::error::TrySendError::Full(task)) => {
@@ -849,7 +855,7 @@ impl Materializer {
                 ));
             }
         }
-        let depth = BACKGROUND_CAPACITY - tx.capacity();
+        let depth = (occupancy_before + 1).min(BACKGROUND_CAPACITY);
         self.metrics
             .bg_high_water
             .fetch_max(depth as u64, Ordering::Relaxed);
@@ -871,9 +877,12 @@ impl Materializer {
         task: MaterializeTask,
     ) -> Result<BackgroundEnqueueOutcome, AppError> {
         let tx = self.bg_sender()?;
+        // Occupancy BEFORE the send — a post-send `capacity()` read races the
+        // consumer draining our task (see `enqueue_background`).
+        let occupancy_before = BACKGROUND_CAPACITY - tx.capacity();
         match tx.try_send(task) {
             Ok(()) => {
-                let depth = BACKGROUND_CAPACITY - tx.capacity();
+                let depth = (occupancy_before + 1).min(BACKGROUND_CAPACITY);
                 self.metrics
                     .bg_high_water
                     .fetch_max(depth as u64, Ordering::Relaxed);
