@@ -1,3 +1,19 @@
+//! `tags_cache` — materialized `(tag_id, name, usage_count)` per live tag
+//! block, a DELETE+INSERT recompute of the GROUP BY in [`DESIRED_TAGS_SQL`]
+//! (a `COUNT(DISTINCT block_id)` over `block_tags ∪ block_tag_refs`).
+//!
+//! **Measurement justification (#2508).** The pre-cache read shape is the
+//! [`DESIRED_TAGS_SQL`] projection run live. The `interactive_slo` bench
+//! probe `bench_tags_cache_direct_query` (gated behind `SLO_INCLUDE_PROBLEM`,
+//! `src-tauri/benches/interactive_slo.rs`) measured it at **~183 ms @ 100K**
+//! (500 tags, 100K usages spread across both source tables; nightly
+//! `bench-slo` runner). That is ~92% of the entire 200 ms interactive SLO
+//! budget — serving tag reads live would consume the budget on its own, so
+//! the incremental-maintenance machinery here is earning its complexity:
+//! **KEEP.** Any retirement of this cache is deferred to #709 Phase 2 (its
+//! name-keyed re-key makes the UNIQUE(name) invariant live at the source, per
+//! #626); this measured number is the empirical input to that decision.
+
 use futures_util::TryStreamExt;
 use sqlx::SqlitePool;
 use std::cmp::Ordering;
