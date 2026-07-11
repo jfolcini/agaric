@@ -353,6 +353,10 @@ export const common: Record<string, string> = {
   'data.importingBlocks': 'Block {{done}} of {{total}}',
   'data.importedMessage_one': 'Imported {{totalBlocks}} blocks from {{count}} file',
   'data.importedMessage_other': 'Imported {{totalBlocks}} blocks from {{count}} files',
+  // #2513 — Evernote `.enex` aggregate success toast. Each unit is a NOTE (one
+  // page per note), so label it "note(s)" rather than the file-worded string.
+  'data.importedNotesMessage_one': 'Imported {{totalBlocks}} blocks from {{count}} note',
+  'data.importedNotesMessage_other': 'Imported {{totalBlocks}} blocks from {{count}} notes',
   // Result-panel summary line. `count` is the number of blocks created so the
   // i18next plural selector picks the right form; `title` is the page title
   // (single file) or the multi-file placeholder (`data.importResultFilesTitle`).
@@ -363,6 +367,9 @@ export const common: Record<string, string> = {
   // Multi-file placeholder title used in place of a single page_title.
   'data.importResultFilesTitle_one': '{{count}} file',
   'data.importResultFilesTitle_other': '{{count}} files',
+  // #2513 — multi-note placeholder title for the Evernote `.enex` result panel.
+  'data.importResultNotesTitle_one': '{{count}} note',
+  'data.importResultNotesTitle_other': '{{count}} notes',
   // Failure / warning surfacing (#1928).
   'data.importNoContent': 'No content was imported.',
   'data.importAllFailed_one': 'All {{count}} file failed to import.',

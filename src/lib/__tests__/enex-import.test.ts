@@ -2,9 +2,11 @@
  * Tests for the frontend-only Evernote `.enex` importer (#1282).
  *
  * Covers: title/tags/date extraction, ENML→Markdown conversion (headings,
- * lists, bold, links, `<pre>`), `<en-todo>` → task markers, `<en-media>`
- * dropped, multi-word tag → `#[[…]]`, malformed XML throwing, multiple notes,
- * empty-title placeholder, and timestamp epoch parsing (incl. null).
+ * lists, bold, links, `<pre>`), `<en-todo>` → task markers, multi-word tag →
+ * `#[[…]]`, malformed XML throwing, multiple notes, empty-title placeholder,
+ * timestamp epoch parsing (incl. null), and `<resource>`/`<en-media>`
+ * attachment ingestion (#2513): base64 decode + MD5 hash-match + `en-media` →
+ * `![](path)` rewrite, dangling-hash graceful fallback, and orphan resources.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -135,6 +137,107 @@ describe('parseEnex', () => {
   })
 })
 
+describe('parseEnex — <resource>/<en-media> attachments (#2513)', () => {
+  // The five ASCII bytes "hello" (base64 `aGVsbG8=`) with the well-known
+  // MD5 digest below. Evernote's `en-media hash` is the lowercase MD5 hex of
+  // the resource's RAW decoded bytes, so this is what an `en-media` must carry
+  // to reference the resource. Verifying the match end-to-end also proves the
+  // module's MD5 implementation is correct.
+  const HELLO_B64 = 'aGVsbG8='
+  const HELLO_MD5 = '5d41402abc4b2a76b9719d911017c592'
+  const HELLO_BYTES = [104, 101, 108, 108, 111]
+
+  /** A `<resource>` block: base64 data + mime + optional file-name. */
+  const resource = (b64: string, mime: string, fileName?: string): string => {
+    const attrs =
+      fileName === undefined
+        ? ''
+        : `<resource-attributes><file-name>${fileName}</file-name></resource-attributes>`
+    return `<resource><data encoding="base64">${b64}</data><mime>${mime}</mime>${attrs}</resource>`
+  }
+
+  it('decodes a resource, MD5-matches en-media, and rewrites to a markdown embed', () => {
+    const enml = `<div>See <en-media hash="${HELLO_MD5}" type="image/png"/> here</div>`
+    const xml = enex(
+      `<note><title>T</title><content>${content(enml)}</content>` +
+        `${resource(HELLO_B64, 'image/png', 'pic.png')}</note>`,
+    )
+
+    const note = at(parseEnex(xml))
+    // The en-media reference became a standard markdown image whose path is the
+    // resource file-name; the raw en-media markup and hash are gone.
+    expect(note.markdown).toContain('![](pic.png)')
+    expect(note.markdown).not.toContain('en-media')
+    expect(note.markdown).not.toContain(HELLO_MD5)
+
+    // The decoded attachment is surfaced for the caller to ship as a VaultFile.
+    expect(note.attachments).toHaveLength(1)
+    const [att] = note.attachments
+    if (att === undefined) throw new Error('expected an attachment')
+    expect(att.path).toBe('pic.png')
+    expect(att.mime).toBe('image/png')
+    expect(Array.from(att.bytes)).toEqual(HELLO_BYTES)
+  })
+
+  it('matches a case-insensitive en-media hash and infers a name from the mime', () => {
+    // No file-name on the resource ⇒ path falls back to `<md5>.<ext>`, and an
+    // UPPERCASE en-media hash still matches (both sides are lowercased).
+    const enml = `<div><en-media hash="${HELLO_MD5.toUpperCase()}" type="image/png"/></div>`
+    const xml = enex(
+      `<note><title>T</title><content>${content(enml)}</content>` +
+        `${resource(HELLO_B64, 'image/png')}</note>`,
+    )
+
+    const note = at(parseEnex(xml))
+    const expectedPath = `${HELLO_MD5}.png`
+    expect(note.attachments).toHaveLength(1)
+    expect(note.attachments[0]?.path).toBe(expectedPath)
+    expect(note.markdown).toContain(`![](${expectedPath})`)
+  })
+
+  it('gracefully drops an en-media whose hash matches no resource (no crash)', () => {
+    // A dangling reference: the note has NO resource for this hash.
+    const enml = `<div>Before <en-media hash="deadbeefdeadbeefdeadbeefdeadbeef" type="image/png"/> after</div>`
+    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
+
+    const note = at(parseEnex(xml))
+    // No attachment, no leaked markup, and the surrounding text survives.
+    expect(note.attachments).toHaveLength(0)
+    expect(note.markdown).not.toContain('en-media')
+    expect(note.markdown).not.toContain('deadbeef')
+    expect(note.markdown).toContain('Before')
+    expect(note.markdown).toContain('after')
+  })
+
+  it('does not orphan-crash on a resource that no en-media references', () => {
+    // The resource decodes fine but nothing in the body references it, so it
+    // is simply never shipped (mirrors the folder import's unreferenced-asset
+    // behaviour) — and the body still converts normally.
+    const xml = enex(
+      `<note><title>T</title><content>${content('<p>just text</p>')}</content>` +
+        `${resource(HELLO_B64, 'image/png', 'unused.png')}</note>`,
+    )
+
+    const note = at(parseEnex(xml))
+    expect(note.attachments).toHaveLength(0)
+    expect(note.markdown).toContain('just text')
+  })
+
+  it('skips a resource with malformed base64 without failing the note', () => {
+    // `@@@` is not valid base64; the resource is skipped, so the en-media that
+    // would have matched it simply drops — the note still parses.
+    const enml = `<div><en-media hash="${HELLO_MD5}" type="image/png"/>tail</div>`
+    const xml = enex(
+      `<note><title>T</title><content>${content(enml)}</content>` +
+        `${resource('@@@not-base64@@@', 'image/png', 'bad.png')}</note>`,
+    )
+
+    const note = at(parseEnex(xml))
+    expect(note.attachments).toHaveLength(0)
+    expect(note.markdown).toContain('tail')
+  })
+})
+
 describe('enexNoteToMarkdown', () => {
   it('emits frontmatter with ISO created/updated and source, tags, then body', () => {
     const md = enexNoteToMarkdown({
@@ -143,6 +246,7 @@ describe('enexNoteToMarkdown', () => {
       tags: ['work', 'Multi Word'],
       createdMs: Date.UTC(2021, 0, 2, 3, 4, 5),
       updatedMs: Date.UTC(2022, 2, 4, 5, 6, 7),
+      attachments: [],
     })
 
     expect(md).toContain('---\n')
@@ -165,6 +269,7 @@ describe('enexNoteToMarkdown', () => {
       tags: [],
       createdMs: null,
       updatedMs: null,
+      attachments: [],
     })
 
     expect(md).not.toContain('created:')
@@ -179,6 +284,7 @@ describe('enexNoteToMarkdown', () => {
       tags: [],
       createdMs: null,
       updatedMs: null,
+      attachments: [],
     })
 
     expect(md).not.toContain('#')
