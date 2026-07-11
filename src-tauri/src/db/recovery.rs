@@ -271,6 +271,180 @@ async fn persisted_engine_snapshot_count(
     Ok(count)
 }
 
+/// #2504: engine-first disaster rebuild of the SQL primary state.
+///
+/// [`recover_blocks_from_op_log`] rebuilds `blocks` by replaying the strictly
+/// device-local op_log (post-#490-M1 remote ops never land in it), so on a
+/// device that has ever synced it reconstructs **only locally-authored content**
+/// and silently drops every remote-authored block, property, and tag. The
+/// complete convergent state lives instead in the per-space Loro engine
+/// snapshots (`loro_doc_state`, persisted every 60s-if-dirty + at shutdown).
+/// This function reprojects the SQL primary state — `blocks`, `block_properties`,
+/// `block_tags`, and `blocks.deleted_at` — directly from those engines, so
+/// remote-authored content survives the rebuild.
+///
+/// It reuses the SAME projection helpers the live inbound-sync path
+/// ([`crate::sync_protocol::loro_sync::import_and_project`]) runs — a throwaway
+/// [`crate::loro::engine::LoroEngine`] per space imports the persisted snapshot,
+/// its full live tree is enumerated parent-before-child, and each block is
+/// projected through Pass A (core columns + properties), Pass B (tags), Pass C
+/// (soft-delete) exactly as a sync pull would. The engine is the source of
+/// truth, so this is the canonical Loro→SQL projection, not a recovery-only
+/// reimplementation.
+///
+/// ## Ordering / fallback contract
+///
+/// Runs AFTER migrations (the projection helpers need the full post-migration
+/// schema and `property_definitions`) and AFTER the op-log derived recovery
+/// ([`recover_derived_state_from_op_log`]), gated by the caller on
+/// `blocks_recovered`. Ordering rationale:
+///
+/// * The op-log derived pass runs first and restores `attachments` (which are
+///   NOT modelled in the Loro engine) plus device-local properties/tags into
+///   the empty derived tables.
+/// * This engine pass then runs authoritatively: `project_block_full_to_sql`
+///   upserts every engine block (adding remote-authored blocks the op-log pass
+///   never saw), and the property/tag reprojections DELETE-then-reinsert per
+///   block, so the engine's complete set (local + remote) overwrites the op-log
+///   pass's local-only rows. Attachments are untouched.
+///
+/// Returns `Ok(true)` iff at least one engine snapshot was reprojected. Returns
+/// `Ok(false)` when `loro_doc_state` is absent/empty (a device that never
+/// synced — local content is already complete via the op-log pass) or when every
+/// snapshot failed to decode (the op-log pass's local content stands, and
+/// [`recover_blocks_from_op_log`] has already logged the remote-content-missing
+/// hazard).
+///
+/// Local ops authored AFTER the last engine snapshot (the ≤60s snapshot lag) are
+/// not in these snapshots; they are replayed on top from the op_log tail by the
+/// always-on boot replay (`recovery::replay::replay_unmaterialized_ops`), so no
+/// op-log tail replay is needed here.
+pub(crate) async fn reproject_blocks_from_engine(
+    pool: &SqlitePool,
+) -> Result<bool, crate::error::AppError> {
+    use crate::loro::projection::{
+        project_block_full_to_sql, reproject_block_deleted_at_from_engine,
+        reproject_block_properties_from_engine, reproject_block_tags_from_engine,
+    };
+
+    // `loro_doc_state` may be absent on an ancient pre-0052 database.
+    let table_exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'loro_doc_state'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if table_exists == 0 {
+        return Ok(false);
+    }
+
+    // Every space that carries a real (non-empty) engine snapshot. A NULL/empty
+    // snapshot column holds no recoverable state.
+    let snapshots: Vec<(String, Vec<u8>)> = sqlx::query_as(
+        "SELECT space_id, snapshot FROM loro_doc_state \
+         WHERE snapshot IS NOT NULL AND LENGTH(snapshot) > 0 \
+         ORDER BY space_id",
+    )
+    .fetch_all(pool)
+    .await?;
+    if snapshots.is_empty() {
+        return Ok(false);
+    }
+
+    // `property_definitions` drives typed-column routing for non-reserved
+    // properties. Load ONCE for the whole rebuild (hoisted out of the per-block
+    // loop), mirroring the live inbound-sync path. This is the identical query
+    // `import_and_project` runs, so it is already in the offline `.sqlx` cache.
+    let value_types: std::collections::HashMap<String, String> =
+        sqlx::query!("SELECT key, value_type FROM property_definitions")
+            .fetch_all(pool)
+            .await?
+            .into_iter()
+            .map(|r| (r.key, r.value_type))
+            .collect();
+
+    let mut tx = pool.begin().await?;
+    let mut spaces_reprojected = 0usize;
+    let mut blocks_reprojected = 0usize;
+
+    for (space_id_str, bytes) in &snapshots {
+        // Build a throwaway engine and load this space's persisted snapshot. A
+        // decode failure is non-fatal: skip this space (its local content still
+        // stands from the op-log pass) and keep rebuilding the rest.
+        let mut engine = crate::loro::engine::LoroEngine::new();
+        if let Err(e) = engine.import(bytes) {
+            tracing::error!(
+                space_id = %space_id_str,
+                error = %e,
+                "recovery (#2504): failed to load persisted Loro snapshot — remote-authored \
+                 content for this space cannot be reprojected and will be missing until re-sync"
+            );
+            continue;
+        }
+
+        let space_id = crate::space::SpaceId::from_trusted(space_id_str);
+        // Full live tree, parent-before-child (soft-deleted nodes are included,
+        // so Pass C can re-stamp their tombstones). Hard-purged blocks are gone
+        // from the engine index already, so there is nothing to sweep here.
+        let block_ids = engine.live_blocks_preorder();
+        if block_ids.is_empty() {
+            spaces_reprojected += 1;
+            continue;
+        }
+
+        // Snapshot every block's engine state under one read pass (mirrors the
+        // inbound-sync #540 shape), then run the SQL passes below.
+        let id_refs: Vec<&str> = block_ids.iter().map(crate::ulid::BlockId::as_str).collect();
+        let core = engine.read_blocks_bulk(&id_refs)?;
+        let mut states = Vec::with_capacity(block_ids.len());
+        for block_id in &block_ids {
+            let props = engine.read_all_properties_typed(block_id.as_str())?;
+            let tags = engine.read_tags(block_id.as_str())?;
+            let deleted_at = engine.read_deleted_at(block_id.as_str())?;
+            states.push((props, tags, deleted_at));
+        }
+
+        // Pass A — core columns + properties. Upserts EVERY block (incl. tag
+        // blocks) so all `blocks` rows a later `block_tags.tag_id` FK references
+        // exist before Pass B.
+        for (block_id, snapshot) in block_ids.iter().zip(&core) {
+            project_block_full_to_sql(&mut tx, &space_id, block_id, snapshot.as_ref()).await?;
+        }
+        for (block_id, (props, _, _)) in block_ids.iter().zip(&states) {
+            reproject_block_properties_from_engine(&mut tx, block_id, props, &value_types).await?;
+        }
+        // Pass B — tags (after Pass A for the FK ordering above).
+        for (block_id, (_, tags, _)) in block_ids.iter().zip(&states) {
+            reproject_block_tags_from_engine(&mut tx, block_id, tags).await?;
+        }
+        // Pass C — soft-delete state (after Pass A so every `parent_id` row the
+        // descendant-cascade CTE walks exists).
+        for (block_id, (_, _, deleted_at)) in block_ids.iter().zip(&states) {
+            reproject_block_deleted_at_from_engine(&mut tx, block_id, deleted_at.as_deref())
+                .await?;
+        }
+
+        spaces_reprojected += 1;
+        blocks_reprojected += block_ids.len();
+    }
+
+    if spaces_reprojected == 0 {
+        // Every snapshot failed to decode — nothing rebuilt. Roll back the
+        // (empty) tx and let the op-log pass's local content stand.
+        tx.rollback().await?;
+        return Ok(false);
+    }
+
+    tx.commit().await?;
+
+    tracing::warn!(
+        spaces_reprojected,
+        blocks_reprojected,
+        "recovery (#2504): rebuilt SQL primary state from the Loro engine snapshots — \
+         remote-authored content restored (engine-first disaster recovery)"
+    );
+    Ok(true)
+}
+
 /// Replay block-level ops from `op_log` into an existing (temporary)
 /// `blocks` table.  Called by [`ensure_blocks_table_exists`] inside a
 /// transaction so the rebuild is atomic.
@@ -287,9 +461,11 @@ async fn persisted_engine_snapshot_count(
 /// locally-authored content** and silently omits every remote-authored block,
 /// property, and tag. The complete convergent state lives in the per-space Loro
 /// engine snapshots (`loro_doc_state`); when those are present this function
-/// logs loudly that remote content is being dropped. Recovering that content
-/// requires an engine-first reprojection (a separate rework tracked by #2503 /
-/// #2504) or a fresh re-sync from a peer.
+/// logs loudly that remote content is being dropped. The complete content is
+/// restored by [`reproject_blocks_from_engine`] (the engine-first rebuild, #2504),
+/// which the caller runs after migrations; this op-log replay remains the
+/// device-local scaffold that gives migration 73's rebuild a target table and
+/// the last-resort fallback when the engine snapshots are themselves unreadable.
 async fn recover_blocks_from_op_log(
     executor: &mut sqlx::SqliteConnection,
     deleted_at_is_ms: bool,
@@ -1915,6 +2091,152 @@ mod tests {
         assert_eq!(
             engine_rows, 1,
             "engine snapshot survives, unread by the op-log rebuild (recoverable via #2503/#2504)"
+        );
+    }
+
+    /// #2504 (acceptance): the engine-first rebuild restores remote-authored
+    /// content that the device-local op-log replay drops.
+    ///
+    /// Setup mirrors the issue's acceptance criterion: device B holds synced
+    /// content authored on device A (a real Loro snapshot in `loro_doc_state`),
+    /// plus one locally-authored op in the (device-local) op_log. B's `blocks`
+    /// table is corrupt/empty at boot.
+    ///
+    /// The test proves BOTH halves in one flow against a real engine snapshot:
+    ///   1. `recover_blocks_from_op_log` (the pre-#2504 path) rebuilds ONLY the
+    ///      local block — the remote block is absent (pre-fix failure).
+    ///   2. `reproject_blocks_from_engine` (the fix) then reprojects the engine
+    ///      state — the remote block, its property, and its tag are restored,
+    ///      and the local block still survives.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_reprojects_remote_content_from_engine_2504() {
+        // Canonical uppercase ULID-shaped ids so `BlockId::from_trusted`'s
+        // `to_ascii_uppercase()` normalization round-trips them unchanged
+        // (production ids are already uppercase Crockford base32).
+        const REMOTE_B: &str = "01HZ0000000000000000000B01";
+        const TAG_X: &str = "01HZ0000000000000000000T0X";
+        const LOCAL_A: &str = "01HZ0000000000000000000L0A";
+
+        let (pool, _dir) = test_pool().await;
+
+        // Device A authors a "remote" block (+ a property and a tag) into a real
+        // per-space Loro engine, and B persists A's snapshot in `loro_doc_state`.
+        // Remote ops never reach B's op_log (#490-M1), so there is deliberately
+        // no op_log row for the remote block.
+        let snapshot = {
+            let mut engine = crate::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
+            engine
+                .apply_create_block(REMOTE_B, "content", "authored on A", None, 0)
+                .unwrap();
+            engine
+                .apply_set_property(REMOTE_B, "flavour", Some("vanilla"))
+                .unwrap();
+            // A tag edge needs the tag block to exist as a `blocks` row (FK), so
+            // create it too; Pass A upserts every live block before Pass B.
+            engine
+                .apply_create_block(TAG_X, "tag", "important", None, 1)
+                .unwrap();
+            engine.apply_add_tag(REMOTE_B, TAG_X).unwrap();
+            engine.export_snapshot().unwrap()
+        };
+        sqlx::query(
+            "INSERT INTO loro_doc_state (space_id, snapshot, updated_at, op_count) \
+             VALUES ('space-1', ?, 0, 3)",
+        )
+        .bind(snapshot)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // One locally-authored block lives in the device-local op_log.
+        let payload = serde_json::json!({
+            "block_id": LOCAL_A,
+            "block_type": "content",
+            "index": 0,
+            "content": "authored here",
+        })
+        .to_string();
+        sqlx::query(
+            "INSERT INTO op_log \
+             (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+             VALUES ('device-B', 1, NULL, 'h1', 'create_block', ?, ?)",
+        )
+        .bind(&payload)
+        .bind(1_767_225_600_000_i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Phase 1 — the pre-#2504 op-log rebuild: local survives, remote absent.
+        let mut conn = pool.acquire().await.unwrap();
+        recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        let remote_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(REMOTE_B)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            remote_before, 0,
+            "pre-fix: the device-local op-log rebuild cannot see remote-authored content"
+        );
+
+        // Phase 2 — the #2504 engine-first reprojection restores remote content.
+        let fired = reproject_blocks_from_engine(&pool).await.unwrap();
+        assert!(
+            fired,
+            "engine reprojection must fire when a snapshot is present"
+        );
+
+        let remote_content: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(REMOTE_B)
+            .fetch_one(&pool)
+            .await
+            .expect("remote-authored block must be restored from the engine");
+        assert_eq!(remote_content, "authored on A");
+
+        let remote_prop: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'flavour'",
+        )
+        .bind(REMOTE_B)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(remote_prop, 1, "remote-authored property must be restored");
+
+        let remote_tag: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM block_tags WHERE block_id = ? AND tag_id = ?")
+                .bind(REMOTE_B)
+                .bind(TAG_X)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(remote_tag, 1, "remote-authored tag edge must be restored");
+
+        // The local block still survives the engine pass (engine upserts add the
+        // remote content; the op-log-recovered local block is untouched).
+        let local: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(LOCAL_A)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(local, 1, "locally-authored content must still survive");
+    }
+
+    /// #2504: with no persisted engine snapshots (a device that never synced, or
+    /// an ancient DB) the engine reprojection is a no-op returning `false`, so
+    /// the caller keeps the op-log pass's local-only content — the documented
+    /// fallback that is correct when local content is already complete.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reproject_blocks_from_engine_no_snapshots_is_noop_2504() {
+        let (pool, _dir) = test_pool().await;
+        let fired = reproject_blocks_from_engine(&pool).await.unwrap();
+        assert!(
+            !fired,
+            "no engine snapshots ⇒ engine reprojection does nothing and the op-log path stands"
         );
     }
 }
