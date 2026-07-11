@@ -343,6 +343,15 @@ export const common: Record<string, string> = {
   'data.importEnexButton': 'Import Evernote (.enex)',
   // #1282 — a `.enex` file whose XML could not be parsed.
   'data.importEnexParseFailed': 'Could not read {{name}}: not a valid Evernote export.',
+  // #2513 (part 2) — fourth affordance: import Joplin `.jex` archives. Each note
+  // in the archive becomes its own page (Markdown, frontend-only).
+  'data.importJexButton': 'Import Joplin (.jex)',
+  // #2513 (part 2) — a `.jex` archive whose tar could not be read / had no notes.
+  'data.importJexParseFailed': 'Could not read {{name}}: not a valid Joplin export.',
+  // #2513 (part 2) — items skipped during a `.jex` import (encrypted or
+  // unreadable metadata), surfaced as a soft warning in the result panel.
+  'data.importJexSkipped_one': 'Skipped {{count}} unreadable or encrypted item.',
+  'data.importJexSkipped_other': 'Skipped {{count}} unreadable or encrypted items.',
   // #1927 — Cancel a long-running multi-file/vault import between files.
   'data.importCancelButton': 'Cancel',
   // #1927 — partial result after the user cancels a multi-file import.

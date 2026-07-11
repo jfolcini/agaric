@@ -20,6 +20,7 @@ import { enexNoteToMarkdown, parseEnex, sanitizeNoteTitleToFilename } from '@/li
 import { downloadBlob, exportGraphAsZip } from '@/lib/export-graph'
 import { formatBytes } from '@/lib/format'
 import { scanAttachmentRefs } from '@/lib/import-attachments'
+import { jexNoteToMarkdown, parseJex } from '@/lib/jex-import'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { importMarkdown, resolvePageByAlias, type VaultFile } from '@/lib/tauri'
@@ -219,6 +220,10 @@ export function DataTab(): React.ReactElement {
   // from the `.md`/folder inputs since each `.enex` file expands into one
   // page PER note (ENML → Markdown), a different iteration unit than a file.
   const enexInputRef = useRef<HTMLInputElement>(null)
+  // #2513 (part 2) — hidden input for the Joplin `.jex` importer. Kept separate
+  // from the other inputs since a `.jex` archive expands into one page PER note
+  // (like `.enex`), a different iteration unit than a file.
+  const jexInputRef = useRef<HTMLInputElement>(null)
   // #1927 — abort flag checked between files so a large vault import can
   // be stopped. A ref (not state) so the running loop reads the latest
   // value without re-subscribing/re-rendering each tick.
@@ -698,6 +703,200 @@ export function DataTab(): React.ReactElement {
     [t, goToImportedPage],
   )
 
+  // #2513 (part 2) — Joplin `.jex` import. Frontend-only: the picked `.jex`
+  // tar archive is unpacked in the browser (`parseJex`), and each note it
+  // contains is composed to Markdown (`jexNoteToMarkdown`) and handed to the
+  // SAME `importMarkdown` IPC as the `.md`/`.enex` paths — one note → one page.
+  // Referenced resources ship as `vaultFiles` (the folder-import attachment
+  // path), and internal note links are preserved as `[[wikilinks]]`. Progress /
+  // notify / error handling mirrors `handleEnexImport`, including the #2513
+  // (part 4) single-summary-toast gating.
+  const handleJexImport = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files
+      if (!files || files.length === 0) return
+
+      const activeSpaceId = useSpaceStore.getState().currentSpaceId
+      if (activeSpaceId == null) {
+        notify.error(t('data.importSpaceNotReady'))
+        e.target.value = ''
+        return
+      }
+
+      setImporting(true)
+      setImportResult(null)
+      setBlocksProcessed(0)
+      setBytesProcessed(0)
+      cancelRef.current = false
+
+      const fileArray = Array.from(files)
+      const failedFiles: FailedFile[] = []
+      // #2513 — a parse failure fires its OWN per-file toast; count them so the
+      // end-of-run summary only fires when there is MORE to say, mirroring the
+      // `.enex` path's no-double-toast gating.
+      let parseFailures = 0
+      // Soft warnings surfaced in the result panel (e.g. skipped encrypted items).
+      const preWarnings: string[] = []
+      // Flatten every note across every picked archive into a single unit list.
+      const units: { name: string; content: string; vaultFiles: VaultFile[] | null }[] = []
+      for (const file of fileArray) {
+        try {
+          const buf = await file.arrayBuffer()
+          const { notes, skipped } = parseJex(new Uint8Array(buf))
+          // An archive that yields no notes is treated as a parse failure so the
+          // user gets an explicit "not a valid Joplin export" toast rather than a
+          // silent no-op (mirrors the `.enex` malformed-file behaviour).
+          if (notes.length === 0) {
+            throw new Error('no importable notes found in archive')
+          }
+          if (skipped > 0) preWarnings.push(t('data.importJexSkipped', { count: skipped }))
+          for (const note of notes) {
+            const vaultFiles: VaultFile[] | null =
+              note.attachments.length > 0
+                ? note.attachments.map((a) => ({ path: a.path, bytes: Array.from(a.bytes) }))
+                : null
+            units.push({
+              name: `${sanitizeNoteTitleToFilename(note.title)}.md`,
+              content: jexNoteToMarkdown(note),
+              vaultFiles,
+            })
+          }
+        } catch (err) {
+          logger.error(
+            'DataSettingsTab',
+            `jex parse failed: ${file.name}`,
+            { fileName: file.name },
+            err,
+          )
+          notify.error(t('data.importJexParseFailed', { name: file.name }))
+          failedFiles.push({ name: file.name, reason: importErrorReason(err) })
+          parseFailures += 1
+        }
+      }
+
+      setTotalFiles(units.length)
+
+      let totalBlocks = 0
+      let totalProps = 0
+      let totalBytes = 0
+      const allWarnings: string[] = [...preWarnings]
+      let succeededFiles = 0
+      let lastTitle = ''
+      let cancelled = false
+
+      for (const [i, unit] of units.entries()) {
+        if (cancelRef.current) {
+          cancelled = true
+          break
+        }
+        setCurrentFileIndex(i + 1)
+        setCurrentFileName(unit.name)
+        setCurrentFileBlocksDone(0)
+        setCurrentFileBlocksTotal(0)
+        try {
+          const result = await importMarkdown(
+            unit.content,
+            unit.name,
+            activeSpaceId,
+            (update) => {
+              switch (update.kind) {
+                case 'started': {
+                  setCurrentFileBlocksDone(0)
+                  setCurrentFileBlocksTotal(update.blocks_total)
+                  break
+                }
+                case 'progress': {
+                  setCurrentFileBlocksDone(update.blocks_done)
+                  setCurrentFileBlocksTotal(update.blocks_total)
+                  break
+                }
+                case 'complete': {
+                  setCurrentFileBlocksDone(update.blocks_created)
+                  break
+                }
+              }
+            },
+            unit.vaultFiles,
+          )
+          totalBlocks += result.blocks_created
+          totalProps += result.properties_set
+          allWarnings.push(...result.warnings)
+          succeededFiles += 1
+          lastTitle = result.page_title
+        } catch (err) {
+          logger.error(
+            'DataSettingsTab',
+            `jex note import failed: ${unit.name}`,
+            { fileName: unit.name },
+            err,
+          )
+          failedFiles.push({ name: unit.name, reason: importErrorReason(err) })
+        }
+        totalBytes += unit.content.length
+        setBlocksProcessed(totalBlocks)
+        setBytesProcessed(totalBytes)
+      }
+
+      const navTitle = totalBlocks > 0 ? lastTitle : null
+
+      setImportResult({
+        pageTitle: units.length === 1 ? lastTitle : null,
+        notes: true,
+        fileCount: units.length,
+        blocksCreated: totalBlocks,
+        propertiesSet: totalProps,
+        warnings: allWarnings,
+        failures: failedFiles,
+        navTitle,
+      })
+      setDetailsExpanded(false)
+      setCurrentFileIndex(null)
+      setCurrentFileName('')
+      setTotalFiles(0)
+      setCurrentFileBlocksDone(0)
+      setCurrentFileBlocksTotal(0)
+      setImporting(false)
+      cancelRef.current = false
+
+      e.target.value = ''
+
+      const viewAction =
+        navTitle != null
+          ? {
+              label: t('data.importViewAction'),
+              onClick: () => {
+                void goToImportedPage(navTitle, activeSpaceId)
+              },
+            }
+          : undefined
+
+      if (cancelled) {
+        notify(t('data.importCancelled', { count: succeededFiles }))
+      } else if (totalBlocks === 0) {
+        // #2513 — nothing imported. Each PARSE failure already fired its own
+        // per-file toast, so the summary fallback only fires when there is MORE
+        // to say (a note that PARSED but failed to import, or an empty
+        // selection), mirroring the `.enex` path's no-double-toast gating.
+        const noteImportFailures = failedFiles.length - parseFailures
+        if (noteImportFailures > 0) {
+          notify.error(t('data.importAllFailed', { count: failedFiles.length }))
+        } else if (failedFiles.length === 0) {
+          notify.error(t('data.importNoContent'))
+        }
+      } else if (failedFiles.length > 0) {
+        notify.retry(t('data.importFailuresHeading', { count: failedFiles.length }), () =>
+          jexInputRef.current?.click(),
+        )
+      } else {
+        // Each unit is a NOTE (one page per note), so label it "notes".
+        notify.success(t('data.importedNotesMessage', { totalBlocks, count: succeededFiles }), {
+          action: viewAction,
+        })
+      }
+    },
+    [t, goToImportedPage],
+  )
+
   const handleExportAll = useCallback(async () => {
     setExporting(true)
     try {
@@ -862,6 +1061,30 @@ export function DataTab(): React.ReactElement {
               data-testid="import-enex-button"
             >
               <FileUp className="h-3.5 w-3.5" /> {t('data.importEnexButton')}
+            </Button>
+            {/* #2513 (part 2) — Joplin `.jex` import affordance. Same gating +
+                flow as the Evernote button; each note in the picked archive
+                becomes a page via the shared `importMarkdown` IPC. */}
+            <input
+              type="file"
+              accept=".jex"
+              multiple
+              ref={jexInputRef}
+              className="hidden"
+              onChange={handleJexImport}
+              data-testid="import-jex-input"
+              aria-label={t('data.importJexButton')}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => jexInputRef.current?.click()}
+              disabled={importDisabled}
+              title={importGatedTitle}
+              aria-describedby={importGatedDescribedBy}
+              data-testid="import-jex-button"
+            >
+              <FileUp className="h-3.5 w-3.5" /> {t('data.importJexButton')}
             </Button>
             {/* #1927 — Cancel is only shown while a run is in flight. It
                 sets the abort flag the file loop checks between files. */}
