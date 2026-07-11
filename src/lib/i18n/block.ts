@@ -121,6 +121,12 @@ export const block: Record<string, string> = {
   'status.backgroundPanicsMessage_one': '{{count}} background panic',
   'status.backgroundPanicsMessage_other': '{{count}} background panics',
   'status.cacheStaleHint': 'Cache data may be stale. Restart the app to retry.',
+  'status.bgStaleMessage_one':
+    '{{count}} background cache rebuild pending — search, agenda, and counts may be briefly stale.',
+  'status.bgStaleMessage_other':
+    '{{count}} background cache rebuilds pending — search, agenda, and counts may be briefly stale.',
+  'status.bgStaleHint':
+    'Note content is never affected. Results reconcile automatically within an hour; restart the app to retry sooner.',
   'status.syncStatusTitle': 'Sync Status',
   'status.syncIdle': 'Idle',
   'status.syncSyncing': 'Syncing...',
