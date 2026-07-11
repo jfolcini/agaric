@@ -326,6 +326,78 @@ describe('StatusPanel', () => {
     })
   })
 
+  describe('bounded-staleness notice (#2471)', () => {
+    it('renders when a background rebuild dropped and retry rows are pending', async () => {
+      mockedInvoke.mockResolvedValue({
+        ...mockStatus,
+        bg_dropped: 4,
+        retry_queue_pending: 2,
+      })
+
+      render(<StatusPanel />)
+
+      expect(
+        await screen.findByText(
+          '2 background cache rebuilds pending — search, agenda, and counts may be briefly stale.',
+        ),
+      ).toBeInTheDocument()
+      expect(screen.getByTestId('status-panel-stale')).toBeInTheDocument()
+    })
+
+    it('renders the singular form for a single pending rebuild', async () => {
+      mockedInvoke.mockResolvedValue({
+        ...mockStatus,
+        bg_dropped: 1,
+        retry_queue_pending: 1,
+      })
+
+      render(<StatusPanel />)
+
+      expect(
+        await screen.findByText(
+          '1 background cache rebuild pending — search, agenda, and counts may be briefly stale.',
+        ),
+      ).toBeInTheDocument()
+    })
+
+    it('is hidden when a drop occurred but the retry queue has drained', async () => {
+      // bg_dropped is monotonic since boot; once the queue drains the notice
+      // must clear rather than stay lit on the stale counter.
+      mockedInvoke.mockResolvedValue({
+        ...mockStatus,
+        bg_dropped: 4,
+        retry_queue_pending: 0,
+      })
+
+      render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+      expect(screen.queryByTestId('status-panel-stale')).not.toBeInTheDocument()
+    })
+
+    it('is hidden when rows are pending but no background drop occurred', async () => {
+      mockedInvoke.mockResolvedValue({
+        ...mockStatus,
+        bg_dropped: 0,
+        retry_queue_pending: 5,
+      })
+
+      render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+      expect(screen.queryByTestId('status-panel-stale')).not.toBeInTheDocument()
+    })
+
+    it('is hidden for the legacy mock with neither field present', async () => {
+      mockedInvoke.mockResolvedValue(mockStatus)
+
+      render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+      expect(screen.queryByTestId('status-panel-stale')).not.toBeInTheDocument()
+    })
+  })
+
   describe('high-water marks', () => {
     it('displays peak values under queue depth cards', async () => {
       mockedInvoke.mockResolvedValue({

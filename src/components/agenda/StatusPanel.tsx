@@ -208,6 +208,41 @@ function SyncRetryButton({ state }: { state: SyncState }): React.ReactElement | 
   )
 }
 
+/**
+ * Bounded-staleness cue (#2471). Cache-backed reads — search (`fts_blocks`),
+ * the agenda, backlinks, and per-page/per-tag counts — can lag primary state
+ * by up to the materializer's 1h retry-queue backoff cap after a background
+ * rebuild is dropped and persisted. This notice makes that otherwise-silent
+ * degraded state visible: a search missing a recent edit is no longer
+ * indistinguishable from the note not existing.
+ *
+ * Rendered only when a background rebuild has been dropped this session
+ * (`bg_dropped > 0`) AND rows are still waiting in the persistent retry queue
+ * (`retry_queue_pending > 0`). Gating on the live pending count rather than
+ * the monotonic `bg_dropped` alone means a drop that has since flushed clears
+ * the notice instead of leaving it stuck lit. Extracted as its own component
+ * so its conditional stays out of `StatusPanel`'s body (complexity ceiling).
+ */
+function BoundedStalenessNotice({ status }: { status: StatusInfo }): React.ReactElement | null {
+  const { t } = useTranslation()
+  const bgDropped = status.bg_dropped ?? 0
+  const retryPending = status.retry_queue_pending ?? 0
+  if (bgDropped <= 0 || retryPending <= 0) return null
+
+  return (
+    <div
+      className="status-panel-stale mt-4 flex flex-col gap-1 rounded-lg border border-status-pending bg-status-pending/10 p-4 text-sm text-status-pending-foreground"
+      data-testid="status-panel-stale"
+    >
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+        <p>{t('status.bgStaleMessage', { count: retryPending })}</p>
+      </div>
+      <p className="ml-6 text-xs text-muted-foreground">{t('status.bgStaleHint')}</p>
+    </div>
+  )
+}
+
 export function StatusPanel(): React.ReactElement {
   const queryFn = useCallback(() => getStatus(), [])
   const {
@@ -347,6 +382,8 @@ export function StatusPanel(): React.ReactElement {
                   )}
                 </div>
               )}
+
+              <BoundedStalenessNotice status={status} />
             </output>
           )}
         </CardContent>
