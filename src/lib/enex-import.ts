@@ -111,6 +111,11 @@ function parseEnexTimestamp(raw: string | null | undefined): number | null {
  */
 const TODO_CHECKED_SENTINEL = '\uE000'
 const TODO_UNCHECKED_SENTINEL = '\uE001'
+// Delimiters for indexed `<en-media>` sentinels: `\uE002<index>\uE003`. The
+// resource path is spliced in (as `![](path)` from `mediaRefs`) only after
+// Turndown runs, so an attacker-controlled path never enters the HTML string.
+const MEDIA_SENTINEL_OPEN = '\uE002'
+const MEDIA_SENTINEL_CLOSE = '\uE003'
 
 /**
  * Build the shared Turndown instance used to convert ENML → Markdown.
@@ -327,16 +332,22 @@ function uniqueResourcePath(
  * Rewrite Evernote-specific tags in place, before Turndown sees the DOM:
  *  - `<en-todo checked="true|false"/>` → a sentinel text node (later swapped
  *    for a `- [x] ` / `- [ ] ` task marker),
- *  - `<en-media hash=…/>` → a standard `<img src="<resource path>">` when the
- *    hash matches a decoded resource (Turndown serializes it to `![](path)`,
- *    the ref the backend matches to the shipped bytes), recording the resource
- *    in `used`; an `<en-media>` with no matching resource is dropped (graceful
- *    fallback rather than leaking markup or crashing).
+ *  - `<en-media hash=…/>` → an indexed sentinel text node when the hash matches
+ *    a decoded resource; the matching `![](path)` markdown is collected in
+ *    `mediaRefs` and spliced back in AFTER Turndown runs. The resource path is
+ *    deliberately kept out of the serialized HTML: it is attacker-controlled
+ *    (an ENEX resource file name) and routing it through `<img src>` + the
+ *    innerHTML→Turndown re-parse would reinterpret DOM text as HTML (CodeQL
+ *    js/xss-through-dom). Sentinel-then-splice mirrors the `<en-todo>` handling
+ *    and never lets the path touch the HTML string. An `<en-media>` with no
+ *    matching resource is dropped (graceful fallback rather than leaking markup
+ *    or crashing).
  */
 function transformEnmlDom(
   root: Element,
   resources: Map<string, ResourceEntry>,
   used: EnexAttachment[],
+  mediaRefs: string[],
 ): void {
   const ownerDoc = root.ownerDocument
   for (const todo of Array.from(root.querySelectorAll('en-todo'))) {
@@ -358,9 +369,11 @@ function transformEnmlDom(
     if (!used.some((a) => a.path === resource.path)) {
       used.push({ path: resource.path, bytes: resource.bytes, mime: resource.mime })
     }
-    const img = ownerDoc.createElement('img')
-    img.setAttribute('src', resource.path)
-    media.replaceWith(img)
+    const index = mediaRefs.length
+    mediaRefs.push(`![](${resource.path})`)
+    media.replaceWith(
+      ownerDoc.createTextNode(`${MEDIA_SENTINEL_OPEN}${index}${MEDIA_SENTINEL_CLOSE}`),
+    )
   }
 }
 
@@ -400,14 +413,22 @@ function enmlToMarkdown(
   // innerHTML strips the wrapper element itself.
   const htmlDoc = document.implementation.createHTMLDocument('')
   const imported = htmlDoc.importNode(enNote, true) as Element
-  // Rewrite `<en-todo>` → sentinel and `<en-media>` → `<img>`/drop before
-  // serializing; matched resources are appended to `used`.
-  transformEnmlDom(imported, resources, used)
+  // Rewrite `<en-todo>` → sentinel and `<en-media>` → indexed sentinel (with
+  // the matching `![](path)` collected in `mediaRefs`) before serializing;
+  // matched resources are appended to `used`. Keeping the resource path out of
+  // the HTML avoids the DOM-text-reinterpreted-as-HTML flow CodeQL flags.
+  const mediaRefs: string[] = []
+  transformEnmlDom(imported, resources, used, mediaRefs)
   const bodyHtml = imported.innerHTML
 
   const markdown = td.turndown(bodyHtml)
-  // Swap the checkbox sentinels for real task markers post-conversion.
+  // Swap the sentinels for real markdown post-conversion: media refs first,
+  // then the checkbox markers.
   return markdown
+    .replace(
+      new RegExp(`${MEDIA_SENTINEL_OPEN}(\\d+)${MEDIA_SENTINEL_CLOSE}`, 'g'),
+      (_match, index: string) => mediaRefs[Number(index)] ?? '',
+    )
     .replace(new RegExp(TODO_CHECKED_SENTINEL, 'g'), '- [x] ')
     .replace(new RegExp(TODO_UNCHECKED_SENTINEL, 'g'), '- [ ] ')
     .trim()
