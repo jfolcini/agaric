@@ -806,6 +806,91 @@ describe('DataTab', () => {
     expect(screen.getByTestId('import-folder-button')).toBeInTheDocument()
   })
 
+  // #2510 — the dedicated "Import Obsidian vault" affordance is a discoverable,
+  // explicitly-named entry point. Like the generic folder button its input must
+  // carry `webkitdirectory` (a vault is a folder pick), and a distinct,
+  // Obsidian-labelled button must drive it so vault support is not hidden behind
+  // the generic "Import Folder" label.
+  it('exposes a dedicated Obsidian vault affordance carrying webkitdirectory (#2510)', () => {
+    render(<DataTab />)
+
+    const vaultInput = screen.getByTestId('import-obsidian-input') as HTMLInputElement
+    // jsdom lowercases the attribute; assert presence (value is empty string).
+    expect(vaultInput.hasAttribute('webkitdirectory')).toBe(true)
+
+    // A distinct, discoverable button, labelled for Obsidian and separate from
+    // the generic "Import Folder" / "Choose Files" affordances.
+    const vaultBtn = screen.getByTestId('import-obsidian-button')
+    expect(vaultBtn).toBeInTheDocument()
+    expect(vaultBtn).toHaveTextContent('Import Obsidian Vault')
+    expect(screen.getByRole('button', { name: /Import Obsidian Vault/i })).toBeInTheDocument()
+  })
+
+  // #2510 — clicking the Obsidian button opens ITS folder picker (the dedicated
+  // `webkitdirectory` input), reusing the same folder-import pipeline.
+  it('Obsidian vault button triggers its folder input click (#2510)', async () => {
+    const user = userEvent.setup()
+    render(<DataTab />)
+
+    const vaultInput = screen.getByTestId('import-obsidian-input') as HTMLInputElement
+    const clickSpy = vi.spyOn(vaultInput, 'click')
+
+    await user.click(screen.getByTestId('import-obsidian-button'))
+
+    expect(clickSpy).toHaveBeenCalled()
+  })
+
+  // #2510 — a vault import lands in a space, so the affordance is gated on an
+  // active space exactly like the other import buttons (no doomed IPC).
+  it('disables the Obsidian vault button when no active space is selected (#2510)', () => {
+    useSpaceStore.setState({
+      currentSpaceId: null,
+      availableSpaces: [],
+      isReady: false,
+    })
+
+    render(<DataTab />)
+
+    expect(screen.getByTestId('import-obsidian-button')).toBeDisabled()
+  })
+
+  // #2510 — a folder pick made through the Obsidian button flows through the
+  // SAME `handleFileImport` path, so a vault-relative `.md` file is imported
+  // with its folder-relative path (the #1446 folder→namespace mapping), proving
+  // the affordance is wired to the real import pipeline and not a dead button.
+  it('imports a picked vault file through the Obsidian affordance (#2510)', async () => {
+    mockImportMarkdown.mockResolvedValueOnce({
+      page_title: 'Note',
+      blocks_created: 3,
+      properties_set: 0,
+      warnings: [],
+    })
+
+    render(<DataTab />)
+
+    const vaultInput = screen.getByTestId('import-obsidian-input') as HTMLInputElement
+    const file = new File(['# Note'], 'Note.md', { type: 'text/markdown' })
+    // Emulate a folder pick: the browser prefixes the chosen vault folder name.
+    Object.defineProperty(file, 'webkitRelativePath', { value: 'MyVault/Note.md' })
+    Object.defineProperty(vaultInput, 'files', { value: [file] })
+
+    await act(async () => {
+      vaultInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    await waitFor(() => {
+      expect(mockImportMarkdown).toHaveBeenCalledWith(
+        '# Note',
+        // #1446 — the folder-relative path drives the namespace mapping.
+        'MyVault/Note.md',
+        DEFAULT_TEST_SPACE.id,
+        expect.any(Function),
+        // No attachment refs in the content ⇒ null vaultFiles payload.
+        null,
+      )
+    })
+  })
+
   // #1927 — the import target space must be visible so the destination is
   // not silent.
   it('shows the import target space name (#1927)', () => {
