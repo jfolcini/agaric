@@ -838,15 +838,36 @@ async fn batch_properties_returns_all_for_multiple_blocks() {
     );
 }
 
+/// #2542 — bulk READS converge on empty-input → empty-output (unlike bulk
+/// writes, which still reject empty input). `get_batch_properties_inner` is
+/// a read, so an empty `block_ids` list must return an empty map, not
+/// `Validation`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn batch_properties_empty_ids_returns_validation_error() {
+async fn batch_properties_empty_ids_returns_empty_map() {
     let (pool, _dir) = test_pool().await;
 
-    let result = get_batch_properties_inner(&pool, vec![]).await;
+    let result = get_batch_properties_inner(&pool, vec![]).await.unwrap();
 
     assert!(
-        matches!(result, Err(AppError::Validation { .. })),
-        "empty block_ids list must return Validation error, got: {result:?}"
+        result.is_empty(),
+        "empty block_ids list must return an empty map, got: {result:?}"
+    );
+}
+
+/// #2542 — `get_batch_properties_inner` must share the
+/// [`crate::commands::MAX_BATCH_BLOCK_IDS`] cap with the rest of the batch
+/// family: an over-cap `block_ids` list rejects with Validation.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_properties_rejects_oversize() {
+    let (pool, _dir) = test_pool().await;
+
+    let oversize: Vec<crate::ulid::BlockId> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
+        .map(|i| format!("ID{i}").into())
+        .collect();
+    let big = get_batch_properties_inner(&pool, oversize).await;
+    assert!(
+        matches!(big, Err(AppError::Validation { .. })),
+        "oversize block_ids list must reject with Validation, got: {big:?}"
     );
 }
 
@@ -1018,8 +1039,12 @@ async fn batch_resolve_returns_all_requested_blocks() {
     assert!(!r3.deleted, "r3 should not be deleted");
 }
 
+/// #2542 — bulk READS converge on empty-input → empty-output (unlike bulk
+/// writes, which still reject empty input). `batch_resolve_inner` is a
+/// read, so an empty `ids` list must return an empty `Vec`, not
+/// `Validation`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn batch_resolve_empty_ids_returns_validation_error() {
+async fn batch_resolve_empty_ids_returns_empty_vec() {
     let (pool, _dir) = test_pool().await;
 
     let result = batch_resolve_inner(
@@ -1027,11 +1052,12 @@ async fn batch_resolve_empty_ids_returns_validation_error() {
         vec![],
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
     )
-    .await;
+    .await
+    .unwrap();
 
     assert!(
-        matches!(result, Err(AppError::Validation { .. })),
-        "empty ids list must return Validation error, got: {result:?}"
+        result.is_empty(),
+        "empty ids list must return an empty Vec, got: {result:?}"
     );
 }
 

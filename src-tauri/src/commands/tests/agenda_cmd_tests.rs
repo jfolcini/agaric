@@ -443,6 +443,23 @@ async fn count_agenda_batch_empty_dates_returns_empty() {
     );
 }
 
+/// #2542 — `count_agenda_batch_inner` must share the
+/// [`crate::commands::MAX_BATCH_BLOCK_IDS`] cap with the rest of the batch
+/// family: an over-cap `dates` list rejects with Validation.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_agenda_batch_rejects_oversize() {
+    let (pool, _dir) = test_pool().await;
+
+    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
+        .map(|i| format!("2025-01-{i:05}"))
+        .collect();
+    let big = count_agenda_batch_inner(&pool, oversize, &SpaceScope::Global).await;
+    assert!(
+        matches!(big, Err(crate::error::AppError::Validation { .. })),
+        "oversize dates list must reject with Validation, got: {big:?}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_agenda_batch_returns_correct_counts() {
     let (pool, _dir) = test_pool().await;
@@ -558,6 +575,23 @@ async fn count_agenda_batch_by_source_empty_dates_returns_empty() {
     assert!(
         result.is_empty(),
         "empty date list should produce empty counts"
+    );
+}
+
+/// #2542 — `count_agenda_batch_by_source_inner` must share the
+/// [`crate::commands::MAX_BATCH_BLOCK_IDS`] cap with the rest of the batch
+/// family: an over-cap `dates` list rejects with Validation.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_agenda_batch_by_source_rejects_oversize() {
+    let (pool, _dir) = test_pool().await;
+
+    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
+        .map(|i| format!("2025-01-{i:05}"))
+        .collect();
+    let big = count_agenda_batch_by_source_inner(&pool, oversize, &SpaceScope::Global).await;
+    assert!(
+        matches!(big, Err(crate::error::AppError::Validation { .. })),
+        "oversize dates list must reject with Validation, got: {big:?}"
     );
 }
 
@@ -757,11 +791,14 @@ async fn count_agenda_batch_by_source_large_input_beyond_sqlite_param_limit() {
         .await
         .unwrap();
 
-    // Build a list of 1100 distinct dates in 2030 (all valid YYYY-MM-DD),
-    // plus our two real dates. None of the 1100 will match.
-    let mut dates: Vec<String> = Vec::with_capacity(1102);
+    // Build a list of 998 distinct dates in 2030 (all valid YYYY-MM-DD),
+    // plus our two real dates — 1000 total, at (not over) the #2542
+    // `MAX_BATCH_BLOCK_IDS` cap, still comfortably past the SQLite ~999
+    // bind-parameter limit the json_each approach exists to avoid. None of
+    // the 998 will match.
+    let mut dates: Vec<String> = Vec::with_capacity(1000);
     let mut day = chrono::NaiveDate::from_ymd_opt(2030, 1, 1).unwrap();
-    for _ in 0..1100 {
+    for _ in 0..998 {
         dates.push(day.format("%Y-%m-%d").to_string());
         day = day.succ_opt().unwrap();
     }

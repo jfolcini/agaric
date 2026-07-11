@@ -74,11 +74,11 @@ tx.commit_and_dispatch(&materializer).await?;
 
 Bulk commands operating on a list of block IDs (`restore_blocks_by_ids_inner`, `set_todo_state_batch_inner`, etc.) MUST:
 
-1. Reject empty `Vec` with `AppError::Validation`.
-2. Reject `len() > MAX_BATCH_BLOCK_IDS` (`MAX_BATCH_BLOCK_IDS = 1000`). The constant and its shared guard helper `ensure_batch_within_cap(subject, len)` are the single source of truth in the `crate::commands` module root (`commands/mod.rs`); prefer the helper for the canonical `"{subject} length {len} exceeds maximum {MAX_BATCH_BLOCK_IDS}"` message — all `*_by_ids` sites (including `restore_blocks_by_ids` / `purge_blocks_by_ids`) now route through it.
+1. Reject empty `Vec` with `AppError::validation(...)` — **this applies to bulk WRITES only.** Bulk READS (`get_blocks_inner`, `batch_resolve_inner`, `get_batch_properties_inner`, etc.) do the opposite: empty input returns an empty collection (`Ok(Vec::new())` / `Ok(HashMap::new())`), never an error. See "Empty input: writes reject, reads return empty" below.
+2. Reject `len() > MAX_BATCH_BLOCK_IDS` (`MAX_BATCH_BLOCK_IDS = 1000`). The constant and its shared guard helper `ensure_batch_within_cap(subject, len)` are the single source of truth in the `crate::commands` module root (`commands/mod.rs`); always call the helper — it produces the canonical `"{subject} length {len} exceeds maximum {MAX_BATCH_BLOCK_IDS}"` message and is required (never hand-spell the cap check). All `*_by_ids` / batch sites, reads and writes alike, route through it.
 3. Normalise ULIDs to uppercase via `BlockId::from_trusted` or the appropriate parser.
 4. Resolve in **one query** via `json_each(?1)` — never N+1 loops.
-5. Open exactly **one** `CommandTx::begin_immediate` per logical bulk op. Never chunk; one logical user action = one tx = one op-log seq range = one activity-feed entry.
+5. Open exactly **one** `CommandTx::begin_immediate` per logical bulk op (writes only). Never chunk; one logical user action = one tx = one op-log seq range = one activity-feed entry.
 
 ```rust
 pub async fn restore_blocks_by_ids_inner(
@@ -88,13 +88,9 @@ pub async fn restore_blocks_by_ids_inner(
     block_ids: Vec<String>,
 ) -> Result<BulkRestoreResponse, AppError> {
     if block_ids.is_empty() {
-        return Err(AppError::Validation("block_ids must not be empty".into()));
+        return Err(AppError::validation("block_ids list cannot be empty".into()));
     }
-    if block_ids.len() > MAX_BATCH_BLOCK_IDS {
-        return Err(AppError::Validation(format!(
-            "block_ids must contain at most {MAX_BATCH_BLOCK_IDS} ids",
-        )));
-    }
+    crate::commands::ensure_batch_within_cap("block_ids", block_ids.len())?;
     let normalized: Vec<String> = block_ids.iter().map(|id| id.to_uppercase()).collect();
     let id_json = serde_json::to_string(&normalized)?;
     // one tx, one json_each resolve, one commit
@@ -104,6 +100,12 @@ pub async fn restore_blocks_by_ids_inner(
     Ok(response)
 }
 ```
+
+### Empty input: writes reject, reads return empty
+
+Bulk **writes** (`restore_blocks_by_ids_inner`, `set_todo_state_batch_inner`, `delete_blocks_by_ids_inner`, `set_property_batch_inner`, and any other mutating `*_by_ids` / `*_batch` command) reject an empty id list with `AppError::validation(...)` — there is no such thing as "successfully wrote zero rows" for a user-triggered bulk action; an empty selection reaching the backend is a caller bug.
+
+Bulk **reads** (`get_blocks_inner`, `batch_resolve_inner`, `get_batch_properties_inner`, `list_attachments_batch_inner`, `count_agenda_batch_inner`, `count_backlinks_batch_inner`, and siblings) return the empty collection on empty input instead of erroring — an empty selection is a legitimate "nothing to fetch" case (e.g. a page with zero blocks), and forcing every caller to special-case it before calling is needless FE ceremony. The batch-size cap (`ensure_batch_within_cap`) still applies on both sides; only the *empty*-input branch differs by read/write.
 
 ## `OpRef` chains via `LAST_APPEND` task-local
 

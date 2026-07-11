@@ -4351,6 +4351,23 @@ async fn list_attachments_batch_empty_input_returns_empty_map() {
     );
 }
 
+/// #2542 — `list_attachments_batch_inner` must share the
+/// [`crate::commands::MAX_BATCH_BLOCK_IDS`] cap with the rest of the batch
+/// family: an over-cap `block_ids` list rejects with Validation.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_attachments_batch_rejects_oversize() {
+    let (pool, _dir) = test_pool().await;
+
+    let oversize: Vec<crate::ulid::BlockId> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
+        .map(|i| format!("ID{i}").into())
+        .collect();
+    let big = list_attachments_batch_inner(&pool, oversize).await;
+    assert!(
+        matches!(big, Err(crate::error::AppError::Validation { .. })),
+        "oversize input must reject with Validation, got: {big:?}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_attachments_batch_unknown_ids_omitted() {
     let (pool, _dir) = test_pool().await;

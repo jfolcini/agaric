@@ -616,15 +616,17 @@ async fn get_batch_properties_happy_path() {
     assert_eq!(result[b2.id.as_str()][0].value_text, Some("done".into()));
 }
 
+/// #2542 — bulk READS converge on empty-input → empty-output (unlike bulk
+/// writes, which still reject empty input).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn get_batch_properties_empty_ids_returns_validation_error() {
+async fn get_batch_properties_empty_ids_returns_empty_map() {
     let (pool, _dir) = test_pool().await;
 
-    let result = get_batch_properties_inner(&pool, vec![]).await;
+    let result = get_batch_properties_inner(&pool, vec![]).await.unwrap();
 
     assert!(
-        matches!(result, Err(AppError::Validation { .. })),
-        "empty block_ids must return Validation error, got: {result:?}"
+        result.is_empty(),
+        "empty block_ids must return an empty map, got: {result:?}"
     );
 }
 

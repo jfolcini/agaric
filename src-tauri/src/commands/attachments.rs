@@ -654,6 +654,7 @@ pub async fn list_attachments_batch_inner(
     if block_ids.is_empty() {
         return Ok(std::collections::HashMap::new());
     }
+    crate::commands::ensure_batch_within_cap("block_ids", block_ids.len())?;
 
     let ids_json = serde_json::to_string(&block_ids)?;
 

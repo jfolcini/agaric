@@ -36,6 +36,7 @@ pub async fn count_agenda_batch_inner(
     if dates.is_empty() {
         return Ok(HashMap::new());
     }
+    crate::commands::ensure_batch_within_cap("dates", dates.len())?;
     // Validate all dates
     for d in &dates {
         validate_date_format(d)?;
@@ -102,6 +103,7 @@ pub async fn count_agenda_batch_by_source_inner(
     if dates.is_empty() {
         return Ok(HashMap::new());
     }
+    crate::commands::ensure_batch_within_cap("dates", dates.len())?;
     for d in &dates {
         validate_date_format(d)?;
     }
