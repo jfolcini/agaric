@@ -104,6 +104,27 @@ pub(super) struct DebounceState {
     pub(super) seq: u64,
 }
 
+/// Outcome of a NON-BLOCKING background enqueue
+/// ([`Materializer::try_enqueue_background`]).
+///
+/// #2541: previously a queue-full shed was indistinguishable from a real
+/// enqueue (both `Ok(())`), so the retry-queue sweeper counted a shed as a
+/// successful re-dispatch AND `lease_entry`d the row with a stale `attempts`
+/// snapshot — racing the shed path's spawned `record_failure` UPSERT and
+/// potentially REWINDING the escalated `next_attempt_at`. Surfacing the
+/// outcome lets the sweeper skip both on a shed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackgroundEnqueueOutcome {
+    /// The task landed on the live background channel.
+    Enqueued,
+    /// The bounded channel was full; the task was dropped at enqueue time.
+    /// If the task is retryable, a spawned
+    /// [`super::retry_queue::record_failure`] has persisted it to
+    /// `materializer_retry_queue` with [`super::retry_queue::SHED_LAST_ERROR`]
+    /// and an escalated backoff — the shed self-heals via the sweeper.
+    Shed,
+}
+
 #[derive(Clone)]
 pub struct Materializer {
     /// The foreground sender is set once during [`Self::build`] and
@@ -836,7 +857,19 @@ impl Materializer {
         Ok(())
     }
 
-    pub fn try_enqueue_background(&self, task: MaterializeTask) -> Result<(), AppError> {
+    /// Non-blocking background enqueue. Returns
+    /// [`BackgroundEnqueueOutcome::Enqueued`] when the task landed on the
+    /// live channel, [`BackgroundEnqueueOutcome::Shed`] when the full channel
+    /// forced a drop (with the retryable-task persistence side-effect
+    /// described on the Full arm below). #2541: the outcome is surfaced so
+    /// the retry-queue sweeper can distinguish a real re-dispatch from a
+    /// shed — pre-fix both returned `Ok(())` and a shed was counted (and
+    /// leased) as a successful re-enqueue. Callers that don't care remain
+    /// source-compatible via `?;`.
+    pub fn try_enqueue_background(
+        &self,
+        task: MaterializeTask,
+    ) -> Result<BackgroundEnqueueOutcome, AppError> {
         let tx = self.bg_sender()?;
         match tx.try_send(task) {
             Ok(()) => {
@@ -845,7 +878,7 @@ impl Materializer {
                     .bg_high_water
                     .fetch_max(depth as u64, Ordering::Relaxed);
                 self.check_queue_pressure();
-                Ok(())
+                Ok(BackgroundEnqueueOutcome::Enqueued)
             }
             Err(mpsc::error::TrySendError::Full(task)) => {
                 // When the bounded background channel is full,
@@ -885,11 +918,11 @@ impl Materializer {
                     let task_for_spawn = task.clone();
                     let metrics_for_spawn = self.metrics.clone();
                     Self::spawn_task(&self.tasks, async move {
-                        use super::retry_queue::record_failure;
+                        use super::retry_queue::{SHED_LAST_ERROR, record_failure};
                         match record_failure(
                             &pool,
                             &task_for_spawn,
-                            "background queue full",
+                            SHED_LAST_ERROR,
                             &metrics_for_spawn,
                         )
                         .await
@@ -907,7 +940,7 @@ impl Materializer {
                                 if let Err(e2) = record_failure(
                                     &pool,
                                     &task_for_spawn,
-                                    "background queue full",
+                                    SHED_LAST_ERROR,
                                     &metrics_for_spawn,
                                 )
                                 .await
@@ -925,7 +958,7 @@ impl Materializer {
                     });
                 }
                 tracing::warn!("background queue full, dropping task");
-                Ok(())
+                Ok(BackgroundEnqueueOutcome::Shed)
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
                 Err(AppError::Channel("background queue closed".into()))
