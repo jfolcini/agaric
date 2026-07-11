@@ -1166,10 +1166,13 @@ pub(crate) async fn import_and_project(
 ///
 /// #535: thin `pub(crate)` wrapper so the recovery module doesn't need to
 /// reconstruct a [`SpaceId`] or know the projection internals. Returns the
-/// changed-block set (discarded by the caller — boot recovery does its own
-/// FTS reconciliation). On success the inbox row is deleted (in-tx, by
-/// `import_and_project`); on error the row is left in place so a later boot
-/// can retry.
+/// `(changed, purged)` block-id sets so the caller can fan out the SAME
+/// inbound cache/FTS rebuilds the live path fires after `apply_remote`
+/// ([`crate::materializer::Materializer::enqueue_inbound_sync_rebuilds`]) —
+/// the per-block projection here does NOT refresh the derived caches or the
+/// FTS index, and no later boot step reconciles them. On success the inbox
+/// row is deleted (in-tx, by `import_and_project`); on error the row is left
+/// in place so a later boot can retry.
 ///
 /// #792 / #1054: before the import, two guards mirror `apply_remote`'s
 /// pre-import gates and DROP the slot (their own small DELETE) rather than
@@ -1190,7 +1193,7 @@ pub(crate) async fn replay_inbox_row(
     // Pass D re-sweeps the stale SQL rows even though the re-imported engine
     // delta is now empty.
     tombstone_purged: &[crate::ulid::BlockId],
-) -> Result<Vec<crate::ulid::BlockId>, AppError> {
+) -> Result<(Vec<crate::ulid::BlockId>, Vec<crate::ulid::BlockId>), AppError> {
     let space = SpaceId::from_trusted(space_id);
 
     // #792: mirror `apply_remote`'s own-peer fork guard. `apply_remote`
@@ -1219,7 +1222,7 @@ pub(crate) async fn replay_inbox_row(
         sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", inbox_id)
             .execute(pool)
             .await?;
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
 
     // #1054: mirror `apply_remote`'s live reachability gate.
@@ -1258,16 +1261,20 @@ pub(crate) async fn replay_inbox_row(
         sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", inbox_id)
             .execute(pool)
             .await?;
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
 
-    // Boot recovery consumes only the changed set (its FTS reconciliation
-    // is its own pass); the purged delta is projected in-tx by Pass D.
-    // `RecoveryReplay` disables the #2264 no-op fast path: this slot's
-    // survival proves its projection never committed, even if the engine
-    // (rehydrated from a `loro_doc_state` persisted ahead of the crash)
-    // already holds every op in `bytes` — the full-projection fallback
-    // reconciles SQL instead of silently dropping the slot.
+    // Both sets are returned to the caller: `replay_sync_inbox` accumulates
+    // them across all replayed slots and fires ONE
+    // `enqueue_inbound_sync_rebuilds` fan-out — the same load-bearing
+    // cache/FTS reconciliation the live path runs after every import
+    // (session_state_machine.rs); the per-block projection alone leaves the
+    // derived caches and FTS stale. `RecoveryReplay` disables the #2264
+    // no-op fast path: this slot's survival proves its projection never
+    // committed, even if the engine (rehydrated from a `loro_doc_state`
+    // persisted ahead of the crash) already holds every op in `bytes` — the
+    // full-projection fallback reconciles SQL instead of silently dropping
+    // the slot.
     import_and_project(
         pool,
         registry,
@@ -1279,7 +1286,6 @@ pub(crate) async fn replay_inbox_row(
         InboundDeliveryKind::RecoveryReplay,
     )
     .await
-    .map(|(changed, _purged)| changed)
 }
 
 // ---------------------------------------------------------------------------
@@ -2623,7 +2629,7 @@ mod tests {
                 .expect("post");
         }
 
-        let changed = replay_inbox_row(
+        let (changed, _purged) = replay_inbox_row(
             &pool,
             &registry_forked,
             "device-F",
@@ -3027,7 +3033,7 @@ mod tests {
         // its oplog_vv has no entry for peer A, so the update's base is
         // unreachable.
         let registry_b = LoroEngineRegistry::new();
-        let changed = replay_inbox_row(
+        let (changed, _purged) = replay_inbox_row(
             &pool,
             &registry_b,
             "device-B",
@@ -3126,7 +3132,7 @@ mod tests {
         .await
         .expect("seed slot");
 
-        let changed = replay_inbox_row(
+        let (changed, _purged) = replay_inbox_row(
             &pool,
             &registry_b,
             "device-B",
@@ -3202,7 +3208,7 @@ mod tests {
 
         // A FRESH replaying engine — a snapshot must import regardless.
         let registry_b = LoroEngineRegistry::new();
-        let changed = replay_inbox_row(
+        let (changed, _purged) = replay_inbox_row(
             &pool,
             &registry_b,
             "device-B",
@@ -3761,7 +3767,8 @@ mod tests {
 
         // Boot replay.
         let registry = LoroEngineRegistry::new();
-        let replayed = crate::recovery::replay_sync_inbox(&pool, &registry, "device-B")
+        let mat = crate::materializer::Materializer::new(pool.clone());
+        let replayed = crate::recovery::replay_sync_inbox(&pool, &registry, "device-B", &mat)
             .await
             .expect("replay_sync_inbox");
         assert_eq!(replayed, 1, "exactly one slot must be replayed");
@@ -3807,7 +3814,8 @@ mod tests {
             .execute(&pool)
             .await
             .expect("seed inbox 1");
-        let r1 = crate::recovery::replay_sync_inbox(&pool, &registry, "device-B")
+        let mat = crate::materializer::Materializer::new(pool.clone());
+        let r1 = crate::recovery::replay_sync_inbox(&pool, &registry, "device-B", &mat)
             .await
             .expect("replay 1");
         assert_eq!(r1, 1);
@@ -3821,7 +3829,7 @@ mod tests {
             .execute(&pool)
             .await
             .expect("seed inbox 2");
-        let r2 = crate::recovery::replay_sync_inbox(&pool, &registry, "device-B")
+        let r2 = crate::recovery::replay_sync_inbox(&pool, &registry, "device-B", &mat)
             .await
             .expect("replay 2 must not error");
         assert_eq!(r2, 1);
@@ -3948,7 +3956,8 @@ mod tests {
         .expect("seed crashed slot");
 
         // Boot replay.
-        let replayed = crate::recovery::replay_sync_inbox(&pool, &registry_b, "device-B")
+        let mat = crate::materializer::Materializer::new(pool.clone());
+        let replayed = crate::recovery::replay_sync_inbox(&pool, &registry_b, "device-B", &mat)
             .await
             .expect("replay");
         assert_eq!(replayed, 1, "the crashed purge slot must replay");
@@ -4231,7 +4240,8 @@ mod tests {
 
         // Boot replay re-sweeps the stale rows FROM THE WRITTEN TOMBSTONE (the
         // re-import's engine delta is empty) and clears the slot.
-        let replayed = crate::recovery::replay_sync_inbox(&pool, &registry_b, "device-B")
+        let mat = crate::materializer::Materializer::new(pool.clone());
+        let replayed = crate::recovery::replay_sync_inbox(&pool, &registry_b, "device-B", &mat)
             .await
             .expect("replay");
         assert_eq!(replayed, 1, "the crashed purge slot must replay");
@@ -4956,7 +4966,7 @@ mod tests {
         .await
         .expect("seed surviving slot");
 
-        let changed = replay_inbox_row(
+        let (changed, _purged) = replay_inbox_row(
             &pool,
             &registry_b,
             "device-B",

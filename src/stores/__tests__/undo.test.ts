@@ -2,13 +2,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { isWithinUndoGroup, MAX_REDO_STACK, UNDO_GROUP_WINDOW_MS, useUndoStore } from '../undo'
 
-// #2190 — the undo store now reverts an entire Ctrl+Z group through a SINGLE
+// #2190 — the undo store reverts an entire Ctrl+Z group through a SINGLE
 // `undoPageGroup` IPC (one IMMEDIATE tx) instead of the old `findUndoGroup` +
-// N × `undoPageOp` loop. The mock therefore exposes `undoPageGroup` (returns
-// the full `UndoResult[]` for the group, newest-first) and `redoPageOp` (redo
-// still replays op-by-op from the recorded group size).
+// N × `undoPageOp` loop. #2468 — entries whose refs were captured at
+// `onNewAction` time are reverted by exact ref instead (`undoOp` for a single
+// op, ONE atomic `undoOps` for a coalesced group); `undoPageGroup` remains
+// the positional fallback for ref-less entries and pre-tracking history.
 vi.mock('@/lib/tauri', () => ({
   undoPageGroup: vi.fn(),
+  undoOp: vi.fn(),
+  undoOps: vi.fn(),
   redoPageOp: vi.fn(),
 }))
 
@@ -24,9 +27,11 @@ vi.mock('@/lib/logger', () => ({
 import { toast } from 'sonner'
 
 import { logger } from '@/lib/logger'
-import { redoPageOp, undoPageGroup } from '@/lib/tauri'
+import { redoPageOp, undoOp, undoOps, undoPageGroup } from '@/lib/tauri'
 
 const mockedUndoPageGroup = vi.mocked(undoPageGroup)
+const mockedUndoOp = vi.mocked(undoOp)
+const mockedUndoOps = vi.mocked(undoOps)
 const mockedRedoPageOp = vi.mocked(redoPageOp)
 const mockedLogger = vi.mocked(logger)
 const mockedToastWarning = vi.mocked(toast.warning)
@@ -720,6 +725,438 @@ describe('useUndoStore', () => {
 
       expect(useUndoStore.getState().pages.has('page1')).toBe(false)
       expect(useUndoStore.getState().pages.has('page2')).toBe(true)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // #2468 — ref-addressed undo: refs captured from the mutation response at
+  // `onNewAction` time are the undo targets; `undoOp` / `undoOps` submit the
+  // EXACT captured refs (killing the #2446 positional race), and the
+  // positional `undoPageGroup` path survives only as the documented fallback
+  // for ref-less entries (batch commands) and pre-tracking history.
+  // ---------------------------------------------------------------------------
+  describe('#2468 — ref-addressed undo', () => {
+    const ref = (seq: number, deviceId = 'dev1') => ({ device_id: deviceId, seq })
+
+    describe('capture (onNewAction with op_refs)', () => {
+      it('pushes a ref entry onto the undo stack and clears redo state', () => {
+        useUndoStore.getState().onNewAction('page1', [ref(5)])
+
+        const pageState = useUndoStore.getState().pages.get('page1')
+        expect(pageState?.undoStack).toHaveLength(1)
+        expect(pageState?.undoStack[0]?.refs).toEqual([ref(5)])
+        expect(pageState?.redoStack).toEqual([])
+        expect(pageState?.undoDepth).toBe(0)
+        expect(pageState?.redoGroupSizes).toEqual([])
+      })
+
+      it('a ref-less onNewAction pushes a positional-fallback entry (refs: null)', () => {
+        useUndoStore.getState().onNewAction('page1')
+
+        const pageState = useUndoStore.getState().pages.get('page1')
+        expect(pageState?.undoStack).toHaveLength(1)
+        expect(pageState?.undoStack[0]?.refs).toBeNull()
+      })
+
+      it('an EMPTY op_refs array (idempotent no-op) pushes nothing and preserves redo state', async () => {
+        // Seed redo state via an undo first.
+        mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ deviceId: 'dev1', seq: 5 })])
+        await useUndoStore.getState().undo('page1')
+        expect(useUndoStore.getState().canRedo('page1')).toBe(true)
+
+        // e.g. add_tag on an already-tagged block: the backend appended NO op
+        // (`op_refs: []`) — nothing to undo, and the redo history of an
+        // action that changed nothing must survive.
+        useUndoStore.getState().onNewAction('page1', [])
+
+        const pageState = useUndoStore.getState().pages.get('page1')
+        expect(pageState?.undoStack).toEqual([])
+        expect(pageState?.redoStack).toHaveLength(1)
+        expect(pageState?.undoDepth).toBe(1)
+        expect(pageState?.redoGroupSizes).toEqual([1])
+      })
+    })
+
+    describe('undo submits the CAPTURED ref (#2446 race)', () => {
+      it('uses undoOp with the exact captured ref even when newer ops landed in between', async () => {
+        useUndoStore.getState().onNewAction('page1', [ref(5)])
+
+        // A newer op (seq 6+) lands in the backend op log WITHOUT a local
+        // notification (a sync flush, another pane's debounced edit) — a
+        // positional depth-0 undo would now target the WRONG op. Ref
+        // addressing is immune: nothing in the store shifts, and undo
+        // submits exactly the ref captured at action time.
+        mockedUndoOp.mockResolvedValueOnce(
+          makeUndoResult({ deviceId: 'dev1', seq: 5, newSeq: 100 }),
+        )
+
+        const returned = await useUndoStore.getState().undo('page1')
+
+        expect(mockedUndoOp).toHaveBeenCalledTimes(1)
+        expect(mockedUndoOp).toHaveBeenCalledWith({ opRef: ref(5) })
+        expect(mockedUndoOps).not.toHaveBeenCalled()
+        expect(mockedUndoPageGroup).not.toHaveBeenCalled()
+        expect(returned).toEqual(makeUndoResult({ deviceId: 'dev1', seq: 5, newSeq: 100 }))
+
+        const pageState = useUndoStore.getState().pages.get('page1')
+        expect(pageState?.undoStack).toEqual([])
+        // Display/fallback anchor still advances so a later positional
+        // fallback stays coherent.
+        expect(pageState?.undoDepth).toBe(1)
+        // Redo carries the undo's new_op_ref (the appended reverse op).
+        expect(pageState?.redoStack).toEqual([ref(100)])
+        expect(pageState?.redoGroupSizes).toEqual([1])
+      })
+
+      it('separate entries keep their own captured refs (LIFO)', async () => {
+        vi.useFakeTimers()
+        try {
+          vi.setSystemTime(1_000_000)
+          useUndoStore.getState().onNewAction('page1', [ref(5)])
+          // Past the window → a distinct entry.
+          vi.setSystemTime(1_000_000 + UNDO_GROUP_WINDOW_MS + 1)
+          useUndoStore.getState().onNewAction('page1', [ref(9)])
+          expect(useUndoStore.getState().pages.get('page1')?.undoStack).toHaveLength(2)
+
+          mockedUndoOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 9 }))
+          await useUndoStore.getState().undo('page1')
+          expect(mockedUndoOp).toHaveBeenLastCalledWith({ opRef: ref(9) })
+
+          mockedUndoOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+          await useUndoStore.getState().undo('page1')
+          expect(mockedUndoOp).toHaveBeenLastCalledWith({ opRef: ref(5) })
+
+          expect(useUndoStore.getState().pages.get('page1')?.undoStack).toEqual([])
+          expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(2)
+        } finally {
+          vi.useRealTimers()
+        }
+      })
+
+      it('after the ref stack drains, undo falls back to positional with the advanced depth', async () => {
+        useUndoStore.getState().onNewAction('page1', [ref(5)])
+        mockedUndoOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+        await useUndoStore.getState().undo('page1')
+
+        // Stack empty → pre-tracking history → positional fallback, seeded
+        // PAST the ref-undone op (depth 1).
+        mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ deviceId: 'dev1', seq: 4 })])
+        await useUndoStore.getState().undo('page1')
+
+        expect(mockedUndoPageGroup).toHaveBeenCalledTimes(1)
+        expect(mockedUndoPageGroup).toHaveBeenCalledWith({
+          pageId: 'page1',
+          depth: 1,
+          windowMs: UNDO_GROUP_WINDOW_MS,
+        })
+        expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(2)
+      })
+    })
+
+    describe('capture-time coalescing (one undoOps call per group)', () => {
+      it('actions within the window accumulate ONE entry; undo issues ONE atomic undoOps (newest-first)', async () => {
+        vi.useFakeTimers()
+        try {
+          vi.setSystemTime(1_000_000)
+          // One action appending two ops (e.g. a recurrence burst)…
+          useUndoStore.getState().onNewAction('page1', [ref(1), ref(2)])
+          // …and a second action 300ms later — inside the window.
+          vi.setSystemTime(1_000_300)
+          useUndoStore.getState().onNewAction('page1', [ref(3)])
+
+          const pageState = useUndoStore.getState().pages.get('page1')
+          expect(pageState?.undoStack).toHaveLength(1)
+          expect(pageState?.undoStack[0]?.refs).toEqual([ref(1), ref(2), ref(3)])
+
+          mockedUndoOps.mockResolvedValueOnce([
+            makeUndoResult({ deviceId: 'dev1', seq: 3, newSeq: 103 }),
+            makeUndoResult({ deviceId: 'dev1', seq: 2, newSeq: 102 }),
+            makeUndoResult({ deviceId: 'dev1', seq: 1, newSeq: 101 }),
+          ])
+
+          const returned = await useUndoStore.getState().undo('page1')
+
+          // ONE atomic IPC for the whole coalesced group, refs newest-first.
+          expect(mockedUndoOps).toHaveBeenCalledTimes(1)
+          expect(mockedUndoOps).toHaveBeenCalledWith({ ops: [ref(3), ref(2), ref(1)] })
+          expect(mockedUndoOp).not.toHaveBeenCalled()
+          expect(mockedUndoPageGroup).not.toHaveBeenCalled()
+          expect(returned).toEqual(makeUndoResult({ deviceId: 'dev1', seq: 3, newSeq: 103 }))
+
+          const after = useUndoStore.getState().pages.get('page1')
+          expect(after?.undoStack).toEqual([])
+          expect(after?.undoDepth).toBe(3)
+          // Newest-first results prepended in order → OLDEST op's reverse at
+          // the front, the order redo pops for oldest-first replay.
+          expect(after?.redoStack).toEqual([ref(101), ref(102), ref(103)])
+          expect(after?.redoGroupSizes).toEqual([3])
+        } finally {
+          vi.useRealTimers()
+        }
+      })
+
+      it('the coalescing window SLIDES with each action', () => {
+        vi.useFakeTimers()
+        try {
+          vi.setSystemTime(1_000_000)
+          useUndoStore.getState().onNewAction('page1', [ref(1)])
+          vi.setSystemTime(1_000_400)
+          useUndoStore.getState().onNewAction('page1', [ref(2)])
+          // 800ms after the FIRST action but only 400ms after the second —
+          // still one group (mirrors the backend's consecutive-gap rule).
+          vi.setSystemTime(1_000_800)
+          useUndoStore.getState().onNewAction('page1', [ref(3)])
+
+          const pageState = useUndoStore.getState().pages.get('page1')
+          expect(pageState?.undoStack).toHaveLength(1)
+          expect(pageState?.undoStack[0]?.refs).toEqual([ref(1), ref(2), ref(3)])
+        } finally {
+          vi.useRealTimers()
+        }
+      })
+
+      it('a ref-less action inside the window degrades the merged entry to the positional fallback', async () => {
+        vi.useFakeTimers()
+        try {
+          vi.setSystemTime(1_000_000)
+          useUndoStore.getState().onNewAction('page1', [ref(5)])
+          // A batch command (no refs) lands 100ms later — same burst.
+          vi.setSystemTime(1_000_100)
+          useUndoStore.getState().onNewAction('page1')
+
+          const pageState = useUndoStore.getState().pages.get('page1')
+          expect(pageState?.undoStack).toHaveLength(1)
+          expect(pageState?.undoStack[0]?.refs).toBeNull()
+
+          // Undo of the mixed burst goes through the positional group path,
+          // which the backend coalesces over the SAME window — one Ctrl+Z
+          // still reverts the whole burst.
+          mockedUndoPageGroup.mockResolvedValueOnce(makeGroup(6, 2, 'dev1'))
+          await useUndoStore.getState().undo('page1')
+
+          expect(mockedUndoPageGroup).toHaveBeenCalledWith({
+            pageId: 'page1',
+            depth: 0,
+            windowMs: UNDO_GROUP_WINDOW_MS,
+          })
+          expect(mockedUndoOp).not.toHaveBeenCalled()
+          expect(mockedUndoOps).not.toHaveBeenCalled()
+          expect(useUndoStore.getState().pages.get('page1')?.undoStack).toEqual([])
+        } finally {
+          vi.useRealTimers()
+        }
+      })
+    })
+
+    describe('redo → undo target cycling', () => {
+      it('a redone op re-enters the undo stack as a ref entry targeting the redo op (new_op_ref)', async () => {
+        useUndoStore.getState().onNewAction('page1', [ref(5)])
+        mockedUndoOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 5, newSeq: 6 }))
+        await useUndoStore.getState().undo('page1')
+        expect(useUndoStore.getState().pages.get('page1')?.undoStack).toEqual([])
+
+        // Redo reverses the undo op (seq 6) and appends a redo op (seq 7) —
+        // per the #2468 contract, that redo op's ref is the NEW undo target.
+        mockedRedoPageOp.mockResolvedValueOnce(
+          makeUndoResult({ deviceId: 'dev1', seq: 6, newSeq: 7, isRedo: true }),
+        )
+        await useUndoStore.getState().redo('page1')
+
+        const pageState = useUndoStore.getState().pages.get('page1')
+        expect(pageState?.undoStack).toHaveLength(1)
+        expect(pageState?.undoStack[0]?.refs).toEqual([ref(7)])
+        expect(pageState?.redoStack).toEqual([])
+
+        // The next Ctrl+Z re-undoes the redone action BY REF.
+        mockedUndoOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 7, newSeq: 8 }))
+        await useUndoStore.getState().undo('page1')
+        expect(mockedUndoOp).toHaveBeenLastCalledWith({ opRef: ref(7) })
+      })
+
+      it('a group redo collects every redone op ref into ONE coalesced undo entry', async () => {
+        vi.useFakeTimers()
+        try {
+          vi.setSystemTime(1_000_000)
+          useUndoStore.getState().onNewAction('page1', [ref(1), ref(2), ref(3)])
+          mockedUndoOps.mockResolvedValueOnce([
+            makeUndoResult({ deviceId: 'dev1', seq: 3, newSeq: 103 }),
+            makeUndoResult({ deviceId: 'dev1', seq: 2, newSeq: 102 }),
+            makeUndoResult({ deviceId: 'dev1', seq: 1, newSeq: 101 }),
+          ])
+          await useUndoStore.getState().undo('page1')
+
+          // Redo replays oldest-first (101, 102, 103); each appends a redo op
+          // (201, 202, 203) whose ref becomes part of the next undo target.
+          mockedRedoPageOp
+            .mockResolvedValueOnce(
+              makeUndoResult({ deviceId: 'dev1', seq: 101, newSeq: 201, isRedo: true }),
+            )
+            .mockResolvedValueOnce(
+              makeUndoResult({ deviceId: 'dev1', seq: 102, newSeq: 202, isRedo: true }),
+            )
+            .mockResolvedValueOnce(
+              makeUndoResult({ deviceId: 'dev1', seq: 103, newSeq: 203, isRedo: true }),
+            )
+          await useUndoStore.getState().redo('page1')
+
+          const pageState = useUndoStore.getState().pages.get('page1')
+          expect(pageState?.undoStack).toHaveLength(1)
+          expect(pageState?.undoStack[0]?.refs).toEqual([ref(201), ref(202), ref(203)])
+
+          // And the whole redone group re-undoes with ONE atomic undoOps
+          // call, newest-first.
+          mockedUndoOps.mockResolvedValueOnce([
+            makeUndoResult({ deviceId: 'dev1', seq: 203, newSeq: 303 }),
+            makeUndoResult({ deviceId: 'dev1', seq: 202, newSeq: 302 }),
+            makeUndoResult({ deviceId: 'dev1', seq: 201, newSeq: 301 }),
+          ])
+          await useUndoStore.getState().undo('page1')
+          expect(mockedUndoOps).toHaveBeenLastCalledWith({ ops: [ref(203), ref(202), ref(201)] })
+        } finally {
+          vi.useRealTimers()
+        }
+      })
+    })
+
+    describe('error surfaces (Validation rejection leaves the stack consistent)', () => {
+      it('undoOp rejection mutates nothing, warns, and the SAME ref is retried next time', async () => {
+        useUndoStore.getState().onNewAction('page1', [ref(5)])
+
+        const err = new Error('op (dev1, 5) is already reversed')
+        mockedUndoOp.mockRejectedValueOnce(err)
+
+        const returned = await useUndoStore.getState().undo('page1')
+
+        expect(returned).toBeNull()
+        expect(mockedLogger.error).toHaveBeenCalledWith(
+          'UndoStore',
+          'undo_op failed',
+          { pageId: 'page1', refCount: 1 },
+          err,
+        )
+        expect(mockedToastWarning).toHaveBeenCalledTimes(1)
+
+        // Stack consistent: the entry was NOT consumed, no redo entry was
+        // fabricated, the positional anchor did not move.
+        const pageState = useUndoStore.getState().pages.get('page1')
+        expect(pageState?.undoStack).toHaveLength(1)
+        expect(pageState?.undoStack[0]?.refs).toEqual([ref(5)])
+        expect(pageState?.undoDepth).toBe(0)
+        expect(pageState?.redoStack).toEqual([])
+        expect(pageState?.redoGroupSizes).toEqual([])
+
+        // A retry resubmits the SAME captured ref.
+        mockedUndoOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+        await useUndoStore.getState().undo('page1')
+        expect(mockedUndoOp).toHaveBeenLastCalledWith({ opRef: ref(5) })
+        expect(useUndoStore.getState().pages.get('page1')?.undoStack).toEqual([])
+      })
+
+      it('undoOps rejection (atomic-abort) leaves the coalesced entry intact', async () => {
+        vi.useFakeTimers()
+        try {
+          vi.setSystemTime(1_000_000)
+          useUndoStore.getState().onNewAction('page1', [ref(1), ref(2)])
+        } finally {
+          vi.useRealTimers()
+        }
+
+        mockedUndoOps.mockRejectedValueOnce(new Error('validation: bad ref in set'))
+        const returned = await useUndoStore.getState().undo('page1')
+
+        expect(returned).toBeNull()
+        expect(mockedToastWarning).toHaveBeenCalledTimes(1)
+        const pageState = useUndoStore.getState().pages.get('page1')
+        expect(pageState?.undoStack).toHaveLength(1)
+        expect(pageState?.undoStack[0]?.refs).toEqual([ref(1), ref(2)])
+        expect(pageState?.undoDepth).toBe(0)
+        expect(pageState?.redoStack).toEqual([])
+      })
+    })
+
+    describe('positional fallback preserved for ref-less flows (batch commands)', () => {
+      it('a ref-less entry undoes via undoPageGroup (depth/window) and pops the entry', async () => {
+        // moveBlocksBatch / createBlocksBatch don't surface refs yet — their
+        // notification pushes a fallback entry.
+        useUndoStore.getState().onNewAction('page1')
+
+        mockedUndoPageGroup.mockResolvedValueOnce(makeGroup(3, 3, 'dev1'))
+        await useUndoStore.getState().undo('page1')
+
+        expect(mockedUndoPageGroup).toHaveBeenCalledWith({
+          pageId: 'page1',
+          depth: 0,
+          windowMs: UNDO_GROUP_WINDOW_MS,
+        })
+        expect(mockedUndoOp).not.toHaveBeenCalled()
+        expect(mockedUndoOps).not.toHaveBeenCalled()
+
+        const pageState = useUndoStore.getState().pages.get('page1')
+        expect(pageState?.undoStack).toEqual([])
+        expect(pageState?.undoDepth).toBe(3)
+        expect(pageState?.redoStack).toHaveLength(3)
+        expect(pageState?.redoGroupSizes).toEqual([3])
+      })
+
+      it('mixed stack: positional fallback for the newer batch entry, then ref undo for the older entry', async () => {
+        vi.useFakeTimers()
+        try {
+          vi.setSystemTime(1_000_000)
+          useUndoStore.getState().onNewAction('page1', [ref(5)])
+          // A batch action lands well past the window — its OWN entry.
+          vi.setSystemTime(1_002_000)
+          useUndoStore.getState().onNewAction('page1')
+          expect(useUndoStore.getState().pages.get('page1')?.undoStack).toHaveLength(2)
+        } finally {
+          vi.useRealTimers()
+        }
+
+        // First Ctrl+Z: the batch entry → positional path.
+        mockedUndoPageGroup.mockResolvedValueOnce([makeUndoResult({ deviceId: 'dev1', seq: 9 })])
+        await useUndoStore.getState().undo('page1')
+        expect(mockedUndoPageGroup).toHaveBeenCalledTimes(1)
+
+        // Second Ctrl+Z: the ref entry beneath → exact captured ref.
+        mockedUndoOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+        await useUndoStore.getState().undo('page1')
+        expect(mockedUndoOp).toHaveBeenCalledWith({ opRef: ref(5) })
+
+        const pageState = useUndoStore.getState().pages.get('page1')
+        expect(pageState?.undoStack).toEqual([])
+        expect(pageState?.undoDepth).toBe(2)
+      })
+    })
+
+    describe('resets drop captured refs', () => {
+      it('reanchorAfterRemoteOps clears the ref stack (#731 conservative reset)', async () => {
+        useUndoStore.getState().onNewAction('page1', [ref(5)])
+        useUndoStore.getState().reanchorAfterRemoteOps('page1')
+
+        const pageState = useUndoStore.getState().pages.get('page1')
+        expect(pageState?.undoStack).toEqual([])
+        expect(pageState?.undoDepth).toBe(0)
+      })
+
+      it('clearPage mid-flight drops the ref-undo result without re-seeding (#1677)', async () => {
+        useUndoStore.getState().onNewAction('page1', [ref(5)])
+
+        let resolveUndo: (r: ReturnType<typeof makeUndoResult>) => void = () => {}
+        mockedUndoOp.mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveUndo = resolve
+            }),
+        )
+
+        const undoPromise = useUndoStore.getState().undo('page1')
+        await Promise.resolve()
+        useUndoStore.getState().clearPage('page1')
+
+        resolveUndo(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+        await undoPromise
+
+        expect(useUndoStore.getState().pages.has('page1')).toBe(false)
+      })
     })
   })
 })

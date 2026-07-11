@@ -86,6 +86,7 @@ fn shutdown_notifies_waiter() {
     let daemon = SyncDaemon {
         shutdown_notify: shutdown_notify.clone(),
         cancel: Arc::new(AtomicBool::new(false)),
+        scheduler: Arc::new(SyncScheduler::new()),
         handle: None,
     };
     daemon.shutdown();
@@ -110,35 +111,63 @@ fn shutdown_notifies_waiter() {
 }
 
 #[test]
-fn cancel_active_sync_sets_flag() {
+fn cancel_active_sync_sets_flag_while_session_active() {
     let cancel = Arc::new(AtomicBool::new(false));
+    let scheduler = Arc::new(SyncScheduler::new());
     let daemon = SyncDaemon {
         shutdown_notify: Arc::new(Notify::new()),
         cancel: cancel.clone(),
+        scheduler: scheduler.clone(),
         handle: None,
     };
     assert!(
         !cancel.load(Ordering::Acquire),
         "cancel flag must start false"
     );
+    // #2537: the cancel only latches while a session is live.
+    let _activity = scheduler.begin_session_activity();
     daemon.cancel_active_sync();
     assert!(
         cancel.load(Ordering::Acquire),
-        "cancel_active_sync must set the flag"
+        "cancel_active_sync must set the flag while a session is active"
+    );
+}
+
+/// #2537: with NO live session there is nothing to cancel — and nothing
+/// that would ever reset the flag (the only resetters are the per-session
+/// cancel guards). `cancel_active_sync` must therefore be a no-op instead
+/// of latching `true` forever and instantly failing every future inbound
+/// responder session.
+#[test]
+fn cancel_active_sync_is_noop_without_active_session() {
+    let cancel = Arc::new(AtomicBool::new(false));
+    let daemon = SyncDaemon {
+        shutdown_notify: Arc::new(Notify::new()),
+        cancel: cancel.clone(),
+        scheduler: Arc::new(SyncScheduler::new()),
+        handle: None,
+    };
+    daemon.cancel_active_sync();
+    assert!(
+        !cancel.load(Ordering::Acquire),
+        "#2537: cancel with no active session must NOT latch the shared flag"
     );
 }
 
 #[test]
 fn shutdown_and_cancel_are_independent() {
     let cancel = Arc::new(AtomicBool::new(false));
+    let scheduler = Arc::new(SyncScheduler::new());
     let daemon = SyncDaemon {
         shutdown_notify: Arc::new(Notify::new()),
         cancel: cancel.clone(),
+        scheduler: scheduler.clone(),
         handle: None,
     };
     daemon.shutdown();
     assert!(!cancel.load(Ordering::Acquire), "cancel must remain unset");
 
+    let _activity = scheduler.begin_session_activity();
     daemon.cancel_active_sync();
     assert!(cancel.load(Ordering::Acquire), "cancel must now be set");
 }
@@ -146,11 +175,14 @@ fn shutdown_and_cancel_are_independent() {
 #[test]
 fn cancel_flag_clear_after_session() {
     let cancel = Arc::new(AtomicBool::new(false));
+    let scheduler = Arc::new(SyncScheduler::new());
     let daemon = SyncDaemon {
         shutdown_notify: Arc::new(Notify::new()),
         cancel: cancel.clone(),
+        scheduler: scheduler.clone(),
         handle: None,
     };
+    let _activity = scheduler.begin_session_activity();
     daemon.cancel_active_sync();
     assert!(cancel.load(Ordering::Acquire), "cancel must be set");
 
@@ -191,11 +223,14 @@ fn shared_event_sink_concurrent_emission() {
 #[test]
 fn cancel_is_idempotent() {
     let cancel = Arc::new(AtomicBool::new(false));
+    let scheduler = Arc::new(SyncScheduler::new());
     let daemon = SyncDaemon {
         shutdown_notify: Arc::new(Notify::new()),
         cancel: cancel.clone(),
+        scheduler: scheduler.clone(),
         handle: None,
     };
+    let _activity = scheduler.begin_session_activity();
     daemon.cancel_active_sync();
     daemon.cancel_active_sync();
     daemon.cancel_active_sync();
@@ -2090,6 +2125,15 @@ async fn handle_incoming_sync_aborts_on_cancel_and_releases_lock() {
     assert!(
         scheduler.try_lock_peer("REMOTE_DEV").is_some(),
         "per-peer lock must be released after the responder aborts on cancel"
+    );
+
+    // #2537: the responder session that consumed the cancel is now a
+    // legitimate resetter (mirrors the initiator's CancelGuard owns-path):
+    // the flag must be cleared on session teardown, not latched forever.
+    assert!(
+        !cancel.load(Ordering::Acquire),
+        "#2537: a responder session that consumed the cancel must clear the \
+         shared flag on exit"
     );
 
     materializer.shutdown();
@@ -6588,6 +6632,19 @@ async fn cancel_637_owns_path_clears_flag_after_real_session() {
         "#637 owns-path: the resetter that ran a real session must clear the flag on exit"
     );
 
+    // #2537: a user cancel is NOT a peer failure — the cancelled session
+    // must not be recorded into the scheduler's backoff (previously it was,
+    // doubling the peer's retry delay for something the peer didn't do).
+    assert_eq!(
+        scheduler.failure_count("PEER_637_OWNS"),
+        0,
+        "#2537: a cancelled session must NOT bump the scheduler failure count"
+    );
+    assert!(
+        scheduler.may_retry("PEER_637_OWNS"),
+        "#2537: a cancelled session must NOT push the peer into backoff"
+    );
+
     server.shutdown().await;
     materializer.shutdown();
 }
@@ -7855,4 +7912,714 @@ async fn issue2140_backoff_advances_on_failure_and_clears_on_success() {
     for dev in &devices {
         dev.flush_and_shutdown().await;
     }
+}
+
+// ======================================================================
+// #2537 — cancel with no active session must not latch the flag
+// ======================================================================
+
+/// #2537 regression: a user cancel issued while NO sync session is active
+/// must be a no-op — and a subsequent inbound responder session must
+/// SUCCEED, not instantly fail with "sync cancelled".
+///
+/// Before the fix, `cancel_active_sync` latched the daemon-wide
+/// `AtomicBool` unconditionally and the ONLY resetter was the
+/// initiator-side `CancelGuard` (armed only after an outbound connection
+/// established), so a cancel with no active initiator session poisoned
+/// every inbound session forever and burned the next outbound one as a
+/// recorded, backoff-doubling failure just to clear the flag.
+///
+/// This test (a) cancels with nothing running, (b) drives a REAL inbound
+/// responder session (`handle_incoming_sync`) over an in-memory wire with
+/// the SAME shared cancel flag + scheduler, and asserts the session
+/// completes and data flows — plus that the cancel never bumped any
+/// scheduler backoff/failure state.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancel_2537_no_session_cancel_does_not_poison_inbound_session() {
+    use crate::sync_protocol::SyncState;
+
+    const RESP_DEV: &str = "RESP2537";
+    const INIT_DEV: &str = "INIT2537";
+    const BLOCK: &str = "01HZ2537BLKXXXXXXXXXXXXXXX";
+    let space = crate::space::SpaceId::from_trusted("01HZ2537SPACEXXXXXXXXXXXXX");
+
+    // Shared daemon-wide state: ONE cancel flag + ONE scheduler, exactly as
+    // production wires them into both the daemon handle and the responder.
+    let cancel = Arc::new(AtomicBool::new(false));
+    let scheduler = Arc::new(SyncScheduler::new());
+    let daemon = SyncDaemon {
+        shutdown_notify: Arc::new(Notify::new()),
+        cancel: cancel.clone(),
+        scheduler: scheduler.clone(),
+        handle: None,
+    };
+
+    // ── (a) cancel with NO active session ────────────────────────────
+    daemon.cancel_active_sync();
+    assert!(
+        !cancel.load(Ordering::Acquire),
+        "#2537: cancel with no active session must NOT latch the shared flag"
+    );
+    assert!(
+        scheduler.failure_counts().is_empty(),
+        "#2537: a cancel must not bump any scheduler backoff/failure count, got {:?}",
+        scheduler.failure_counts()
+    );
+
+    // ── (b) drive a real inbound responder session with the SAME flag ─
+    // Responder: one seeded local edit so the session actually streams data.
+    let (resp_pool, _resp_dir) = test_pool().await;
+    let resp_mat = Materializer::new(resp_pool.clone());
+    let resp_state = std::sync::Arc::clone(resp_mat.loro_state());
+    let resp_sink_typed = Arc::new(RecordingEventSink::new());
+    let resp_sink: Arc<dyn SyncEventSink> = resp_sink_typed.clone();
+
+    peer_refs::upsert_peer_ref(&resp_pool, INIT_DEV)
+        .await
+        .unwrap();
+    make_local_edit_602(
+        &resp_pool,
+        &resp_mat,
+        &resp_state,
+        RESP_DEV,
+        &space,
+        BLOCK,
+        "seeded on responder (#2537)",
+        1_736_942_400_000,
+    )
+    .await;
+    resp_mat.flush_background().await.unwrap();
+
+    // Initiator: fresh device driven manually through the wire (mirrors
+    // `run_sync_session`'s loop, like the #778/#611 harnesses).
+    let (init_pool, _init_dir) = test_pool().await;
+    let init_mat = Materializer::new(init_pool.clone());
+    peer_refs::upsert_peer_ref(&init_pool, RESP_DEV)
+        .await
+        .unwrap();
+
+    let (mut server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+    server_conn.set_test_cert(Some(INIT_DEV.to_string()), None);
+
+    let resp_pool_clone = resp_pool.clone();
+    let resp_mat_clone = resp_mat.clone();
+    let server_task = tokio::spawn(handle_incoming_sync(
+        server_conn,
+        resp_pool_clone,
+        RESP_DEV.to_string(),
+        resp_mat_clone,
+        scheduler.clone(),
+        resp_sink.clone(),
+        cancel.clone(),
+    ));
+
+    let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let init_sink_box: Box<dyn SyncEventSink> = Box::new(SharedEventSink(init_sink.clone()));
+    let mut init_orch = SyncOrchestrator::new(init_pool.clone(), INIT_DEV.into(), init_mat.clone())
+        .with_event_sink(init_sink_box)
+        .with_expected_remote_id(RESP_DEV.into());
+
+    let first = init_orch.start().await.expect("initiator start");
+    super::wire::send_sync_message(&mut client_conn, &first)
+        .await
+        .unwrap();
+
+    while !init_orch.is_terminal() {
+        let incoming: SyncMessage = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            super::wire::recv_sync_message(&mut client_conn),
+        )
+        .await
+        .expect("initiator timed out waiting for responder message")
+        .expect("initiator wire recv");
+        // The #2537 failure signature: a latched flag makes the responder
+        // reply "sync cancelled" (or abort the wire) instead of syncing.
+        if let SyncMessage::Error { message } = &incoming {
+            panic!("#2537: responder rejected the post-cancel inbound session: {message}");
+        }
+        if let Some(resp) = init_orch
+            .handle_message(incoming)
+            .await
+            .expect("initiator handle_message")
+        {
+            super::wire::send_sync_message(&mut client_conn, &resp)
+                .await
+                .unwrap();
+            while let Some(m) = init_orch.next_message() {
+                super::wire::send_sync_message(&mut client_conn, &m)
+                    .await
+                    .unwrap();
+            }
+        }
+    }
+
+    assert_eq!(
+        init_orch.session().state,
+        SyncState::Complete,
+        "#2537: the inbound session after a no-session cancel must COMPLETE"
+    );
+
+    // End the responder's post-Complete file-transfer phase and reap it.
+    let _ = client_conn.close().await;
+    let resp_result = tokio::time::timeout(std::time::Duration::from_secs(10), server_task)
+        .await
+        .expect("responder task timed out")
+        .expect("responder task panicked");
+    assert!(
+        resp_result.is_ok(),
+        "#2537: the responder session must succeed (flag not latched), got {resp_result:?}"
+    );
+
+    // Data actually flowed — the session was real, not a rejected stub.
+    let content: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(BLOCK)
+        .fetch_optional(&init_pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        content.as_deref(),
+        Some("seeded on responder (#2537)"),
+        "#2537: the responder's block must reach the initiator"
+    );
+
+    // The flag is still clear and the cancel never inflated any backoff.
+    assert!(
+        !cancel.load(Ordering::Acquire),
+        "#2537: the shared flag must remain clear after the session"
+    );
+    assert!(
+        scheduler.failure_counts().is_empty(),
+        "#2537: no failure may be recorded for a clean session after a \
+         no-session cancel, got {:?}",
+        scheduler.failure_counts()
+    );
+
+    resp_mat.shutdown();
+    init_mat.shutdown();
+}
+
+// ======================================================================
+// #2538 — catch-up rejection must record failure, not success
+// ======================================================================
+
+/// #2538 regression: an over-size-cap snapshot offer is REJECTED by
+/// `try_receive_snapshot_catchup` (`CatchupOutcome::Rejected`) — nothing is
+/// applied and no frontier advances. The caller used to collapse that into
+/// a session SUCCESS: `record_success` reset the backoff, a
+/// `SyncEvent::Complete` told the UI "complete", and `last_address` success
+/// bookkeeping ran — so the 30 s scheduler re-selected the peer forever
+/// while the responder re-hashed the full blob every round.
+///
+/// Drives the REAL `try_sync_with_peer` against a live loopback responder
+/// that scripts `HeadExchange → ResetRequired → oversized SnapshotOffer`
+/// and asserts: a failure (with backoff — the peer is NOT immediately
+/// re-due), NO Complete event, NO peer_refs success bookkeeping, and an
+/// actionable error event.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn catchup_2538_oversize_rejection_records_failure_not_success() {
+    install_crypto_provider();
+
+    const PEER: &str = "PEER_2538";
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let sink = Arc::new(RecordingEventSink::new());
+    let event_sink: Arc<dyn SyncEventSink> = sink.clone();
+    let cert = sync_net::generate_self_signed_cert("LOCAL_2538").unwrap();
+
+    // Live loopback responder whose accepted connection is scripted by a
+    // test task (same harness shape as the #637 owns-path tests).
+    let server_cert = sync_net::generate_self_signed_cert(PEER).unwrap();
+    let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(1);
+    let (server, port) = SyncServer::start(&server_cert, move |conn, _permit| {
+        let _ = conn_tx.try_send(conn);
+    })
+    .await
+    .unwrap();
+
+    // Scripted responder: force the snapshot catch-up path, then offer an
+    // over-cap legacy CBOR snapshot; expect the initiator's SnapshotReject.
+    let script = tokio::spawn(async move {
+        let mut conn = tokio::time::timeout(std::time::Duration::from_secs(10), conn_rx.recv())
+            .await
+            .expect("responder accept timed out")
+            .expect("responder connection channel closed");
+        let first: SyncMessage = conn.recv_json().await.expect("script recv HeadExchange");
+        assert!(
+            matches!(first, SyncMessage::HeadExchange { .. }),
+            "initiator must open with HeadExchange, got {first:?}"
+        );
+        conn.send_json(&SyncMessage::ResetRequired {
+            reason: "test: force snapshot catch-up".into(),
+        })
+        .await
+        .expect("script send ResetRequired");
+        conn.send_json(&SyncMessage::SnapshotOffer {
+            size_bytes: super::snapshot_transfer::MAX_SNAPSHOT_SIZE + 1,
+            // Rejected on size before any bytes/checksum are exchanged.
+            blob_blake3: String::new(),
+        })
+        .await
+        .expect("script send SnapshotOffer");
+        let reply: SyncMessage = conn.recv_json().await.expect("script recv reject");
+        assert_eq!(
+            reply,
+            SyncMessage::SnapshotReject,
+            "initiator must reject the over-cap offer"
+        );
+        conn
+    });
+
+    let peer = sync_net::DiscoveredPeer {
+        device_id: PEER.to_string(),
+        addresses: vec!["127.0.0.1".parse().unwrap()],
+        port,
+    };
+    let refs = vec![make_peer_ref(PEER)];
+    let cancel = AtomicBool::new(false);
+
+    let ctx = SyncSessionContext {
+        pool: &pool,
+        device_id: "LOCAL_2538",
+        materializer: &materializer,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        cert: &cert,
+    };
+
+    let was_cancelled = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        try_sync_with_peer(&ctx, &peer, &refs),
+    )
+    .await
+    .expect("try_sync_with_peer must complete within timeout");
+    assert!(!was_cancelled, "no cancel was issued");
+
+    // Keep the scripted connection alive until the session returned.
+    let _conn = tokio::time::timeout(std::time::Duration::from_secs(10), script)
+        .await
+        .expect("script task timed out")
+        .expect("script task panicked");
+
+    // ── Scheduler: failure + backoff, NOT success ─────────────────────
+    assert_eq!(
+        scheduler.failure_count(PEER),
+        1,
+        "#2538: the rejected catch-up must be recorded as a failure"
+    );
+    assert!(
+        !scheduler.may_retry(PEER),
+        "#2538: the peer must be in backoff (NOT immediately re-due)"
+    );
+    assert!(
+        scheduler.peers_due_for_resync(&refs).is_empty(),
+        "#2538: the 30 s resync tick must NOT re-select the rejected peer"
+    );
+
+    // ── Events: no Complete; an actionable size-cap error surfaced ───
+    let events = sink.events();
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, SyncEvent::Complete { .. })),
+        "#2538: a rejected catch-up must NOT emit SyncEvent::Complete, got {events:?}"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            SyncEvent::Error { message, .. } if message.contains("exceeds local cap")
+        )),
+        "#2538: the sub-flow's actionable size-cap error must surface, got {events:?}"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            SyncEvent::Error { message, .. } if message.contains("snapshot catch-up rejected")
+        )),
+        "#2538: the session-level rejection error must surface, got {events:?}"
+    );
+
+    // ── No success bookkeeping: no peer_refs row (no synced_at advance,
+    //    no last_address persist, no TOFU cert upsert). ────────────────
+    let row = peer_refs::get_peer_ref(&pool, PEER).await.unwrap();
+    assert!(
+        row.is_none(),
+        "#2538: rejected catch-up must skip last_address/TOFU/synced_at \
+         bookkeeping, got {row:?}"
+    );
+
+    server.shutdown().await;
+    materializer.shutdown();
+}
+
+// ======================================================================
+// #2539 item 1 — HANDSHAKE_TIMEOUT dispatch guard (incl. first dispatch)
+// ======================================================================
+
+/// #2539 (item 1): the shared dispatch guard
+/// [`super::server::dispatch_with_handshake_timeout`] must abort a dispatch
+/// that outlives `HANDSHAKE_TIMEOUT` with the session loops' long-standing
+/// elapsed error. The responder's FIRST-message dispatch (the heavyweight
+/// `HeadExchange`: per-space Loro exports, a vault-wide soft-deleted read, VV
+/// decodes — run while holding a responder permit + the per-peer lock) used
+/// to run bare; it now routes through this exact helper, as do the
+/// responder's message loop (`server.rs`) and the initiator's loop
+/// (`run_sync_session`). Pinning the helper's timeout + error shape therefore
+/// pins all three sites, the same way the `RECV_TIMEOUT > HANDSHAKE_TIMEOUT`
+/// structural tests in `sync_net::connection` pin the guard ordering.
+///
+/// `start_paused` virtual time makes the 120 s timeout elapse instantly and
+/// deterministically.
+#[tokio::test(start_paused = true)]
+async fn dispatch_guard_2539_times_out_with_session_loop_error_shape() {
+    use crate::sync_constants::HANDSHAKE_TIMEOUT;
+
+    let never = std::future::pending::<Result<Option<SyncMessage>, AppError>>();
+    let err = super::server::dispatch_with_handshake_timeout(never)
+        .await
+        .expect_err("a dispatch that outlives HANDSHAKE_TIMEOUT must be aborted");
+    match err {
+        AppError::InvalidOperation(msg) => assert_eq!(
+            msg,
+            format!(
+                "handle_message timed out after {}s",
+                HANDSHAKE_TIMEOUT.as_secs()
+            ),
+            "#2539: the elapsed mapping must keep the session loops' exact error text"
+        ),
+        other => panic!("#2539: expected InvalidOperation, got {other:?}"),
+    }
+}
+
+/// #2539 (item 1) companion: the guard is transparent for dispatches that
+/// finish in time — both the `Ok` value and a handler-produced error pass
+/// through unchanged (no spurious timeout mapping).
+#[tokio::test(start_paused = true)]
+async fn dispatch_guard_2539_passes_through_prompt_results() {
+    let ok = super::server::dispatch_with_handshake_timeout(std::future::ready(Ok::<
+        Option<SyncMessage>,
+        AppError,
+    >(None)))
+    .await;
+    assert!(
+        matches!(ok, Ok(None)),
+        "#2539: a prompt Ok must pass through, got {ok:?}"
+    );
+
+    let err = super::server::dispatch_with_handshake_timeout(std::future::ready(Err::<
+        Option<SyncMessage>,
+        AppError,
+    >(
+        AppError::InvalidOperation("handler failed".into()),
+    )))
+    .await
+    .expect_err("a prompt handler error must pass through");
+    match err {
+        AppError::InvalidOperation(msg) => assert_eq!(
+            msg, "handler failed",
+            "#2539: a handler error must not be rewritten by the guard"
+        ),
+        other => panic!("#2539: expected the handler's own error, got {other:?}"),
+    }
+}
+
+// ======================================================================
+// #2539 item 2 — exactly ONE terminal Complete per session per role
+// ======================================================================
+
+/// #2539 (item 2) regression: a full successful sync session must emit
+/// exactly ONE `SyncEvent::Complete` per role.
+///
+/// Before the fix, the initiator's orchestrator emitted Complete on the
+/// final-LoroSync path AND `try_sync_with_peer` emitted a second Complete
+/// with identical counters through the raw daemon sink — every successful
+/// session double-fired `sync:complete` on the frontend bus (double toast,
+/// double reload). The responder always emitted once (orchestrator only).
+///
+/// Drives the REAL daemon-level initiator entry point (`try_sync_with_peer`
+/// — the layer that used to duplicate) against a live `handle_incoming_sync`
+/// responder over a real loopback TLS socket, with a seeded responder edit so
+/// the session takes the streamed-ops path, and counts Complete events on
+/// BOTH roles' sinks.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn complete_2539_full_session_emits_single_complete_per_role() {
+    install_crypto_provider();
+
+    const INIT_DEV: &str = "INIT2539";
+    const RESP_DEV: &str = "RESP2539";
+    const BLOCK: &str = "01HZ2539BLKXXXXXXXXXXXXXXX";
+    let space = crate::space::SpaceId::from_trusted("01HZ2539SPACEXXXXXXXXXXXXX");
+
+    // ── Responder: real handle_incoming_sync with one seeded edit ─────
+    let (resp_pool, _resp_dir) = test_pool().await;
+    let resp_mat = Materializer::new(resp_pool.clone());
+    let resp_state = std::sync::Arc::clone(resp_mat.loro_state());
+    peer_refs::upsert_peer_ref(&resp_pool, INIT_DEV)
+        .await
+        .unwrap();
+    make_local_edit_602(
+        &resp_pool,
+        &resp_mat,
+        &resp_state,
+        RESP_DEV,
+        &space,
+        BLOCK,
+        "seeded on responder (#2539)",
+        1_736_942_400_000,
+    )
+    .await;
+
+    let resp_sink = Arc::new(RecordingEventSink::new());
+    let resp_cert = sync_net::generate_self_signed_cert(RESP_DEV).unwrap();
+    let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(1);
+    let (server, port) = SyncServer::start(&resp_cert, move |conn, _permit| {
+        let _ = conn_tx.try_send(conn);
+    })
+    .await
+    .unwrap();
+
+    let resp_pool_clone = resp_pool.clone();
+    let resp_mat_clone = resp_mat.clone();
+    let resp_sink_dyn: Arc<dyn SyncEventSink> = resp_sink.clone();
+    let resp_task = tokio::spawn(async move {
+        let conn = tokio::time::timeout(std::time::Duration::from_secs(10), conn_rx.recv())
+            .await
+            .expect("responder accept timed out")
+            .expect("responder connection channel closed");
+        handle_incoming_sync(
+            conn,
+            resp_pool_clone,
+            RESP_DEV.to_string(),
+            resp_mat_clone,
+            Arc::new(SyncScheduler::new()),
+            resp_sink_dyn,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+    });
+
+    // ── Initiator: the REAL daemon layer (try_sync_with_peer) ─────────
+    let (init_pool, _init_dir) = test_pool().await;
+    let init_mat = Materializer::new(init_pool.clone());
+    let init_sink = Arc::new(RecordingEventSink::new());
+    let init_sink_dyn: Arc<dyn SyncEventSink> = init_sink.clone();
+    let init_cert = sync_net::generate_self_signed_cert(INIT_DEV).unwrap();
+    let scheduler = Arc::new(SyncScheduler::new());
+    let cancel = AtomicBool::new(false);
+
+    let ctx = SyncSessionContext {
+        pool: &init_pool,
+        device_id: INIT_DEV,
+        materializer: &init_mat,
+        scheduler: &scheduler,
+        event_sink: &init_sink_dyn,
+        cancel: &cancel,
+        cert: &init_cert,
+    };
+    let peer = sync_net::DiscoveredPeer {
+        device_id: RESP_DEV.to_string(),
+        addresses: vec!["127.0.0.1".parse().unwrap()],
+        port,
+    };
+    let refs = vec![make_peer_ref(RESP_DEV)];
+
+    let was_cancelled = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        try_sync_with_peer(&ctx, &peer, &refs),
+    )
+    .await
+    .expect("try_sync_with_peer timed out");
+    assert!(!was_cancelled, "no cancel was issued");
+
+    let resp_result = tokio::time::timeout(std::time::Duration::from_secs(10), resp_task)
+        .await
+        .expect("responder task timed out")
+        .expect("responder task panicked");
+    resp_result.expect("responder session must succeed");
+    server.shutdown().await;
+
+    // The session really succeeded end-to-end (data flowed, no failure).
+    let content: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(BLOCK)
+        .fetch_optional(&init_pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        content.as_deref(),
+        Some("seeded on responder (#2539)"),
+        "the responder's block must reach the initiator"
+    );
+    assert_eq!(
+        scheduler.failure_count(RESP_DEV),
+        0,
+        "a clean session must not record a failure"
+    );
+
+    // ── #2539: exactly ONE terminal Complete per role ─────────────────
+    let init_events = init_sink.events();
+    let init_completes = init_events
+        .iter()
+        .filter(|e| matches!(e, SyncEvent::Complete { .. }))
+        .count();
+    assert_eq!(
+        init_completes, 1,
+        "#2539: the initiator must emit exactly ONE SyncEvent::Complete per \
+         successful session, got {init_events:?}"
+    );
+    let resp_events = resp_sink.events();
+    let resp_completes = resp_events
+        .iter()
+        .filter(|e| matches!(e, SyncEvent::Complete { .. }))
+        .count();
+    assert_eq!(
+        resp_completes, 1,
+        "#2539: the responder must emit exactly ONE SyncEvent::Complete per \
+         successful session, got {resp_events:?}"
+    );
+
+    resp_mat.shutdown();
+    init_mat.shutdown();
+}
+
+/// #2539 (item 2), snapshot catch-up path: an initiator session that
+/// completes via the post-ResetRequired Loro-snapshot catch-up must also
+/// emit exactly ONE `SyncEvent::Complete`.
+///
+/// On this path the orchestrator never emits Complete at all (its terminal
+/// state is `ResetRequired`); the single emission is owned by
+/// `snapshot_transfer`'s Applied path. Before the fix,
+/// `try_sync_with_peer` then added a second Complete — and that duplicate
+/// carried the stale ResetRequired-era session counters, not the catch-up's.
+///
+/// Mirrors the #2538 harness (real `try_sync_with_peer` against a scripted
+/// loopback responder), but the script ACCEPTS the catch-up: after
+/// `HeadExchange → ResetRequired` it streams one valid per-space Loro
+/// snapshot frame (`LoroSync { is_last: true }`, the #2503 merge flow).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn complete_2539_snapshot_catchup_emits_single_complete() {
+    install_crypto_provider();
+
+    const PEER: &str = "PEER2539CU";
+    const BLOCK: &str = "01HZ2539CBLKXXXXXXXXXXXXXX";
+    let space = crate::space::SpaceId::from_trusted("01HZ2539CSPACEXXXXXXXXXXXX");
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let sink = Arc::new(RecordingEventSink::new());
+    let event_sink: Arc<dyn SyncEventSink> = sink.clone();
+    let cert = sync_net::generate_self_signed_cert("LOCAL2539CU").unwrap();
+
+    let server_cert = sync_net::generate_self_signed_cert(PEER).unwrap();
+    let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(1);
+    let (server, port) = SyncServer::start(&server_cert, move |conn, _permit| {
+        let _ = conn_tx.try_send(conn);
+    })
+    .await
+    .unwrap();
+
+    // Scripted responder: force the catch-up, then stream ONE valid Loro
+    // space snapshot so the initiator's merge path (#2503) applies it.
+    let script_space = space.clone();
+    let script = tokio::spawn(async move {
+        let mut conn = tokio::time::timeout(std::time::Duration::from_secs(10), conn_rx.recv())
+            .await
+            .expect("responder accept timed out")
+            .expect("responder connection channel closed");
+        let first: SyncMessage = conn.recv_json().await.expect("script recv HeadExchange");
+        assert!(
+            matches!(first, SyncMessage::HeadExchange { .. }),
+            "initiator must open with HeadExchange, got {first:?}"
+        );
+        conn.send_json(&SyncMessage::ResetRequired {
+            reason: "test: force snapshot catch-up (#2539)".into(),
+        })
+        .await
+        .expect("script send ResetRequired");
+
+        let bytes = {
+            let mut e = crate::loro::engine::LoroEngine::with_peer_id(PEER).expect("script engine");
+            e.apply_create_block(BLOCK, "content", "caught-up content (#2539)", None, 0)
+                .expect("script create block");
+            e.export_snapshot().expect("script export snapshot")
+        };
+        conn.send_json(&SyncMessage::LoroSync {
+            msg: crate::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot {
+                protocol_version: crate::sync_protocol::loro_sync_types::LORO_SYNC_PROTOCOL_VERSION,
+                space_id: script_space,
+                bytes,
+            },
+            is_last: true,
+        })
+        .await
+        .expect("script send LoroSync snapshot");
+        conn
+    });
+
+    let peer = sync_net::DiscoveredPeer {
+        device_id: PEER.to_string(),
+        addresses: vec!["127.0.0.1".parse().unwrap()],
+        port,
+    };
+    let refs = vec![make_peer_ref(PEER)];
+    let cancel = AtomicBool::new(false);
+
+    let ctx = SyncSessionContext {
+        pool: &pool,
+        device_id: "LOCAL2539CU",
+        materializer: &materializer,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        cert: &cert,
+    };
+
+    let was_cancelled = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        try_sync_with_peer(&ctx, &peer, &refs),
+    )
+    .await
+    .expect("try_sync_with_peer must complete within timeout");
+    assert!(!was_cancelled, "no cancel was issued");
+
+    // Keep the scripted connection alive until the session returned.
+    let _conn = tokio::time::timeout(std::time::Duration::from_secs(10), script)
+        .await
+        .expect("script task timed out")
+        .expect("script task panicked");
+    server.shutdown().await;
+
+    // The catch-up genuinely applied: merged block projected into SQL and
+    // the session recorded as a success (no backoff).
+    let content: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(BLOCK)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        content.as_deref(),
+        Some("caught-up content (#2539)"),
+        "the snapshot catch-up must project the peer's block"
+    );
+    assert_eq!(
+        scheduler.failure_count(PEER),
+        0,
+        "an applied catch-up is a success — no failure/backoff"
+    );
+
+    // ── #2539: exactly ONE terminal Complete (snapshot_transfer's) ────
+    let events = sink.events();
+    let completes = events
+        .iter()
+        .filter(|e| matches!(e, SyncEvent::Complete { .. }))
+        .count();
+    assert_eq!(
+        completes, 1,
+        "#2539: the snapshot catch-up path must emit exactly ONE \
+         SyncEvent::Complete, got {events:?}"
+    );
+
+    materializer.shutdown();
 }

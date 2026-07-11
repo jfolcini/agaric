@@ -31,7 +31,7 @@ pub(crate) mod android_multicast;
 mod tests;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use sqlx::SqlitePool;
@@ -99,6 +99,10 @@ impl SyncEventSink for SharedEventSink {
 pub struct SyncDaemon {
     shutdown_notify: Arc<Notify>,
     cancel: Arc<AtomicBool>,
+    /// #2537: shared scheduler handle, used by [`Self::cancel_active_sync`]
+    /// to gate the cancel flag on live-session activity so a cancel with
+    /// no running session can never latch the flag.
+    scheduler: Arc<SyncScheduler>,
     /// Read only by `#[cfg(test)] mod tests` — assertions that the
     /// daemon holds a handle (e.g. in dormant mode) and to await
     /// graceful shutdown after `shutdown()`. The production drop path
@@ -253,9 +257,11 @@ impl SyncDaemon {
     fn spawn_dormant_waiter(ctx: SyncDaemonContext) -> Result<Self, AppError> {
         let shutdown_notify = Arc::new(Notify::new());
         let shutdown_notify_task = shutdown_notify.clone();
-        // Clone the shared cancel flag for the returned handle; the owned
-        // `ctx` (carrying the same Arc) is moved into `daemon_loop` below.
+        // Clone the shared cancel flag + scheduler for the returned handle;
+        // the owned `ctx` (carrying the same Arcs) is moved into
+        // `daemon_loop` below.
         let cancel = ctx.cancel.clone();
+        let scheduler = ctx.scheduler.clone();
 
         let handle = tokio::spawn(async move {
             let mut poll = tokio::time::interval(Self::DORMANT_POLL_INTERVAL);
@@ -295,6 +301,7 @@ impl SyncDaemon {
         Ok(Self {
             shutdown_notify,
             cancel,
+            scheduler,
             handle: Some(handle),
         })
     }
@@ -337,9 +344,11 @@ impl SyncDaemon {
     pub async fn start_with_lifecycle(ctx: SyncDaemonContext) -> Result<Self, AppError> {
         let shutdown_notify = Arc::new(Notify::new());
         let shutdown_notify_flag = shutdown_notify.clone();
-        // Clone the shared cancel flag for the returned handle; the owned
-        // `ctx` (carrying the same Arc) is moved into `daemon_loop` below.
+        // Clone the shared cancel flag + scheduler for the returned handle;
+        // the owned `ctx` (carrying the same Arcs) is moved into
+        // `daemon_loop` below.
         let cancel = ctx.cancel.clone();
+        let scheduler = ctx.scheduler.clone();
 
         let handle = tokio::spawn(async move {
             if let Err(e) = session_supervisor::daemon_loop(ctx, shutdown_notify_flag).await {
@@ -350,6 +359,7 @@ impl SyncDaemon {
         Ok(Self {
             shutdown_notify,
             cancel,
+            scheduler,
             handle: Some(handle),
         })
     }
@@ -359,13 +369,23 @@ impl SyncDaemon {
         self.shutdown_notify.notify_one();
     }
 
-    /// Signal the active sync session to cancel.
+    /// Signal the active sync session(s) to cancel.
     ///
-    /// The cancellation flag is checked each iteration of the message exchange
-    /// loop in `run_sync_session`.  If no sync is active the flag is harmlessly
-    /// cleared on the next session attempt.
+    /// The cancellation flag is checked each iteration of the message
+    /// exchange loops in `run_sync_session` (initiator) and
+    /// `handle_incoming_sync` (responder).
+    ///
+    /// #2537: the flag is only latched while a session is actually live
+    /// ([`SyncScheduler::request_cancel`]); with nothing running the call
+    /// is a no-op. Previously the flag was stored unconditionally and the
+    /// only resetter was the initiator-side session guard — a cancel with
+    /// no active session latched `true` forever, instantly failing every
+    /// inbound session and burning (plus back-off-penalising) the next
+    /// outbound one just to clear it.
     pub fn cancel_active_sync(&self) {
-        self.cancel.store(true, Ordering::Release);
+        if !self.scheduler.request_cancel(&self.cancel) {
+            tracing::debug!("cancel_active_sync ignored: no sync session is active");
+        }
     }
 }
 

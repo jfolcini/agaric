@@ -53,7 +53,6 @@ use crate::error::AppError;
 use crate::lifecycle::LifecycleHooks;
 use crate::materializer::Materializer;
 use crate::peer_refs::{self, PeerRef};
-use crate::sync_constants::HANDSHAKE_TIMEOUT;
 use crate::sync_events::{SyncEvent, SyncEventSink};
 use crate::sync_net::{self, DiscoveredPeer, MdnsService, SyncCert, SyncConnection, SyncServer};
 use crate::sync_protocol::{SyncMessage, SyncOrchestrator, SyncState};
@@ -644,6 +643,56 @@ pub(crate) struct SyncSessionContext<'a> {
 }
 
 // ---------------------------------------------------------------------------
+// CancelGuard — cancel-flag ownership scope guard (S-11 / #637 / #2537)
+// ---------------------------------------------------------------------------
+
+/// Scope guard that clears the shared cancel flag on Drop, but ONLY when the
+/// holding task actually *owns* the cancel — i.e. it committed to a real
+/// sync session and is therefore the legitimate consumer of (and resetter
+/// for) a user cancel.
+///
+/// #637: the cancel flag is a single `&AtomicBool` SHARED by every per-peer
+/// task in a round (Branch B of `daemon_loop` spawns one task per peer
+/// against the same flag) and, since #1605/#2537, by responder sessions too.
+/// It is set `true` only by the user via `cancel_active_sync()` /
+/// `cancel_sync`. An early guard design cleared it unconditionally on every
+/// exit path; an early-exiting task (backoff gate, lock contention, no
+/// resolved addresses, all-addresses-failed connect, responder identity
+/// rejection) would then store `false` and *swallow* a user cancel aimed at
+/// a still-running sibling before that sibling ever observed it.
+///
+/// Invariant: a user cancel targeting a still-running sibling MUST survive
+/// an early-exiting peer's teardown, while the legitimate post-run reset
+/// still happens. Enforced by clearing the flag on Drop only when
+/// `owns == true`, which each session sets exactly once — the initiator
+/// immediately before running the real session (`try_sync_with_peer`
+/// step 7), the responder once identity checks pass and the per-peer lock
+/// is held (#2537, `handle_incoming_sync`). Every early-exit path drops
+/// with `owns == false` and leaves the shared flag untouched.
+pub(super) struct CancelGuard<'a> {
+    pub(super) cancel: &'a AtomicBool,
+    pub(super) owns: bool,
+}
+
+impl Drop for CancelGuard<'_> {
+    fn drop(&mut self) {
+        if self.owns {
+            // `SeqCst` (not `Release`) is load-bearing for the #2537
+            // teardown race: this store must be ordered AFTER the session's
+            // activity-count decrement (`SessionActivityGuard`'s SeqCst
+            // `fetch_sub`, which drops first) in the flag's modification
+            // order, so that `SyncScheduler::request_cancel`'s SeqCst
+            // store→re-check pair can rely on "re-check saw a live count ⇒
+            // that owner's `false` lands after our `true`". A release store
+            // does not join the SC total order, which would let a racing
+            // cancel's buffered `true` become visible after this `false` —
+            // latching the flag with no owner left to reset it.
+            self.cancel.store(false, Ordering::SeqCst);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // try_sync_with_peer — single sync session with backoff
 // ---------------------------------------------------------------------------
 
@@ -709,38 +758,12 @@ pub(crate) async fn try_sync_with_peer(
     // Scope guard: clear the shared cancel flag on Drop, but ONLY when this
     // task actually *owns* the cancel — i.e. it reached the real sync-session
     // phase and is therefore the legitimate consumer of (and resetter for) a
-    // user cancel. See `CancelGuard::owns`.
-    //
-    // #637: the cancel flag (`ctx.cancel`) is a single `&AtomicBool` SHARED by
-    // every per-peer task in a round (Branch B spawns one task per peer against
-    // the same flag). It is set `true` only by the user via
-    // `cancel_active_sync()`. The original guard cleared it unconditionally on
-    // every exit path; an early-exiting task (backoff gate, lock contention, no
-    // resolved addresses, all-addresses-failed connect) would then store
-    // `false` and *swallow* a user cancel aimed at a still-running sibling
-    // before that sibling ever observed it — `abort_all` (Branch B) only fires
-    // when some task returns `true`, so the whole round would keep syncing
-    // despite the user having cancelled.
-    //
-    // Invariant: a user cancel targeting a still-running sibling MUST survive
-    // an early-exiting peer's teardown, while the legitimate post-run reset
-    // still happens. We enforce this by clearing the flag on Drop only when
-    // `owns == true`, which is set exactly once — immediately before we run the
-    // real session (step 7). Every early-exit path returns with `owns == false`
-    // and therefore leaves the shared flag untouched: a pending user cancel
-    // Stays set for the sibling / next attempt to observe, and a stale
-    // un-set flag stays un-set.
-    struct CancelGuard<'a> {
-        cancel: &'a AtomicBool,
-        owns: bool,
-    }
-    impl Drop for CancelGuard<'_> {
-        fn drop(&mut self) {
-            if self.owns {
-                self.cancel.store(false, Ordering::Release);
-            }
-        }
-    }
+    // user cancel. See the module-level [`CancelGuard`] docs (#637/#2537) for
+    // the full ownership invariant; `owns` is set exactly once, immediately
+    // before we run the real session (step 7). Every early-exit path returns
+    // with `owns == false` and therefore leaves the shared flag untouched: a
+    // pending user cancel stays set for the sibling / next attempt to
+    // observe, and a stale un-set flag stays un-set.
     let mut _cancel_guard = CancelGuard {
         cancel: ctx.cancel,
         owns: false,
@@ -820,6 +843,14 @@ pub(crate) async fn try_sync_with_peer(
     // when the session ends (whether it completed normally or was cancelled).
     _cancel_guard.owns = true;
 
+    // #2537: register this session as live so `cancel_active_sync` /
+    // `cancel_sync` actually latch the shared flag (they are no-ops with no
+    // live session — see `SyncScheduler::request_cancel`). Declared AFTER
+    // `_cancel_guard`, so on exit the activity count drops to zero before
+    // the guard clears the flag — `request_cancel`'s post-store re-check
+    // then guarantees a racing cancel can never latch an ownerless flag.
+    let _session_activity = ctx.scheduler.begin_session_activity();
+
     let mut event_sink_arc = Arc::clone(ctx.event_sink);
     if let Some(channel) = ctx.scheduler.take_channel(peer_id) {
         event_sink_arc = Arc::new(crate::sync_events::ChannelEventSink {
@@ -865,16 +896,22 @@ pub(crate) async fn try_sync_with_peer(
                     "failed to store peer cert hash (TOFU)"
                 );
             }
+            // #2539 (item 2): NO daemon-level `SyncEvent::Complete` here —
+            // exactly ONE terminal Complete is emitted per session per role,
+            // and every initiator success path already emits it closer to the
+            // completion itself:
+            //   * streamed ops    → the orchestrator's final-LoroSync arm,
+            //   * empty stream    → the orchestrator's SyncComplete arm,
+            //   * snapshot catch-up → `snapshot_transfer`'s Applied paths
+            //     (the orchestrator ends that session in `ResetRequired` and
+            //     never emits Complete itself).
+            // The orchestrator is wired with `event_sink_arc` above (the same
+            // sink, `ChannelEventSink`-wrapped when a command channel is
+            // attached), so its emission reaches everything this duplicate
+            // used to reach. Emitting a second Complete here doubled the
+            // event on every success — and on the catch-up path the duplicate
+            // carried stale ResetRequired-era session counters.
             let session = orch.session();
-            ctx.event_sink.on_sync_event(SyncEvent::Complete {
-                remote_device_id: peer_id.clone(),
-                ops_received: session.ops_received,
-                ops_sent: session.ops_sent,
-                // #1071: forward the session's accumulated targeted-
-                // invalidation page-id set so the frontend reloads only the
-                // affected stores. Empty when the session applied no ops.
-                changed_page_ids: session.changed_page_ids.clone(),
-            });
             tracing::info!(
                 peer_id,
                 ops_rx = session.ops_received,
@@ -883,12 +920,29 @@ pub(crate) async fn try_sync_with_peer(
             );
         }
         Err(e) => {
-            ctx.scheduler.record_failure(peer_id);
-            ctx.event_sink.on_sync_event(SyncEvent::Error {
-                message: format!("Sync failed: {e}"),
-                remote_device_id: peer_id.clone(),
-            });
-            tracing::warn!(peer_id, error = %e, "sync session failed");
+            // #2537: a user cancel is NOT a peer failure. Recording it via
+            // `record_failure` doubled the peer's backoff (2s → … → 60s) for
+            // something the peer did nothing wrong about, delaying the very
+            // next legitimate sync. Distinguish by the live cancel flag
+            // (still set here — the owning guard only clears it on Drop,
+            // after this match): skip the scheduler recording entirely
+            // (neither failure nor success) and surface the terminal state
+            // through the existing `SyncEvent::Error` vocabulary so the
+            // active sync UI still resolves.
+            if ctx.cancel.load(Ordering::Acquire) {
+                ctx.event_sink.on_sync_event(SyncEvent::Error {
+                    message: format!("Sync cancelled: {e}"),
+                    remote_device_id: peer_id.clone(),
+                });
+                tracing::info!(peer_id, error = %e, "sync session cancelled by user");
+            } else {
+                ctx.scheduler.record_failure(peer_id);
+                ctx.event_sink.on_sync_event(SyncEvent::Error {
+                    message: format!("Sync failed: {e}"),
+                    remote_device_id: peer_id.clone(),
+                });
+                tracing::warn!(peer_id, error = %e, "sync session failed");
+            }
         }
     }
 
@@ -994,14 +1048,10 @@ pub(crate) async fn run_sync_session(
         }
 
         let incoming: SyncMessage = wire::recv_sync_message(conn).await?;
-        let response = tokio::time::timeout(HANDSHAKE_TIMEOUT, orch.handle_message(incoming))
-            .await
-            .map_err(|_| {
-                AppError::InvalidOperation(format!(
-                    "handle_message timed out after {}s",
-                    HANDSHAKE_TIMEOUT.as_secs()
-                ))
-            })??;
+        // #2539: same `HANDSHAKE_TIMEOUT` dispatch guard as the responder's
+        // first-message dispatch and message loop (`server.rs`).
+        let response =
+            super::server::dispatch_with_handshake_timeout(orch.handle_message(incoming)).await?;
         if let Some(response) = response {
             wire::send_sync_message(conn, &response).await?;
             // Drain any pending op batches (B-3)
@@ -1063,19 +1113,39 @@ pub(crate) async fn run_sync_session(
         )
         .await
         {
-            Ok(outcome) => {
+            // #2538: only `Applied` is a real success. The sub-flow's other
+            // outcome, `Rejected`, means the offer was refused (over the
+            // local size cap): nothing was applied, no frontier advanced,
+            // no `peer_refs` bookkeeping ran. Collapsing it into `Ok(())`
+            // made the caller `record_success` (resetting backoff), emit
+            // `SyncEvent::Complete`, and persist last_address/TOFU state —
+            // so the 30 s scheduler re-selected the peer forever, with the
+            // responder re-hashing the full blob every round while the UI
+            // said "complete".
+            Ok(snapshot_transfer::CatchupOutcome::Applied { .. }) => {
                 tracing::info!(
                     peer_id = %peer_id,
-                    outcome = ?outcome,
                     "snapshot-driven catch-up complete"
                 );
                 return Ok(());
             }
+            Ok(snapshot_transfer::CatchupOutcome::Rejected { size_bytes }) => {
+                // Surface as a session failure so the caller records it
+                // (exponential backoff — the peer is NOT immediately re-due)
+                // and skips the success bookkeeping. The sub-flow already
+                // emitted the actionable size-cap `SyncEvent::Error`.
+                return Err(AppError::InvalidOperation(format!(
+                    "snapshot catch-up rejected: peer offered {size_bytes} bytes, over the \
+                     local {max} byte cap; delta sync cannot resume (ResetRequired) until the \
+                     peer's snapshot fits the cap",
+                    max = snapshot_transfer::MAX_SNAPSHOT_SIZE,
+                )));
+            }
             Err(e) => {
                 // The catch-up sub-flow had its own error handling
-                // (oversized offer → SnapshotReject + Ok, decoded
-                // bytes failing → Err). Surface the error here so the
-                // scheduler records the failure and backs off.
+                // (decode/apply failure, unexpected message). Surface the
+                // error here so the scheduler records the failure and
+                // backs off.
                 return Err(e);
             }
         }

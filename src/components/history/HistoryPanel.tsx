@@ -35,7 +35,7 @@ import { usePaginatedQuery } from '@/hooks/usePaginatedQuery'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import type { HistoryEntry } from '@/lib/tauri'
+import type { HistoryEntry, OpRef } from '@/lib/tauri'
 import { editBlock, getBlock, getBlockHistory } from '@/lib/tauri'
 import { forEachPageStore, storeOwnsBlock } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
@@ -79,17 +79,22 @@ function isRestorable(entry: HistoryEntry): boolean {
  * `onNewAction`: restore is a new user mutation, so the positional
  * `undoDepth` and stale `redoStack` must not survive it — the contract every
  * other content-edit mutation honors (see `notifyUndoNewAction` in
- * page-blocks-reducers.ts). No-op when no mounted store owns the block; an
- * unmounted page has no visible block to patch and its undo state was
- * already cleared on unmount.
+ * page-blocks-reducers.ts). #2468 — `opRefs` threads the restore edit's
+ * `op_refs` so the restore itself lands as a ref-addressed entry on the
+ * page's undo stack (Ctrl+Z after a restore reverts exactly the restore
+ * edit). No-op when no mounted store owns the block; an unmounted page has
+ * no visible block to patch and its undo state was already cleared on
+ * unmount.
  */
-function applyRestoredContentToStore(blockId: string, content: string): void {
+function applyRestoredContentToStore(blockId: string, content: string, opRefs?: OpRef[]): void {
   forEachPageStore((pageId, store) => {
     if (!storeOwnsBlock(store, blockId)) return
     store.setState((state) => ({
       blocks: state.blocks.map((b) => (b.id === blockId ? { ...b, content } : b)),
     }))
-    useUndoStore.getState().onNewAction(pageId)
+    const { onNewAction } = useUndoStore.getState()
+    if (opRefs) onNewAction(pageId, opRefs)
+    else onNewAction(pageId)
   })
 }
 
@@ -179,8 +184,8 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   const handleUndoRestore = useCallback(
     async (targetBlockId: string, previousContent: string) => {
       try {
-        await editBlock(targetBlockId, previousContent)
-        applyRestoredContentToStore(targetBlockId, previousContent)
+        const resp = await editBlock(targetBlockId, previousContent)
+        applyRestoredContentToStore(targetBlockId, previousContent, resp.op_refs)
         notify.success(t('history.restoreUndone'))
       } catch (err) {
         logger.error('HistoryPanel', 'Failed to undo restore', { blockId: targetBlockId }, err)
@@ -225,8 +230,8 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
           )
         }
 
-        await editBlock(blockId, toText)
-        applyRestoredContentToStore(blockId, toText)
+        const resp = await editBlock(blockId, toText)
+        applyRestoredContentToStore(blockId, toText, resp.op_refs)
 
         if (previousContent != null) {
           const captured = previousContent

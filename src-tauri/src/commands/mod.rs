@@ -109,8 +109,9 @@ pub use history::{
     apply_reverse_in_tx, compute_block_vs_current_diff, compute_block_vs_current_diff_inner,
     compute_edit_diff, compute_edit_diff_inner, find_undo_group, find_undo_group_inner,
     list_page_history, list_page_history_inner, redo_page_op, redo_page_op_inner,
-    restore_page_to_op, restore_page_to_op_inner, revert_ops, revert_ops_inner, undo_page_group,
-    undo_page_group_inner, undo_page_op, undo_page_op_inner,
+    restore_page_to_op, restore_page_to_op_inner, revert_ops, revert_ops_inner, undo_op,
+    undo_op_inner, undo_ops, undo_ops_inner, undo_page_group, undo_page_group_inner, undo_page_op,
+    undo_page_op_inner,
 };
 pub use journal::{
     get_journal_page_by_date, get_journal_page_by_date_inner, journal_for_date_inner,
@@ -219,8 +220,8 @@ pub use drafts::{
 pub use history::{
     __specta__fn__compute_block_vs_current_diff, __specta__fn__compute_edit_diff,
     __specta__fn__find_undo_group, __specta__fn__list_page_history, __specta__fn__redo_page_op,
-    __specta__fn__restore_page_to_op, __specta__fn__revert_ops, __specta__fn__undo_page_group,
-    __specta__fn__undo_page_op,
+    __specta__fn__restore_page_to_op, __specta__fn__revert_ops, __specta__fn__undo_op,
+    __specta__fn__undo_ops, __specta__fn__undo_page_group, __specta__fn__undo_page_op,
 };
 #[doc(hidden)]
 pub use journal::{
@@ -318,7 +319,7 @@ pub use drafts::{
 pub use history::{
     __cmd__compute_block_vs_current_diff, __cmd__compute_edit_diff, __cmd__find_undo_group,
     __cmd__list_page_history, __cmd__redo_page_op, __cmd__restore_page_to_op, __cmd__revert_ops,
-    __cmd__undo_page_op,
+    __cmd__undo_op, __cmd__undo_ops, __cmd__undo_page_op,
 };
 #[doc(hidden)]
 pub use journal::{
@@ -576,6 +577,58 @@ pub struct QueryByPropertyRequest {
     pub exclude_todo_states: Option<Vec<String>>,
 }
 
+/// #2468: a mutating command's response plus the `OpRef`(s) of the op-log
+/// rows the command appended, so the frontend can seed its undo stack with
+/// exact refs at `notifyUndoNewAction` time (ref-addressed undo via
+/// `undo_op` / `undo_ops`) instead of positional depth accounting.
+///
+/// `inner` is `#[serde(flatten)]`ed, so the wire shape is a strict
+/// SUPERSET of the pre-#2468 response (`{ ...T, op_refs }` — the specta
+/// binding is `T & { op_refs: OpRef[] }`): existing frontend call sites
+/// keep type-checking unchanged while migrated ones read `op_refs`.
+///
+/// `op_refs` preserves append order. Single-op commands carry exactly one
+/// entry. The contract also admits an empty Vec ("appended nothing —
+/// nothing to undo"), which the frontend must handle by skipping the
+/// undo-stack push; note that NO currently-migrated command produces it
+/// (the tag no-ops are rejected with errors by `add_tag_inner` /
+/// `remove_tag_inner`, and `delete_property` appends its op even when the
+/// key is absent) — only the tauri-mock's lenient conformance paths do.
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct WithOps<T> {
+    #[serde(flatten)]
+    pub inner: T,
+    /// The op-log refs appended by this command, in append order.
+    pub op_refs: Vec<crate::op::OpRef>,
+}
+
+/// #2468: run a mutating command future inside a
+/// [`crate::task_locals::LAST_APPEND`] capture scope and attach the
+/// harvested `OpRef`s to the response.
+///
+/// This reuses the exact mechanism the MCP dispatch layer uses to attribute
+/// produced ops to a tool call (`mcp::rmcp_adapter` / `mcp::server`):
+/// `op_log::append_local_op_in_tx` records every appended `(device_id,
+/// seq)` into the task-local, which is drained AFTER the future completes.
+/// Because the scope is task-local and the command future runs to
+/// completion inside it, the captured refs correspond to EXACTLY the ops
+/// this command appended — a concurrent writer (another command, an MCP
+/// tool) cannot leak refs in, and "latest op" is never consulted. On error
+/// the captured refs are discarded along with the failed transaction.
+pub(crate) async fn capture_op_refs<T, F>(fut: F) -> Result<WithOps<T>, AppError>
+where
+    F: std::future::Future<Output = Result<T, AppError>>,
+{
+    let (result, op_refs) = crate::task_locals::LAST_APPEND
+        .scope(std::cell::RefCell::new(Vec::new()), async move {
+            let r = fut.await;
+            let refs = crate::task_locals::take_appends();
+            (r, refs)
+        })
+        .await;
+    result.map(|inner| WithOps { inner, op_refs })
+}
+
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct DeleteResponse {
     pub block_id: String,
@@ -611,6 +664,15 @@ pub struct MoveResponse {
 pub struct TagResponse {
     pub block_id: String,
     pub tag_id: String,
+}
+
+/// #2468: echo payload for `delete_property` (previously returned unit).
+/// Exists so the command can ride the [`WithOps`] flatten (a unit can't be
+/// flattened) and surface the produced op ref to the frontend undo stack.
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct DeletePropertyResponse {
+    pub block_id: String,
+    pub key: String,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, Type)]

@@ -344,11 +344,24 @@ async fn full_pair_then_sync_workflow() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancel_sync_succeeds() {
     let flag = std::sync::atomic::AtomicBool::new(false);
-    let result = cancel_sync_inner(&flag);
+    let scheduler = SyncScheduler::new();
+
+    // #2537: with no live session the cancel is a no-op (nothing would ever
+    // reset the flag) — it must still succeed but NOT latch the flag.
+    let result = cancel_sync_inner(&flag, &scheduler);
+    assert!(result.is_ok(), "cancel_sync should always succeed");
+    assert!(
+        !flag.load(std::sync::atomic::Ordering::Acquire),
+        "#2537: cancel with no active session must not latch the flag"
+    );
+
+    // With a live session, the cancel latches.
+    let _activity = scheduler.begin_session_activity();
+    let result = cancel_sync_inner(&flag, &scheduler);
     assert!(result.is_ok(), "cancel_sync should always succeed");
     assert!(
         flag.load(std::sync::atomic::Ordering::Acquire),
-        "cancel flag must be set after cancel_sync"
+        "cancel flag must be set after cancel_sync while a session is active"
     );
 }
 

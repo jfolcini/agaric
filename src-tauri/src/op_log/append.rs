@@ -103,34 +103,85 @@ pub async fn append_local_op_in_tx(
     op_payload: OpPayload,
     created_at: i64,
 ) -> Result<OpRecord, AppError> {
-    append_local_op_in_tx_with_provenance(tx, device_id, op_payload, created_at, false).await
+    append_local_op_in_tx_with_provenance(tx, device_id, op_payload, created_at, false, None).await
 }
 
 /// #659: append a local op flagged as an UNDO op (`op_log.is_undo = 1`,
 /// migration 0090).
 ///
-/// Only `undo_page_op_inner` calls this — the reverse op it appends is the
-/// one thing `redo_page_op` may later reverse, and redo verifies the flag
-/// before reversing. Redo's own output ops are forward-equivalent and go
-/// through the plain [`append_local_op_in_tx`] (flag 0), as does everything
-/// else. Same `BEGIN IMMEDIATE` contract as the plain variant.
-#[tracing::instrument(skip(tx, device_id, op_payload, created_at), err)]
+/// Only the reverse-producing paths in `commands::history` call this
+/// (`undo_page_op_inner` and `revert_ops_in_tx`, which fans out to batch
+/// revert, group undo, ref-addressed undo, and point-in-time restore) —
+/// the reverse ops they append are the one thing `redo_page_op` may later
+/// reverse, and redo verifies the flag before reversing. Redo's own output
+/// ops are forward-equivalent and go through
+/// [`append_local_redo_op_in_tx`] (flag 0); everything else uses the plain
+/// [`append_local_op_in_tx`]. Same `BEGIN IMMEDIATE` contract as the plain
+/// variant.
+///
+/// #2468: `reverses` is the ref of the FORWARD op whose computed inverse
+/// `op_payload` is. It lands in `op_log.(reverses_device_id, reverses_seq)`
+/// (migration 0101) so the ref-addressed undo (`undo_op` / `undo_ops`) can
+/// enforce its already-reversed guard.
+#[tracing::instrument(skip(tx, device_id, op_payload, created_at, reverses), err)]
 pub async fn append_local_undo_op_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,
     op_payload: OpPayload,
     created_at: i64,
+    reverses: &crate::op::OpRef,
 ) -> Result<OpRecord, AppError> {
-    append_local_op_in_tx_with_provenance(tx, device_id, op_payload, created_at, true).await
+    append_local_op_in_tx_with_provenance(
+        tx,
+        device_id,
+        op_payload,
+        created_at,
+        true,
+        Some(reverses),
+    )
+    .await
 }
 
-#[tracing::instrument(skip(tx, device_id, op_payload, created_at), fields(is_undo), err)]
+/// #2468: append a local REDO op — forward-equivalent (`is_undo = 0`, its
+/// effect re-applies the original op, so it must stay redo-invisible per
+/// migration 0090) but carrying the `reverses` link to the UNDO op it
+/// reverses (migration 0101). The link is what returns the original op to
+/// the "not currently reversed" state, making a subsequent ref-addressed
+/// undo of it legal again (undo → redo → undo cycles).
+///
+/// Only `redo_page_op_inner` calls this. Same `BEGIN IMMEDIATE` contract
+/// as the plain variant.
+#[tracing::instrument(skip(tx, device_id, op_payload, created_at, reverses), err)]
+pub async fn append_local_redo_op_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    device_id: &str,
+    op_payload: OpPayload,
+    created_at: i64,
+    reverses: &crate::op::OpRef,
+) -> Result<OpRecord, AppError> {
+    append_local_op_in_tx_with_provenance(
+        tx,
+        device_id,
+        op_payload,
+        created_at,
+        false,
+        Some(reverses),
+    )
+    .await
+}
+
+#[tracing::instrument(
+    skip(tx, device_id, op_payload, created_at, reverses),
+    fields(is_undo),
+    err
+)]
 async fn append_local_op_in_tx_with_provenance(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,
     mut op_payload: OpPayload,
     created_at: i64,
     is_undo: bool,
+    reverses: Option<&crate::op::OpRef>,
 ) -> Result<OpRecord, AppError> {
     // `op_log.created_at` is INTEGER epoch-ms (migration 0079);
     // reverse-op "find prior op" queries compare it numerically. No
@@ -226,9 +277,15 @@ async fn append_local_op_in_tx_with_provenance(
     // `origin`, it is local metadata and NOT part of the hash preimage.
     let is_undo_flag: i64 = i64::from(is_undo);
 
+    // #2468: `reverses_*` (migration 0101) links a reverse op (undo OR
+    // redo) to the op it reverses, powering the ref-addressed undo's
+    // already-reversed guard. Local metadata, NOT in the hash preimage.
+    let reverses_device_id: Option<&str> = reverses.map(|r| r.device_id.as_str());
+    let reverses_seq: Option<i64> = reverses.map(|r| r.seq);
+
     sqlx::query!(
-        "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, origin, attachment_id, is_undo) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, origin, attachment_id, is_undo, reverses_device_id, reverses_seq) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         device_id,
         seq,
         parent_seqs,
@@ -240,6 +297,8 @@ async fn append_local_op_in_tx_with_provenance(
         origin,
         attachment_id,
         is_undo_flag,
+        reverses_device_id,
+        reverses_seq,
     )
     .execute(&mut **tx)
     .await?;

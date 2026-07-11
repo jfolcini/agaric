@@ -328,6 +328,127 @@ async fn recover_single_draft_returns_err_when_enqueue_fails_1322() {
     );
 }
 
+/// #2540: a draft whose `recover_single_draft` FAILS before commit must NOT
+/// be deleted — the `block_drafts` row is the only surviving copy of the
+/// user's unflushed text, and a transient DB error (WAL-lock contention,
+/// busy_timeout) during boot must not convert a recoverable crash-draft into
+/// permanent, silent data loss. The retained row must be recovered on the
+/// NEXT boot once the transient condition clears.
+///
+/// The failure is induced with a `BEFORE INSERT ON op_log` trigger that
+/// `RAISE(ABORT, …)` (mirroring `delete_failure_rolls_back_op_log_append` in
+/// db/command_tx.rs) — a deterministic, schema-independent "the recovery tx's
+/// op-log append fails". This is a PRE-commit failure: no synthetic edit op is
+/// appended and `blocks.content` is not updated, so the draft is genuinely the
+/// only copy of the text.
+#[tokio::test]
+async fn failed_boot_recovery_keeps_draft_and_recovers_on_next_boot_2540() {
+    let (pool, _dir) = test_pool().await;
+    let device_id = "dev-2540";
+    let block_id = "block-2540";
+
+    // A block whose content is the STALE pre-crash value; the unflushed draft
+    // carries the newer text.
+    insert_test_block(&pool, block_id, "stale content").await;
+    // Far-future timestamp so the draft is classified as unflushed and the
+    // recovery path (synthetic op + content update) is taken.
+    sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
+        .bind(block_id)
+        .bind("precious unflushed text")
+        .bind(FAR_FUTURE)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Poison the op-log: any INSERT aborts. `recover_single_draft` reaches its
+    // IMMEDIATE tx's `append_local_op_in_tx` and errors BEFORE commit.
+    sqlx::query(
+        "CREATE TRIGGER op_log_abort BEFORE INSERT ON op_log \
+         BEGIN SELECT RAISE(ABORT, 'op_log inserts forbidden'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // First boot: recovery fails for this draft. `recover_at_boot` follows the
+    // "log + continue" philosophy, so it returns Ok with the failure recorded
+    // in `draft_errors` (not `drafts_recovered`).
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
+    assert!(
+        report.drafts_recovered.is_empty(),
+        "recovery must NOT report success when the op-log append aborts"
+    );
+    assert_eq!(
+        report.draft_errors.len(),
+        1,
+        "the failed recovery must be recorded in draft_errors"
+    );
+
+    // The draft row SURVIVES — the fix's core contract. Before #2540 the boot
+    // loop deleted it unconditionally after logging the error, losing the text.
+    let drafts = crate::draft::get_all_drafts(&pool).await.unwrap();
+    assert_eq!(
+        drafts.len(),
+        1,
+        "the draft row must survive a FAILED recovery so the next boot can retry"
+    );
+    assert_eq!(drafts[0].content, "precious unflushed text");
+
+    // No synthetic op was committed and content is untouched (pre-commit fail).
+    let op_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        op_count, 0,
+        "no synthetic op should be committed on failure"
+    );
+    let content: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(block_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        content.as_deref(),
+        Some("stale content"),
+        "blocks.content must be untouched when recovery fails pre-commit"
+    );
+
+    // Clear the transient condition and boot again: the retained draft is now
+    // recovered and its text lands in blocks.content — proof the retention
+    // enables a real second-boot retry (not just data-at-rest).
+    sqlx::query("DROP TRIGGER op_log_abort")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let report2 = recover_at_boot_test(&pool, device_id).await.unwrap();
+    assert_eq!(
+        report2.drafts_recovered,
+        vec![block_id.to_string()],
+        "the retained draft must be recovered on the next boot"
+    );
+    assert!(report2.draft_errors.is_empty());
+
+    let content2: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(block_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        content2.as_deref(),
+        Some("precious unflushed text"),
+        "the recovered draft's text must land in blocks.content on retry"
+    );
+
+    // And the draft row is finally cleaned up now that recovery succeeded.
+    let drafts_after = crate::draft::get_all_drafts(&pool).await.unwrap();
+    assert!(
+        drafts_after.is_empty(),
+        "the draft row is deleted once recovery SUCCEEDS"
+    );
+}
+
 #[tokio::test]
 async fn already_flushed_draft_just_gets_deleted() {
     let (pool, _dir) = test_pool().await;
@@ -999,11 +1120,17 @@ async fn find_prev_edit_returns_most_recent_op_not_first() {
 
 // -- error-path coverage -----------------------------------------------
 
-/// Exercises the defensive error handling inside the draft-recovery loop
-/// by dropping the `op_log` table (so `recover_single_draft` fails) and
-/// adding a trigger that blocks DELETE on `block_drafts` (so `delete_draft`
-/// also fails). This covers the `Err(e)` match arm and the `if let Err(e)`
-/// branch that are otherwise unreachable without DB-level failures.
+/// Exercises the defensive error handling inside the draft-recovery loop by
+/// dropping the `op_log` table so `recover_single_draft` fails on its first
+/// SELECT. This covers the `Err(e)` match arm.
+///
+/// #2540: on a FAILED recovery the loop must NOT attempt `delete_draft` — the
+/// draft is the only surviving copy of the user's text. We deliberately do
+/// NOT install a delete-blocking trigger here: the only thing that can keep
+/// the `block_drafts` row alive is the fix skipping the delete on `Err`. So
+/// this test asserts both a single recover error (NOT two) and the survival
+/// of the row, either of which would break under the old
+/// unconditional-delete behaviour.
 #[tokio::test]
 async fn recover_at_boot_records_errors_when_draft_processing_fails() {
     let (pool, _dir) = test_pool().await;
@@ -1021,27 +1148,16 @@ async fn recover_at_boot_records_errors_when_draft_processing_fails() {
         .await
         .unwrap();
 
-    // Add a BEFORE DELETE trigger on block_drafts that raises an error,
-    // so delete_draft also fails.
-    sqlx::query(
-        "CREATE TRIGGER fail_delete BEFORE DELETE ON block_drafts \
-         BEGIN SELECT RAISE(ABORT, 'intentional test failure'); END",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-
     let report = recover_at_boot_test(&pool, device_id).await.unwrap();
 
-    // Single draft row → the loop iterates once. Both steps fail:
-    //   - `recover_single_draft` → op_log SELECT errors (table dropped)
-    //   - `delete_draft`         → BEFORE DELETE trigger aborts
-    // Each failure pushes one entry into `draft_errors`, so the count
-    // is deterministically 2.
+    // Single draft row → the loop iterates once. `recover_single_draft` fails
+    // (op_log SELECT errors), and the delete is now SKIPPED (#2540), so there
+    // is exactly ONE draft error (the recover), not two. Under the old
+    // unconditional-delete behaviour this was 2.
     assert_eq!(
         report.draft_errors.len(),
-        2,
-        "expected exactly 2 draft errors (recover + delete), got: {:?}",
+        1,
+        "expected exactly 1 draft error (recover only; delete skipped on Err), got: {:?}",
         report.draft_errors
     );
     assert_eq!(
@@ -1053,6 +1169,17 @@ async fn recover_at_boot_records_errors_when_draft_processing_fails() {
     assert!(
         report.drafts_recovered.is_empty(),
         "no drafts should be recovered when op_log is missing"
+    );
+
+    // #2540: the draft row must SURVIVE the failed recovery so the next boot
+    // can retry it.
+    let surviving: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_drafts")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        surviving, 1,
+        "the draft row must survive a failed recovery (not be deleted)"
     );
 }
 
@@ -3180,6 +3307,208 @@ async fn boot_replay_reprojects_batched_over_chunk_boundary_2295() {
         moved_pos, 1,
         "moved-to-top child must have dense position 1"
     );
+}
+
+/// #2541: the end-of-replay dense reproject (#2295) must be per-group fault
+/// isolated. Pre-fix, the per-parent loop `?`-propagated the FIRST error out
+/// of `replay_unmaterialized_ops`, losing the dense reproject for every
+/// remaining parent — unretryably, because the dirty set was already drained
+/// and the apply cursor already advanced past the replayed ops. This test
+/// poisons ONE sibling group (a trigger aborts any `position` UPDATE
+/// touching one of its children) and asserts:
+///   1. the replay is NOT reported as aborted (Ok report; ops applied,
+///      cursor advanced),
+///   2. the OTHER group still gets dense 1-based ranks,
+///   3. the failure is recorded as a "reproject degraded" entry in
+///      `replay_errors` (distinguishable from "replay aborted").
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn end_of_replay_reproject_continues_past_poisoned_group_2541() {
+    use crate::space::SpaceId;
+
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const PAGE_A: &str = "01HZ00000000000000002541PA";
+    const PAGE_B: &str = "01HZ00000000000000002541PB";
+    const N: usize = 3;
+    let device_id = "dev-replay-2541";
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let state = mat.loro_state();
+
+    // Space block + registered space (#708) + two pages.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+         VALUES (?, 'tag', 'space', NULL, 0)",
+    )
+    .bind(SPACE)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+        .bind(SPACE)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (i, page) in [PAGE_A, PAGE_B].iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
+                                 space_id) \
+             VALUES (?, 'page', 'P', NULL, ?, ?, ?)",
+        )
+        .bind(page)
+        .bind(i64::try_from(i).unwrap())
+        .bind(page)
+        .bind(SPACE)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    // Child ids per page, in creation order.
+    let ids_for = |prefix: &str| -> Vec<String> {
+        (0..N)
+            .map(|k| {
+                BlockId::test_id(&format!("{prefix}{k:04}"))
+                    .as_str()
+                    .to_string()
+            })
+            .collect()
+    };
+    let a_children = ids_for("A2541CH");
+    let b_children = ids_for("B2541CH");
+
+    // Pre-seed each child's SQL row (already materialized by a prior
+    // session) with DELIBERATELY WRONG positions (10, 11, 12) so the
+    // end-of-replay reproject has real work to do (dense ranks are 1..=3).
+    for (page, children) in [(PAGE_A, &a_children), (PAGE_B, &b_children)] {
+        for (k, id) in children.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
+                                     space_id) \
+                 VALUES (?, 'content', 'c', ?, ?, ?, ?)",
+            )
+            .bind(id)
+            .bind(page)
+            .bind(i64::try_from(10 + k).unwrap())
+            .bind(page)
+            .bind(SPACE)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    // Seed the engine with just the pages (children enter as the replayed
+    // CreateBlock ops apply).
+    {
+        let space = SpaceId::from_trusted(SPACE);
+        let mut guard = state.registry.for_space(&space, device_id).unwrap();
+        guard
+            .engine_mut()
+            .apply_create_block(PAGE_A, "page", "P", None, 0)
+            .unwrap();
+        guard
+            .engine_mut()
+            .apply_create_block(PAGE_B, "page", "P", None, 1)
+            .unwrap();
+    }
+
+    // Unmaterialized creates: three under each page — TWO dirty groups.
+    for (page, children) in [(PAGE_A, &a_children), (PAGE_B, &b_children)] {
+        for (k, id) in children.iter().enumerate() {
+            append_local_op(
+                &pool,
+                device_id,
+                OpPayload::CreateBlock(CreateBlockPayload {
+                    block_id: BlockId::from_trusted(id),
+                    block_type: "content".into(),
+                    parent_id: Some(BlockId::from_trusted(page)),
+                    position: None,
+                    index: Some(i64::try_from(k).unwrap()),
+                    content: "c".into(),
+                }),
+            )
+            .await
+            .unwrap();
+        }
+    }
+
+    // Poison page A's group: abort any `position` UPDATE that touches its
+    // first child. The reproject writes the whole group in ONE statement,
+    // so the abort degrades exactly that group (statement rolled back)
+    // while page B's statement is unaffected.
+    let poison_ddl = format!(
+        "CREATE TRIGGER poison_reproject_2541 \
+         BEFORE UPDATE OF position ON blocks \
+         FOR EACH ROW WHEN NEW.id = '{}' \
+         BEGIN SELECT RAISE(ABORT, 'poisoned sibling group (#2541 test)'); END",
+        a_children[0]
+    );
+    sqlx::query(sqlx::AssertSqlSafe(poison_ddl.as_str()))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let report = replay_unmaterialized_ops(&pool, &mat)
+        .await
+        .expect("#2541: a poisoned reproject group must NOT abort the replay");
+    mat.shutdown();
+
+    // 1. The replay itself succeeded: every op applied, cursor advanced.
+    assert_eq!(
+        report.ops_replayed,
+        (2 * N) as u64,
+        "all creates must replay despite the poisoned reproject group"
+    );
+    assert_eq!(
+        read_cursor(&pool).await,
+        i64::try_from(2 * N).unwrap(),
+        "the apply cursor must advance past every replayed op"
+    );
+
+    // 3. The failure is visible as a DEGRADED-reprojection entry, not an
+    //    aborted replay.
+    assert_eq!(
+        report.replay_errors.len(),
+        1,
+        "exactly the poisoned group must be recorded: {:?}",
+        report.replay_errors
+    );
+    assert!(
+        report.replay_errors[0].contains("reproject degraded"),
+        "the report must distinguish reprojection-degraded from replay-aborted, \
+         got: {}",
+        report.replay_errors[0]
+    );
+
+    // 2. Page B's group still got dense 1-based ranks in creation order.
+    for (k, id) in b_children.iter().enumerate() {
+        let pos: i64 = sqlx::query_scalar("SELECT position FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            pos,
+            i64::try_from(k + 1).unwrap(),
+            "#2541: the healthy group must still be densely reprojected"
+        );
+    }
+    // The poisoned group's single-statement UPDATE rolled back atomically —
+    // its pre-seeded (stale) positions remain, pinning that the abort hit
+    // group A and ONLY group A.
+    for (k, id) in a_children.iter().enumerate() {
+        let pos: i64 = sqlx::query_scalar("SELECT position FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            pos,
+            i64::try_from(10 + k).unwrap(),
+            "the poisoned group's positions must be left as-is (statement aborted)"
+        );
+    }
 }
 
 // === #1255: degraded-boot signal ===

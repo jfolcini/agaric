@@ -3509,8 +3509,12 @@ describe('BlockTree heading slash command execution', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    // Mock edit_block call
-    mockedInvoke.mockResolvedValue(null)
+    // Mock edit_block call — #2468: resolves a WithOps envelope (op_refs).
+    mockedInvoke.mockResolvedValue({
+      id: 'A',
+      content: '',
+      op_refs: [{ device_id: 'dev1', seq: 3 }],
+    })
 
     await act(async () => {
       capturedOnSlashCommand?.({ id: 'h1', label: 'Heading 1 — Large heading' })
@@ -3546,7 +3550,11 @@ describe('BlockTree heading slash command execution', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValue(null)
+    mockedInvoke.mockResolvedValue({
+      id: 'A',
+      content: '',
+      op_refs: [{ device_id: 'dev1', seq: 3 }],
+    })
 
     await act(async () => {
       capturedOnSlashCommand?.({ id: 'h3', label: 'Heading 3 — Small heading' })
@@ -3581,7 +3589,11 @@ describe('BlockTree heading slash command execution', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValue(null)
+    mockedInvoke.mockResolvedValue({
+      id: 'A',
+      content: '',
+      op_refs: [{ device_id: 'dev1', seq: 3 }],
+    })
 
     await act(async () => {
       capturedOnSlashCommand?.({ id: 'h2', label: 'Heading 2 — Medium heading' })

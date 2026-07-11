@@ -57,8 +57,8 @@ async function handleAssigneeOrLocation(
   label: string,
 ): Promise<void> {
   try {
-    await setProperty({ blockId: ctx.blockId, key, valueText: '' })
-    notifyUndo(ctx.rootParentId)
+    const resp = await setProperty({ blockId: ctx.blockId, key, valueText: '' })
+    notifyUndo(ctx.rootParentId, resp.op_refs)
     notify.success(
       ctx.t('blockTree.addedPropertyMessage', {
         name: label.split(' — ')[0]?.toLowerCase(),
@@ -76,8 +76,8 @@ async function handleAssigneePreset(
 ): Promise<void> {
   if (preset === 'custom') {
     try {
-      await setProperty({ blockId: ctx.blockId, key: 'assignee', valueText: '' })
-      notifyUndo(ctx.rootParentId)
+      const resp = await setProperty({ blockId: ctx.blockId, key: 'assignee', valueText: '' })
+      notifyUndo(ctx.rootParentId, resp.op_refs)
       notify.success(ctx.t('blockTree.addedAssigneeProperty'))
     } catch {
       notify.error(ctx.t('blockTree.addPropertyFailed'))
@@ -86,12 +86,12 @@ async function handleAssigneePreset(
   }
   const value = label.split(' — ')[0]?.replace('ASSIGNEE ', '')
   try {
-    await setProperty({
+    const resp = await setProperty({
       blockId: ctx.blockId,
       key: 'assignee',
       ...(value != null && { valueText: value }),
     })
-    notifyUndo(ctx.rootParentId)
+    notifyUndo(ctx.rootParentId, resp.op_refs)
     notify.success(ctx.t('blockTree.setAssigneeMessage', { value }))
   } catch {
     notify.error(ctx.t('blockTree.setAssigneeFailed'))
@@ -105,8 +105,8 @@ async function handleLocationPreset(
 ): Promise<void> {
   if (preset === 'custom') {
     try {
-      await setProperty({ blockId: ctx.blockId, key: 'location', valueText: '' })
-      notifyUndo(ctx.rootParentId)
+      const resp = await setProperty({ blockId: ctx.blockId, key: 'location', valueText: '' })
+      notifyUndo(ctx.rootParentId, resp.op_refs)
       notify.success(ctx.t('blockTree.addedLocationProperty'))
     } catch {
       notify.error(ctx.t('blockTree.addPropertyFailed'))
@@ -115,12 +115,12 @@ async function handleLocationPreset(
   }
   const value = label.split(' — ')[0]?.replace('LOCATION ', '')
   try {
-    await setProperty({
+    const resp = await setProperty({
       blockId: ctx.blockId,
       key: 'location',
       valueText: value,
     })
-    notifyUndo(ctx.rootParentId)
+    notifyUndo(ctx.rootParentId, resp.op_refs)
     notify.success(ctx.t('blockTree.setLocationMessage', { value }))
   } catch {
     notify.error(ctx.t('blockTree.setLocationFailed'))
@@ -133,8 +133,8 @@ async function handleEffort(ctx: SlashCommandContext, value: string): Promise<vo
   // same empty-value → property-editor path as assignee/location custom.
   if (value === 'custom') {
     try {
-      await setProperty({ blockId: ctx.blockId, key: 'effort', valueText: '' })
-      notifyUndo(ctx.rootParentId)
+      const resp = await setProperty({ blockId: ctx.blockId, key: 'effort', valueText: '' })
+      notifyUndo(ctx.rootParentId, resp.op_refs)
       notify.success(ctx.t('blockTree.addedEffortProperty'))
     } catch {
       notify.error(ctx.t('blockTree.addPropertyFailed'))
@@ -142,8 +142,8 @@ async function handleEffort(ctx: SlashCommandContext, value: string): Promise<vo
     return
   }
   try {
-    await setProperty({ blockId: ctx.blockId, key: 'effort', valueText: value })
-    notifyUndo(ctx.rootParentId)
+    const resp = await setProperty({ blockId: ctx.blockId, key: 'effort', valueText: value })
+    notifyUndo(ctx.rootParentId, resp.op_refs)
     notify.success(ctx.t('slash.effortSet', { value }))
   } catch {
     notify.error(ctx.t('slash.effortFailed'))
@@ -153,8 +153,15 @@ async function handleEffort(ctx: SlashCommandContext, value: string): Promise<vo
 async function handleRepeatLimit(ctx: SlashCommandContext, sub: string): Promise<void> {
   if (sub === 'remove') {
     try {
-      await deleteProperty(ctx.blockId, 'repeat-count')
-      await deleteProperty(ctx.blockId, 'repeat-until')
+      const countResp = await deleteProperty(ctx.blockId, 'repeat-count')
+      const untilResp = await deleteProperty(ctx.blockId, 'repeat-until')
+      // #2468 — `delete_property` now surfaces `op_refs` (was a `null`
+      // response), so property removal is undoable by ref like every other
+      // migrated mutation. Both deletes belong to ONE user action: combine
+      // their refs into a single notification (they coalesce into one undo
+      // entry). Skip when both were idempotent no-ops (nothing appended).
+      const opRefs = [...countResp.op_refs, ...untilResp.op_refs]
+      if (opRefs.length > 0) notifyUndo(ctx.rootParentId, opRefs)
       notify.success(ctx.t('blockTree.repeatEndConditionRemoved'))
     } catch {
       notify.error(ctx.t('blockTree.removeEndConditionFailed'))
@@ -164,8 +171,8 @@ async function handleRepeatLimit(ctx: SlashCommandContext, sub: string): Promise
   const count = Number.parseInt(sub, 10)
   if (Number.isNaN(count)) return
   try {
-    await setProperty({ blockId: ctx.blockId, key: 'repeat-count', valueNum: count })
-    notifyUndo(ctx.rootParentId)
+    const resp = await setProperty({ blockId: ctx.blockId, key: 'repeat-count', valueNum: count })
+    notifyUndo(ctx.rootParentId, resp.op_refs)
     notify.success(ctx.t('blockTree.repeatLimitedMessage', { count }))
   } catch {
     notify.error(ctx.t('blockTree.setRepeatLimitFailed'))
@@ -175,7 +182,10 @@ async function handleRepeatLimit(ctx: SlashCommandContext, sub: string): Promise
 async function handleRepeat(ctx: SlashCommandContext, value: string): Promise<void> {
   if (value === 'remove') {
     try {
-      await deleteProperty(ctx.blockId, 'repeat')
+      const resp = await deleteProperty(ctx.blockId, 'repeat')
+      // #2468 — see handleRepeatLimit: delete_property is now undoable by
+      // ref; skip the undo push on an idempotent no-op (empty `op_refs`).
+      if (resp.op_refs.length > 0) notifyUndo(ctx.rootParentId, resp.op_refs)
       notify.success(ctx.t('slash.repeatRemoved'))
     } catch {
       notify.error(ctx.t('slash.repeatRemoveFailed'))
@@ -183,8 +193,8 @@ async function handleRepeat(ctx: SlashCommandContext, value: string): Promise<vo
     return
   }
   try {
-    await setProperty({ blockId: ctx.blockId, key: 'repeat', valueText: value })
-    notifyUndo(ctx.rootParentId)
+    const resp = await setProperty({ blockId: ctx.blockId, key: 'repeat', valueText: value })
+    notifyUndo(ctx.rootParentId, resp.op_refs)
     // ctx.t is typed as the file-local loose `TFn` to keep the dispatcher
     // generic; formatRepeatLabel takes the strict i18next `TFunction`. The
     // cast is safe because ctx.t IS the i18next translator at runtime —

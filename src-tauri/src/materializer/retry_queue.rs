@@ -65,6 +65,19 @@ pub(crate) const GLOBAL_TASK_SENTINEL: &str = "__GLOBAL__";
 /// the sentinel is lowercase + underscores).
 pub(crate) const APPLY_OP_TASK_SENTINEL: &str = "__APPLY_OP__";
 
+/// #2541: distinct `last_error` marker for a task persisted because it was
+/// SHED at enqueue time (`try_enqueue_background` hit a full channel) — the
+/// task never executed, so this is a capacity signal, not an execution
+/// failure. [`give_up_reason`] consults the marker to keep shed-driven
+/// `attempts` increments from burning the `MAX_ATTEMPTS` give-up budget:
+/// under sustained backpressure a task could previously hit the give-up
+/// threshold with ZERO executions and be permanently dropped. This is a
+/// value-level convention on the existing nullable `last_error` column — no
+/// schema change; the `attempts` column still counts every persistence
+/// (shed or execution failure), only the give-up guard's interpretation
+/// changes.
+pub(crate) const SHED_LAST_ERROR: &str = "shed: background queue full (task never executed)";
+
 /// Task kinds that may be persisted to the retry queue.
 ///
 /// Three families:
@@ -514,8 +527,19 @@ const GIVE_UP_AGE_DAYS: i64 = 7;
 ///
 /// A future `created_at` (clock skew) yields a negative age and is treated
 /// as fresh — the conservative bias of the rest of the module.
+///
+/// #2541: a row whose most recent persistence was a SHED
+/// ([`SHED_LAST_ERROR`]) is exempt from the `max_attempts` trigger — its
+/// latest `attempts` increments came from queue saturation, not from the
+/// task actually running and failing, so dropping it would permanently lose
+/// a task that may have ZERO executions. The moment the task runs and fails
+/// for real, `record_failure` overwrites `last_error` with the execution
+/// error and the trigger arms again. The `age_exceeded` trigger still
+/// applies unconditionally: it bounds abandonment by wall clock, which a
+/// shed loop should not evade forever.
 fn give_up_reason(row: &DueRow) -> Option<&'static str> {
-    if row.attempts >= MAX_ATTEMPTS {
+    let last_was_shed = row.last_error.as_deref() == Some(SHED_LAST_ERROR);
+    if row.attempts >= MAX_ATTEMPTS && !last_was_shed {
         return Some("max_attempts");
     }
     // #109 Phase 2: created_at is epoch-ms — age is plain integer subtraction.
@@ -536,6 +560,10 @@ pub(crate) struct DueRow {
     /// Epoch-ms timestamp the row was first persisted (#109 Phase 2) — gates
     /// the `GIVE_UP_AGE_DAYS` give-up trigger in [`sweep_once`].
     pub created_at: i64,
+    /// The most recent failure recorded by `record_failure`. #2541: read so
+    /// [`give_up_reason`] can exempt shed-persisted rows
+    /// ([`SHED_LAST_ERROR`]) from the `max_attempts` budget.
+    pub last_error: Option<String>,
 }
 
 /// Return rows where `next_attempt_at <= now`, up to `limit` entries.
@@ -551,7 +579,8 @@ pub(crate) async fn fetch_due(pool: &SqlitePool, limit: i64) -> Result<Vec<DueRo
         // `(next_attempt_at, block_id, task_kind)` is exactly the covering
         // index `idx_materializer_retry_queue_due` (migration 0063), so
         // the added sort keys are satisfied by the index — no extra sort.
-        "SELECT block_id, task_kind, attempts, created_at FROM materializer_retry_queue \
+        "SELECT block_id, task_kind, attempts, created_at, last_error \
+         FROM materializer_retry_queue \
          WHERE next_attempt_at <= ? \
          ORDER BY next_attempt_at ASC, block_id ASC, task_kind ASC LIMIT ?",
         now,
@@ -566,6 +595,7 @@ pub(crate) async fn fetch_due(pool: &SqlitePool, limit: i64) -> Result<Vec<DueRo
             task_kind: r.task_kind,
             attempts: r.attempts,
             created_at: r.created_at,
+            last_error: r.last_error,
         })
         .collect())
 }
@@ -920,7 +950,7 @@ pub async fn sweep_once(
             continue;
         };
         match materializer.try_enqueue_background(task) {
-            Ok(()) => {
+            Ok(crate::materializer::BackgroundEnqueueOutcome::Enqueued) => {
                 // Issue #378: lease (do NOT clear) the row on successful
                 // enqueue. Pre-clearing here meant a task that then
                 // FAILED on its re-run hit `record_failure`'s INSERT
@@ -936,6 +966,23 @@ pub async fn sweep_once(
                 // resolves.
                 lease_entry(write_pool, &row.block_id, &row.task_kind, row.attempts).await?;
                 re_enqueued += 1;
+            }
+            Ok(crate::materializer::BackgroundEnqueueOutcome::Shed) => {
+                // #2541: the queue was full — the task never dispatched, so
+                // this is NOT a re-enqueue: do not count it and, crucially,
+                // do NOT `lease_entry`. The shed path has already spawned a
+                // `record_failure` UPSERT that reschedules the row with the
+                // escalated backoff (and the `SHED_LAST_ERROR` marker);
+                // leasing here with this sweep's STALE `row.attempts`
+                // snapshot raced that UPSERT and could REWIND
+                // `next_attempt_at` below the escalated value, re-sweeping
+                // the row into the still-saturated queue early.
+                tracing::debug!(
+                    block_id = %row.block_id,
+                    task_kind = %row.task_kind,
+                    "retry row shed at re-enqueue (background queue full) — \
+                     rescheduled by the shed path's record_failure (#2541)"
+                );
             }
             Err(e) => {
                 tracing::warn!(
@@ -1619,6 +1666,7 @@ mod tests {
             task_kind: "UpdateFtsBlock".into(),
             attempts: 0,
             created_at: crate::db::now_ms(),
+            last_error: None,
         };
         let t = task_from_row(&row).unwrap();
         assert!(
@@ -1630,6 +1678,7 @@ mod tests {
             task_kind: "SomeFutureTaskKind".into(),
             attempts: 0,
             created_at: crate::db::now_ms(),
+            last_error: None,
         };
         assert!(
             task_from_row(&unknown).is_none(),
@@ -2286,6 +2335,218 @@ mod tests {
             giveups, 1,
             "retry_queue_giveup_total metric must increment on age-exceeded give-up"
         );
+    }
+
+    /// #2541: [`give_up_reason`] exempts rows whose LATEST persistence was a
+    /// shed ([`SHED_LAST_ERROR`]) from the `max_attempts` trigger — those
+    /// attempts came from queue saturation, not executions — while a real
+    /// execution error at the cap still gives up, and the wall-clock
+    /// `age_exceeded` trigger applies even to shed rows.
+    #[test]
+    fn give_up_reason_exempts_shed_rows_from_max_attempts_2541() {
+        let shed_at_cap = DueRow {
+            block_id: "B".into(),
+            task_kind: "UpdateFtsBlock".into(),
+            attempts: MAX_ATTEMPTS,
+            created_at: crate::db::now_ms(),
+            last_error: Some(SHED_LAST_ERROR.into()),
+        };
+        assert_eq!(
+            give_up_reason(&shed_at_cap),
+            None,
+            "a shed-persisted row at the attempts cap must NOT be given up"
+        );
+
+        let executed_at_cap = DueRow {
+            block_id: "B".into(),
+            task_kind: "UpdateFtsBlock".into(),
+            attempts: MAX_ATTEMPTS,
+            created_at: crate::db::now_ms(),
+            last_error: Some("boom: real execution failure".into()),
+        };
+        assert_eq!(
+            give_up_reason(&executed_at_cap),
+            Some("max_attempts"),
+            "a real execution failure at the cap must still give up"
+        );
+
+        let stale_shed = DueRow {
+            block_id: "B".into(),
+            task_kind: "UpdateFtsBlock".into(),
+            attempts: MAX_ATTEMPTS,
+            created_at: crate::db::now_ms() - (GIVE_UP_AGE_DAYS + 1) * 86_400_000,
+            last_error: Some(SHED_LAST_ERROR.into()),
+        };
+        assert_eq!(
+            give_up_reason(&stale_shed),
+            Some("age_exceeded"),
+            "the wall-clock trigger must still bound abandoned shed rows"
+        );
+    }
+
+    /// #2541: a due row swept into a SATURATED background queue is a SHED,
+    /// not a re-dispatch. `sweep_once` must (a) not count it as re-enqueued
+    /// and (b) not `lease_entry` it — the shed path's spawned
+    /// `record_failure` reschedules the row with the ESCALATED backoff, and
+    /// the old stale-`attempts` lease racing that UPSERT could REWIND
+    /// `next_attempt_at`.
+    ///
+    /// Determinism: the background consumer batch-drains the channel the
+    /// moment it is scheduled, so a saturated channel alone races the
+    /// consumer. Instead the WRITER is taken hostage with an open
+    /// `BEGIN IMMEDIATE` transaction: the consumer dequeues one batch and
+    /// then sits in its handler's 5s `busy_timeout` wait — NOT in `recv()` —
+    /// while the channel is refilled to capacity. The sweep's
+    /// `try_enqueue_background` then deterministically lands in the Full
+    /// arm. Single-threaded runtime keeps the enqueue loop unpreemptible.
+    #[tokio::test]
+    async fn sweep_shed_not_counted_and_backoff_not_rewound_2541() {
+        use crate::materializer::{BackgroundEnqueueOutcome, Materializer};
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // A due row with attempts = 1: the old buggy lease would set
+        // `next_attempt_at = now + backoff(1) = +1 min`, while the shed
+        // path's record_failure escalates to attempts = 2 → +5 min. The gap
+        // makes a rewind observable.
+        let now = crate::db::now_ms();
+        let past = now - 5 * 60_000;
+        sqlx::query(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, created_at, next_attempt_at, last_error) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("BLK_SHED_2541")
+        .bind("UpdateFtsBlock")
+        .bind(1_i64)
+        .bind(now)
+        .bind(past)
+        .bind("boom")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Take the writer hostage so every consumer write waits on the 5s
+        // busy_timeout instead of completing.
+        let hostage = crate::db::begin_immediate_logged(&pool, "test_2541_hostage")
+            .await
+            .unwrap();
+
+        // Wake the consumer with one write-hungry task and yield until it
+        // has drained the (1-element) batch and is stuck inside the handler.
+        mat.try_enqueue_background(MaterializeTask::RebuildTagsCache)
+            .unwrap();
+        // Real-time sleep (not just yields): the consumer's descent into the
+        // blocked SQL write crosses sqlx's worker-thread channel, which
+        // needs wall-clock time, not only scheduler turns. 250ms is far
+        // inside the 5s busy_timeout window the consumer then waits in.
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+
+        // Refill the channel to capacity; the consumer is busy, not in
+        // `recv()`, so it stays full. The filler is deliberately
+        // NON-retryable (`FtsOptimize` — `RetryKind::from_task` is `None`)
+        // so filler sheds spawn no `record_failure` writes of their own.
+        let mut probe = BackgroundEnqueueOutcome::Enqueued;
+        for _ in 0..1100 {
+            probe = mat
+                .try_enqueue_background(MaterializeTask::FtsOptimize)
+                .unwrap();
+        }
+        assert_eq!(
+            probe,
+            BackgroundEnqueueOutcome::Shed,
+            "precondition: the channel must be saturated before the sweep"
+        );
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 0,
+            "#2541: a shed must not be counted as a successful re-enqueue"
+        );
+
+        // Release the writer so the shed path's spawned record_failure (and
+        // the parked consumer) can complete.
+        drop(hostage);
+
+        // Poll until the shed UPSERT lands (attempts 1 → 2, marker set).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let (attempts, last_error, next_attempt_at) = loop {
+            let row: (i64, Option<String>, i64) = sqlx::query_as(
+                "SELECT attempts, last_error, next_attempt_at \
+                 FROM materializer_retry_queue \
+                 WHERE block_id = 'BLK_SHED_2541' AND task_kind = 'UpdateFtsBlock'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            if row.0 >= 2 {
+                break row;
+            }
+            assert!(
+                std::time::Instant::now() <= deadline,
+                "#2541: the shed path's record_failure must UPSERT the row"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        };
+        assert_eq!(attempts, 2, "one shed persistence on top of the seed row");
+        assert_eq!(
+            last_error.as_deref(),
+            Some(SHED_LAST_ERROR),
+            "#2541: a shed must be recorded with the distinct shed marker"
+        );
+        // attempts = 2 → the escalated +5 min backoff. A lease keyed on the
+        // STALE attempts = 1 snapshot would have rewound this to ~+1 min.
+        let min_expected = crate::db::now_ms() + 2 * 60_000;
+        assert!(
+            next_attempt_at > min_expected,
+            "#2541: next_attempt_at must keep the escalated backoff \
+             (got {next_attempt_at}, expected > {min_expected}) — the sweeper \
+             must not lease/rewind a shed row"
+        );
+        mat.shutdown();
+    }
+
+    /// #2541: the shed exemption end-to-end — a row at the `MAX_ATTEMPTS`
+    /// cap whose latest persistence was a shed is swept back onto the (now
+    /// free) queue instead of being permanently dropped.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_reenqueues_shed_row_at_attempts_cap_2541() {
+        use crate::materializer::Materializer;
+        use std::sync::atomic::Ordering;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let now = crate::db::now_ms();
+        let past = now - 5 * 60_000;
+        sqlx::query(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, created_at, next_attempt_at, last_error) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("BLK_SHED_CAP_2541")
+        .bind("UpdateFtsBlock")
+        .bind(MAX_ATTEMPTS)
+        .bind(now)
+        .bind(past)
+        .bind(SHED_LAST_ERROR)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 1,
+            "#2541: a shed-capped row must be re-enqueued, not given up"
+        );
+        let giveups = mat
+            .metrics()
+            .retry_queue_giveup_total
+            .load(Ordering::Relaxed);
+        assert_eq!(
+            giveups, 0,
+            "#2541: shed-driven attempts must not burn the give-up budget"
+        );
+        mat.shutdown();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -3346,6 +3607,7 @@ mod tests {
                 task_kind: row.task_kind,
                 attempts: row.attempts,
                 created_at: row.created_at,
+                last_error: row.last_error.clone(),
             };
             let reconstructed = task_from_row(&due).unwrap_or_else(|| {
                 panic!("task_from_row must reconstruct {kind_str} (regression would drop the row)")

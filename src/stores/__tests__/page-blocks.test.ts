@@ -3326,6 +3326,159 @@ describe('PageBlockStore', () => {
 
       expect(mockOnNewAction).not.toHaveBeenCalled()
     })
+
+    // -------------------------------------------------------------------------
+    // #2468 — ref-addressed undo: every migrated mutation threads the
+    // response's `op_refs` (the exact op-log refs the command appended) into
+    // the undo notification, so Ctrl+Z submits captured refs instead of a
+    // positional depth. The two batch commands (`move_blocks_batch`,
+    // `create_blocks_batch`) do not surface refs yet — their flows must keep
+    // the ref-LESS call shape (positional `undoPageGroup` fallback).
+    // -------------------------------------------------------------------------
+    describe('#2468 op_refs threading', () => {
+      const REFS = [{ device_id: 'dev1', seq: 42 }]
+
+      it('createBelow forwards the create_block response op_refs', async () => {
+        store.setState({ blocks: [makeBlock({ id: 'A', position: 0 })] })
+        mockedInvoke.mockResolvedValueOnce({
+          id: 'NEW',
+          block_type: 'text',
+          content: '',
+          parent_id: null,
+          position: 1,
+          deleted_at: null,
+          op_refs: REFS,
+        })
+
+        await store.getState().createBelow('A')
+
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', REFS)
+      })
+
+      it('edit forwards the edit_block response op_refs', async () => {
+        store.setState({ blocks: [makeBlock({ id: 'A', content: 'old' })] })
+        mockedInvoke.mockResolvedValueOnce({
+          id: 'A',
+          block_type: 'text',
+          content: 'new',
+          parent_id: null,
+          position: 0,
+          deleted_at: null,
+          op_refs: REFS,
+        })
+
+        await store.getState().edit('A', 'new')
+
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', REFS)
+      })
+
+      it('remove forwards the delete_block response op_refs', async () => {
+        store.setState({ blocks: [makeBlock({ id: 'A' })] })
+        mockedInvoke.mockResolvedValueOnce({
+          block_id: 'A',
+          deleted_at: '2025-01-01T00:00:00Z',
+          descendants_affected: 0,
+          op_refs: REFS,
+        })
+
+        await store.getState().remove('A')
+
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', REFS)
+      })
+
+      it('reorder forwards the move_block response op_refs', async () => {
+        store.setState({
+          blocks: [
+            makeBlock({ id: 'A', position: 0, parent_id: null }),
+            makeBlock({ id: 'B', position: 1, parent_id: null }),
+            makeBlock({ id: 'C', position: 2, parent_id: null }),
+          ],
+        })
+        mockedInvoke.mockResolvedValueOnce({
+          block_id: 'C',
+          new_parent_id: null,
+          new_position: 0,
+          op_refs: REFS,
+        })
+
+        await store.getState().reorder('C', 0)
+
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', REFS)
+      })
+
+      it('moveToParent forwards the move_block response op_refs', async () => {
+        store.setState({
+          blocks: [
+            makeBlock({ id: 'A', position: 0, parent_id: null }),
+            makeBlock({ id: 'B', position: 1, parent_id: null }),
+          ],
+        })
+        mockedInvoke.mockImplementation(async (cmd: string) => {
+          if (cmd === 'move_block') {
+            return { block_id: 'A', new_parent_id: 'B', new_position: 1, op_refs: REFS }
+          }
+          if (cmd === 'load_page_subtree') return subtreeResp([])
+          return undefined
+        })
+
+        await store.getState().moveToParent('A', 'B', 0)
+
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', REFS)
+      })
+
+      it('moveBlocks (batch) keeps the ref-less positional fallback', async () => {
+        store.setState({
+          blocks: [
+            makeBlock({ id: 'A', position: 0, parent_id: null }),
+            makeBlock({ id: 'B', position: 1, parent_id: null }),
+          ],
+        })
+        mockedInvoke.mockImplementation(async (cmd: string) => {
+          if (cmd === 'move_blocks_batch') {
+            return [{ block_id: 'A', new_parent_id: 'B', new_position: 1 }]
+          }
+          if (cmd === 'load_page_subtree') return subtreeResp([])
+          return undefined
+        })
+
+        await store.getState().moveBlocks(['A'], 'B', 0)
+
+        // Exactly ONE argument — no refs threaded: the undo store must record
+        // a positional-fallback entry for the batch flow.
+        expect(mockOnNewAction).toHaveBeenCalledTimes(1)
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
+        expect(mockOnNewAction.mock.calls[0]).toHaveLength(1)
+      })
+
+      it('pasteBlocks (batch create) keeps the ref-less positional fallback', async () => {
+        const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })
+        store.setState({ blocks: [anchor] })
+        mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+          if (cmd === 'create_blocks_batch') {
+            const specs = ((args as { specs?: unknown })?.specs ?? []) as Array<{
+              content: string
+              parentId: string | null
+            }>
+            return specs.map((s, i) => ({
+              id: `NEW${i}`,
+              block_type: 'content',
+              content: s.content,
+              parent_id: s.parentId,
+              position: null,
+              deleted_at: null,
+            }))
+          }
+          if (cmd === 'load_page_subtree') return subtreeResp([anchor])
+          return []
+        })
+
+        await store.getState().pasteBlocks('A', 'one\ntwo')
+
+        expect(mockOnNewAction).toHaveBeenCalledTimes(1)
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
+        expect(mockOnNewAction.mock.calls[0]).toHaveLength(1)
+      })
+    })
   })
 
   // ---------------------------------------------------------------------------

@@ -46,8 +46,9 @@ test.describe('Block-level undo/redo', () => {
     // Press Ctrl+Z — triggers block-level undo (useUndoShortcuts)
     await page.keyboard.press('Control+z')
 
-    // Wait for the "Undone" toast to confirm undo fired
-    await expect(page.getByLabel('Notifications alt+T').getByText('Undone')).toBeVisible()
+    // Wait for the undo toast to confirm undo fired. The text is per-op-type
+    // ("Undid create block") with a generic "Undone" fallback, so match both.
+    await expect(page.getByLabel('Notifications alt+T').getByText(/Und(one|id)/)).toBeVisible()
 
     // Navigate away and back to re-fetch blocks from mock's updated state
     await reopenPage(page, 'Getting Started')
@@ -74,7 +75,7 @@ test.describe('Block-level undo/redo', () => {
 
     // Press Ctrl+Z — triggers block-level undo
     await page.keyboard.press('Control+z')
-    await expect(page.getByLabel('Notifications alt+T').getByText('Undone')).toBeVisible()
+    await expect(page.getByLabel('Notifications alt+T').getByText(/Und(one|id)/)).toBeVisible()
 
     // Navigate away and back to re-fetch from mock
     await reopenPage(page, 'Getting Started')
@@ -97,11 +98,11 @@ test.describe('Block-level undo/redo', () => {
 
     // Press Ctrl+Z — triggers undo
     await page.keyboard.press('Control+z')
-    await expect(page.getByLabel('Notifications alt+T').getByText('Undone')).toBeVisible()
+    await expect(page.getByLabel('Notifications alt+T').getByText(/Und(one|id)/)).toBeVisible()
 
     // Now redo with Ctrl+Y
     await page.keyboard.press('Control+y')
-    await expect(page.getByLabel('Notifications alt+T').getByText('Redone')).toBeVisible()
+    await expect(page.getByLabel('Notifications alt+T').getByText(/Red(one|id)/)).toBeVisible()
 
     // Navigate away and back to verify
     await reopenPage(page, 'Getting Started')
@@ -129,9 +130,8 @@ test.describe('Block-level undo/redo', () => {
   // re-parents the block under its previous sibling), so the undo path is the
   // same `move_block` reversal for all three. We assert on the structural
   // signal (paddingLeft for depth, `data-block-id` order for moves) rather
-  // than the toast, because the generic "Undone"/"Redone" fallback fires for
-  // every op type here (the mock returns `new_op_type`, not the
-  // `reversed_op_type` the per-op i18n key reads).
+  // than the toast: the toast text is now per-op-type ("Undid move"), so the
+  // structural signal is the more direct assertion of what actually changed.
   //
   // Redo uses Ctrl+Shift+Z (one of the two `redoLastUndoneOp` bindings, the
   // other being Ctrl+Y used by the create test above) to cover that chord too.
@@ -172,7 +172,7 @@ test.describe('Block-level undo/redo', () => {
     // calls refreshAfterUndoRedo → the store reloads and the depth reverts
     // IN PLACE with no navigation.
     await page.keyboard.press('Control+z')
-    await expect(page.getByLabel('Notifications alt+T').getByText('Undone')).toBeVisible()
+    await expect(page.getByLabel('Notifications alt+T').getByText(/Und(one|id)/)).toBeVisible()
 
     // WITHOUT reopening: the block must be back at its original depth.
     await expect
@@ -186,7 +186,7 @@ test.describe('Block-level undo/redo', () => {
 
     // Ctrl+Shift+Z — redo re-applies the indent, again in place.
     await page.keyboard.press('Control+Shift+z')
-    await expect(page.getByLabel('Notifications alt+T').getByText('Redone')).toBeVisible()
+    await expect(page.getByLabel('Notifications alt+T').getByText(/Red(one|id)/)).toBeVisible()
     await expect
       .poll(async () =>
         Number.parseInt(
@@ -250,7 +250,7 @@ test.describe('Block-level undo/redo', () => {
     // place (the dedent was the last op; its reversal re-nests the block).
     await blurEditors(page)
     await page.keyboard.press('Control+z')
-    await expect(page.getByLabel('Notifications alt+T').getByText('Undone')).toBeVisible()
+    await expect(page.getByLabel('Notifications alt+T').getByText(/Und(one|id)/)).toBeVisible()
 
     await expect
       .poll(async () =>
@@ -290,14 +290,14 @@ test.describe('Block-level undo/redo', () => {
     // Ctrl+Z — undo the move. Order must revert IN PLACE (no reopen): the
     // original first block is first again.
     await page.keyboard.press('Control+z')
-    await expect(page.getByLabel('Notifications alt+T').getByText('Undone')).toBeVisible()
+    await expect(page.getByLabel('Notifications alt+T').getByText(/Und(one|id)/)).toBeVisible()
     await expect(blocks.nth(0)).toHaveAttribute('data-block-id', originalFirstId, {
       timeout: 5000,
     })
 
     // Ctrl+Shift+Z — redo re-applies the move, again in place.
     await page.keyboard.press('Control+Shift+z')
-    await expect(page.getByLabel('Notifications alt+T').getByText('Redone')).toBeVisible()
+    await expect(page.getByLabel('Notifications alt+T').getByText(/Red(one|id)/)).toBeVisible()
     await expect(blocks.nth(0)).toHaveAttribute('data-block-id', originalSecondId, {
       timeout: 5000,
     })

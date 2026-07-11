@@ -1097,6 +1097,157 @@ type TypedHandlers = {
   ) => ReturnContract<CommandData<K>> | Promise<ReturnContract<CommandData<K>>>
 }
 
+// ─── #2468 — ref-addressed undo core (`undo_op` / `undo_ops`) ────────────────
+//
+// The FE undo store now addresses undo targets by the exact `OpRef` each
+// mutating command returned (`WithOps.op_refs`) instead of a positional depth.
+// These helpers resolve + validate a ref against the in-memory `opLog`
+// (mirroring `undo_op_inner`'s reject rules) and delegate the actual state
+// reversal to the mock op-log's existing reversal core (`applyRevertForOp`,
+// the same core `revert_ops` uses — it covers the property/tag op types the
+// positional `undo_page_op` core never needed).
+
+/** The device id `pushOp` stamps on every locally-appended op. */
+const MOCK_LOCAL_DEVICE = 'mock-device'
+
+/**
+ * Reverse op_type stamped on the appended `undo_*` op. Mirrors the per-type
+ * mapping in `undo_page_op` (block-row ops), extended to the property/tag ops
+ * the #2468 migration makes undoable by ref.
+ */
+function reverseOpTypeFor(opType: string): string {
+  switch (opType) {
+    case 'create_block': {
+      return 'delete_block'
+    }
+    case 'delete_block': {
+      return 'restore_block'
+    }
+    case 'restore_block': {
+      return 'delete_block'
+    }
+    case 'delete_property': {
+      return 'set_property'
+    }
+    case 'add_tag': {
+      return 'remove_tag'
+    }
+    case 'remove_tag': {
+      return 'add_tag'
+    }
+    default: {
+      // edit_block / move_block / set_property / the task-column setters all
+      // reverse to an op of their own type.
+      return opType
+    }
+  }
+}
+
+/**
+ * Net reversal count for a forward op: +1 per `undo_*` op whose stashed
+ * `reversed` payload references it, -1 per `redo_*` op that re-applied it.
+ * `> 0` ⇒ the op is currently reversed (an `undo_op` against it must be
+ * rejected as already-reversed; a redo makes it undoable again).
+ */
+function timesReversedNet(target: MockOpLogEntry): number {
+  let net = 0
+  for (const o of opLog) {
+    if (o.op_type.startsWith('undo_')) {
+      const reversed = (JSON.parse(o.payload) as { reversed?: MockOpLogEntry }).reversed
+      if (reversed && reversed.device_id === target.device_id && reversed.seq === target.seq) {
+        net += 1
+      }
+    } else if (o.op_type.startsWith('redo_')) {
+      const reApplied = (JSON.parse(o.payload) as { re_applied?: MockOpLogEntry }).re_applied
+      if (reApplied && reApplied.device_id === target.device_id && reApplied.seq === target.seq) {
+        net -= 1
+      }
+    }
+  }
+  return net
+}
+
+/**
+ * Resolve an `OpRef` to the EFFECTIVE op to revert, enforcing `undo_op`'s
+ * reject rules (#2463 error-shape parity — mirror `undo_op_inner`):
+ *   - unknown ref                     → `not_found`;
+ *   - foreign / replicated op         → `validation` (only ops this device
+ *     authored are undoable — a test models a replicated op by pushing a
+ *     foreign-device entry onto `opLog` directly);
+ *   - ref to an `undo_*` op           → `validation` (undoing an undo is
+ *     redo's job — `redo_page_op` takes those refs);
+ *   - already-reversed op             → `validation` (net of undos/redos);
+ *   - `delete_property` with no prior value → `not_found` (backend parity:
+ *     `build_reverse_delete_property` cannot compute an inverse without a
+ *     prior `set_property`, so the revert phase rejects the whole batch).
+ * A `redo_*` ref is ACCEPTED — redo appends a new op that re-applies the
+ * original, and the FE pushes the redo's `new_op_ref` as the next undo
+ * target; its effective revert target is the stashed original op.
+ */
+function resolveUndoTarget(opRef: { device_id: string; seq: number }): MockOpLogEntry {
+  const entry = opLog.find((o) => o.device_id === opRef.device_id && o.seq === opRef.seq)
+  if (!entry) throw notFoundRejection(`op_log (${opRef.device_id}, ${opRef.seq})`)
+  if (entry.device_id !== MOCK_LOCAL_DEVICE) {
+    throw validationRejection(
+      `op (${entry.device_id}, ${entry.seq}) was replicated from another device — ` +
+        'refusing to undo a foreign op',
+    )
+  }
+  if (entry.op_type.startsWith('undo_')) {
+    throw validationRejection(
+      `op (${entry.device_id}, ${entry.seq}) is a '${entry.op_type}' undo op — ` +
+        'refusing to undo an undo (use redo_page_op)',
+    )
+  }
+  const effective = entry.op_type.startsWith('redo_')
+    ? (JSON.parse(entry.payload) as { re_applied?: MockOpLogEntry }).re_applied
+    : entry
+  // mock-internal invariant (#2463) — the mock stashes the re-applied op
+  // inline on its own `redo_*` entry (see `redo_page_op`); a missing payload
+  // means the mock corrupted its own bookkeeping.
+  if (!effective) throw new Error('redo op carries no re_applied payload')
+  if (timesReversedNet(effective) > 0) {
+    throw validationRejection(
+      `op (${effective.device_id}, ${effective.seq}) is already reversed — ` +
+        'refusing to undo it twice',
+    )
+  }
+  // Backend parity: the real command appends a `delete_property` op even when
+  // the property never existed, but reversing that op is impossible — there
+  // is no prior `set_property` to restore. `build_reverse_delete_property`
+  // surfaces that as NotFound during the (pre-apply, batch-aborting) reverse
+  // computation; mirror it here so the FE sees the same failure shape.
+  if (effective.op_type === 'delete_property') {
+    const payload = JSON.parse(effective.payload) as { from_value?: unknown; key?: string }
+    if (payload.from_value == null) {
+      throw notFoundRejection(
+        `no prior set_property found for key '${payload.key ?? ''}' — ` +
+          'cannot reverse delete_property',
+      )
+    }
+  }
+  return effective
+}
+
+/**
+ * Apply the reverse of a validated target via the shared reversal core and
+ * append the bookkeeping `undo_*` op (same `{ reversed }` stash the
+ * positional `undo_page_op` writes, so `redo_page_op` accepts the returned
+ * `new_op_ref`). Returns the `UndoResult` wire shape.
+ */
+function applyUndoForTarget(effective: MockOpLogEntry): Record<string, unknown> {
+  applyRevertForOp(effective, blocks, { properties, blockTags })
+  const reverseOpType = reverseOpTypeFor(effective.op_type)
+  const newOp = pushOp(`undo_${reverseOpType}`, { reversed: effective })
+  return {
+    reversed_op: { device_id: effective.device_id, seq: effective.seq },
+    reversed_op_type: effective.op_type,
+    new_op_ref: { device_id: newOp.device_id, seq: newOp.seq },
+    new_op_type: reverseOpType,
+    is_redo: false,
+  }
+}
+
 // `HANDLERS_TYPED` is the FRESH object literal, checked against the generated
 // command surface by the trailing `satisfies TypedHandlers`. It is deliberately
 // NOT annotated: an outer `: Record<string, Handler>` annotation would strip the
@@ -1601,14 +1752,17 @@ const HANDLERS_TYPED = {
         value_bool: null,
       })
     }
-    pushOp('create_block', {
+    const op = pushOp('create_block', {
       block_id: id,
       content: row.content,
       parent_id: parentId,
       block_type: row.block_type,
       position,
     })
-    return row
+    // #2468 — `WithOps<BlockRow>`: echo the appended op's ref so FE tests
+    // exercise undo-ref capture. Spread copy: the stored block row must not
+    // grow an `op_refs` field (list_blocks & co. return the stored rows).
+    return { ...row, op_refs: [{ device_id: op.device_id, seq: op.seq }] }
   },
 
   // Atomic batch-create. Mirrors the existing
@@ -1815,12 +1969,13 @@ const HANDLERS_TYPED = {
     if (!b) throw notFoundRejection(`block '${a['blockId'] as string}' not found`)
     const oldContent = b['content'] as string | null
     b['content'] = a['toText'] as string
-    pushOp('edit_block', {
+    const op = pushOp('edit_block', {
       block_id: a['blockId'],
       to_text: a['toText'],
       from_text: oldContent,
     })
-    return b
+    // #2468 — `WithOps<BlockRow>` (spread copy — see create_block).
+    return { ...b, op_refs: [{ device_id: op.device_id, seq: op.seq }] }
   },
 
   // #1775 — single-op soft-delete cascade, mirroring the backend's
@@ -1874,11 +2029,13 @@ const HANDLERS_TYPED = {
         }
       }
     }
-    pushOp('delete_block', { block_id: blockId })
+    const op = pushOp('delete_block', { block_id: blockId })
+    // #2468 — `WithOps<DeleteResponse>`.
     return {
       block_id: blockId,
       deleted_at: now,
       descendants_affected: descendantsAffected,
+      op_refs: [{ device_id: op.device_id, seq: op.seq }],
     }
   },
 
@@ -2134,17 +2291,19 @@ const HANDLERS_TYPED = {
     // when the parent didn't change — the insert already renumbered it.
     if (oldParentId !== newParentId) renumberSiblings(oldParentId)
     const newPosition = b['position'] as number
-    pushOp('move_block', {
+    const op = pushOp('move_block', {
       block_id: blockId,
       new_parent_id: newParentId,
       new_position: newPosition,
       old_parent_id: oldParentId,
       old_position: oldPosition,
     })
+    // #2468 — `WithOps<MoveResponse>`.
     return {
       block_id: blockId,
       new_parent_id: newParentId,
       new_position: newPosition,
+      op_refs: [{ device_id: op.device_id, seq: op.seq }],
     }
   },
 
@@ -2255,19 +2414,42 @@ const HANDLERS_TYPED = {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const tagId = a['tagId'] as string
+    // #2468 — duplicate add: the REAL `add_tag` command REJECTS it
+    // (`InvalidOperation("tag already applied")`, `add_tag_inner`). The mock
+    // stays lenient because the `tag_add_remove` conformance fixture drives
+    // the backend's op-APPLY pipeline (which logs the duplicate op for LWW
+    // convergence, #622/#709) through this one command surface. On that
+    // mock-only lenient path the `WithOps<TagResponse>` response carries
+    // EMPTY `op_refs`: reversing the duplicate would remove an edge an
+    // earlier op also added, so it is not an undoable ref and the FE must
+    // not push an undo entry for it.
+    const alreadyAttached = blockTags.get(blockId)?.has(tagId) ?? false
     if (!blockTags.has(blockId)) blockTags.set(blockId, new Set())
     blockTags.get(blockId)?.add(tagId)
-    pushOp('add_tag', { block_id: blockId, tag_id: tagId })
-    return { block_id: blockId, tag_id: tagId }
+    const op = pushOp('add_tag', { block_id: blockId, tag_id: tagId })
+    return {
+      block_id: blockId,
+      tag_id: tagId,
+      op_refs: alreadyAttached ? [] : [{ device_id: op.device_id, seq: op.seq }],
+    }
   },
 
   remove_tag: (args) => {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const tagId = a['tagId'] as string
+    // #2468 — unattached remove: the REAL `remove_tag` command REJECTS it
+    // (`NotFound("tag association")`, `remove_tag_inner`); the mock stays
+    // lenient (see add_tag — conformance-fixture constraint) and surfaces no
+    // undoable ref on that mock-only path.
+    const wasAttached = blockTags.get(blockId)?.has(tagId) ?? false
     blockTags.get(blockId)?.delete(tagId)
-    pushOp('remove_tag', { block_id: blockId, tag_id: tagId })
-    return { block_id: blockId, tag_id: tagId }
+    const op = pushOp('remove_tag', { block_id: blockId, tag_id: tagId })
+    return {
+      block_id: blockId,
+      tag_id: tagId,
+      op_refs: wasAttached ? [{ device_id: op.device_id, seq: op.seq }] : [],
+    }
   },
 
   // #81 / bulk add one tag to N blocks. Lenient skip of
@@ -2952,9 +3134,10 @@ const HANDLERS_TYPED = {
       value_ref: valueRef,
       value_bool: valueBool === null ? null : valueBool ? 1 : 0,
     })
-    pushOp('set_property', { block_id: blockId, key, from_value: fromValue })
+    const op = pushOp('set_property', { block_id: blockId, key, from_value: fromValue })
     const b = blocks.get(blockId)
-    return b ? { ...b } : null
+    // #2468 — `WithOps<BlockRow>`.
+    return b ? { ...b, op_refs: [{ device_id: op.device_id, seq: op.seq }] } : null
   },
 
   delete_property: (args) => {
@@ -2974,12 +3157,22 @@ const HANDLERS_TYPED = {
       : null
     const blockProps = properties.get(blockId)
     if (blockProps) blockProps.delete(key)
-    pushOp('delete_property', {
+    const op = pushOp('delete_property', {
       block_id: blockId,
       key,
       from_value: fromValue,
     })
-    return null
+    // #2468 — previously returned `null`; now echoes `(block_id, key)` plus
+    // `op_refs` (`WithOps<DeletePropertyResponse>`). Backend parity: the real
+    // `delete_property_core` ALWAYS appends the op — even when the property
+    // does not exist — so the ref is always surfaced. Undoing a no-prior
+    // delete then fails (`resolveUndoTarget` mirrors the backend's "no prior
+    // set_property" NotFound from `build_reverse_delete_property`).
+    return {
+      block_id: blockId,
+      key,
+      op_refs: [{ device_id: op.device_id, seq: op.seq }],
+    }
   },
 
   get_properties: (args) => {
@@ -3181,6 +3374,43 @@ const HANDLERS_TYPED = {
       new_op_type: redoOpType,
       is_redo: true,
     }
+  },
+
+  // #2468 — ref-addressed single undo (`undo_page_op` successor). The FE
+  // submits the exact `OpRef` it captured from the mutation's `op_refs`
+  // response; validation + reversal live in `resolveUndoTarget` /
+  // `applyUndoForTarget` (shared with `undo_ops`), which delegate to the
+  // mock op-log's reversal core (`applyRevertForOp`) and enforce the
+  // foreign / undo-op / already-reversed reject rules.
+  undo_op: (args) => {
+    const a = args as Record<string, unknown>
+    const opRef = a['opRef'] as { device_id: string; seq: number }
+    return applyUndoForTarget(resolveUndoTarget(opRef))
+  },
+
+  // #2468 — ref-addressed group undo (`undo_page_group` successor) with
+  // ATOMIC-ABORT semantics: every ref is validated (same reject rules as
+  // `undo_op`, plus duplicate detection) BEFORE any reversal is applied, so a
+  // bad ref anywhere in the set reverts nothing. Ops revert newest-first and
+  // the results come back newest-first, matching the real command.
+  undo_ops: (args) => {
+    const a = args as Record<string, unknown>
+    const ops = (a['ops'] as Array<{ device_id: string; seq: number }> | undefined) ?? []
+    // Backend parity: `undo_ops_inner` returns `Ok(vec![])` for an empty
+    // ref-set (mirrors `revert_ops_inner`) — it does NOT reject it.
+    if (ops.length === 0) return []
+    const seen = new Set<string>()
+    for (const ref of ops) {
+      const key = `${ref.device_id}:${ref.seq}`
+      if (seen.has(key)) {
+        throw validationRejection(`duplicate op ref (${ref.device_id}, ${ref.seq})`)
+      }
+      seen.add(key)
+    }
+    const newestFirst = [...ops].toSorted((x, y) => y.seq - x.seq)
+    // Validate ALL before applying ANY (atomic-abort).
+    const targets = newestFirst.map((ref) => resolveUndoTarget(ref))
+    return targets.map((target) => applyUndoForTarget(target))
   },
 
   query_backlinks_filtered: (args) => {

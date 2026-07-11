@@ -992,10 +992,19 @@ async fn revert_ops_in_tx(
         // the DeleteBlock arm stamps it into `blocks.deleted_at`, and the
         // cohort invariant `op.created_at == blocks.deleted_at` (#1549) is
         // what lets a later undo/redo of this reverse find its rows.
+        // #2468: stamp the reversed op's ref (`reverses_*`, migration 0101)
+        // so the ref-addressed undo's already-reversed guard sees reverses
+        // produced by EVERY path (batch revert, group undo, ref undo,
+        // restore), not just `undo_op`/`undo_ops` themselves.
         let op_ts = reverse_op_timestamp(reverse_payload);
-        let op_record =
-            op_log::append_local_undo_op_in_tx(tx, device_id, reverse_payload.clone(), op_ts)
-                .await?;
+        let op_record = op_log::append_local_undo_op_in_tx(
+            tx,
+            device_id,
+            reverse_payload.clone(),
+            op_ts,
+            op_ref,
+        )
+        .await?;
 
         // #2305: a distinct-move group's MoveBlock reverses bypass
         // `apply_reverse_in_tx` and call `reverse_move_block` directly so
@@ -1303,15 +1312,17 @@ pub async fn undo_page_op_inner(
     // I-CommandsCRUD-1 — the AGENTS.md "Backend Patterns"
     // carve-out for this pattern is deferred (locked AGENTS.md self-rule).
     // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
-    // #2549: `AND ol.is_replicated = 0` — this is the interactive-undo
-    // target-selection query; unlike `revert_ops`/`restore_page_to_op` it
-    // calls `reverse::compute_reverse` directly and never routes through
-    // `revert_ops_in_tx`'s `reject_replicated_targets` guard. Without this
-    // filter, a #2495 audit-only replicated row (foreign device, never
-    // applied to local state) sitting more recently in the page's history
-    // than any local op would be picked as the undo target and its
-    // "reverse" would be computed and APPLIED to local state — corrupting
-    // it by undoing a forward effect that never happened on this device.
+    //
+    // #2481 phase 2: `is_replicated = 0` — implicit (Ctrl+Z) undo targets
+    // only locally-authored ops. Replicated foreign audit rows (migration
+    // 0099) appear in History but were never applied to local state, so
+    // reversing one from the undo stack would mutate state that the op
+    // never produced. Reverting a foreign op stays legitimate ONLY as an
+    // explicit History-view action (`revert_ops`, deliberately unfiltered).
+    // also #2549: this interactive-undo target-selection query calls
+    // `reverse::compute_reverse` directly and never routes through
+    // `revert_ops_in_tx`'s `reject_replicated_targets` guard, so the filter
+    // here is the sole line of defense against selecting an audit-only row.
     let target = sqlx::query_as!(
         HistoryEntry,
         "WITH RECURSIVE page_blocks(id, depth) AS ( \
@@ -1368,10 +1379,22 @@ pub async fn undo_page_op_inner(
     // (`reverse_op_timestamp`): the DeleteBlock arm stamps it into
     // `blocks.deleted_at`, preserving the `op.created_at == deleted_at`
     // cohort invariant (#1549) that redo relies on.
+    // #2468: stamp the reversed op's ref (`reverses_*`, migration 0101) so
+    // the ref-addressed undo's already-reversed guard also sees reverses
+    // produced by this positional path.
+    let target_ref = OpRef {
+        device_id: target.device_id,
+        seq: target.seq,
+    };
     let op_ts = reverse_op_timestamp(&reverse_payload);
-    let op_record =
-        op_log::append_local_undo_op_in_tx(&mut tx, device_id, reverse_payload.clone(), op_ts)
-            .await?;
+    let op_record = op_log::append_local_undo_op_in_tx(
+        &mut tx,
+        device_id,
+        reverse_payload.clone(),
+        op_ts,
+        &target_ref,
+    )
+    .await?;
 
     apply_reverse_in_tx(
         &mut tx,
@@ -1390,10 +1413,7 @@ pub async fn undo_page_op_inner(
     tx.commit_and_dispatch(materializer).await?;
 
     Ok(UndoResult {
-        reversed_op: OpRef {
-            device_id: target.device_id,
-            seq: target.seq,
-        },
+        reversed_op: target_ref,
         reversed_op_type: target.op_type,
         new_op_ref: OpRef {
             device_id: new_op_device_id,
@@ -1475,9 +1495,24 @@ pub async fn redo_page_op_inner(
     // (`reverse_op_timestamp`): a redo that re-deletes stamps
     // `blocks.deleted_at = op.created_at`, so the NEXT undo's
     // `RestoreBlock { deleted_at_ref }` finds the cohort (#1549).
+    //
+    // #2468: the redo op stamps `reverses_* = the undo op` (migration
+    // 0101) while keeping `is_undo = 0` (its effect is forward-equivalent,
+    // #659). The link returns the ORIGINAL op to the "not currently
+    // reversed" state, so a later ref-addressed undo of it is legal again.
+    let undo_ref = OpRef {
+        device_id: undo_device_id,
+        seq: undo_seq,
+    };
     let op_ts = reverse_op_timestamp(&reverse_payload);
-    let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, reverse_payload.clone(), op_ts).await?;
+    let op_record = op_log::append_local_redo_op_in_tx(
+        &mut tx,
+        device_id,
+        reverse_payload.clone(),
+        op_ts,
+        &undo_ref,
+    )
+    .await?;
 
     apply_reverse_in_tx(
         &mut tx,
@@ -1496,10 +1531,7 @@ pub async fn redo_page_op_inner(
     tx.commit_and_dispatch(materializer).await?;
 
     Ok(UndoResult {
-        reversed_op: OpRef {
-            device_id: undo_device_id,
-            seq: undo_seq,
-        },
+        reversed_op: undo_ref,
         reversed_op_type: undo_op_type,
         new_op_ref: OpRef {
             device_id: new_op_device_id,
@@ -1590,6 +1622,13 @@ pub async fn find_undo_group_inner(
     // then aborts wholesale).
     let seed_rn: i64 = depth + 1; // depth=0 → rn=1 (newest)
     // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
+    //
+    // #2481 phase 2: `is_replicated = 0` in `ordered_ops` — undo groups are
+    // built over locally-authored ops only, matching `undo_page_op_inner`'s
+    // target filter. A replicated foreign audit row (migration 0099) must
+    // neither seed/extend a group nor BREAK one: filtered out here, two
+    // local ops with a replicated row between them stay adjacent in the
+    // walk, exactly as they present in the implicit undo stack.
     let count: Option<i64> = sqlx::query_scalar!(
         "WITH RECURSIVE page_blocks(id, depth) AS ( \
              SELECT id, 0 FROM blocks WHERE id = ?1 \
@@ -1717,13 +1756,15 @@ pub async fn undo_page_group_inner(
     // so we can project each op's concrete `(device_id, seq)` rather than only
     // `MAX(count_so_far)`. `depth + 1` seeds at the newest undoable op for
     // `depth = 0`. The `count_so_far < 1000` bound matches the `undo_depth`
-    // ceiling in `undo_page_op_inner`.
-    // #2549: `AND ol.is_replicated = 0` — see the matching note in
-    // `find_undo_group_inner`. Without it, a replicated audit row (#2495,
-    // never applied locally) seeding or joining the walk would flow into
-    // `revert_ops_in_tx`, whose `reject_replicated_targets` guard aborts the
-    // WHOLE group; excluding it here keeps group undo usable and keeps the
-    // rn universe identical to `find_undo_group_inner` / `undo_page_op_inner`.
+    // ceiling in `undo_page_op_inner`. #2481 phase 2: `is_replicated = 0`
+    // keeps replicated foreign audit rows out of the group (and out of the
+    // rn-numbering, so they don't break a local group either) — implicit
+    // undo is local-only; explicit `revert_ops` stays unfiltered.
+    // also #2549: without this filter a replicated audit row seeding or
+    // joining the walk would flow into `revert_ops_in_tx`, whose
+    // `reject_replicated_targets` guard aborts the WHOLE group; excluding it
+    // here keeps group undo usable and the rn universe identical to
+    // `find_undo_group_inner` / `undo_page_op_inner`.
     let seed_rn: i64 = depth + 1;
     let rows = sqlx::query!(
         r#"WITH RECURSIVE page_blocks(id, depth) AS (
@@ -1813,6 +1854,218 @@ pub async fn undo_page_group_inner(
     Ok(results)
 }
 
+/// #2468: ref-addressed interactive undo — revert an explicit set of op
+/// refs with EXACTLY the interactive undo stack's semantics, replacing the
+/// positional `undo_depth` addressing whose offset shifts whenever an op
+/// lands between the user's intent and the IPC (#2446).
+///
+/// This is the batch/group form (a coalesced `UNDO_GROUP_WINDOW_MS` group
+/// becomes one explicit ref-set revert — the same shape MCP session revert
+/// already exercises via `revert_ops`). [`undo_op_inner`] is the
+/// single-ref special case. Both differ from the sanctioned explicit
+/// `revert_ops` in ONE way: a guard verifying every ref is a legitimate
+/// implicit-undo target, enforced INSIDE the IMMEDIATE transaction that
+/// applies the reverses (no TOCTOU window — a concurrent double-submit of
+/// the same ref serializes and the loser is rejected):
+///
+/// * **local** — `is_replicated = 0` (#2481 phase 2: replicated foreign
+///   audit rows were never applied to local state; reverting one stays
+///   legitimate only as an explicit History-view `revert_ops` action);
+/// * **forward** — `is_undo = 0` (#659: reversing an undo op is redo's
+///   job, `redo_page_op`);
+/// * **not already reversed** — no unreversed reverse op links to the ref
+///   via `reverses_*` (migration 0101). An undo → redo cycle clears the
+///   state (the redo op links to the undo op), so re-undoing after redo is
+///   legal.
+///
+/// The revert itself is the shared [`revert_ops_in_tx`] with
+/// `skip_non_reversible = false` — the interactive contract: a single
+/// non-reversible op (including a reverse-move preflight failure,
+/// classified `NonReversible`) ABORTS the whole batch before any reverse
+/// is applied; nothing is skipped. Results are newest-first
+/// [`UndoResult`]s whose `new_op_ref`s are the frontend's redo targets.
+///
+/// An empty `ops` returns `Ok(vec![])` (mirrors `revert_ops_inner`).
+#[instrument(skip_all, fields(ops_count = ops.len()), err)]
+pub async fn undo_ops_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    ops: Vec<OpRef>,
+) -> Result<Vec<UndoResult>, AppError> {
+    if ops.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // C5 (#344): bound the batch before any DB work — same ceiling as
+    // `revert_ops_in_tx` (which re-enforces it as a backstop), surfaced
+    // here so an oversized group fails before taking the write lock.
+    if ops.len() > MAX_REVERT_OPS {
+        return Err(AppError::validation(format!(
+            "cannot undo {} ops in a single batch (maximum is {MAX_REVERT_OPS})",
+            ops.len()
+        )));
+    }
+
+    // A duplicate ref would append (and apply) the SAME inverse twice
+    // inside one transaction — the second application is exactly the
+    // double-undo the already-reversed guard exists to prevent, but the
+    // guard reads committed state and cannot see the first in-batch
+    // reverse. Reject up front.
+    {
+        let mut seen = std::collections::HashSet::with_capacity(ops.len());
+        for r in &ops {
+            if !seen.insert((r.device_id.as_str(), r.seq)) {
+                return Err(AppError::validation(format!(
+                    "duplicate op ref ({}, {}) in undo batch",
+                    r.device_id, r.seq
+                )));
+            }
+        }
+    }
+
+    // Open the IMMEDIATE write transaction BEFORE the guard reads so guard
+    // and revert are atomic (mirrors #1551 / `undo_page_group_inner`).
+    let mut tx = CommandTx::begin_immediate(pool, "undo_ops").await?;
+
+    verify_undo_targets_in_tx(&mut tx, &ops).await?;
+
+    // Interactive contract: `skip_non_reversible = false` — one
+    // non-reversible op aborts the whole batch (the tx rolls back, nothing
+    // is applied). The discarded skip count is always 0 on this path.
+    let (results, _skipped) = revert_ops_in_tx(
+        &mut tx,
+        pool,
+        materializer.loro_state(),
+        device_id,
+        ops,
+        false,
+    )
+    .await?;
+
+    // Commit, then fire queued dispatches in enqueue order. If commit
+    // fails, no dispatches fire.
+    tx.commit_and_dispatch(materializer).await?;
+
+    Ok(results)
+}
+
+/// #2468: ref-addressed single undo — the `undo_page_op` successor. Same
+/// [`UndoResult`] contract (`is_redo: false`, `new_op_ref` is the redo
+/// target), same reverse-move preflight → `NonReversible` ABORTS (no
+/// skip), but the target is the exact `(device_id, seq)` the frontend
+/// captured when the action was performed, not the Nth row of a shifting
+/// positional walk. See [`undo_ops_inner`] for the guard semantics.
+#[instrument(skip_all, fields(device_id = %op_ref.device_id, seq = op_ref.seq), err)]
+pub async fn undo_op_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    op_ref: OpRef,
+) -> Result<UndoResult, AppError> {
+    let mut results = undo_ops_inner(pool, device_id, materializer, vec![op_ref]).await?;
+    // Exactly one input ref + `skip_non_reversible = false` (errors abort
+    // via `?` above) ⇒ exactly one result. The branch is unreachable; it
+    // exists so a future contract drift fails loudly instead of panicking.
+    results.pop().ok_or_else(|| {
+        AppError::Internal(
+            "undo_op produced no result for a single-ref batch (revert_ops_in_tx \
+             contract drift)"
+                .into(),
+        )
+    })
+}
+
+/// #2468: verify — inside the caller's IMMEDIATE transaction — that every
+/// ref in `ops` is a legitimate ref-addressed-undo target: it exists, is
+/// locally authored (`is_replicated = 0`, #2481), is a forward op
+/// (`is_undo = 0`, #659), and is not CURRENTLY reversed (no unreversed
+/// reverse op links to it via `reverses_*`, migration 0101 — an undo →
+/// redo cycle clears the state).
+///
+/// One batched query (row-value `IN` over `json_each`, the
+/// `dag::ingest_remote_record` parent-check pattern); the `EXISTS` probes
+/// ride the partial `idx_op_log_reverses` index. `ops` is caller-bounded
+/// by `MAX_REVERT_OPS` and deduplicated, so the missing-ref check is a
+/// straight count comparison resolved to a per-ref `NotFound`.
+async fn verify_undo_targets_in_tx(tx: &mut CommandTx, ops: &[OpRef]) -> Result<(), AppError> {
+    let refs_json = serde_json::to_string(
+        &ops.iter()
+            .map(|r| (r.device_id.as_str(), r.seq))
+            .collect::<Vec<_>>(),
+    )?;
+
+    let rows = sqlx::query!(
+        r#"SELECT ol.device_id AS "device_id!: String",
+                  ol.seq AS "seq!: i64",
+                  ol.op_type AS "op_type!: String",
+                  ol.is_undo AS "is_undo!: i64",
+                  ol.is_replicated AS "is_replicated!: i64",
+                  EXISTS(
+                      SELECT 1 FROM op_log u
+                      WHERE u.reverses_device_id = ol.device_id
+                        AND u.reverses_seq = ol.seq
+                        AND NOT EXISTS(
+                            SELECT 1 FROM op_log r
+                            WHERE r.reverses_device_id = u.device_id
+                              AND r.reverses_seq = u.seq
+                        )
+                  ) AS "currently_reversed!: i64"
+           FROM op_log ol
+           WHERE (ol.device_id, ol.seq) IN (
+               SELECT json_extract(value, '$[0]'),
+                      CAST(json_extract(value, '$[1]') AS INTEGER)
+               FROM json_each(?1)
+           )"#,
+        refs_json,
+    )
+    .fetch_all(&mut ***tx)
+    .await?;
+
+    // Missing refs: the join drops them, so resolve by set difference for
+    // a precise NotFound instead of an anonymous count mismatch.
+    if rows.len() != ops.len() {
+        let found: std::collections::HashSet<(&str, i64)> =
+            rows.iter().map(|r| (r.device_id.as_str(), r.seq)).collect();
+        if let Some(missing) = ops
+            .iter()
+            .find(|r| !found.contains(&(r.device_id.as_str(), r.seq)))
+        {
+            return Err(AppError::NotFound(format!(
+                "op_log ({}, {})",
+                missing.device_id, missing.seq
+            )));
+        }
+    }
+
+    for row in &rows {
+        if row.is_replicated != 0 {
+            return Err(AppError::validation(format!(
+                "undo target ({}, {}) is a replicated foreign '{}' op — the \
+                 interactive undo stack is scoped to locally-authored ops; \
+                 revert it explicitly from the History view instead (#2481)",
+                row.device_id, row.seq, row.op_type
+            )));
+        }
+        if row.is_undo != 0 {
+            return Err(AppError::validation(format!(
+                "undo target ({}, {}) is a '{}' op produced by undo — \
+                 reversing an undo op is redo's job (`redo_page_op`, #659)",
+                row.device_id, row.seq, row.op_type
+            )));
+        }
+        if row.currently_reversed != 0 {
+            return Err(AppError::validation(format!(
+                "undo target ({}, {}) ('{}') is already reversed — refusing \
+                 to apply the same inverse twice (#2468)",
+                row.device_id, row.seq, row.op_type
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 /// Tauri command: list page history. Delegates to [`list_page_history_inner`].
 #[tauri::command]
 #[specta::specta]
@@ -1879,6 +2132,32 @@ pub async fn undo_page_op(
     )
     .await
     .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: ref-addressed single undo (#2468). Delegates to
+/// [`undo_op_inner`]. The `undo_page_op` successor: the frontend passes the
+/// exact `OpRef` it captured when the action was performed, killing the
+/// positional-offset race (#2446). Same `UndoResult` contract.
+#[tauri::command]
+#[specta::specta]
+pub async fn undo_op(ctx: State<'_, WriteCtx>, op_ref: OpRef) -> Result<UndoResult, AppError> {
+    undo_op_inner(ctx.pool(), ctx.device_id(), ctx.materializer(), op_ref)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: ref-addressed group undo (#2468). Delegates to
+/// [`undo_ops_inner`]. The `undo_page_group` successor: a coalesced undo
+/// group is an explicit ref-set revert with atomic-abort semantics.
+#[tauri::command]
+#[specta::specta]
+pub async fn undo_ops(
+    ctx: State<'_, WriteCtx>,
+    ops: Vec<OpRef>,
+) -> Result<Vec<UndoResult>, AppError> {
+    undo_ops_inner(ctx.pool(), ctx.device_id(), ctx.materializer(), ops)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: redo page op. Delegates to [`redo_page_op_inner`].
