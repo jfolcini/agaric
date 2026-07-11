@@ -113,16 +113,18 @@ pub(crate) fn verify_peer_cert(
 /// in-flight recv still runs to its timeout; mid-recv abort is out of scope.
 ///
 /// #2537: this responder path now mirrors the initiator's [`CancelGuard`] —
-/// once the per-peer lock is acquired and identity checks pass
-/// (`_cancel_guard.owns = true`, set right before the peer-guard block below
-/// returns `Some(guard)`), this session becomes a legitimate resetter of the
-/// shared flag on Drop (gated on `!scheduler.is_any_peer_locked()`, i.e. only
-/// once it is the last active session standing). Before this fix the
-/// responder only ever *checked* the flag — it never cleared it, so a user
-/// cancel issued while no initiator session was around to consume it left
-/// every subsequent inbound session from any peer failing "sync cancelled"
-/// forever. See `CancelGuard`'s doc comment in `session_supervisor.rs` for
-/// the full concurrent-session race analysis.
+/// once the per-peer lock is acquired (`_cancel_guard.owns = true`, set
+/// immediately after `try_lock_peer` succeeds in the peer-guard block
+/// below — *not* deferred until identity/cert checks also pass; see
+/// [`CancelGuard`]'s doc comment for why that distinction matters), this
+/// session becomes a legitimate resetter of the shared flag on Drop (gated
+/// on `!scheduler.is_any_peer_locked()`, i.e. only once it is the last
+/// active session standing). Before this fix the responder only ever
+/// *checked* the flag — it never cleared it, so a user cancel issued while
+/// no initiator session was around to consume it left every subsequent
+/// inbound session from any peer failing "sync cancelled" forever. See
+/// `CancelGuard`'s doc comment in `session_supervisor.rs` for the full
+/// concurrent-session race analysis.
 #[tracing::instrument(skip_all, name = "sync_resp")]
 pub(crate) async fn handle_incoming_sync(
     conn: SyncConnection,
@@ -351,6 +353,18 @@ async fn handle_incoming_sync_inner(
             return Ok(());
         };
 
+        // #2537: the per-peer lock is acquired — this task now holds the
+        // exact resource `is_any_peer_locked()` observes, so it is a
+        // legitimate participant in "am I the last one standing" from here
+        // on, regardless of whether the cert checks below pass and a full
+        // session runs, or a post-lock identity/cert rejection exits early
+        // (a rejected connection here still held the lock, potentially
+        // across an `.await`ed DB lookup below — leaving `owns` unset until
+        // full cert-check success would let this task's early exit fail to
+        // ever clear a flag it could have been the last holder of; see
+        // [`CancelGuard`]'s doc comment in `session_supervisor.rs`).
+        _cancel_guard.owns = true;
+
         // B-33: Verify TLS certificate hash matches stored cert_hash.
         // (B-34's CN check is trivially satisfied here: #778 derives
         // `remote_id` from the cert CN whenever a cert is present, and
@@ -448,13 +462,11 @@ async fn handle_incoming_sync_inner(
             }
         }
 
-        // #2537: identity + pinning checks passed and the per-peer lock is
-        // held — this is a committed, real session from here on, and the
-        // message loop below is the one that observes `cancel`. Mirrors the
-        // initiator's commit point (`_cancel_guard.owns = true` right before
-        // `run_sync_session` in `try_sync_with_peer`).
-        _cancel_guard.owns = true;
-
+        // #2537: identity + pinning checks passed — this is now a committed,
+        // real session, and the message loop below is the one that observes
+        // `cancel`. `_cancel_guard.owns` was already armed right after the
+        // per-peer lock was acquired above, so no further action is needed
+        // here.
         Some(guard)
     } else {
         None

@@ -650,14 +650,34 @@ pub(crate) struct SyncSessionContext<'a> {
 /// Scope guard that clears the shared, daemon-wide sync-cancel `AtomicBool`
 /// on `Drop` — but only when both of the following hold:
 ///
-/// 1. `owns == true`: this task actually reached the real sync-session
-///    phase (connection established / peer lock held past cert checks) and
-///    is therefore a legitimate consumer of (and resetter for) a user
-///    cancel — as opposed to an early-exit path (backoff gate, lock
-///    contention, no resolved addresses, failed connect, rejected identity)
-///    that never ran a real session and must leave a pending cancel alone
-///    (#637: an early-exiting peer must never swallow a cancel aimed at a
-///    still-running sibling).
+/// 1. `owns == true`: this task actually acquired its own per-peer lock —
+///    the exclusive resource `is_any_peer_locked()` observes — and is
+///    therefore a legitimate participant in "am I the last active session
+///    standing" reckoning, as opposed to an early-exit path that never
+///    acquired a lock at all (backoff gate, lock contention: another
+///    session already holds this peer's lock) and so never contributed to
+///    `is_any_peer_locked()`'s signal in the first place (#637: an
+///    early-exiting peer that never held a lock must never swallow a
+///    cancel aimed at a still-running sibling).
+///
+///    Note that `owns` is armed as soon as the per-peer lock is acquired —
+///    *not* only once the session goes on to complete a full protocol run.
+///    A task that acquires the lock and then exits early for an unrelated
+///    reason (no resolved addresses, failed connect, a post-lock identity/
+///    cert rejection) still held the exact resource that could have kept
+///    `is_any_peer_locked()` true for a sibling's Drop check; it must be
+///    equally eligible to perform the final clear once it releases that
+///    lock and is genuinely the last one standing. Arming only after a full
+///    successful connect+cert-check (as originally implemented) left a gap:
+///    such a task would sit with `owns == false` for the (potentially many
+///    seconds, e.g. a TCP connect timeout to an unreachable peer) duration
+///    it held the lock, and if a concurrent real session's Drop happened to
+///    observe `is_any_peer_locked() == true` during exactly that window, it
+///    would correctly defer clearing — but the lock-holding task would then
+///    exit with `owns == false` and never clear either, latching the flag
+///    with nobody left to reset it (#2537 regression within the #2537 fix
+///    itself). See `cancel_guard_never_stuck_when_owning_session_exits_early`
+///    for the regression test.
 /// 2. `!scheduler.is_any_peer_locked()`: no OTHER session — initiator or
 ///    responder, for any peer — is still holding its per-peer lock (#2537).
 ///
@@ -735,15 +755,18 @@ impl Drop for CancelGuard<'_> {
 /// `run_sync_session` returned `Err("sync cancelled by user")`).
 ///
 /// The `_cancel_guard` (a Drop scope guard, S-11) clears the flag on
-/// Drop — but only when this task actually ran a real session and thus
-/// *owns* the cancel (#637), AND it is the last currently-active session
-/// standing (#2537; see [`CancelGuard`]). Early-exit paths (backoff / lock /
-/// no-address / connect failure) return with `owns == false` and
-/// deliberately leave the shared flag untouched, so an early-exiting peer
-/// can never swallow a user cancel aimed at a still-running sibling. On the
-/// real-session path the `was_cancelled` capture happens *before* the
-/// guard's Drop fires, so the returned bool reflects the live state at
-/// session end.
+/// Drop — but only when this task actually acquired the per-peer lock and
+/// thus *owns* the cancel (#637), AND it is the last currently-active
+/// session standing (#2537; see [`CancelGuard`]). Only the paths that never
+/// acquire a lock at all (backoff gate / lock contention) return with
+/// `owns == false` and deliberately leave the shared flag untouched, so an
+/// early-exiting peer that never held the lock can never swallow a user
+/// cancel aimed at a still-running sibling. Paths that DO acquire the lock
+/// before exiting early (no resolved addresses, failed connect) are armed
+/// (`owns == true`) the moment the lock is acquired — see [`CancelGuard`]'s
+/// doc comment for why. On the real-session path the `was_cancelled`
+/// capture happens *before* the guard's Drop fires, so the returned bool
+/// reflects the live state at session end.
 #[tracing::instrument(
     skip_all,
     fields(peer = %peer.device_id),
@@ -767,10 +790,18 @@ pub(crate) async fn try_sync_with_peer(
     let peer_id = &peer.device_id;
 
     // Scope guard: clear the shared cancel flag on Drop, but ONLY when this
-    // task actually *owns* the cancel — i.e. it reached the real sync-session
-    // phase and is therefore a legitimate consumer of (and resetter for) a
-    // user cancel — AND it is the last active session standing. See
+    // task actually *owns* the cancel — i.e. it acquired its own per-peer
+    // lock — AND it is the last active session standing. See
     // [`CancelGuard`]'s doc comment for the full race analysis (#637, #2537).
+    //
+    // ORDERING INVARIANT (#2537): this guard MUST stay declared BEFORE the
+    // per-peer lock guard (`_guard`, step 2 below). Rust drops locals in
+    // reverse declaration order, so this guard's Drop runs AFTER the peer
+    // lock is released — `is_any_peer_locked()` (consulted in
+    // `CancelGuard::drop`) then reflects only OTHER sessions' locks, never
+    // this session's own. Swapping the declarations would make every
+    // session observe its own still-held lock on Drop and never clear the
+    // flag.
     let mut _cancel_guard = CancelGuard {
         cancel: ctx.cancel,
         scheduler: ctx.scheduler,
@@ -787,18 +818,26 @@ pub(crate) async fn try_sync_with_peer(
 
     // 2. Per-peer mutex (prevents concurrent syncs to the same peer)
     let Some(_guard) = ctx.scheduler.try_lock_peer(peer_id) else {
-        // Already syncing with this peer; no real session ran here.
+        // Already syncing with this peer; this task never acquired a lock.
         // #637: guard.owns is still false → don't clear a sibling's cancel.
         return false;
     };
+
+    // #2537: the lock is acquired — this task now holds the exact resource
+    // `is_any_peer_locked()` observes, so it is a legitimate participant in
+    // "am I the last one standing" from here on, regardless of whether the
+    // session below goes on to complete a full protocol run or exits early
+    // (no addresses / connect failure). See [`CancelGuard`]'s doc comment.
+    _cancel_guard.owns = true;
 
     // 3. Resolve all addresses from discovered peer info, in connection
     // Priority order. Empty list ⇒ no useable address.
     let addrs = format_peer_addresses(peer);
     if addrs.is_empty() {
         tracing::warn!(peer_id, "peer has no addresses, skipping sync");
-        // No real session ran, cancellation is moot for this peer.
-        // #637: guard.owns is still false → don't clear a sibling's cancel.
+        // No real session ran, but this task DID hold the per-peer lock
+        // (owns == true) — its Drop may still clear the flag, but only if
+        // it is the last session standing (#2537; see [`CancelGuard`]).
         return false;
     }
 
@@ -833,23 +872,24 @@ pub(crate) async fn try_sync_with_peer(
                     message: format!("Connection failed: {combined}"),
                     remote_device_id: peer_id.clone(),
                 });
-                // Connection never established, no real session ran.
-                // #637: guard.owns is still false → don't clear a sibling's
-                // cancel; this early-exit must not swallow a pending user
-                // cancel aimed at a still-running peer.
+                // Connection never established, no real session ran — but
+                // this task DID hold the per-peer lock while attempting to
+                // connect (potentially for the full connect-timeout
+                // duration), so `owns` is already `true` (armed at step 2).
+                // Its Drop may still clear the flag, gated on being the
+                // last session standing (#2537; see [`CancelGuard`]).
                 return false;
             }
         };
 
     // 7. Run sync protocol through the orchestrator
     //
-    // #637: we have committed to a real sync session — connection established,
-    // per-peer lock held, addresses resolved. From here on this task OWNS the
-    // cancel: it is the task that `run_sync_session` checks the flag in, the
-    // One that may observe & report a user cancel, and therefore the
-    // legitimate resetter. Mark the guard so its Drop clears the shared flag
-    // when the session ends (whether it completed normally or was cancelled).
-    _cancel_guard.owns = true;
+    // #637/#2537: we have committed to a real sync session — connection
+    // established, per-peer lock held, addresses resolved. `_cancel_guard`
+    // was already armed (`owns = true`) back at step 2 when the lock was
+    // acquired, so no further action is needed here: this task is, and has
+    // been since the lock was acquired, a legitimate consumer of (and
+    // candidate resetter for) a user cancel.
 
     let mut event_sink_arc = Arc::clone(ctx.event_sink);
     if let Some(channel) = ctx.scheduler.take_channel(peer_id) {
@@ -888,11 +928,13 @@ pub(crate) async fn try_sync_with_peer(
     // the `Err` arm below uses it to keep a user cancel out of the peer's
     // backoff accounting (#2537).
     //
-    // #637: at this point `_cancel_guard.owns == true` (set in step 7), so the
-    // guard WILL clear the shared flag on Drop — this is the legitimate
-    // post-run reset, gated (#2537) on this being the LAST currently-active
-    // session (see `CancelGuard::drop`). Early-exit paths never reach here
-    // and never set `owns`, so they leave a pending sibling-targeted cancel
+    // #637: at this point `_cancel_guard.owns == true` (armed back at step 2,
+    // when the per-peer lock was acquired), so the guard WILL clear the
+    // shared flag on Drop — this is the legitimate post-run reset, gated
+    // (#2537) on this being the LAST currently-active session (see
+    // `CancelGuard::drop`). The only paths that never reach here and never
+    // set `owns` are the ones that never acquired a lock at all (backoff
+    // gate / lock contention); they leave a pending sibling-targeted cancel
     // intact.
     let was_cancelled = ctx.cancel.load(Ordering::Acquire);
 

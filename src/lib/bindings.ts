@@ -466,7 +466,7 @@ export const commands = {
 	 *  Checks backoff (#278), acquires the per-peer lock, and returns session info.
 	 */
 	startSync: (peerId: string, progress: Channel<SyncProgressUpdate>) => typedError<SyncSessionInfo, AppError>(__TAURI_INVOKE("start_sync", { peerId, progress })),
-	/**  Tauri command: cancel an active sync session. */
+	/**  Tauri command: cancel the currently active sync session(s). */
 	cancelSync: () => typedError<null, AppError>(__TAURI_INVOKE("cancel_sync")),
 	/**
 	 *  Tauri command: return the current mDNS peer-discovery status (#2506).
