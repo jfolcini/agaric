@@ -31,6 +31,30 @@
  * - A block scrolled back into view flips on-screen → it re-enters the window
  *   and is re-fetched lazily. This is what makes a newly-visible block resolve.
  *
+ * ## Mount-cap exclusion (#2580)
+ *
+ * The conservative "never-measured ⇒ in-window" rule above assumes a
+ * never-measured block is merely *pending its first measurement* — it's
+ * mounted, the observer just hasn't ticked yet. That assumption breaks for a
+ * block `useBlockMountLimit` excluded from the mounted React tree entirely
+ * (#2467's row-count ceiling): that block will NEVER mount, so it will NEVER
+ * be measured, so the conservative rule would keep it "in window" forever —
+ * a permanent, wasted metadata IPC for a row that isn't on the DOM.
+ *
+ * The optional `excludedIds` parameter lets the caller (BlockTree) name that
+ * exact set — the ids the mount cap dropped — so this hook can subtract them
+ * from the window regardless of `isOffscreen`:
+ *
+ *   windowed = { id ∈ blocks : id ∉ excludedIds AND NOT viewport.isOffscreen(id) }
+ *
+ * This does NOT touch the conservative rule for genuinely-mounted rows —
+ * `isOffscreen` keeps meaning exactly what it meant before. `excludedIds` is
+ * a caller-provided allowlist-complement layered on top, recomputed whenever
+ * the caller's mounted set changes (e.g. the mount cap expands), so a row
+ * that becomes newly mounted drops out of `excludedIds` and re-enters the
+ * window on the very next recompute — see `useBlockMountLimit` and
+ * `BlockTree`'s `mountCapExcludedIds`.
+ *
  * ## Re-render scope (#1067-safe)
  *
  * Off-screen membership lives in a ref inside `useViewportObserver`; a per-id
@@ -54,10 +78,17 @@ import type { ViewportObserver } from './useViewportObserver'
  *
  * Generic over the block shape so it composes with whatever fields the caller
  * threads downstream (id-only for properties; id+content for link resolve).
+ *
+ * @param excludedIds — Optional caller-provided set of ids to force OUT of the
+ * window regardless of `isOffscreen` (#2580). Intended for ids the caller
+ * knows will never mount (today: rows beyond `useBlockMountLimit`'s cap) —
+ * NOT a substitute for `isOffscreen`'s scroll-driven membership. Pass `null`/
+ * `undefined` (or omit) for the original unscoped behavior.
  */
 export function useViewportWindow<T extends { id: string }>(
   viewport: ViewportObserver,
   blocks: ReadonlyArray<T>,
+  excludedIds?: ReadonlySet<string> | null,
 ): T[] {
   // useSyncExternalStore over the coalesced window channel: `getWindowVersion`
   // is a monotonic counter that bumps on every membership flip, so React
@@ -74,15 +105,17 @@ export function useViewportWindow<T extends { id: string }>(
   )
 
   return useMemo(
-    () => blocks.filter((b) => !viewport.isOffscreen(b.id)),
+    () => blocks.filter((b) => !excludedIds?.has(b.id) && !viewport.isOffscreen(b.id)),
     // `windowVersion` is the membership-change SIGNAL: off-screen membership
     // lives in a ref (#1067), so it isn't read structurally here — the memo
     // must re-run when the version bumps to re-read the current ref-backed set
     // via `viewport.isOffscreen`. oxlint flags it as "unnecessary" because it's
     // not referenced in the body, but dropping it would freeze the window at
     // mount. `blocks` re-windows on page edits; `viewport` identity is
-    // permanently stable (#1067).
+    // permanently stable (#1067). `excludedIds` re-windows when the caller's
+    // mount-cap-excluded set changes (#2580) — e.g. `expandMountLimit()`
+    // shrinks it, and the newly-uncapped ids must re-enter on this recompute.
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- windowVersion is the intentional recompute trigger for the ref-backed off-screen set; it is read indirectly via viewport.isOffscreen, not structurally.
-    [blocks, viewport, windowVersion],
+    [blocks, viewport, windowVersion, excludedIds],
   )
 }

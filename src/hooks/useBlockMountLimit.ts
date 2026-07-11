@@ -39,13 +39,14 @@
  *   already loads (and the store already holds) every block up to
  *   `PAGE_SUBTREE_MAX_BLOCKS`; this hook only bounds what MOUNTS from that
  *   already-loaded set.
- * - Does not scope the batch metadata IPCs (`useViewportWindow`'s
- *   `windowedBlocks`) to the mounted set — that hook conservatively treats
- *   any never-measured block as "in window" (see its own doc comment), so
- *   cap-excluded blocks are still included in those batch fetches today.
- *   This is a pre-existing characteristic shared with manually-collapsed
- *   subtrees, not something introduced here; scoping it is a natural
- *   follow-up.
+ * - Collapse-hidden and zoomed-out-of-view rows are still included in
+ *   `useViewportWindow`'s `windowedBlocks` (that hook conservatively treats
+ *   any never-measured block as "in window" — see its own doc comment).
+ *   Cap-excluded rows are no longer part of that over-inclusion (#2580):
+ *   `BlockTree` derives `mountCapExcludedIds` from this hook's `mounted` vs.
+ *   its input and passes it to `useViewportWindow` so mount-cap-excluded
+ *   rows are subtracted from the window. The collapse/zoom cases remain a
+ *   separate, not-yet-addressed instance of the same over-inclusion.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
