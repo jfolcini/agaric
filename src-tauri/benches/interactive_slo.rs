@@ -1457,13 +1457,19 @@ fn bench_list_page_links(c: &mut Criterion) {
 /// `[range_start, range_end]` BEFORE the Rust expansion, shrinking the
 /// expansion set.
 ///
-/// #2178: CONFIRMED on the nightly lane (dispatch 29122903173,
-/// main@66e4e1e): 181.33 ms @ 100K against the 200 ms budget (earlier
-/// samples straddled the line at 214-234 ms on runner variance). Promoted
-/// to the green tier at 91% of budget — if runner variance reds this row,
-/// see the budget re-calibration discussion in #2298.
+/// #2178: promoted to the green tier after one confirming run
+/// (181.33 ms @ 100K, dispatch 29122903173) — then RE-GATED the same day:
+/// the very next dispatch (29129456480, main@947430c) measured 215.74 ms.
+/// The command straddles the 200 ms budget on runner variance
+/// (181 / 216 / 214-234 across four same-week runs), so a hard green gate
+/// is a coin-flip red on every nightly. Back behind SLO_INCLUDE_PROBLEM
+/// until either the #2069 residual work lands another real win or the
+/// budget question in #2298 is settled by the maintainer.
 fn bench_list_projected_agenda(c: &mut Criterion) {
     const BUDGET_MS: f64 = 200.0;
+    if problem_skipped("list_projected_agenda @ 100K") {
+        return;
+    }
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "slo_projected_agenda"));
@@ -1502,7 +1508,7 @@ fn bench_list_projected_agenda(c: &mut Criterion) {
     });
     group.finish();
 
-    assert_under_budget("list_projected_agenda @ 100K", &acc, BUDGET_MS);
+    assert_under_budget_deferred("list_projected_agenda @ 100K", &acc, BUDGET_MS);
 }
 
 /// #2508 scope item 1 — the `DESIRED_TAGS_SQL` projection from
@@ -1708,11 +1714,11 @@ criterion_group!(
     bench_revert_ops_50op_at_100k,
     bench_create_block,
     bench_list_page_links,
-    bench_list_projected_agenda,
 );
 
 criterion_group!(
     slo_problem,
+    bench_list_projected_agenda,
     bench_tags_cache_direct_query,
     bench_pages_cache_counts_direct_query,
     problem_tier_verdict,
