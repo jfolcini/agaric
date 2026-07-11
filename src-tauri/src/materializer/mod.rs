@@ -10,7 +10,7 @@ mod tests;
 use crate::op_log::OpRecord;
 #[cfg(test)]
 use consumer::process_single_foreground_task;
-pub use coordinator::Materializer;
+pub use coordinator::{BackgroundEnqueueOutcome, Materializer};
 // #417/#432: the local command path (commands/blocks/*) maintains
 // `pages_cache.{child_block_count,inbound_link_count}` in-tx for ops that
 // do NOT enqueue a full `RebuildPagesCache` (notably content `create`),

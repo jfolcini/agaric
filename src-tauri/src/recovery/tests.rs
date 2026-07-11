@@ -3309,6 +3309,208 @@ async fn boot_replay_reprojects_batched_over_chunk_boundary_2295() {
     );
 }
 
+/// #2541: the end-of-replay dense reproject (#2295) must be per-group fault
+/// isolated. Pre-fix, the per-parent loop `?`-propagated the FIRST error out
+/// of `replay_unmaterialized_ops`, losing the dense reproject for every
+/// remaining parent — unretryably, because the dirty set was already drained
+/// and the apply cursor already advanced past the replayed ops. This test
+/// poisons ONE sibling group (a trigger aborts any `position` UPDATE
+/// touching one of its children) and asserts:
+///   1. the replay is NOT reported as aborted (Ok report; ops applied,
+///      cursor advanced),
+///   2. the OTHER group still gets dense 1-based ranks,
+///   3. the failure is recorded as a "reproject degraded" entry in
+///      `replay_errors` (distinguishable from "replay aborted").
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn end_of_replay_reproject_continues_past_poisoned_group_2541() {
+    use crate::space::SpaceId;
+
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const PAGE_A: &str = "01HZ00000000000000002541PA";
+    const PAGE_B: &str = "01HZ00000000000000002541PB";
+    const N: usize = 3;
+    let device_id = "dev-replay-2541";
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let state = mat.loro_state();
+
+    // Space block + registered space (#708) + two pages.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+         VALUES (?, 'tag', 'space', NULL, 0)",
+    )
+    .bind(SPACE)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+        .bind(SPACE)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (i, page) in [PAGE_A, PAGE_B].iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
+                                 space_id) \
+             VALUES (?, 'page', 'P', NULL, ?, ?, ?)",
+        )
+        .bind(page)
+        .bind(i64::try_from(i).unwrap())
+        .bind(page)
+        .bind(SPACE)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    // Child ids per page, in creation order.
+    let ids_for = |prefix: &str| -> Vec<String> {
+        (0..N)
+            .map(|k| {
+                BlockId::test_id(&format!("{prefix}{k:04}"))
+                    .as_str()
+                    .to_string()
+            })
+            .collect()
+    };
+    let a_children = ids_for("A2541CH");
+    let b_children = ids_for("B2541CH");
+
+    // Pre-seed each child's SQL row (already materialized by a prior
+    // session) with DELIBERATELY WRONG positions (10, 11, 12) so the
+    // end-of-replay reproject has real work to do (dense ranks are 1..=3).
+    for (page, children) in [(PAGE_A, &a_children), (PAGE_B, &b_children)] {
+        for (k, id) in children.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
+                                     space_id) \
+                 VALUES (?, 'content', 'c', ?, ?, ?, ?)",
+            )
+            .bind(id)
+            .bind(page)
+            .bind(i64::try_from(10 + k).unwrap())
+            .bind(page)
+            .bind(SPACE)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    // Seed the engine with just the pages (children enter as the replayed
+    // CreateBlock ops apply).
+    {
+        let space = SpaceId::from_trusted(SPACE);
+        let mut guard = state.registry.for_space(&space, device_id).unwrap();
+        guard
+            .engine_mut()
+            .apply_create_block(PAGE_A, "page", "P", None, 0)
+            .unwrap();
+        guard
+            .engine_mut()
+            .apply_create_block(PAGE_B, "page", "P", None, 1)
+            .unwrap();
+    }
+
+    // Unmaterialized creates: three under each page — TWO dirty groups.
+    for (page, children) in [(PAGE_A, &a_children), (PAGE_B, &b_children)] {
+        for (k, id) in children.iter().enumerate() {
+            append_local_op(
+                &pool,
+                device_id,
+                OpPayload::CreateBlock(CreateBlockPayload {
+                    block_id: BlockId::from_trusted(id),
+                    block_type: "content".into(),
+                    parent_id: Some(BlockId::from_trusted(page)),
+                    position: None,
+                    index: Some(i64::try_from(k).unwrap()),
+                    content: "c".into(),
+                }),
+            )
+            .await
+            .unwrap();
+        }
+    }
+
+    // Poison page A's group: abort any `position` UPDATE that touches its
+    // first child. The reproject writes the whole group in ONE statement,
+    // so the abort degrades exactly that group (statement rolled back)
+    // while page B's statement is unaffected.
+    let poison_ddl = format!(
+        "CREATE TRIGGER poison_reproject_2541 \
+         BEFORE UPDATE OF position ON blocks \
+         FOR EACH ROW WHEN NEW.id = '{}' \
+         BEGIN SELECT RAISE(ABORT, 'poisoned sibling group (#2541 test)'); END",
+        a_children[0]
+    );
+    sqlx::query(sqlx::AssertSqlSafe(poison_ddl.as_str()))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let report = replay_unmaterialized_ops(&pool, &mat)
+        .await
+        .expect("#2541: a poisoned reproject group must NOT abort the replay");
+    mat.shutdown();
+
+    // 1. The replay itself succeeded: every op applied, cursor advanced.
+    assert_eq!(
+        report.ops_replayed,
+        (2 * N) as u64,
+        "all creates must replay despite the poisoned reproject group"
+    );
+    assert_eq!(
+        read_cursor(&pool).await,
+        i64::try_from(2 * N).unwrap(),
+        "the apply cursor must advance past every replayed op"
+    );
+
+    // 3. The failure is visible as a DEGRADED-reprojection entry, not an
+    //    aborted replay.
+    assert_eq!(
+        report.replay_errors.len(),
+        1,
+        "exactly the poisoned group must be recorded: {:?}",
+        report.replay_errors
+    );
+    assert!(
+        report.replay_errors[0].contains("reproject degraded"),
+        "the report must distinguish reprojection-degraded from replay-aborted, \
+         got: {}",
+        report.replay_errors[0]
+    );
+
+    // 2. Page B's group still got dense 1-based ranks in creation order.
+    for (k, id) in b_children.iter().enumerate() {
+        let pos: i64 = sqlx::query_scalar("SELECT position FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            pos,
+            i64::try_from(k + 1).unwrap(),
+            "#2541: the healthy group must still be densely reprojected"
+        );
+    }
+    // The poisoned group's single-statement UPDATE rolled back atomically —
+    // its pre-seeded (stale) positions remain, pinning that the abort hit
+    // group A and ONLY group A.
+    for (k, id) in a_children.iter().enumerate() {
+        let pos: i64 = sqlx::query_scalar("SELECT position FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            pos,
+            i64::try_from(10 + k).unwrap(),
+            "the poisoned group's positions must be left as-is (statement aborted)"
+        );
+    }
+}
+
 // === #1255: degraded-boot signal ===
 //
 // When the C-2b op-log replay fails wholesale, `recover_at_boot` must no
