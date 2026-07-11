@@ -2509,3 +2509,75 @@ mod tests_l9 {
         }
     }
 }
+
+// ===========================================================================
+// Property-based tests (proptest) — #2590
+// ===========================================================================
+//
+// The Markdown/Obsidian importer parses fully arbitrary user files (a picked
+// vault folder, an Obsidian export, ENEX/JEX notes composed into Markdown), so
+// `parse_logseq_markdown` is a raw-input boundary. The example-based tests above
+// pin specific shapes; this proptest asserts the *structural contract* holds for
+// arbitrary input: the parser never panics, always clamps `depth` to
+// `MAX_IMPORT_DEPTH`, and only ever emits a non-empty, caret-free block anchor.
+// (The libFuzzer `import_parse` target in `src-tauri/fuzz` drives the same entry
+// point over the raw byte space; proptest generates VALID-ish Markdown shapes,
+// libFuzzer the truncated/garbage boundary — the two are complementary.)
+#[cfg(test)]
+mod parse_proptest {
+    use super::{MAX_IMPORT_DEPTH, parse_logseq_markdown};
+    use proptest::prelude::*;
+
+    /// One line of plausible Logseq/Obsidian Markdown: an indented bullet, a
+    /// `key:: value` property, a trailing `^block-id` anchor, a fence, or an
+    /// arbitrary text line. Joined with `\n` this exercises the block splitter,
+    /// the depth clamp, the property parser, and the anchor stripper.
+    fn arb_md_line() -> impl Strategy<Value = String> {
+        prop_oneof![
+            (0usize..12, "[a-zA-Z0-9 #\\[\\]()^:-]{0,40}").prop_map(|(indent, text)| format!(
+                "{}- {}",
+                "  ".repeat(indent),
+                text
+            )),
+            ("[a-z-]{1,10}", "[a-zA-Z0-9 ]{0,20}").prop_map(|(k, v)| format!("{k}:: {v}")),
+            "[a-zA-Z0-9 ]{0,30} \\^[A-Za-z0-9-]{1,12}".prop_map(|s: String| s),
+            "[a-zA-Z0-9 #:\\[\\]()^-]{0,40}".prop_map(|s: String| s),
+            Just("```".to_string()),
+        ]
+    }
+
+    fn arb_markdown() -> impl Strategy<Value = String> {
+        proptest::collection::vec(arb_md_line(), 0..25).prop_map(|lines| lines.join("\n"))
+    }
+
+    proptest! {
+        /// `parse_logseq_markdown` never panics and always upholds its
+        /// structural invariants on arbitrary Markdown-ish input.
+        #[test]
+        fn parse_logseq_markdown_upholds_invariants(input in arb_markdown()) {
+            let output = parse_logseq_markdown(&input);
+            for block in &output.blocks {
+                prop_assert!(
+                    block.depth <= MAX_IMPORT_DEPTH,
+                    "block depth {} exceeds the import clamp {}",
+                    block.depth,
+                    MAX_IMPORT_DEPTH,
+                );
+                if let Some(anchor) = &block.block_anchor {
+                    prop_assert!(!anchor.is_empty(), "a block anchor, when present, is never empty");
+                    prop_assert!(
+                        !anchor.contains('^'),
+                        "the leading caret is stripped from a block anchor, got {anchor:?}",
+                    );
+                }
+            }
+        }
+
+        /// Also fuzz the truly-arbitrary-string boundary (not just Markdown-ish
+        /// input): any UTF-8 string must parse without panicking.
+        #[test]
+        fn parse_logseq_markdown_never_panics_on_arbitrary_text(input in ".*") {
+            let _ = parse_logseq_markdown(&input);
+        }
+    }
+}

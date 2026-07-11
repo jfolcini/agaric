@@ -3789,29 +3789,39 @@ mod proptest_tests {
     /// Strategy for generating an arbitrary `BlockSnapshot`.
     fn arb_block_snapshot() -> impl Strategy<Value = BlockSnapshot> {
         (
-            "BLK_[0-9]{1,4}",                                     // id
-            "content|page",                                       // block_type
-            proptest::option::of("[a-zA-Z0-9 ]{0,50}"),           // content
-            proptest::option::of("BLK_[0-9]{1,4}"),               // parent_id
-            proptest::option::of(0i64..1000),                     // position
-            proptest::option::of(Just("todo".to_string())),       // todo_state
-            proptest::option::of(Just("2025-12-31".to_string())), // due_date
-            proptest::option::of(Just("2025-12-31".to_string())), // scheduled_date
-            proptest::option::of(Just("1".to_string())),          // priority (Option<String>)
-            proptest::option::of(proptest::num::i64::ANY),        // deleted_at (Option<i64>)
+            (
+                "BLK_[0-9]{1,4}",                                     // id
+                "content|page",                                       // block_type
+                proptest::option::of("[a-zA-Z0-9 ]{0,50}"),           // content
+                proptest::option::of("BLK_[0-9]{1,4}"),               // parent_id
+                proptest::option::of(0i64..1000),                     // position
+                proptest::option::of(Just("todo".to_string())),       // todo_state
+                proptest::option::of(Just("2025-12-31".to_string())), // due_date
+                proptest::option::of(Just("2025-12-31".to_string())), // scheduled_date
+                proptest::option::of(Just("1".to_string())),          // priority (Option<String>)
+                proptest::option::of(proptest::num::i64::ANY),        // deleted_at (Option<i64>)
+            ),
+            // #533: vary `space_id` (was hard-coded `None`). A dropped
+            // `blocks.space_id` column anywhere in the codec would silently
+            // turn every membership into `None` on round-trip; generating both
+            // arms makes the round-trip proptest catch that regression.
+            proptest::option::of("BLK_[0-9]{1,4}"), // space_id
         )
             .prop_map(
                 |(
-                    id,
-                    block_type,
-                    content,
-                    parent_id,
-                    position,
-                    todo_state,
-                    due_date,
-                    scheduled_date,
-                    priority,
-                    deleted_at,
+                    (
+                        id,
+                        block_type,
+                        content,
+                        parent_id,
+                        position,
+                        todo_state,
+                        due_date,
+                        scheduled_date,
+                        priority,
+                        deleted_at,
+                    ),
+                    space_id,
                 )| BlockSnapshot {
                     id: id.into(),
                     block_type,
@@ -3823,7 +3833,7 @@ mod proptest_tests {
                     priority,
                     due_date,
                     scheduled_date,
-                    space_id: None,
+                    space_id: space_id.map(Into::into),
                 },
             )
     }
@@ -3885,9 +3895,21 @@ mod proptest_tests {
             // column in the create/restore path (which would silently turn the
             // hash into None on round-trip) is caught by the proptest suite.
             proptest::option::of("[a-f0-9]{64}"),
+            // Vary `deleted_at` (was hard-coded `None`) so the round-trip also
+            // exercises a soft-deleted attachment row (stays TEXT — #109).
+            proptest::option::of(Just("2025-06-01T00:00:00Z".to_string())),
         )
             .prop_map(
-                |(id, block_id, mime_type, filename, size_bytes, fs_path, content_hash)| {
+                |(
+                    id,
+                    block_id,
+                    mime_type,
+                    filename,
+                    size_bytes,
+                    fs_path,
+                    content_hash,
+                    deleted_at,
+                )| {
                     AttachmentSnapshot {
                         id: id.into(),
                         block_id: block_id.into(),
@@ -3896,11 +3918,36 @@ mod proptest_tests {
                         size_bytes,
                         fs_path,
                         created_at: 1_735_689_600_000,
-                        deleted_at: None,
+                        deleted_at,
                         content_hash,
                     }
                 },
             )
+    }
+
+    /// Strategy for generating an arbitrary `PropertyDefinitionSnapshot`.
+    /// Previously the round-trip never populated `property_definitions`, so a
+    /// dropped column in that table went uncaught; this closes the gap.
+    fn arb_property_definition() -> impl Strategy<Value = PropertyDefinitionSnapshot> {
+        (
+            "[a-z_]{2,10}",                          // key
+            "text|number|date|ref|bool|select",      // value_type
+            proptest::option::of("[a-z0-9,]{0,20}"), // options (opaque JSON-ish blob)
+        )
+            .prop_map(|(key, value_type, options)| PropertyDefinitionSnapshot {
+                key,
+                value_type,
+                options,
+                created_at: "2025-01-01T00:00:00Z".to_string(),
+            })
+    }
+
+    /// Strategy for generating an arbitrary `PageAliasSnapshot`. Previously the
+    /// round-trip never populated `page_aliases`, so a dropped column there was
+    /// invisible to the proptest suite.
+    fn arb_page_alias() -> impl Strategy<Value = PageAliasSnapshot> {
+        ("BLK_[0-9]{1,4}", "[a-zA-Z0-9 ]{1,20}")
+            .prop_map(|(page_id, alias)| PageAliasSnapshot { page_id, alias })
     }
 
     /// Strategy for generating a complete `SnapshotData` with random fields.
@@ -3914,22 +3961,26 @@ mod proptest_tests {
             proptest::collection::vec(arb_block_link(), 0..3),      // block_links
             proptest::collection::vec(arb_attachment(), 0..2),      // attachments
             proptest::collection::btree_map("dev-[a-z]{2,8}", 1i64..1000, 0..3), // up_to_seqs
+            proptest::collection::vec(arb_property_definition(), 0..3), // property_definitions
+            proptest::collection::vec(arb_page_alias(), 0..3),      // page_aliases
         )
             .prop_map(
-                |(device_id, hash, blocks, tags, props, links, atts, seqs)| SnapshotData {
-                    schema_version: SCHEMA_VERSION,
-                    snapshot_device_id: device_id,
-                    up_to_seqs: seqs,
-                    up_to_hash: hash,
-                    tables: SnapshotTables {
-                        blocks,
-                        block_tags: tags,
-                        block_properties: props,
-                        block_links: links,
-                        attachments: atts,
-                        property_definitions: vec![],
-                        page_aliases: vec![],
-                    },
+                |(device_id, hash, blocks, tags, props, links, atts, seqs, prop_defs, aliases)| {
+                    SnapshotData {
+                        schema_version: SCHEMA_VERSION,
+                        snapshot_device_id: device_id,
+                        up_to_seqs: seqs,
+                        up_to_hash: hash,
+                        tables: SnapshotTables {
+                            blocks,
+                            block_tags: tags,
+                            block_properties: props,
+                            block_links: links,
+                            attachments: atts,
+                            property_definitions: prop_defs,
+                            page_aliases: aliases,
+                        },
+                    }
                 },
             )
     }

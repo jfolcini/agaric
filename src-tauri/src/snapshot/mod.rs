@@ -38,7 +38,7 @@ pub(crate) use create::{
 pub use restore::apply_snapshot;
 pub use types::{
     AttachmentSnapshot, BlockLinkSnapshot, BlockPropertySnapshot, BlockSnapshot, BlockTagSnapshot,
-    SnapshotData, SnapshotTables,
+    PageAliasSnapshot, PropertyDefinitionSnapshot, SnapshotData, SnapshotTables,
 };
 // Re-export for tests and internal use
 #[allow(unused_imports)]
