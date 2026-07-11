@@ -152,6 +152,26 @@ async fn handle_incoming_sync_inner(
 ) -> Result<(), AppError> {
     tracing::info!("incoming sync connection received, starting responder session");
 
+    // #2537: mirror the initiator's cancel ownership (see
+    // `session_supervisor::CancelGuard`). Once identity checks pass and the
+    // per-peer lock is held, THIS responder session is a legitimate consumer
+    // of a user cancel — and therefore also its resetter: the guard clears
+    // the shared flag on Drop so a cancel consumed by a responder-only
+    // session does not stay latched (previously the ONLY resetter was the
+    // initiator-side guard, so a responder-consumed cancel poisoned every
+    // subsequent inbound session and burned the next outbound one).
+    // Rejection paths (unidentifiable / self / unpaired / busy / cert
+    // mismatch) leave `owns == false` and preserve a pending flag for its
+    // real target, exactly like the initiator's early-exit paths (#637).
+    let mut cancel_guard = super::session_supervisor::CancelGuard {
+        cancel: &cancel,
+        owns: false,
+    };
+    // #2537: live-session marker for `SyncScheduler::request_cancel`; armed
+    // together with `owns` below. Declared after `cancel_guard` so the
+    // activity count drops before the flag is cleared on unwind.
+    let mut _session_activity = None;
+
     let pool_ref = pool.clone();
     let event_sink_box: Box<dyn SyncEventSink> =
         Box::new(super::SharedEventSink(std::sync::Arc::clone(&event_sink)));
@@ -417,6 +437,13 @@ async fn handle_incoming_sync_inner(
                 return Ok(());
             }
         }
+
+        // #2537: identity checks passed and the per-peer lock is held — this
+        // session is now committed. Take cancel ownership (the guard's Drop
+        // becomes the legitimate post-run reset) and register live-session
+        // activity so `cancel_active_sync` / `cancel_sync` latch the flag.
+        cancel_guard.owns = true;
+        _session_activity = Some(scheduler.begin_session_activity());
 
         Some(guard)
     } else {

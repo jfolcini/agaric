@@ -1,6 +1,6 @@
 //! Sync Cmds command handlers.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use sqlx::SqlitePool;
@@ -376,11 +376,24 @@ pub fn start_sync_inner(
 /// Cancel an active sync session.
 ///
 /// Sets the cancel flag that is checked each iteration of the sync message
-/// exchange loop.  If no sync is active the flag is harmlessly cleared on
-/// the next session start.
-#[instrument(skip(cancel_flag), err)]
-pub fn cancel_sync_inner(cancel_flag: &AtomicBool) -> Result<(), AppError> {
-    cancel_flag.store(true, Ordering::Release);
+/// exchange loops (initiator and responder).
+///
+/// #2537: the flag is only latched while a session is actually live
+/// ([`SyncScheduler::request_cancel`] gates on the scheduler's
+/// live-session count). With nothing running the call is a no-op —
+/// previously the flag was stored unconditionally, and since the only
+/// resetter was the initiator-side session guard, a cancel with no active
+/// session latched `true` forever, instantly failing every inbound
+/// responder session and burning the next outbound one (recorded as a
+/// backoff-doubling failure) just to clear it.
+#[instrument(skip(cancel_flag, scheduler), err)]
+pub fn cancel_sync_inner(
+    cancel_flag: &AtomicBool,
+    scheduler: &SyncScheduler,
+) -> Result<(), AppError> {
+    if !scheduler.request_cancel(cancel_flag) {
+        tracing::debug!("cancel_sync ignored: no sync session is active");
+    }
     Ok(())
 }
 
@@ -512,8 +525,11 @@ pub async fn start_sync(
 /// Tauri command: cancel an active sync session.
 #[tauri::command]
 #[specta::specta]
-pub async fn cancel_sync(cancel_flag: State<'_, crate::SyncCancelFlag>) -> Result<(), AppError> {
-    cancel_sync_inner(&cancel_flag.0).map_err(sanitize_internal_error)
+pub async fn cancel_sync(
+    cancel_flag: State<'_, crate::SyncCancelFlag>,
+    scheduler: State<'_, Arc<SyncScheduler>>,
+) -> Result<(), AppError> {
+    cancel_sync_inner(&cancel_flag.0, &scheduler).map_err(sanitize_internal_error)
 }
 
 /// Tauri command: return the current mDNS peer-discovery status (#2506).

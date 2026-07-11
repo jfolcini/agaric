@@ -27,6 +27,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::peer_refs::PeerRef;
@@ -45,6 +46,32 @@ pub struct PeerSyncGuard {
     pub peer_id: String,
 }
 
+/// RAII guard returned by [`SyncScheduler::begin_session_activity`].
+///
+/// #2537: marks a *committed* sync session (initiator: connection
+/// established and `run_sync_session` about to run; responder: identity
+/// verified and the per-peer lock held). While at least one guard is
+/// alive, [`SyncScheduler::request_cancel`] will latch the shared cancel
+/// flag; with none alive it is a no-op — so a cancel issued when nothing
+/// is running can never latch the flag and poison future sessions.
+///
+/// Dropping the guard decrements the live-session count. The session's
+/// own cancel-ownership guard (`CancelGuard` in the daemon) is declared
+/// *before* this one, so on unwind the activity count drops to zero
+/// first and the flag is cleared last — `request_cancel`'s post-store
+/// re-check (see there) then closes the set-after-teardown race.
+pub struct SessionActivityGuard<'a> {
+    scheduler: &'a SyncScheduler,
+}
+
+impl Drop for SessionActivityGuard<'_> {
+    fn drop(&mut self) {
+        self.scheduler
+            .active_sessions
+            .fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 /// Manages per-peer sync locks, backoff state, and scheduling signals.
 pub struct SyncScheduler {
     /// One mutex per peer — prevents concurrent syncs to the same device.
@@ -57,6 +84,15 @@ pub struct SyncScheduler {
     channels: std::sync::Mutex<
         HashMap<String, tauri::ipc::Channel<crate::sync_events::SyncProgressUpdate>>,
     >,
+
+    /// #2537: number of sync sessions currently *committed to run*
+    /// (initiator sessions past connection establishment; responder
+    /// sessions past identity checks + peer lock). Incremented by
+    /// [`Self::begin_session_activity`], decremented when the returned
+    /// guard drops. Read by [`Self::request_cancel`] so a user cancel
+    /// only ever latches the shared flag while a session exists to
+    /// consume (and reset) it.
+    active_sessions: AtomicUsize,
 
     /// Fires when local changes are detected (debounced).
     change_notify: Notify,
@@ -111,6 +147,7 @@ impl SyncScheduler {
             peer_locks: std::sync::Mutex::new(HashMap::new()),
             backoff: std::sync::Mutex::new(HashMap::new()),
             channels: std::sync::Mutex::new(HashMap::new()),
+            active_sessions: AtomicUsize::new(0),
             change_notify: Notify::new(),
             debounce_window: DEFAULT_DEBOUNCE,
             resync_interval: DEFAULT_RESYNC,
@@ -172,6 +209,72 @@ impl SyncScheduler {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(peer_id)
+    }
+
+    // -- Session activity + targeted cancel (#2537) ---------------------------
+
+    /// Mark a sync session as *live* for cancellation purposes.
+    ///
+    /// #2537: called by the initiator once a connection is established and
+    /// it commits to running `run_sync_session` (the same point at which it
+    /// takes ownership of the shared cancel flag), and by the responder once
+    /// identity checks pass and the per-peer lock is held. The returned
+    /// guard decrements the count on drop.
+    pub fn begin_session_activity(&self) -> SessionActivityGuard<'_> {
+        self.active_sessions.fetch_add(1, Ordering::SeqCst);
+        SessionActivityGuard { scheduler: self }
+    }
+
+    /// `true` while at least one sync session is committed/running.
+    pub fn has_active_session(&self) -> bool {
+        self.active_sessions.load(Ordering::SeqCst) > 0
+    }
+
+    /// Request cancellation of the currently-active sync session(s).
+    ///
+    /// #2537: the shared `cancel` flag used to be latched unconditionally.
+    /// With no session running, *nothing* ever reset it — the only resetter
+    /// was the initiator-side `CancelGuard`, armed only after an outbound
+    /// connection established — so a stray cancel poisoned every subsequent
+    /// inbound session ("sync cancelled") until an outbound session burned
+    /// itself (recorded as a failure, inflating backoff) just to clear it.
+    ///
+    /// This method targets live sessions only: the flag is stored **iff** a
+    /// session is active (per [`Self::begin_session_activity`]); otherwise
+    /// the call is a no-op and returns `false`. After storing, the activity
+    /// count is re-checked — if the last session tore down concurrently
+    /// (its flag-clearing guard may already have run), the store is undone
+    /// so the flag cannot latch with no owner left to reset it.
+    ///
+    /// Returns `true` iff a cancellation was actually signalled.
+    pub fn request_cancel(&self, cancel_flag: &AtomicBool) -> bool {
+        if !self.has_active_session() {
+            return false;
+        }
+        // `SeqCst` (not `Release`) is load-bearing: with a release store,
+        // the re-check load below may execute while this store still sits
+        // in the local store buffer (TSO store→load reordering; likewise
+        // unordered in the C++ model, where a release store does not join
+        // the SC total order). The re-check could then read a stale
+        // non-zero count — skipping the un-latch — while the buffered
+        // `true` becomes globally visible AFTER the last owner's guard
+        // stored `false`, latching the flag with zero sessions left to
+        // reset it. SeqCst orders the store before the re-check load, so:
+        //   * re-check sees 0  → our own SeqCst `false` below is final;
+        //   * re-check sees ≥1 → that owner's activity decrement had not
+        //     run at the re-check, so its `CancelGuard`'s SeqCst `false`
+        //     (sequenced after the decrement) is ordered after our `true`
+        //     in the flag's modification order.
+        // Either way the flag cannot outlive its consumers.
+        cancel_flag.store(true, Ordering::SeqCst);
+        // Close the check→store race: if every session ended between the
+        // check above and the store, the owners' reset guards may have
+        // already run — un-latch so the flag never outlives its consumers.
+        if !self.has_active_session() {
+            cancel_flag.store(false, Ordering::SeqCst);
+            return false;
+        }
+        true
     }
 
     /// Garbage-collect entries from `peer_locks` whose `Arc::strong_count`
@@ -803,5 +906,78 @@ mod tests {
         sched.register_channel("PEER1", dummy_channel());
         assert!(sched.take_channel("PEER1").is_some());
         assert!(sched.take_channel("PEER1").is_none());
+    }
+
+    /// #2537 teardown-race stress: `request_cancel` racing the last owning
+    /// session's teardown must never leave the flag latched once the system
+    /// is quiescent (no live sessions).
+    ///
+    /// Reproduces the schedule the SeqCst orderings in `request_cancel` /
+    /// the daemon's `CancelGuard` close: canceller checks the count (≥1),
+    /// stores `true`; the session concurrently drops its activity guard
+    /// (count → 0) then clears the flag on its owning-guard Drop; the
+    /// canceller's re-check must either observe the drained count and
+    /// un-latch, or the owner's `false` must be ordered after the
+    /// canceller's `true`. With `Release` flag stores (store→load
+    /// reordering past the re-check), the buffered `true` could land after
+    /// the owner's `false` — latching an ownerless flag. This hammers the
+    /// window from two threads and asserts the invariant at every
+    /// quiescent point.
+    #[test]
+    fn request_cancel_racing_session_teardown_never_latches_ownerless_flag() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let sched = std::sync::Arc::new(SyncScheduler::new());
+        let flag = std::sync::Arc::new(AtomicBool::new(false));
+        let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+
+        const ROUNDS: usize = 20_000;
+
+        // Session thread: begin activity, then immediately tear down in the
+        // production drop order — activity guard first (count → 0), owning
+        // cancel-clear second (mirrors `SessionActivityGuard` being declared
+        // after `CancelGuard`, so it drops first).
+        let session = {
+            let sched = sched.clone();
+            let flag = flag.clone();
+            let start = start.clone();
+            std::thread::spawn(move || {
+                start.wait();
+                for _ in 0..ROUNDS {
+                    let activity = sched.begin_session_activity();
+                    drop(activity); // count → 0
+                    flag.store(false, Ordering::SeqCst); // owning guard's clear
+                }
+            })
+        };
+
+        // Canceller thread: fire cancels into the churn.
+        let canceller = {
+            let sched = sched.clone();
+            let flag = flag.clone();
+            let start = start.clone();
+            std::thread::spawn(move || {
+                start.wait();
+                for _ in 0..ROUNDS {
+                    sched.request_cancel(&flag);
+                    std::hint::spin_loop();
+                }
+            })
+        };
+
+        session.join().unwrap();
+        canceller.join().unwrap();
+
+        // Quiescent: no live session may exist and the flag must not have
+        // latched — there is no owner left to ever reset it.
+        assert!(
+            !sched.has_active_session(),
+            "activity count must drain to zero"
+        );
+        assert!(
+            !flag.load(Ordering::SeqCst),
+            "#2537: a cancel racing the last session's teardown must never \
+             leave the shared flag latched with no owner left to reset it"
+        );
     }
 }

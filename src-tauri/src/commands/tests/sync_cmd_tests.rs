@@ -640,13 +640,34 @@ fn sync_start_sync_does_not_record_success_preemptively() {
 // ======================================================================
 
 #[test]
-fn sync_cancel_sync_succeeds() {
+fn sync_cancel_sync_sets_flag_while_session_active() {
     let flag = AtomicBool::new(false);
-    let result = cancel_sync_inner(&flag);
+    let scheduler = SyncScheduler::new();
+    // #2537: the cancel only latches while a session is live.
+    let _activity = scheduler.begin_session_activity();
+    let result = cancel_sync_inner(&flag, &scheduler);
     assert!(result.is_ok(), "cancel_sync must succeed");
     assert!(
         flag.load(Ordering::Acquire),
-        "cancel flag must be set after cancel_sync"
+        "cancel flag must be set after cancel_sync while a session is active"
+    );
+}
+
+/// #2537: with NO live session there is nothing to cancel — and, crucially,
+/// nothing that would ever reset the flag. `cancel_sync` must be a no-op so
+/// the flag cannot latch and instantly fail every future inbound session.
+#[test]
+fn sync_cancel_sync_is_noop_without_active_session() {
+    let flag = AtomicBool::new(false);
+    let scheduler = SyncScheduler::new();
+    let result = cancel_sync_inner(&flag, &scheduler);
+    assert!(
+        result.is_ok(),
+        "cancel_sync must still succeed (idempotent no-op)"
+    );
+    assert!(
+        !flag.load(Ordering::Acquire),
+        "#2537: cancel with no active session must NOT latch the shared flag"
     );
 }
 
