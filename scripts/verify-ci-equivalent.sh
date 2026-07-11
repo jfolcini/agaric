@@ -200,6 +200,24 @@ if [ "$HAS_RS" = "1" ]; then
     fi
 fi
 
+# ── Phase D2: cargo test --doc (only if Rust changed) ──────────────
+# nextest (Phase D) does NOT execute doc-tests, so a broken `/// ```` example
+# would compile-fail invisibly. Run the doc-tests explicitly here so executable
+# doc-comment examples on pure helpers stay honest (#2555). Cheap while there
+# are few doc-tests; each compiles as its own binary, so scope grows the cost.
+
+if [ "$HAS_RS" = "1" ]; then
+    echo ""
+    echo "→ Phase D2: cargo test --doc"
+    if ! ( cd src-tauri && cargo test --doc ); then
+        echo ""
+        echo "✗ Pre-push verification FAILED at Phase D2 (cargo test --doc)."
+        echo "  Iterate: ( cd src-tauri && cargo test --doc )"
+        echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
+        exit 1
+    fi
+fi
+
 # ── Phase E: cargo sqlx prepare --check (only if Rust changed) ─────
 
 if [ "$HAS_RS" = "1" ]; then

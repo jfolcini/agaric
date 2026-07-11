@@ -60,6 +60,18 @@ impl OpType {
     ///
     /// This is the single source of truth for the string mapping. Both
     /// [`Display`] and [`OpPayload::op_type_str`] delegate here.
+    ///
+    /// # Examples
+    ///
+    /// Every variant maps to its `op_log.op_type` column value, matching the
+    /// serde serialization:
+    ///
+    /// ```
+    /// use agaric_lib::op::OpType;
+    ///
+    /// assert_eq!(OpType::CreateBlock.as_str(), "create_block");
+    /// assert_eq!(OpType::RenameAttachment.as_str(), "rename_attachment");
+    /// ```
     pub fn as_str(&self) -> &'static str {
         match self {
             OpType::CreateBlock => "create_block",
@@ -93,6 +105,19 @@ impl FromStr for OpType {
     /// Uses a manual match to avoid the overhead of serde_json deserialization
     /// for this simple string-to-enum conversion. The match arms mirror
     /// [`OpType::as_str`] to guarantee round-trip consistency.
+    ///
+    /// # Examples
+    ///
+    /// Parsing round-trips with [`OpType::as_str`]; an unrecognised op-type
+    /// string is an error rather than a silent default:
+    ///
+    /// ```
+    /// use agaric_lib::op::OpType;
+    ///
+    /// assert_eq!("set_property".parse::<OpType>(), Ok(OpType::SetProperty));
+    /// assert_eq!(OpType::SetProperty.as_str().parse::<OpType>(), Ok(OpType::SetProperty));
+    /// assert!("no_such_op".parse::<OpType>().is_err());
+    /// ```
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "create_block" => Ok(OpType::CreateBlock),
