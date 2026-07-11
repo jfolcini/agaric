@@ -651,6 +651,19 @@ impl SyncOrchestrator {
                 }
 
                 if !is_last {
+                    // #2536: a streamer with multiple registered spaces ships
+                    // one `LoroSync` per space (only the last `is_last: true`).
+                    // We just parked in `ApplyingOps` for the import above; if
+                    // we return still in `ApplyingOps`, the NEXT space's
+                    // `LoroSync` hits the state-validation match — which only
+                    // accepts `LoroSync` in `StreamingOps | ExchangingHeads` —
+                    // and the wildcard arm rejects it as "LoroSync received
+                    // before HeadExchange", failing an otherwise valid
+                    // multi-space session. Restore `StreamingOps` so the
+                    // streaming phase continues to accept the remaining
+                    // per-space messages.
+                    self.state = SyncState::StreamingOps;
+                    self.session.state = SyncState::StreamingOps;
                     return Ok(None); // wait for more LoroSync messages
                 }
 

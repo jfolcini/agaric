@@ -4611,6 +4611,148 @@ async fn issue602_two_edited_devices_converge_without_reset_required() {
 }
 
 // ======================================================================
+// #2536 — multi-space delta sync must not fail on the second LoroSync
+// ======================================================================
+
+/// #2536 regression — a responder streamingLoroSync for TWO registered
+/// spaces (the normal case in production: every vault seeds a "Personal"
+/// and a "Work" space) must not fail the puller's session.
+///
+/// `head_exchange_outgoing_loro` streams one `LoroSync` per registered
+/// space, marking only the LAST one `is_last: true`. On the puller side,
+/// `handle_message`'s `LoroSync` arm sets `self.state =
+/// SyncState::ApplyingOps` before importing, and — critically — only
+/// restores `StreamingOps` on the FINAL (`is_last: true`) message; a
+/// non-final message hits `if !is_last { return Ok(None) }` and leaves
+/// the puller parked in `ApplyingOps`. The state-validation match only
+/// accepts `LoroSync` in `StreamingOps | ExchangingHeads`, so the second
+/// `LoroSync` (for the second space) is rejected by the wildcard arm
+/// with "LoroSync received before HeadExchange" and the session fails —
+/// even though the puller never actually saw a HeadExchange-ordering
+/// violation.
+///
+/// This test seeds a responder (device B) with local edits in TWO
+/// distinct, dirty/registered Loro spaces (mirroring the production
+/// Personal + Work default vaults), drives one full session with device
+/// A as the initiator/puller, and asserts both spaces' blocks converge
+/// on the puller and BOTH sides reach `SyncState::Complete` — i.e. no
+/// `Failed` from the second `LoroSync` in the stream.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn issue2536_multi_space_delta_sync_completes() {
+    use crate::sync_protocol::{SyncOrchestrator, SyncState};
+
+    const DEV_A: &str = "DEV2536A";
+    const DEV_B: &str = "DEV2536B";
+    const BLOCK_PERSONAL: &str = "01HZ2536BLKPERSONALXXXXXXX";
+    const BLOCK_WORK: &str = "01HZ2536BLKWORKXXXXXXXXXXX";
+    let space_personal = crate::space::SpaceId::from_trusted("01HZ2536SPACEPERSONALXXXXX");
+    let space_work = crate::space::SpaceId::from_trusted("01HZ2536SPACEWORKXXXXXXXXX");
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+    let mat_b = Materializer::new(pool_b.clone());
+
+    let state_a = std::sync::Arc::clone(mat_a.loro_state());
+    let state_b = std::sync::Arc::clone(mat_b.loro_state());
+
+    peer_refs::upsert_peer_ref(&pool_a, DEV_B).await.unwrap();
+    peer_refs::upsert_peer_ref(&pool_b, DEV_A).await.unwrap();
+
+    // The responder (B) has touched/dirty edits in TWO distinct spaces —
+    // this is what forces `head_exchange_outgoing_loro` to stream two
+    // `LoroSync` messages (one per space), with only the second marked
+    // `is_last: true`.
+    make_local_edit_602(
+        &pool_b,
+        &mat_b,
+        &state_b,
+        DEV_B,
+        &space_personal,
+        BLOCK_PERSONAL,
+        "personal space content",
+        1_752_000_000_000,
+    )
+    .await;
+    make_local_edit_602(
+        &pool_b,
+        &mat_b,
+        &state_b,
+        DEV_B,
+        &space_work,
+        BLOCK_WORK,
+        "work space content",
+        1_752_000_001_000,
+    )
+    .await;
+    assert_eq!(
+        state_b.registry.dirty_count(),
+        2,
+        "responder must have two dirty/registered spaces going into the session"
+    );
+
+    // ── A initiates, B responds — B streams both spaces to A ─────────
+    let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
+        .with_expected_remote_id(DEV_B.into());
+    let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
+        .with_expected_remote_id(DEV_A.into());
+    pump_full_session_602(&mut init_a, &mut resp_b).await;
+
+    assert_eq!(
+        init_a.session().state,
+        SyncState::Complete,
+        "#2536: puller (initiator A) must reach Complete after receiving \
+         LoroSync for BOTH spaces — a Failed state here reproduces the \
+         'LoroSync received before HeadExchange' bug on the second \
+         space's message"
+    );
+    assert_eq!(
+        resp_b.session().state,
+        SyncState::Complete,
+        "#2536: responder B (the streamer) must also reach Complete"
+    );
+
+    mat_a.flush_background().await.unwrap();
+
+    // ── Convergence: puller's DB holds BOTH spaces' blocks ────────────
+    for (block_id, content) in [
+        (BLOCK_PERSONAL, "personal space content"),
+        (BLOCK_WORK, "work space content"),
+    ] {
+        let row: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(block_id)
+            .fetch_optional(&pool_a)
+            .await
+            .unwrap();
+        assert_eq!(
+            row.as_deref(),
+            Some(content),
+            "puller's DB must hold block {block_id} after multi-space sync"
+        );
+    }
+
+    // ── Convergence: puller's engines match the responder's per-space ──
+    for (label, space, block_id) in [
+        ("personal", &space_personal, BLOCK_PERSONAL),
+        ("work", &space_work, BLOCK_WORK),
+    ] {
+        let mut g = state_a
+            .registry
+            .for_space(space, DEV_A)
+            .expect("puller space");
+        let block = g
+            .engine_mut()
+            .read_block(block_id)
+            .unwrap()
+            .unwrap_or_else(|| panic!("puller engine must have {label} space's block"));
+        let _ = block;
+    }
+
+    mat_a.shutdown();
+    mat_b.shutdown();
+}
+
+// ======================================================================
 // #2129 — two-instance convergence over a REAL loopback TLS socket
 // ======================================================================
 
