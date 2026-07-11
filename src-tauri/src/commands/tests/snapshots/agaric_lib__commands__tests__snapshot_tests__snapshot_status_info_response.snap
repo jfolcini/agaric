@@ -1,6 +1,6 @@
 ---
 source: src/commands/tests/snapshot_tests.rs
-assertion_line: 109
+assertion_line: 148
 expression: status
 ---
 foreground_queue_depth: 0
