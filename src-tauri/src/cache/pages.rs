@@ -89,6 +89,20 @@ async fn apply_sort_merge_rebuild(
 /// `RebuildPagesCacheCounts` task (and called by the test-only
 /// `rebuild_all_caches`).
 ///
+/// **Measurement justification (#2508).** The canonical live SELECT these
+/// count columns denormalize (the two correlated subqueries below, run as a
+/// plain `SELECT` over a representative Pages-view page set) was measured by
+/// the `interactive_slo` probe `bench_pages_cache_counts_direct_query` (gated
+/// behind `SLO_INCLUDE_PROBLEM`, `src-tauri/benches/interactive_slo.rs`) at
+/// **~0.96 ms @ 100K** (50-page sample, 10K pages × 9 children + links;
+/// nightly `bench-slo` runner). Sub-millisecond for a realistic page set
+/// means the `inbound_link_count` / `child_block_count` denormalization (this
+/// full recompute, the per-op `recompute_pages_cache_counts_for_pages` path,
+/// and its staleness class) buys nothing measurable against the 200 ms
+/// interactive budget: the columns are a **DROP CANDIDATE** — scope item 2 of
+/// #2508 (remove the columns + read the live SELECT directly). Deferred
+/// pending a maintainer nod because it deletes schema columns.
+///
 /// #432: the guard `WHERE inbound_link_count != (<subq>) OR
 /// child_block_count != (<subq>)` makes the UPDATE touch ONLY rows whose
 /// materialised value actually differs, so `rows_affected()` is exactly
