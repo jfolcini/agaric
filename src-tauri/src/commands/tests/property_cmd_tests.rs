@@ -5068,7 +5068,7 @@ async fn bug20_set_priority_rejects_value_not_in_seeded_options() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn m20_set_priority_accepts_user_extended_options() {
-    // / docs/ARCHITECTURE.md §20: the priority property is a
+    // / docs/architecture/queries.md § Pagination invariant: the priority property is a
     // user-extensible select-type definition. Calling set_priority_inner
     // with a value outside the seeded `["1","2","3"]` set must succeed
     // when the user has extended the options to cover that value (e.g.

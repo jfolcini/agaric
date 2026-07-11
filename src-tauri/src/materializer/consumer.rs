@@ -492,8 +492,8 @@ pub(super) async fn process_single_foreground_task(
     }
 
     // Foreground retry schedule: a single retry after a 100 ms constant
-    // backoff. See docs/ARCHITECTURE.md §5 ("Materializer / Retry behaviour"
-    // — Foreground backoff schedule). Background uses an exponential
+    // backoff. See docs/architecture/data-and-events.md § Retry semantics
+    // (Foreground backoff schedule). Background uses an exponential
     // schedule (150 ms / 300 ms) — the difference is encoded in the
     // backoff closures here vs. in `run_background`.
     let outcome = {
@@ -664,8 +664,8 @@ pub(super) async fn run_background(
                 const MAX_RETRIES: u32 = 2;
                 // Increased from 50ms to reduce retry churn on transient WAL
                 // lock contention; background tasks tolerate longer delays.
-                // docs: docs/ARCHITECTURE.md §5 ("Materializer / Retry behaviour"
-                // — Background backoff schedule: 150ms, 300ms).
+                // docs: docs/architecture/data-and-events.md § Retry semantics
+                // (Background backoff schedule: 150ms, 300ms).
                 //
                 // Cross-reference: this is the
                 // *in-memory* per-batch retry budget. Tasks that exhaust

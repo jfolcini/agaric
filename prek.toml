@@ -349,6 +349,26 @@ pass_filenames = false
 types = ["markdown"]
 stages = ["pre-commit"]
 
+# Stale-citation guard (#2546). `docs/ARCHITECTURE.md` used to be a big
+# numbered-section document; it was split into `docs/architecture/*.md` and
+# is now a short index with no numbered sections at all. This hook fails
+# any tracked `*.md` / `*.rs` / `*.ts` / `*.tsx` file that still cites
+# `ARCHITECTURE.md §N` — those citations point nowhere post-split. Fix by
+# retargeting to the concrete split file + heading, e.g.
+# `docs/architecture/<file>.md § <Heading>`. `docs/session-log/*` (archive
+# of past state) is excluded; rules live in
+# scripts/check-architecture-citations.mjs.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "architecture-citations"
+name = "no stale ARCHITECTURE.md section citations"
+entry = "node scripts/check-architecture-citations.mjs"
+language = "system"
+pass_filenames = false
+files = "\\.(md|rs|ts|tsx)$"
+stages = ["pre-commit"]
+
 # Frontend import-cycle guard (#761). The `src/` module graph was driven to
 # zero cycles (Tarjan SCC over ~600 first-party modules); this hook keeps it
 # there. A new value- or type-import cycle confuses bundlers (init-order
@@ -1204,7 +1224,7 @@ stages = ["pre-commit"]
 repo = "local"
 [[repos.hooks]]
 id = "verify-ci-equivalent"
-name = "verify CI-equivalent (parallel)"
+name = "verify CI-equivalent"
 entry = "bash scripts/verify-ci-equivalent.sh"
 language = "system"
 pass_filenames = false

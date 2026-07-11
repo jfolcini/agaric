@@ -1,7 +1,8 @@
 # Scripts
 
-Repo-level helper scripts. One entry per file; most are invoked
-indirectly (pre-commit hooks, `package.json` scripts, CI workflows).
+Repo-level helper scripts. Selected scripts; the full guard-hook suite is
+indexed in `prek.toml`. Most are invoked indirectly (pre-commit hooks,
+`package.json` scripts, CI workflows).
 
 | Script | What it does | Invoked by |
 | --- | --- | --- |
@@ -14,7 +15,7 @@ indirectly (pre-commit hooks, `package.json` scripts, CI workflows).
 
 ## `mcp_smoke.py` — MCP wire-compat smoke test
 
-Manual-run smoke harness. Exercises every v1 MCP read tool (9 of them)
+Manual-run smoke harness. Exercises every tool in `EXPECTED_TOOLS`
 against a running `cargo tauri dev` build of Agaric and asserts each
 response matches a minimal inline JSON Schema. The harness is deliberately
 run through the same Python MCP SDK that real agents (Claude Desktop,
@@ -55,7 +56,7 @@ Usage help:
 
 | Code | Meaning |
 | --- | --- |
-| 0 | All 9 tools returned schema-valid payloads. |
+| 0 | Every tool in `EXPECTED_TOOLS` returned a schema-valid payload. |
 | 1 | One or more tools failed — structured failure report on stderr. |
 | 2 | Argparse / usage error. |
 
