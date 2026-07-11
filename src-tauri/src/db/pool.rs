@@ -3,7 +3,9 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 use sqlx::{Sqlite, SqlitePool};
 use std::path::Path;
 
-use super::recovery::{ensure_blocks_table_exists, recover_derived_state_from_op_log};
+use super::recovery::{
+    ensure_blocks_table_exists, recover_derived_state_from_op_log, reproject_blocks_from_engine,
+};
 
 /// Threshold (ms) above which [`acquire_logged`] emits a `warn` log.
 ///
@@ -436,6 +438,17 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, crate::error::AppErro
     // or the persisted pending marker), never on empty-table inference.
     recover_derived_state_from_op_log(&write_pool, blocks_recovered).await?;
 
+    // #2504: engine-first rebuild. The two op-log passes above reconstruct only
+    // device-local content (the op_log is strictly device-local post-#490-M1),
+    // so on a synced device every remote-authored block/property/tag is missing.
+    // Reproject the SQL primary state authoritatively from the per-space Loro
+    // engine snapshots (`loro_doc_state` — the complete convergent state), on top
+    // of the op-log passes (which also restored engine-independent `attachments`).
+    // Gated on the same this-boot block-recovery signal.
+    if blocks_recovered {
+        reproject_blocks_from_engine(&write_pool).await?;
+    }
+
     // T-5: Update query planner statistics after migrations.
     // PRAGMA optimize analyzes tables whose stats may be stale and runs
     // ANALYZE only where beneficial. Safe, idempotent, runs in <100ms
@@ -530,6 +543,11 @@ pub async fn init_pool(db_path: &Path) -> Result<SqlitePool, crate::error::AppEr
 
     // Recovery part 2 (#616: see `init_pools` for the gate rationale)
     recover_derived_state_from_op_log(&pool, blocks_recovered).await?;
+
+    // #2504: engine-first rebuild from the Loro snapshots — see `init_pools`.
+    if blocks_recovered {
+        reproject_blocks_from_engine(&pool).await?;
+    }
 
     // Match `init_pools` — refresh planner stats after migrations.
     sqlx::query("PRAGMA optimize").execute(&pool).await?;
