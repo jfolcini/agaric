@@ -3283,7 +3283,7 @@ async fn move_block_at_depth_limit_succeeds() {
 // ── MAX_BLOCK_DEPTH enforced in create_block_in_tx ─────────────────
 //
 // `move_block_inner` already rejects moves that would push the subtree past
-// The documented limit (docs/architecture/queries.md § Pagination invariant). closed the asymmetry on
+// The documented limit (docs/architecture/data-and-events.md § Everything is a block). closed the asymmetry on
 // the create side: a user used to be able to repeatedly create blocks under
 // the deepest leaf and drift past the bound. The recursive CTE inside
 // `create_block_in_tx` now computes parent_depth and rejects when

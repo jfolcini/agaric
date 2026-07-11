@@ -263,7 +263,7 @@ pub(crate) async fn create_block_in_tx(
 
         // Enforce `MAX_BLOCK_DEPTH` on the create path. The new block
         // will live at depth = parent_depth + 1, so reject when that exceeds
-        // the documented limit (docs/architecture/queries.md § Pagination invariant). Without this guard
+        // the documented limit (docs/architecture/data-and-events.md § Everything is a block). Without this guard
         // a user could repeatedly create blocks under the deepest leaf and
         // drift past the bound — `move_block_inner` already enforces the
         // same limit; the asymmetry was the loophole.
