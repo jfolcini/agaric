@@ -89,19 +89,28 @@ async fn apply_sort_merge_rebuild(
 /// `RebuildPagesCacheCounts` task (and called by the test-only
 /// `rebuild_all_caches`).
 ///
-/// **Measurement justification (#2508).** The canonical live SELECT these
-/// count columns denormalize (the two correlated subqueries below, run as a
-/// plain `SELECT` over a representative Pages-view page set) was measured by
-/// the `interactive_slo` probe `bench_pages_cache_counts_direct_query` (gated
-/// behind `SLO_INCLUDE_PROBLEM`, `src-tauri/benches/interactive_slo.rs`) at
-/// **~0.96 ms @ 100K** (50-page sample, 10K pages × 9 children + links;
-/// nightly `bench-slo` runner). Sub-millisecond for a realistic page set
-/// means the `inbound_link_count` / `child_block_count` denormalization (this
-/// full recompute, the per-op `recompute_pages_cache_counts_for_pages` path,
-/// and its staleness class) buys nothing measurable against the 200 ms
-/// interactive budget: the columns are a **DROP CANDIDATE** — scope item 2 of
-/// #2508 (remove the columns + read the live SELECT directly). Deferred
-/// pending a maintainer nod because it deletes schema columns.
+/// # Why these two columns exist — KEEP (#2508, measured; drop rejected)
+///
+/// The #2508 audit flagged the `inbound_link_count` / `child_block_count`
+/// columns as a possible drop ("read the canonical live SELECT instead").
+/// They are **not** droppable: they are the sort keys for `MostLinked` /
+/// `MostContent` and the predicate for the `Orphan` / `Stub` /
+/// `HasNoInboundLinks` filters (`commands/pages/metadata.rs` `keyset_for`,
+/// `filters/primitive.rs`). Those paths run a `USE TEMP B-TREE FOR ORDER BY`
+/// / page-wide `WHERE`, so SQLite evaluates the count for **every page in
+/// the space** before the `LIMIT` — a cheap materialised-column read per
+/// page. Migration `0069` created these columns precisely to replace the
+/// per-row `COUNT(DISTINCT …) FROM block_links` correlated subquery;
+/// dropping them re-introduces that O(N)-subquery cost (guarded today by
+/// `most_linked_perf_gate_20k_pages` +
+/// `most_linked_query_plan_uses_pages_cache_not_block_links`).
+///
+/// The #2508 `interactive_slo` probe measured the direct count query at
+/// **0.96 ms @ 100K**, but only over a **50-page sample** (`WHERE page_id
+/// IN (…50 ids…)`) — that is the badge-render cost for one visible Pages
+/// page, NOT the sort/filter cost across the whole space. It does not
+/// justify a drop; the justification for keeping is the O(N)-subquery
+/// avoidance at sort/filter time. Verdict: **keep, justified.**
 ///
 /// #432: the guard `WHERE inbound_link_count != (<subq>) OR
 /// child_block_count != (<subq>)` makes the UPDATE touch ONLY rows whose

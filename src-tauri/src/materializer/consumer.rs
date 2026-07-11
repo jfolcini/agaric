@@ -484,10 +484,26 @@ pub(super) async fn process_single_foreground_task(
     // (with the pool / metrics Arc clones the rest of this
     // function needs) was leftover panic-isolation scaffolding from
     // the real handler arms. Inline it here, mirroring the bg-side
-    // pattern at `run_background` (consumer.rs ~217-223).
+    // pattern at `run_background` (consumer.rs ~656-661/805-806).
+    //
+    // #2582: `fetch_add` MUST happen-before `notify_one()`, not after.
+    // `flush_foreground()` awaits `notify.notified()` and, on a
+    // `multi_thread` runtime, can resume on a *different* worker thread
+    // the instant `notify_one()` runs — concurrently with whatever this
+    // function still has left to execute. Under `cargo llvm-cov`'s much
+    // heavier per-line instrumentation, that "still has left to execute"
+    // window widens enough to be observed: a caller that wakes on
+    // `flush_foreground()` and immediately samples
+    // `StatusInfo::total_ops_dispatched` (`fg_processed`) could read the
+    // pre-increment value, exactly the twin of the `bg_high_water`
+    // sample-before-send race fixed for the enqueue side. Incrementing
+    // first makes the counter observable-complete at the moment the
+    // waiter wakes, mirroring the background consumer's own barrier
+    // handling below (increment happens inside the drain loop, strictly
+    // before the deferred `notify_one()` loop that runs after it).
     if let MaterializeTask::Barrier(notify) = task {
-        notify.notify_one();
         metrics.fg_processed.fetch_add(1, Ordering::Relaxed);
+        notify.notify_one();
         return;
     }
 
@@ -656,6 +672,20 @@ pub(super) async fn run_background(
             let mut pending_barriers: Vec<Arc<tokio::sync::Notify>> = Vec::new();
             for task in deduped {
                 let rp_ref = read_pool.as_ref();
+                // #2582: audited against the same reorder bug fixed on the
+                // fg side (`process_single_foreground_task` above). This
+                // increment already happens-before its `notify_one()` — the
+                // notify is deferred into `pending_barriers` and only fired
+                // after this whole `for task in deduped` loop finishes (see
+                // below), so every `bg_processed` bump for this drained
+                // batch — this barrier's own, and any batch-mate processed
+                // before or after it — is complete before any waiter can
+                // wake. No reorder needed here; left as documentation for
+                // the next reader auditing this bug class (see
+                // `dedup_tasks`'s `RebuildPagesCacheCounts` doc comment,
+                // which already relies on this same "barriers signal only
+                // after the whole batch drains" invariant for a different
+                // reason — trailing-position dedup ordering).
                 if let MaterializeTask::Barrier(ref notify) = task {
                     pending_barriers.push(Arc::clone(notify));
                     metrics.bg_processed.fetch_add(1, Ordering::Relaxed);
