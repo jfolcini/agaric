@@ -361,6 +361,7 @@ Baseline performance at 100K blocks (established by benchmarks):
 4. **`total_count` uses post-filter count:** when a query filters after fetch (self-reference filtering in backlinks, etc.), set `total_count` from filtered length, not pre-filter length.
 5. **Materializer error propagation:** `ApplyOp` / `BatchApplyOps` tasks must propagate errors for retry, not swallow with `.ok()`. Background cache rebuild errors must bubble up so retry logic can kick in.
 6. **Multi-row INSERT for bulk data:** use chunked `INSERT INTO ... VALUES (?,?,...), (?,?,...)` with a `MAX_SQL_PARAMS` constant (SQLite limit ~999, chunk size depends on columns-per-row). See `apply_snapshot`.
+7. **No side effects inside `debug_assert!`:** the release profile compiles `debug_assert*!` bodies out entirely (`debug-assertions` off, `panic = "abort"`, `strip`), so any mutation or effect in the asserted expression silently vanishes in production while passing every debug/test build. Assert only on pure reads (`.is_empty()`, `.len()`, `.contains()`, comparisons, a value already bound in a `let`). If an invariant must hold in release too, promote it to a release-active `return Err(...)` / `assert!` on the production path — see the `debug_assert!` + release-build `InvalidOperation` pairing in `materializer/handlers/apply.rs` and `dag::insert_remote_op`.
 
 ## Search & FTS
 
