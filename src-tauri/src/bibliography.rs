@@ -336,6 +336,16 @@ pub fn parse_bibtex(content: &str) -> Result<BibParseOutput, AppError> {
     let mut entries: Vec<BibEntry> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
+    // Incremental line counter for entry-start lines. `line_scan_pos` only ever
+    // advances (entry `@`s are encountered in increasing `pos` order), so each
+    // char is scanned for newlines at most once and the whole parse stays
+    // O(n). A per-entry `line_at(&chars, pos)` here rescanned `[0..pos]` every
+    // entry — O(n·entries), quadratic for the many-small-entries case a large
+    // academic export hits (the same O(n²) class fixed in
+    // `split_bibtex_authors`).
+    let mut line_scan_pos = 0usize;
+    let mut cur_line = 1usize;
+
     while pos < len {
         // Text between entries is a comment by BibTeX convention — skip to
         // the next '@' silently.
@@ -343,7 +353,13 @@ pub fn parse_bibtex(content: &str) -> Result<BibParseOutput, AppError> {
             pos += 1;
             continue;
         }
-        let at_line = line_at(&chars, pos);
+        while line_scan_pos < pos {
+            if chars[line_scan_pos] == '\n' {
+                cur_line += 1;
+            }
+            line_scan_pos += 1;
+        }
+        let at_line = cur_line;
         pos += 1;
 
         // Entry type identifier.
@@ -1393,5 +1409,29 @@ mod tests {
         let out = parse_bibtex(&src).expect("large entry must parse");
         assert_eq!(out.entries.len(), 1);
         assert!(out.entries[0].abstract_text.is_some());
+    }
+
+    #[test]
+    fn bibtex_many_small_entries_is_linear_not_quadratic() {
+        // Regression guard for the O(n·entries) entry-start line count: the
+        // per-entry `line_at(&chars, pos)` rescanned `[0..pos]` every entry, so
+        // a large academic export (many small entries) took Σpos ≈ O(n²) — tens
+        // of seconds at 10k entries. The incremental `line_scan_pos`/`cur_line`
+        // counter keeps it linear. 20k minimal entries (~1 MB) must parse fast.
+        let mut src = String::with_capacity(1_100_000);
+        for i in 0..20_000 {
+            // Spread entries across lines so newline counting is exercised.
+            src.push_str(&format!(
+                "@article{{k{i},\n title={{T{i}}},\n year={{2020}}}}\n"
+            ));
+        }
+        let out = parse_bibtex(&src).expect("many small entries must parse");
+        assert_eq!(out.entries.len(), 20_000);
+        // Spot-check that entry-start line tracking stayed correct after the
+        // switch from full rescans to the incremental counter: the last entry's
+        // title survived and keys are distinct.
+        assert_eq!(out.entries[0].citation_key, "k0");
+        assert_eq!(out.entries[19_999].citation_key, "k19999");
+        assert_eq!(out.entries[19_999].title.as_deref(), Some("T19999"));
     }
 }
