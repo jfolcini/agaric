@@ -4859,10 +4859,7 @@ async fn issue2536_puller_rests_in_streaming_ops_between_loro_messages() {
         .handle_message(wire_roundtrip_602(&streamed[0]))
         .await
         .expect("initiator handles first LoroSync without error");
-    assert!(
-        r0.is_none(),
-        "non-final LoroSync yields no immediate reply"
-    );
+    assert!(r0.is_none(), "non-final LoroSync yields no immediate reply");
     assert_eq!(
         init_a.session().state,
         SyncState::StreamingOps,
