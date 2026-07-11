@@ -27,9 +27,15 @@
  * hash matches no resource is dropped (graceful, no crash); a resource nobody
  * references is simply never shipped.
  *
- * DEFERRED (follow-up, still open on #2513): Joplin `.jex` import (part 2) and
- * advanced ENML fidelity — nested tables, encrypted blocks, `<en-todo>` inside
- * `<li>` (part 3).
+ * ADVANCED ENML FIDELITY (#2513, part 3): nested `<table>`s are flattened to
+ * an inline representation inside the outer cell (GFM pipe tables can't nest,
+ * and a raw nested table corrupts the outer one); undecryptable `<en-crypt>`
+ * blocks become a `> [!warning]` callout placeholder (ciphertext never leaked);
+ * and an `<en-todo>` at the start of an `<li>` renders as a NATIVE task item
+ * (`- [ ]`/`- [x]`) instead of a bullet wrapping a task. See
+ * {@link transformEnmlDom} and {@link enmlToMarkdown}.
+ *
+ * DEFERRED (separate follow-up): Joplin `.jex` import.
  */
 
 import TurndownService from 'turndown'
@@ -116,6 +122,18 @@ const TODO_UNCHECKED_SENTINEL = '\uE001'
 // Turndown runs, so an attacker-controlled path never enters the HTML string.
 const MEDIA_SENTINEL_OPEN = '\uE002'
 const MEDIA_SENTINEL_CLOSE = '\uE003'
+/**
+ * Sentinel for an `<en-crypt>` block (#2513). Encrypted Evernote content can't
+ * be decrypted on import, so we drop the ciphertext (never leak it) and, in
+ * its place, emit a clear callout marker. Like the other markers we route it
+ * through Turndown as a private-use text char and swap it for the real
+ * (bracket-laden) callout syntax AFTERWARDS, so Turndown never escapes the
+ * `[`/`]`/`!` of `> [!warning]`.
+ */
+const CRYPT_SENTINEL = '\uE004'
+/** The callout emitted where an undecryptable `<en-crypt>` block stood. */
+const CRYPT_PLACEHOLDER =
+  '> [!warning] Encrypted content was omitted during import (Evernote en-crypt block).'
 
 /**
  * Build the shared Turndown instance used to convert ENML → Markdown.
@@ -342,6 +360,17 @@ function uniqueResourcePath(
  *    and never lets the path touch the HTML string. An `<en-media>` with no
  *    matching resource is dropped (graceful fallback rather than leaking markup
  *    or crashing).
+ *  - `<en-crypt>…</en-crypt>` → a block sentinel (later a `> [!warning]`
+ *    callout). The ciphertext can't be decrypted on import, so its children are
+ *    discarded (never leaked) and replaced by a clear, non-destructive marker
+ *    (#2513, advanced ENML fidelity).
+ *  - a nested `<table>` (one inside a `<td>`/`<th>`) → inline text. GFM pipe
+ *    tables can't nest — letting Turndown emit the inner table's own rows
+ *    splices newlines and `|`s into the OUTER cell and corrupts the whole
+ *    table — so each nested table is flattened to a single-line
+ *    `cell / cell ; row` string (see {@link flattenNestedTable}) that survives
+ *    intact inside the outer pipe cell. The outer (top-level) table still
+ *    renders as a real Markdown table (#2513, advanced ENML fidelity).
  */
 function transformEnmlDom(
   root: Element,
@@ -375,6 +404,65 @@ function transformEnmlDom(
       ownerDoc.createTextNode(`${MEDIA_SENTINEL_OPEN}${index}${MEDIA_SENTINEL_CLOSE}`),
     )
   }
+  for (const crypt of Array.from(root.querySelectorAll('en-crypt'))) {
+    // Wrap the sentinel in a block element so Turndown renders it on its own
+    // line(s) — the `> [!warning]` callout it becomes is a block, so it must
+    // not be glued to surrounding inline text. Children (the ciphertext) are
+    // dropped by replacing the whole element.
+    const block = ownerDoc.createElement('p')
+    block.append(ownerDoc.createTextNode(CRYPT_SENTINEL))
+    crypt.replaceWith(block)
+  }
+  // Flatten nested tables inner-most first: once a nested table is replaced by
+  // text, its former parent may itself become a leaf nested table.
+  for (
+    let nested = findLeafNestedTable(root);
+    nested !== null;
+    nested = findLeafNestedTable(root)
+  ) {
+    nested.replaceWith(ownerDoc.createTextNode(flattenNestedTable(nested)))
+  }
+}
+
+/**
+ * Find a nested `<table>` (a descendant of a `<td>`/`<th>`) that contains no
+ * further nested table — a "leaf" — so {@link transformEnmlDom} can flatten
+ * from the inside out. Returns null when no nested table remains.
+ */
+function findLeafNestedTable(root: Element): Element | null {
+  for (const t of Array.from(root.querySelectorAll('td table, th table'))) {
+    if (t.querySelector('table') === null) return t
+  }
+  return null
+}
+
+/** Collapse a cell's text to one safe inline run: no newlines, no `|`. */
+function normalizeInlineCell(text: string): string {
+  // Collapse all whitespace (incl. newlines) to single spaces and neutralize
+  // `|` (which would otherwise open a spurious column in the OUTER pipe row).
+  return text.replace(/\s+/g, ' ').replace(/\|/g, '/').trim()
+}
+
+/**
+ * Flatten a nested `<table>` to a single-line string safe to drop inside an
+ * outer Markdown table cell: cells within a row joined by ` / `, rows joined by
+ * ` ; `. All data is preserved (no drop), just linearized — Markdown pipe
+ * tables can't nest, so this is the faithful-yet-valid representation.
+ */
+function flattenNestedTable(table: Element): string {
+  const rows: string[] = []
+  for (const tr of Array.from(table.querySelectorAll('tr'))) {
+    // Match cells by localName (case-insensitive): the ENML is parsed as XML
+    // and imported, so `tagName` is the lowercase `td`/`th`, not HTML's
+    // uppercased form.
+    const cells = Array.from(tr.children).filter((c) => {
+      const name = c.tagName.toLowerCase()
+      return name === 'td' || name === 'th'
+    })
+    const line = cells.map((c) => normalizeInlineCell(c.textContent ?? '')).join(' / ')
+    if (line.length > 0) rows.push(line)
+  }
+  return rows.join(' ; ')
 }
 
 /**
@@ -423,15 +511,27 @@ function enmlToMarkdown(
 
   const markdown = td.turndown(bodyHtml)
   // Swap the sentinels for real markdown post-conversion: media refs first,
-  // then the checkbox markers.
-  return markdown
-    .replace(
-      new RegExp(`${MEDIA_SENTINEL_OPEN}(\\d+)${MEDIA_SENTINEL_CLOSE}`, 'g'),
-      (_match, index: string) => mediaRefs[Number(index)] ?? '',
-    )
-    .replace(new RegExp(TODO_CHECKED_SENTINEL, 'g'), '- [x] ')
-    .replace(new RegExp(TODO_UNCHECKED_SENTINEL, 'g'), '- [ ] ')
-    .trim()
+  // then the encrypt callout, then the checkbox markers.
+  return (
+    markdown
+      .replace(
+        new RegExp(`${MEDIA_SENTINEL_OPEN}(\\d+)${MEDIA_SENTINEL_CLOSE}`, 'g'),
+        (_match, index: string) => mediaRefs[Number(index)] ?? '',
+      )
+      .replace(new RegExp(CRYPT_SENTINEL, 'g'), CRYPT_PLACEHOLDER)
+      // `<en-todo>` at the START of an `<li>` is a NATIVE task item, not a
+      // bullet wrapping a task: Turndown emits the list marker (`-` + spaces)
+      // and then the sentinel, so fold the two into one canonical `- [ ] `
+      // marker (Agaric's task parser needs exactly `- [ ]`, not `- - [ ]` nor
+      // `-   [ ]`). Leading indentation is preserved so nested task items stay
+      // nested. These run BEFORE the plain-sentinel swaps below, which then
+      // handle any `<en-todo>` outside a list (e.g. inside a `<div>`).
+      .replace(new RegExp(`^([ \\t]*)[-*][ \\t]+${TODO_CHECKED_SENTINEL}`, 'gm'), '$1- [x] ')
+      .replace(new RegExp(`^([ \\t]*)[-*][ \\t]+${TODO_UNCHECKED_SENTINEL}`, 'gm'), '$1- [ ] ')
+      .replace(new RegExp(TODO_CHECKED_SENTINEL, 'g'), '- [x] ')
+      .replace(new RegExp(TODO_UNCHECKED_SENTINEL, 'g'), '- [ ] ')
+      .trim()
+  )
 }
 
 /** XML-escape the `&`, `<`, `>` in a raw text run. */

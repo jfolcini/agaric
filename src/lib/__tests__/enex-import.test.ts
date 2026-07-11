@@ -7,6 +7,11 @@
  * timestamp epoch parsing (incl. null), and `<resource>`/`<en-media>`
  * attachment ingestion (#2513): base64 decode + MD5 hash-match + `en-media` →
  * `![](path)` rewrite, dangling-hash graceful fallback, and orphan resources.
+ *
+ * Advanced ENML fidelity (#2513, part 3): `<en-todo>` at the start of an `<li>`
+ * → native checkbox item, nested `<table>` flattened inline without corrupting
+ * the outer table, and `<en-crypt>` → a `> [!warning]` callout placeholder that
+ * never leaks the ciphertext.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -235,6 +240,98 @@ describe('parseEnex — <resource>/<en-media> attachments (#2513)', () => {
     const note = at(parseEnex(xml))
     expect(note.attachments).toHaveLength(0)
     expect(note.markdown).toContain('tail')
+  })
+})
+
+describe('parseEnex — advanced ENML fidelity (#2513)', () => {
+  it('renders <en-todo> at the start of an <li> as a native checkbox item', () => {
+    // A task list authored as `<li><en-todo/>text</li>` must become a native
+    // GFM task item (`- [ ] `/`- [x] `), NOT a bullet wrapping a task
+    // (`- - [ ] `) nor a wide-indented `-   [ ]` — Agaric's task parser needs
+    // exactly `- [ ]`.
+    const enml =
+      '<ul>' +
+      '<li><en-todo checked="false"/>pending</li>' +
+      '<li><en-todo checked="true"/>done</li>' +
+      '</ul>'
+    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
+
+    const note = at(parseEnex(xml))
+    expect(note.markdown).toContain('- [ ] pending')
+    expect(note.markdown).toContain('- [x] done')
+    // No bullet-wrapping-a-task and no over-indented marker.
+    expect(note.markdown).not.toContain('- - [')
+    expect(note.markdown).not.toContain('-   [')
+    // Each task is its own line — assert the whole body, exactly.
+    expect(note.markdown).toBe('- [ ] pending\n- [x] done')
+  })
+
+  it('still renders a standalone <en-todo> (outside a list) as a task line', () => {
+    // The <li> handling must not regress the div-wrapped form (existing test).
+    const enml = '<div><en-todo checked="true"/>Done thing</div>'
+    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
+
+    const note = at(parseEnex(xml))
+    expect(note.markdown).toBe('- [x] Done thing')
+  })
+
+  it('renders a nested <table> as inline text without corrupting the outer table', () => {
+    // GFM pipe tables cannot nest; the inner table is flattened to a single
+    // safe inline run inside the outer cell (cells by ` / `, rows by ` ; `) so
+    // the OUTER table structure stays valid and NO data is dropped.
+    const enml =
+      '<table><thead><tr><th>H1</th><th>H2</th></tr></thead><tbody>' +
+      '<tr><td>a</td><td>' +
+      '<table><thead><tr><th>N1</th><th>N2</th></tr></thead>' +
+      '<tbody><tr><td>x</td><td>y</td></tr></tbody></table>' +
+      '</td></tr></tbody></table>'
+    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
+
+    const note = at(parseEnex(xml))
+    const lines = note.markdown.split('\n').filter((l) => l.trim().length > 0)
+    // Outer table: header row, separator row, one data row — intact.
+    expect(lines[0]).toBe('| H1 | H2 |')
+    expect(lines[1]).toBe('| --- | --- |')
+    expect(lines[2]).toBe('| a | N1 / N2 ; x / y |')
+    // Exactly the three table lines — the nested table did not leak extra
+    // rows/pipes into the document.
+    expect(lines).toHaveLength(3)
+    // Every nested cell value survives (nothing dropped).
+    for (const value of ['N1', 'N2', 'x', 'y']) expect(note.markdown).toContain(value)
+  })
+
+  it('replaces an <en-crypt> block with a callout and never leaks the ciphertext', () => {
+    const cipher = 'U2FsdGVkX1SECRETCIPHERTEXT'
+    const enml = `<div>Before<en-crypt cipher="RC2" length="64" hint="a hint">${cipher}</en-crypt>After</div>`
+    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
+
+    const note = at(parseEnex(xml))
+    // A clear, non-destructive callout marker stands in for the encrypted block.
+    expect(note.markdown).toContain('> [!warning]')
+    expect(note.markdown.toLowerCase()).toContain('encrypted content')
+    // The ciphertext is NOT leaked and the raw `<en-crypt>` markup / its
+    // attributes never survive (the placeholder's descriptive prose may name
+    // "en-crypt", so we check for the tag and attribute markup specifically).
+    expect(note.markdown).not.toContain(cipher)
+    expect(note.markdown).not.toContain('<en-crypt')
+    expect(note.markdown).not.toContain('cipher=')
+    expect(note.markdown).not.toContain('a hint')
+    // Surrounding text is preserved around the placeholder.
+    expect(note.markdown).toContain('Before')
+    expect(note.markdown).toContain('After')
+  })
+
+  it('does not crash on malformed nested-fidelity ENML (empty en-crypt, empty nested table)', () => {
+    const enml =
+      '<div><en-crypt></en-crypt></div>' +
+      '<table><thead><tr><th>H</th></tr></thead><tbody>' +
+      '<tr><td><table></table></td></tr></tbody></table>'
+    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
+
+    // Graceful degradation: parses without throwing and still emits the callout.
+    expect(() => parseEnex(xml)).not.toThrow()
+    const note = at(parseEnex(xml))
+    expect(note.markdown).toContain('> [!warning]')
   })
 })
 
