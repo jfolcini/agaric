@@ -646,7 +646,17 @@ fn split_bibtex_authors(raw: &str, latex_kept_literal: &mut bool) -> Vec<String>
                     i = after;
                     continue;
                 }
+                // Collapse the whole whitespace run to a single space and jump
+                // to its end. Advancing by ONE char here instead would re-scan
+                // the same run on every iteration (the inner peek above rescans
+                // from `i` to the run's end each time) — O(n^2) on a long
+                // whitespace run in an `author` field, a pathological-input
+                // hang. The final `split_whitespace().join(" ")` normalizes
+                // runs to single spaces regardless, so collapsing here is
+                // behavior-preserving.
                 current.push(' ');
+                i = j;
+                continue;
             }
             _ => current.push(c),
         }
@@ -1301,5 +1311,87 @@ mod tests {
     fn parse_bibliography_rejects_empty_content() {
         let err = parse_bibliography("   ", BibliographyFormat::Bibtex).unwrap_err();
         assert!(err.to_string().contains("empty"), "{err}");
+    }
+
+    // -- adversarial / mangled input (must never panic or hang) --------------
+
+    #[test]
+    fn bibtex_mangled_inputs_never_panic() {
+        // Every entry must resolve to either Ok(..) or Err(Validation) — never
+        // a panic (arithmetic overflow, slice OOB) and never a non-terminating
+        // loop. Covers the resync-hard cases called out in review: unbalanced
+        // braces at EOF, a quote inside braces, `@{`, missing citation key,
+        // deep nesting, CRLF, and a trailing backslash mid-escape at EOF.
+        let cases = [
+            "",
+            "@",
+            "@@@@",
+            "@{",
+            "@{}",
+            "@article",
+            "@article{",
+            "@article{}",
+            "@article{,}",
+            "@article{key",
+            "@article{key,",
+            "@article{key, title",
+            "@article{key, title=",
+            "@article{key, title={",
+            "@article{key, title={}",
+            "@article{key, title=}",
+            "@article{key, title=,}",
+            "@article{, title={x}}",
+            "@article{key, title={{{{{{{{{{deep",
+            "@article{key, title={{{nested}}} }",
+            "@article{key, title=\"quote {inside} braces\"}",
+            "@article{key, title=\"never closed",
+            "@article{key, title={quote \" inside braces}}",
+            "@string{x = {y}}\r\n@article{k, title={t}}\r\n",
+            "@article{key, author={a and and b and }, year={x}}",
+            "@article{key, title={ends with backslash \\",
+            "@article{key, author={\\",
+            "\\",
+            "@comment",
+            "@preamble(",
+            "@article(paren, title={x})",
+            "@article{k, doi = 10.1/x # junk}",
+            "@article{k1, title={a}}@article{k1, title={b}}",
+        ];
+        for src in cases {
+            // BibTeX path.
+            let _ = parse_bibtex(src);
+            // Auto-detect + generic entry — also must not panic on either arm.
+            if let Ok(fmt) = detect_bibliography_format(src) {
+                let _ = parse_bibliography(src, fmt);
+            }
+        }
+    }
+
+    #[test]
+    fn bibtex_large_whitespace_author_is_linear_not_quadratic() {
+        // Regression guard for the O(n^2) whitespace-run rescan in
+        // `split_bibtex_authors`: a long run of spaces in an `author` value
+        // used to rescan the run once per char. 1 MB of spaces would take tens
+        // of seconds under the old code; linear scanning finishes instantly.
+        let mut src = String::from("@article{k, author={");
+        src.push_str(&" ".repeat(1_000_000));
+        src.push_str("Doe, Jane}, year={2020}}");
+        let out = parse_bibtex(&src).expect("must parse without hanging");
+        assert_eq!(out.entries.len(), 1);
+        // Leading whitespace collapses; the single real name survives.
+        assert_eq!(out.entries[0].authors, vec!["Doe, Jane"]);
+    }
+
+    #[test]
+    fn bibtex_large_single_entry_parses_linearly() {
+        // A ~4 MB single entry (large abstract) must parse in one pass without
+        // a quadratic scan. `line_at` is only called on warning/error paths,
+        // so the happy path stays O(n).
+        let mut src = String::from("@article{big, abstract={");
+        src.push_str(&"lorem ipsum dolor ".repeat(250_000)); // ~4.5 MB
+        src.push_str("}}");
+        let out = parse_bibtex(&src).expect("large entry must parse");
+        assert_eq!(out.entries.len(), 1);
+        assert!(out.entries[0].abstract_text.is_some());
     }
 }
