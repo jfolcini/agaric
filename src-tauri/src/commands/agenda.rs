@@ -26,6 +26,8 @@ use super::*;
 ///
 /// # Errors
 ///
+/// - [`AppError::Validation`] — `dates.len()` >
+///   [`crate::commands::MAX_BATCH_BLOCK_IDS`]
 /// - [`AppError::Validation`] — any date fails `YYYY-MM-DD` validation
 #[instrument(skip(pool, dates), err)]
 pub async fn count_agenda_batch_inner(
@@ -36,6 +38,7 @@ pub async fn count_agenda_batch_inner(
     if dates.is_empty() {
         return Ok(HashMap::new());
     }
+    crate::commands::ensure_batch_within_cap("dates", dates.len())?;
     // Validate all dates
     for d in &dates {
         validate_date_format(d)?;
@@ -92,6 +95,8 @@ pub async fn count_agenda_batch_inner(
 ///
 /// # Errors
 ///
+/// - [`AppError::Validation`] — `dates.len()` >
+///   [`crate::commands::MAX_BATCH_BLOCK_IDS`]
 /// - [`AppError::Validation`] — any date fails `YYYY-MM-DD` validation
 #[instrument(skip(pool, dates), err)]
 pub async fn count_agenda_batch_by_source_inner(
@@ -102,6 +107,7 @@ pub async fn count_agenda_batch_by_source_inner(
     if dates.is_empty() {
         return Ok(HashMap::new());
     }
+    crate::commands::ensure_batch_within_cap("dates", dates.len())?;
     for d in &dates {
         validate_date_format(d)?;
     }

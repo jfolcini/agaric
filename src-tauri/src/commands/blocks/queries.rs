@@ -273,9 +273,12 @@ pub async fn get_active_block_inner(
 /// the "unknown id" branch in the frontend and render as broken-link
 /// Chips via the existing UX.
 ///
+/// Empty `ids` returns an empty `Vec` (not an error), matching the
+/// bulk-read convention across the `*_by_ids` family (bulk reads return
+/// empty; only bulk writes reject empty).
+///
 /// # Errors
 ///
-/// - [`AppError::Validation`] — `ids` is empty
 /// - [`AppError::Validation`] — `ids.len()` >
 ///   [`crate::commands::MAX_BATCH_BLOCK_IDS`]
 ///
@@ -294,7 +297,7 @@ pub async fn batch_resolve_inner(
     scope: &SpaceScope,
 ) -> Result<Vec<ResolvedBlock>, AppError> {
     if ids.is_empty() {
-        return Err(AppError::validation("ids list cannot be empty".into()));
+        return Ok(Vec::new());
     }
     crate::commands::ensure_batch_within_cap("ids", ids.len())?;
 
@@ -637,8 +640,9 @@ pub async fn first_child_for_blocks(
 ///      included so the caller sees the full state for any consumer
 ///      that intentionally wants to surface tombstoned rows.
 ///
-/// Empty input rejects with [`AppError::Validation`] (mirrors
-/// [`batch_resolve_inner`]). Above [`crate::commands::MAX_BATCH_BLOCK_IDS`]
+/// Empty input returns an empty `Vec` (not an error, mirrors
+/// [`batch_resolve_inner`] and the bulk-read convention across the
+/// `*_by_ids` family). Above [`crate::commands::MAX_BATCH_BLOCK_IDS`]
 /// entries rejects with [`AppError::Validation`] (mirrors every other
 /// batch boundary in this surface).
 ///
@@ -649,7 +653,6 @@ pub async fn first_child_for_blocks(
 ///
 /// # Errors
 ///
-/// - [`AppError::Validation`] — `ids` is empty
 /// - [`AppError::Validation`] — `ids.len()` >
 ///   [`crate::commands::MAX_BATCH_BLOCK_IDS`]
 #[instrument(skip(pool, ids), err)]
@@ -658,7 +661,7 @@ pub async fn get_blocks_inner(
     ids: Vec<BlockId>,
 ) -> Result<Vec<BlockRow>, AppError> {
     if ids.is_empty() {
-        return Err(AppError::validation("ids list cannot be empty".into()));
+        return Ok(Vec::new());
     }
     crate::commands::ensure_batch_within_cap("ids", ids.len())?;
     // #107: re-derive owned String form for the JSON membership probe below.

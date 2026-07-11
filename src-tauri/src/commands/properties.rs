@@ -1290,18 +1290,22 @@ pub async fn delete_property_def_inner(pool: &SqlitePool, key: String) -> Result
 /// Uses `json_each()` so the full ID list is passed as a single JSON-encoded
 /// bind parameter — no dynamic SQL construction.
 ///
+/// Empty `block_ids` returns an empty map (not an error), matching the
+/// bulk-read convention across the `*_by_ids` family (bulk reads return
+/// empty; only bulk writes reject empty).
+///
 /// # Errors
-/// - [`AppError::Validation`] — `block_ids` is empty
+/// - [`AppError::Validation`] — `block_ids.len()` >
+///   [`crate::commands::MAX_BATCH_BLOCK_IDS`]
 #[instrument(skip(pool, block_ids), err)]
 pub async fn get_batch_properties_inner(
     pool: &SqlitePool,
     block_ids: Vec<BlockId>,
 ) -> Result<HashMap<String, Vec<PropertyRow>>, AppError> {
     if block_ids.is_empty() {
-        return Err(AppError::validation(
-            "block_ids list cannot be empty".into(),
-        ));
+        return Ok(HashMap::new());
     }
+    crate::commands::ensure_batch_within_cap("block_ids", block_ids.len())?;
 
     // `json_each(?)` binds a JSON array of the canonical id strings;
     // `BlockId` already holds the normalised uppercase form.

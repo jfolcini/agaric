@@ -645,6 +645,8 @@ pub async fn list_attachments_inner(
 ///
 /// # Errors
 ///
+/// - [`AppError::Validation`] — `block_ids.len()` >
+///   [`crate::commands::MAX_BATCH_BLOCK_IDS`]
 /// - [`AppError::Database`] — on query failure
 #[instrument(skip(pool, block_ids), err)]
 pub async fn list_attachments_batch_inner(
@@ -654,6 +656,7 @@ pub async fn list_attachments_batch_inner(
     if block_ids.is_empty() {
         return Ok(std::collections::HashMap::new());
     }
+    crate::commands::ensure_batch_within_cap("block_ids", block_ids.len())?;
 
     let ids_json = serde_json::to_string(&block_ids)?;
 
