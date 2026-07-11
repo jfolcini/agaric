@@ -1163,6 +1163,16 @@ impl Materializer {
             total_ops_in_log,
             sync_peer_failure_counts,
             retry_queue_pending,
+            // #2509: surface the persistent-enqueue-by-class + backoff-tier
+            // counters so "is the durable retry tier earning its keep?" is
+            // answerable from field telemetry rather than code-reachability.
+            retry_persist_apply_op: self.metrics.retry_persist_apply_op.load(Ordering::Relaxed),
+            retry_persist_cache: self.metrics.retry_persist_cache.load(Ordering::Relaxed),
+            retry_persist_cache_global: self
+                .metrics
+                .retry_persist_cache_global
+                .load(Ordering::Relaxed),
+            retry_persist_capped: self.metrics.retry_persist_capped.load(Ordering::Relaxed),
             // #1326: surface the SQL-only fallback observability counter
             // (process-global, monotonic) through the status endpoint.
             sql_only_fallback_count: super::handlers::sql_only_fallback::count(),
