@@ -3600,6 +3600,36 @@ export type StatusInfo = {
 	 */
 	retry_queue_pending: number | null,
 	/**
+	 *  #2509: persistent-enqueue events of the `ApplyOp` **correctness**
+	 *  class since process start (fresh INSERT + every escalating UPSERT).
+	 *  The signal that the durable tier is protecting a real primary-state
+	 *  write, not just cache freshness — expected to track boots with a
+	 *  nonempty prior session. Pair with `retry_persist_cache` to answer
+	 *  "is the persistent retry queue earning its keep?" (#2509 measure-item
+	 *  1): correctness churn here vs. cache churn there.
+	 */
+	retry_persist_apply_op: number,
+	/**
+	 *  #2509: persistent-enqueue events of the idempotent **cache-rebuild**
+	 *  class (per-block + global) since process start. This is the class
+	 *  #2509 proposes could move to "mark dirty, rebuild on next boot/idle
+	 *  tick"; a near-zero field value is the evidence that would sanction
+	 *  retiring the persistent tier for caches.
+	 */
+	retry_persist_cache: number,
+	/**
+	 *  #2509: subset of `retry_persist_cache` attributable to **global**
+	 *  cache rebuilds (`'__GLOBAL__'` sentinel).
+	 */
+	retry_persist_cache_global: number,
+	/**
+	 *  #2509: persistent-enqueue events that reached the **1h backoff-cap**
+	 *  tier (`attempts >= 4`). #2509 measure-item 2: if this stays ~0 in the
+	 *  field, no failure mode ever exercises the deep backoff schedule and
+	 *  the next boot's reconcile would have covered the same ground.
+	 */
+	retry_persist_capped: number,
+	/**
 	 *  #1326 / #1057: process-global count of SQL-only fallbacks taken by
 	 *  the `apply_*_via_loro` handlers (Loro engine uninitialised or block
 	 *  space unresolved). Monotonic, never reset. **In production both

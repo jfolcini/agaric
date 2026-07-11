@@ -154,6 +154,89 @@ pub struct QueueMetrics {
     /// real `COUNT(*)` at sweeper boot and thereafter maintained
     /// incrementally by `note_retry_row_inserted` / `note_retry_rows_deleted`.
     pub pending_retry_rows: AtomicU64,
+    /// #2509: count of persistent-enqueue events (calls to
+    /// [`super::retry_queue::record_failure`] that landed a row) whose task
+    /// was the `ApplyOp` **correctness** class — a failed primary-state
+    /// application, keyed by `(device_id, seq)`. Bumped on every reach of
+    /// the persistent queue for this class (fresh INSERT *and* every
+    /// escalating UPSERT), so it measures churn, not distinct ops.
+    ///
+    /// This is the counter that answers issue #2509's measure-item 1 for
+    /// the class the investigation found is *not* disposable: if this rises
+    /// with boots (as `recovery/replay.rs` re-enqueues un-cursor-advanced
+    /// local ops) while [`Self::retry_persist_cache`] stays ~0, the durable
+    /// tier is earning its keep for correctness, not staleness.
+    pub retry_persist_apply_op: AtomicU64,
+    /// #2509: count of persistent-enqueue events whose task was a
+    /// **cache-rebuild** class (per-block `UpdateFtsBlock` /
+    /// `ReindexBlockLinks` / `ReindexBlockTagRefs` / `RefreshTagUsageCount`,
+    /// or any global `Rebuild*`/`RebuildPageIds`/`SetBlockPageId`). These
+    /// are the idempotent, boot-reconcilable caches the issue proposes
+    /// could move to a "mark dirty, rebuild on next boot/idle tick" shape.
+    /// A near-zero value in the field is the evidence that would sanction
+    /// retiring the persistent tier for this class; a nonzero value bounds
+    /// what a simpler shape would have to keep covering.
+    pub retry_persist_cache: AtomicU64,
+    /// #2509: subset of [`Self::retry_persist_cache`] attributable to
+    /// **global** cache rebuilds (persisted under the `'__GLOBAL__'`
+    /// sentinel). Separated because global rebuilds are the most expensive
+    /// to re-run; a per-block reindex backlog (large `retry_persist_cache`,
+    /// small `retry_persist_cache_global`) is a different signal from a
+    /// global-cache freshness gap (the two move together).
+    pub retry_persist_cache_global: AtomicU64,
+    /// #2509: count of persistent-enqueue events that reached the **1h
+    /// backoff cap** tier (`attempts >= 4`, see
+    /// [`super::retry_queue::backoff_delay_for`]). This is the counter for
+    /// issue #2509's measure-item 2 — "is the 1h-max-backoff path ever the
+    /// thing that saves a user, vs. the next boot doing it anyway?" If this
+    /// stays ~0 in the field, nothing ever escalates past the first couple
+    /// of short retries, and the deep backoff schedule is machinery no
+    /// failure mode actually exercises.
+    pub retry_persist_capped: AtomicU64,
+}
+
+/// #2509: classification of a persistent retry-queue enqueue, so the
+/// telemetry can distinguish the two structurally different payload
+/// classes the queue carries (see `docs/architecture/data-and-events.md`
+/// § "Durable retry: correctness vs. staleness (#2509)").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetryPersistClass {
+    /// A failed primary-state application (`ApplyOp`) — the correctness
+    /// backstop class, exercised on every boot's replay of un-cursor-advanced
+    /// local ops. Loss silently drops a user's write, not a cache entry.
+    ApplyOp,
+    /// A per-block idempotent cache rebuild (`UpdateFtsBlock`, etc.).
+    CachePerBlock,
+    /// A global cache rebuild (`RebuildTagsCache`, etc.) persisted under
+    /// the `'__GLOBAL__'` sentinel.
+    CacheGlobal,
+}
+
+impl QueueMetrics {
+    /// #2509: record one persistent-enqueue event on the class + backoff-tier
+    /// counters. Called from [`super::retry_queue::record_failure`] after the
+    /// row is durably written, with the post-increment `attempts` returned by
+    /// the UPSERT (so the tier reflects the row's current backoff step).
+    pub fn note_persistent_enqueue(&self, class: RetryPersistClass, attempts: i64) {
+        match class {
+            RetryPersistClass::ApplyOp => {
+                self.retry_persist_apply_op.fetch_add(1, Ordering::Relaxed);
+            }
+            RetryPersistClass::CachePerBlock => {
+                self.retry_persist_cache.fetch_add(1, Ordering::Relaxed);
+            }
+            RetryPersistClass::CacheGlobal => {
+                self.retry_persist_cache.fetch_add(1, Ordering::Relaxed);
+                self.retry_persist_cache_global
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        // attempts >= 4 is the `backoff_delay_for` 1h-cap tier — the deepest
+        // rung of the schedule, and measure-item 2's signal.
+        if attempts >= 4 {
+            self.retry_persist_capped.fetch_add(1, Ordering::Relaxed);
+        }
+    }
 }
 
 impl QueueMetrics {
@@ -236,6 +319,10 @@ impl Default for QueueMetrics {
             retry_queue_giveup_total: AtomicU64::new(0),
             last_materialize_ms: AtomicU64::new(0),
             pending_retry_rows: AtomicU64::new(0),
+            retry_persist_apply_op: AtomicU64::new(0),
+            retry_persist_cache: AtomicU64::new(0),
+            retry_persist_cache_global: AtomicU64::new(0),
+            retry_persist_capped: AtomicU64::new(0),
         }
     }
 }
@@ -334,6 +421,28 @@ pub struct StatusInfo {
     /// Number of rows currently queued in `materializer_retry_queue` —
     /// per-block tasks waiting for their next retry window.
     pub retry_queue_pending: Option<i64>,
+    /// #2509: persistent-enqueue events of the `ApplyOp` **correctness**
+    /// class since process start (fresh INSERT + every escalating UPSERT).
+    /// The signal that the durable tier is protecting a real primary-state
+    /// write, not just cache freshness — expected to track boots with a
+    /// nonempty prior session. Pair with `retry_persist_cache` to answer
+    /// "is the persistent retry queue earning its keep?" (#2509 measure-item
+    /// 1): correctness churn here vs. cache churn there.
+    pub retry_persist_apply_op: u64,
+    /// #2509: persistent-enqueue events of the idempotent **cache-rebuild**
+    /// class (per-block + global) since process start. This is the class
+    /// #2509 proposes could move to "mark dirty, rebuild on next boot/idle
+    /// tick"; a near-zero field value is the evidence that would sanction
+    /// retiring the persistent tier for caches.
+    pub retry_persist_cache: u64,
+    /// #2509: subset of `retry_persist_cache` attributable to **global**
+    /// cache rebuilds (`'__GLOBAL__'` sentinel).
+    pub retry_persist_cache_global: u64,
+    /// #2509: persistent-enqueue events that reached the **1h backoff-cap**
+    /// tier (`attempts >= 4`). #2509 measure-item 2: if this stays ~0 in the
+    /// field, no failure mode ever exercises the deep backoff schedule and
+    /// the next boot's reconcile would have covered the same ground.
+    pub retry_persist_capped: u64,
     /// #1326 / #1057: process-global count of SQL-only fallbacks taken by
     /// the `apply_*_via_loro` handlers (Loro engine uninitialised or block
     /// space unresolved). Monotonic, never reset. **In production both

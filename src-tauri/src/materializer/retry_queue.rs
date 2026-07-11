@@ -465,11 +465,29 @@ pub(crate) async fn record_failure(
         metrics.note_retry_row_inserted();
     }
 
+    // #2509: classify this persistent-enqueue event so the field can answer
+    // "is the durable tier earning its keep?" — the `ApplyOp` correctness
+    // class (durable retry protects a primary-state write the next boot's
+    // MAX-cursor replay could permanently strand) vs. the idempotent
+    // cache-rebuild class (the "mark dirty, rebuild on boot/idle" candidate).
+    // Recorded on every reach (INSERT + escalating UPSERT); `row.attempts`
+    // carries the backoff tier so measure-item 2 (does the 1h cap ever fire)
+    // is answerable from `retry_persist_capped`.
+    let persist_class = if matches!(kind, RetryKind::ApplyOp { .. }) {
+        super::metrics::RetryPersistClass::ApplyOp
+    } else if kind.is_global() {
+        super::metrics::RetryPersistClass::CacheGlobal
+    } else {
+        super::metrics::RetryPersistClass::CachePerBlock
+    };
+    metrics.note_persistent_enqueue(persist_class, row.attempts);
+
     tracing::warn!(
         block_id = %block_id,
         task_kind = kind_str,
         attempts = row.attempts,
         next_attempt_at = %row.next_attempt_at,
+        persist_class = ?persist_class,
         "persisted failed background task to retry queue"
     );
     Ok(())
@@ -1527,6 +1545,131 @@ mod tests {
             row.last_error.as_deref(),
             Some("err3"),
             "last_error must be overwritten with the most recent message"
+        );
+    }
+
+    /// #2509: every persistent-enqueue event is classified onto the
+    /// per-class + backoff-tier telemetry counters so the field can answer
+    /// "is the durable retry tier earning its keep?" without guessing. This
+    /// pins the wiring end-to-end through `record_failure`:
+    ///   - a per-block cache task bumps `retry_persist_cache` only,
+    ///   - a global cache task bumps `retry_persist_cache` AND
+    ///     `retry_persist_cache_global`,
+    ///   - an `ApplyOp` (correctness class) bumps `retry_persist_apply_op`
+    ///     and leaves the cache counters untouched,
+    ///   - repeated failures of one task escalate `attempts`, and only once
+    ///     the row reaches the 1h-cap tier (`attempts >= 4`) does
+    ///     `retry_persist_capped` bump — measure-item 2's signal.
+    #[tokio::test]
+    async fn record_failure_classifies_persistent_enqueue_telemetry_2509() {
+        use crate::op_log::OpRecord;
+        let (pool, _dir) = test_pool().await;
+        let metrics = test_metrics();
+
+        // --- Per-block cache class ---
+        let per_block = MaterializeTask::UpdateFtsBlock {
+            block_id: "BLK_2509".into(),
+        };
+        record_failure(&pool, &per_block, "boom", &metrics)
+            .await
+            .unwrap();
+        assert_eq!(
+            metrics
+                .retry_persist_cache
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "a per-block cache task must bump retry_persist_cache",
+        );
+        assert_eq!(
+            metrics
+                .retry_persist_cache_global
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "a per-block task is not global",
+        );
+        assert_eq!(
+            metrics
+                .retry_persist_apply_op
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "a cache task must not bump the correctness-class counter",
+        );
+
+        // --- Global cache class ---
+        record_failure(&pool, &MaterializeTask::RebuildTagsCache, "boom", &metrics)
+            .await
+            .unwrap();
+        assert_eq!(
+            metrics
+                .retry_persist_cache
+                .load(std::sync::atomic::Ordering::Relaxed),
+            2,
+            "a global cache task also counts toward retry_persist_cache",
+        );
+        assert_eq!(
+            metrics
+                .retry_persist_cache_global
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "a global cache task must additionally bump retry_persist_cache_global",
+        );
+
+        // --- ApplyOp correctness class ---
+        let record = OpRecord {
+            device_id: "dev-2509".into(),
+            seq: 7,
+            parent_seqs: None,
+            hash: "beef".into(),
+            op_type: "create_block".into(),
+            payload: "{}".into(),
+            created_at: 1_736_942_400_000,
+            block_id: None,
+        };
+        record_failure(
+            &pool,
+            &MaterializeTask::ApplyOp(Arc::new(record)),
+            "boom",
+            &metrics,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            metrics
+                .retry_persist_apply_op
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "an ApplyOp failure must bump the correctness-class counter",
+        );
+        assert_eq!(
+            metrics
+                .retry_persist_cache
+                .load(std::sync::atomic::Ordering::Relaxed),
+            2,
+            "an ApplyOp failure must not pollute the cache-class counter",
+        );
+
+        // --- Backoff-cap tier: only fires at attempts >= 4 ---
+        assert_eq!(
+            metrics
+                .retry_persist_capped
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "no single-failure task has reached the 1h cap yet",
+        );
+        // Fail the same per-block task until it escalates to the cap tier.
+        // First failure above landed attempts=1; three more reach attempts=4.
+        for _ in 0..3 {
+            record_failure(&pool, &per_block, "boom", &metrics)
+                .await
+                .unwrap();
+        }
+        let capped = metrics
+            .retry_persist_capped
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(
+            capped, 1,
+            "retry_persist_capped must bump exactly once when the row first \
+             reaches attempts >= 4 (the 1h backoff cap)",
         );
     }
 

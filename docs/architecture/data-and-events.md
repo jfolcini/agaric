@@ -206,6 +206,48 @@ One correction to the "reconciled at boot anyway" premise for class (1): `recove
 
 **Conclusion:** the persistent tier is not uniformly disposable. Class (2) (`ApplyOp`/`BatchApplyOps`) is load-bearing for correctness and structurally exercised on every boot with un-replayed local ops; class (1) (the cache rebuilds) is durability/staleness machinery whose removal is not obviously safe today because no general "rebuild on next boot" path exists to fall back on. See #2509 for the full investigation; #2471 surfaced `bg_dropped` in the Status view (above) and left the manual-flush command and per-surface FTS banner as optional future affordances. `fg_apply_dropped`/`fg_apply_dropped_persisted` — the class-(2) correctness counters — remain unsurfaced in the UI.
 
+#### Per-`task_kind` classification (the retirement decision, task by task)
+
+Every `RetryKind` that `record_failure` can persist, classified by whether its durable retry is load-bearing for **correctness** (a boot-rebuild would not recover it) or only bounds cache **staleness** (a "mark dirty, rebuild on boot/idle" shape could subsume it). Persisted `block_id` shape and the `retry_queue.rs` evidence are noted so a future retirement PR can act per-kind rather than all-or-nothing:
+
+| `task_kind` | `block_id` shape | class | boot-rebuild would recover it? |
+| --- | --- | --- | --- |
+| `ApplyOp:<seq>:<device_id>` | `'__APPLY_OP__'` | **correctness** | **No** — `advance_apply_cursor`'s `MAX(materialized_through_seq, seq)` (`handlers/apply.rs`) can strand op *N* forever once *N+1* advances the cursor; the persisted row is the only surviving record. Purge/edit-supersession guards (`retry_queue.rs` `SupersededBy*`) exist to make the late re-apply safe. |
+| `UpdateFtsBlock` | real `block_id` | pure-cache | Yes — idempotent FTS reindex from `blocks`; but only if a general boot reconcile existed (it does not today; `cache_refresh.rs` covers draft-recovered ids only). |
+| `ReindexBlockLinks` | real `block_id` | pure-cache | Yes (same caveat). |
+| `ReindexBlockTagRefs` | real `block_id` | pure-cache | Yes (same caveat). |
+| `RefreshTagUsageCount` | `tag_id` | pure-cache | Yes (same caveat). |
+| `RebuildTagsCache` | `'__GLOBAL__'` | pure-cache | Yes (same caveat). |
+| `RebuildPagesCache` | `'__GLOBAL__'` | pure-cache | Yes (same caveat). |
+| `RebuildPagesCacheCounts` | `'__GLOBAL__'` | pure-cache | Yes (same caveat). |
+| `RebuildAgendaCache` | `'__GLOBAL__'` | pure-cache | Yes (same caveat). |
+| `RebuildProjectedAgendaCache` | `'__GLOBAL__'` | pure-cache | Yes (same caveat). |
+| `RebuildTagInheritanceCache` | `'__GLOBAL__'` | pure-cache | Yes (same caveat). |
+| `RebuildPageIds` | `'__GLOBAL__'` | pure-cache | Yes (same caveat). |
+| `SetBlockPageId` | real `block_id` | pure-cache | Yes (same caveat). |
+| `RebuildBlockTagRefsCache` | `'__GLOBAL__'` | pure-cache | Yes (same caveat). |
+| `RebuildPageLinkCache` | `'__GLOBAL__'` | pure-cache | Yes (same caveat). |
+
+Rebuild-order dependencies the issue flagged for correctness (measure-item 3, e.g. `page_ids` before agenda) are enforced by the materializer's **dispatch/dedup** layer, not by retry-queue persistence — that ordering is orthogonal to whether a *failed instance* of a rebuild gets a durable retry, so it does not, on its own, keep the persistent tier alive for class (1).
+
+#### Instrumentation added by #2509 (measure before removing)
+
+The prior investigation could not produce field numbers; #2528 was docs-only. #2509 adds the counters that make measure-items 1 and 2 answerable **in production**, classified so the retirement decision is data-driven rather than by-inspection. Every persistent enqueue funnels through `record_failure`, which now calls `QueueMetrics::note_persistent_enqueue(class, attempts)` and surfaces four new `StatusInfo` fields (`materializer/metrics.rs`, wired through `coordinator.rs::status_with_scheduler`):
+
+- `retry_persist_apply_op` — reaches of the **correctness** class. Expected to track boots with a nonempty prior session (replay re-enqueues un-cursor-advanced local ops). A field value that scales with restarts *confirms* the class-(2) design rather than indicting it.
+- `retry_persist_cache` — reaches of the **pure-cache** class (per-block + global). **This is the retirement gauge.** If it stays ≈0 outside pool-exhaustion storms, class (1)'s persistent tier is protecting a failure mode that almost never happens, and the simpler "mark dirty, rebuild on boot/idle" shape becomes defensible — *once the general boot-reconcile pass it depends on actually exists*.
+- `retry_persist_cache_global` — subset of the above attributable to global `'__GLOBAL__'` rebuilds (the most expensive to re-run; distinguishes a per-block reindex backlog from a global-cache freshness gap).
+- `retry_persist_capped` — reaches that escalated to the **1h backoff-cap tier** (`attempts >= 4`). Measure-item 2 directly: if this stays ≈0, no failure mode ever exercises the deep backoff schedule, and the next boot would have covered the same ground — evidence that the multi-tier backoff is machinery in excess of the failure it guards.
+
+Each counter is bumped on *every* reach (fresh INSERT and every escalating UPSERT), so they measure churn, not distinct rows; the `persist_class` is also emitted on the existing `record_failure` warn line for per-event triage. These are process-global monotonic counters on the same path #2471 uses for `bg_dropped`; surfacing them in the Status view is left to that frontend work, consistent with the counters above.
+
+#### Recommendation (reasoned, telemetry-gated)
+
+**Keep the persistent tier as-is for now; do not remove anything in this issue.** Grounded in the code, not vibes:
+
+1. **Class (2) (`ApplyOp`) — keep, design vindicated.** Its loss is a dropped *user write*, not a stale cache, and it is exercised on *every* boot with un-replayed local ops (`recovery/replay.rs`), not just in storms. Durable retry here protects something boot-rebuild structurally cannot (the `MAX`-cursor strand). No plausible telemetry retires this.
+2. **Class (1) (the cache rebuilds) — a candidate for the simpler mark-dirty/boot-rebuild shape, but blocked on two preconditions, not sanctioned yet.** The reduced shape would be: on cache-handler failure or shed, mark the affected entity dirty (or rely on the existing `pending_retry_rows` gauge as a "something is stale" flag) and rebuild on the next boot/idle tick — deleting the 1m→1h backoff schedule, the `(block_id, task_kind)` coalescing, and the `'__GLOBAL__'` sentinel machinery for these kinds only. That is safe **only if both**: (a) the new `retry_persist_cache` / `retry_persist_capped` field data shows class-(1) reaches are ≈0 and effectively never escalate to the cap (else the simpler shape trades a bounded ≤1h staleness window for an unbounded one); **and** (b) a *general* boot/idle cache-reconciliation pass is built first — today `recovery/cache_refresh.rs` only covers draft-recovered block ids, so "next boot fixes it" is not currently true. Executing that removal is an explicit **telemetry-gated follow-up** (track under #2509 / a new issue), not part of this change.
+
 ### Crash recovery (boot)
 
 Four steps, runs once per process (guarded by `AtomicBool`):
