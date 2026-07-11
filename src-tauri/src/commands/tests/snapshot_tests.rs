@@ -95,6 +95,25 @@ async fn snapshot_list_blocks_response() {
 // ======================================================================
 
 /// Snapshot a StatusInfo from get_status_inner.
+///
+/// #2582: this test runs on a `multi_thread` runtime (2 workers), so
+/// `flush_background()`'s `notify.notified().await` can resume on a
+/// *different* OS thread than the background consumer that calls
+/// `notify_one()`. Under `cargo llvm-cov nextest`'s much heavier per-line
+/// instrumentation this test flipped deterministically-in-nextest but
+/// flaky-under-coverage on `total_background_dispatched` (the
+/// `bg_processed` counter): `process_single_foreground_task`'s Barrier arm
+/// (consumer.rs) previously called `notify.notify_one()` *before*
+/// `metrics.fg_processed.fetch_add(..)`, the same "wake before the count
+/// lands" ordering bug fixed for `bg_high_water` in #2570 (sample
+/// occupancy before `send`, not after). Fixed by reordering the fg Barrier
+/// arm to increment before notifying; the bg Barrier arm (`run_background`)
+/// was audited and already deferred its `notify_one()` until after every
+/// `bg_processed` bump in the drained batch (see the comment there), so it
+/// needed no change. The `assert_eq!`s below pin both barrier-count fields
+/// explicitly — nextest captures assert messages even when insta's diff
+/// output gets lost in CI logs, so a regression under llvm-cov names the
+/// exact field instead of just failing the snapshot.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn snapshot_status_info_response() {
     let (pool, _dir) = test_pool().await;
@@ -105,6 +124,26 @@ async fn snapshot_status_info_response() {
     mat.flush_background().await.unwrap();
 
     let status = get_status_inner(&mat, None).await;
+
+    // #2582 belt-and-suspenders: pin the two barrier-driven processed
+    // counters by name before the broader snapshot assertion runs.
+    assert_eq!(
+        status.total_background_dispatched, 1,
+        "total_background_dispatched (bg_processed) must count exactly the \
+         flush_background() barrier task itself by the time notify_one() \
+         wakes the waiter — see consumer.rs::run_background's deferred \
+         pending_barriers notify, which fires only after every bg_processed \
+         fetch_add in the drained batch has landed"
+    );
+    assert_eq!(
+        status.total_ops_dispatched, 0,
+        "total_ops_dispatched (fg_processed) must stay 0 in this bg-only \
+         flush test — no foreground task is ever enqueued here, so a \
+         non-zero value would indicate cross-queue contamination, not the \
+         #2582 notify/increment-ordering race (that race lives in \
+         consumer.rs::process_single_foreground_task's Barrier arm, fixed by \
+         incrementing fg_processed before notify_one())"
+    );
 
     insta::assert_yaml_snapshot!(status, {
         ".last_materialize_at" => "[TIMESTAMP]",

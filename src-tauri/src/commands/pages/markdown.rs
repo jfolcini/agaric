@@ -1582,7 +1582,9 @@ pub async fn import_markdown_with_progress(
         // #2510 — the `^block-id` sub-anchor id, when this is an Obsidian
         // BLOCK anchor (as opposed to a heading anchor).
         let block_anchor_id = anchor.and_then(obsidian_block_anchor_id);
-        if anchor.is_some() && base.is_empty() {
+        if let Some(anchor) = anchor
+            && base.is_empty()
+        {
             if let Some(block_id) = block_anchor_id {
                 // #2510 — intra-note block anchor (`[[#^blockId]]`): the
                 // implicit target page IS the page being imported. Defer
@@ -1602,7 +1604,7 @@ pub async fn import_markdown_with_progress(
             // literal behavior (`empty_base = true`), so this is not a
             // regression: a `[[#Heading]]` with no matching heading in the
             // document still ends up literal + warned.
-            let norm = normalize_heading_anchor(anchor.expect("anchor.is_some() in this branch"));
+            let norm = normalize_heading_anchor(anchor);
             pending_heading_anchor_links.insert(
                 name,
                 PendingHeading {
