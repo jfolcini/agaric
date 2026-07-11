@@ -91,6 +91,12 @@ Two-tier:
 - **In-editor undo**: ProseMirror history. Scoped to one edit session. Survives only until the editor unmounts.
 - **Page-level undo**: `UndoStore` over the op log. Reversed via `src-tauri/src/reverse/` (one reverse-op per source op type; see table below). Coalesces consecutive ops within `UNDO_GROUP_WINDOW_MS`; redo stack capped at `MAX_REDO_STACK`. Both constants live in `src/stores/undo.ts`.
 
+### Addressing model (#2468)
+
+Page-level undo is **op-ref addressed**: each mutating command returns the `OpRef`s it produced (`WithOps<T> = T & { op_refs: OpRef[] }`, captured backend-side via the `LAST_APPEND` task-local, so the refs are exactly this invocation's appends — never "latest"). `UndoStore` entries carry those refs; Ctrl+Z submits them to `undo_op` (single) or `undo_ops` (coalesced group, one atomic transaction, `NonReversible` aborts the whole set). This kills the positional-offset race class (#2446): an op appended between the user's intent and the IPC cannot shift the target. The backend verifies each ref in-transaction — local (`is_replicated = 0`, the #2481 implicit-undo scoping: replicated foreign ops are only revertible through the explicit History-view `revert_ops` path), forward (`is_undo = 0`), and not already reversed (via `op_log.reverses_device_id/reverses_seq` provenance, migration 0101; a target is "currently reversed" while an unreversed reverse of it exists, so undo→redo→undo cycles stay legal).
+
+The **positional** path (`undo_page_op` / `undo_page_group`, `LIMIT 1 OFFSET undoDepth` — the documented invariant-#3 carve-out) survives as the fallback for flows whose commands don't yet surface refs (`move_blocks_batch`, `create_blocks_batch`) and for history predating ref tracking; `undoDepth` is display/fallback state only. Redo is unchanged: the redo stack already held refs, and a redone group's `new_op_ref`s are pushed back as one ref entry.
+
 Reverse-op table (canonical):
 
 | Source op | Reverse op |
