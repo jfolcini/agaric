@@ -15,12 +15,46 @@
  * folder→namespace, and YAML frontmatter, so we only PRODUCE markdown here and
  * never reimplement any of that.
  *
- * DEFERRED (follow-up): `<resource>` / `<en-media>` attachment ingestion,
- * Joplin `.jex`, and advanced ENML fidelity (nested tables, encrypted blocks).
+ * ATTACHMENTS (#2513, part 1): ENEX embeds attachments as base64 `<resource>`
+ * blocks referenced from the note body by `<en-media hash=… type=…/>`, where
+ * `hash` is the lowercase MD5 hex of the resource's raw (decoded) bytes. We
+ * decode each `<resource>`, index them by that MD5, match `en-media` refs to
+ * resources, rewrite each matched ref to a standard markdown image embed
+ * (`![](path)`) and hand the bytes back on {@link EnexNote.attachments}. The
+ * caller ships those as `importMarkdown`'s `vaultFiles` — the SAME
+ * vault-attachment path a folder import uses — so the backend ingests the
+ * bytes and canonicalizes the ref to `attachment:<id>`. An `en-media` whose
+ * hash matches no resource is dropped (graceful, no crash); a resource nobody
+ * references is simply never shipped.
+ *
+ * DEFERRED (follow-up, still open on #2513): Joplin `.jex` import (part 2) and
+ * advanced ENML fidelity — nested tables, encrypted blocks, `<en-todo>` inside
+ * `<li>` (part 3).
  */
 
 import TurndownService from 'turndown'
 import { gfm } from 'turndown-plugin-gfm'
+
+/**
+ * One decoded, referenced `<resource>` attachment for a note (#2513). Only
+ * resources actually referenced by an `<en-media>` in the body are surfaced —
+ * `path` matches the markdown ref emitted into {@link EnexNote.markdown}, and
+ * `bytes` are the raw decoded resource bytes. The caller ships these as
+ * `importMarkdown`'s `vaultFiles` (`{ path, bytes }`), which the backend
+ * matches against the ref and ingests via `add_attachment_with_bytes`.
+ */
+export interface EnexAttachment {
+  /**
+   * Vault-relative path used both as the markdown embed target and the
+   * shipped `VaultFile.path`, so the backend matches them (relative-path
+   * equality, then basename — see `match_vault_file`).
+   */
+  path: string
+  /** Raw decoded resource bytes (the exact bytes Evernote MD5-hashes). */
+  bytes: Uint8Array
+  /** The resource's declared MIME type (`<mime>`), e.g. `image/png`. */
+  mime: string
+}
 
 /** A single parsed Evernote note, ready to compose into importer markdown. */
 export interface EnexNote {
@@ -34,6 +68,12 @@ export interface EnexNote {
   createdMs: number | null
   /** `<updated>` as epoch milliseconds, or null when absent/unparseable. */
   updatedMs: number | null
+  /**
+   * Decoded attachments referenced by the body's `<en-media>` tags (#2513),
+   * in first-referenced order. Empty when the note embeds no (resolvable)
+   * media. Shipped as `importMarkdown`'s `vaultFiles`.
+   */
+  attachments: EnexAttachment[]
 }
 
 /** Placeholder title for a note whose `<title>` is empty or missing. */
@@ -89,13 +129,215 @@ function createEnmlTurndown(): TurndownService {
 }
 
 /**
+ * Compute the lowercase MD5 hex digest of a byte array (#2513).
+ *
+ * Evernote references an embedded `<resource>` from the note body via
+ * `<en-media hash=…/>`, where `hash` is the MD5 of the resource's RAW decoded
+ * bytes (RFC 1321). The Web Crypto API does not offer MD5, so this is a small
+ * self-contained implementation over `Uint8Array`. Correctness is what makes
+ * the whole feature work (a wrong digest silently matches nothing), so it is
+ * exercised end-to-end by the resource-match tests.
+ */
+function md5Hex(input: Uint8Array): string {
+  const rotl = (x: number, c: number): number => (x << c) | (x >>> (32 - c))
+  // Per-round left-rotate amounts (typed array so indexing is `number`, not
+  // `number | undefined` under noUncheckedIndexedAccess).
+  const S = new Uint8Array([
+    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9,
+    14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10, 15, 21,
+    6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+  ])
+  // Per-round additive constants K[i] = floor(abs(sin(i+1)) * 2^32), stored as
+  // 32-bit words (the signed wrap is harmless — all arithmetic is mod 2^32).
+  const K = new Int32Array(64)
+  for (let i = 0; i < 64; i++) K[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296)
+
+  const originalLenBits = input.length * 8
+  const withOne = input.length + 1
+  // Pad with 0x80 then zeros up to ≡ 56 (mod 64), then an 8-byte LE bit length.
+  const padZeros = (56 - (withOne % 64) + 64) % 64
+  const totalLen = withOne + padZeros + 8
+  const msg = new Uint8Array(totalLen)
+  msg.set(input)
+  msg[input.length] = 0x80
+  const dv = new DataView(msg.buffer)
+  dv.setUint32(totalLen - 8, originalLenBits >>> 0, true)
+  dv.setUint32(totalLen - 4, Math.floor(originalLenBits / 4294967296) >>> 0, true)
+
+  let a0 = 0x67452301
+  let b0 = 0xefcdab89
+  let c0 = 0x98badcfe
+  let d0 = 0x10325476
+
+  for (let chunk = 0; chunk < totalLen; chunk += 64) {
+    let A = a0
+    let B = b0
+    let C = c0
+    let D = d0
+    for (let i = 0; i < 64; i++) {
+      let F: number
+      let g: number
+      if (i < 16) {
+        F = (B & C) | (~B & D)
+        g = i
+      } else if (i < 32) {
+        F = (D & B) | (~D & C)
+        g = (5 * i + 1) % 16
+      } else if (i < 48) {
+        F = B ^ C ^ D
+        g = (3 * i + 5) % 16
+      } else {
+        F = C ^ (B | ~D)
+        g = (7 * i) % 16
+      }
+      // `i` is always 0..63, so these `?? 0` fallbacks never fire; they only
+      // satisfy noUncheckedIndexedAccess's `number | undefined` on index access.
+      F = (F + A + (K[i] ?? 0) + dv.getUint32(chunk + g * 4, true)) | 0
+      A = D
+      D = C
+      C = B
+      B = (B + rotl(F, S[i] ?? 0)) | 0
+    }
+    a0 = (a0 + A) | 0
+    b0 = (b0 + B) | 0
+    c0 = (c0 + C) | 0
+    d0 = (d0 + D) | 0
+  }
+
+  const toHexLE = (n: number): string => {
+    let h = ''
+    for (let i = 0; i < 4; i++) h += (((n >>> (i * 8)) & 0xff) + 0x100).toString(16).slice(1)
+    return h
+  }
+  return toHexLE(a0) + toHexLE(b0) + toHexLE(c0) + toHexLE(d0)
+}
+
+/**
+ * Decode a base64 `<resource>` payload to raw bytes (#2513). ENEX wraps the
+ * base64 across lines, so all non-base64 characters (whitespace/newlines) are
+ * stripped before `atob`. Returns null when the payload is empty or `atob`
+ * rejects it (malformed base64) so the caller can skip the resource rather
+ * than crash the whole import.
+ */
+function decodeResourceData(raw: string): Uint8Array | null {
+  const clean = raw.replace(/[^A-Za-z0-9+/=]/g, '')
+  if (clean.length === 0) return null
+  try {
+    const bin = atob(clean)
+    const bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+    return bytes.length > 0 ? bytes : null
+  } catch {
+    return null
+  }
+}
+
+/** Map a resource MIME type to a filename extension (best-effort). */
+function mimeToExt(mime: string): string {
+  const known: Record<string, string> = {
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/jpg': 'jpg',
+    'image/gif': 'gif',
+    'image/webp': 'webp',
+    'image/svg+xml': 'svg',
+    'image/bmp': 'bmp',
+    'image/tiff': 'tiff',
+    'application/pdf': 'pdf',
+    'audio/mpeg': 'mp3',
+    'audio/mp4': 'm4a',
+    'audio/wav': 'wav',
+    'video/mp4': 'mp4',
+    'text/plain': 'txt',
+  }
+  if (mime in known) return known[mime] ?? 'bin'
+  const sub = (mime.split('/')[1] ?? '').replace(/[^a-z0-9]+/gi, '').toLowerCase()
+  return sub.length > 0 && sub.length <= 5 ? sub : 'bin'
+}
+
+/** Basename-only, control-char-free resource filename (no path traversal). */
+function sanitizeResourceName(name: string): string {
+  const base = name.replace(/\\/g, '/').split('/').pop() ?? ''
+  // Strip C0 control characters (codepoints < 0x20) without a control-char
+  // regex literal, then trim surrounding whitespace.
+  let out = ''
+  for (const ch of base) {
+    const cp = ch.codePointAt(0)
+    if (cp !== undefined && cp >= 0x20) out += ch
+  }
+  return out.trim()
+}
+
+/** A decoded resource plus the vault-relative path it will be embedded/shipped as. */
+interface ResourceEntry {
+  path: string
+  bytes: Uint8Array
+  mime: string
+}
+
+/**
+ * Decode a note's `<resource>` blocks and index them by lowercase MD5 hex
+ * (#2513) — the key an `<en-media hash=…>` matches against. Resources are
+ * deduped by hash (identical bytes → one entry). Each entry is assigned a
+ * deterministic, note-unique `path`: the resource's `<file-name>` when present
+ * (basename only, extension inferred from `<mime>` if absent), else
+ * `<md5>.<ext>`; a filename collision is disambiguated with a short hash.
+ */
+function indexNoteResources(noteEl: Element): Map<string, ResourceEntry> {
+  const byHash = new Map<string, ResourceEntry>()
+  const usedPaths = new Set<string>()
+  for (const res of Array.from(noteEl.querySelectorAll('resource'))) {
+    const bytes = decodeResourceData(res.querySelector('data')?.textContent ?? '')
+    if (bytes === null) continue
+    const hash = md5Hex(bytes)
+    if (byHash.has(hash)) continue
+    const mime = res.querySelector('mime')?.textContent?.trim() ?? 'application/octet-stream'
+    const fileName = sanitizeResourceName(res.querySelector('file-name')?.textContent ?? '')
+    const path = uniqueResourcePath(fileName, mime, hash, usedPaths)
+    usedPaths.add(path)
+    byHash.set(hash, { path, bytes, mime })
+  }
+  return byHash
+}
+
+/** Assign a note-unique vault path for one resource (see {@link indexNoteResources}). */
+function uniqueResourcePath(
+  fileName: string,
+  mime: string,
+  hash: string,
+  used: Set<string>,
+): string {
+  const ext = mimeToExt(mime)
+  let candidate: string
+  if (fileName.length > 0) {
+    candidate = /\.[^./\\]+$/.test(fileName) ? fileName : `${fileName}.${ext}`
+  } else {
+    candidate = `${hash}.${ext}`
+  }
+  if (!used.has(candidate)) return candidate
+  // Filename collision across distinct resources — disambiguate with a short
+  // hash prefix on the stem so both survive as distinct vault files.
+  const dot = candidate.lastIndexOf('.')
+  const stem = dot === -1 ? candidate : candidate.slice(0, dot)
+  const suffix = dot === -1 ? '' : candidate.slice(dot)
+  return `${stem}-${hash.slice(0, 8)}${suffix}`
+}
+
+/**
  * Rewrite Evernote-specific tags in place, before Turndown sees the DOM:
  *  - `<en-todo checked="true|false"/>` → a sentinel text node (later swapped
  *    for a `- [x] ` / `- [ ] ` task marker),
- *  - `<en-media/>` → removed entirely (attachment ingestion is deferred, so
- *    the embedded-resource reference is dropped rather than leaked as markup).
+ *  - `<en-media hash=…/>` → a standard `<img src="<resource path>">` when the
+ *    hash matches a decoded resource (Turndown serializes it to `![](path)`,
+ *    the ref the backend matches to the shipped bytes), recording the resource
+ *    in `used`; an `<en-media>` with no matching resource is dropped (graceful
+ *    fallback rather than leaking markup or crashing).
  */
-function transformEnmlDom(root: Element): void {
+function transformEnmlDom(
+  root: Element,
+  resources: Map<string, ResourceEntry>,
+  used: EnexAttachment[],
+): void {
   const ownerDoc = root.ownerDocument
   for (const todo of Array.from(root.querySelectorAll('en-todo'))) {
     const checked = todo.getAttribute('checked') === 'true'
@@ -105,7 +347,20 @@ function transformEnmlDom(root: Element): void {
     todo.replaceWith(sentinel)
   }
   for (const media of Array.from(root.querySelectorAll('en-media'))) {
-    media.remove()
+    const hash = media.getAttribute('hash')?.trim().toLowerCase() ?? ''
+    const resource = hash.length > 0 ? resources.get(hash) : undefined
+    if (resource === undefined) {
+      // No matching resource (dangling hash / unsupported inline media): drop
+      // the reference rather than leaking `<en-media>` markup into the body.
+      media.remove()
+      continue
+    }
+    if (!used.some((a) => a.path === resource.path)) {
+      used.push({ path: resource.path, bytes: resource.bytes, mime: resource.mime })
+    }
+    const img = ownerDoc.createElement('img')
+    img.setAttribute('src', resource.path)
+    media.replaceWith(img)
   }
 }
 
@@ -126,7 +381,12 @@ function transformEnmlDom(root: Element): void {
  * A content string that fails to parse yields an empty body (the note still
  * imports, just without its ENML).
  */
-function enmlToMarkdown(td: TurndownService, enml: string): string {
+function enmlToMarkdown(
+  td: TurndownService,
+  enml: string,
+  resources: Map<string, ResourceEntry>,
+  used: EnexAttachment[],
+): string {
   const trimmed = enml.trim()
   if (trimmed.length === 0) return ''
 
@@ -140,8 +400,9 @@ function enmlToMarkdown(td: TurndownService, enml: string): string {
   // innerHTML strips the wrapper element itself.
   const htmlDoc = document.implementation.createHTMLDocument('')
   const imported = htmlDoc.importNode(enNote, true) as Element
-  // Rewrite `<en-todo>` → sentinel and drop `<en-media>` before serializing.
-  transformEnmlDom(imported)
+  // Rewrite `<en-todo>` → sentinel and `<en-media>` → `<img>`/drop before
+  // serializing; matched resources are appended to `used`.
+  transformEnmlDom(imported, resources, used)
   const bodyHtml = imported.innerHTML
 
   const markdown = td.turndown(bodyHtml)
@@ -192,9 +453,15 @@ export function parseEnex(xmlText: string): EnexNote[] {
     const rawTitle = noteEl.querySelector('title')?.textContent?.trim() ?? ''
     const title = rawTitle.length > 0 ? rawTitle : UNTITLED_PLACEHOLDER
 
+    // Decode+index this note's `<resource>` attachments by MD5 (#2513) before
+    // converting the body, so `<en-media hash=…>` refs can be matched.
+    const resources = indexNoteResources(noteEl)
+    // Attachments actually referenced by the body (first-referenced order).
+    const attachments: EnexAttachment[] = []
+
     // `<content>` holds the ENML as CDATA text — `textContent` unwraps it.
     const enml = noteEl.querySelector('content')?.textContent ?? ''
-    const markdown = enmlToMarkdown(td, enml)
+    const markdown = enmlToMarkdown(td, enml, resources, attachments)
 
     const tags = Array.from(noteEl.querySelectorAll('tag'))
       .map((el) => el.textContent?.trim() ?? '')
@@ -203,7 +470,7 @@ export function parseEnex(xmlText: string): EnexNote[] {
     const createdMs = parseEnexTimestamp(noteEl.querySelector('created')?.textContent)
     const updatedMs = parseEnexTimestamp(noteEl.querySelector('updated')?.textContent)
 
-    return { title, markdown, tags, createdMs, updatedMs }
+    return { title, markdown, tags, createdMs, updatedMs, attachments }
   })
 }
 

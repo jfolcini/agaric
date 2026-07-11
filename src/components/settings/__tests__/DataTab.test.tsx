@@ -1226,7 +1226,9 @@ describe('DataTab', () => {
       expect(filename0).toBe('Alpha.md')
       expect(spaceId0).toBe(DEFAULT_TEST_SPACE.id)
       expect(typeof onProgress0).toBe('function')
-      expect(vaultFiles0).toBeUndefined()
+      // #2513 — a note with no `<en-media>` attachments ships null vaultFiles
+      // (consistent with the single-file `.md` path).
+      expect(vaultFiles0).toBeNull()
       // Frontmatter + tag token + converted body all present.
       expect(content0).toContain('source: evernote')
       expect(content0).toContain('#[[Multi Word]]')
@@ -1249,10 +1251,11 @@ describe('DataTab', () => {
         input.dispatchEvent(new Event('change', { bubbles: true }))
       })
 
-      // 3 + 4 = 7 blocks aggregated across the two notes.
+      // 3 + 4 = 7 blocks aggregated across the two notes. #2513 — the aggregate
+      // toast now labels the units "notes" (one page per note), not "files".
       await waitFor(() => {
         expect(toast.success).toHaveBeenCalledWith(
-          'Imported 7 blocks from 2 files',
+          'Imported 7 blocks from 2 notes',
           expect.anything(),
         )
       })
@@ -1280,6 +1283,75 @@ describe('DataTab', () => {
       expect(mockImportMarkdown).not.toHaveBeenCalled()
       // The parse failure is logged at ERROR with a filename-distinct message.
       expect(mockLoggerError).toHaveBeenCalled()
+    })
+
+    // #2513 (part 4) — when the ONLY picked file fails to parse, the per-file
+    // parse toast is the ONLY error toast: the summary fallback must NOT also
+    // fire (previously it double-toasted), matching the `.md` path.
+    it('fires a single error toast (no double) when the only file fails to parse (#2513)', async () => {
+      render(<DataTab />)
+      const input = screen.getByTestId('import-enex-input') as HTMLInputElement
+      const bad = new File(['<en-export><note><title>oops</note>'], 'broken.enex', {
+        type: 'application/xml',
+      })
+      Object.defineProperty(input, 'files', { value: [bad] })
+
+      await act(async () => {
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(
+          'Could not read broken.enex: not a valid Evernote export.',
+        )
+      })
+      // The generic summary ("All 1 file failed to import.") must NOT fire on
+      // top of the per-file toast, and exactly one error toast is shown.
+      expect(toast.error).not.toHaveBeenCalledWith('All 1 file failed to import.')
+      expect(toast.error).toHaveBeenCalledTimes(1)
+    })
+
+    // #2513 (part 1) — a note with an embedded `<resource>` referenced by
+    // `<en-media>` ships the decoded bytes as `vaultFiles`, reusing the same
+    // vault-attachment plumbing the folder import uses, and the note's markdown
+    // carries the rewritten `![](path)` ref the backend matches to those bytes.
+    it('ships decoded en-media attachment bytes as vaultFiles (#2513)', async () => {
+      mockImportMarkdown.mockResolvedValue(okResult())
+
+      // "hello" (base64 aGVsbG8=) has MD5 5d41402abc4b2a76b9719d911017c592,
+      // which is the en-media hash referencing the resource.
+      const md5 = '5d41402abc4b2a76b9719d911017c592'
+      const cdata = (enml: string) => `<![CDATA[<en-note>${enml}</en-note>]]>`
+      const enexXml =
+        `<?xml version="1.0" encoding="UTF-8"?><en-export><note><title>Img</title>` +
+        `<content>${cdata(`<div><en-media hash="${md5}" type="image/png"/></div>`)}</content>` +
+        `<resource><data encoding="base64">aGVsbG8=</data><mime>image/png</mime>` +
+        `<resource-attributes><file-name>pic.png</file-name></resource-attributes>` +
+        `</resource></note></en-export>`
+
+      render(<DataTab />)
+      const input = screen.getByTestId('import-enex-input') as HTMLInputElement
+      const file = new File([enexXml], 'withmedia.enex', { type: 'application/xml' })
+      Object.defineProperty(input, 'files', { value: [file] })
+
+      await act(async () => {
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+
+      await waitFor(() => expect(mockImportMarkdown).toHaveBeenCalled())
+      const [content0, , , , vaultFiles0] = mockImportMarkdown.mock.calls[0] as [
+        string,
+        string,
+        string,
+        unknown,
+        Array<{ path: string; bytes: number[] }> | null,
+      ]
+      // The markdown embeds the rewritten attachment ref.
+      expect(content0).toContain('![](pic.png)')
+      // The decoded resource bytes ("hello") ship as a VaultFile at that path.
+      expect(vaultFiles0).toHaveLength(1)
+      expect(vaultFiles0?.[0]?.path).toBe('pic.png')
+      expect(vaultFiles0?.[0]?.bytes).toEqual([104, 101, 108, 108, 111])
     })
 
     it('has no a11y violations with the enex control present', async () => {

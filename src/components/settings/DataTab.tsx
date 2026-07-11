@@ -158,6 +158,12 @@ interface FailedFile {
 interface ImportRunResult {
   /** Page title (single file) or null for the multi-file placeholder. */
   pageTitle: string | null
+  /**
+   * #2513 — whether the import unit is a NOTE (Evernote `.enex`, one page per
+   * note) rather than a FILE (`.md`/folder). Drives the "N notes" vs "N files"
+   * wording in the multi-unit result-panel title.
+   */
+  notes: boolean
   fileCount: number
   blocksCreated: number
   propertiesSet: number
@@ -427,6 +433,7 @@ export function DataTab(): React.ReactElement {
 
       setImportResult({
         pageTitle: fileArray.length === 1 ? lastTitle : null,
+        notes: false,
         fileCount: fileArray.length,
         blocksCreated: totalBlocks,
         propertiesSet: totalProps,
@@ -514,18 +521,36 @@ export function DataTab(): React.ReactElement {
 
       const fileArray = Array.from(files)
       const failedFiles: FailedFile[] = []
+      // #2513 — a parse failure fires its OWN per-file toast below. Count them
+      // so the end-of-run summary only fires when there is MORE to say (a note
+      // that failed to import, or nothing to import at all) rather than
+      // double-toasting on top of the per-file errors, mirroring the `.md`
+      // path (which has no per-file toasts, so never double-toasts).
+      let parseFailures = 0
       // Flatten every note across every picked file into a single unit list
-      // (name = page filename, content = composed markdown). A file that
-      // fails to parse is recorded as a failure and surfaced immediately,
-      // mirroring the per-file error pattern the `.md` path uses.
-      const units: { name: string; content: string }[] = []
+      // (name = page filename, content = composed markdown, vaultFiles =
+      // decoded `<en-media>` attachments to ingest — #2513). A file that fails
+      // to parse is recorded as a failure and surfaced immediately, mirroring
+      // the per-file error pattern the `.md` path uses.
+      const units: { name: string; content: string; vaultFiles: VaultFile[] | null }[] = []
       for (const file of fileArray) {
         try {
           const xml = await file.text()
           for (const note of parseEnex(xml)) {
+            // #2513 — ship each note's referenced attachments as `vaultFiles`,
+            // the SAME plumbing the folder import uses; the backend matches the
+            // `![](path)` refs in `content` to these bytes and ingests them.
+            const vaultFiles: VaultFile[] | null =
+              note.attachments.length > 0
+                ? note.attachments.map((a) => ({
+                    path: a.path,
+                    bytes: Array.from(a.bytes),
+                  }))
+                : null
             units.push({
               name: `${sanitizeNoteTitleToFilename(note.title)}.md`,
               content: enexNoteToMarkdown(note),
+              vaultFiles,
             })
           }
         } catch (err) {
@@ -537,6 +562,7 @@ export function DataTab(): React.ReactElement {
           )
           notify.error(t('data.importEnexParseFailed', { name: file.name }))
           failedFiles.push({ name: file.name, reason: importErrorReason(err) })
+          parseFailures += 1
         }
       }
 
@@ -582,8 +608,10 @@ export function DataTab(): React.ReactElement {
                 }
               }
             },
-            // A note carries no sibling attachments (deferred), so no vault files.
-            undefined,
+            // #2513 — decoded `<en-media>` attachment bytes for this note (or
+            // null when the note embeds none), ingested via the SAME
+            // vault-attachment path a folder import uses.
+            unit.vaultFiles,
           )
           totalBlocks += result.blocks_created
           totalProps += result.properties_set
@@ -609,6 +637,7 @@ export function DataTab(): React.ReactElement {
 
       setImportResult({
         pageTitle: units.length === 1 ? lastTitle : null,
+        notes: true,
         fileCount: units.length,
         blocksCreated: totalBlocks,
         propertiesSet: totalProps,
@@ -640,11 +669,18 @@ export function DataTab(): React.ReactElement {
       if (cancelled) {
         notify(t('data.importCancelled', { count: succeededFiles }))
       } else if (totalBlocks === 0) {
-        // Nothing imported. A parse failure already fired its own error toast
-        // above; only surface the generic fallbacks when there is more to say.
-        if (failedFiles.length > 0) {
+        // #2513 — nothing imported. Each PARSE failure already fired its own
+        // per-file error toast above (`importEnexParseFailed`), so the summary
+        // fallback must only fire when there is MORE to say: a note that PARSED
+        // but failed to import (no per-file toast), or a genuinely empty
+        // selection. When every failure was a parse failure we stay silent
+        // here and let the per-file toasts stand — this is the `.md` path's
+        // "no double toast" behaviour (that path has no per-file toasts at
+        // all, so its summary is always the only toast).
+        const noteImportFailures = failedFiles.length - parseFailures
+        if (noteImportFailures > 0) {
           notify.error(t('data.importAllFailed', { count: failedFiles.length }))
-        } else {
+        } else if (failedFiles.length === 0) {
           notify.error(t('data.importNoContent'))
         }
       } else if (failedFiles.length > 0) {
@@ -652,7 +688,9 @@ export function DataTab(): React.ReactElement {
           enexInputRef.current?.click(),
         )
       } else {
-        notify.success(t('data.importedMessage', { totalBlocks, count: succeededFiles }), {
+        // #2513 — each unit is a NOTE (not a file), so label the aggregate
+        // toast "notes" rather than reusing the file-worded `.md` string.
+        notify.success(t('data.importedNotesMessage', { totalBlocks, count: succeededFiles }), {
           action: viewAction,
         })
       }
@@ -948,6 +986,7 @@ export function DataTab(): React.ReactElement {
                 fileCount,
                 pageTitle,
                 navTitle,
+                notes,
               } = importResult
               const allFailed = blocksCreated === 0 && failures.length > 0
               const hasDetail = failures.length > 0 || warnings.length > 0
@@ -956,7 +995,11 @@ export function DataTab(): React.ReactElement {
               const shownFailures = detailsExpanded ? failures : failures.slice(0, PREVIEW)
               const shownWarnings = detailsExpanded ? warnings : warnings.slice(0, PREVIEW)
               const truncated = failures.length > PREVIEW || warnings.length > PREVIEW
-              const title = pageTitle ?? t('data.importResultFilesTitle', { count: fileCount })
+              const title =
+                pageTitle ??
+                t(notes ? 'data.importResultNotesTitle' : 'data.importResultFilesTitle', {
+                  count: fileCount,
+                })
               return (
                 <div
                   className="import-result mt-3 text-xs space-y-1"
