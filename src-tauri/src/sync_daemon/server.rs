@@ -6,6 +6,35 @@ use crate::sync_net::SyncConnection;
 use crate::sync_protocol::{SyncMessage, SyncOrchestrator, SyncState};
 use crate::sync_scheduler::SyncScheduler;
 
+/// #2539 (item 1): bound a single `SyncOrchestrator::handle_message` dispatch
+/// by [`HANDSHAKE_TIMEOUT`], mapping the elapsed case to the same
+/// `InvalidOperation` error every session loop has always produced.
+///
+/// This is the ONE guard shared by all three dispatch sites:
+///   * the responder's FIRST-message dispatch below (previously unguarded —
+///     `HeadExchange` is the heaviest dispatch of the whole session: per-space
+///     Loro exports, a vault-wide soft-deleted read, and VV decodes, all while
+///     holding a responder permit and the per-peer lock),
+///   * the responder's message loop below, and
+///   * the initiator's message loop in
+///     [`super::session_supervisor::run_sync_session`].
+///
+/// Routing every dispatch through this helper is what keeps the elapsed-error
+/// mapping identical across the three sites; the direct unit tests in
+/// `sync_daemon/tests.rs` pin the timeout + error shape.
+pub(crate) async fn dispatch_with_handshake_timeout<T>(
+    fut: impl std::future::Future<Output = Result<T, AppError>>,
+) -> Result<T, AppError> {
+    tokio::time::timeout(HANDSHAKE_TIMEOUT, fut)
+        .await
+        .map_err(|_| {
+            AppError::InvalidOperation(format!(
+                "handle_message timed out after {}s",
+                HANDSHAKE_TIMEOUT.as_secs()
+            ))
+        })?
+}
+
 /// Result of verifying the peer's TLS certificate against its claimed identity.
 #[derive(Debug, PartialEq)]
 pub(crate) enum CertVerifyResult {
@@ -463,7 +492,11 @@ async fn handle_incoming_sync_inner(
         orch = orch.with_expected_remote_id(cert_cn.to_string());
     }
     // ── Process first message ─────────────────────────────────────────────
-    let response = orch.handle_message(first_msg).await?;
+    // #2539: the first dispatch (a `HeadExchange` on the happy path) rides
+    // the SAME `HANDSHAKE_TIMEOUT` guard as every loop dispatch below. It
+    // used to run bare, so a pathological first message could hold the
+    // responder permit + per-peer lock unbounded.
+    let response = dispatch_with_handshake_timeout(orch.handle_message(first_msg)).await?;
     if let Some(resp) = response {
         super::wire::send_sync_message(&mut conn, &resp).await?;
         // Drain any pending op batches (B-3)
@@ -485,14 +518,7 @@ async fn handle_incoming_sync_inner(
         }
 
         let incoming: SyncMessage = super::wire::recv_sync_message(&mut conn).await?;
-        let response = tokio::time::timeout(HANDSHAKE_TIMEOUT, orch.handle_message(incoming))
-            .await
-            .map_err(|_| {
-                AppError::InvalidOperation(format!(
-                    "handle_message timed out after {}s",
-                    HANDSHAKE_TIMEOUT.as_secs()
-                ))
-            })??;
+        let response = dispatch_with_handshake_timeout(orch.handle_message(incoming)).await?;
 
         if let Some(resp) = response {
             super::wire::send_sync_message(&mut conn, &resp).await?;
