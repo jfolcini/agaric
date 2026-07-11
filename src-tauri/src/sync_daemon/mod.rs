@@ -99,6 +99,10 @@ impl SyncEventSink for SharedEventSink {
 pub struct SyncDaemon {
     shutdown_notify: Arc<Notify>,
     cancel: Arc<AtomicBool>,
+    /// #2537: shared with the running daemon loop so `cancel_active_sync`
+    /// can gate the cancel flag on whether a session is actually active —
+    /// see the doc comment on that method.
+    scheduler: Arc<SyncScheduler>,
     /// Read only by `#[cfg(test)] mod tests` — assertions that the
     /// daemon holds a handle (e.g. in dormant mode) and to await
     /// graceful shutdown after `shutdown()`. The production drop path
@@ -253,9 +257,11 @@ impl SyncDaemon {
     fn spawn_dormant_waiter(ctx: SyncDaemonContext) -> Result<Self, AppError> {
         let shutdown_notify = Arc::new(Notify::new());
         let shutdown_notify_task = shutdown_notify.clone();
-        // Clone the shared cancel flag for the returned handle; the owned
-        // `ctx` (carrying the same Arc) is moved into `daemon_loop` below.
+        // Clone the shared cancel flag and scheduler for the returned
+        // handle; the owned `ctx` (carrying the same Arcs) is moved into
+        // `daemon_loop` below.
         let cancel = ctx.cancel.clone();
+        let scheduler = ctx.scheduler.clone();
 
         let handle = tokio::spawn(async move {
             let mut poll = tokio::time::interval(Self::DORMANT_POLL_INTERVAL);
@@ -295,6 +301,7 @@ impl SyncDaemon {
         Ok(Self {
             shutdown_notify,
             cancel,
+            scheduler,
             handle: Some(handle),
         })
     }
@@ -337,9 +344,11 @@ impl SyncDaemon {
     pub async fn start_with_lifecycle(ctx: SyncDaemonContext) -> Result<Self, AppError> {
         let shutdown_notify = Arc::new(Notify::new());
         let shutdown_notify_flag = shutdown_notify.clone();
-        // Clone the shared cancel flag for the returned handle; the owned
-        // `ctx` (carrying the same Arc) is moved into `daemon_loop` below.
+        // Clone the shared cancel flag and scheduler for the returned
+        // handle; the owned `ctx` (carrying the same Arcs) is moved into
+        // `daemon_loop` below.
         let cancel = ctx.cancel.clone();
+        let scheduler = ctx.scheduler.clone();
 
         let handle = tokio::spawn(async move {
             if let Err(e) = session_supervisor::daemon_loop(ctx, shutdown_notify_flag).await {
@@ -350,6 +359,7 @@ impl SyncDaemon {
         Ok(Self {
             shutdown_notify,
             cancel,
+            scheduler,
             handle: Some(handle),
         })
     }
@@ -359,12 +369,29 @@ impl SyncDaemon {
         self.shutdown_notify.notify_one();
     }
 
-    /// Signal the active sync session to cancel.
+    /// Signal the currently active sync session(s) to cancel.
     ///
-    /// The cancellation flag is checked each iteration of the message exchange
-    /// loop in `run_sync_session`.  If no sync is active the flag is harmlessly
-    /// cleared on the next session attempt.
+    /// The cancellation flag is checked each iteration of the message
+    /// exchange loop in `run_sync_session` (initiator) and
+    /// `handle_incoming_sync` (responder). Both sides clear the flag once
+    /// they are the last active session standing (see `CancelGuard` in
+    /// `session_supervisor.rs`), so a cancel never persists past the
+    /// session(s) it targeted.
+    ///
+    /// #2537: if no session is currently active (`!scheduler.
+    /// is_any_peer_locked()`), this is a deliberate no-op — there is
+    /// nothing to cancel, and nobody would ever clear a flag that only
+    /// latched because it was set with no session running. Previously the
+    /// flag was set unconditionally: with nothing active it stayed `true`
+    /// indefinitely (only a session that reaches the real sync phase ever
+    /// clears it), so every subsequent responder session from any peer
+    /// failed instantly with "sync cancelled", and the next locally
+    /// initiated session was burned as a recorded failure (inflating that
+    /// peer's backoff) just to reset the flag.
     pub fn cancel_active_sync(&self) {
+        if !self.scheduler.is_any_peer_locked() {
+            return;
+        }
         self.cancel.store(true, Ordering::Release);
     }
 }

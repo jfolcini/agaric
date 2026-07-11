@@ -211,6 +211,27 @@ impl SyncScheduler {
             .len()
     }
 
+    /// Returns `true` iff at least one peer currently holds its sync lock —
+    /// i.e., a [`PeerSyncGuard`] is alive for at least one `peer_id`, which
+    /// means a real sync session (initiator OR responder) is running right
+    /// now for that peer.
+    ///
+    /// Same liveness check `gc_unused_peer_locks` already uses
+    /// (`Arc::strong_count(arc) > 1`), exposed read-only. #2537: this is the
+    /// gate the shared sync-cancellation flag uses on both ends — setting it
+    /// (nothing to cancel if no session is active, so don't latch a
+    /// cancel that no future session earned) and clearing it (a session's
+    /// cancel-guard only resets the flag once IT is the last active
+    /// session standing, so a still-running sibling's pending cancellation
+    /// can't be swallowed by this one finishing first).
+    pub(crate) fn is_any_peer_locked(&self) -> bool {
+        let locks = self
+            .peer_locks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        locks.values().any(|arc| Arc::strong_count(arc) > 1)
+    }
+
     // -- Exponential backoff (#387) ------------------------------------------
 
     /// Check whether `peer_id` is allowed to retry now.
@@ -415,6 +436,47 @@ mod tests {
         }
         // Should be available again after drop
         assert!(sched.try_lock_peer("peer-a").is_some());
+    }
+
+    // -- is_any_peer_locked (#2537) ----------------------------------
+
+    #[test]
+    fn is_any_peer_locked_false_when_nothing_held() {
+        let sched = SyncScheduler::new();
+        assert!(!sched.is_any_peer_locked());
+    }
+
+    #[test]
+    fn is_any_peer_locked_true_while_guard_alive() {
+        let sched = SyncScheduler::new();
+        let _guard = sched.try_lock_peer("peer-a").unwrap();
+        assert!(sched.is_any_peer_locked());
+    }
+
+    #[test]
+    fn is_any_peer_locked_false_after_guard_drops() {
+        let sched = SyncScheduler::new();
+        {
+            let _guard = sched.try_lock_peer("peer-a").unwrap();
+            assert!(sched.is_any_peer_locked());
+        }
+        assert!(
+            !sched.is_any_peer_locked(),
+            "releasing the only held lock must clear the signal, even though \
+             the (idle) peer_locks entry itself lingers until GC"
+        );
+    }
+
+    #[test]
+    fn is_any_peer_locked_true_if_any_of_several_peers_held() {
+        let sched = SyncScheduler::new();
+        let _idle = sched.try_lock_peer("peer-idle");
+        drop(_idle);
+        let _held = sched.try_lock_peer("peer-b").unwrap();
+        assert!(
+            sched.is_any_peer_locked(),
+            "one held lock is enough even with other idle entries in the map"
+        );
     }
 
     // -- gc_unused_peer_locks --------------------------------------

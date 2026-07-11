@@ -640,13 +640,41 @@ fn sync_start_sync_does_not_record_success_preemptively() {
 // ======================================================================
 
 #[test]
-fn sync_cancel_sync_succeeds() {
+fn sync_cancel_sync_sets_flag_when_a_session_is_active() {
     let flag = AtomicBool::new(false);
-    let result = cancel_sync_inner(&flag);
+    let scheduler = SyncScheduler::new();
+    // Simulate an in-flight session (initiator or responder) holding its
+    // per-peer lock.
+    let _guard = scheduler.try_lock_peer("peer-1").unwrap();
+
+    let result = cancel_sync_inner(&flag, &scheduler);
     assert!(result.is_ok(), "cancel_sync must succeed");
     assert!(
         flag.load(Ordering::Acquire),
-        "cancel flag must be set after cancel_sync"
+        "cancel flag must be set when a session is active"
+    );
+}
+
+/// #2537 regression: cancelling with nothing active used to latch the
+/// shared flag forever — the ONLY code that ever cleared it was a
+/// session-scoped guard armed once a real session started running, and
+/// with no session active, nothing was ever going to run to clear it.
+/// Every subsequent responder session then failed instantly with "sync
+/// cancelled" (the responder never cleared the flag at all, pre-fix), and
+/// the daemon's next initiator attempt was burned as a recorded failure
+/// just to reset it. `cancel_sync_inner` must be a no-op here instead.
+#[test]
+fn sync_cancel_sync_is_noop_when_nothing_active() {
+    let flag = AtomicBool::new(false);
+    let scheduler = SyncScheduler::new(); // no peer locks held
+
+    let result = cancel_sync_inner(&flag, &scheduler);
+    assert!(result.is_ok(), "cancel_sync must still report success");
+    assert!(
+        !flag.load(Ordering::Acquire),
+        "cancel flag must stay clear when no session is active — \
+         setting it here would latch until an unrelated future session \
+         paid for clearing it"
     );
 }
 

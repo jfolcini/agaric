@@ -86,6 +86,7 @@ fn shutdown_notifies_waiter() {
     let daemon = SyncDaemon {
         shutdown_notify: shutdown_notify.clone(),
         cancel: Arc::new(AtomicBool::new(false)),
+        scheduler: Arc::new(SyncScheduler::new()),
         handle: None,
     };
     daemon.shutdown();
@@ -110,13 +111,19 @@ fn shutdown_notifies_waiter() {
 }
 
 #[test]
-fn cancel_active_sync_sets_flag() {
+fn cancel_active_sync_sets_flag_when_a_session_is_active() {
     let cancel = Arc::new(AtomicBool::new(false));
+    let scheduler = Arc::new(SyncScheduler::new());
     let daemon = SyncDaemon {
         shutdown_notify: Arc::new(Notify::new()),
         cancel: cancel.clone(),
+        scheduler: scheduler.clone(),
         handle: None,
     };
+    // Simulate an in-flight session (initiator or responder) holding its
+    // per-peer lock.
+    let _guard = scheduler.try_lock_peer("peer-1").unwrap();
+
     assert!(
         !cancel.load(Ordering::Acquire),
         "cancel flag must start false"
@@ -124,18 +131,44 @@ fn cancel_active_sync_sets_flag() {
     daemon.cancel_active_sync();
     assert!(
         cancel.load(Ordering::Acquire),
-        "cancel_active_sync must set the flag"
+        "cancel_active_sync must set the flag when a session is active"
+    );
+}
+
+/// #2537 regression: `cancel_active_sync` used to set the flag
+/// unconditionally, latching it forever whenever no session was around to
+/// consume and clear it (only a session-scoped guard, armed once a real
+/// session started running, ever cleared it). With nothing active, this
+/// must now be a no-op.
+#[test]
+fn cancel_active_sync_is_noop_when_nothing_active() {
+    let cancel = Arc::new(AtomicBool::new(false));
+    let scheduler = Arc::new(SyncScheduler::new()); // no peer locks held
+    let daemon = SyncDaemon {
+        shutdown_notify: Arc::new(Notify::new()),
+        cancel: cancel.clone(),
+        scheduler,
+        handle: None,
+    };
+    daemon.cancel_active_sync();
+    assert!(
+        !cancel.load(Ordering::Acquire),
+        "#2537: cancel_active_sync must be a no-op when no session is active"
     );
 }
 
 #[test]
 fn shutdown_and_cancel_are_independent() {
     let cancel = Arc::new(AtomicBool::new(false));
+    let scheduler = Arc::new(SyncScheduler::new());
     let daemon = SyncDaemon {
         shutdown_notify: Arc::new(Notify::new()),
         cancel: cancel.clone(),
+        scheduler: scheduler.clone(),
         handle: None,
     };
+    let _guard = scheduler.try_lock_peer("peer-1").unwrap();
+
     daemon.shutdown();
     assert!(!cancel.load(Ordering::Acquire), "cancel must remain unset");
 
@@ -146,15 +179,23 @@ fn shutdown_and_cancel_are_independent() {
 #[test]
 fn cancel_flag_clear_after_session() {
     let cancel = Arc::new(AtomicBool::new(false));
+    let scheduler = Arc::new(SyncScheduler::new());
     let daemon = SyncDaemon {
         shutdown_notify: Arc::new(Notify::new()),
         cancel: cancel.clone(),
+        scheduler: scheduler.clone(),
         handle: None,
     };
+    let guard = scheduler.try_lock_peer("peer-1").unwrap();
+
     daemon.cancel_active_sync();
     assert!(cancel.load(Ordering::Acquire), "cancel must be set");
 
-    // Simulate what try_sync_with_peer does after the session ends
+    // Simulate what try_sync_with_peer / handle_incoming_sync's
+    // `CancelGuard` does after the session ends: release the per-peer
+    // lock, then clear the flag now that this was the last active session.
+    drop(guard);
+    assert!(!scheduler.is_any_peer_locked());
     cancel.store(false, Ordering::Release);
     assert!(!cancel.load(Ordering::Acquire), "cancel must be cleared");
 }
@@ -191,11 +232,15 @@ fn shared_event_sink_concurrent_emission() {
 #[test]
 fn cancel_is_idempotent() {
     let cancel = Arc::new(AtomicBool::new(false));
+    let scheduler = Arc::new(SyncScheduler::new());
     let daemon = SyncDaemon {
         shutdown_notify: Arc::new(Notify::new()),
         cancel: cancel.clone(),
+        scheduler: scheduler.clone(),
         handle: None,
     };
+    let _guard = scheduler.try_lock_peer("peer-1").unwrap();
+
     daemon.cancel_active_sync();
     daemon.cancel_active_sync();
     daemon.cancel_active_sync();
@@ -2092,7 +2137,294 @@ async fn handle_incoming_sync_aborts_on_cancel_and_releases_lock() {
         "per-peer lock must be released after the responder aborts on cancel"
     );
 
+    // #2537: unlike before this fix, the responder is now a legitimate
+    // consumer/resetter of the shared flag — it was the only (and thus
+    // last) active session, so its own `CancelGuard` must have cleared it
+    // on Drop. Before this fix the responder only ever CHECKED the flag
+    // and never cleared it, so it stayed `true` forever after this exact
+    // scenario, and every subsequent inbound session from any peer would
+    // instantly fail "sync cancelled".
+    assert!(
+        !cancel.load(Ordering::Acquire),
+        "#2537: the responder's CancelGuard must clear the flag once it \
+         is the last active session standing"
+    );
+
     materializer.shutdown();
+}
+
+/// #2537 concurrent-session race: while ANOTHER session (real or, as here,
+/// simulated by directly holding a second peer's lock) is still active,
+/// this responder's own `CancelGuard` must NOT clear the shared flag when
+/// IT finishes. If it did, a user cancel meant for BOTH sessions would be
+/// silently swallowed by whichever one happens to finish first — the
+/// still-running sibling would never see `true` on its own next check.
+///
+/// #637 already prevented an early-exiting (non-owning) peer from
+/// swallowing a sibling's cancel within one sequential backoff round. This
+/// test covers the case #637 could not: a genuinely CONCURRENT sibling
+/// (the responder path spawns one task per accepted connection, with no
+/// sequential round serializing them — and an initiator round can overlap
+/// an inbound responder session for a different peer entirely).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn handle_incoming_sync_does_not_clear_cancel_while_sibling_session_active() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    peer_refs::upsert_peer_ref(&pool, "REMOTE_DEV_SIB")
+        .await
+        .unwrap();
+
+    // Simulates a concurrently-active SIBLING session (initiator or
+    // responder, for a different peer) that is still mid-flight when this
+    // responder's session ends.
+    let _sibling_guard = scheduler.try_lock_peer("SIBLING_PEER_2537").unwrap();
+
+    let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+    // Cancel already pending, exactly like the sibling test above.
+    let cancel = Arc::new(AtomicBool::new(true));
+
+    let pool_clone = pool.clone();
+    let mat_clone = materializer.clone();
+    let sched_clone = scheduler.clone();
+    let sink_clone = event_sink.clone();
+    let cancel_clone = cancel.clone();
+    let handle = tokio::spawn(async move {
+        handle_incoming_sync(
+            server_conn,
+            pool_clone,
+            "LOCAL_DEV".to_string(),
+            mat_clone,
+            sched_clone,
+            sink_clone,
+            cancel_clone,
+        )
+        .await
+    });
+
+    client_conn
+        .send_json(&SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "REMOTE_DEV_SIB".to_string(),
+                seq: 0,
+                hash: "fakehash".to_string(),
+            }],
+            loro_vvs: vec![],
+            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
+            wire_compression: false,
+        })
+        .await
+        .unwrap();
+
+    // As in `handle_incoming_sync_aborts_on_cancel_and_releases_lock` above,
+    // whether this particular (trivial, empty-heads) session's outcome
+    // surfaces as `Ok` or `Err` depends on exactly where the pending
+    // cancel is observed (the file-transfer sub-phase treats a cancelled
+    // transfer as non-fatal and logs it rather than propagating an `Err`)
+    // — so this test does not assert on it. What matters here is the
+    // shared flag's state afterward.
+    let _resp_result = tokio::time::timeout(std::time::Duration::from_secs(10), handle)
+        .await
+        .expect("responder session must resolve promptly")
+        .expect("responder task must not panic");
+
+    // This responder's own per-peer lock is released...
+    assert!(
+        scheduler.try_lock_peer("REMOTE_DEV_SIB").is_some(),
+        "the responder's own lock must be released"
+    );
+
+    // ...but the SIBLING's lock is still held, so the flag must survive —
+    // otherwise a cancel meant for the sibling too would be swallowed the
+    // instant this unrelated session happened to finish first.
+    assert!(
+        cancel.load(Ordering::Acquire),
+        "#2537: the flag must NOT be cleared while a sibling session \
+         (SIBLING_PEER_2537) is still active"
+    );
+
+    drop(_sibling_guard);
+    materializer.shutdown();
+}
+
+/// #2537 concurrent-session race, at the `CancelGuard` unit level —
+/// deterministic companion to the wire-level test above (which proves the
+/// same property through a real `handle_incoming_sync` session, but can
+/// only observe it indirectly since that session's `Ok`/`Err` outcome
+/// depends on exactly where along the protocol the pending cancel is
+/// hit). Exercises `CancelGuard::drop` directly: a guard that owns the
+/// cancel must NOT clear it while `scheduler.is_any_peer_locked()` still
+/// reports another peer's lock held — proving the guard survives a
+/// concurrently-active sibling regardless of session outcome.
+#[test]
+fn cancel_guard_does_not_clear_while_sibling_session_active() {
+    let scheduler = SyncScheduler::new();
+    let cancel = AtomicBool::new(true);
+
+    // Sibling session still active — a different peer's lock is held and
+    // stays held for the rest of this test.
+    let _sibling_guard = scheduler.try_lock_peer("SIBLING_PEER_2537").unwrap();
+
+    {
+        // Declared BEFORE `_own_lock` so — mirroring both
+        // `try_sync_with_peer` and `handle_incoming_sync_inner` — this
+        // guard's Drop runs AFTER `_own_lock` releases (Rust drops locals
+        // in reverse declaration order). `is_any_peer_locked()` therefore
+        // sees only the sibling's lock, not this session's own.
+        let mut guard = super::session_supervisor::CancelGuard {
+            cancel: &cancel,
+            scheduler: &scheduler,
+            owns: false,
+        };
+        let _own_lock = scheduler.try_lock_peer("REMOTE_DEV_SIB_UNIT").unwrap();
+        // Commit point: this session reached the real sync phase.
+        guard.owns = true;
+        drop(_own_lock);
+    }
+
+    assert!(
+        cancel.load(Ordering::Acquire),
+        "#2537: CancelGuard must not clear the flag while a sibling \
+         session (SIBLING_PEER_2537) is still active"
+    );
+
+    drop(_sibling_guard);
+}
+
+/// Companion to the test above: with NO sibling active, the same guard
+/// DOES perform the legitimate post-run reset once it owns the cancel —
+/// confirming the sibling check doesn't regress the ordinary case.
+#[test]
+fn cancel_guard_clears_when_it_is_the_last_active_session() {
+    let scheduler = SyncScheduler::new();
+    let cancel = AtomicBool::new(true);
+
+    {
+        let mut guard = super::session_supervisor::CancelGuard {
+            cancel: &cancel,
+            scheduler: &scheduler,
+            owns: false,
+        };
+        let _own_lock = scheduler.try_lock_peer("REMOTE_DEV_SOLO_UNIT").unwrap();
+        guard.owns = true;
+        drop(_own_lock);
+    }
+
+    assert!(
+        !cancel.load(Ordering::Acquire),
+        "CancelGuard must clear the flag when it is the last active session standing"
+    );
+}
+
+/// #2537 regression: cancelling with NOTHING active must not latch the
+/// shared flag — a subsequent, completely unrelated responder session
+/// (sharing the SAME flag + scheduler) must complete normally instead of
+/// failing instantly with "sync cancelled".
+///
+/// Pre-fix, `cancel_sync_inner` unconditionally stored `true`, and the
+/// responder never cleared the flag at all (only the initiator's
+/// `CancelGuard` did, and only once it ran a real session). So a cancel
+/// issued in step 1 here, with nothing syncing, would sit `true` forever —
+/// step 2's totally unrelated responder session would then abort on its
+/// very first message-loop check with "sync cancelled", exactly the
+/// "responder-heavy device has sync silently bricked" impact from the
+/// issue.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancel_with_nothing_active_does_not_break_next_responder_session() {
+    install_crypto_provider();
+    use crate::sync_protocol::SyncState;
+
+    const INIT_DEV: &str = "INIT2537NOOP";
+    const RESP_DEV: &str = "RESP2537NOOP";
+
+    let (init_pool, _init_dir) = test_pool().await;
+    let init_mat = Materializer::new(init_pool.clone());
+    peer_refs::upsert_peer_ref(&init_pool, RESP_DEV)
+        .await
+        .unwrap();
+
+    let (resp_pool, _resp_dir) = test_pool().await;
+    let resp_mat = Materializer::new(resp_pool.clone());
+    peer_refs::upsert_peer_ref(&resp_pool, INIT_DEV)
+        .await
+        .unwrap();
+
+    let resp_scheduler = Arc::new(SyncScheduler::new());
+    let cancel = Arc::new(AtomicBool::new(false));
+
+    // ── Step 1: the user cancels while NOTHING is syncing ────────────────
+    let noop = crate::commands::cancel_sync_inner(&cancel, &resp_scheduler);
+    assert!(noop.is_ok(), "cancel_sync must always report success");
+    assert!(
+        !cancel.load(Ordering::Acquire),
+        "#2537: cancel must stay clear — nothing was active to target"
+    );
+
+    // ── Step 2: a completely unrelated responder session, sharing the
+    //    SAME flag + scheduler, must complete normally ───────────────────
+    let (mut server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+    // #778: identify the (fresh, empty-heads) initiator via the verified
+    // cert CN, mirroring production mTLS.
+    server_conn.set_test_cert(Some(INIT_DEV.to_string()), None);
+
+    let resp_pool_clone = resp_pool.clone();
+    let resp_mat_clone = resp_mat.clone();
+    let resp_scheduler_clone = resp_scheduler.clone();
+    let resp_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let cancel_clone = cancel.clone();
+    let server_task = tokio::spawn(async move {
+        handle_incoming_sync(
+            server_conn,
+            resp_pool_clone,
+            RESP_DEV.to_string(),
+            resp_mat_clone,
+            resp_scheduler_clone,
+            resp_sink,
+            cancel_clone,
+        )
+        .await
+    });
+
+    let mut init_orch = SyncOrchestrator::new(init_pool.clone(), INIT_DEV.into(), init_mat.clone())
+        .with_expected_remote_id(RESP_DEV.into());
+    let init_cancel = AtomicBool::new(false);
+    let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    let init_result = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        run_sync_session(
+            &mut init_orch,
+            &mut client_conn,
+            &init_cancel,
+            &init_pool,
+            &init_mat,
+            &init_sink,
+        ),
+    )
+    .await
+    .expect("initiator session timed out");
+    assert!(
+        init_result.is_ok(),
+        "#2537: initiator must not fail — got {init_result:?}"
+    );
+    assert_eq!(init_orch.session().state, SyncState::Complete);
+
+    let resp_result = tokio::time::timeout(std::time::Duration::from_secs(10), server_task)
+        .await
+        .expect("responder task timed out")
+        .expect("responder task panicked");
+    assert!(
+        resp_result.is_ok(),
+        "#2537: a subsequent, unrelated responder session must not fail \
+         with 'sync cancelled' just because an EARLIER cancel had nothing \
+         to target — got {resp_result:?}"
+    );
+
+    init_mat.shutdown();
+    resp_mat.shutdown();
 }
 
 /// T-16 Test 4: Sending a non-HeadExchange message (SyncComplete) as

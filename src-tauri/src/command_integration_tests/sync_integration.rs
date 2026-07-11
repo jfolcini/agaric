@@ -344,11 +344,30 @@ async fn full_pair_then_sync_workflow() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancel_sync_succeeds() {
     let flag = std::sync::atomic::AtomicBool::new(false);
-    let result = cancel_sync_inner(&flag);
+    let scheduler = SyncScheduler::new();
+    // #2537: cancel_sync_inner gates the flag on an active session — hold
+    // a peer lock so this is exercised as the "something is running" case.
+    let _guard = scheduler.try_lock_peer("peer-1").unwrap();
+    let result = cancel_sync_inner(&flag, &scheduler);
     assert!(result.is_ok(), "cancel_sync should always succeed");
     assert!(
         flag.load(std::sync::atomic::Ordering::Acquire),
-        "cancel flag must be set after cancel_sync"
+        "cancel flag must be set after cancel_sync while a session is active"
+    );
+}
+
+/// #2537 regression: with nothing active, `cancel_sync_inner` must be a
+/// no-op rather than latching the flag until an unrelated future session
+/// is burned as a recorded failure just to clear it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancel_sync_is_noop_when_nothing_active() {
+    let flag = std::sync::atomic::AtomicBool::new(false);
+    let scheduler = SyncScheduler::new();
+    let result = cancel_sync_inner(&flag, &scheduler);
+    assert!(result.is_ok(), "cancel_sync should always succeed");
+    assert!(
+        !flag.load(std::sync::atomic::Ordering::Acquire),
+        "cancel flag must stay clear when no session is active"
     );
 }
 

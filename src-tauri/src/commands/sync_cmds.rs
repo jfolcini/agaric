@@ -373,14 +373,31 @@ pub fn start_sync_inner(
     })
 }
 
-/// Cancel an active sync session.
+/// Cancel the currently active sync session(s).
 ///
 /// Sets the cancel flag that is checked each iteration of the sync message
-/// exchange loop.  If no sync is active the flag is harmlessly cleared on
-/// the next session start.
-#[instrument(skip(cancel_flag), err)]
-pub fn cancel_sync_inner(cancel_flag: &AtomicBool) -> Result<(), AppError> {
-    cancel_flag.store(true, Ordering::Release);
+/// exchange loop, on both the initiator (`run_sync_session`) and responder
+/// (`handle_incoming_sync`) sides. Both sides clear the flag once they are
+/// the last active session standing (see `CancelGuard` in
+/// `sync_daemon::session_supervisor`), so the cancel never outlives the
+/// session(s) it targeted.
+///
+/// #2537: if no sync session is currently active
+/// (`!scheduler.is_any_peer_locked()`), this is a deliberate no-op rather
+/// than setting the flag anyway. The old unconditional `store(true, ..)`
+/// left the flag latched forever whenever nothing was running to consume
+/// and clear it — every subsequent *responder* session (which never
+/// cleared the flag at all, prior to this fix) failed instantly with "sync
+/// cancelled", and the next locally initiated session was burned as a
+/// recorded failure (inflating that peer's backoff) just to reset it.
+#[instrument(skip(cancel_flag, scheduler), err)]
+pub fn cancel_sync_inner(
+    cancel_flag: &AtomicBool,
+    scheduler: &SyncScheduler,
+) -> Result<(), AppError> {
+    if scheduler.is_any_peer_locked() {
+        cancel_flag.store(true, Ordering::Release);
+    }
     Ok(())
 }
 
@@ -509,11 +526,14 @@ pub async fn start_sync(
     start_sync_inner(&scheduler, device_id.as_str(), peer_id).map_err(sanitize_internal_error)
 }
 
-/// Tauri command: cancel an active sync session.
+/// Tauri command: cancel the currently active sync session(s).
 #[tauri::command]
 #[specta::specta]
-pub async fn cancel_sync(cancel_flag: State<'_, crate::SyncCancelFlag>) -> Result<(), AppError> {
-    cancel_sync_inner(&cancel_flag.0).map_err(sanitize_internal_error)
+pub async fn cancel_sync(
+    cancel_flag: State<'_, crate::SyncCancelFlag>,
+    scheduler: State<'_, Arc<SyncScheduler>>,
+) -> Result<(), AppError> {
+    cancel_sync_inner(&cancel_flag.0, &scheduler).map_err(sanitize_internal_error)
 }
 
 /// Tauri command: return the current mDNS peer-discovery status (#2506).

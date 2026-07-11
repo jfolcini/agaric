@@ -6,6 +6,8 @@ use crate::sync_net::SyncConnection;
 use crate::sync_protocol::{SyncMessage, SyncOrchestrator, SyncState};
 use crate::sync_scheduler::SyncScheduler;
 
+use super::session_supervisor::CancelGuard;
+
 /// Result of verifying the peer's TLS certificate against its claimed identity.
 #[derive(Debug, PartialEq)]
 pub(crate) enum CertVerifyResult {
@@ -109,6 +111,18 @@ pub(crate) fn verify_peer_cert(
 /// Like the initiator, the flag is checked between recvs (at the top of each
 /// message-loop iteration and per-file in the transfer phase), so a single
 /// in-flight recv still runs to its timeout; mid-recv abort is out of scope.
+///
+/// #2537: this responder path now mirrors the initiator's [`CancelGuard`] —
+/// once the per-peer lock is acquired and identity checks pass
+/// (`_cancel_guard.owns = true`, set right before the peer-guard block below
+/// returns `Some(guard)`), this session becomes a legitimate resetter of the
+/// shared flag on Drop (gated on `!scheduler.is_any_peer_locked()`, i.e. only
+/// once it is the last active session standing). Before this fix the
+/// responder only ever *checked* the flag — it never cleared it, so a user
+/// cancel issued while no initiator session was around to consume it left
+/// every subsequent inbound session from any peer failing "sync cancelled"
+/// forever. See `CancelGuard`'s doc comment in `session_supervisor.rs` for
+/// the full concurrent-session race analysis.
 #[tracing::instrument(skip_all, name = "sync_resp")]
 pub(crate) async fn handle_incoming_sync(
     conn: SyncConnection,
@@ -155,6 +169,22 @@ async fn handle_incoming_sync_inner(
     let pool_ref = pool.clone();
     let event_sink_box: Box<dyn SyncEventSink> =
         Box::new(super::SharedEventSink(std::sync::Arc::clone(&event_sink)));
+
+    // #2537: scope guard that clears the shared daemon-wide cancel flag on
+    // Drop once this responder session both owns the cancel and is the
+    // last active session standing — mirrors the initiator's `CancelGuard`
+    // in `session_supervisor::try_sync_with_peer`. Declared BEFORE
+    // `_peer_guard` below so, per Rust's reverse-declaration-order Drop
+    // rule, this guard's Drop runs AFTER `_peer_guard` releases this
+    // session's own per-peer lock — `scheduler.is_any_peer_locked()`
+    // (consulted from `CancelGuard::drop`) therefore reflects only OTHER
+    // still-active sessions, not this one. See `CancelGuard`'s doc comment
+    // for the full race analysis.
+    let mut _cancel_guard = CancelGuard {
+        cancel: cancel.as_ref(),
+        scheduler: scheduler.as_ref(),
+        owns: false,
+    };
 
     // Construction of `orch` is deferred until after the cert
     // check so we can wire the verified TLS certificate CN into the
@@ -417,6 +447,13 @@ async fn handle_incoming_sync_inner(
                 return Ok(());
             }
         }
+
+        // #2537: identity + pinning checks passed and the per-peer lock is
+        // held — this is a committed, real session from here on, and the
+        // message loop below is the one that observes `cancel`. Mirrors the
+        // initiator's commit point (`_cancel_guard.owns = true` right before
+        // `run_sync_session` in `try_sync_with_peer`).
+        _cancel_guard.owns = true;
 
         Some(guard)
     } else {
