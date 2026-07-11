@@ -328,6 +328,127 @@ async fn recover_single_draft_returns_err_when_enqueue_fails_1322() {
     );
 }
 
+/// #2540: a draft whose `recover_single_draft` FAILS before commit must NOT
+/// be deleted — the `block_drafts` row is the only surviving copy of the
+/// user's unflushed text, and a transient DB error (WAL-lock contention,
+/// busy_timeout) during boot must not convert a recoverable crash-draft into
+/// permanent, silent data loss. The retained row must be recovered on the
+/// NEXT boot once the transient condition clears.
+///
+/// The failure is induced with a `BEFORE INSERT ON op_log` trigger that
+/// `RAISE(ABORT, …)` (mirroring `delete_failure_rolls_back_op_log_append` in
+/// db/command_tx.rs) — a deterministic, schema-independent "the recovery tx's
+/// op-log append fails". This is a PRE-commit failure: no synthetic edit op is
+/// appended and `blocks.content` is not updated, so the draft is genuinely the
+/// only copy of the text.
+#[tokio::test]
+async fn failed_boot_recovery_keeps_draft_and_recovers_on_next_boot_2540() {
+    let (pool, _dir) = test_pool().await;
+    let device_id = "dev-2540";
+    let block_id = "block-2540";
+
+    // A block whose content is the STALE pre-crash value; the unflushed draft
+    // carries the newer text.
+    insert_test_block(&pool, block_id, "stale content").await;
+    // Far-future timestamp so the draft is classified as unflushed and the
+    // recovery path (synthetic op + content update) is taken.
+    sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
+        .bind(block_id)
+        .bind("precious unflushed text")
+        .bind(FAR_FUTURE)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Poison the op-log: any INSERT aborts. `recover_single_draft` reaches its
+    // IMMEDIATE tx's `append_local_op_in_tx` and errors BEFORE commit.
+    sqlx::query(
+        "CREATE TRIGGER op_log_abort BEFORE INSERT ON op_log \
+         BEGIN SELECT RAISE(ABORT, 'op_log inserts forbidden'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // First boot: recovery fails for this draft. `recover_at_boot` follows the
+    // "log + continue" philosophy, so it returns Ok with the failure recorded
+    // in `draft_errors` (not `drafts_recovered`).
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
+    assert!(
+        report.drafts_recovered.is_empty(),
+        "recovery must NOT report success when the op-log append aborts"
+    );
+    assert_eq!(
+        report.draft_errors.len(),
+        1,
+        "the failed recovery must be recorded in draft_errors"
+    );
+
+    // The draft row SURVIVES — the fix's core contract. Before #2540 the boot
+    // loop deleted it unconditionally after logging the error, losing the text.
+    let drafts = crate::draft::get_all_drafts(&pool).await.unwrap();
+    assert_eq!(
+        drafts.len(),
+        1,
+        "the draft row must survive a FAILED recovery so the next boot can retry"
+    );
+    assert_eq!(drafts[0].content, "precious unflushed text");
+
+    // No synthetic op was committed and content is untouched (pre-commit fail).
+    let op_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        op_count, 0,
+        "no synthetic op should be committed on failure"
+    );
+    let content: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(block_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        content.as_deref(),
+        Some("stale content"),
+        "blocks.content must be untouched when recovery fails pre-commit"
+    );
+
+    // Clear the transient condition and boot again: the retained draft is now
+    // recovered and its text lands in blocks.content — proof the retention
+    // enables a real second-boot retry (not just data-at-rest).
+    sqlx::query("DROP TRIGGER op_log_abort")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let report2 = recover_at_boot_test(&pool, device_id).await.unwrap();
+    assert_eq!(
+        report2.drafts_recovered,
+        vec![block_id.to_string()],
+        "the retained draft must be recovered on the next boot"
+    );
+    assert!(report2.draft_errors.is_empty());
+
+    let content2: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(block_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        content2.as_deref(),
+        Some("precious unflushed text"),
+        "the recovered draft's text must land in blocks.content on retry"
+    );
+
+    // And the draft row is finally cleaned up now that recovery succeeded.
+    let drafts_after = crate::draft::get_all_drafts(&pool).await.unwrap();
+    assert!(
+        drafts_after.is_empty(),
+        "the draft row is deleted once recovery SUCCEEDS"
+    );
+}
+
 #[tokio::test]
 async fn already_flushed_draft_just_gets_deleted() {
     let (pool, _dir) = test_pool().await;
@@ -999,11 +1120,17 @@ async fn find_prev_edit_returns_most_recent_op_not_first() {
 
 // -- error-path coverage -----------------------------------------------
 
-/// Exercises the defensive error handling inside the draft-recovery loop
-/// by dropping the `op_log` table (so `recover_single_draft` fails) and
-/// adding a trigger that blocks DELETE on `block_drafts` (so `delete_draft`
-/// also fails). This covers the `Err(e)` match arm and the `if let Err(e)`
-/// branch that are otherwise unreachable without DB-level failures.
+/// Exercises the defensive error handling inside the draft-recovery loop by
+/// dropping the `op_log` table so `recover_single_draft` fails on its first
+/// SELECT. This covers the `Err(e)` match arm.
+///
+/// #2540: on a FAILED recovery the loop must NOT attempt `delete_draft` — the
+/// draft is the only surviving copy of the user's text. We deliberately do
+/// NOT install a delete-blocking trigger here: the only thing that can keep
+/// the `block_drafts` row alive is the fix skipping the delete on `Err`. So
+/// this test asserts both a single recover error (NOT two) and the survival
+/// of the row, either of which would break under the old
+/// unconditional-delete behaviour.
 #[tokio::test]
 async fn recover_at_boot_records_errors_when_draft_processing_fails() {
     let (pool, _dir) = test_pool().await;
@@ -1021,27 +1148,16 @@ async fn recover_at_boot_records_errors_when_draft_processing_fails() {
         .await
         .unwrap();
 
-    // Add a BEFORE DELETE trigger on block_drafts that raises an error,
-    // so delete_draft also fails.
-    sqlx::query(
-        "CREATE TRIGGER fail_delete BEFORE DELETE ON block_drafts \
-         BEGIN SELECT RAISE(ABORT, 'intentional test failure'); END",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-
     let report = recover_at_boot_test(&pool, device_id).await.unwrap();
 
-    // Single draft row → the loop iterates once. Both steps fail:
-    //   - `recover_single_draft` → op_log SELECT errors (table dropped)
-    //   - `delete_draft`         → BEFORE DELETE trigger aborts
-    // Each failure pushes one entry into `draft_errors`, so the count
-    // is deterministically 2.
+    // Single draft row → the loop iterates once. `recover_single_draft` fails
+    // (op_log SELECT errors), and the delete is now SKIPPED (#2540), so there
+    // is exactly ONE draft error (the recover), not two. Under the old
+    // unconditional-delete behaviour this was 2.
     assert_eq!(
         report.draft_errors.len(),
-        2,
-        "expected exactly 2 draft errors (recover + delete), got: {:?}",
+        1,
+        "expected exactly 1 draft error (recover only; delete skipped on Err), got: {:?}",
         report.draft_errors
     );
     assert_eq!(
@@ -1053,6 +1169,17 @@ async fn recover_at_boot_records_errors_when_draft_processing_fails() {
     assert!(
         report.drafts_recovered.is_empty(),
         "no drafts should be recovered when op_log is missing"
+    );
+
+    // #2540: the draft row must SURVIVE the failed recovery so the next boot
+    // can retry it.
+    let surviving: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_drafts")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        surviving, 1,
+        "the draft row must survive a failed recovery (not be deleted)"
     );
 }
 

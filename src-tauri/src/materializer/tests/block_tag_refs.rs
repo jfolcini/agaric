@@ -28,6 +28,70 @@ fn dedup_block_tag_refs_collapses_same_block_id() {
     );
 }
 
+// ======================================================================
+// #2540: SetBlockPageId — the per-block page_id/space_id backstop must be
+// keyed by block_id, NOT collapsed by discriminant.
+// ======================================================================
+
+#[test]
+fn dedup_set_block_page_id_keeps_distinct_blocks() {
+    // A multi-block paste/import burst enqueues one SetBlockPageId per
+    // non-page create; they reliably co-locate in one background drain.
+    // Before #2540 these fell into the discriminant catch-all, so only the
+    // FIRST block's page_id/space_id backstop survived — every later block
+    // stayed NULL page_id/space_id until an unrelated lifecycle op ran a
+    // full RebuildPageIds. Distinct block_ids must all survive.
+    let d = dedup_tasks(vec![
+        MaterializeTask::SetBlockPageId {
+            block_id: "a".into(),
+        },
+        MaterializeTask::SetBlockPageId {
+            block_id: "b".into(),
+        },
+        MaterializeTask::SetBlockPageId {
+            block_id: "a".into(),
+        },
+        MaterializeTask::SetBlockPageId {
+            block_id: "c".into(),
+        },
+    ]);
+    assert_eq!(
+        d.len(),
+        3,
+        "SetBlockPageId is keyed by block_id: distinct blocks (a, b, c) all \
+         survive; only the exact-block duplicate (second a) collapses"
+    );
+    // The surviving tasks are the three distinct blocks, first occurrence kept.
+    let ids: Vec<&str> = d
+        .iter()
+        .map(|t| match t {
+            MaterializeTask::SetBlockPageId { block_id } => block_id.as_ref(),
+            other => panic!("unexpected task in dedup output: {other:?}"),
+        })
+        .collect();
+    assert_eq!(ids, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn dedup_set_block_page_id_collapses_same_block_id() {
+    let d = dedup_tasks(vec![
+        MaterializeTask::SetBlockPageId {
+            block_id: "X".into(),
+        },
+        MaterializeTask::SetBlockPageId {
+            block_id: "X".into(),
+        },
+        MaterializeTask::SetBlockPageId {
+            block_id: "X".into(),
+        },
+    ]);
+    assert_eq!(
+        d.len(),
+        1,
+        "exact-block duplicate SetBlockPageId collapses to one"
+    );
+}
+
 #[test]
 fn dedup_reindex_block_tag_refs_and_block_links_independent() {
     // The two tasks share a block_id but are different task types and

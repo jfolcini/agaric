@@ -24,6 +24,7 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
     let mut seen_fr: FxHashSet<u64> = FxHashSet::default();
     let mut seen_frr: FxHashSet<u64> = FxHashSet::default();
     let mut seen_tu: FxHashSet<u64> = FxHashSet::default();
+    let mut seen_spid: FxHashSet<u64> = FxHashSet::default();
     // #2042: RebuildPagesCacheCounts is held aside and emitted exactly once at
     // the END of the batch (see the arm + tail below).
     let mut saw_pages_cache_counts = false;
@@ -62,6 +63,22 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
             // per-block tasks above; only exact-`tag_id` duplicates collapse.
             MaterializeTask::RefreshTagUsageCount { tag_id } => {
                 if seen_tu.insert(hash_id(tag_id)) {
+                    result.push(task);
+                }
+            }
+            // #2540: keyed by `block_id`, NOT discriminant — two
+            // `SetBlockPageId` for DIFFERENT blocks in the same drain must both
+            // survive. This is the per-block `page_id`/`space_id` backstop
+            // (task_handlers.rs) that fills a block whose owning page the in-tx
+            // stamp could not resolve; every non-page create enqueues one
+            // (dispatch.rs), so a multi-block paste/import burst co-locates many
+            // in one drain. Collapsing by discriminant would keep only the first
+            // and leave every later block with NULL page_id/space_id until an
+            // unrelated lifecycle op enqueues a full RebuildPageIds. Same
+            // per-key dedup shape as ReindexBlockLinks; only exact-`block_id`
+            // duplicates collapse.
+            MaterializeTask::SetBlockPageId { block_id } => {
+                if seen_spid.insert(hash_id(block_id)) {
                     result.push(task);
                 }
             }
