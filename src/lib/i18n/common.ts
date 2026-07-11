@@ -352,6 +352,18 @@ export const common: Record<string, string> = {
   // unreadable metadata), surfaced as a soft warning in the result panel.
   'data.importJexSkipped_one': 'Skipped {{count}} unreadable or encrypted item.',
   'data.importJexSkipped_other': 'Skipped {{count}} unreadable or encrypted items.',
+  // #1454 — fifth affordance: import a BibTeX (`.bib`) or CSL-JSON
+  // (`.json`) bibliography. One reference page per entry.
+  'data.importBibliographyButton': 'Import Bibliography (.bib/.json)',
+  // #1454 — success toast + result-panel summary. `count` drives the plural
+  // (pages created); `skipped` is the entries the backend skipped.
+  'data.importBibliographyResult_one': 'Imported {{count}} reference page ({{skipped}} skipped)',
+  'data.importBibliographyResult_other': 'Imported {{count}} reference pages ({{skipped}} skipped)',
+  // #1454 — picked a file whose extension maps to no bibliography format.
+  'data.importBibliographyUnsupported':
+    'Cannot import {{name}}: only .bib and .json bibliography files are supported.',
+  // #1454 — picked file has no content to import.
+  'data.importBibliographyEmpty': 'Cannot import {{name}}: the file is empty.',
   // #1927 — Cancel a long-running multi-file/vault import between files.
   'data.importCancelButton': 'Cancel',
   // #1927 — partial result after the user cancels a multi-file import.

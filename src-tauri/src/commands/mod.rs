@@ -130,9 +130,10 @@ pub use mcp::{
     mcp_rw_set_enabled, mcp_rw_set_enabled_inner, mcp_set_enabled, mcp_set_enabled_inner,
 };
 pub use pages::{
-    MCP_PAGE_LIMIT_CAP, PAGE_LINKS_EDGE_CAP, PageHeading, PageLinksResponse, PageSubtreeResponse,
-    export_page_markdown, export_page_markdown_inner, get_page_aliases, get_page_aliases_inner,
-    get_page_inner, get_page_unscoped_inner, import_markdown, import_markdown_inner,
+    ImportBibliographyResult, MCP_PAGE_LIMIT_CAP, PAGE_LINKS_EDGE_CAP, PageHeading,
+    PageLinksResponse, PageSubtreeResponse, export_page_markdown, export_page_markdown_inner,
+    get_page_aliases, get_page_aliases_inner, get_page_inner, get_page_unscoped_inner,
+    import_bibliography, import_bibliography_inner, import_markdown, import_markdown_inner,
     import_markdown_with_progress, list_all_pages_in_space, list_all_pages_in_space_inner,
     list_page_aliases_by_prefix, list_page_aliases_by_prefix_inner, list_page_links,
     list_page_links_inner, list_page_links_inner_split, list_page_links_inner_split_with_cap,

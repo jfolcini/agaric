@@ -8,7 +8,7 @@
  *  - Export: download all pages as a ZIP of Markdown files
  */
 
-import { Download, FileUp, FolderUp, Upload, Vault } from 'lucide-react'
+import { Download, FileUp, FolderUp, Library, Upload, Vault } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -23,7 +23,13 @@ import { scanAttachmentRefs } from '@/lib/import-attachments'
 import { jexNoteToMarkdown, parseJex } from '@/lib/jex-import'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { importMarkdown, resolvePageByAlias, type VaultFile } from '@/lib/tauri'
+import {
+  type BibliographyFormat,
+  importBibliography,
+  importMarkdown,
+  resolvePageByAlias,
+  type VaultFile,
+} from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 
@@ -198,6 +204,93 @@ function sanitizeSpaceNameForFilename(name: string): string {
     .replace(/^-+|-+$/g, '')
 }
 
+/**
+ * Map a picked bibliography file's extension to the `import_bibliography`
+ * `format` param (#1454): `.bib` → BibTeX, `.json` → CSL-JSON. Returns `null`
+ * for any other extension so the handler can reject before reading the file.
+ * The backend also accepts `format: null` (content auto-detect), but with a
+ * filename in hand the extension is authoritative — the hidden input filters
+ * the picker to exactly these two extensions, so `null` here only happens on
+ * a defensive path (e.g. a drag-drop bypassing the `accept` filter).
+ */
+function inferBibliographyFormat(filename: string): BibliographyFormat | null {
+  const lower = filename.toLowerCase()
+  if (lower.endsWith('.bib')) return 'bibtex'
+  if (lower.endsWith('.json')) return 'csl-json'
+  return null
+}
+
+/**
+ * #1454 — outcome of a bibliography import, rendered by its own result
+ * panel. camelCase mirror of the backend `ImportBibliographyResult` wire
+ * shape (see `importBibliography` in `src/lib/tauri.ts`); kept separate from
+ * {@link ImportRunResult} because a bibliography import is a single-IPC run
+ * with page/entry counts, not the markdown importer's per-file block loop.
+ */
+interface BibliographyImportOutcome {
+  pagesCreated: number
+  entriesSkipped: number
+  warnings: string[]
+}
+
+/**
+ * #1454 — presentational result region for a bibliography import. Mirrors
+ * the markdown import-result region's live-region + warnings-panel pattern
+ * (#1928 / #1929) but with page/entry counts instead of a per-file block
+ * summary. Extracted from `DataTab` to keep the parent's cyclomatic
+ * complexity under the lint budget.
+ */
+function BibliographyResultPanel({
+  result,
+}: {
+  result: BibliographyImportOutcome
+}): React.ReactElement {
+  const { t } = useTranslation()
+  return (
+    <div
+      className="import-result mt-3 text-xs space-y-1"
+      data-testid="bib-import-result"
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level status wrapper holding the summary <p> and the <details> list, same as the markdown import-result region; <output> is inline-level and would change the block flow
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      <p className="text-status-done-foreground" data-testid="bib-import-summary">
+        {t('data.importBibliographyResult', {
+          count: result.pagesCreated,
+          skipped: result.entriesSkipped,
+        })}
+      </p>
+      {result.warnings.length > 0 && (
+        <details data-testid="bib-import-warnings">
+          <summary className="cursor-pointer text-status-pending-foreground">
+            <span data-testid="bib-import-warnings-heading">
+              {t('data.importWarningsHeading', { count: result.warnings.length })}
+            </span>
+          </summary>
+          <ul
+            className="mt-1 space-y-0.5 max-h-40 overflow-y-auto"
+            data-testid="bib-import-warning-list"
+          >
+            {result.warnings.map((warning, i) => (
+              <li
+                // Warnings are free-form strings and may repeat, so
+                // index-qualify the key to keep it stable+unique.
+                // oxlint-disable-next-line react/no-array-index-key -- warning strings are free-form and may duplicate; the list is render-only (no reorder/insert), so the positional index is a stable, unique key
+                key={`bib-warn-${i}-${warning}`}
+                className="text-status-pending-foreground"
+                data-testid="bib-import-warning-item"
+              >
+                {warning}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  )
+}
+
 export function DataTab(): React.ReactElement {
   const { t } = useTranslation()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
@@ -220,6 +313,11 @@ export function DataTab(): React.ReactElement {
   // from the `.md`/folder inputs since each `.enex` file expands into one
   // page PER note (ENML → Markdown), a different iteration unit than a file.
   const enexInputRef = useRef<HTMLInputElement>(null)
+  // #1454 — hidden input for the bibliography importer (`.bib` BibTeX /
+  // `.json` CSL-JSON). Separate from the `.md`/folder/enex inputs: it is a
+  // single-file pick handled by one `import_bibliography` IPC (the backend
+  // iterates the entries), so none of the per-file loop machinery applies.
+  const bibInputRef = useRef<HTMLInputElement>(null)
   // #2513 (part 2) — hidden input for the Joplin `.jex` importer. Kept separate
   // from the other inputs since a `.jex` archive expands into one page PER note
   // (like `.enex`), a different iteration unit than a file.
@@ -230,6 +328,9 @@ export function DataTab(): React.ReactElement {
   const cancelRef = useRef(false)
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<ImportRunResult | null>(null)
+  // #1454 — bibliography import outcome, rendered by its own summary +
+  // warnings panel below the markdown importer's result region.
+  const [bibResult, setBibResult] = useState<BibliographyImportOutcome | null>(null)
   // Whether the failure/warning detail list is expanded past the first N
   // entries. Reset on each new import run.
   const [detailsExpanded, setDetailsExpanded] = useState(false)
@@ -897,6 +998,85 @@ export function DataTab(): React.ReactElement {
     [t, goToImportedPage],
   )
 
+  // #1454 — bibliography import (`.bib` BibTeX / `.json` CSL-JSON). A single
+  // file maps to a single `import_bibliography` IPC: the backend parses the
+  // entries and creates one reference page per entry, so there is no
+  // per-file/per-note loop here. Format is inferred from the extension
+  // (`inferBibliographyFormat`); the wrapper's `format: null` auto-detect is
+  // deliberately unused since the picker guarantees a filename. Space
+  // gating, toasts, and error extraction (#1935 `importErrorReason`) mirror
+  // `handleFileImport`.
+  const handleBibliographyImport = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0]
+      if (!file) return
+
+      // Defensive space guard — the button is disabled while
+      // `currentSpaceId` is null, same as the markdown importer.
+      const activeSpaceId = useSpaceStore.getState().currentSpaceId
+      if (activeSpaceId == null) {
+        notify.error(t('data.importSpaceNotReady'))
+        e.target.value = ''
+        return
+      }
+
+      const format = inferBibliographyFormat(file.name)
+      if (format == null) {
+        // The `accept` filter should make this unreachable from the picker,
+        // but drag-drop / OS quirks can still hand us an arbitrary file.
+        notify.error(t('data.importBibliographyUnsupported', { name: file.name }))
+        e.target.value = ''
+        return
+      }
+
+      const content = await file.text()
+      if (content.trim().length === 0) {
+        // Empty-file guard: never fire an IPC that can only produce
+        // "0 entries" — surface the reason immediately instead.
+        notify.error(t('data.importBibliographyEmpty', { name: file.name }))
+        e.target.value = ''
+        return
+      }
+
+      setImporting(true)
+      setBibResult(null)
+      try {
+        const result = await importBibliography(content, format, activeSpaceId)
+        setBibResult({
+          pagesCreated: result.pages_created,
+          entriesSkipped: result.entries_skipped,
+          warnings: result.warnings,
+        })
+        notify.success(
+          t('data.importBibliographyResult', {
+            count: result.pages_created,
+            skipped: result.entries_skipped,
+          }),
+        )
+      } catch (err) {
+        // #1935 — filename-distinct message keys the logger rate-limiter per
+        // file, and the extracted reason (Validation errors carry real text)
+        // is surfaced on the toast rather than a generic failure.
+        logger.error(
+          'DataSettingsTab',
+          `bibliography import failed: ${file.name}`,
+          { fileName: file.name },
+          err,
+        )
+        const reason = importErrorReason(err)
+        notify.error(
+          reason
+            ? t('data.importFailedFileDetail', { name: file.name, reason })
+            : t('data.importFailedFile', { name: file.name }),
+        )
+      } finally {
+        setImporting(false)
+        e.target.value = ''
+      }
+    },
+    [t],
+  )
+
   const handleExportAll = useCallback(async () => {
     setExporting(true)
     try {
@@ -1085,6 +1265,29 @@ export function DataTab(): React.ReactElement {
               data-testid="import-jex-button"
             >
               <FileUp className="h-3.5 w-3.5" /> {t('data.importJexButton')}
+            </Button>
+            {/* #1454 — bibliography import affordance. Same gating + flow as
+                the other import buttons; a single `.bib`/`.json` pick maps to
+                one `import_bibliography` IPC (one page per entry). */}
+            <input
+              type="file"
+              accept=".bib,.json"
+              ref={bibInputRef}
+              className="hidden"
+              onChange={handleBibliographyImport}
+              data-testid="import-bib-input"
+              aria-label={t('data.importBibliographyButton')}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => bibInputRef.current?.click()}
+              disabled={importDisabled}
+              title={importGatedTitle}
+              aria-describedby={importGatedDescribedBy}
+              data-testid="import-bib-button"
+            >
+              <Library className="h-3.5 w-3.5" /> {t('data.importBibliographyButton')}
             </Button>
             {/* #1927 — Cancel is only shown while a run is in flight. It
                 sets the abort flag the file loop checks between files. */}
@@ -1324,6 +1527,8 @@ export function DataTab(): React.ReactElement {
                 </div>
               )
             })()}
+          {/* #1454 — bibliography import outcome (summary + warnings). */}
+          {bibResult && <BibliographyResultPanel result={bibResult} />}
         </CardContent>
       </Card>
 

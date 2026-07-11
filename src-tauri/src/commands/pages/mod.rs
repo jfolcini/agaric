@@ -8,6 +8,7 @@
 //! it did when this was a single file.
 
 pub(crate) mod aliases;
+pub(crate) mod bibliography;
 pub(crate) mod links;
 pub(crate) mod listing;
 pub(crate) mod markdown;
@@ -15,6 +16,7 @@ pub(crate) mod markdown_yaml;
 pub(crate) mod metadata;
 
 pub use aliases::*;
+pub use bibliography::*;
 pub use links::*;
 pub use listing::*;
 pub use markdown::*;

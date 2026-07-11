@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT content AS \"content!: String\"\n               FROM blocks\n               WHERE block_type = 'page'\n                 AND deleted_at IS NULL\n                 AND space_id = ?1\n                 AND content IN (SELECT value FROM json_each(?2))",
+  "describe": {
+    "columns": [
+      {
+        "name": "content!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "e1bb2f07201598142b37b605108a9b67e4ab450323727fa66871308742212306"
+}

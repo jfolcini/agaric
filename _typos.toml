@@ -53,6 +53,10 @@ mis = "mis"
 Welcom = "Welcom"
 # `IIF(...)` is the SQLite immediate-if function used in queries.
 IIF = "IIF"
+# `ois` — the BibTeX LaTeX-accent decoder test in `bibliography.rs` decodes
+# `Fran\c{c}ois` (cedilla) to "François"; the `\c{c}` splits the token so the
+# trailing `ois` is scanned on its own. Deliberate fixture, not "is".
+ois = "ois"
 # `NODEL` — appears in trash_integration tests as part of a test ULID
 # / token fixture, not the English word "model" / "nodal".
 NODEL = "NODEL"

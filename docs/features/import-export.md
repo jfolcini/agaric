@@ -15,6 +15,16 @@
 
 The Import button shows a per-block progress count while a file imports, then a count-only summary (page title, blocks created, properties set, and a `N warning(s)` count). It does not show per-file detail or which file produced a given warning.
 
+### Bibliography import (BibTeX / CSL-JSON, #1454)
+
+*Import Bibliography* in Settings → Data accepts `.bib` (BibTeX) and `.json` (CSL-JSON) files. Each entry becomes a **reference page** in the active space:
+
+- **Page title** is the citation display name — `{first-author family name} {year}` (e.g. "Smith 2024"), falling back to the citation key; title collisions get the citation key appended.
+- **Typed properties** per entry: `citation-key`, `authors` ("; "-joined), `year` (number), `doi`, `url`, `journal`, `abstract`, `reference-type`. Definitions are created idempotently; a pre-existing user declaration of the same key wins and values coerce to it.
+- **Re-import is idempotent:** entries whose `citation-key` (or, as a fallback, non-empty `doi`) already exists in the space are skipped and counted.
+- **BibTeX is a documented subset** (`src-tauri/src/bibliography.rs`): brace-bodied entries with `{…}` / `"…"` / bare-integer values; `@comment` / `@preamble` / `@string` are skipped with a warning (no macro expansion, no `#` concatenation); LaTeX decoding covers only the common escapes, dashes, and pure-ASCII accent forms — anything else stays literal with a per-entry warning. Unbalanced braces or an unterminated quote fail the import with the entry's line number.
+- Authors/journals as linkable `ref` pages is a possible follow-up (issue #1454 tier b covers the live citation picker).
+
 ## Export
 
 ### Per-page export

@@ -1,6 +1,7 @@
 #[cfg(target_os = "linux")]
 pub mod appimage_integration;
 pub mod backlink;
+pub mod bibliography;
 pub mod block_descendants;
 pub mod cache;
 pub mod cancellation;
@@ -244,6 +245,8 @@ macro_rules! agaric_commands {
             $crate::commands::notifier::notify_task,
             // Logseq/Markdown import (#660)
             $crate::commands::pages::import_markdown,
+            // BibTeX / CSL-JSON bibliography import (#1454 tier a)
+            $crate::commands::pages::import_bibliography,
             // Attachments (F-7)
             $crate::commands::attachments::add_attachment,
             $crate::commands::attachments::add_attachment_with_bytes,

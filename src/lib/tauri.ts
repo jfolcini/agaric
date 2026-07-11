@@ -2418,6 +2418,41 @@ export async function importMarkdown(
 }
 
 // ---------------------------------------------------------------------------
+// Bibliography import (#1454)
+// ---------------------------------------------------------------------------
+
+/**
+ * Source format accepted by the `import_bibliography` command (#1454).
+ * `'bibtex'` for `.bib` files, `'csl-json'` for CSL-JSON `.json` files.
+ * Passing `null` as the wrapper's `format` asks the backend to auto-detect
+ * from the content.
+ */
+export type BibliographyFormat = 'bibtex' | 'csl-json'
+
+/** Result of a bibliography import (#1454) — the generated wire shape. */
+export type { ImportBibliographyResult } from './bindings'
+
+/**
+ * Import a BibTeX (`.bib`) or CSL-JSON (`.json`) bibliography (#1454).
+ * Creates one reference page per entry in the target space.
+ *
+ * `format` — `'bibtex' | 'csl-json'`, or `null` for backend content
+ * auto-detection. The Settings → Data importer always infers it from the
+ * picked file's extension, so `null` is only for callers with no filename.
+ *
+ * `spaceId` — required; like `importMarkdown`, the backend rejects empty /
+ * unknown ULIDs with `AppError::Validation`, so the UI affordance must stay
+ * disabled until the space store is bootstrapped.
+ */
+export async function importBibliography(
+  content: string,
+  format: BibliographyFormat | null,
+  spaceId: string,
+): Promise<import('./bindings').ImportBibliographyResult> {
+  return unwrap(await commands.importBibliography(content, format, spaceId))
+}
+
+// ---------------------------------------------------------------------------
 // Draft autosave commands (F-17)
 // ---------------------------------------------------------------------------
 

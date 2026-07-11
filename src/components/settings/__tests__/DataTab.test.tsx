@@ -31,12 +31,14 @@ vi.mock('@/lib/export-graph', () => ({
 }))
 
 const mockImportMarkdown = vi.fn()
+const mockImportBibliography = vi.fn()
 // #1927 — post-import navigation resolves the imported page's title to an
 // id via `resolvePageByAlias`, then calls `useTabsStore.navigateToPage`.
 const mockResolvePageByAlias = vi.fn()
 
 vi.mock('@/lib/tauri', () => ({
   importMarkdown: (...args: unknown[]) => mockImportMarkdown(...args),
+  importBibliography: (...args: unknown[]) => mockImportBibliography(...args),
   resolvePageByAlias: (...args: unknown[]) => mockResolvePageByAlias(...args),
 }))
 
@@ -80,6 +82,7 @@ beforeEach(() => {
   // (e.g. the cancel test, whose 2nd file is never reached) would bleed it
   // into the next test — reset the implementation queue explicitly.
   mockImportMarkdown.mockReset()
+  mockImportBibliography.mockReset()
   mockResolvePageByAlias.mockReset()
   useSpaceStore.setState({
     currentSpaceId: DEFAULT_TEST_SPACE.id,
@@ -1505,6 +1508,187 @@ describe('DataTab', () => {
       expect(toast.error).not.toHaveBeenCalledWith('All 1 file failed to import.')
       expect(toast.error).toHaveBeenCalledTimes(1)
       expect(mockImportMarkdown).not.toHaveBeenCalled()
+    })
+  })
+
+  // #1454 — bibliography import (.bib BibTeX / .json CSL-JSON). A single
+  // file maps to a single `import_bibliography` IPC; format is inferred from
+  // the picked file's extension.
+  describe('bibliography import (#1454)', () => {
+    const okResult = {
+      pages_created: 3,
+      entries_skipped: 1,
+      properties_set: 12,
+      warnings: [],
+    }
+
+    /** Dispatch a change event on the bib input carrying `file`. */
+    const pickBibFile = async (file: File): Promise<void> => {
+      const input = screen.getByTestId('import-bib-input') as HTMLInputElement
+      Object.defineProperty(input, 'files', { value: [file] })
+      await act(async () => {
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+    }
+
+    it('renders the bibliography input and button', () => {
+      render(<DataTab />)
+
+      const input = screen.getByTestId('import-bib-input')
+      expect(input).toBeInTheDocument()
+      // The picker filters to exactly the two supported extensions.
+      expect(input).toHaveAttribute('accept', '.bib,.json')
+
+      const btn = screen.getByTestId('import-bib-button')
+      expect(btn).toBeInTheDocument()
+      expect(btn).toHaveTextContent('Import Bibliography (.bib/.json)')
+    })
+
+    it('clicking the bibliography button opens the file input', async () => {
+      const user = userEvent.setup()
+      render(<DataTab />)
+
+      const input = screen.getByTestId('import-bib-input') as HTMLInputElement
+      const clickSpy = vi.spyOn(input, 'click')
+      await user.click(screen.getByTestId('import-bib-button'))
+      expect(clickSpy).toHaveBeenCalled()
+    })
+
+    it('is disabled until a space is ready, with the shared not-ready hint', () => {
+      useSpaceStore.setState({
+        currentSpaceId: null,
+        availableSpaces: [],
+        isReady: false,
+      })
+
+      render(<DataTab />)
+
+      const btn = screen.getByTestId('import-bib-button')
+      expect(btn).toBeDisabled()
+      // Same aria-describedby wiring as the markdown import button — the
+      // visible hint explains WHY the control is unactionable.
+      const hint = screen.getByTestId('import-space-not-ready-hint')
+      expect(btn).toHaveAttribute('aria-describedby', hint.id)
+    })
+
+    it('imports a .bib file as bibtex and shows the created/skipped toast', async () => {
+      mockImportBibliography.mockResolvedValueOnce(okResult)
+
+      render(<DataTab />)
+      await pickBibFile(
+        new File(['@article{knuth1984, title={Literate Programming}}'], 'refs.bib', {
+          type: 'text/plain',
+        }),
+      )
+
+      await waitFor(() => {
+        // Extension → format inference: `.bib` → 'bibtex'; content and the
+        // active space's ULID flow through unchanged.
+        expect(mockImportBibliography).toHaveBeenCalledWith(
+          '@article{knuth1984, title={Literate Programming}}',
+          'bibtex',
+          DEFAULT_TEST_SPACE.id,
+        )
+      })
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Imported 3 reference pages (1 skipped)')
+      })
+      // The result panel mirrors the toast summary.
+      expect(screen.getByTestId('bib-import-summary')).toHaveTextContent(
+        'Imported 3 reference pages (1 skipped)',
+      )
+    })
+
+    it('imports a .json file as csl-json', async () => {
+      mockImportBibliography.mockResolvedValueOnce({ ...okResult, pages_created: 1 })
+
+      render(<DataTab />)
+      const csl = '[{"id":"a","type":"book","title":"A"}]'
+      await pickBibFile(new File([csl], 'library.json', { type: 'application/json' }))
+
+      await waitFor(() => {
+        expect(mockImportBibliography).toHaveBeenCalledWith(csl, 'csl-json', DEFAULT_TEST_SPACE.id)
+      })
+    })
+
+    it('rejects an unsupported extension without firing the IPC', async () => {
+      render(<DataTab />)
+      // The `accept` filter should prevent this from the picker, but
+      // drag-drop / OS quirks can still hand over an arbitrary file.
+      await pickBibFile(new File(['@misc{x}'], 'refs.txt', { type: 'text/plain' }))
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(
+          'Cannot import refs.txt: only .bib and .json bibliography files are supported.',
+        )
+      })
+      expect(mockImportBibliography).not.toHaveBeenCalled()
+    })
+
+    it('rejects an empty file without firing the IPC', async () => {
+      render(<DataTab />)
+      await pickBibFile(new File(['   \n'], 'empty.bib', { type: 'text/plain' }))
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Cannot import empty.bib: the file is empty.')
+      })
+      expect(mockImportBibliography).not.toHaveBeenCalled()
+    })
+
+    it('renders backend warnings in the warnings panel', async () => {
+      mockImportBibliography.mockResolvedValueOnce({
+        ...okResult,
+        warnings: ['duplicate key smith2020 skipped', 'entry doe2021 has no title'],
+      })
+
+      render(<DataTab />)
+      await pickBibFile(new File(['@misc{x}'], 'refs.bib', { type: 'text/plain' }))
+
+      await waitFor(() => {
+        expect(screen.getByTestId('bib-import-warnings-heading')).toHaveTextContent('2 warnings')
+      })
+      // The actual warning strings render (a <details> keeps its contents in
+      // the DOM even while collapsed).
+      expect(screen.getByText('duplicate key smith2020 skipped')).toBeInTheDocument()
+      expect(screen.getByText('entry doe2021 has no title')).toBeInTheDocument()
+      expect(screen.getAllByTestId('bib-import-warning-item')).toHaveLength(2)
+    })
+
+    it('surfaces the AppError message on failure (#1935 pattern)', async () => {
+      // IPC AppError wire shape: { kind, message } — Validation failures
+      // carry real text the user should see.
+      mockImportBibliography.mockRejectedValueOnce({
+        kind: 'validation',
+        message: 'unbalanced braces at line 3',
+      })
+
+      render(<DataTab />)
+      await pickBibFile(new File(['@misc{x'], 'bad.bib', { type: 'text/plain' }))
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(
+          'Failed to import bad.bib: unbalanced braces at line 3',
+        )
+      })
+      // No success toast and no result panel on the failure path.
+      expect(toast.success).not.toHaveBeenCalled()
+      expect(screen.queryByTestId('bib-import-result')).not.toBeInTheDocument()
+    })
+
+    it('has no a11y violations with a populated bibliography result panel', async () => {
+      mockImportBibliography.mockResolvedValueOnce({
+        ...okResult,
+        warnings: ['duplicate key smith2020 skipped'],
+      })
+
+      const { container } = render(<DataTab />)
+      await pickBibFile(new File(['@misc{x}'], 'refs.bib', { type: 'text/plain' }))
+
+      await waitFor(() => {
+        expect(screen.getByTestId('bib-import-result')).toBeInTheDocument()
+      })
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
     })
   })
 })
