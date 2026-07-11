@@ -149,8 +149,10 @@ export const commands = {
 	 *  #2468: the response carries the produced op ref(s) (`WithOps` — a
 	 *  flattened, strict superset of the previous `TagResponse` shape) so the
 	 *  frontend undo stack can address the action by exact ref (`undo_op`).
-	 *  `op_refs` is empty when the tag was already present (idempotent no-op —
-	 *  nothing to undo).
+	 *  An already-present tag is REJECTED (`InvalidOperation("tag already
+	 *  applied")` from [`add_tag_inner`]), not surfaced as an empty-`op_refs`
+	 *  success — the empty-Vec case exists in the `WithOps` contract for the
+	 *  frontend's defense-in-depth guard, but this command never produces it.
 	 */
 	addTag: (blockId: BlockId, tagId: BlockId) => typedError<WithOps<TagResponse>, AppError>(__TAURI_INVOKE("add_tag", { blockId, tagId })),
 	/**
@@ -3900,9 +3902,12 @@ export type VaultFile = {
  *  keep type-checking unchanged while migrated ones read `op_refs`.
  * 
  *  `op_refs` preserves append order. Single-op commands carry exactly one
- *  entry; a command that appends nothing (possible for idempotent
- *  tag/property no-ops) carries an empty Vec — the frontend must skip the
- *  undo-stack push in that case (nothing was done, nothing to undo).
+ *  entry. The contract also admits an empty Vec ("appended nothing —
+ *  nothing to undo"), which the frontend must handle by skipping the
+ *  undo-stack push; note that NO currently-migrated command produces it
+ *  (the tag no-ops are rejected with errors by `add_tag_inner` /
+ *  `remove_tag_inner`, and `delete_property` appends its op even when the
+ *  key is absent) — only the tauri-mock's lenient conformance paths do.
  */
 export type WithOps<T> = {
 	/**  The op-log refs appended by this command, in append order. */

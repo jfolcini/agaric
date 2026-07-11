@@ -897,9 +897,11 @@ export async function moveBlocksBatch(
 
 /** Associate a tag with a block.
  *
- * #2468: carries `op_refs` — EMPTY when the tag was already present
- * (idempotent no-op: nothing appended, nothing to undo — callers must NOT
- * push an undo entry in that case).
+ * #2468: carries `op_refs`. The real backend REJECTS an already-present tag
+ * (`InvalidOperation("tag already applied")`), so a real success never has
+ * empty `op_refs`; the tauri-mock's lenient duplicate path (kept for the
+ * `tag_add_remove` conformance fixture) returns `op_refs: []` instead —
+ * callers must NOT push an undo entry when `op_refs` is empty.
  */
 export async function addTag(blockId: string, tagId: string): Promise<WithOps<TagResponse>> {
   return unwrap(await commands.addTag(blockId, tagId))
@@ -918,8 +920,9 @@ export async function addTagsByIds(blockIds: string[], tagId: string): Promise<n
 
 /** Remove a tag association from a block.
  *
- * #2468: carries `op_refs` — EMPTY when the tag was not attached (idempotent
- * no-op: nothing appended, nothing to undo).
+ * #2468: carries `op_refs`. The real backend REJECTS an unattached remove
+ * (`NotFound("tag association")`); only the tauri-mock's lenient path
+ * returns `op_refs: []` — callers must NOT push an undo entry then.
  */
 export async function removeTag(blockId: string, tagId: string): Promise<WithOps<TagResponse>> {
   return unwrap(await commands.removeTag(blockId, tagId))
