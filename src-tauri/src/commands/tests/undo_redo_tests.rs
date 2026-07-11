@@ -5,6 +5,39 @@ use crate::op::{
 };
 use crate::op_log;
 
+/// #2549 regression-test helper: insert a REPLICATED (audit-only,
+/// `is_replicated = 1`) op from a foreign device — a row ingested for
+/// provenance that is NEVER applied to local state (#2481/#2495). Goes
+/// through the real sync-ingest core (`dag::insert_replicated_op`) so the
+/// denormalized `block_id` column is populated and `is_replicated = 1` is
+/// stamped exactly as a synced audit row would be. Mirrors
+/// `reverse::tests::append_replicated_op`.
+async fn append_replicated_op(
+    pool: &SqlitePool,
+    device_id: &str,
+    seq: i64,
+    mut payload: OpPayload,
+    ts: i64,
+) {
+    payload.normalize_block_ids();
+    let op_type = payload.op_type_str().to_owned();
+    let payload_json = op_log::serialize_inner_payload(&payload).unwrap();
+    let hash = crate::hash::compute_op_hash(device_id, seq, None, &op_type, &payload_json);
+    let transfer = crate::sync_protocol::types::OpTransfer {
+        device_id: device_id.to_owned(),
+        seq,
+        parent_seqs: None,
+        hash,
+        op_type,
+        payload: payload_json,
+        created_at: ts,
+        origin: "agent:codex".to_owned(),
+    };
+    crate::dag::insert_replicated_op(pool, &transfer)
+        .await
+        .expect("replicated audit op must ingest");
+}
+
 // ======================================================================
 // Undo/Redo tests
 // ======================================================================
@@ -6639,4 +6672,304 @@ async fn undo_of_create_keeps_engine_in_step_for_next_move() {
         .unwrap();
     assert!(z_deleted.is_some(), "undone create must stay soft-deleted");
     mat.shutdown();
+}
+
+// ======================================================================
+// #2549 — reviewer-added completeness fixes.
+//
+// The original #2549 fix filtered `find_prior_*` prior-state walks and
+// added `reject_replicated_targets` to `revert_ops_in_tx`. It missed two
+// other op_log reads that feed the SAME reverse-computation surface:
+//
+//   * `undo_page_op_inner`'s target-selection query calls
+//     `reverse::compute_reverse` DIRECTLY — it never routes through
+//     `revert_ops_in_tx`, so `reject_replicated_targets` never runs for it.
+//   * `restore_page_to_op_inner`'s "ops after target" sweep feeds
+//     `revert_ops_in_tx` a whole-batch-reject guard: a single unrelated
+//     replicated audit row anywhere in the swept range would abort an
+//     otherwise legitimate point-in-time restore.
+//
+// Both are fixed by adding `is_replicated = 0` to the respective queries
+// (see `commands/history.rs`). These tests cover the two gaps.
+// ======================================================================
+
+/// #2549: `undo_page_op_inner` must skip a replicated (foreign, never-
+/// applied) audit row even when it is NEWER than the last local op —
+/// undo_depth=0 must still target the local edit, not the audit row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_page_op_skips_replicated_op_newer_than_local_2549() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let (page_id, child_ids) = create_page_with_children(&pool, &mat).await;
+
+    // The only LOCAL edit this device actually applied.
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child_ids[0].clone().into(),
+        "local-edit".into(),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // A REPLICATED (foreign, never-applied) edit on the SAME block, stamped
+    // with a LATER created_at than the local edit above. Without the
+    // `is_replicated = 0` filter on the undo target-selection query, this
+    // newer-but-foreign row would be picked as the undo_depth=0 target
+    // instead of the local edit, and `compute_reverse` +
+    // `apply_reverse_in_tx` would mutate local state from a row this device
+    // never actually applied.
+    append_replicated_op(
+        &pool,
+        "remote-dev-2549",
+        1,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: child_ids[0].clone().into(),
+            to_text: "foreign-edit".into(),
+            prev_edit: None,
+        }),
+        FIXED_TS + 999_999_999,
+    )
+    .await;
+
+    let result = undo_page_op_inner(&pool, DEV, &mat, page_id.clone(), 0)
+        .await
+        .expect("undo must succeed by skipping the replicated row");
+
+    assert_eq!(
+        result.reversed_op.device_id, DEV,
+        "undo must target the LOCAL edit, not the newer replicated audit row (#2549)"
+    );
+    assert_eq!(result.new_op_type, "edit_block");
+
+    let after = get_block_inner(&pool, child_ids[0].clone().into())
+        .await
+        .unwrap();
+    assert_eq!(
+        after.content,
+        Some("child one".into()),
+        "content should revert to the pre-local-edit value, unaffected by the \
+         never-applied foreign row"
+    );
+
+    // The replicated row itself must remain untouched.
+    let (is_replicated,): (i64,) =
+        sqlx::query_as("SELECT is_replicated FROM op_log WHERE device_id = ? AND seq = ?")
+            .bind("remote-dev-2549")
+            .bind(1i64)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        is_replicated, 1,
+        "replicated row must stay marked as replicated"
+    );
+}
+
+/// #2549: `restore_page_to_op_inner`'s sweep must exclude replicated audit
+/// rows so an unrelated foreign op does not trip `reject_replicated_targets`
+/// and abort an otherwise legitimate point-in-time restore.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_page_to_op_ignores_replicated_op_in_sweep_2549() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Test Page".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "first".into(),
+        Some(page.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    edit_block_inner(&pool, DEV, &mat, b1.id.clone(), "first-edited".into())
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Restore target: right after this edit.
+    let ops_so_far = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
+    let target_seq = ops_so_far
+        .iter()
+        .rev()
+        .find(|o| o.op_type == "edit_block")
+        .unwrap()
+        .seq;
+
+    // A REPLICATED (foreign, never-applied) edit AFTER the target, on the
+    // SAME block that is in scope for this page restore. Before the fix,
+    // this row would land in `candidate_ops` and `revert_ops_in_tx`'s
+    // `reject_replicated_targets` guard would reject the ENTIRE restore,
+    // even though this row has no local forward effect to undo.
+    append_replicated_op(
+        &pool,
+        "remote-dev-2549",
+        1,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: b1.id.clone(),
+            to_text: "foreign-edit".into(),
+            prev_edit: None,
+        }),
+        FIXED_TS + 500_000,
+    )
+    .await;
+
+    // A genuine LOCAL edit after the target — this is what should actually
+    // be reverted by the restore.
+    edit_block_inner(&pool, DEV, &mat, b1.id.clone(), "second-local-edit".into())
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let result = restore_page_to_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.id.to_string(),
+        DEV.into(),
+        target_seq,
+    )
+    .await
+    .expect("restore must succeed despite an unrelated replicated audit row in the swept range");
+    mat.flush_background().await.unwrap();
+
+    assert_eq!(
+        result.ops_reverted, 1,
+        "only the local second edit should be reverted; the replicated row \
+         must be excluded from the sweep entirely"
+    );
+    assert_eq!(result.non_reversible_skipped, 0);
+
+    assert_eq!(
+        get_block_inner(&pool, b1.id.clone()).await.unwrap().content,
+        Some("first-edited".into()),
+        "block should be restored to the target's local content"
+    );
+
+    // The replicated audit row itself must be untouched (never reverted).
+    let (is_replicated,): (i64,) =
+        sqlx::query_as("SELECT is_replicated FROM op_log WHERE device_id = ? AND seq = ?")
+            .bind("remote-dev-2549")
+            .bind(1i64)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        is_replicated, 1,
+        "replicated row must remain marked as replicated"
+    );
+}
+
+/// #2549: `undo_page_group_inner` (and by construction the identical
+/// `find_undo_group_inner` CTE) must exclude replicated audit rows from
+/// `ordered_ops`. A replicated row that is NEWER than every local op would
+/// otherwise seed the walk (rn = 1 for depth = 0), flow into
+/// `revert_ops_in_tx`, and be rejected wholesale by
+/// `reject_replicated_targets` — making group undo unusable. With the filter,
+/// the row is invisible: the two local edits form the group and both revert.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_page_group_skips_replicated_rows_2549() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Block created by OTHER_DEV so the create op breaks the same-device
+    // walk and bounds the group at the two DEV edits (mirrors
+    // `undo_page_group_reverts_multi_op_group_newest_first`).
+    let created = create_block_inner(
+        &pool,
+        OTHER_DEV,
+        &mat,
+        "content".into(),
+        "v0".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Two LOCAL edits, applied — the group that should be undone.
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "local-1".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "local-2".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // A REPLICATED (foreign, never-applied) edit on the same block with a
+    // LATER created_at than both local edits: without the
+    // `is_replicated = 0` filter it seeds the walk at depth 0 and the whole
+    // group undo is rejected by `reject_replicated_targets`.
+    append_replicated_op(
+        &pool,
+        "remote-dev-2549",
+        1,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: created.id.clone(),
+            to_text: "foreign".into(),
+            prev_edit: None,
+        }),
+        crate::db::now_ms() + 999_999,
+    )
+    .await;
+
+    let page_id = created.id.clone().into_string();
+
+    // Sizing must agree with enumeration: the group is the two local edits.
+    let size = find_undo_group_inner(&pool, &page_id, 0, 1_000_000)
+        .await
+        .expect("find_undo_group must succeed with a replicated row present");
+    assert_eq!(
+        size, 2,
+        "group size must count only LOCAL undoable ops, not the replicated row (#2549)"
+    );
+
+    let results = undo_page_group_inner(&pool, DEV, &mat, page_id.clone(), 0, 1_000_000)
+        .await
+        .expect("group undo must succeed by ignoring the replicated row (#2549)");
+    settle(&mat).await;
+
+    assert_eq!(
+        results.len(),
+        2,
+        "both local edits must be reverted; the replicated row must not \
+         seed/abort the group"
+    );
+    assert!(
+        results.iter().all(|r| r.reversed_op.device_id == DEV),
+        "every reversed op must be a LOCAL op"
+    );
+
+    let after = get_block_inner(&pool, created.id.clone()).await.unwrap();
+    assert_eq!(
+        after.content,
+        Some("v0".into()),
+        "content must revert to the pre-edit value, unaffected by the \
+         never-applied foreign row"
+    );
 }
