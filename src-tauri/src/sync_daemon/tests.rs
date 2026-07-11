@@ -4752,6 +4752,149 @@ async fn issue2536_multi_space_delta_sync_completes() {
     mat_b.shutdown();
 }
 
+/// #2536 (adversarial reviewer addition) — pin the INTERMEDIATE puller
+/// state between the two streamed `LoroSync` messages, not just the
+/// terminal `Complete`.
+///
+/// The end-to-end `issue2536_multi_space_delta_sync_completes` test only
+/// pins the `self.state = StreamingOps` half of the fix: the daemon's
+/// state-validation match reads `self.state`, so reverting only that line
+/// makes the second `LoroSync` fail validation and the pump panics. But
+/// the fix also restores `self.session.state`, and NOTHING in the
+/// end-to-end test observes `session().state` mid-stream — reverting only
+/// the `self.session.state` line still passes that test.
+///
+/// This test drives the initiator's `handle_message` MANUALLY (no pump)
+/// and, after delivering the first non-final `LoroSync`, asserts
+/// `init_a.session().state == StreamingOps`. That directly pins the
+/// `self.session.state = StreamingOps` line: without it the puller would
+/// be observably parked in `ApplyingOps` between messages. It then feeds
+/// the final `LoroSync` and asserts the terminal `Complete`, and confirms
+/// no intermediate handle_message errored.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn issue2536_puller_rests_in_streaming_ops_between_loro_messages() {
+    use crate::sync_protocol::{SyncMessage, SyncOrchestrator, SyncState};
+
+    const DEV_A: &str = "DEV2536IA";
+    const DEV_B: &str = "DEV2536IB";
+    const BLOCK_PERSONAL: &str = "01HZ2536IBLKPERSONALXXXXXX";
+    const BLOCK_WORK: &str = "01HZ2536IBLKWORKXXXXXXXXXX";
+    let space_personal = crate::space::SpaceId::from_trusted("01HZ2536ISPACEPERSONALXXXX");
+    let space_work = crate::space::SpaceId::from_trusted("01HZ2536ISPACEWORKXXXXXXXX");
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+    let mat_b = Materializer::new(pool_b.clone());
+
+    let state_b = std::sync::Arc::clone(mat_b.loro_state());
+
+    peer_refs::upsert_peer_ref(&pool_a, DEV_B).await.unwrap();
+    peer_refs::upsert_peer_ref(&pool_b, DEV_A).await.unwrap();
+
+    make_local_edit_602(
+        &pool_b,
+        &mat_b,
+        &state_b,
+        DEV_B,
+        &space_personal,
+        BLOCK_PERSONAL,
+        "personal space content",
+        1_752_000_000_000,
+    )
+    .await;
+    make_local_edit_602(
+        &pool_b,
+        &mat_b,
+        &state_b,
+        DEV_B,
+        &space_work,
+        BLOCK_WORK,
+        "work space content",
+        1_752_000_001_000,
+    )
+    .await;
+    assert_eq!(state_b.registry.dirty_count(), 2, "two dirty spaces seeded");
+
+    let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
+        .with_expected_remote_id(DEV_B.into());
+    let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
+        .with_expected_remote_id(DEV_A.into());
+
+    // A -> B: HeadExchange.
+    let head = init_a.start().await.expect("initiator start");
+
+    // B handles HeadExchange, streams its two LoroSync messages.
+    let first_loro = resp_b
+        .handle_message(wire_roundtrip_602(&head))
+        .await
+        .expect("responder handles HeadExchange")
+        .expect("responder replies with first LoroSync");
+    let mut streamed: Vec<SyncMessage> = vec![first_loro];
+    while let Some(m) = resp_b.next_message() {
+        streamed.push(m);
+    }
+    assert_eq!(
+        streamed.len(),
+        2,
+        "responder must stream exactly two LoroSync messages (one per dirty space)"
+    );
+    // Exactly one is_last, and it is the last of the stream.
+    match &streamed[0] {
+        SyncMessage::LoroSync { is_last, .. } => {
+            assert!(!is_last, "first streamed LoroSync must be non-final")
+        }
+        other => panic!("expected LoroSync, got {other:?}"),
+    }
+    match &streamed[1] {
+        SyncMessage::LoroSync { is_last, .. } => {
+            assert!(is_last, "second streamed LoroSync must be final")
+        }
+        other => panic!("expected LoroSync, got {other:?}"),
+    }
+
+    // A handles the FIRST (non-final) LoroSync. It returns Ok(None) and —
+    // with the fix — parks in StreamingOps, NOT ApplyingOps.
+    let r0 = init_a
+        .handle_message(wire_roundtrip_602(&streamed[0]))
+        .await
+        .expect("initiator handles first LoroSync without error");
+    assert!(
+        r0.is_none(),
+        "non-final LoroSync yields no immediate reply"
+    );
+    assert_eq!(
+        init_a.session().state,
+        SyncState::StreamingOps,
+        "#2536: after a non-final LoroSync the puller must rest in \
+         StreamingOps (pins `self.session.state`); ApplyingOps here means \
+         the `self.session.state` line was dropped"
+    );
+    assert!(
+        !init_a.is_terminal(),
+        "puller must not be terminal mid-stream"
+    );
+
+    // A handles the FINAL LoroSync -> Complete + SyncComplete reply.
+    let r1 = init_a
+        .handle_message(wire_roundtrip_602(&streamed[1]))
+        .await
+        .expect("initiator handles final LoroSync without error")
+        .expect("final LoroSync yields a SyncComplete reply");
+    assert!(
+        matches!(r1, SyncMessage::SyncComplete { .. }),
+        "final LoroSync must reply SyncComplete, got {r1:?}"
+    );
+    assert_eq!(
+        init_a.session().state,
+        SyncState::Complete,
+        "#2536: puller must reach Complete after the final LoroSync"
+    );
+
+    mat_a.shutdown();
+    mat_b.shutdown();
+}
+
 // ======================================================================
 // #2129 — two-instance convergence over a REAL loopback TLS socket
 // ======================================================================
