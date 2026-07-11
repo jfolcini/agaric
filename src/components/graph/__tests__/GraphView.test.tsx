@@ -18,6 +18,7 @@ import { drag } from 'd3-drag'
 import { forceSimulation } from 'd3-force'
 import { select } from 'd3-selection'
 import { zoom } from 'd3-zoom'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -512,6 +513,27 @@ describe('GraphView', () => {
 
     // navigateToPage from navigation store is set up correctly
     expect(useTabsStore.getState().navigateToPage).toBe(navigateToPage)
+  })
+
+  // #2545: the tag-filter fetch used to fail silently (logger-only), leaving
+  // the dropdown empty with no user feedback. It must now surface a deduped
+  // toast like the main graph fetch does.
+  it('surfaces a toast when the tag-filter fetch fails (#2545)', async () => {
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_tags_by_prefix') return Promise.reject(new Error('tags IPC offline'))
+      if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
+      if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+      return Promise.resolve(null)
+    })
+
+    render(<GraphView />)
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('graph.tagsLoadFailed'), {
+        id: 'graph-tags',
+      })
+    })
   })
 
   it('shows error state on fetch failure', async () => {

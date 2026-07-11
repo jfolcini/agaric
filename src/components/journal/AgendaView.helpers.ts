@@ -7,10 +7,15 @@
  */
 
 import type { ExecuteFiltersResult } from '@/lib/agenda-filters'
+import { t } from '@/lib/i18n'
 import type { BlockRow, ResolvedBlock } from '@/lib/tauri'
 
-/** Fallback title used when batch-resolve returns a null title. */
-export const FALLBACK_PAGE_TITLE = 'Untitled'
+/**
+ * Fallback title used when batch-resolve returns a null title. Resolved
+ * through the shared `common.untitled` i18n key (#2545) so every surface
+ * spells the fallback the same way.
+ */
+export const FALLBACK_PAGE_TITLE = t('common.untitled')
 
 /** Processed outcome of a filter execution, ready for state updates. */
 export interface AgendaFetchOutcome {

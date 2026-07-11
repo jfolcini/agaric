@@ -19,6 +19,7 @@ import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { usePaginatedQuery } from '@/hooks/usePaginatedQuery'
 import { useToday } from '@/hooks/useToday'
 import type { NavigateToPageFn } from '@/lib/block-events'
+import { t as translate } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import type { BlockRow } from '@/lib/tauri'
 import { batchResolve, listUnfinishedTasks, paginationLimit } from '@/lib/tauri'
@@ -160,7 +161,7 @@ async function resolvePageTitles(parentIds: string[]): Promise<Map<string, strin
   try {
     const resolved = await batchResolve(parentIds, 'global')
     for (const r of resolved) {
-      titles.set(r.id, r.title ?? 'Untitled')
+      titles.set(r.id, r.title ?? translate('common.untitled'))
     }
   } catch {
     // Non-critical: breadcrumbs will show "Untitled"

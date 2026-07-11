@@ -39,6 +39,7 @@ import {
 } from '@/lib/graph-neighborhood'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { listTagsByPrefix } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
@@ -213,8 +214,17 @@ export function GraphView(): React.ReactElement {
   useEffect(() => {
     listTagsByPrefix({ prefix: '' })
       .then((result) => setTags(result ?? []))
-      .catch((err) => logger.error('GraphView', 'Failed to load tags', undefined, err))
-  }, [])
+      .catch((err) => {
+        logger.error('GraphView', 'Failed to load tags', undefined, err)
+        // #2545: don't fail silently. A logger-only catch left the tag-filter
+        // dropdown empty with zero user feedback (the user concludes they have
+        // no tags). Surface it like the main graph fetch does, deduped by id
+        // so a remount can't stack duplicate toasts.
+        notify.error(t('graph.tagsLoadFailed'), { id: 'graph-tags' })
+      })
+    // `t` is referentially stable across renders (single-locale app), so this
+    // effect stays effectively mount-only while satisfying exhaustive-deps.
+  }, [t])
 
   // Fetch data with stale-while-revalidate caching
   useEffect(() => {

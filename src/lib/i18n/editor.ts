@@ -139,6 +139,7 @@ export const editor: Record<string, string> = {
   // editor selection moves), so the copy stays minimal.
   'suggestion.footer.touch.select': 'Tap to select',
   'link.opensInNewTab': '(opens in new tab)',
+  'linkPreview.notFoundTag': '(not found)',
   'lightbox.description': 'Fullscreen preview of {{filename}}',
   'lightbox.openExternal': 'Open externally',
   'lightbox.previous': 'Previous image',

@@ -43,6 +43,7 @@ export const references: Record<string, string> = {
   'graph.noPages': 'No pages to visualize',
   'graph.noMatches': 'No pages match the current filters',
   'graph.loadFailed': 'Failed to load graph data',
+  'graph.tagsLoadFailed': 'Failed to load tags for the filter',
   'graph.title': 'Page Relationships',
   'graph.keyboardHint':
     'Use Tab to enter the graph, Arrow keys to move between nodes, then Enter or Space to open the page.',

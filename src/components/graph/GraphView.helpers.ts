@@ -8,6 +8,7 @@
  */
 
 import type { GraphEdge, GraphFetchResult, GraphNode } from '@/lib/graph-types'
+import { t } from '@/lib/i18n'
 import type { PageHeading } from '@/lib/tauri'
 import { listAllPagesInSpace, listPageLinks, listTemplatePageIdsInSpace } from '@/lib/tauri'
 
@@ -37,7 +38,7 @@ function buildNodes(
 ): GraphNode[] {
   return items.map((p) => ({
     id: p.id,
-    label: p.content && p.content.length > 0 ? p.content : 'Untitled',
+    label: p.content && p.content.length > 0 ? p.content : t('common.untitled'),
     todo_state: p.todo_state,
     priority: p.priority,
     due_date: p.due_date,
