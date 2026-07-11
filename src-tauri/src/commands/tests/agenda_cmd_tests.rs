@@ -450,9 +450,11 @@ async fn count_agenda_batch_empty_dates_returns_empty() {
 async fn count_agenda_batch_rejects_oversize() {
     let (pool, _dir) = test_pool().await;
 
-    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
-        .map(|i| format!("2025-01-{i:05}"))
-        .collect();
+    // Valid dates so the ONLY rejection cause is the cap, not date-format
+    // validation — otherwise this test would stay green even if the cap
+    // were removed (a false regression guard).
+    let oversize: Vec<String> =
+        vec!["2025-01-15".to_string(); crate::commands::MAX_BATCH_BLOCK_IDS + 1];
     let big = count_agenda_batch_inner(&pool, oversize, &SpaceScope::Global).await;
     assert!(
         matches!(big, Err(crate::error::AppError::Validation { .. })),
@@ -585,9 +587,11 @@ async fn count_agenda_batch_by_source_empty_dates_returns_empty() {
 async fn count_agenda_batch_by_source_rejects_oversize() {
     let (pool, _dir) = test_pool().await;
 
-    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
-        .map(|i| format!("2025-01-{i:05}"))
-        .collect();
+    // Valid dates so the ONLY rejection cause is the cap, not date-format
+    // validation — otherwise this test would stay green even if the cap
+    // were removed (a false regression guard).
+    let oversize: Vec<String> =
+        vec!["2025-01-15".to_string(); crate::commands::MAX_BATCH_BLOCK_IDS + 1];
     let big = count_agenda_batch_by_source_inner(&pool, oversize, &SpaceScope::Global).await;
     assert!(
         matches!(big, Err(crate::error::AppError::Validation { .. })),
