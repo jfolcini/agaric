@@ -242,7 +242,7 @@ export function useSearchResults({
             // batchResolve fetch. Only allocate a new Map if a title changed.
             let changed = false
             for (const r of resolved) {
-              const nextTitle = r.title ?? 'Untitled'
+              const nextTitle = r.title ?? t('common.untitled')
               if (prev.get(r.id) !== nextTitle) {
                 changed = true
                 break
@@ -251,7 +251,7 @@ export function useSearchResults({
             if (!changed) return prev
             const next = new Map(prev)
             for (const r of resolved) {
-              next.set(r.id, r.title ?? 'Untitled')
+              next.set(r.id, r.title ?? t('common.untitled'))
             }
             return next
           })
@@ -264,7 +264,8 @@ export function useSearchResults({
       })
     // `pageTitles` participates so the already-resolved filter above sees the
     // latest map; the empty-`parentIds` guard makes the follow-up a no-op.
-  }, [results, pageTitles])
+    // `t` is referentially stable (single-locale app), listed for exhaustive-deps.
+  }, [results, pageTitles, t])
 
   // A monotonic "navigation generation". Each click claims the next
   // generation; only the latest may resolve the spinner / perform the
@@ -276,8 +277,8 @@ export function useSearchResults({
       setLoadingResultId(block.id)
       try {
         if (block.block_type === 'page') {
-          addRecentPage(block.id, block.content ?? 'Untitled')
-          navigateToPage(block.id, block.content ?? 'Untitled')
+          addRecentPage(block.id, block.content ?? t('common.untitled'))
+          navigateToPage(block.id, block.content ?? t('common.untitled'))
           return
         }
         if (block.parent_id) {
@@ -285,8 +286,8 @@ export function useSearchResults({
             const parent = await getBlock(block.parent_id)
             // A newer click superseded this one while the parent loaded.
             if (navGenerationRef.current !== gen) return
-            addRecentPage(block.parent_id, parent.content ?? 'Untitled')
-            navigateToPage(block.parent_id, parent.content ?? 'Untitled', block.id)
+            addRecentPage(block.parent_id, parent.content ?? t('common.untitled'))
+            navigateToPage(block.parent_id, parent.content ?? t('common.untitled'), block.id)
           } catch (err) {
             reportIpcError('SearchPanel', 'search.loadResultsFailed', err, t, {
               blockId: block.id,

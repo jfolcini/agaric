@@ -529,6 +529,18 @@ pass_filenames = false
 files = "(\\.snap$|^src-tauri/src/.*\\.rs$)"
 stages = ["pre-commit"]
 
+# Session-log numbering: next number is NUMERIC max + 1. Past session-999,
+# lexicographic `ls | tail` reports the wrong max (session-1000 < session-996),
+# which produced fifteen session-1000 collisions before this guard existed.
+[[repos.hooks]]
+id = "session-log-numbering"
+name = "session-log numbering guard"
+entry = "bash scripts/check-session-log-numbering.sh"
+language = "system"
+pass_filenames = false
+files = "^docs/session-log/session-.*\\.md$"
+stages = ["pre-commit"]
+
 # JS: better-npm-audit (security advisories). Pre-push only (#817, #1087):
 # `better-npm-audit audit` shells out to `npm audit`, a network round-trip to
 # the registry advisory endpoint, so a dependency-bump commit would block on

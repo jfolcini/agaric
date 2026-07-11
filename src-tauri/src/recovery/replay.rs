@@ -510,30 +510,97 @@ pub async fn replay_unmaterialized_ops(
     if let Some(device_id) = replay_device_id.as_deref() {
         use crate::space::SpaceId;
 
+        // #2541: per-group failures are LOGGED + RECORDED, never propagated.
+        // The dirty set is already drained and the apply cursor has already
+        // advanced past every replayed op, so a `?` here was unretryable —
+        // one poisoned group aborted the dense reproject for every REMAINING
+        // group (their SQL `position` ranks stayed stale with no later pass
+        // to heal them; no background task rebuilds positions — RebuildPageIds
+        // covers `page_id` only). Instead, each group is attempted
+        // independently and failures land in `report.replay_errors` with a
+        // "reproject degraded" prefix so the boot report distinguishes a
+        // degraded reprojection from an aborted replay.
+        let record_group_error = |errors: &mut Vec<String>,
+                                  space_id: &str,
+                                  parent: Option<&str>,
+                                  stage: &str,
+                                  e: &AppError| {
+            tracing::error!(
+                space_id,
+                parent = parent.unwrap_or("<root>"),
+                stage,
+                error = %e,
+                "replay: end-of-replay dense reproject failed for one sibling \
+                 group — continuing with the remaining groups (#2541); this \
+                 group's SQL positions stay stale until its next move/create"
+            );
+            errors.push(format!(
+                "reproject degraded ({space_id}/{}, {stage}): {e}",
+                parent.unwrap_or("<root>")
+            ));
+        };
+
         // Do ALL engine reads first (the per-space `EngineGuard` is `!Send` and
         // must not be held across an `.await`): for each dirty group, take the
         // guard, read the final ordered child ids, drop the guard. Collect the
         // orderings, THEN run the async reproject loop with no guard held.
-        let mut orderings: Vec<Vec<String>> = Vec::with_capacity(dirty.len());
+        let mut orderings: Vec<(&String, &Option<String>, Vec<String>)> =
+            Vec::with_capacity(dirty.len());
         for (space_id, parent) in &dirty {
             let space = SpaceId::from_trusted(space_id);
             // `for_space` lazily creates an engine for an absent space; a fresh
             // engine has no such parent node, so `children_ordered_block_ids`
             // returns empty and the reproject below is a no-op — the
             // "skip absent space/engine" behaviour, without a special case.
-            let ordered = {
+            let read: Result<Vec<String>, AppError> = (|| {
                 let mut guard = state.registry.for_space(&space, device_id)?;
                 guard
                     .engine_mut()
-                    .children_ordered_block_ids(parent.as_deref())?
-            };
-            orderings.push(ordered);
+                    .children_ordered_block_ids(parent.as_deref())
+            })();
+            match read {
+                Ok(ordered) => orderings.push((space_id, parent, ordered)),
+                Err(e) => record_group_error(
+                    &mut report.replay_errors,
+                    space_id,
+                    parent.as_deref(),
+                    "engine read",
+                    &e,
+                ),
+            }
         }
 
-        let mut conn = pool.acquire().await?;
-        for ordered in &orderings {
-            crate::loro::projection::reproject_dense_positions(&mut conn, ordered).await?;
-            parents_reprojected += 1;
+        match pool.acquire().await {
+            Ok(mut conn) => {
+                for (space_id, parent, ordered) in &orderings {
+                    match crate::loro::projection::reproject_dense_positions(&mut conn, ordered)
+                        .await
+                    {
+                        Ok(()) => parents_reprojected += 1,
+                        Err(e) => record_group_error(
+                            &mut report.replay_errors,
+                            space_id,
+                            parent.as_deref(),
+                            "sql reproject",
+                            &e,
+                        ),
+                    }
+                }
+            }
+            Err(e) => {
+                // No connection at all — every group is degraded, but the
+                // replay itself (ops applied, cursor advanced) still stands.
+                let e = AppError::from(e);
+                for (space_id, parent, _) in &orderings {
+                    record_group_error(
+                        &mut report.replay_errors,
+                        space_id,
+                        parent.as_deref(),
+                        "acquire conn",
+                        &e,
+                    );
+                }
+            }
         }
     }
 

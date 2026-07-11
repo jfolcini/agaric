@@ -143,6 +143,13 @@ pub async fn recover_at_boot(
     // boot — the same "log + continue" philosophy that the draft loop
     // uses for individual-draft errors. Boot must succeed so the user
     // can at least open the app and recover via UI.
+    //
+    // #2541: the two failure shapes are distinguishable in the report.
+    // A WHOLESALE failure lands here in the `Err` arm and is recorded as
+    // a single "replay aborted: …" entry. Per-group failures in the
+    // end-of-replay dense reproject do NOT abort the replay any more —
+    // they arrive inside `Ok(report)` as "reproject degraded (…)" entries
+    // (ops applied, cursor advanced, only that group's positions stale).
     // -----------------------------------------------------------------
     let replay_report = match replay_unmaterialized_ops(pool, materializer).await {
         Ok(r) => r,
@@ -166,14 +173,16 @@ pub async fn recover_at_boot(
     // `op_log` never carries remote Loro-only data — so the op-log replay
     // above cannot reconstruct it. Re-running the import+project for each
     // leftover slot reconciles SQL and clears the slot. Placed AFTER the
-    // op-log replay and BEFORE the draft loop.
+    // op-log replay and BEFORE the draft loop. #2541: the replay also fires
+    // the inbound cache/FTS rebuild fan-out for everything it imported,
+    // mirroring the live sync path (hence the `materializer` argument).
     //
     // Failures are non-fatal: `replay_sync_inbox` logs + continues per row
     // and a hard error here is swallowed so boot still completes (same
     // "log + continue" philosophy as the op-log replay above).
     // -----------------------------------------------------------------
     let sync_inbox_replayed =
-        match super::sync_inbox::replay_sync_inbox(pool, registry, device_id).await {
+        match super::sync_inbox::replay_sync_inbox(pool, registry, device_id, materializer).await {
             Ok(n) => n,
             Err(e) => {
                 tracing::warn!(error = %e, "#535 sync-inbox replay failed — continuing boot");

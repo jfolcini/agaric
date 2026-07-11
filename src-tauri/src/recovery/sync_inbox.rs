@@ -17,6 +17,7 @@ use sqlx::SqlitePool;
 
 use crate::error::AppError;
 use crate::loro::registry::LoroEngineRegistry;
+use crate::materializer::Materializer;
 
 /// Replay every leftover row in `loro_sync_inbox`, oldest first.
 ///
@@ -25,6 +26,21 @@ use crate::loro::registry::LoroEngineRegistry;
 /// continues with the remaining rows — the same "log + continue" philosophy
 /// the op-log replay and draft-recovery steps use, so a single poison slot
 /// cannot block boot.
+///
+/// # Inbound cache/FTS fan-out (#2541)
+///
+/// The live inbound path always follows `import_and_project` with
+/// [`Materializer::enqueue_inbound_sync_rebuilds`] (see
+/// `session_state_machine.rs`) because the per-block projection does NOT
+/// refresh the derived read caches or the FTS index. This boot replay runs
+/// the SAME import+project, so it owes the same fan-out: the per-row
+/// `(changed, purged)` sets are accumulated (deduped) across the whole walk
+/// and `enqueue_inbound_sync_rebuilds` is fired ONCE at the end. No other
+/// boot step compensates — `cache_refresh` covers recovered-draft ids only,
+/// and the `lib.rs` FTS rebuild fires only when the index is empty — so
+/// skipping this left remote content invisible to search until an unrelated
+/// full rebuild. A fan-out enqueue failure is non-fatal (logged), matching
+/// the live path's convention: the projections have already committed.
 ///
 /// # Bounded memory (#1574)
 ///
@@ -61,11 +77,18 @@ pub async fn replay_sync_inbox(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
     device_id: &str,
+    materializer: &Materializer,
 ) -> Result<u64, AppError> {
     use crate::recovery::replay::REPLAY_CHUNK_SIZE;
+    use std::collections::HashSet;
 
     let mut replayed: u64 = 0;
     let mut errors: Vec<String> = Vec::new();
+    // #2541: accumulate the per-row changed / tombstone-purged block ids so
+    // the inbound cache/FTS fan-out fires exactly once after the walk (sets:
+    // the same block can recur across slots; the fan-out is per-id).
+    let mut changed_all: HashSet<crate::ulid::BlockId> = HashSet::new();
+    let mut purged_all: HashSet<crate::ulid::BlockId> = HashSet::new();
     // FIFO by the AUTOINCREMENT id (authoritative insert order). Start below
     // the smallest possible id (1) so the first chunk includes every row.
     let mut last_seen: i64 = 0;
@@ -147,8 +170,10 @@ pub async fn replay_sync_inbox(
             )
             .await
             {
-                Ok(_changed) => {
+                Ok((changed, purged)) => {
                     replayed += 1;
+                    changed_all.extend(changed);
+                    purged_all.extend(purged);
                 }
                 Err(e) => {
                     tracing::error!(
@@ -161,6 +186,28 @@ pub async fn replay_sync_inbox(
                 }
             }
         }
+    }
+
+    // #2541: fire the inbound cache/FTS fan-out ONCE for everything the walk
+    // imported — the exact rebuild set the live path enqueues after each
+    // import (`enqueue_inbound_sync_rebuilds` short-circuits when both sets
+    // are empty, #2264). Non-fatal: the projections committed in-tx above,
+    // so an enqueue failure (queue closed at shutdown) must not fail boot —
+    // log and continue, mirroring the live orchestrator's convention.
+    let changed: Vec<crate::ulid::BlockId> = changed_all.into_iter().collect();
+    let purged: Vec<crate::ulid::BlockId> = purged_all.into_iter().collect();
+    if let Err(e) = materializer
+        .enqueue_inbound_sync_rebuilds(&changed, &purged)
+        .await
+    {
+        tracing::warn!(
+            error = %e,
+            changed = changed.len(),
+            purged = purged.len(),
+            "#2541: failed to enqueue the inbound cache/FTS fan-out after the \
+             sync-inbox replay — derived caches/FTS may be stale until the \
+             next inbound sync or local mutation"
+        );
     }
 
     if replayed > 0 || !errors.is_empty() {
@@ -268,7 +315,8 @@ mod tests {
         );
 
         let registry = LoroEngineRegistry::new();
-        let replayed = replay_sync_inbox(&pool, &registry, "device-B")
+        let mat = Materializer::new(pool.clone());
+        let replayed = replay_sync_inbox(&pool, &registry, "device-B", &mat)
             .await
             .expect("replay_sync_inbox");
         assert_eq!(
@@ -318,7 +366,8 @@ mod tests {
         assert!(exists.is_none(), "precondition: space must be purged");
 
         let registry = LoroEngineRegistry::new();
-        let replayed = replay_sync_inbox(&pool, &registry, "device-B")
+        let mat = Materializer::new(pool.clone());
+        let replayed = replay_sync_inbox(&pool, &registry, "device-B", &mat)
             .await
             .expect("replay must NOT wedge boot on a purged space");
         assert_eq!(replayed, 1, "the purged-space slot must still be replayed");
@@ -357,7 +406,8 @@ mod tests {
         seed_inbox(&pool, space.as_str(), &bytes, None).await;
 
         let registry = LoroEngineRegistry::new();
-        let replayed = replay_sync_inbox(&pool, &registry, "device-B")
+        let mat = Materializer::new(pool.clone());
+        let replayed = replay_sync_inbox(&pool, &registry, "device-B", &mat)
             .await
             .expect("replay");
         assert_eq!(replayed, 1, "the non-purge slot must replay");
@@ -376,5 +426,74 @@ mod tests {
             .await
             .expect("count inbox");
         assert_eq!(remaining, 0, "the NULL-tombstone slot must be cleared");
+    }
+
+    /// #2541: the boot sync-inbox replay must fire the SAME inbound
+    /// cache/FTS fan-out the live path runs after `apply_remote`. A slot
+    /// whose snapshot carries new content for an already-FTS-indexed block
+    /// must leave the FTS row reflecting the NEW content after
+    /// `replay_sync_inbox` + `flush_background`. Pre-fix, the changed set
+    /// was discarded (`Ok(_changed)`) and the FTS row stayed stale forever —
+    /// no other boot step reconciles it (`cache_refresh` covers recovered
+    /// drafts only; the `lib.rs` full rebuild fires only on an EMPTY index).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn replay_fires_inbound_fts_fanout_for_changed_blocks_2541() {
+        let (pool, _dir) = test_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+        let bid = block_id_for(9);
+
+        // The block already exists in SQL with OLD content, and is already
+        // FTS-indexed with that OLD content (as after a previous session).
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'old payload', NULL, 0)",
+        )
+        .bind(&bid)
+        .execute(&pool)
+        .await
+        .expect("seed block");
+        sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, 'old payload')")
+            .bind(&bid)
+            .execute(&pool)
+            .await
+            .expect("seed fts");
+
+        // The crashed inbound slot carries the block with NEW content
+        // ("payload" — what `snapshot_with_block` writes).
+        let bytes = snapshot_with_block(&bid, "device-fts");
+        seed_inbox(&pool, space.as_str(), &bytes, None).await;
+
+        let registry = LoroEngineRegistry::new();
+        let mat = Materializer::new(pool.clone());
+        let replayed = replay_sync_inbox(&pool, &registry, "device-B", &mat)
+            .await
+            .expect("replay");
+        assert_eq!(replayed, 1, "the slot must replay");
+
+        // The projection itself upserted the base row…
+        let content: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(&bid)
+            .fetch_one(&pool)
+            .await
+            .expect("block content");
+        assert_eq!(content, "payload", "projection must upsert the new content");
+
+        // …and the fan-out's per-block `UpdateFtsBlock` (enqueued from the
+        // accumulated changed set) must reconcile the FTS row once the
+        // background queue drains. `update_fts_block` deletes-then-inserts,
+        // so exactly one row remains for the block.
+        mat.flush_background().await.expect("flush background");
+        let stripped: String =
+            sqlx::query_scalar("SELECT stripped FROM fts_blocks WHERE block_id = ?")
+                .bind(&bid)
+                .fetch_one(&pool)
+                .await
+                .expect("fts row");
+        assert_eq!(
+            stripped, "payload",
+            "#2541: boot sync-inbox replay must fan out UpdateFtsBlock for \
+             changed blocks — the FTS row must reflect the imported content"
+        );
+        mat.shutdown();
     }
 }

@@ -775,7 +775,14 @@ describe('HistoryPanel', () => {
         get_block: () => {
           throw new Error('block not found')
         },
-        edit_block: () => ({ id: 'BLOCK001', block_type: 'content', content: 'Old content' }),
+        edit_block: () => ({
+          id: 'BLOCK001',
+          block_type: 'content',
+          content: 'Old content',
+          // #2468 — editBlock resolves WithOps<BlockRow>; the restore threads
+          // these refs into the undo store (ref-addressed undo entry).
+          op_refs: [{ device_id: 'DEVICE01', seq: 77 }],
+        }),
         compute_block_vs_current_diff: () => [],
         compute_edit_diff: () => [],
       })
@@ -814,7 +821,14 @@ describe('HistoryPanel', () => {
       setupInvokeRouter({
         get_block_history: () => page,
         get_block: () => ({ id: 'BLOCK001', block_type: 'content', content: 'Current text' }),
-        edit_block: () => ({ id: 'BLOCK001', block_type: 'content', content: 'Old content' }),
+        edit_block: () => ({
+          id: 'BLOCK001',
+          block_type: 'content',
+          content: 'Old content',
+          // #2468 — editBlock resolves WithOps<BlockRow>; the restore threads
+          // these refs into the undo store (ref-addressed undo entry).
+          op_refs: [{ device_id: 'DEVICE01', seq: 77 }],
+        }),
         compute_block_vs_current_diff: () => [],
         compute_edit_diff: () => [],
       })
@@ -875,7 +889,12 @@ describe('HistoryPanel', () => {
         pages: new Map([
           [
             'PAGE_1',
-            { redoStack: [{ device_id: 'DEVICE01', seq: 9 }], undoDepth: 1, redoGroupSizes: [1] },
+            {
+              undoStack: [],
+              redoStack: [{ device_id: 'DEVICE01', seq: 9 }],
+              undoDepth: 1,
+              redoGroupSizes: [1],
+            },
           ],
         ]),
       })
@@ -884,6 +903,9 @@ describe('HistoryPanel', () => {
 
       await waitFor(() => {
         expect(useUndoStore.getState().pages.get('PAGE_1')).toEqual({
+          // #2468 — the restore edit becomes the next undo target, addressed
+          // by the op ref the edit_block response carried.
+          undoStack: [{ refs: [{ device_id: 'DEVICE01', seq: 77 }], at: expect.any(Number) }],
           redoStack: [],
           undoDepth: 0,
           redoGroupSizes: [],
@@ -913,7 +935,12 @@ describe('HistoryPanel', () => {
         pages: new Map([
           [
             'PAGE_1',
-            { redoStack: [{ device_id: 'DEVICE01', seq: 9 }], undoDepth: 1, redoGroupSizes: [1] },
+            {
+              undoStack: [],
+              redoStack: [{ device_id: 'DEVICE01', seq: 9 }],
+              undoDepth: 1,
+              redoGroupSizes: [1],
+            },
           ],
         ]),
       })
@@ -925,6 +952,8 @@ describe('HistoryPanel', () => {
       })
       await waitFor(() => {
         expect(useUndoStore.getState().pages.get('PAGE_1')).toEqual({
+          // #2468 — see above: the toast-Undo edit is itself ref-addressed.
+          undoStack: [{ refs: [{ device_id: 'DEVICE01', seq: 77 }], at: expect.any(Number) }],
           redoStack: [],
           undoDepth: 0,
           redoGroupSizes: [],

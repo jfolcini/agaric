@@ -129,7 +129,13 @@ describe('useBlockTreeEventListeners', () => {
     it('calls setPriority for SET_PRIORITY_1 event', async () => {
       const { invoke } = await import('@tauri-apps/api/core')
       const mockedInvoke = vi.mocked(invoke)
-      mockedInvoke.mockResolvedValue(undefined)
+      // #2468 — edit_block resolves a WithOps envelope (op_refs) that the
+      // applyContentEdit undo-ref capture reads; keep the mock wire-faithful.
+      mockedInvoke.mockImplementation(async (cmd: string) =>
+        cmd === 'edit_block'
+          ? { id: 'BLOCK_1', content: '', op_refs: [{ device_id: 'dev1', seq: 3 }] }
+          : undefined,
+      )
 
       const opts = makeOptions()
       renderHook(() => useBlockTreeEventListeners(opts))
@@ -317,7 +323,13 @@ describe('useBlockTreeEventListeners', () => {
     ] as const)('%s edits the focused block to "%s"', async (event, toText) => {
       const { invoke } = await import('@tauri-apps/api/core')
       const mockedInvoke = vi.mocked(invoke)
-      mockedInvoke.mockResolvedValue(undefined)
+      // #2468 — edit_block resolves a WithOps envelope (op_refs) that the
+      // applyContentEdit undo-ref capture reads; keep the mock wire-faithful.
+      mockedInvoke.mockImplementation(async (cmd: string) =>
+        cmd === 'edit_block'
+          ? { id: 'BLOCK_1', content: '', op_refs: [{ device_id: 'dev1', seq: 3 }] }
+          : undefined,
+      )
       const { opts, mount } = structuralOpts('hello')
       renderHook(() => useBlockTreeEventListeners(opts))
 
@@ -337,7 +349,13 @@ describe('useBlockTreeEventListeners', () => {
     ] as const)('INSERT_CALLOUT { type: %s } → "%s"', async (type, toText) => {
       const { invoke } = await import('@tauri-apps/api/core')
       const mockedInvoke = vi.mocked(invoke)
-      mockedInvoke.mockResolvedValue(undefined)
+      // #2468 — edit_block resolves a WithOps envelope (op_refs) that the
+      // applyContentEdit undo-ref capture reads; keep the mock wire-faithful.
+      mockedInvoke.mockImplementation(async (cmd: string) =>
+        cmd === 'edit_block'
+          ? { id: 'BLOCK_1', content: '', op_refs: [{ device_id: 'dev1', seq: 3 }] }
+          : undefined,
+      )
       const { opts } = structuralOpts('hello')
       renderHook(() => useBlockTreeEventListeners(opts))
 

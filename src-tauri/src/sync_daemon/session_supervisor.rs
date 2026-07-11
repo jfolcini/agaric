@@ -53,7 +53,6 @@ use crate::error::AppError;
 use crate::lifecycle::LifecycleHooks;
 use crate::materializer::Materializer;
 use crate::peer_refs::{self, PeerRef};
-use crate::sync_constants::HANDSHAKE_TIMEOUT;
 use crate::sync_events::{SyncEvent, SyncEventSink};
 use crate::sync_net::{self, DiscoveredPeer, MdnsService, SyncCert, SyncConnection, SyncServer};
 use crate::sync_protocol::{SyncMessage, SyncOrchestrator, SyncState};
@@ -897,16 +896,22 @@ pub(crate) async fn try_sync_with_peer(
                     "failed to store peer cert hash (TOFU)"
                 );
             }
+            // #2539 (item 2): NO daemon-level `SyncEvent::Complete` here —
+            // exactly ONE terminal Complete is emitted per session per role,
+            // and every initiator success path already emits it closer to the
+            // completion itself:
+            //   * streamed ops    → the orchestrator's final-LoroSync arm,
+            //   * empty stream    → the orchestrator's SyncComplete arm,
+            //   * snapshot catch-up → `snapshot_transfer`'s Applied paths
+            //     (the orchestrator ends that session in `ResetRequired` and
+            //     never emits Complete itself).
+            // The orchestrator is wired with `event_sink_arc` above (the same
+            // sink, `ChannelEventSink`-wrapped when a command channel is
+            // attached), so its emission reaches everything this duplicate
+            // used to reach. Emitting a second Complete here doubled the
+            // event on every success — and on the catch-up path the duplicate
+            // carried stale ResetRequired-era session counters.
             let session = orch.session();
-            ctx.event_sink.on_sync_event(SyncEvent::Complete {
-                remote_device_id: peer_id.clone(),
-                ops_received: session.ops_received,
-                ops_sent: session.ops_sent,
-                // #1071: forward the session's accumulated targeted-
-                // invalidation page-id set so the frontend reloads only the
-                // affected stores. Empty when the session applied no ops.
-                changed_page_ids: session.changed_page_ids.clone(),
-            });
             tracing::info!(
                 peer_id,
                 ops_rx = session.ops_received,
@@ -1043,14 +1048,10 @@ pub(crate) async fn run_sync_session(
         }
 
         let incoming: SyncMessage = wire::recv_sync_message(conn).await?;
-        let response = tokio::time::timeout(HANDSHAKE_TIMEOUT, orch.handle_message(incoming))
-            .await
-            .map_err(|_| {
-                AppError::InvalidOperation(format!(
-                    "handle_message timed out after {}s",
-                    HANDSHAKE_TIMEOUT.as_secs()
-                ))
-            })??;
+        // #2539: same `HANDSHAKE_TIMEOUT` dispatch guard as the responder's
+        // first-message dispatch and message loop (`server.rs`).
+        let response =
+            super::server::dispatch_with_handshake_timeout(orch.handle_message(incoming)).await?;
         if let Some(response) = response {
             wire::send_sync_message(conn, &response).await?;
             // Drain any pending op batches (B-3)

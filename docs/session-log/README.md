@@ -21,7 +21,7 @@ For a specific session, the slug helps disambiguate: `session-846-cache-rebuilds
 
 ## Adding a new session
 
-Append a new file at the next session number — never rename or edit existing files (reviewer corrections go in the PR / issue comments, not in the log). See the `batch-issues` skill (`.claude/skills/batch-issues/SKILL.md`) § "Session log entry template" for the entry shape.
+Append a new file at the next session number — the **numeric** max plus one, computed with `ls docs/session-log | grep -oP 'session-\K[0-9]+' | sort -n | tail -1`, never with plain `ls | tail` (lexicographic order lies past 999: `session-1000` < `session-996`; the fifteen `session-1000-*` files are that mistake, preserved as history). The `session-log-numbering` pre-commit hook enforces this. Never rename or edit existing files (reviewer corrections go in the PR / issue comments, not in the log). See the `batch-issues` skill (`.claude/skills/batch-issues/SKILL.md`) § "Session log entry template" for the entry shape.
 
 ## Why per-session files
 

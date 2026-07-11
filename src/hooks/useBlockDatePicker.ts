@@ -11,6 +11,7 @@ import { announce } from '../lib/announcer'
 import {
   createPageInSpace,
   listAllPagesInSpace,
+  type OpRef,
   setDueDate as setDueDateCmd,
   setProperty,
   setScheduledDate as setScheduledDateCmd,
@@ -62,8 +63,17 @@ interface DatePickContext {
 
 type DatePickHandler = (ctx: DatePickContext) => Promise<void> | void
 
-function notifyUndo(rootParentId: string | null): void {
-  if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
+/**
+ * #2468 — `opRefs` threads a migrated command's `op_refs` into the undo store
+ * (ref-addressed undo). `setDueDate` / `setScheduledDate` are NOT migrated
+ * yet, so their handlers omit it (positional-fallback entry); the conditional
+ * forward keeps their call shape identical to pre-#2468.
+ */
+function notifyUndo(rootParentId: string | null, opRefs?: OpRef[]): void {
+  if (!rootParentId) return
+  const { onNewAction } = useUndoStore.getState()
+  if (opRefs) onNewAction(rootParentId, opRefs)
+  else onNewAction(rootParentId)
 }
 
 function formatIsoDate(d: Date): string {
@@ -101,12 +111,12 @@ async function handleDueMode(ctx: DatePickContext): Promise<void> {
 async function handleRepeatUntilMode(ctx: DatePickContext): Promise<void> {
   if (!ctx.blockId) return
   try {
-    await setProperty({
+    const resp = await setProperty({
       blockId: ctx.blockId,
       key: 'repeat-until',
       valueDate: ctx.dateStr,
     })
-    notifyUndo(ctx.rootParentId)
+    notifyUndo(ctx.rootParentId, resp.op_refs)
     notify.success(ctx.t('blockTree.repeatUntilMessage', { date: ctx.dateStr }))
   } catch {
     notify.error(ctx.t('blockTree.setRepeatEndDateFailed'))

@@ -136,7 +136,7 @@ export function TrashView(): React.ReactElement {
         await restoreBlock(block.id, block.deleted_at)
         setBlocks((prev) => prev.filter((b) => b.id !== block.id))
         if (block.block_type === 'page' || block.block_type === 'tag') {
-          useResolveStore.getState().set(block.id, block.content ?? 'Untitled', false)
+          useResolveStore.getState().set(block.id, block.content ?? t('common.untitled'), false)
         }
         notify.success(t('trash.blockRestored'))
         announce(t('announce.blockRestored'))
@@ -185,7 +185,7 @@ export function TrashView(): React.ReactElement {
       restored = await restoreBlocksByIds(selectedBlocks.map((b) => b.id))
       for (const block of selectedBlocks) {
         if (block.block_type === 'page' || block.block_type === 'tag') {
-          useResolveStore.getState().set(block.id, block.content ?? 'Untitled', false)
+          useResolveStore.getState().set(block.id, block.content ?? t('common.untitled'), false)
         }
       }
     } catch (err) {

@@ -22,7 +22,7 @@ import { recordGraphStructureChange } from '../lib/graph-structure-events'
 import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import { buildImportRefInternalizers } from '../lib/paste-internalize'
-import type { BlockRow, CreateBlockSpec } from '../lib/tauri'
+import type { BlockRow, CreateBlockSpec, OpRef } from '../lib/tauri'
 import {
   createBlock,
   createBlocksBatch,
@@ -56,9 +56,21 @@ import { useUndoStore } from './undo'
  * read reflects the new nodes/edges instead of stale data until the TTL. The
  * `appendBlock` path bumps it separately because that path does not call this
  * helper (its caller owns the undo notification).
+ *
+ * #2468 — `opRefs` threads the mutation response's `op_refs` (the exact op-log
+ * refs the command appended) into the undo store so Ctrl+Z is ref-addressed.
+ * The two batch commands (`moveBlocksBatch` in `moveBlocks`,
+ * `createBlocksBatch` in `pasteBlocks`) do not surface refs yet — their call
+ * sites omit `opRefs`, pushing a positional-fallback undo entry (documented
+ * fallback; `undoPageGroup` semantics unchanged for those flows). The
+ * conditional forward keeps the ref-less call shape identical to pre-#2468.
  */
-function notifyUndoNewAction(rootParentId: string | null): void {
-  if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
+function notifyUndoNewAction(rootParentId: string | null, opRefs?: OpRef[]): void {
+  if (rootParentId) {
+    const { onNewAction } = useUndoStore.getState()
+    if (opRefs) onNewAction(rootParentId, opRefs)
+    else onNewAction(rootParentId)
+  }
   recordGraphStructureChange()
 }
 
@@ -203,7 +215,7 @@ export function createReducers({
             return { blocks: newBlocks, touchedIds: [newBlock.id] }
           },
         })
-        notifyUndoNewAction(rootParentId)
+        notifyUndoNewAction(rootParentId, result.op_refs)
         return result.id
       } catch (err) {
         logger.error('page-blocks', 'Failed to create block', { afterBlockId }, err)
@@ -266,7 +278,7 @@ export function createReducers({
             return { blocks, blocksById: cloneBlocksByIdWith(state.blocksById, [normalized]) }
           })
         }
-        notifyUndoNewAction(rootParentId)
+        notifyUndoNewAction(rootParentId, resp.op_refs)
         return true
       } catch (err) {
         // Rollback optimistic update — also a single-block touch.
@@ -299,7 +311,7 @@ export function createReducers({
       const { rootParentId } = get()
       try {
         // #730 — pool_busy retry (see edit/createBelow).
-        await retryOnPoolBusy(() => deleteBlock(blockId))
+        const resp = await retryOnPoolBusy(() => deleteBlock(blockId))
         // #714 — recompute the descendant set INSIDE the functional updater
         // from `state.blocks` (current at commit time), never from the
         // pre-await capture: a concurrent structural change (reparent,
@@ -322,7 +334,7 @@ export function createReducers({
         // Focus/selection cleanup is the caller's responsibility — all current
         // callers (handleDeleteBlock, handleMerge*, handleEscapeCancel, BlockTree
         // empty-block cleanup) explicitly manage focus after remove() resolves.
-        notifyUndoNewAction(rootParentId)
+        notifyUndoNewAction(rootParentId, resp.op_refs)
       } catch (err) {
         logger.error('page-blocks', 'Failed to delete block', { blockId }, err)
         notify.error(i18n.t('error.deleteBlockFailed'))
@@ -432,7 +444,7 @@ export function createReducers({
         // different parent, fall back to a structural reload.
         if ((resp.new_parent_id ?? null) !== (parentId ?? null)) {
           await get().load()
-          notifyUndoNewAction(rootParentId)
+          notifyUndoNewAction(rootParentId, resp.op_refs)
           return
         }
 
@@ -503,7 +515,7 @@ export function createReducers({
             return { blocks: newBlocks, touchedIds: [blockId] }
           },
         })
-        notifyUndoNewAction(rootParentId)
+        notifyUndoNewAction(rootParentId, resp.op_refs)
       } catch (err) {
         logger.error('page-blocks', 'Failed to reorder block', { blockId }, err)
         notify.error(i18n.t('error.reorderBlockFailed'))
@@ -514,10 +526,10 @@ export function createReducers({
       const { rootParentId } = get()
       try {
         // #730 — pool_busy retry (see edit/createBelow).
-        await retryOnPoolBusy(() => moveBlock(blockId, newParentId, newIndex))
+        const resp = await retryOnPoolBusy(() => moveBlock(blockId, newParentId, newIndex))
         // Reload the full tree to get the correct flattened order.
         await get().load()
-        notifyUndoNewAction(rootParentId)
+        notifyUndoNewAction(rootParentId, resp.op_refs)
       } catch (err) {
         logger.error(
           'page-blocks',
@@ -568,6 +580,10 @@ export function createReducers({
           return { blocks: next, blocksById: buildBlocksById(next) }
         })
         if (needsReload) await get().load()
+        // #2468 — `move_blocks_batch` does not surface `op_refs` yet, so this
+        // flow keeps the positional undo fallback: no refs are threaded and
+        // the undo store records a ref-less entry that `undoPageGroup`
+        // reverts by depth/window (pre-#2468 behavior, documented fallback).
         notifyUndoNewAction(rootParentId)
       } catch (err) {
         logger.error('page-blocks', 'Failed to move blocks', { ids, newParentId, newIndex }, err)
@@ -636,7 +652,9 @@ export function createReducers({
           // instead of silently trusting the requested parent.
           if ((resp?.new_parent_id ?? null) !== prevSibling.id) {
             await get().load()
-            notifyUndoNewAction(rootParentId)
+            // `resp?.` — this branch also catches a nullish echo (mirrors the
+            // guard above); fall back to a ref-less (positional) undo entry.
+            notifyUndoNewAction(rootParentId, resp?.op_refs)
             return true
           }
           // #714 — recompute the indent splice INSIDE the functional updater
@@ -676,7 +694,7 @@ export function createReducers({
               return { blocks: newBlocks, touchedIds: [blockId, ...descendantIds] }
             },
           })
-          notifyUndoNewAction(rootParentId)
+          notifyUndoNewAction(rootParentId, resp.op_refs)
           return true
         } catch (err) {
           logger.error('page-blocks', 'Failed to indent block', { blockId }, err)
@@ -709,7 +727,7 @@ export function createReducers({
           // requested parent.
           if ((resp.new_parent_id ?? null) !== (newParentId ?? null)) {
             await get().load()
-            notifyUndoNewAction(rootParentId)
+            notifyUndoNewAction(rootParentId, resp.op_refs)
             return true
           }
 
@@ -773,7 +791,7 @@ export function createReducers({
               return { blocks: remaining, touchedIds: movedItems.map((b) => b.id) }
             },
           })
-          notifyUndoNewAction(rootParentId)
+          notifyUndoNewAction(rootParentId, resp.op_refs)
           return true
         } catch (err) {
           logger.error('page-blocks', 'Failed to dedent block', { blockId }, err)
@@ -812,9 +830,9 @@ export function createReducers({
           const newParentId = parent.parent_id ?? null
           const newIndex = siblingSlot(blocks, parent)
           try {
-            await retryOnPoolBusy(() => moveBlock(blockId, newParentId, newIndex))
+            const resp = await retryOnPoolBusy(() => moveBlock(blockId, newParentId, newIndex))
             await get().load()
-            notifyUndoNewAction(rootParentId)
+            notifyUndoNewAction(rootParentId, resp.op_refs)
             return true
           } catch (err) {
             logger.error('page-blocks', 'Failed to move block up', { blockId }, err)
@@ -903,7 +921,7 @@ export function createReducers({
               },
             })
           }
-          notifyUndoNewAction(rootParentId)
+          notifyUndoNewAction(rootParentId, resp.op_refs)
           return true
         } catch (err) {
           logger.error('page-blocks', 'Failed to move block up', { blockId }, err)
@@ -940,9 +958,9 @@ export function createReducers({
           const newParentId = parent.parent_id ?? null
           const newIndex = siblingSlot(blocks, parent) + 1
           try {
-            await retryOnPoolBusy(() => moveBlock(blockId, newParentId, newIndex))
+            const resp = await retryOnPoolBusy(() => moveBlock(blockId, newParentId, newIndex))
             await get().load()
-            notifyUndoNewAction(rootParentId)
+            notifyUndoNewAction(rootParentId, resp.op_refs)
             return true
           } catch (err) {
             logger.error('page-blocks', 'Failed to move block down', { blockId }, err)
@@ -1032,7 +1050,7 @@ export function createReducers({
               },
             })
           }
-          notifyUndoNewAction(rootParentId)
+          notifyUndoNewAction(rootParentId, resp.op_refs)
           return true
         } catch (err) {
           logger.error('page-blocks', 'Failed to move block down', { blockId }, err)
@@ -1133,6 +1151,9 @@ export function createReducers({
         // Structural insert across N blocks — reload for the authoritative
         // flattened order (mirrors `moveBlocks` / `moveToParent`).
         await get().load()
+        // #2468 — `create_blocks_batch` does not surface `op_refs` yet, so
+        // paste keeps the positional undo fallback (ref-less entry →
+        // `undoPageGroup` by depth/window; documented fallback).
         notifyUndoNewAction(rootParentId)
         return createdIds.filter((id): id is string => typeof id === 'string')
       } catch (err) {

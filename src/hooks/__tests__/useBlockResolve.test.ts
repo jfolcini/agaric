@@ -409,6 +409,8 @@ describe('onCreateTag', () => {
       due_date: null,
       scheduled_date: null,
       page_id: null,
+      // #2468 — createBlock resolves WithOps<BlockRow>.
+      op_refs: [],
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -438,6 +440,8 @@ describe('onCreateTag', () => {
       due_date: null,
       scheduled_date: null,
       page_id: null,
+      // #2468 — createBlock resolves WithOps<BlockRow>.
+      op_refs: [],
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -463,6 +467,8 @@ describe('onCreateTag', () => {
       due_date: null,
       scheduled_date: null,
       page_id: null,
+      // #2468 — createBlock resolves WithOps<BlockRow>.
+      op_refs: [],
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -775,6 +781,8 @@ describe('searchPages — long query (>2 chars)', () => {
       due_date: null,
       scheduled_date: null,
       page_id: null,
+      // #2468 — createBlock resolves WithOps<BlockRow>.
+      op_refs: [],
     }))
 
     mockedSearchBlocks.mockResolvedValueOnce({
@@ -2319,6 +2327,8 @@ describe('searchBlockRefs — icons', () => {
       due_date: null,
       scheduled_date: null,
       page_id: null,
+      // #2468 — createBlock resolves WithOps<BlockRow>.
+      op_refs: [],
     })
 
     mockedSearchBlocks.mockResolvedValueOnce({

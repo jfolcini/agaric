@@ -15,6 +15,7 @@ import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
 import { useLinkPreview } from '@/hooks/useLinkPreview'
+import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
 
@@ -142,7 +143,7 @@ export function LinkPreviewTooltip({
                 data-testid="link-preview-not-found-tag"
                 className="shrink-0 text-xs italic text-muted-foreground"
               >
-                (not found)
+                {t('linkPreview.notFoundTag')}
               </span>
             ) : null}
           </>

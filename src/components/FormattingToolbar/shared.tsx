@@ -103,8 +103,7 @@ export function toolbarPressHandlers(
  * Render a config-driven button. In `inline` and `sentinel` modes the
  * button is icon-only (matches the existing toolbar). In `overflow`
  * mode the button widens into a list row with icon + label, matching
- * `HeadingLevelSelector` / `CodeLanguageSelector` so the 44 px touch
- * floor is honoured.
+ * `CodeLanguageSelector` so the 44 px touch floor is honoured.
  */
 export function renderConfigButton(
   btn: ToolbarButtonConfig,

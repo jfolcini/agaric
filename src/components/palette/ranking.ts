@@ -6,6 +6,7 @@
  * the existing test import path.
  */
 
+import { t } from '@/lib/i18n'
 import { jaroWinkler } from '@/lib/jaro-winkler'
 import type { SearchBlockRow } from '@/lib/tauri'
 
@@ -58,18 +59,18 @@ export function mergeAndRankGroups(
   }
 
   for (const row of pages) {
-    const title = row.content ?? 'Untitled'
+    const title = row.content ?? t('common.untitled')
     ensureGroup(row.id, title, true)
   }
   for (const row of blocks) {
     if (row.block_type === 'page') {
-      const title = row.content ?? 'Untitled'
+      const title = row.content ?? t('common.untitled')
       ensureGroup(row.id, title, true)
       continue
     }
     const pageId = row.page_id
     if (pageId == null) continue
-    const group = ensureGroup(pageId, 'Untitled', false)
+    const group = ensureGroup(pageId, t('common.untitled'), false)
     if (group.matches.length < MAX_MATCHES_PER_GROUP) {
       group.matches.push(row)
     } else {

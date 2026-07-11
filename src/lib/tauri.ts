@@ -26,6 +26,7 @@ export type {
   DateBucketUnit,
   DateField,
   DateRange,
+  DeletePropertyResponse,
   DeleteResponse,
   DiffSpan,
   DiffTag,
@@ -71,6 +72,7 @@ export type {
   TagResponse,
   TaskNotification,
   VaultFile,
+  WithOps,
 } from './bindings'
 export type { SafeLimit } from './safe-limit'
 export {
@@ -94,6 +96,7 @@ import type {
   BlockRow,
   CreateBlockSpec,
   DateRange,
+  DeletePropertyResponse,
   DeleteResponse,
   DiffSpan,
   Draft,
@@ -126,6 +129,7 @@ import type {
   TagResponse,
   TaskNotification,
   VaultFile,
+  WithOps,
 } from './bindings'
 
 /**
@@ -284,7 +288,7 @@ export async function createBlock(params: {
   /** #400: 0-based sibling slot among `parentId`'s children; omit to append. */
   index?: number | undefined
   spaceId?: string | undefined
-}): Promise<BlockRow> {
+}): Promise<WithOps<BlockRow>> {
   return unwrap(
     await commands.createBlock(
       params.blockType,
@@ -325,13 +329,17 @@ export async function createBlocksBatch(specs: CreateBlockSpec[]): Promise<Block
   return unwrap(await commands.createBlocksBatch(specs))
 }
 
-/** Edit a block's text content. */
-export async function editBlock(blockId: string, toText: string): Promise<BlockRow> {
+/** Edit a block's text content.
+ *
+ * #2468: the response carries the appended op ref(s) (`WithOps`) so callers
+ * can seed the ref-addressed undo stack (`useUndoStore.onNewAction`).
+ */
+export async function editBlock(blockId: string, toText: string): Promise<WithOps<BlockRow>> {
   return unwrap(await commands.editBlock(blockId, toText))
 }
 
-/** Soft-delete a block (cascade to descendants). */
-export async function deleteBlock(blockId: string): Promise<DeleteResponse> {
+/** Soft-delete a block (cascade to descendants). #2468: carries `op_refs`. */
+export async function deleteBlock(blockId: string): Promise<WithOps<DeleteResponse>> {
   return unwrap(await commands.deleteBlock(blockId))
 }
 
@@ -862,7 +870,7 @@ export async function moveBlock(
   blockId: string,
   newParentId: string | null,
   newIndex: number,
-): Promise<MoveResponse> {
+): Promise<WithOps<MoveResponse>> {
   return unwrap(await commands.moveBlock(blockId, newParentId, newIndex))
 }
 
@@ -887,8 +895,15 @@ export async function moveBlocksBatch(
   return unwrap(await commands.moveBlocksBatch(blockIds, newParentId, newIndex))
 }
 
-/** Associate a tag with a block. */
-export async function addTag(blockId: string, tagId: string): Promise<TagResponse> {
+/** Associate a tag with a block.
+ *
+ * #2468: carries `op_refs`. The real backend REJECTS an already-present tag
+ * (`InvalidOperation("tag already applied")`), so a real success never has
+ * empty `op_refs`; the tauri-mock's lenient duplicate path (kept for the
+ * `tag_add_remove` conformance fixture) returns `op_refs: []` instead —
+ * callers must NOT push an undo entry when `op_refs` is empty.
+ */
+export async function addTag(blockId: string, tagId: string): Promise<WithOps<TagResponse>> {
   return unwrap(await commands.addTag(blockId, tagId))
 }
 
@@ -903,8 +918,13 @@ export async function addTagsByIds(blockIds: string[], tagId: string): Promise<n
   return unwrap(await commands.addTagsByIds(blockIds, tagId))
 }
 
-/** Remove a tag association from a block. */
-export async function removeTag(blockId: string, tagId: string): Promise<TagResponse> {
+/** Remove a tag association from a block.
+ *
+ * #2468: carries `op_refs`. The real backend REJECTS an unattached remove
+ * (`NotFound("tag association")`); only the tauri-mock's lenient path
+ * returns `op_refs: []` — callers must NOT push an undo entry then.
+ */
+export async function removeTag(blockId: string, tagId: string): Promise<WithOps<TagResponse>> {
   return unwrap(await commands.removeTag(blockId, tagId))
 }
 
@@ -1264,7 +1284,7 @@ export async function setProperty(params: {
   valueDate?: string | null | undefined
   valueRef?: string | null | undefined
   valueBool?: boolean | null | undefined
-}): Promise<BlockRow> {
+}): Promise<WithOps<BlockRow>> {
   return unwrap(
     await commands.setProperty(params.blockId, params.key, {
       value_text: params.valueText ?? null,
@@ -1277,8 +1297,16 @@ export async function setProperty(params: {
 }
 
 /** Delete a property from a block by key. */
-export async function deleteProperty(blockId: string, key: string): Promise<void> {
-  unwrap(await commands.deleteProperty(blockId, key))
+/**
+ * #2468: previously resolved `void`; the command now echoes `(block_id, key)`
+ * plus the appended op ref(s) so callers can seed the ref-addressed undo
+ * stack. Additive for legacy callers (they discard the result).
+ */
+export async function deleteProperty(
+  blockId: string,
+  key: string,
+): Promise<WithOps<DeletePropertyResponse>> {
+  return unwrap(await commands.deleteProperty(blockId, key))
 }
 
 /** Get all properties for a block. */
@@ -1734,6 +1762,31 @@ export async function undoPageGroup(params: {
   windowMs: number
 }): Promise<UndoResult[]> {
   return unwrap(await commands.undoPageGroup(params.pageId, params.depth, params.windowMs))
+}
+
+/**
+ * #2468 — ref-addressed single undo, the `undoPageOp` successor. The frontend
+ * passes the EXACT `OpRef` captured from the mutating command's `op_refs`
+ * response at action time, killing the positional-offset race (#2446): ops
+ * landing between capture and Ctrl+Z can no longer shift the target.
+ *
+ * The backend rejects foreign/replicated refs, already-reversed ops, and refs
+ * that point at undo ops (use `redoPageOp` for those). Same `UndoResult`
+ * contract as `undoPageOp`.
+ */
+export async function undoOp(params: { opRef: OpRef }): Promise<UndoResult> {
+  return unwrap(await commands.undoOp(params.opRef))
+}
+
+/**
+ * #2468 — ref-addressed group undo, the `undoPageGroup` successor for
+ * FE-coalesced undo groups. Reverts the given ref-set ATOMICALLY (all ops or
+ * none) and returns one `UndoResult` per reverted op, newest-first. Same
+ * reject rules as {@link undoOp}, applied to every ref before anything is
+ * reverted.
+ */
+export async function undoOps(params: { ops: OpRef[] }): Promise<UndoResult[]> {
+  return unwrap(await commands.undoOps(params.ops))
 }
 
 /**
