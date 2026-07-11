@@ -224,27 +224,54 @@ pub async fn recover_at_boot(
     };
 
     for draft in &drafts {
-        match recover_single_draft(pool, device_id, materializer, draft, &existing_block_ids).await
-        {
-            Ok(true) => {
-                drafts_recovered.push(draft.block_id.to_string());
-            }
-            Ok(false) => {
-                drafts_already_flushed += 1;
-            }
-            Err(e) => {
-                log_draft_error(&mut draft_errors, draft.block_id.as_str(), &e, "recovering");
-            }
-        }
+        let recovered =
+            match recover_single_draft(pool, device_id, materializer, draft, &existing_block_ids)
+                .await
+            {
+                Ok(true) => {
+                    drafts_recovered.push(draft.block_id.to_string());
+                    true
+                }
+                Ok(false) => {
+                    drafts_already_flushed += 1;
+                    true
+                }
+                Err(e) => {
+                    log_draft_error(&mut draft_errors, draft.block_id.as_str(), &e, "recovering");
+                    false
+                }
+            };
 
-        // Delete the draft row in a separate statement (not in the same tx as
-        // the synthetic op). This is safe: `recover_single_draft` timestamps
-        // the synthetic op with `now_ms()`, which is strictly greater than
-        // `draft.updated_at`, so next boot's content-provenance check sees
-        // `matching_ops > 0` and skips re-processing — the delete is idempotent
-        // even if it races or is retried. (The production `flush_draft` path
+        // #2540: only delete the draft row when recovery SUCCEEDED.
+        //
+        // `recover_single_draft` can return `Err` BEFORE its `tx.commit()`
+        // (the `parent_valid` SELECT, the supersession COUNT, `find_prev_edit`,
+        // or `BEGIN IMMEDIATE` hitting transient WAL-lock contention) — in
+        // which case NO synthetic edit op was appended and `blocks.content` was
+        // NOT updated, yet the `block_drafts` row is the ONLY surviving copy of
+        // the user's unflushed text. Deleting it there converts a recoverable
+        // transient DB error into permanent, silent data loss and the next boot
+        // has no source row to retry from. Retain the row on `Err` so a later
+        // boot (after `reset_recovery_guard`/process restart) retries it.
+        //
+        // Retention is idempotent in both `Ok` arms and both error positions:
+        // - `Ok(true)`  — recovered: the synthetic op is committed and
+        //   `blocks.content` updated; the draft is stale, delete it.
+        // - `Ok(false)` — already flushed / orphan / superseded: no unflushed
+        //   text is at risk, delete it.
+        // - Post-commit `Err` (#1322 enqueue failure): the synthetic op is
+        //   already committed, so next boot's seq-anchored supersession check
+        //   (draft_recovery.rs) sees `matching_ops > 0` and returns `Ok(false)`
+        //   — the retained row is deleted then, no double-apply.
+        // - Pre-commit `Err`: nothing was written; retrying next boot is the
+        //   whole point.
+        //
+        // Delete in a separate statement (not in the same tx as the synthetic
+        // op). This is safe: `recover_single_draft` timestamps the synthetic op
+        // with `now_ms()` and anchors supersession on the op-log seq, so a
+        // retried delete is idempotent. (The production `flush_draft` path
         // deletes in-tx; the divergence here is intentional and documented.)
-        if let Err(e) = delete_draft(pool, draft.block_id.as_str()).await {
+        if recovered && let Err(e) = delete_draft(pool, draft.block_id.as_str()).await {
             log_draft_error(&mut draft_errors, draft.block_id.as_str(), &e, "deleting");
         }
     }
