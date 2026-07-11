@@ -20,9 +20,10 @@ cargo-fuzz = true
 
 # cargo-machete scans a crate's `src/` for usage, but our targets live in
 # `fuzz_targets/*.rs` (non-standard [[bin]] paths it doesn't trace), so it
-# false-reports `agaric` as unused. The crate genuinely depends on it —
-# both targets `use agaric::{snapshot::decode_snapshot, deeplink::parse_deep_link}`
-# and the crate fails to build without it. Ignore the false positive.
+# false-reports `agaric` as unused. The crate genuinely depends on it — the
+# targets `use agaric_lib::{snapshot::decode_snapshot, deeplink::parse_deep_link,
+# import::parse_logseq_markdown}` and the crate fails to build without it.
+# Ignore the false positive.
 [package.metadata.cargo-machete]
 ignored = ["agaric"]
 
@@ -53,6 +54,13 @@ bench = false
 [[bin]]
 name = "deeplink_parse"
 path = "fuzz_targets/deeplink_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "import_parse"
+path = "fuzz_targets/import_parse.rs"
 test = false
 doc = false
 bench = false

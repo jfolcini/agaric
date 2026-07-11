@@ -30,10 +30,11 @@ name: Scheduled deep checks
 #   mutants        — #649: cargo-mutants scoped to the invariant core
 #                    (op, op_log, reverse, loro/engine). Non-blocking; the
 #                    survivor list is the deliverable to triage into tests.
-#   fuzz           — #650: short coverage-guided fuzz runs over the three
-#                    byte-level parsers (snapshot decode, deeplink parse).
-#                    Smoke-length here (the per-target time budget is small);
-#                    a real fuzzing campaign runs longer out-of-band.
+#   fuzz           — #650/#2590: short coverage-guided fuzz runs over the
+#                    raw-input parsers (snapshot decode, deeplink parse,
+#                    Markdown/Obsidian import parse). Smoke-length here (the
+#                    per-target time budget is small); a real fuzzing campaign
+#                    runs longer out-of-band.
 on:
   schedule:
     # Mondays 04:17 UTC — off-peak, odd minute to avoid the top-of-hour
@@ -630,7 +631,7 @@ jobs:
           retention-days: 30
 
   # ---------------------------------------------------------------------------
-  # fuzz (#650) — short coverage-guided fuzz of the byte-level parsers. The
+  # fuzz (#650/#2590) — short coverage-guided fuzz of the raw-input parsers. The
   # fuzz crate (src-tauri/fuzz) builds under stable for compile-checking but
   # `cargo fuzz run` needs nightly (libFuzzer instrumentation). Smoke-length
   # budget here; a longer campaign runs out-of-band. Non-blocking.
@@ -710,7 +711,7 @@ jobs:
           RUSTFLAGS: "-C target-feature=-crt-static"
         run: |
           set -euo pipefail
-          for target in snapshot_decode deeplink_parse; do
+          for target in snapshot_decode deeplink_parse import_parse; do
             echo "::group::fuzz $target"
             # `--target x86_64-unknown-linux-gnu` pins the gnu HOST target.
             # Recent cargo-fuzz defaults `--target` to
