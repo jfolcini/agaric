@@ -8,6 +8,7 @@ items:
     op_type: create_block
     payload: "{\"block_id\":\"SNAP_HIST\",\"block_type\":\"content\",\"content\":\"hi\"}"
     created_at: 1749988800000
+    is_replicated: false
 next_cursor: ~
 has_more: false
 total_count: ~

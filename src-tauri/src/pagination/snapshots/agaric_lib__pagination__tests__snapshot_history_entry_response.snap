@@ -1,6 +1,5 @@
 ---
 source: src/pagination/tests.rs
-assertion_line: 2892
 expression: resp
 ---
 items:
@@ -9,6 +8,7 @@ items:
     op_type: create_block
     payload: "{\"block_id\":\"SNAP_HIS\",\"block_type\":\"content\",\"content\":\"snap\"}"
     created_at: "[TIMESTAMP]"
+    is_replicated: false
 next_cursor: "[CURSOR]"
 has_more: false
 total_count: ~
