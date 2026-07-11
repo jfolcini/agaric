@@ -8,7 +8,7 @@ mod tag_ops;
 
 pub(crate) use batch::{
     compute_reverse_batch, get_op_records_batch, is_skippable_non_reversible,
-    is_statically_non_reversible,
+    is_statically_non_reversible, reject_replicated_targets,
 };
 pub(crate) use block_ops::find_prior_text;
 

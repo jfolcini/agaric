@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT device_id, seq, op_type FROM op_log WHERE (created_at > ?1 OR (created_at = ?1 AND (seq > ?2 OR (seq = ?2 AND device_id > ?3)))) ORDER BY created_at DESC, seq DESC, device_id DESC",
+  "query": "SELECT o.device_id, o.seq, o.op_type FROM op_log o WHERE ( o.block_id IN (SELECT value FROM json_each(?1)) OR (o.op_type IN ('delete_attachment', 'rename_attachment') AND EXISTS ( SELECT 1 FROM attachments a WHERE a.id = json_extract(o.payload, '$.attachment_id') AND a.block_id IN (SELECT value FROM json_each(?1)) )) ) AND o.is_replicated = 0 AND (o.created_at > ?2 OR (o.created_at = ?2 AND (o.seq > ?3 OR (o.seq = ?3 AND o.device_id > ?4)))) ORDER BY o.created_at DESC, o.seq DESC, o.device_id DESC",
   "describe": {
     "columns": [
       {
@@ -38,7 +38,7 @@
       }
     ],
     "parameters": {
-      "Right": 3
+      "Right": 4
     },
     "nullable": [
       false,
@@ -46,5 +46,5 @@
       false
     ]
   },
-  "hash": "7e4b6f5c42add28705f9f7f7ae92abf04de2c5d938cfec2fd4d7bb3c17b97d84"
+  "hash": "bba91f5da85a3f75eccf59ed173b550d910302f39d15d91dabc2dea68e14af9c"
 }

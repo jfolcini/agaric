@@ -813,6 +813,12 @@ async fn revert_ops_in_tx(
     // so they run against the bare pool. The membership read that decides
     // *which* ops are reverted — `restore_page_to_op_inner`'s ops-to-revert
     // SELECT — runs inside `tx` so it shares the IMMEDIATE write lock.
+    // #2549: refuse to revert a REPLICATED audit op (`is_replicated = 1`,
+    // #2481/#2495). Such rows were ingested for provenance only and never
+    // applied to local state, so applying their inverse would corrupt local
+    // state by "undoing" a forward effect that never happened here. Reject
+    // before any reverse is computed or applied.
+    reverse::reject_replicated_targets(pool, &ops).await?;
     let records = reverse::get_op_records_batch(pool, &ops).await?;
     // #2020: `compute_reverse_batch` returns a per-op `Result`. A
     // non-reversible op surfaces as an inner `Err(NonReversible)` (e.g. a
@@ -1108,8 +1114,17 @@ pub async fn restore_page_to_op_inner(
     // since restoring to that point means un-deleting those blocks.
     let ops_after: Vec<(String, i64, String)> = if page_id == "__all__" {
         sqlx::query!(
+            // #2549: `AND is_replicated = 0` — this sweep feeds
+            // `revert_ops_in_tx`, whose `reject_replicated_targets` guard
+            // rejects the WHOLE batch if it sees a replicated op. A #2495
+            // audit-only row (foreign device, never applied to local state)
+            // touching the same block/page after the target timestamp must
+            // not be swept in here — it has no local forward effect to
+            // undo, so it belongs out of scope entirely rather than aborting
+            // an otherwise-legitimate point-in-time restore.
             "SELECT device_id, seq, op_type FROM op_log \
-             WHERE (created_at > ?1 OR (created_at = ?1 AND (seq > ?2 OR (seq = ?2 AND device_id > ?3)))) \
+             WHERE is_replicated = 0 \
+             AND (created_at > ?1 OR (created_at = ?1 AND (seq > ?2 OR (seq = ?2 AND device_id > ?3)))) \
              ORDER BY created_at DESC, seq DESC, device_id DESC",
             target_ts,
             target_seq,
@@ -1141,6 +1156,9 @@ pub async fn restore_page_to_op_inner(
         // sqlx requires `String` (NOT `Vec<String>`) for `json_each(?)`
         let subtree_json = serde_json::Value::from(subtree_ids).to_string();
         sqlx::query!(
+            // #2549: `AND o.is_replicated = 0` — see the matching note on
+            // the `__all__` branch above; a replicated audit row must not
+            // be swept into a page-scoped restore either.
             "SELECT o.device_id, o.seq, o.op_type FROM op_log o \
              WHERE ( \
                o.block_id IN (SELECT value FROM json_each(?1)) \
@@ -1150,6 +1168,7 @@ pub async fn restore_page_to_op_inner(
                    AND a.block_id IN (SELECT value FROM json_each(?1)) \
                )) \
              ) \
+             AND o.is_replicated = 0 \
              AND (o.created_at > ?2 OR (o.created_at = ?2 AND (o.seq > ?3 OR (o.seq = ?3 AND o.device_id > ?4)))) \
              ORDER BY o.created_at DESC, o.seq DESC, o.device_id DESC",
             subtree_json,
@@ -1300,6 +1319,10 @@ pub async fn undo_page_op_inner(
     // reversing one from the undo stack would mutate state that the op
     // never produced. Reverting a foreign op stays legitimate ONLY as an
     // explicit History-view action (`revert_ops`, deliberately unfiltered).
+    // also #2549: this interactive-undo target-selection query calls
+    // `reverse::compute_reverse` directly and never routes through
+    // `revert_ops_in_tx`'s `reject_replicated_targets` guard, so the filter
+    // here is the sole line of defense against selecting an audit-only row.
     let target = sqlx::query_as!(
         HistoryEntry,
         "WITH RECURSIVE page_blocks(id, depth) AS ( \
@@ -1417,11 +1440,12 @@ pub async fn redo_page_op_inner(
     use crate::reverse;
 
     // Fetch the undo op's op_type (surfaced to the frontend as
-    // `reversed_op_type` for descriptive toasts) and its `is_undo` flag in a
-    // SINGLE query — both come from the same `(device_id, seq)` row, so there
-    // is no need for a second round-trip (perf-redo-double-query-same-row).
+    // `reversed_op_type` for descriptive toasts), its `is_undo` flag, and its
+    // `is_replicated` flag in a SINGLE query — all three come from the same
+    // `(device_id, seq)` row, so there is no need for a second round-trip
+    // (perf-redo-double-query-same-row).
     let undo_row = sqlx::query!(
-        r#"SELECT op_type, is_undo as "is_undo!: i64" FROM op_log WHERE device_id = ? AND seq = ?"#,
+        r#"SELECT op_type, is_undo as "is_undo!: i64", is_replicated as "is_replicated!: i64" FROM op_log WHERE device_id = ? AND seq = ?"#,
         undo_device_id,
         undo_seq,
     )
@@ -1441,6 +1465,18 @@ pub async fn redo_page_op_inner(
         return Err(AppError::validation(format!(
             "redo target ({undo_device_id}, {undo_seq}) is a '{undo_op_type}' op that was not \
              produced by undo — refusing to reverse a forward op via redo (#659)"
+        )));
+    }
+    // #2549: `is_undo = 1` alone does not prove the row is a LOCAL undo op —
+    // a foreign device's own undo op can arrive here as a #2495 audit-only
+    // replicated row (`is_replicated = 1`, `is_undo = 1`), never applied to
+    // local state. `compute_reverse` + `apply_reverse_in_tx` below would
+    // otherwise happily mutate local state from it. Reject before computing
+    // any reverse, same as `reject_replicated_targets` does for `revert_ops`.
+    if undo_row.is_replicated != 0 {
+        return Err(AppError::validation(format!(
+            "redo target ({undo_device_id}, {undo_seq}) is a replicated audit op \
+             (never applied to local state) and has no local forward effect to redo (#2549)"
         )));
     }
 
@@ -1574,6 +1610,16 @@ pub async fn find_undo_group_inner(
     // The walk's `count <= 1000` matches the `undo_depth` ceiling in
     // `undo_page_op_inner`, bounding worst-case recursion against a
     // pathological burst of same-device ops.
+    //
+    // #2549: `AND ol.is_replicated = 0` — replicated audit rows (#2495,
+    // never applied to local state) are excluded from `ordered_ops`, exactly
+    // as in `undo_page_op_inner`'s target query and `undo_page_group_inner`'s
+    // enumeration. All three MUST share the same row-numbering universe:
+    // the FE sizes the group here and then addresses ops by depth/rn, so a
+    // replicated row visible to one query but not the others would skew
+    // depth addressing (and a replicated row in the walk would either break
+    // the same-device chain or seed a group that `reject_replicated_targets`
+    // then aborts wholesale).
     let seed_rn: i64 = depth + 1; // depth=0 → rn=1 (newest)
     // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
     //
@@ -1714,6 +1760,11 @@ pub async fn undo_page_group_inner(
     // keeps replicated foreign audit rows out of the group (and out of the
     // rn-numbering, so they don't break a local group either) — implicit
     // undo is local-only; explicit `revert_ops` stays unfiltered.
+    // also #2549: without this filter a replicated audit row seeding or
+    // joining the walk would flow into `revert_ops_in_tx`, whose
+    // `reject_replicated_targets` guard aborts the WHOLE group; excluding it
+    // here keeps group undo usable and the rn universe identical to
+    // `find_undo_group_inner` / `undo_page_op_inner`.
     let seed_rn: i64 = depth + 1;
     let rows = sqlx::query!(
         r#"WITH RECURSIVE page_blocks(id, depth) AS (

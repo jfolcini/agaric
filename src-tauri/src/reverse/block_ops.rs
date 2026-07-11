@@ -218,10 +218,18 @@ pub async fn find_prior_text(
     // share a `(created_at, seq)` pair: the equal-key op could fall on
     // either side of the boundary. Including `device_id` makes "the op
     // immediately before this one" well-defined cross-device.
+    // #2549: `AND is_replicated = 0` — reconstruct prior state ONLY from
+    // locally-authored ops. #2495 introduced audit-only replicated rows
+    // (`is_replicated = 1`) that are ingested for provenance but NEVER
+    // applied to local state. Walking back into such a row would restore
+    // content this device never actually held ("prior state" fabricated from
+    // a never-applied edit). Implicit undo already scopes to local ops; this
+    // makes the shared `compute_reverse` prior-state walk do the same.
     let row = sqlx::query!(
         "SELECT op_type, payload FROM op_log \
          WHERE block_id = ?1 \
            AND op_type IN ('edit_block', 'create_block') \
+           AND is_replicated = 0 \
            AND (created_at < ?2 \
                 OR (created_at = ?2 AND (seq < ?3 OR (seq = ?3 AND device_id < ?4)))) \
          ORDER BY created_at DESC, seq DESC, device_id DESC \
@@ -292,10 +300,15 @@ async fn find_prior_position(
     let bid_upper = block_id.to_ascii_uppercase();
     // #382: tie-break on the canonical `(created_at, seq, device_id)`
     // total order — see the matching note in `find_prior_text`.
+    // #2549: `AND is_replicated = 0` — see `find_prior_text`. Prior placement
+    // must be reconstructed from locally-applied move/create ops only; a
+    // never-applied audit row (#2495) would restore a slot this device never
+    // laid out.
     let row = sqlx::query!(
         "SELECT op_type, payload FROM op_log \
          WHERE block_id = ?1 \
            AND op_type IN ('move_block', 'create_block') \
+           AND is_replicated = 0 \
            AND (created_at < ?2 \
                 OR (created_at = ?2 AND (seq < ?3 OR (seq = ?3 AND device_id < ?4)))) \
          ORDER BY created_at DESC, seq DESC, device_id DESC \
