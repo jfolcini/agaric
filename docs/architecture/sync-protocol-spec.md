@@ -262,6 +262,55 @@ puller records `synced_at` + the bookmark in `peer_refs` (#610 — the
 streamer deliberately does *not*, so the reverse-direction session stays
 due).
 
+### `SyncMessage::OpLogBatch`
+
+```text
+OpLogBatch { records: Vec<OpTransfer>, is_last: bool }   // streamer → puller
+```
+
+Audit-only op-log replication (#2481 phase 1). The **streamer** appends these
+to the tail of its streaming reply — *after* the per-space `LoroSync` deltas —
+carrying the op records the puller lacks (`seq >` the puller's advertised
+per-device frontier from `HeadExchange.heads`, computed by
+`operations::collect_ops_for_peer` and partitioned under `LORO_INLINE_MAX_BYTES`
+by `batch_ops_for_wire`). Each record is hash-verified and stored by the puller
+via `dag::insert_replicated_op` with `is_replicated = 1` — append-only **audit
+metadata that is never applied to state** (state flows exclusively through Loro
+CRDT sync). A corrupt record (hash mismatch) is logged and skipped best-effort,
+never faulting the pull.
+
+The puller **buffers** received records during the stream and ingests them once,
+at session completion (`complete_pull_session`), after a materializer flush. The
+inline write would otherwise contend with the background inbound-sync cache
+rebuild that the just-applied `LoroSync` enqueued — SQLite is single-writer, and
+an oversized-block FTS rebuild can hold the write lock past the 5 s
+`busy_timeout` (#611). Flushing first drains that rebuild so the audit write runs
+uncontended.
+
+The batches ride the **same streaming phase and drain** (`next_message`) as the
+`LoroSync` deltas, so the receiver ingests them in its normal `handle_message`
+loop; the single final message across the whole stream — the last `OpLogBatch`,
+or the last `LoroSync` when there are none — carries `is_last: true` and drives
+the puller to `Complete`. This is single-direction per session (streamer →
+puller, mirroring state sync); the reverse propagates when roles swap (#610). A
+streamer that receives an `OpLogBatch` (it should only send them) fails the
+session — the direction is enforced, not just conventional.
+
+`OpLogBatch` has **no chunked transport** (unlike `LoroSync`), so a single op
+record whose serialized JSON would push a lone-record batch past
+`MAX_MSG_SIZE` (10 MB) is **skipped** from replication with a warning — its
+state still syncs via the chunked `LoroSync` path; only its audit record
+defers (a chunked `OpLogBatch` transport is a follow-up). Normal edits are
+bounded well under this by the 256 KiB content cap.
+
+**Capability-gated (back-compat).** The streamer appends `OpLogBatch` only when
+the puller advertised `HeadExchange { op_log_replication: true }` — an older
+peer that omits the flag (`#[serde(default)]` → `false`) is never sent the
+variant it cannot deserialize, and a newer puller talking to an older streamer
+simply never receives one (it blocks on nothing — the batches are additive to a
+stream it already drains). No new handshake round-trip; nothing on the wire
+becomes mandatory.
+
 ### `SyncMessage::ResetRequired`
 
 ```text
@@ -343,7 +392,10 @@ StreamingOps
   │ each inbound LoroSync → apply_remote:
   │   ├─ ApplyOutcome::Imported ─────► ApplyingOps (transient), back to StreamingOps
   │   └─ ApplyOutcome::SnapshotFallbackRequested ──► ResetRequired
-  │ inbound LoroSync { is_last: true } ─────────────► Complete (emit SyncComplete)
+  │ each inbound OpLogBatch (#2481) → buffer records (audit-only),
+  │   stay in StreamingOps while is_last:false
+  │ inbound message with is_last:true (last LoroSync, or last OpLogBatch) ─► flush +
+  │   insert_replicated_op the buffered records ─► Complete (emit SyncComplete)
   ▼
 ApplyingOps  (per-message engine-import phase; SQL projection + cache rebuild enqueue)
   ▼
@@ -370,6 +422,10 @@ of `SyncOrchestrator::handle_message`. Notable rules:
 - `LoroSync` and `SyncComplete` are valid in `StreamingOps` and also in
   `ExchangingHeads` (the latter absorbs the empty-stream short-circuit where
   a peer with no registered spaces replies `SyncComplete` directly).
+- `OpLogBatch` (#2481) is valid in `StreamingOps` / `ExchangingHeads` — the
+  same states as `LoroSync`, since it rides the tail of the same stream — and
+  is ingested by the dispatch body (`dag::insert_replicated_op`), unlike the
+  snapshot / file-transfer variants below.
 - The `SnapshotOffer` / `SnapshotAccept` / `SnapshotReject` and the four
   file-transfer variants pass state validation but are rejected by the
   dispatch body — they are handled by the daemon-layer sub-flows, never the
@@ -408,14 +464,22 @@ Initiator (puller)                         Responder (streamer)
    │                                           │
    │      LoroSync { msg, is_last:false } ...  │  one per SpaceId:
    ◄──────────────────────────────────────────┤  incremental Update against
-   │      LoroSync { msg, is_last:true }       │  the initiator's advertised
+   │      LoroSync { msg, is_last:false }      │  the initiator's advertised
    ◄──────────────────────────────────────────┤  vv; full Snapshot for a
    │ (applies each via apply_remote)           │  space it didn't advertise
+   │                                           │
+   │      OpLogBatch { records, is_last:true } │  #2481 audit tail: op records
+   ◄──────────────────────────────────────────┤  the puller lacks, only when it
+   │ (ingests each via insert_replicated_op)   │  advertised op_log_replication
    │                                           │
    │ SyncComplete { last_hash }                │  puller records synced_at +
    ├──────────────────────────────────────────►  peer_refs bookmark; the
    │              [ file-transfer phase ]      │  streamer does not (#610)
 ```
+
+(When the puller is an older peer that did not advertise `op_log_replication`,
+no `OpLogBatch` is appended and the last `LoroSync` carries `is_last:true`, the
+pre-#2481 shape.)
 
 Mechanics worth pinning:
 
@@ -431,6 +495,12 @@ Mechanics worth pinning:
   `pending_loro_messages`. The driver loop drains the queue via
   `next_message()` after each `handle_message`. Over-threshold payloads are
   re-encoded as `LoroSyncChunked` by the wire layer transparently.
+- #2481 audit tail: when the puller advertised `op_log_replication: true`,
+  `head_exchange_outgoing_loro` also queues the op records the puller lacks
+  (`collect_ops_for_peer` → `batch_ops_for_wire`) into `pending_op_batches`,
+  drained after the `LoroSync` messages by the same `next_message()` loop. The
+  `is_last` flag moves to the final message across *both* queues, so the puller
+  completes only after state deltas AND audit records have arrived.
 - Empty-stream short-circuit: a responder with zero registered spaces
   replies `SyncComplete` directly from `ExchangingHeads` rather than
   emitting a zero-byte `LoroSync`; the initiator (which never streamed)

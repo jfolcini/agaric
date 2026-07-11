@@ -161,6 +161,38 @@ pub struct SyncOrchestrator {
     /// incremental-export floor when the initiator advertises no vv for a
     /// space, retiring the every-tick full-snapshot churn (#610).
     peer_advertised_loro_vvs: Vec<crate::sync_protocol::types::SpaceVersionVector>,
+    /// #2481 phase 1: `true` once the peer advertised
+    /// `HeadExchange { op_log_replication: true }`. The responder gates the
+    /// audit-only op-log push on this — it only appends `OpLogBatch`
+    /// messages to a peer that advertised the capability, so an older peer
+    /// (deserializes the flag as `false`) is never sent the variant it
+    /// cannot decode.
+    peer_op_log_replication: bool,
+    /// #2481 phase 1: the peer's advertised per-device op-log frontiers
+    /// (`HeadExchange.heads`), stashed so the streamer can compute which op
+    /// records the peer still lacks (`seq > the peer's frontier per device`)
+    /// via [`collect_ops_for_peer`] when building the streaming reply.
+    peer_advertised_heads: Vec<DeviceHead>,
+    /// #2481 phase 1: audit-only op-log batches queued for the peer, drained
+    /// after [`pending_loro_messages`] by [`next_message`](Self::next_message)
+    /// so op records ride the tail of the same streaming phase as the
+    /// `LoroSync` deltas. Each entry becomes one
+    /// [`SyncMessage::OpLogBatch`]; the receiver hands every record to
+    /// [`crate::dag::insert_replicated_op`] (audit metadata, never applied to
+    /// state). The final drained message overall (last op batch, or last
+    /// `LoroSync` when there are none) carries `is_last: true`.
+    pending_op_batches: VecDeque<Vec<OpTransfer>>,
+    /// #2481 phase 1: audit op records the puller has *received* this session,
+    /// buffered until session completion. They are NOT written inline in
+    /// `handle_message`: `insert_replicated_op` takes the write lock, and
+    /// mid-stream that contends with the materializer's background inbound-sync
+    /// cache rebuild triggered by the just-applied `LoroSync` (SQLite is
+    /// single-writer — an oversized-block FTS rebuild can hold the lock past
+    /// the busy_timeout, #611). Instead they are drained in
+    /// [`complete_pull_session`](Self::complete_pull_session), after a
+    /// materializer flush settles that rebuild, so the audit write runs
+    /// uncontended.
+    pending_ingest_records: Vec<OpTransfer>,
     event_sink: Option<Box<dyn crate::sync_events::SyncEventSink>>,
 }
 
@@ -185,6 +217,10 @@ impl SyncOrchestrator {
             expected_remote_id: None,
             streamed_to_peer: false,
             peer_advertised_loro_vvs: Vec::new(),
+            peer_op_log_replication: false,
+            peer_advertised_heads: Vec::new(),
+            pending_op_batches: VecDeque::new(),
+            pending_ingest_records: Vec::new(),
             event_sink: None,
         }
     }
@@ -385,14 +421,27 @@ impl SyncOrchestrator {
                 | SyncMessage::FileReceived { .. }
                 | SyncMessage::FileTransferComplete,
             ) => {}
-            // OpLogBatch (#2481 phase 1) is designed to ride a dedicated
-            // sync-daemon sub-flow after the delta phase, never the
-            // per-session core — but that sub-flow isn't wired yet, so
-            // nothing intercepts it before the dispatch match below. Kept
-            // exhaustive here (state validation always accepts it through to
-            // dispatch); the dispatch match below rejects it loudly in every
-            // build (same hard-fail contract as `SnapshotOffer`).
-            (_, SyncMessage::OpLogBatch { .. }) => {}
+            // OpLogBatch (#2481 phase 1) rides the tail of the streaming
+            // phase: the responder appends it after its LoroSync deltas (or,
+            // for a device with no registered spaces, as the sole stream), so
+            // it is valid in the same states as LoroSync — `StreamingOps`
+            // (after ≥1 LoroSync) or `ExchangingHeads` (pure-audit stream, the
+            // responder's first reply). The dispatch match below ingests each
+            // record as audit metadata.
+            (
+                SyncState::StreamingOps | SyncState::ExchangingHeads,
+                SyncMessage::OpLogBatch { .. },
+            ) => {}
+            (_, SyncMessage::OpLogBatch { .. }) => {
+                let msg_str = "OpLogBatch received outside the streaming phase";
+                self.state = SyncState::Failed(msg_str.into());
+                self.session.state = self.state.clone();
+                self.emit(crate::sync_events::SyncEvent::Error {
+                    message: msg_str.into(),
+                    remote_device_id: self.session.remote_device_id.clone(),
+                });
+                return Err(AppError::InvalidOperation(msg_str.into()));
+            }
         }
 
         match msg {
@@ -401,11 +450,10 @@ impl SyncOrchestrator {
                 heads,
                 loro_vvs,
                 engine_format_version,
-                // #2481 phase 1: the peer's audit-replication capability is
-                // consumed by the sync-daemon op-log exchange sub-flow (which
-                // decides whether to stream `OpLogBatch`), not by this
-                // per-session core. Ignored here.
-                op_log_replication: _,
+                // #2481 phase 1: the peer's audit-replication capability
+                // gates whether we append `OpLogBatch` messages to the
+                // streaming reply below (stashed at `peer_op_log_replication`).
+                op_log_replication,
                 // #2200: the peer's compression capability is consumed by
                 // the sync-daemon wire layer (`sync_daemon::wire`), which
                 // reads it off the received `HeadExchange` and records it
@@ -439,33 +487,28 @@ impl SyncOrchestrator {
                     return Err(AppError::InvalidOperation(msg));
                 }
 
-                // Identify the remote device from received heads. A peer that
-                // has never originated its own ops will only advertise per-
-                // device heads for *other* devices (including ours), so an
-                // empty `remote_id` at this point is not automatically
-                // malformed — it simply means "we can't yet attribute this
-                // session to a specific peer from the heads list alone".
-                let remote_id = heads
-                    .iter()
-                    .find(|h| h.device_id != self.device_id)
-                    .map(|h| h.device_id.clone())
-                    .unwrap_or_default();
-
-                // Validate the remote device claims a known peer identity
-                if !remote_id.is_empty()
-                    && let Some(expected) = &self.expected_remote_id
-                    && &remote_id != expected
-                {
-                    let msg =
-                        format!("peer device_id mismatch: expected {expected}, got {remote_id}");
-                    self.state = SyncState::Failed(msg.clone());
-                    self.session.state = self.state.clone();
-                    self.emit(crate::sync_events::SyncEvent::Error {
-                        message: msg.clone(),
-                        remote_device_id: remote_id,
-                    });
-                    return Err(AppError::InvalidOperation(msg));
-                }
+                // Identify the remote device.
+                //
+                // #2481: the peer advertises the frontier of EVERY device it
+                // holds (its own plus any foreign device whose ops it
+                // replicated as audit metadata), so the first non-self head is
+                // NOT reliably the peer's own identity — a multi-device
+                // advertisement would mis-attribute the session and, against
+                // the daemon-supplied cert CN, false-fail as a "device_id
+                // mismatch". When the daemon set an `expected_remote_id` from
+                // the verified TLS cert CN (#778, authoritative), use it. Only
+                // for a cert-less (in-memory test) session do we fall back to
+                // the first-non-self head — where a peer that has never
+                // originated its own ops legitimately yields an empty id, so an
+                // empty `remote_id` here is not malformed.
+                let remote_id = match &self.expected_remote_id {
+                    Some(expected) => expected.clone(),
+                    None => heads
+                        .iter()
+                        .find(|h| h.device_id != self.device_id)
+                        .map(|h| h.device_id.clone())
+                        .unwrap_or_default(),
+                };
 
                 self.remote_device_id = Some(remote_id.clone());
                 self.session.remote_device_id = remote_id;
@@ -474,6 +517,13 @@ impl SyncOrchestrator {
                 // streamer can persist them to `peer_refs.loro_vv_bytes` on
                 // session completion (churn-cutting export floor next round).
                 self.peer_advertised_loro_vvs = loro_vvs.clone();
+
+                // #2481 phase 1: stash the peer's advertised op-log frontiers +
+                // audit-replication capability so `head_exchange_outgoing_loro`
+                // can append the op records the peer lacks after the LoroSync
+                // deltas (only when the peer advertised the capability).
+                self.peer_advertised_heads = heads.clone();
+                self.peer_op_log_replication = op_log_replication;
 
                 // Check whether a reset is required — own-lineage-loss in Loro
                 // VV space (#2502, retiring the op-log-seq heads check, #87
@@ -667,44 +717,12 @@ impl SyncOrchestrator {
                     return Ok(None); // wait for more LoroSync messages
                 }
 
-                // Final LoroSync of the batch — transition to Complete
-                // and send our SyncComplete with the latest local head
-                // hash. Loro's import has already converged the engine
+                // Final LoroSync of the batch and no #2481 audit records follow
+                // (the responder sets `is_last` on the very last message across
+                // both queues). Transition to Complete and send our
+                // SyncComplete. Loro's import has already converged the engine
                 // state, so no further merge step is needed.
-                let last_hash = get_local_heads(&self.pool)
-                    .await?
-                    .into_iter()
-                    .find(|h| h.device_id == self.device_id)
-                    .map(|h| h.hash)
-                    .unwrap_or_default();
-
-                // #610: we just PULLED the peer's full state (only the
-                // puller receives LoroSync — the streamer never reaches
-                // this arm). Record `synced_at` so the scheduler stops
-                // marking us due every tick and re-pulling a full snapshot.
-                // Skip the write only when the peer was never identified —
-                // Never fabricate a bogus empty-`peer_id` row.
-                if let Some(peer_id) = self.resolve_remote_peer_id() {
-                    self.record_pull_in_tx(&peer_id, &last_hash).await?;
-                } else {
-                    tracing::warn!(
-                        device_id = %self.device_id,
-                        "completed a pull session but the remote device_id was \
-                         never identified; skipping synced_at bookkeeping (#610)"
-                    );
-                }
-
-                self.state = SyncState::Complete;
-                self.session.state = SyncState::Complete;
-                self.emit(crate::sync_events::SyncEvent::Complete {
-                    remote_device_id: self.session.remote_device_id.clone(),
-                    ops_received: self.session.ops_received,
-                    ops_sent: self.session.ops_sent,
-                    // #1071: deduped page ids accumulated from this session's
-                    // applied ops (empty when no Imported outcome occurred).
-                    changed_page_ids: self.session.changed_page_ids.clone(),
-                });
-                Ok(Some(SyncMessage::SyncComplete { last_hash }))
+                self.complete_pull_session().await
             }
 
             // ---- SyncComplete -----------------------------------------------
@@ -825,28 +843,62 @@ impl SyncOrchestrator {
             }
 
             // ---- OpLogBatch (#2481 phase 1) ---------------------------------
-            // Audit-only op-log replication is DESIGNED to ride a dedicated
-            // sync-daemon sub-flow that would run after the delta phase
-            // (parallel to file transfer), ingesting records via
-            // `crate::dag::insert_replicated_op` — never through this
-            // per-session orchestrator. Unlike the file-transfer messages
-            // below, that sub-flow is NOT wired yet (#2481 phase 1 is
-            // ingest-only; no daemon code intercepts `OpLogBatch` before it
-            // would reach here), so this arm is not a backstop behind real
-            // interception — it is the only thing standing between a peer
-            // that takes our advertised `op_log_replication: true` at face
-            // value and this codebase silently dropping its audit records.
-            // Fail loudly in every build (mirrors `SnapshotOffer` /
-            // `LoroSyncChunked`, not the file-transfer degrade-in-release
-            // contract) so a stray/unsupported batch surfaces as a session
-            // error instead of vanishing.
-            SyncMessage::OpLogBatch { .. } => Err(AppError::InvalidOperation(
-                "OpLogBatch is not yet consumed by the orchestrator; #2481 \
-                 phase 1 does not wire the sync-daemon op-log exchange \
-                 sub-flow, so a peer must not stream OpLogBatch over the \
-                 main session channel"
-                    .into(),
-            )),
+            // Audit-only op-log replication: the streamer appends these after
+            // its LoroSync deltas (see `head_exchange_outgoing_loro` +
+            // `next_message`). Each record is hash-verified and stored as
+            // append-only audit metadata (`is_replicated = 1`) via
+            // `crate::dag::insert_replicated_op` — it is NEVER applied to state
+            // (state flows exclusively through Loro CRDT sync). Only the puller
+            // (initiator) reaches this arm; the streamer sends OpLogBatch and
+            // never receives it (single-direction, responder → initiator, in
+            // one session — the reverse propagates when roles swap, exactly
+            // like state sync, #610).
+            SyncMessage::OpLogBatch { records, is_last } => {
+                // Single-direction guard: only the PULLER ingests op batches.
+                // If we streamed this session (`streamed_to_peer`, the
+                // responder role), receiving an `OpLogBatch` is a protocol
+                // violation — the puller must not stream back. Reject loudly so
+                // a misbehaving/Forked peer cannot push audit records into the
+                // streamer's log through an unexpected direction (records are
+                // hash-verified + audit-only regardless, so this is defence in
+                // depth, not a state-integrity fix).
+                if self.streamed_to_peer {
+                    let msg = "OpLogBatch received by the streamer; audit \
+                               replication is single-direction (puller ingests)";
+                    self.state = SyncState::Failed(msg.into());
+                    self.session.state = self.state.clone();
+                    self.emit(crate::sync_events::SyncEvent::Error {
+                        message: msg.into(),
+                        remote_device_id: self.session.remote_device_id.clone(),
+                    });
+                    return Err(AppError::InvalidOperation(msg.into()));
+                }
+
+                // Buffer the records; they are ingested (once) in
+                // `complete_pull_session` after a materializer flush, NOT
+                // inline here — an inline `insert_replicated_op` write contends
+                // with the materializer's background inbound-sync rebuild from
+                // the just-applied `LoroSync` and can lose the SQLite
+                // single-writer race (#611). Records arrive in
+                // `(device_id, seq)` order and are appended in that order,
+                // which the Audit profile's parent-gap relaxation relies on.
+                self.pending_ingest_records.extend(records);
+
+                if !is_last {
+                    // More stream to come (further op batches). Stay in
+                    // StreamingOps so the next OpLogBatch passes state
+                    // validation, mirroring the non-final LoroSync arm.
+                    self.state = SyncState::StreamingOps;
+                    self.session.state = SyncState::StreamingOps;
+                    return Ok(None);
+                }
+
+                // Final message of the whole stream (state deltas already
+                // applied). Ingest the buffered audit records and complete the
+                // pull with SyncComplete — same bookkeeping as the
+                // final-LoroSync arm (this is the puller side).
+                self.complete_pull_session().await
+            }
 
             // ---- File transfer (F-14) ---------------------------------------
             // File-transfer messages are read directly off the wire by
@@ -986,31 +1038,13 @@ impl SyncOrchestrator {
         let loro_state = self.loro_state();
         let space_ids: Vec<crate::space::SpaceId> = loro_state.registry.space_ids();
 
-        // Empty-stream short-circuit. No registered spaces means there
-        // is nothing to ship; reply with `SyncComplete` directly so we
-        // do not waste a round-trip on an empty `LoroSync`. The
-        // remote's state validation accepts `SyncComplete` in
-        // `ExchangingHeads` for exactly this case.
-        if space_ids.is_empty() {
-            let last_hash = get_local_heads(&self.pool)
-                .await?
-                .into_iter()
-                .find(|h| h.device_id == self.device_id)
-                .map(|h| h.hash)
-                .unwrap_or_default();
-            self.state = SyncState::Complete;
-            self.session.state = SyncState::Complete;
-            self.emit(crate::sync_events::SyncEvent::Complete {
-                remote_device_id: self.session.remote_device_id.clone(),
-                ops_received: self.session.ops_received,
-                ops_sent: self.session.ops_sent,
-                // #1071: empty-stream short-circuit applies no inbound ops, so
-                // the accumulated set is empty here — but read it from the
-                // session uniformly with the other Complete sites.
-                changed_page_ids: self.session.changed_page_ids.clone(),
-            });
-            return Ok(Some(SyncMessage::SyncComplete { last_hash }));
-        }
+        // #2481 phase 1: audit-only op records the peer still lacks, batched
+        // for the wire. Empty unless the peer advertised `op_log_replication`
+        // AND we hold op records beyond its advertised per-device frontier.
+        // These stream *after* the LoroSync deltas (see `next_message`), so a
+        // device with no registered spaces but pending audit records still
+        // replicates them.
+        let op_batches = self.collect_op_batches_for_peer().await?;
 
         // Enumerate spaces and build one LoroSync per space. When the
         // initiator advertised a version vector for a space, ship an
@@ -1018,106 +1052,102 @@ impl SyncOrchestrator {
         // space the initiator doesn't have, or an older peer that sent no
         // Vvs — ship a full Snapshot. The receiver's reachability
         // gate (`apply_remote`) catches an unreachable `from_vv` and falls
-        // back to a snapshot, so a stale advertised vv is safe.
-        // #2040: read the vault-wide SQL-soft-deleted id set ONCE for this
-        // whole sync round, then thread it into every per-space
-        // `prepare_outgoing`. Previously each space re-ran the identical
-        // full-vault `SELECT id FROM blocks WHERE deleted_at IS NOT NULL`, so S
-        // spaces meant S identical reads on every sync tick / debounced change /
-        // mDNS discovery. The set's content does not depend on the space, so
-        // sharing it across spaces is behaviour-preserving.
-        let sql_deleted = loro_sync::read_sql_soft_deleted_ids(&self.pool).await?;
-
-        // #2502/#610: persisted per-peer VV floor. When the initiator advertised
-        // no vv for a space (an older peer, or the every-tick churn case), fall
-        // back to the frontier this peer advertised at its LAST completed session
-        // (`peer_refs.loro_vv_bytes`) so we still ship an incremental Update
-        // instead of a full Snapshot. A stale/ahead persisted floor is safe: the
-        // receiver's `apply_remote` reachability gate catches an unbridgeable
-        // `from_vv` and falls back to a snapshot. Empty when we have no persisted
-        // frontier for this peer (never synced, or the peer id is unresolved).
-        let persisted_floor: Vec<crate::sync_protocol::types::SpaceVersionVector> =
-            match self.remote_device_id.clone().filter(|s| !s.is_empty()) {
-                Some(peer_id) => match crate::peer_refs::get_loro_vv_bytes(&self.pool, &peer_id)
-                    .await?
-                {
-                    Some(bytes) => crate::sync_protocol::types::decode_persisted_loro_vvs(&bytes),
-                    None => Vec::new(),
-                },
-                None => Vec::new(),
-            };
-
+        // back to a snapshot, so a stale advertised vv is safe. Skipped
+        // entirely when the registry is empty (nothing to ship).
         let mut messages: VecDeque<LoroSyncMessage> = VecDeque::with_capacity(space_ids.len());
-        for sid in &space_ids {
-            let peer_vv = peer_vvs
-                .iter()
-                .find(|v| &v.space_id == sid)
-                .map(|v| v.vv.as_slice())
-                // #2502/#610 fallback: the peer's last-session frontier.
-                .or_else(|| {
-                    persisted_floor
-                        .iter()
-                        .find(|v| &v.space_id == sid)
-                        .map(|v| v.vv.as_slice())
-                });
-            // #1257 freshness gate: `prepare_outgoing` returns `None` when the
-            // engine is stale vs SQL for this space (it would export a block SQL
-            // has soft-deleted). On refusal, skip the space — emit no payload for
-            // it this round; the gate already logged + signalled a
-            // rebuild-from-op-log is needed. Do NOT repair inline.
-            match loro_sync::prepare_outgoing(
-                &loro_state.registry,
-                sid,
-                &self.device_id,
-                peer_vv,
-                &sql_deleted,
-            )
-            .await?
-            {
-                Some(m) => messages.push_back(m),
-                None => {
-                    tracing::warn!(
-                        device_id = %self.device_id,
-                        space_id = %sid.as_str(),
-                        "loro: #1257 freshness gate refused export for space; \
-                         skipping it in this push (rebuild-from-op-log required)"
-                    );
+        if !space_ids.is_empty() {
+            // #2040: read the vault-wide SQL-soft-deleted id set ONCE for this
+            // whole sync round, then thread it into every per-space
+            // `prepare_outgoing`. Previously each space re-ran the identical
+            // full-vault `SELECT id FROM blocks WHERE deleted_at IS NOT NULL`, so S
+            // spaces meant S identical reads on every sync tick / debounced change /
+            // mDNS discovery. The set's content does not depend on the space, so
+            // sharing it across spaces is behaviour-preserving.
+            let sql_deleted = loro_sync::read_sql_soft_deleted_ids(&self.pool).await?;
+
+            // #2502/#610: persisted per-peer VV floor. When the initiator advertised
+            // no vv for a space (an older peer, or the every-tick churn case), fall
+            // back to the frontier this peer advertised at its LAST completed session
+            // (`peer_refs.loro_vv_bytes`) so we still ship an incremental Update
+            // instead of a full Snapshot. A stale/ahead persisted floor is safe: the
+            // receiver's `apply_remote` reachability gate catches an unbridgeable
+            // `from_vv` and falls back to a snapshot. Empty when we have no persisted
+            // frontier for this peer (never synced, or the peer id is unresolved).
+            let persisted_floor: Vec<crate::sync_protocol::types::SpaceVersionVector> =
+                match self.remote_device_id.clone().filter(|s| !s.is_empty()) {
+                    Some(peer_id) => {
+                        match crate::peer_refs::get_loro_vv_bytes(&self.pool, &peer_id).await? {
+                            Some(bytes) => {
+                                crate::sync_protocol::types::decode_persisted_loro_vvs(&bytes)
+                            }
+                            None => Vec::new(),
+                        }
+                    }
+                    None => Vec::new(),
+                };
+
+            for sid in &space_ids {
+                let peer_vv = peer_vvs
+                    .iter()
+                    .find(|v| &v.space_id == sid)
+                    .map(|v| v.vv.as_slice())
+                    // #2502/#610 fallback: the peer's last-session frontier.
+                    .or_else(|| {
+                        persisted_floor
+                            .iter()
+                            .find(|v| &v.space_id == sid)
+                            .map(|v| v.vv.as_slice())
+                    });
+                // #1257 freshness gate: `prepare_outgoing` returns `None` when the
+                // engine is stale vs SQL for this space (it would export a block SQL
+                // has soft-deleted). On refusal, skip the space — emit no payload for
+                // it this round; the gate already logged + signalled a
+                // rebuild-from-op-log is needed. Do NOT repair inline.
+                match loro_sync::prepare_outgoing(
+                    &loro_state.registry,
+                    sid,
+                    &self.device_id,
+                    peer_vv,
+                    &sql_deleted,
+                )
+                .await?
+                {
+                    Some(m) => messages.push_back(m),
+                    None => {
+                        tracing::warn!(
+                            device_id = %self.device_id,
+                            space_id = %sid.as_str(),
+                            "loro: #1257 freshness gate refused export for space; \
+                             skipping it in this push (rebuild-from-op-log required)"
+                        );
+                    }
                 }
             }
         }
-        // #1257: every registered space's export was refused by the freshness
-        // gate (engine stale vs SQL). There is nothing safe to ship, so take
-        // the same empty-stream short-circuit as the no-spaces case — reply
-        // `SyncComplete` directly rather than panicking on an empty queue
-        // below. The per-space gate already logged + signalled rebuild.
-        if messages.is_empty() {
-            let last_hash = get_local_heads(&self.pool)
-                .await?
-                .into_iter()
-                .find(|h| h.device_id == self.device_id)
-                .map(|h| h.hash)
-                .unwrap_or_default();
-            self.state = SyncState::Complete;
-            self.session.state = SyncState::Complete;
-            self.emit(crate::sync_events::SyncEvent::Complete {
-                remote_device_id: self.session.remote_device_id.clone(),
-                ops_received: self.session.ops_received,
-                ops_sent: self.session.ops_sent,
-                changed_page_ids: self.session.changed_page_ids.clone(),
-            });
-            return Ok(Some(SyncMessage::SyncComplete { last_hash }));
+
+        // Empty-stream short-circuit. Nothing to ship — no registered spaces
+        // (or every space refused by the #1257 freshness gate) AND no audit
+        // records to replicate. Reply `SyncComplete` directly so we do not
+        // waste a round-trip on an empty `LoroSync`; the remote's state
+        // validation accepts `SyncComplete` in `ExchangingHeads` for exactly
+        // this case.
+        if messages.is_empty() && op_batches.is_empty() {
+            return self.reply_sync_complete().await;
         }
 
-        // #705: this counts outbound LoroSync *messages* (one per
-        // registered space, each a full CRDT snapshot/update), not
-        // individual CRDT operations. Surfaced in the UI as "Ops Sent";
-        // the i18n tooltip is worded as "sync messages" to match.
+        // #705: this counts outbound LoroSync *messages* (one per registered
+        // space, each a full CRDT snapshot/update), not individual CRDT
+        // operations. #2481 audit op batches are metadata, not state deltas,
+        // so they are deliberately not counted here. Surfaced in the UI as
+        // "Ops Sent"; the i18n tooltip is worded as "sync messages" to match.
         self.session.ops_sent = messages.len();
 
-        // #610: we are streaming our own state to the peer — this is the
-        // responder (pull-from-us) role. Mark it so the post-session
-        // bookkeeping does NOT advance our `synced_at` for this peer (we
-        // pulled nothing from them); only the puller records `synced_at`.
+        // #610: we are streaming to the peer — this is the responder
+        // (pull-from-us) role. Mark it so the post-session bookkeeping does
+        // NOT advance our `synced_at` for this peer (we pulled nothing from
+        // them); only the puller records `synced_at`. Streaming audit-only op
+        // records counts as streaming for this purpose — the peer still pulled
+        // from us, we pulled nothing back this session.
         self.streamed_to_peer = true;
 
         self.state = SyncState::StreamingOps;
@@ -1129,19 +1159,209 @@ impl SyncOrchestrator {
             ops_sent: self.session.ops_sent,
         });
 
-        // Pop the first; the rest go into the pending queue and are
-        // drained by `next_message`.  `messages` is non-empty here: the
-        // `space_ids.is_empty()` short-circuit AND the #1257 all-refused
-        // short-circuit above both returned before reaching this point.
-        let first = messages
-            .pop_front()
-            .expect("messages is non-empty: empty-stream + all-refused short-circuits returned");
-        let is_last = messages.is_empty();
+        // Queue the whole outgoing stream (LoroSync deltas first, then op
+        // batches) and return the first message. `next_message` orders the two
+        // queues and sets `is_last` only on the final message across both — so
+        // the receiver completes exactly once, after state deltas AND audit
+        // records have arrived. Non-empty here: the short-circuit above
+        // returned when both queues were empty.
         self.pending_loro_messages = messages;
-        Ok(Some(SyncMessage::LoroSync {
-            msg: first,
-            is_last,
-        }))
+        self.pending_op_batches = VecDeque::from(op_batches);
+        Ok(Some(self.next_message().expect(
+            "stream is non-empty: the empty messages + empty op_batches short-circuit returned above",
+        )))
+    }
+
+    /// Reply to a `HeadExchange` with `SyncComplete` when there is nothing to
+    /// stream (empty registry, every space refused by the #1257 freshness
+    /// gate, and no #2481 audit records to replicate). Transitions to
+    /// `Complete` and emits the terminal event, mirroring the puller-side
+    /// completion but from the streamer's empty-stream short-circuit.
+    async fn reply_sync_complete(&mut self) -> Result<Option<SyncMessage>, AppError> {
+        let last_hash = get_local_heads(&self.pool)
+            .await?
+            .into_iter()
+            .find(|h| h.device_id == self.device_id)
+            .map(|h| h.hash)
+            .unwrap_or_default();
+        self.state = SyncState::Complete;
+        self.session.state = SyncState::Complete;
+        self.emit(crate::sync_events::SyncEvent::Complete {
+            remote_device_id: self.session.remote_device_id.clone(),
+            ops_received: self.session.ops_received,
+            ops_sent: self.session.ops_sent,
+            // #1071: empty-stream short-circuit applies no inbound ops, so the
+            // accumulated set is empty — read it from the session uniformly
+            // with the other Complete sites.
+            changed_page_ids: self.session.changed_page_ids.clone(),
+        });
+        Ok(Some(SyncMessage::SyncComplete { last_hash }))
+    }
+
+    /// #2481 phase 1 — collect the audit-only op-log batches to stream to the
+    /// peer after the LoroSync deltas.
+    ///
+    /// Returns an empty `Vec` unless the peer advertised
+    /// `HeadExchange { op_log_replication: true }` (capability gate — an older
+    /// peer never receives the [`SyncMessage::OpLogBatch`] variant it cannot
+    /// decode) AND we hold op records the peer lacks
+    /// ([`collect_ops_for_peer`], `seq > the peer's advertised per-device
+    /// frontier`). Records are partitioned into wire-sized batches under
+    /// [`crate::sync_constants::LORO_INLINE_MAX_BYTES`] so each rides the
+    /// inline JSON frame ([`batch_ops_for_wire`]).
+    ///
+    /// A single op record whose own serialized size would push even a
+    /// lone-record `OpLogBatch` past the transport's
+    /// [`SyncConnection::MAX_MSG_SIZE`](crate::sync_net::SyncConnection::MAX_MSG_SIZE)
+    /// (10 MB) frame cap is **skipped** with a warning: `OpLogBatch` has no
+    /// chunked transport (unlike `LoroSync`), so shipping it would fail the
+    /// send and fault the whole session. The op's *state* still syncs via the
+    /// chunked `LoroSync` path; only its audit record defers (best-effort,
+    /// re-attempted never — a chunked `OpLogBatch` transport is the follow-up).
+    /// The bound leaves headroom for the `{"type":..,"records":[..],"is_last":..}`
+    /// envelope + array syntax.
+    async fn collect_op_batches_for_peer(&self) -> Result<Vec<Vec<OpTransfer>>, AppError> {
+        if !self.peer_op_log_replication {
+            return Ok(Vec::new());
+        }
+        // Per-record inline cap: the largest record that still fits a lone
+        // batch under MAX_MSG_SIZE once wrapped in the OpLogBatch envelope.
+        const OP_RECORD_WIRE_CAP: usize = crate::sync_net::SyncConnection::MAX_MSG_SIZE - 65_536;
+
+        let records = collect_ops_for_peer(&self.pool, &self.peer_advertised_heads).await?;
+        let kept: Vec<OpTransfer> = records
+            .into_iter()
+            .filter(|rec| {
+                let size = serde_json::to_string(rec).map_or(0, |s| s.len());
+                if size > OP_RECORD_WIRE_CAP {
+                    tracing::warn!(
+                        device_id = %self.device_id,
+                        op_device_id = %rec.device_id,
+                        op_seq = rec.seq,
+                        size,
+                        cap = OP_RECORD_WIRE_CAP,
+                        "#2481: skipping an oversized op record from audit replication \
+                         (no chunked OpLogBatch transport); its state still syncs via LoroSync"
+                    );
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect();
+        Ok(batch_ops_for_wire(
+            kept,
+            crate::sync_constants::LORO_INLINE_MAX_BYTES,
+        ))
+    }
+
+    /// Complete a pull session on the puller (initiator) side: record the
+    /// `synced_at` bookkeeping and return the terminal `SyncComplete`.
+    ///
+    /// Called from the final-message arm of the streaming phase — the last
+    /// `LoroSync` when no audit records follow, or the last
+    /// [`SyncMessage::OpLogBatch`] (#2481) when they do. Only the puller
+    /// reaches this path (the streamer sends the stream and never receives
+    /// it), so recording `synced_at` here is unconditional and correct (#610):
+    /// we pulled the peer's state into our store, so the scheduler should stop
+    /// marking us due every tick. Skips the write only when the peer was never
+    /// identified — never fabricates a bogus empty-`peer_id` row.
+    async fn complete_pull_session(&mut self) -> Result<Option<SyncMessage>, AppError> {
+        // #2481: ingest the buffered audit records now that the streaming phase
+        // is done. Flush the materializer FIRST so this write does not race the
+        // background inbound-sync cache rebuild triggered by this session's
+        // `LoroSync` imports (SQLite single-writer; an oversized-block FTS
+        // rebuild can otherwise hold the write lock past the busy_timeout and
+        // fail the audit write, #611). Best-effort throughout — the op log is
+        // not load-bearing for state, so a flush error or a single corrupt
+        // record (hash mismatch, NUL byte) is logged and skipped, never
+        // faulting an otherwise-successful pull (which would re-ship + re-fault
+        // the same record every session → permanent backoff over non-state
+        // data). The unresolved-parent-gap case is already handled inside
+        // `insert_replicated_op` under the Audit profile (warn-and-land).
+        if !self.pending_ingest_records.is_empty() {
+            if let Err(e) = self.materializer.flush().await {
+                tracing::warn!(
+                    device_id = %self.device_id,
+                    error = %e,
+                    "#2481: materializer flush before op-log ingest failed; \
+                     ingesting anyway (best-effort)"
+                );
+            }
+            let records = std::mem::take(&mut self.pending_ingest_records);
+            let mut ingested = 0usize;
+            for record in &records {
+                match crate::dag::insert_replicated_op(&self.pool, record).await {
+                    Ok(true) => ingested += 1,
+                    Ok(false) => {} // idempotent redelivery — already held
+                    // Distinguish genuine corruption (hash mismatch / NUL /
+                    // domain validation → `Validation`) from a transient
+                    // DB/lock error (`Database` / `PoolTimedOut`, e.g. a rebuild
+                    // task the flush did not fully settle). Both skip the record
+                    // — the puller's frontier for that device does not advance,
+                    // so it re-ships next session — but only the former is
+                    // "corrupt"; mislabeling a transient loss hides it.
+                    Err(e @ (AppError::Database(_) | AppError::PoolTimedOut)) => {
+                        tracing::warn!(
+                            device_id = %self.device_id,
+                            remote_device_id = %self.session.remote_device_id,
+                            op_device_id = %record.device_id,
+                            op_seq = record.seq,
+                            error = %e,
+                            "#2481: transient DB error ingesting a replicated op \
+                             record; skipping it (will re-ship next session)"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            device_id = %self.device_id,
+                            remote_device_id = %self.session.remote_device_id,
+                            op_device_id = %record.device_id,
+                            op_seq = record.seq,
+                            error = %e,
+                            "#2481: rejecting a corrupt replicated op record; \
+                             skipping it (audit-only, not load-bearing for state)"
+                        );
+                    }
+                }
+            }
+            tracing::debug!(
+                device_id = %self.device_id,
+                remote_device_id = %self.session.remote_device_id,
+                ingested,
+                total = records.len(),
+                "#2481: ingested buffered op-log audit records at session completion"
+            );
+        }
+
+        let last_hash = get_local_heads(&self.pool)
+            .await?
+            .into_iter()
+            .find(|h| h.device_id == self.device_id)
+            .map(|h| h.hash)
+            .unwrap_or_default();
+
+        if let Some(peer_id) = self.resolve_remote_peer_id() {
+            self.record_pull_in_tx(&peer_id, &last_hash).await?;
+        } else {
+            tracing::warn!(
+                device_id = %self.device_id,
+                "completed a pull session but the remote device_id was \
+                 never identified; skipping synced_at bookkeeping (#610)"
+            );
+        }
+
+        self.state = SyncState::Complete;
+        self.session.state = SyncState::Complete;
+        self.emit(crate::sync_events::SyncEvent::Complete {
+            remote_device_id: self.session.remote_device_id.clone(),
+            ops_received: self.session.ops_received,
+            ops_sent: self.session.ops_sent,
+            // #1071: deduped page ids accumulated from this session's applied
+            // ops (empty when no Imported outcome occurred).
+            changed_page_ids: self.session.changed_page_ids.clone(),
+        });
+        Ok(Some(SyncMessage::SyncComplete { last_hash }))
     }
 
     /// Returns true iff the session ended in `SyncState::Complete` — i.e. the
@@ -1171,7 +1391,7 @@ impl SyncOrchestrator {
         )
     }
 
-    /// Drain the next queued [`SyncMessage::LoroSync`], if any.
+    /// Drain the next queued streaming message, if any.
     ///
     /// After [`handle_message`](Self::handle_message) returns the first
     /// message, the transport layer should call this method in a loop to
@@ -1182,15 +1402,29 @@ impl SyncOrchestrator {
     ///     send(msg).await;
     /// }
     /// ```
+    ///
+    /// The stream is ordered: all per-space [`SyncMessage::LoroSync`] deltas
+    /// first, then any #2481 audit-only [`SyncMessage::OpLogBatch`] messages.
+    /// The single final message overall — the last op batch, or the last
+    /// `LoroSync` when there are no op batches — carries `is_last: true`, so
+    /// the receiver transitions to `Complete` exactly once, after the whole
+    /// stream (state deltas *and* audit records) has been delivered.
     pub fn next_message(&mut self) -> Option<SyncMessage> {
         // When `head_exchange_outgoing_loro`'s registry-empty branch
-        // fires, the queue stays empty and the session reply is
+        // fires, both queues stay empty and the session reply is
         // `SyncComplete` (returned directly from `handle_message`) —
         // `next_message` then returns `None` immediately. Otherwise it
-        // drains the per-space pending queue one message at a time.
+        // drains the LoroSync queue, then the op-batch queue, one message
+        // at a time. `is_last` is only set on the very last message across
+        // *both* queues.
         if let Some(msg) = self.pending_loro_messages.pop_front() {
-            let is_last = self.pending_loro_messages.is_empty();
+            let is_last =
+                self.pending_loro_messages.is_empty() && self.pending_op_batches.is_empty();
             return Some(SyncMessage::LoroSync { msg, is_last });
+        }
+        if let Some(records) = self.pending_op_batches.pop_front() {
+            let is_last = self.pending_op_batches.is_empty();
+            return Some(SyncMessage::OpLogBatch { records, is_last });
         }
         None
     }

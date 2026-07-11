@@ -358,11 +358,19 @@ pub enum SyncMessage {
     /// (op records are inherently small — a single text edit — so no
     /// individual record approaches the cap).
     ///
-    /// **Daemon sub-flow only.** Like the file-transfer variants, this rides
-    /// a dedicated exchange the sync-daemon layer runs after the delta phase;
-    /// it must **never** reach the per-session
-    /// [`SyncOrchestrator::handle_message`](super::SyncOrchestrator::handle_message)
-    /// core dispatch, which rejects it loudly (same contract as `FileRequest`).
+    /// **Rides the streaming phase (#2481 phase 1 wiring).** The streamer
+    /// (responder) appends these to the tail of its `HeadExchange` reply,
+    /// after the per-space `LoroSync` deltas — so they flow through the same
+    /// [`SyncOrchestrator::next_message`](super::SyncOrchestrator::next_message)
+    /// drain and the initiator ingests them in its normal
+    /// [`handle_message`](super::SyncOrchestrator::handle_message) dispatch
+    /// loop. This is what keeps the feature fully back-compat with no
+    /// deadlock: an older responder simply never queues them, and the puller
+    /// never blocks waiting for them (it processes whatever the streamer
+    /// sends). The single-direction (responder → initiator per session)
+    /// mirrors state sync; the reverse propagates when roles swap (#610). The
+    /// final message across the whole stream — last `OpLogBatch`, or last
+    /// `LoroSync` when there are none — carries `is_last: true`.
     OpLogBatch {
         records: Vec<OpTransfer>,
         is_last: bool,

@@ -255,37 +255,24 @@ async fn handle_incoming_sync_inner(
             .map(|h| h.device_id.clone())
             .unwrap_or_default();
 
-        // B-34, hoisted ahead of the pairing lookup (#778): when the
-        // heads claim an identity AND the connection carries a verified
-        // client cert, the two must agree — otherwise a forged
-        // HeadExchange could steer the rest of the handshake under a
-        // different identity than the cert's. Pure CN check only
-        // (no stored hash yet); B-33 runs below after the peer lock.
-        if !claimed_id.is_empty()
-            && let CertVerifyResult::CnMismatch {
-                ref remote_id,
-                ref cert_cn,
-            } = verify_peer_cert(&claimed_id, conn.peer_cert_cn(), None, None)
-        {
-            tracing::warn!(
-                peer_id = %remote_id,
-                cert_cn = %cert_cn,
-                "rejecting sync: HeadExchange device_id does not match TLS certificate CN"
-            );
-            conn.send_json(&SyncMessage::Error {
-                message: "device ID does not match certificate".into(),
-            })
-            .await?;
-            let _ = conn.close().await;
-            return Ok(());
-        }
-
-        // #778: the peer's identity is the verified TLS certificate CN
-        // (mTLS), mirroring the initiator-side fallback
-        // (`expected_remote_id` in `sync_protocol::session_state_machine`). The
-        // heads-claimed id is only a fallback for cert-less connections
-        // (in-memory test pairs); the hoisted B-34 check above
-        // guarantees the two agree whenever both are present.
+        // #778 / #2481: the peer's identity is the verified TLS certificate CN
+        // (mTLS), mirroring the initiator-side fallback (`expected_remote_id`
+        // in `sync_protocol::session_state_machine`). The heads-claimed id is
+        // only a fallback for cert-less connections (in-memory test pairs).
+        //
+        // The old hoisted B-34 pre-check compared `claimed_id` (the first
+        // non-self advertised head) against the cert CN and rejected a
+        // mismatch. That is INVALID since #2481 phase-1 frontier advertisement:
+        // a peer advertises the frontier of EVERY device it holds (its own plus
+        // any foreign device whose ops it replicated as audit metadata), so
+        // `claimed_id` is not reliably the peer's own identity and a legitimate
+        // multi-device advertisement would false-reject. Identity is taken
+        // solely from the cert CN below; a peer presenting a cert for an
+        // unpaired device is still rejected by the S-1 unpaired-device gate
+        // further down (the cert is authoritative, and an attacker cannot forge
+        // a CN for a device it lacks the key for), and the full B-33/B-34
+        // `verify_peer_cert` (CN + TOFU hash) still runs against that cert-CN
+        // identity after the peer lock.
         let remote_id = match conn.peer_cert_cn() {
             Some(cn) => cn.to_string(),
             None => claimed_id,
