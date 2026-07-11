@@ -2253,21 +2253,27 @@ async fn inmem_handle_incoming_sync_rejects_cert_cn_mismatch() {
         .await
         .unwrap();
 
-    // Receive rejection response — `SyncMessage::Error.message` is unstructured
-    // `String`, so combine the variant pin (matches!) with a substring check.
+    // Receive rejection response. #2481: the cert CN ("wrong-device") is the
+    // authoritative identity (the advertised heads are frontier ads, not an
+    // identity claim), so the mismatch is now caught by the S-1 unpaired-device
+    // gate — "wrong-device" is not in `peer_refs` — rather than the retired
+    // heads-vs-cert pre-check. The security outcome is identical: a peer whose
+    // cert does not correspond to a paired device is rejected before any sync.
+    // `SyncMessage::Error.message` is unstructured, so pin the variant and
+    // check the substring.
     let response: SyncMessage = client_conn.recv_json().await.unwrap();
     assert!(
         matches!(
             &response,
-            SyncMessage::Error { message } if message.contains("certificate")
+            SyncMessage::Error { message } if message.contains("paired")
         ),
-        "expected SyncMessage::Error mentioning 'certificate' for CN mismatch, got: {response:?}"
+        "expected SyncMessage::Error rejecting the unpaired cert-CN identity, got: {response:?}"
     );
 
     let result = handle.await.unwrap();
     assert!(
         result.is_ok(),
-        "handle_incoming_sync should return Ok after rejecting CN mismatch"
+        "handle_incoming_sync should return Ok after rejecting the mismatched peer"
     );
 
     materializer.shutdown();
@@ -4834,58 +4840,70 @@ async fn issue2536_puller_rests_in_streaming_ops_between_loro_messages() {
     while let Some(m) = resp_b.next_message() {
         streamed.push(m);
     }
+    // #2481: B authored two ops that A lacks and A advertises
+    // op_log_replication, so B now streams two LoroSync (one per dirty space)
+    // PLUS an OpLogBatch audit tail. The two LoroSync are therefore both
+    // non-final; the OpLogBatch carries the single `is_last`.
     assert_eq!(
         streamed.len(),
-        2,
-        "responder must stream exactly two LoroSync messages (one per dirty space)"
+        3,
+        "responder streams two LoroSync (one per dirty space) + one OpLogBatch tail (#2481)"
     );
-    // Exactly one is_last, and it is the last of the stream.
-    match &streamed[0] {
-        SyncMessage::LoroSync { is_last, .. } => {
-            assert!(!is_last, "first streamed LoroSync must be non-final")
+    for (i, m) in streamed.iter().take(2).enumerate() {
+        match m {
+            SyncMessage::LoroSync { is_last, .. } => assert!(
+                !is_last,
+                "LoroSync #{i} must be non-final — the OpLogBatch tail carries is_last"
+            ),
+            other => panic!("expected LoroSync at {i}, got {other:?}"),
         }
-        other => panic!("expected LoroSync, got {other:?}"),
     }
-    match &streamed[1] {
-        SyncMessage::LoroSync { is_last, .. } => {
-            assert!(is_last, "second streamed LoroSync must be final")
+    match &streamed[2] {
+        SyncMessage::OpLogBatch { is_last, records } => {
+            assert!(is_last, "the OpLogBatch tail is the final streamed message");
+            assert!(
+                !records.is_empty(),
+                "B replicates its two authored ops as audit records"
+            );
         }
-        other => panic!("expected LoroSync, got {other:?}"),
+        other => panic!("expected an OpLogBatch tail, got {other:?}"),
     }
 
-    // A handles the FIRST (non-final) LoroSync. It returns Ok(None) and —
-    // with the fix — parks in StreamingOps, NOT ApplyingOps.
-    let r0 = init_a
-        .handle_message(wire_roundtrip_602(&streamed[0]))
-        .await
-        .expect("initiator handles first LoroSync without error");
-    assert!(r0.is_none(), "non-final LoroSync yields no immediate reply");
-    assert_eq!(
-        init_a.session().state,
-        SyncState::StreamingOps,
-        "#2536: after a non-final LoroSync the puller must rest in \
-         StreamingOps (pins `self.session.state`); ApplyingOps here means \
-         the `self.session.state` line was dropped"
-    );
-    assert!(
-        !init_a.is_terminal(),
-        "puller must not be terminal mid-stream"
-    );
+    // A handles the two non-final LoroSync messages. Each returns Ok(None) and
+    // — the #2536 pin — parks in StreamingOps, NOT ApplyingOps.
+    for m in streamed.iter().take(2) {
+        let r = init_a
+            .handle_message(wire_roundtrip_602(m))
+            .await
+            .expect("initiator handles a non-final LoroSync without error");
+        assert!(r.is_none(), "non-final LoroSync yields no immediate reply");
+        assert_eq!(
+            init_a.session().state,
+            SyncState::StreamingOps,
+            "#2536: between stream messages the puller must rest in \
+             StreamingOps (pins `self.session.state`); ApplyingOps here means \
+             the `self.session.state` line was dropped"
+        );
+        assert!(
+            !init_a.is_terminal(),
+            "puller must not be terminal mid-stream"
+        );
+    }
 
-    // A handles the FINAL LoroSync -> Complete + SyncComplete reply.
-    let r1 = init_a
-        .handle_message(wire_roundtrip_602(&streamed[1]))
+    // A handles the FINAL message (the OpLogBatch tail) -> Complete + SyncComplete.
+    let r_final = init_a
+        .handle_message(wire_roundtrip_602(&streamed[2]))
         .await
-        .expect("initiator handles final LoroSync without error")
-        .expect("final LoroSync yields a SyncComplete reply");
+        .expect("initiator handles the final OpLogBatch without error")
+        .expect("the final message yields a SyncComplete reply");
     assert!(
-        matches!(r1, SyncMessage::SyncComplete { .. }),
-        "final LoroSync must reply SyncComplete, got {r1:?}"
+        matches!(r_final, SyncMessage::SyncComplete { .. }),
+        "the final message must reply SyncComplete, got {r_final:?}"
     );
     assert_eq!(
         init_a.session().state,
         SyncState::Complete,
-        "#2536: puller must reach Complete after the final LoroSync"
+        "#2536: puller must reach Complete after the final message"
     );
 
     mat_a.shutdown();
@@ -5014,6 +5032,97 @@ async fn run_one_real_loopback_session_2129(
 
     server.shutdown().await;
     init_orch.session().state.clone()
+}
+
+/// #2481 phase 1 (acceptance) — an op authored on A replicates into B's
+/// op_log as audit-only metadata when B pulls from A over a REAL socket.
+///
+/// B initiates (the puller); A responds (the streamer). After the delta
+/// phase, A appends the op records B lacks as `OpLogBatch` messages riding
+/// the tail of the same stream, which B ingests via
+/// `dag::insert_replicated_op` — stored with `is_replicated = 1`, hash +
+/// origin verbatim, NEVER applied to B's state (state still flows only
+/// through Loro CRDT sync). This is the production caller the #2481 phase-1
+/// ingest path was built for; it exercises the real TLS socket + wire path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue2481_op_authored_on_a_replicates_into_b_op_log_over_real_socket() {
+    use crate::sync_protocol::SyncState;
+
+    let space = crate::space::SpaceId::from_trusted("01HZ2481REPLSPACEXXXXXXXXX");
+    let devices = make_n_devices_2141(&["DEV2481AA", "DEV2481BB"]).await;
+    let (a, b) = (&devices[0], &devices[1]);
+
+    // A authors an edit → one op in A's op_log (device = A), engine updated.
+    make_local_edit_602(
+        &a.pool,
+        &a.mat,
+        &a.state,
+        &a.id,
+        &space,
+        "01HZ2481BLKAXXXXXXXXXXXXXX",
+        "edit from A",
+        1_736_942_400_000,
+    )
+    .await;
+
+    // Capture A's authored op head (seq + hash) for a verbatim comparison.
+    let a_head = crate::sync_protocol::get_local_heads(&a.pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|h| h.device_id == a.id)
+        .expect("A must have an op head for its own device");
+    let a_origin: String =
+        sqlx::query_scalar("SELECT origin FROM op_log WHERE device_id = ? AND seq = ?")
+            .bind(&a.id)
+            .bind(a_head.seq)
+            .fetch_one(&a.pool)
+            .await
+            .unwrap();
+
+    // Sanity: B holds none of A's ops yet.
+    let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log WHERE device_id = ?")
+        .bind(&a.id)
+        .fetch_one(&b.pool)
+        .await
+        .unwrap();
+    assert_eq!(before, 0, "B starts without any of A's ops");
+
+    // B pulls from A: B initiator (puller), A responder (streamer).
+    let init_state = run_one_real_loopback_session_2129(
+        &b.pool, &b.mat, &b.id, &b.cert, // init = B (puller)
+        &a.pool, &a.mat, &a.id, &a.cert, // resp = A (streamer)
+    )
+    .await;
+    assert_eq!(
+        init_state,
+        SyncState::Complete,
+        "the pull session completes cleanly (no reset fallback)"
+    );
+
+    // A's op now lives in B's op_log as audit metadata (is_replicated = 1),
+    // hash + origin verbatim.
+    let rows: Vec<(String, i64, String, String, i64)> = sqlx::query_as(
+        "SELECT device_id, seq, hash, origin, is_replicated FROM op_log \
+         WHERE device_id = ? ORDER BY seq",
+    )
+    .bind(&a.id)
+    .fetch_all(&b.pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1, "exactly A's one op replicated into B");
+    let (device_id, seq, hash, origin, is_replicated) = &rows[0];
+    assert_eq!(device_id, &a.id);
+    assert_eq!(*seq, a_head.seq);
+    assert_eq!(hash, &a_head.hash, "A's op hash is stored verbatim in B");
+    assert_eq!(origin, &a_origin, "origin travels with the record");
+    assert_eq!(
+        *is_replicated, 1,
+        "stored as audit-only (is_replicated = 1), never applied to state"
+    );
+
+    a.flush_and_shutdown().await;
+    b.flush_and_shutdown().await;
 }
 
 /// #2129 keystone — two devices that have BOTH made divergent local edits

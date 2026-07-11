@@ -1447,8 +1447,17 @@ async fn failed_state_skips_file_transfer_i_sync_3() {
 // #614 — orchestrator rejects HeadExchange with unexpected peer device_id
 // ======================================================================
 
+/// #2481: the cert CN (`expected_remote_id`) is the authoritative peer
+/// identity, and the advertised heads are frontier advertisements — NOT an
+/// identity claim (a peer legitimately advertises the frontiers of every
+/// device it holds, including foreign devices whose ops it replicated). So a
+/// divergent head no longer fails the session; the orchestrator attributes the
+/// session to the cert CN and proceeds. (Pre-#2481 this rejected with a "peer
+/// device_id mismatch"; that guard false-rejected multi-device advertisements.
+/// A peer presenting a cert for an unpaired device is still blocked — by the
+/// daemon's S-1 unpaired-device gate, not this per-session core.)
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn orchestrator_rejects_unexpected_peer_device_id() {
+async fn orchestrator_uses_cert_cn_identity_over_advertised_heads_2481() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
 
@@ -1457,11 +1466,12 @@ async fn orchestrator_rejects_unexpected_peer_device_id() {
 
     let _start = orch.start().await.unwrap();
 
-    // Send HeadExchange with a different device_id than expected
+    // HeadExchange advertising a device other than the cert CN (e.g. a foreign
+    // frontier the peer replicated) — must NOT fail the session.
     let result = orch
         .handle_message(SyncMessage::HeadExchange {
             heads: vec![DeviceHead {
-                device_id: "wrong-peer".into(),
+                device_id: "some-other-device".into(),
                 seq: 1,
                 hash: "abc".into(),
             }],
@@ -1473,18 +1483,17 @@ async fn orchestrator_rejects_unexpected_peer_device_id() {
         .await;
 
     assert!(
-        result.is_err(),
-        "mismatched peer device_id should be rejected"
+        result.is_ok(),
+        "a divergent advertised head must not fail the session (#2481); got {result:?}"
     );
-    let err_msg = result.unwrap_err().to_string();
     assert!(
-        err_msg.contains("peer device_id mismatch"),
-        "error should mention mismatch, got: {err_msg}"
+        !matches!(orch.session().state, SyncState::Failed(_)),
+        "session must not be Failed on a divergent head"
     );
     assert_eq!(
-        orch.session().state,
-        SyncState::Failed("peer device_id mismatch: expected expected-peer, got wrong-peer".into()),
-        "state should be Failed with peer mismatch details"
+        orch.session().remote_device_id,
+        "expected-peer",
+        "the session is attributed to the authoritative cert CN, not the head"
     );
 
     materializer.shutdown();
@@ -3648,4 +3657,325 @@ fn batch_ops_for_wire_partitions_under_cap_2481() {
 
     // Empty input → no batches (caller then sends no OpLogBatch).
     assert!(batch_ops_for_wire(vec![], 100).is_empty());
+}
+
+// ── #2481 phase 1 sub-flow: live OpLogBatch send + ingest ────────────
+
+/// Count the audit-only (`is_replicated = 1`) rows in a pool's op_log.
+async fn count_replicated_ops(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM op_log WHERE is_replicated = 1")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// The streamer appends an `OpLogBatch` of the records the peer lacks to the
+/// tail of its `HeadExchange` reply when the peer advertised the capability.
+/// With no registered spaces the batch is the sole streamed message, so it is
+/// returned directly (`is_last: true`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn streamer_appends_op_log_batch_for_capable_peer_2481() {
+    let (pool, _dir) = test_pool().await;
+    // Responder ("device-A") authored three ops; no Loro spaces registered,
+    // so the only thing to stream is the audit batch.
+    for i in 1..=3 {
+        append_local_op_at(
+            &pool,
+            "device-A",
+            test_create_payload(&format!("A{i}")),
+            FIXED_TS,
+        )
+        .await
+        .unwrap();
+    }
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(pool, "device-A".into(), materializer.clone());
+
+    // The initiator advertises it already holds device-A through seq 1 and is
+    // op-log-replication capable → the responder should ship seqs 2 and 3.
+    let resp = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "device-A".into(),
+                seq: 1,
+                hash: "h".into(),
+            }],
+            loro_vvs: vec![],
+            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: true,
+            wire_compression: false,
+        })
+        .await
+        .unwrap();
+
+    match resp {
+        Some(SyncMessage::OpLogBatch { records, is_last }) => {
+            assert!(is_last, "the sole streamed message carries is_last");
+            assert_eq!(
+                records.iter().map(|r| r.seq).collect::<Vec<_>>(),
+                vec![2, 3],
+                "only the ops past the peer's advertised frontier are shipped, in seq order"
+            );
+            assert!(records.iter().all(|r| r.device_id == "device-A"));
+        }
+        other => panic!("expected an OpLogBatch stream, got {other:?}"),
+    }
+    // No further queued messages.
+    assert!(
+        orch.next_message().is_none(),
+        "the single batch drains fully"
+    );
+    assert_eq!(orch.session().state, SyncState::StreamingOps);
+    materializer.shutdown();
+}
+
+/// Back-compat: a peer that did NOT advertise `op_log_replication` is never
+/// sent an `OpLogBatch` (it could not decode the variant). With nothing else
+/// to stream, the responder short-circuits to `SyncComplete`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn streamer_omits_op_log_batch_for_incapable_peer_2481() {
+    let (pool, _dir) = test_pool().await;
+    for i in 1..=3 {
+        append_local_op_at(
+            &pool,
+            "device-A",
+            test_create_payload(&format!("A{i}")),
+            FIXED_TS,
+        )
+        .await
+        .unwrap();
+    }
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(pool, "device-A".into(), materializer.clone());
+
+    let resp = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![],
+            loro_vvs: vec![],
+            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            // Older peer: capability absent.
+            op_log_replication: false,
+            wire_compression: false,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        matches!(resp, Some(SyncMessage::SyncComplete { .. })),
+        "an incapable peer with no state to pull gets SyncComplete, never an OpLogBatch: {resp:?}"
+    );
+    assert!(orch.next_message().is_none());
+    materializer.shutdown();
+}
+
+/// An op record whose serialized size would push a lone-record `OpLogBatch`
+/// past the transport frame cap is SKIPPED from audit replication (OpLogBatch
+/// has no chunked transport) — it must not be queued and fail the send. With
+/// the sole record skipped and no registered spaces, the responder replies
+/// `SyncComplete`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn streamer_skips_oversized_op_record_2481() {
+    let (pool, _dir) = test_pool().await;
+    // One op carrying ~10 MB of content — its serialized OpTransfer exceeds the
+    // per-record wire cap (MAX_MSG_SIZE - envelope headroom).
+    let big = "x".repeat(10_000_000);
+    let payload = OpPayload::CreateBlock(CreateBlockPayload {
+        block_id: BlockId::test_id("BIG"),
+        block_type: "content".into(),
+        parent_id: None,
+        position: Some(0),
+        index: None,
+        content: big,
+    });
+    append_local_op_at(&pool, "device-A", payload, FIXED_TS)
+        .await
+        .unwrap();
+
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(pool, "device-A".into(), materializer.clone());
+
+    let resp = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![],
+            loro_vvs: vec![],
+            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: true,
+            wire_compression: false,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        matches!(resp, Some(SyncMessage::SyncComplete { .. })),
+        "the oversized record is skipped, so no OpLogBatch is streamed: {resp:?}"
+    );
+    assert!(
+        orch.next_message().is_none(),
+        "no op batch is queued for an oversized-only op log"
+    );
+    materializer.shutdown();
+}
+
+/// Single-direction guard: a streamer (it streamed op batches this session)
+/// that receives an `OpLogBatch` fails the session — audit replication flows
+/// responder → initiator only; the puller must not stream back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn streamer_rejects_inbound_op_log_batch_2481() {
+    let (pool, _dir) = test_pool().await;
+    append_local_op_at(&pool, "device-A", test_create_payload("A1"), FIXED_TS)
+        .await
+        .unwrap();
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(pool, "device-A".into(), materializer.clone());
+
+    // Drive the responder to stream (sets `streamed_to_peer`).
+    let streamed = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![],
+            loro_vvs: vec![],
+            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: true,
+            wire_compression: false,
+        })
+        .await
+        .unwrap();
+    assert!(
+        matches!(streamed, Some(SyncMessage::OpLogBatch { .. })),
+        "responder streams an OpLogBatch for its op record"
+    );
+
+    // Now a peer streams an OpLogBatch back at us — protocol violation.
+    let err = orch
+        .handle_message(SyncMessage::OpLogBatch {
+            records: vec![],
+            is_last: true,
+        })
+        .await;
+    assert!(
+        err.is_err(),
+        "the streamer must reject an inbound OpLogBatch"
+    );
+    assert!(matches!(orch.session().state, SyncState::Failed(_)));
+    materializer.shutdown();
+}
+
+/// The puller ingests a received `OpLogBatch` as append-only audit metadata
+/// (`is_replicated = 1`, never applied to state) and completes the pull.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn initiator_ingests_op_log_batch_as_audit_metadata_2481() {
+    // Build valid transfers (correct blake3 hashes) from a source pool.
+    let (source, _sdir) = test_pool().await;
+    for i in 1..=2 {
+        append_local_op_at(
+            &source,
+            "device-A",
+            test_create_payload(&format!("A{i}")),
+            FIXED_TS,
+        )
+        .await
+        .unwrap();
+    }
+    let records = collect_ops_for_peer(&source, &[]).await.unwrap();
+    assert_eq!(records.len(), 2);
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(pool.clone(), "device-B".into(), materializer.clone())
+        .with_expected_remote_id("device-A".into());
+    // Drive to ExchangingHeads so the streaming-phase message is valid.
+    let _ = orch.start().await.unwrap();
+
+    let resp = orch
+        .handle_message(SyncMessage::OpLogBatch {
+            records: records.clone(),
+            is_last: true,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        matches!(resp, Some(SyncMessage::SyncComplete { .. })),
+        "the final OpLogBatch completes the pull with SyncComplete: {resp:?}"
+    );
+    assert_eq!(orch.session().state, SyncState::Complete);
+    assert_eq!(
+        count_replicated_ops(&pool).await,
+        2,
+        "both records landed as audit-only (is_replicated = 1) rows"
+    );
+    // The stored records match the source hash + origin verbatim.
+    let stored: Vec<(String, i64, String, String)> = sqlx::query_as(
+        "SELECT device_id, seq, hash, origin FROM op_log WHERE is_replicated = 1 ORDER BY seq",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    for (i, (device_id, seq, hash, origin)) in stored.iter().enumerate() {
+        assert_eq!(device_id, "device-A");
+        assert_eq!(*seq, records[i].seq);
+        assert_eq!(hash, &records[i].hash, "hash stored verbatim");
+        assert_eq!(origin, &records[i].origin, "origin travels with the record");
+    }
+    materializer.shutdown();
+}
+
+/// A corrupt record (hash mismatch) is skipped best-effort — it does NOT fault
+/// an otherwise-successful pull — while the good records still land.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn initiator_skips_corrupt_op_log_record_but_completes_2481() {
+    let (source, _sdir) = test_pool().await;
+    append_local_op_at(&source, "device-A", test_create_payload("A1"), FIXED_TS)
+        .await
+        .unwrap();
+    append_local_op_at(&source, "device-A", test_create_payload("A2"), FIXED_TS)
+        .await
+        .unwrap();
+    let mut records = collect_ops_for_peer(&source, &[]).await.unwrap();
+    // Corrupt the first record's hash so blake3 verification rejects it.
+    records[0].hash = "0".repeat(64);
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(pool.clone(), "device-B".into(), materializer.clone())
+        .with_expected_remote_id("device-A".into());
+    let _ = orch.start().await.unwrap();
+
+    let resp = orch
+        .handle_message(SyncMessage::OpLogBatch {
+            records,
+            is_last: true,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        matches!(resp, Some(SyncMessage::SyncComplete { .. })),
+        "a corrupt audit record must not fault the pull: {resp:?}"
+    );
+    assert_eq!(orch.session().state, SyncState::Complete);
+    assert_eq!(
+        count_replicated_ops(&pool).await,
+        1,
+        "the corrupt record is skipped; the valid one still lands"
+    );
+    materializer.shutdown();
+}
+
+/// `OpLogBatch` arriving before the streaming phase (in `Idle`) is a protocol
+/// violation and fails the session loudly.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn op_log_batch_before_handshake_fails_2481() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(pool, "device-B".into(), materializer.clone());
+    // No start() → still Idle.
+    let err = orch
+        .handle_message(SyncMessage::OpLogBatch {
+            records: vec![],
+            is_last: true,
+        })
+        .await;
+    assert!(err.is_err(), "OpLogBatch in Idle must be rejected");
+    assert!(matches!(orch.session().state, SyncState::Failed(_)));
+    materializer.shutdown();
 }
