@@ -67,6 +67,27 @@ impl BlockId {
     /// Create from an existing ULID string. Validates format and normalises
     /// to uppercase Crockford base32 — essential for deterministic hashing
     /// in the op log (blake3 input must be canonical).
+    ///
+    /// # Examples
+    ///
+    /// A valid ULID in any case is accepted and stored in canonical
+    /// uppercase Crockford base32 (the form fed to the blake3 preimage):
+    ///
+    /// ```
+    /// use agaric_lib::ulid::BlockId;
+    ///
+    /// let id = BlockId::from_string("01arz3ndektsv4rrffq69g5fav").unwrap();
+    /// assert_eq!(id.as_str(), "01ARZ3NDEKTSV4RRFFQ69G5FAV");
+    /// ```
+    ///
+    /// A string that is not a well-formed 26-char ULID is rejected — unlike
+    /// [`BlockId::from_trusted`], this is the validating entry point:
+    ///
+    /// ```
+    /// use agaric_lib::ulid::BlockId;
+    ///
+    /// assert!(BlockId::from_string("not-a-ulid").is_err());
+    /// ```
     pub fn from_string(s: impl Into<String>) -> Result<Self, crate::error::AppError> {
         let s = s.into();
         let parsed = ulid::Ulid::from_str(&s)
@@ -98,6 +119,18 @@ impl BlockId {
     /// byte output matches — Unicode `to_uppercase()` would produce different
     /// output for non-ASCII inputs (e.g. "ß" → "SS"), breaking blake3
     /// determinism across the two paths (AGENTS.md invariant #8).
+    ///
+    /// # Examples
+    ///
+    /// The trusted path performs no ULID validation — it only ASCII-uppercases
+    /// — so it accepts synthetic non-ULID ids (test fixtures, in-process
+    /// round-trips) that [`BlockId::from_string`] would reject:
+    ///
+    /// ```
+    /// use agaric_lib::ulid::BlockId;
+    ///
+    /// assert_eq!(BlockId::from_trusted("block_a").as_str(), "BLOCK_A");
+    /// ```
     pub fn from_trusted(s: &str) -> Self {
         Self(s.to_ascii_uppercase())
     }

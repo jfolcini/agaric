@@ -64,6 +64,21 @@ impl TagExpr {
     /// bound at the TOP of each frame, BEFORE recursing into children, so it
     /// bounds its own recursion to `MAX_DEPTH + 1` frames and cannot itself
     /// overflow the stack on a pathologically deep tree.
+    ///
+    /// # Examples
+    ///
+    /// A tree within [`TagExpr::MAX_DEPTH`] validates; untrusted trees must
+    /// pass this gate before resolution:
+    ///
+    /// ```
+    /// use agaric_lib::tag_query::TagExpr;
+    ///
+    /// let expr = TagExpr::Or(vec![
+    ///     TagExpr::Tag("a".into()),
+    ///     TagExpr::Prefix("work/".into()),
+    /// ]);
+    /// assert!(expr.validate_depth().is_ok());
+    /// ```
     pub fn validate_depth(&self) -> Result<(), crate::error::AppError> {
         self.check_depth(0)
     }
@@ -109,6 +124,25 @@ impl TagExpr {
     /// adds one over its deepest child). Used to decide whether the pushed-
     /// down candidate-subquery compilation is safe (`<= MAX_PUSHDOWN_DEPTH`)
     /// or the legacy materialisation fallback must be used.
+    ///
+    /// # Examples
+    ///
+    /// A bare leaf is depth 0; each `And`/`Or`/`Not` adds one level over its
+    /// deepest child (not the sum of its children):
+    ///
+    /// ```
+    /// use agaric_lib::tag_query::TagExpr;
+    ///
+    /// assert_eq!(TagExpr::Tag("urgent".into()).depth(), 0);
+    ///
+    /// // And([leaf, Not(leaf)]) — the deepest child (Not) is depth 1,
+    /// // so the And is depth 2.
+    /// let expr = TagExpr::And(vec![
+    ///     TagExpr::Tag("work".into()),
+    ///     TagExpr::Not(Box::new(TagExpr::Tag("done".into()))),
+    /// ]);
+    /// assert_eq!(expr.depth(), 2);
+    /// ```
     pub fn depth(&self) -> usize {
         match self {
             TagExpr::Tag(_) | TagExpr::Prefix(_) => 0,

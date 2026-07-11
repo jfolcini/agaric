@@ -959,6 +959,18 @@ jobs:
           cargo llvm-cov report --lcov \
             --output-path coverage-${{ matrix.shard }}.lcov
 
+      - name: Cargo test --doc (executable doc-comment examples)
+        # nextest (the step above) does NOT run doc-tests — they compile as
+        # their own per-example binaries outside the nextest harness. Without
+        # this step a broken `/// ```` example on a pure helper would rot
+        # silently (#2555). Run only on shard 1 (doc-tests aren't partitioned,
+        # so running on both shards would just duplicate the work). Cheap while
+        # there are few doc-tests; the per-example binary is the real cost as
+        # adoption grows, which is why the convention is pure helpers only.
+        if: matrix.shard == 1
+        working-directory: src-tauri
+        run: cargo test --doc
+
       - name: Upload shard coverage artifact
         # Partial lcov for this shard. Retained 7 days — the merged artifact
         # the `cargo-coverage` job publishes is the long-lived one.
