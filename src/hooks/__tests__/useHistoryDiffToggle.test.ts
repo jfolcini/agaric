@@ -32,6 +32,7 @@ function makeEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
     op_type: 'edit_block',
     payload: JSON.stringify({ to_text: 'hello' }),
     created_at: 1704067200000,
+    is_replicated: false,
     ...overrides,
   }
 }

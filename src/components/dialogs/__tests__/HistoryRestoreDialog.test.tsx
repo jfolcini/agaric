@@ -39,6 +39,7 @@ const TARGET: HistoryEntry = {
   op_type: 'edit_block',
   payload: '{}',
   created_at: 1_735_689_600_000,
+  is_replicated: false,
 }
 
 beforeEach(() => {

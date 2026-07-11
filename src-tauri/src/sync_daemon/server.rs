@@ -267,12 +267,14 @@ async fn handle_incoming_sync_inner(
         // any foreign device whose ops it replicated as audit metadata), so
         // `claimed_id` is not reliably the peer's own identity and a legitimate
         // multi-device advertisement would false-reject. Identity is taken
-        // solely from the cert CN below; a peer presenting a cert for an
-        // unpaired device is still rejected by the S-1 unpaired-device gate
-        // further down (the cert is authoritative, and an attacker cannot forge
-        // a CN for a device it lacks the key for), and the full B-33/B-34
-        // `verify_peer_cert` (CN + TOFU hash) still runs against that cert-CN
-        // identity after the peer lock.
+        // solely from the cert CN below. Impersonation is not defeated by the
+        // CN itself — these are self-signed certs, so any CN can be minted;
+        // what actually gates it is the app layer: the S-1 unpaired-device gate
+        // (a cert CN not in `peer_refs` and not mid-pairing is rejected) and
+        // the B-33 TOFU cert-hash pin in the full `verify_peer_cert` that runs
+        // against that cert-CN identity after the peer lock. The removed B-34
+        // pre-check only compared the CN against the heads and added nothing
+        // those two guards don't already enforce.
         let remote_id = match conn.peer_cert_cn() {
             Some(cn) => cn.to_string(),
             None => claimed_id,

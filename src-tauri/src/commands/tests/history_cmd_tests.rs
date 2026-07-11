@@ -40,6 +40,96 @@ async fn get_block_history_returns_ops_for_block() {
         resp.items[1].op_type, "create_block",
         "oldest op should be create_block"
     );
+    // #2481 phase 2: locally-authored ops are not flagged replicated.
+    assert!(
+        resp.items.iter().all(|e| !e.is_replicated),
+        "local-authored ops must have is_replicated = false"
+    );
+}
+
+/// #2481 phase 2: ingest a REPLICATED (audit-only) CreateBlock from a foreign
+/// device through the real sync-ingest core, so it lands with `is_replicated = 1`
+/// and a populated `block_id`, exactly as a synced audit row would.
+async fn append_replicated_create(
+    pool: &SqlitePool,
+    device_id: &str,
+    seq: i64,
+    block_id: &crate::ulid::BlockId,
+    ts: i64,
+) {
+    use crate::op::{CreateBlockPayload, OpPayload};
+    let mut payload = OpPayload::CreateBlock(CreateBlockPayload {
+        block_id: block_id.clone(),
+        block_type: "content".into(),
+        parent_id: None,
+        position: Some(0),
+        index: None,
+        content: "from a foreign device".into(),
+    });
+    payload.normalize_block_ids();
+    let op_type = payload.op_type_str().to_owned();
+    let payload_json = crate::op_log::serialize_inner_payload(&payload).unwrap();
+    let hash = crate::hash::compute_op_hash(device_id, seq, None, &op_type, &payload_json);
+    let transfer = crate::sync_protocol::types::OpTransfer {
+        device_id: device_id.to_owned(),
+        seq,
+        parent_seqs: None,
+        hash,
+        op_type,
+        payload: payload_json,
+        created_at: ts,
+        origin: "user".to_owned(),
+    };
+    crate::dag::insert_replicated_op(pool, &transfer)
+        .await
+        .expect("replicated audit op must ingest");
+}
+
+/// #2481 phase 2: a foreign-device op replicated as audit metadata surfaces in
+/// the History view flagged `is_replicated = true` (so the UI can attribute it
+/// and gate revert), while local-authored ops read `false`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_block_history_flags_replicated_foreign_ops_2481() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // A locally-authored block: its op is not replicated.
+    let local = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "local".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let local_hist = get_block_history_inner(&pool, local.id, None, None, None)
+        .await
+        .unwrap();
+    assert!(!local_hist.items.is_empty());
+    assert!(
+        local_hist.items.iter().all(|e| !e.is_replicated),
+        "local-authored ops must read is_replicated = false"
+    );
+
+    // A foreign device's replicated CreateBlock: audit-only, flagged replicated.
+    let foreign_block = crate::ulid::BlockId::test_id("FGN2481");
+    append_replicated_create(&pool, "FOREIGN_DEV", 1, &foreign_block, 2).await;
+    let foreign_hist = get_block_history_inner(&pool, foreign_block, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        foreign_hist.items.len(),
+        1,
+        "the foreign create op appears in that block's history"
+    );
+    assert!(
+        foreign_hist.items[0].is_replicated,
+        "a foreign audit op must be flagged is_replicated = true"
+    );
+    assert_eq!(foreign_hist.items[0].device_id, "FOREIGN_DEV");
 }
 
 /// #663 — `get_block_history` used to pass the raw, un-normalised id to

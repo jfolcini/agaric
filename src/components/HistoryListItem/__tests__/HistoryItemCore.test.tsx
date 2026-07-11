@@ -34,6 +34,7 @@ function makeEntry(
   payload: Record<string, unknown>,
   createdAt = 1736942400000,
   deviceId = 'DEVICE01XXXXXXXX',
+  isReplicated = false,
 ) {
   return {
     device_id: deviceId,
@@ -41,6 +42,7 @@ function makeEntry(
     op_type: opType,
     payload: JSON.stringify(payload),
     created_at: createdAt,
+    is_replicated: isReplicated,
   }
 }
 
@@ -128,6 +130,35 @@ describe('HistoryItemCore', () => {
     const { container } = renderCore(
       <HistoryItemCore
         entry={makeEntry(1, 'edit_block', { to_text: 'Hello world' })}
+        onToggleDiff={vi.fn()}
+      />,
+    )
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+
+  it('renders the foreign-op indicator for a replicated entry', () => {
+    renderCore(
+      <HistoryItemCore
+        entry={makeEntry(1, 'edit_block', { to_text: 'hi' }, undefined, undefined, true)}
+      />,
+    )
+    expect(screen.getByTestId('history-foreign-badge')).toBeInTheDocument()
+  })
+
+  it('does not render the foreign-op indicator for a local entry', () => {
+    renderCore(
+      <HistoryItemCore
+        entry={makeEntry(1, 'edit_block', { to_text: 'hi' }, undefined, undefined, false)}
+      />,
+    )
+    expect(screen.queryByTestId('history-foreign-badge')).not.toBeInTheDocument()
+  })
+
+  it('has no a11y violations when rendering a replicated (foreign) entry', async () => {
+    const { container } = renderCore(
+      <HistoryItemCore
+        entry={makeEntry(1, 'edit_block', { to_text: 'Hello world' }, undefined, undefined, true)}
         onToggleDiff={vi.fn()}
       />,
     )

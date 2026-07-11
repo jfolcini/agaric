@@ -14,6 +14,7 @@
 
 import type { LucideIcon } from 'lucide-react'
 import {
+  ArrowLeftRight,
   ArrowRight,
   Circle,
   Paperclip,
@@ -187,6 +188,36 @@ export function HistoryItemCore({
           <span className="history-item-device text-xs text-muted-foreground">
             dev:{entry.device_id.slice(0, 8)}
           </span>
+          {/* #2481: a foreign op replicated from another device (audit-only,
+              not revertible here). */}
+          {entry.is_replicated && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  className="history-item-foreign inline-flex items-center text-muted-foreground"
+                  data-testid="history-foreign-badge"
+                >
+                  <ArrowLeftRight className="h-3 w-3" aria-hidden="true" />
+                  {/* Accessible name via sr-only text (avoids aria-label on a
+                      roleless span — axe — and a `role` attribute — oxlint
+                      prefer-tag-over-role). The tooltip carries the visible
+                      hint. */}
+                  <span className="sr-only">
+                    {t('history.foreignOp', {
+                      defaultValue: 'Synced from another device (audit-only; not revertible here)',
+                    })}
+                  </span>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>
+                  {t('history.foreignOp', {
+                    defaultValue: 'Synced from another device (audit-only; not revertible here)',
+                  })}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
         {/* Content preview */}
         {propPayload && (

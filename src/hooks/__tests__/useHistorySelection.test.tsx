@@ -9,13 +9,14 @@ import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
 import type { HistoryEntry } from '../../lib/tauri'
-import { entryKey, useHistorySelection } from '../useHistorySelection'
+import { entryKey, isRevertible, useHistorySelection } from '../useHistorySelection'
 
 function makeEntry(
   seq: number,
   opType: string,
   createdAt: number,
   deviceId = 'DEVICE01',
+  isReplicated = false,
 ): HistoryEntry {
   return {
     device_id: deviceId,
@@ -23,6 +24,7 @@ function makeEntry(
     op_type: opType,
     payload: '{}',
     created_at: createdAt,
+    is_replicated: isReplicated,
   }
 }
 
@@ -138,6 +140,40 @@ describe('useHistorySelection', () => {
     })
 
     expect(result.current.selectedIds.size).toBe(0)
+  })
+
+  it('selectAll skips a foreign (is_replicated) entry', () => {
+    const e0 = makeEntry(1, 'edit_block', 1736942400000)
+    const e1 = makeEntry(2, 'edit_block', 1736938800000, 'DEVICE01', true) // foreign, skipped
+    const e2 = makeEntry(3, 'create_block', 1736935200000)
+    const { result } = renderHook(() => useHistorySelection([e0, e1, e2]))
+
+    act(() => {
+      result.current.selectAll()
+    })
+
+    expect(result.current.selectedIds.size).toBe(2)
+    expect(result.current.selectedIds.has(entryKey(e0))).toBe(true)
+    expect(result.current.selectedIds.has(entryKey(e1))).toBe(false)
+    expect(result.current.selectedIds.has(entryKey(e2))).toBe(true)
+  })
+})
+
+describe('isRevertible', () => {
+  it('returns true for a normal local op', () => {
+    expect(isRevertible(makeEntry(1, 'edit_block', 1736942400000))).toBe(true)
+  })
+
+  it('returns false for a purge_block op', () => {
+    expect(isRevertible(makeEntry(1, 'purge_block', 1736942400000))).toBe(false)
+  })
+
+  it('returns false for a delete_attachment op', () => {
+    expect(isRevertible(makeEntry(1, 'delete_attachment', 1736942400000))).toBe(false)
+  })
+
+  it('returns false for a replicated (foreign) entry', () => {
+    expect(isRevertible(makeEntry(1, 'edit_block', 1736942400000, 'DEVICE01', true))).toBe(false)
   })
 })
 

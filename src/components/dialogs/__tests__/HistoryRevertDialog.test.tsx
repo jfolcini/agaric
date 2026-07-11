@@ -40,6 +40,7 @@ const ENTRIES: HistoryEntry[] = [
     op_type: 'edit_block',
     payload: '{}',
     created_at: 1_735_689_600_000,
+    is_replicated: false,
   },
   {
     device_id: 'dev-1',
@@ -47,6 +48,7 @@ const ENTRIES: HistoryEntry[] = [
     op_type: 'edit_block',
     payload: '{}',
     created_at: 1_735_689_500_000,
+    is_replicated: false,
   },
 ]
 
