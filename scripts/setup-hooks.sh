@@ -20,7 +20,21 @@
 #     you just can't run every hook until the gap is filled.
 # Hence `set -u` but NOT `set -e`: a single failed installer must never sink
 # the whole bootstrap (so it is safe to call from `scripts/setup.sh` and from
-# VM provisioning).
+# VM provisioning). Because a failed installer is silent-by-exit-code, the
+# script ends with a loud `MISSING:` summary (issue #2535) listing every hook
+# binary still absent after all fallbacks ran — read that block, not the
+# exit code, to know whether provisioning fully succeeded.
+#
+# Remote-container / egress-proxy hardening (issue #2535): some sandboxed
+# sessions only allow crates.io + cargo-binstall traffic through the egress
+# proxy and 403 on GitHub release-tarball downloads. Every installer below
+# that pulls a prebuilt GitHub release tarball (lychee, cargo-binstall
+# itself) therefore falls back to `cargo binstall`, then `cargo install
+# --locked`, before giving up. Separately, a crate's newest release can
+# require a newer rustc than this box's pinned toolchain (MSRV skew), which
+# fails both binstall AND the from-source fallback identically — see
+# `fallback_version_for()` below for the pinned-version retry that handles
+# that case.
 set -uo pipefail
 
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -141,16 +155,45 @@ ensure_cargo_binstall() {
   fi
 }
 
-# cargo_get <crate> [binary] — install a Rust hook tool (prebuilt via binstall,
-# else from source).
+# fallback_version_for <crate> — echoes a pinned known-good version to retry
+# when the crate's LATEST release outpaces this box's rustc (MSRV skew).
+# Symptom (issue #2535, verified with sqruff 0.39.0 vs. rustc 1.95): both
+# `cargo binstall -y <crate>` AND its from-source fallback fail identically
+# with an MSRV error, because binstall's source fallback still targets the
+# newest crates.io release. Pinning a slightly older version sidesteps it.
+# A plain `case` (not an associative array) so this stays bash-3.2/macOS
+# compatible. Add an entry here — and drop it once the box's rustc pin
+# (rust-toolchain.toml) catches up — mirroring the same pin CI uses via
+# taiki-e/install-action in .github/workflows/_validate.yml.
+fallback_version_for() {
+  case "$1" in
+    sqruff) echo "0.38.0" ;;
+    *) echo "" ;;
+  esac
+}
+
+# cargo_get <crate> [binary] — install a Rust hook tool (prebuilt via
+# binstall, else a pinned-version retry if the crate has MSRV skew, else
+# from source).
 cargo_get() {
-  local crate="$1" bin="${2:-$1}"
+  local crate="$1" bin="${2:-$1}" fallback
   if have "$bin"; then ok "$bin (already installed)"; return; fi
-  if have cargo-binstall && cargo binstall -y "$crate" >/dev/null 2>&1; then
-    ok "$bin (binstall)"; return
+  fallback="$(fallback_version_for "$crate")"
+  if have cargo-binstall; then
+    if cargo binstall -y "$crate" >/dev/null 2>&1; then
+      ok "$bin (binstall)"; return
+    fi
+    if [ -n "$fallback" ] && cargo binstall -y "${crate}@${fallback}" >/dev/null 2>&1; then
+      ok "$bin (binstall ${fallback} — latest release exceeds this box's rustc)"; return
+    fi
+  fi
+  if [ -n "$fallback" ] && cargo install --locked "${crate}@${fallback}" >/dev/null 2>&1; then
+    ok "$bin (cargo install ${fallback} — pinned fallback)"; return
   fi
   if cargo install --locked "$crate" >/dev/null 2>&1; then
     ok "$bin (cargo install)"
+  elif [ -n "$fallback" ]; then
+    warn "could not install $crate — tried latest and pinned fallback ${fallback} — run: cargo install --locked ${crate}@${fallback}"
   else
     warn "could not install $crate — run: cargo install --locked $crate"
   fi
@@ -159,6 +202,15 @@ cargo_get() {
 # lychee is a heavy crate that cargo-binstall can't fetch prebuilt (it falls
 # back to a slow from-source compile), so — exactly like CI — pull the official
 # prebuilt release tarball instead. macOS prefers brew.
+#
+# Egress-proxy hardening (issue #2535, verified live): some remote-container
+# sessions' proxy 403s the GitHub release-tarball download below (only
+# crates.io + cargo-binstall's own source are allowed through), and the
+# warning used to scroll past unnoticed until a later `git push` hard-failed
+# on the missing `lychee` hook. If the tarball download fails for ANY reason
+# — proxy 403, network, layout change — fall back to `cargo binstall`
+# (crates.io, reachable), then `cargo install --locked` (slow from-source
+# compile) as the last resort, instead of just warning and stopping.
 install_lychee() {
   if have lychee; then ok "lychee (already installed)"; return; fi
   if [ "$OS" = "Darwin" ] && have brew && brew install lychee >/dev/null 2>&1; then
@@ -171,26 +223,39 @@ install_lychee() {
     Linux-aarch64|Linux-arm64)  triple=aarch64-unknown-linux-gnu ;;
     Darwin-x86_64)              triple=x86_64-apple-darwin ;;
     Darwin-arm64|Darwin-aarch64) triple=aarch64-apple-darwin ;;
-    *) warn "no prebuilt lychee for $OS-$arch — install manually (https://github.com/lycheeverse/lychee/releases)"; return ;;
+    *) triple="" ;;
   esac
-  local url="https://github.com/lycheeverse/lychee/releases/latest/download/lychee-${triple}.tar.gz"
-  mkdir -p "$HOME/.local/bin"
-  # Extract to a temp dir and FIND the binary rather than hard-coding its path:
-  # recent release tarballs nest it under `lychee-<triple>/lychee`, older ones
-  # under `<triple>/lychee`, and pinning one layout silently broke the install
-  # when upstream changed it (the curl|tar just found no such member and the
-  # hook went missing). `find` is layout- and portable across GNU/bsd tar.
-  local tmp bin=""
-  tmp="$(mktemp -d)"
-  if curl -fsSL "$url" | tar -xz -C "$tmp" >/dev/null 2>&1; then
-    bin="$(find "$tmp" -type f -name lychee 2>/dev/null | head -1)"
-  fi
-  if [ -n "$bin" ] && install -m 0755 "$bin" "$HOME/.local/bin/lychee" 2>/dev/null; then
-    ok "lychee (prebuilt $triple)"
+  if [ -n "$triple" ]; then
+    local url="https://github.com/lycheeverse/lychee/releases/latest/download/lychee-${triple}.tar.gz"
+    mkdir -p "$HOME/.local/bin"
+    # Extract to a temp dir and FIND the binary rather than hard-coding its
+    # path: recent release tarballs nest it under `lychee-<triple>/lychee`,
+    # older ones under `<triple>/lychee`, and pinning one layout silently
+    # broke the install when upstream changed it (the curl|tar just found no
+    # such member and the hook went missing). `find` is layout- and portable
+    # across GNU/bsd tar.
+    local tmp bin=""
+    tmp="$(mktemp -d)"
+    if curl -fsSL "$url" | tar -xz -C "$tmp" >/dev/null 2>&1; then
+      bin="$(find "$tmp" -type f -name lychee 2>/dev/null | head -1)"
+    fi
+    if [ -n "$bin" ] && install -m 0755 "$bin" "$HOME/.local/bin/lychee" 2>/dev/null; then
+      ok "lychee (prebuilt $triple)"
+      rm -rf "$tmp"
+      return
+    fi
+    rm -rf "$tmp"
+    warn "prebuilt lychee tarball unreachable (proxy/network) — falling back to cargo binstall"
   else
-    warn "could not download prebuilt lychee — install manually (https://github.com/lycheeverse/lychee/releases)"
+    warn "no prebuilt lychee tarball for $OS-$arch — falling back to cargo binstall"
   fi
-  rm -rf "$tmp"
+  if have cargo && have cargo-binstall && cargo binstall -y lychee >/dev/null 2>&1; then
+    ok "lychee (binstall fallback)"; return
+  fi
+  if have cargo && cargo install --locked lychee >/dev/null 2>&1; then
+    ok "lychee (cargo install fallback, slow from-source build)"; return
+  fi
+  warn "could not install lychee (prebuilt tarball and cargo fallbacks all failed) — install manually (https://github.com/lycheeverse/lychee/releases)"
 }
 
 # sqlx-cli needs custom features (rustls + sqlite only) — same as CI.
@@ -270,6 +335,37 @@ if have prek; then
   fi
 else
   warn "prek not on PATH — install it, then run: prek install"
+fi
+
+# --- Summary: make gaps loud, without failing the bootstrap ----------------
+# This script deliberately never exits non-zero (`set -uo pipefail`, no
+# `set -e` — see header): it can run from session/VM bootstrap, where a
+# non-zero exit here would abort the whole provisioning flow over one
+# optional hook tool. A silently-missing binary is exactly the failure mode
+# issue #2535 was filed over (a proxy 403 scrolled past as a `warn` and only
+# surfaced later as a hard-failed push), so instead of relying on the exit
+# code, print an impossible-to-miss `MISSING:` block naming every hook
+# binary still absent after every installer + fallback above ran.
+HOOK_BINS="prek cargo-deny cargo-machete cargo-audit sqruff typos zizmor taplo cargo-nextest just lychee shellcheck go python3"
+missing=""
+for bin in $HOOK_BINS; do
+  have "$bin" || missing="$missing $bin"
+done
+# sqlx-cli ships two possible binary names (see install_sqlx_cli); check
+# both before flagging it missing.
+have cargo-sqlx || have sqlx || missing="$missing sqlx-cli"
+
+echo
+if [ -n "$missing" ]; then
+  printf '\033[41;97;1m %s \033[0m\n' "MISSING: hook toolchain incomplete"
+  warn "the following hook binaries are still not on PATH:"
+  for bin in $missing; do
+    warn "  - $bin"
+  done
+  warn "the matching prek hook(s) will fail until these are installed."
+  warn "re-run scripts/setup-hooks.sh once network/package-manager access is fixed, or install manually."
+else
+  ok "all hook binaries present"
 fi
 
 echo "Hook toolchain setup complete (warnings above, if any, are non-fatal)."
