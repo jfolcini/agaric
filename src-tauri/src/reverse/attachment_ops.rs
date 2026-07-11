@@ -50,10 +50,16 @@ pub async fn reverse_delete_attachment(
     // canonical `(created_at, seq, device_id)` total order — matching the
     // other reverse-op prior-context lookups and `commands/history.rs` /
     // `pagination/history.rs`.
+    // #2549: `AND is_replicated = 0` — reconstruct the original
+    // `add_attachment` from a locally-applied op only. A #2495 audit-only
+    // replicated row (`is_replicated = 1`) was never applied to local state,
+    // so restoring an attachment from it would resurrect a row this device
+    // never held. Mirrors the block/property prior-state walks.
     let original = sqlx::query!(
         r#"SELECT payload FROM op_log
          WHERE op_type = 'add_attachment'
          AND attachment_id = ?1
+         AND is_replicated = 0
          AND (created_at < ?2
               OR (created_at = ?2 AND (seq < ?3 OR (seq = ?3 AND device_id < ?4))))
          ORDER BY created_at DESC, seq DESC, device_id DESC

@@ -112,11 +112,17 @@ async fn find_prior_property(
     // order used by `commands/history.rs` and `pagination/history.rs`).
     // Omitting `device_id` leaves the bound ambiguous when two devices
     // share a `(created_at, seq)` pair.
+    // #2549: `AND is_replicated = 0` — the prior value of a property must be
+    // reconstructed from locally-applied set/delete ops only. #2495 audit-only
+    // replicated rows (`is_replicated = 1`) were never applied to local state,
+    // so honouring one here would resurrect a property value this device never
+    // held. Mirrors `block_ops::find_prior_text` / `find_prior_position`.
     let row = sqlx::query!(
         "SELECT op_type, payload FROM op_log \
          WHERE block_id = ?1 \
            AND json_extract(payload, '$.key') = ?2 \
            AND op_type IN ('set_property', 'delete_property') \
+           AND is_replicated = 0 \
            AND (created_at < ?3 \
                 OR (created_at = ?3 AND (seq < ?4 OR (seq = ?4 AND device_id < ?5)))) \
          ORDER BY created_at DESC, seq DESC, device_id DESC \

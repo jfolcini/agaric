@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT op_type, payload FROM op_log WHERE block_id = ?1 AND json_extract(payload, '$.key') = ?2 AND op_type IN ('set_property', 'delete_property') AND (created_at < ?3 OR (created_at = ?3 AND (seq < ?4 OR (seq = ?4 AND device_id < ?5)))) ORDER BY created_at DESC, seq DESC, device_id DESC LIMIT 1",
+  "query": "SELECT op_type, payload FROM op_log WHERE block_id = ?1 AND json_extract(payload, '$.key') = ?2 AND op_type IN ('set_property', 'delete_property') AND is_replicated = 0 AND (created_at < ?3 OR (created_at = ?3 AND (seq < ?4 OR (seq = ?4 AND device_id < ?5)))) ORDER BY created_at DESC, seq DESC, device_id DESC LIMIT 1",
   "describe": {
     "columns": [
       {
@@ -34,5 +34,5 @@
       false
     ]
   },
-  "hash": "0d572b9b92a919a37084c0caff66bc892dd09f62edd869507de069f9aa45e075"
+  "hash": "5c0c3f24584f1590799b9061b07f2cd5f6828ea893eefe1d9963c6b7b2509289"
 }

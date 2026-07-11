@@ -331,7 +331,10 @@ async fn fetch_prior_text_batch(
                 " AS idx, op_type, payload FROM (SELECT op_type, payload FROM op_log WHERE block_id = ",
             );
             qb.push_bind(bid_upper);
-            qb.push(" AND op_type IN ('edit_block','create_block') AND (created_at < ");
+            // #2549: `AND is_replicated = 0` — walk back only into
+            // locally-applied ops; a #2495 audit-only replicated row was never
+            // applied to local state (mirrors `block_ops::find_prior_text`).
+            qb.push(" AND op_type IN ('edit_block','create_block') AND is_replicated = 0 AND (created_at < ");
             qb.push_bind(ops[op_idx].created_at);
             qb.push(" OR (created_at = ");
             qb.push_bind(ops[op_idx].created_at);
@@ -384,7 +387,10 @@ async fn fetch_prior_position_batch(
                 " AS idx, op_type, payload FROM (SELECT op_type, payload FROM op_log WHERE block_id = ",
             );
             qb.push_bind(bid_upper);
-            qb.push(" AND op_type IN ('move_block','create_block') AND (created_at < ");
+            // #2549: `AND is_replicated = 0` — mirrors
+            // `block_ops::find_prior_position`; never-applied audit rows (#2495)
+            // must not seed a restored slot.
+            qb.push(" AND op_type IN ('move_block','create_block') AND is_replicated = 0 AND (created_at < ");
             qb.push_bind(ops[op_idx].created_at);
             qb.push(" OR (created_at = ");
             qb.push_bind(ops[op_idx].created_at);
@@ -467,7 +473,10 @@ async fn fetch_prior_property_batch(
             qb.push_bind(bid_upper);
             qb.push(" AND json_extract(payload, '$.key') = ");
             qb.push_bind(payload.key);
-            qb.push(" AND op_type IN ('set_property', 'delete_property') AND (created_at < ");
+            // #2549: `AND is_replicated = 0` — mirrors
+            // `property_ops::find_prior_property`; a never-applied audit row
+            // (#2495) must not resurrect a property value.
+            qb.push(" AND op_type IN ('set_property', 'delete_property') AND is_replicated = 0 AND (created_at < ");
             qb.push_bind(record.created_at);
             qb.push(" OR (created_at = ");
             qb.push_bind(record.created_at);
@@ -523,7 +532,10 @@ async fn fetch_prior_attachment_batch(
                 qb.push(" UNION ALL SELECT ");
             }
             qb.push_bind((base + j) as i64);
-            qb.push(" AS idx, payload FROM (SELECT payload FROM op_log WHERE op_type = 'add_attachment' AND attachment_id = ");
+            // #2549: `AND is_replicated = 0` — mirrors
+            // `attachment_ops::reverse_delete_attachment`; a never-applied audit
+            // row (#2495) must not source the restored `add_attachment`.
+            qb.push(" AS idx, payload FROM (SELECT payload FROM op_log WHERE op_type = 'add_attachment' AND is_replicated = 0 AND attachment_id = ");
             qb.push_bind(att_id);
             qb.push(" AND (created_at < ");
             qb.push_bind(record.created_at);
@@ -762,4 +774,52 @@ pub async fn get_op_records_batch(
         result.push(r);
     }
     Ok(result)
+}
+
+/// #2549: refuse to revert a REPLICATED audit op.
+///
+/// Replicated rows (`is_replicated = 1`; #2481/#2495) are ingested for
+/// provenance only and are NEVER applied to local state. Applying the inverse
+/// of such an op would corrupt local state by "undoing" a forward effect that
+/// never happened on this device — the same never-applied-row hazard the
+/// `find_prior_*` prior-state walks guard against, but for the revert TARGET
+/// itself. `revert_ops` accepts arbitrary `OpRef`s from the front-end, so this
+/// is the choke point that rejects a replicated target with a `Validation`
+/// error before any reverse is computed or applied.
+///
+/// Bounded by `MAX_REVERT_OPS` at the caller; chunked at
+/// `MAX_SQL_PARAMS / 2` (`device_id` + `seq` per ref) so the OR-of-pairs
+/// predicate never overflows SQLite's bind limit.
+pub async fn reject_replicated_targets(
+    pool: &SqlitePool,
+    refs: &[crate::op::OpRef],
+) -> Result<(), AppError> {
+    if refs.is_empty() {
+        return Ok(());
+    }
+    // 2 binds per ref: (device_id, seq).
+    let chunk_size = MAX_SQL_PARAMS / 2;
+    for chunk in refs.chunks(chunk_size) {
+        let mut qb: QueryBuilder<Sqlite> =
+            QueryBuilder::new("SELECT device_id, seq FROM op_log WHERE is_replicated = 1 AND (");
+        for (j, r) in chunk.iter().enumerate() {
+            if j > 0 {
+                qb.push(" OR ");
+            }
+            qb.push("(device_id = ");
+            qb.push_bind(r.device_id.clone());
+            qb.push(" AND seq = ");
+            qb.push_bind(r.seq);
+            qb.push(")");
+        }
+        qb.push(") LIMIT 1");
+        let hit: Option<(String, i64)> = qb.build_query_as().fetch_optional(pool).await?;
+        if let Some((device_id, seq)) = hit {
+            return Err(AppError::validation(format!(
+                "cannot revert op ({device_id}, {seq}): it is a replicated audit op \
+                 (never applied to local state) and has no local forward effect to undo"
+            )));
+        }
+    }
+    Ok(())
 }

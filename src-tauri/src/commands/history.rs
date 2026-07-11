@@ -813,6 +813,12 @@ async fn revert_ops_in_tx(
     // so they run against the bare pool. The membership read that decides
     // *which* ops are reverted — `restore_page_to_op_inner`'s ops-to-revert
     // SELECT — runs inside `tx` so it shares the IMMEDIATE write lock.
+    // #2549: refuse to revert a REPLICATED audit op (`is_replicated = 1`,
+    // #2481/#2495). Such rows were ingested for provenance only and never
+    // applied to local state, so applying their inverse would corrupt local
+    // state by "undoing" a forward effect that never happened here. Reject
+    // before any reverse is computed or applied.
+    reverse::reject_replicated_targets(pool, &ops).await?;
     let records = reverse::get_op_records_batch(pool, &ops).await?;
     // #2020: `compute_reverse_batch` returns a per-op `Result`. A
     // non-reversible op surfaces as an inner `Err(NonReversible)` (e.g. a

@@ -22,6 +22,45 @@ async fn append_op(pool: &SqlitePool, payload: OpPayload, ts: i64) -> crate::op_
         .unwrap()
 }
 
+/// #2549: seed a REPLICATED (audit-only, `is_replicated = 1`) op — a row
+/// ingested for provenance that is NEVER applied to local state (#2481/#2495).
+///
+/// Goes through the real sync-ingest core (`dag::insert_replicated_op`) so the
+/// denormalized `block_id` column is populated and the `is_replicated = 1`
+/// stamp is set exactly as a synced audit row would be. Authored by a distinct
+/// (foreign) `device_id` and serialized with the same inner-payload encoding as
+/// the local append path, so `find_prior_*` sees a byte-faithful candidate row.
+async fn append_replicated_op(
+    pool: &SqlitePool,
+    device_id: &str,
+    seq: i64,
+    mut payload: OpPayload,
+    ts: i64,
+) -> crate::op_log::OpRecord {
+    // Mirror the local append path: normalize ULIDs, then serialize the inner
+    // payload (no `op_type` tag) exactly as `append_local_op_at` stores it.
+    payload.normalize_block_ids();
+    let op_type = payload.op_type_str().to_owned();
+    let payload_json = crate::op_log::serialize_inner_payload(&payload).unwrap();
+    let hash = crate::hash::compute_op_hash(device_id, seq, None, &op_type, &payload_json);
+    let transfer = crate::sync_protocol::types::OpTransfer {
+        device_id: device_id.to_owned(),
+        seq,
+        parent_seqs: None,
+        hash,
+        op_type,
+        payload: payload_json,
+        created_at: ts,
+        origin: "agent:codex".to_owned(),
+    };
+    crate::dag::insert_replicated_op(pool, &transfer)
+        .await
+        .expect("replicated audit op must ingest");
+    crate::op_log::get_op_by_seq(&crate::db::ReadPool(pool.clone()), device_id, seq)
+        .await
+        .expect("replicated op must be readable")
+}
+
 #[tokio::test]
 async fn reverse_create_block_produces_delete_block() {
     let (pool, _dir) = test_pool().await;
@@ -2558,5 +2597,307 @@ async fn find_prior_text_tie_breaks_on_device_id_at_equal_created_at_seq() {
         Some("from dev5".to_string()),
         "equal (created_at, seq) ties must break on device_id: the prior of dev9 \
          is the largest device_id still < dev9 (dev5), not None and not dev1"
+    );
+}
+
+// ======================================================================
+// #2549 — reverse prior-state reconstruction must skip replicated audit
+// rows (`is_replicated = 1`) that were NEVER applied to local state.
+//
+// #2495 introduced audit-only replicated ops: rows landed in `op_log`
+// for provenance but never materialized. The shared `compute_reverse` /
+// `compute_reverse_batch` prior-state walk (`find_prior_*`) must ignore
+// them — otherwise an explicit revert reconstructs "prior state" from a
+// value this device never held, restoring foreign content/properties.
+// ======================================================================
+
+/// #2549 (single-op path): `compute_reverse` of a local `edit_block` must
+/// reconstruct the prior text from the most recent LOCAL edit, skipping a
+/// never-applied replicated audit row that sits between the two local edits.
+#[tokio::test]
+async fn compute_reverse_edit_skips_replicated_prior_text_2549() {
+    let (pool, _dir) = test_pool().await;
+    let blk = "BLK_2549_TEXT";
+
+    append_op(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id(blk),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            index: None,
+            content: "seed".into(),
+        }),
+        1_000,
+    )
+    .await;
+    // Local edit A -> "local-1".
+    append_op(
+        &pool,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id(blk),
+            to_text: "local-1".into(),
+            prev_edit: None,
+        }),
+        2_000,
+    )
+    .await;
+    // Replicated audit row (foreign device) -> "foreign", NEVER applied.
+    append_replicated_op(
+        &pool,
+        "remote-dev",
+        1,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id(blk),
+            to_text: "foreign".into(),
+            prev_edit: None,
+        }),
+        3_000,
+    )
+    .await;
+    // Local edit B -> "local-2" (the op we reverse).
+    let edit_b = append_op(
+        &pool,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id(blk),
+            to_text: "local-2".into(),
+            prev_edit: None,
+        }),
+        4_000,
+    )
+    .await;
+
+    let reverse = compute_reverse(&pool, TEST_DEVICE, edit_b.seq)
+        .await
+        .unwrap();
+    match reverse {
+        OpPayload::EditBlock(p) => assert_eq!(
+            p.to_text, "local-1",
+            "reverse must restore the last LOCAL content, not the never-applied replicated 'foreign' row (#2549)"
+        ),
+        other => panic!("expected EditBlock reverse, got {other:?}"),
+    }
+}
+
+/// #2549 (property sibling, single-op path): `compute_reverse` of a local
+/// `set_property` must roll back to the prior LOCAL value, skipping a
+/// never-applied replicated audit `set_property` on the same (block, key).
+#[tokio::test]
+async fn compute_reverse_set_property_skips_replicated_prior_2549() {
+    let (pool, _dir) = test_pool().await;
+    let blk = "BLK_2549_PROP";
+
+    append_op(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id(blk),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            index: None,
+            content: "seed".into(),
+        }),
+        1_000,
+    )
+    .await;
+    // Local set priority -> "local-1".
+    append_op(
+        &pool,
+        OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id(blk),
+            key: "priority".into(),
+            value_text: Some("local-1".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+            value_bool: None,
+        }),
+        2_000,
+    )
+    .await;
+    // Replicated audit set priority -> "foreign", NEVER applied.
+    append_replicated_op(
+        &pool,
+        "remote-dev",
+        1,
+        OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id(blk),
+            key: "priority".into(),
+            value_text: Some("foreign".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+            value_bool: None,
+        }),
+        3_000,
+    )
+    .await;
+    // Local set priority -> "local-2" (the op we reverse).
+    let set_b = append_op(
+        &pool,
+        OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id(blk),
+            key: "priority".into(),
+            value_text: Some("local-2".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+            value_bool: None,
+        }),
+        4_000,
+    )
+    .await;
+
+    let reverse = compute_reverse(&pool, TEST_DEVICE, set_b.seq)
+        .await
+        .unwrap();
+    match reverse {
+        OpPayload::SetProperty(p) => assert_eq!(
+            p.value_text.as_deref(),
+            Some("local-1"),
+            "reverse must restore the prior LOCAL property value, not the never-applied replicated 'foreign' row (#2549)"
+        ),
+        other => panic!("expected SetProperty reverse, got {other:?}"),
+    }
+}
+
+/// #2549 (explicit revert, end-to-end, BATCH path): a full `revert_ops_inner`
+/// of a local `edit_block` must materialize the last LOCAL content, not the
+/// never-applied replicated audit content. This drives the same
+/// `compute_reverse_batch` -> `fetch_prior_text_batch` walk that the real
+/// `revert_ops` command uses.
+#[tokio::test]
+async fn revert_ops_restores_local_content_over_replicated_prior_2549() {
+    use crate::commands::revert_ops_inner;
+    use crate::materializer::Materializer;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let blk = "BLK_2549_E2E";
+
+    // Local create + edit A -> "local-1", both applied.
+    let create_rec = append_op(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id(blk),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            index: None,
+            content: "local-0".into(),
+        }),
+        1_000,
+    )
+    .await;
+    mat.dispatch_op(&create_rec).await.unwrap();
+    let edit_a = append_op(
+        &pool,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id(blk),
+            to_text: "local-1".into(),
+            prev_edit: None,
+        }),
+        2_000,
+    )
+    .await;
+    mat.dispatch_op(&edit_a).await.unwrap();
+
+    // Replicated audit edit -> "foreign": lands in op_log but is NOT applied.
+    append_replicated_op(
+        &pool,
+        "remote-dev",
+        1,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id(blk),
+            to_text: "foreign".into(),
+            prev_edit: None,
+        }),
+        3_000,
+    )
+    .await;
+
+    // Local edit B -> "local-2", applied. This is the op we explicitly revert.
+    let edit_b = append_op(
+        &pool,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id(blk),
+            to_text: "local-2".into(),
+            prev_edit: None,
+        }),
+        4_000,
+    )
+    .await;
+    mat.dispatch_op(&edit_b).await.unwrap();
+    mat.flush().await.unwrap();
+
+    // Sanity: applied state is "local-2" before the revert.
+    let pre = snapshot_blocks(&pool).await;
+    assert_eq!(pre.len(), 1);
+    assert_eq!(pre[0].content.as_deref(), Some("local-2"));
+
+    revert_ops_inner(
+        &pool,
+        TEST_DEVICE,
+        &mat,
+        vec![OpRef {
+            device_id: edit_b.device_id.clone(),
+            seq: edit_b.seq,
+        }],
+    )
+    .await
+    .expect("explicit revert of a local edit must succeed");
+    mat.flush().await.unwrap();
+
+    let post = snapshot_blocks(&pool).await;
+    assert_eq!(post.len(), 1);
+    assert_eq!(
+        post[0].content.as_deref(),
+        Some("local-1"),
+        "explicit revert must restore the last LOCAL content, not the never-applied replicated 'foreign' row (#2549)"
+    );
+}
+
+/// #2549 (provenance guard): `revert_ops` must REFUSE to revert a replicated
+/// audit op itself. Such a row was never applied to local state, so applying
+/// its inverse would corrupt state by "undoing" a forward effect that never
+/// happened on this device. The batch must be rejected with a `Validation`
+/// error before any reverse is applied.
+#[tokio::test]
+async fn revert_ops_rejects_replicated_target_2549() {
+    use crate::commands::revert_ops_inner;
+    use crate::materializer::Materializer;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let blk = "BLK_2549_GUARD";
+
+    let replicated = append_replicated_op(
+        &pool,
+        "remote-dev",
+        1,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id(blk),
+            to_text: "foreign".into(),
+            prev_edit: None,
+        }),
+        3_000,
+    )
+    .await;
+
+    let err = revert_ops_inner(
+        &pool,
+        TEST_DEVICE,
+        &mat,
+        vec![OpRef {
+            device_id: replicated.device_id.clone(),
+            seq: replicated.seq,
+        }],
+    )
+    .await
+    .expect_err("reverting a replicated audit op must be rejected");
+    assert!(
+        matches!(err, crate::error::AppError::Validation { .. }),
+        "reverting a replicated audit op must surface AppError::Validation, got {err:?}"
     );
 }
