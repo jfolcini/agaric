@@ -758,6 +758,18 @@ fn compile_pages_filters(
 /// outright (a `(inbound_link_count DESC)`-style materialised sort column) is
 /// the same gated schema promotion deferred above — revisit only if a future
 /// workload regresses past budget at 100k+ pages.
+///
+/// # #2508 — the count columns are load-bearing here, not droppable
+///
+/// The temp-B-tree sort evaluates the sort key for EVERY page in the space
+/// before the `LIMIT`, so `pc.inbound_link_count` / `pc.child_block_count`
+/// being materialised columns (not the pre-0069 `COUNT(DISTINCT) FROM
+/// block_links` subquery) is what keeps this sort within budget. The #2508
+/// audit's `interactive_slo` probe measured the direct count query at
+/// 0.96 ms @ 100K, but only over a 50-page `WHERE page_id IN (…)` sample —
+/// the badge-render cost for the visible rows, NOT this whole-space sort
+/// key. Do not read that number as license to drop the columns; see the
+/// KEEP rationale on `cache::pages::recompute_all_pages_cache_counts`.
 const PAGES_METADATA_BASE_SELECT: &str = r"SELECT
                b.id, b.block_type, b.content, b.parent_id, b.position,
                b.deleted_at, b.todo_state, b.priority, b.due_date,
