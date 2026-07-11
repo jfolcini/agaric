@@ -24,7 +24,7 @@ use crate::ulid::{AttachmentId, BlockId};
 /// Operation type tag. Serialized as snake_case strings for storage in the
 /// `op_log.op_type` TEXT column.
 ///
-/// **In-crate exhaustive-match invariant** (per docs/ARCHITECTURE.md §4 —
+/// **In-crate exhaustive-match invariant** (per docs/architecture/data-and-events.md § Op log —
 /// exhaustive `match` over every op type, no catch-all arms): every consumer
 /// of this enum is workspace-internal and matches on every variant
 /// explicitly. (#652: the invariant is the exhaustive matching, not any

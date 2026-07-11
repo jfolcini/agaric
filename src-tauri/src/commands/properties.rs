@@ -709,7 +709,7 @@ pub async fn set_property_batch_inner(
 ///
 /// Priority levels are user-configurable through the
 /// `property_definitions.options` JSON for the `priority` key (see
-/// Docs/ARCHITECTURE.md §20). Validation against the configured
+/// docs/architecture/queries.md § Pagination invariant). Validation against the configured
 /// options is performed inside [`set_property_in_tx`], which honours the
 /// current definition row. As a defensive fallback — mirroring the
 /// `set_todo_state_inner` pattern — when the `priority`
