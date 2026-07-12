@@ -168,7 +168,8 @@ pub fn verify_op_hash(
     constant_time_eq(stored_hash.as_bytes(), computed.as_bytes())
 }
 
-/// Byte-slice equality used for hash comparison.
+/// Byte-slice equality used for hash comparison (and the #855 pairing-proof
+/// compare in `sync_daemon::server`).
 ///
 /// The body XOR-accumulates over the whole slice rather than early-exiting on
 /// the first differing byte. That is an implementation detail, **not** a
@@ -178,7 +179,7 @@ pub fn verify_op_hash(
 /// across unequal lengths because of the early length check below.) Inputs
 /// here are always fixed-length 64-byte blake3 hex hashes.
 #[inline]
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }

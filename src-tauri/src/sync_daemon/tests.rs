@@ -1041,6 +1041,7 @@ async fn handle_incoming_sync_rejects_sync_with_self() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await
         .unwrap();
@@ -1297,6 +1298,7 @@ async fn handle_incoming_sync_rejects_unpaired_device() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await
         .unwrap();
@@ -1641,6 +1643,7 @@ async fn inmem_handle_incoming_sync_rejects_self() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await
         .unwrap();
@@ -1707,6 +1710,7 @@ async fn inmem_handle_incoming_sync_rejects_unidentifiable_peer() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await
         .unwrap();
@@ -1770,6 +1774,7 @@ async fn inmem_handle_incoming_sync_rejects_unpaired() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await
         .unwrap();
@@ -1842,6 +1847,7 @@ async fn inmem_handle_incoming_sync_rejects_busy_peer() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await
         .unwrap();
@@ -1898,7 +1904,12 @@ async fn inmem_handle_incoming_sync_admits_first_connection_while_pairing_pendin
             .is_none(),
         "precondition: joining device must be unpaired"
     );
-    peer_refs::set_pending_pairing(&pool).await.unwrap();
+    // #855: the marker stores the passphrase proof; the connecting device must
+    // present a matching proof to be admitted past S-1.
+    let expected_proof = crate::pairing::pairing_proof("pass one two three four");
+    peer_refs::set_pending_pairing(&pool, &expected_proof)
+        .await
+        .unwrap();
     assert!(
         peer_refs::is_pending_pairing(&pool).await.unwrap(),
         "precondition: pairing must be pending"
@@ -1940,6 +1951,8 @@ async fn inmem_handle_incoming_sync_admits_first_connection_while_pairing_pendin
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            // #855: a matching proof, so the device is admitted past S-1.
+            pairing_proof: Some(expected_proof.clone()),
         })
         .await
         .unwrap();
@@ -1971,6 +1984,115 @@ async fn inmem_handle_incoming_sync_admits_first_connection_while_pairing_pendin
     );
 
     materializer.shutdown();
+}
+
+/// #855 driver: with a pairing pending (marker holds the proof of
+/// `"the real passphrase"`), drive `handle_incoming_sync` against a first
+/// connection from unpaired `VICTIM_DEV` that offers `offered_proof`, and return
+/// `(response, victim_was_pinned, still_pending)`.
+#[cfg(test)]
+async fn run_pairing_proof_scenario_855(
+    offered_proof: Option<String>,
+) -> (SyncMessage, bool, bool) {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    let expected_proof = crate::pairing::pairing_proof("the real passphrase");
+    peer_refs::set_pending_pairing(&pool, &expected_proof)
+        .await
+        .unwrap();
+
+    let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+    let pool_clone = pool.clone();
+    let mat_clone = materializer.clone();
+    let sched_clone = scheduler.clone();
+    let sink_clone = event_sink.clone();
+    let handle = tokio::spawn(async move {
+        handle_incoming_sync(
+            server_conn,
+            pool_clone,
+            "LOCAL_DEV".to_string(),
+            mat_clone,
+            sched_clone,
+            sink_clone,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+    });
+
+    client_conn
+        .send_json(&SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "VICTIM_DEV".to_string(),
+                seq: 0,
+                hash: "fakehash".to_string(),
+            }],
+            loro_vvs: vec![],
+            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
+            wire_compression: false,
+            op_log_batch_chunked: false,
+            pairing_proof: offered_proof,
+        })
+        .await
+        .unwrap();
+
+    let response: SyncMessage = client_conn.recv_json().await.unwrap();
+    handle.await.unwrap().unwrap();
+
+    let victim_pinned = peer_refs::get_peer_ref(&pool, "VICTIM_DEV")
+        .await
+        .unwrap()
+        .is_some();
+    let still_pending = peer_refs::is_pending_pairing(&pool).await.unwrap();
+    materializer.shutdown();
+    (response, victim_pinned, still_pending)
+}
+
+/// #855 (security): a device that connects during the pairing window with NO
+/// passphrase proof — e.g. a CN-spoofing attacker that minted
+/// `CN=agaric-{victim}` but does not know the out-of-band passphrase — is
+/// REJECTED at the S-1 gate and NEVER TOFU-pinned. The pairing window is not
+/// consumed (marker stays pending) so the legitimate device can still pair.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inmem_handle_incoming_sync_rejects_pairing_without_proof_855() {
+    let (response, victim_pinned, still_pending) = run_pairing_proof_scenario_855(None).await;
+    assert!(
+        matches!(&response, SyncMessage::Error { message } if message.contains("pairing passphrase proof")),
+        "a proofless pairing connection must be rejected with the #855 proof error, got: {response:?}"
+    );
+    assert!(
+        !victim_pinned,
+        "#855: a proofless attacker must never be TOFU-pinned as the victim device"
+    );
+    assert!(
+        still_pending,
+        "#855: a rejected proofless attempt must not consume the pairing window"
+    );
+}
+
+/// #855 (security): the same, but the attacker offers a WRONG proof (it guessed
+/// / minted a value without knowing the passphrase). Constant-time-mismatched →
+/// rejected, never pinned, window preserved.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inmem_handle_incoming_sync_rejects_pairing_with_wrong_proof_855() {
+    let wrong = crate::pairing::pairing_proof("a wrong passphrase guess");
+    let (response, victim_pinned, still_pending) =
+        run_pairing_proof_scenario_855(Some(wrong)).await;
+    assert!(
+        matches!(&response, SyncMessage::Error { message } if message.contains("pairing passphrase proof")),
+        "a wrong-proof pairing connection must be rejected, got: {response:?}"
+    );
+    assert!(
+        !victim_pinned,
+        "#855: an attacker with a wrong proof must never be TOFU-pinned"
+    );
+    assert!(
+        still_pending,
+        "#855: a rejected wrong-proof attempt must not consume the pairing window"
+    );
 }
 
 /// #1519 (control): the pending-pairing exception is gated on the marker — an
@@ -2026,6 +2148,7 @@ async fn inmem_handle_incoming_sync_rejects_unpaired_without_pending_marker() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await
         .unwrap();
@@ -2111,6 +2234,7 @@ async fn handle_incoming_sync_aborts_on_cancel_and_releases_lock() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await
         .unwrap();
@@ -2259,6 +2383,7 @@ async fn inmem_handle_incoming_sync_rejects_cert_cn_mismatch() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await
         .unwrap();
@@ -2349,6 +2474,7 @@ async fn inmem_handle_incoming_sync_rejects_cert_hash_mismatch() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await
         .unwrap();
@@ -2441,6 +2567,7 @@ async fn inmem_handle_incoming_sync_rejects_certless_claim_of_pinned_peer_800() 
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await
         .unwrap();
@@ -3528,7 +3655,9 @@ async fn should_start_active_true_when_pairing_pending() {
     // A just-completed pairing (no real peer yet) must wake the
     // dormant daemon so it can accept the first inbound connection.
     let (pool, _dir) = test_pool().await;
-    peer_refs::set_pending_pairing(&pool).await.unwrap();
+    peer_refs::set_pending_pairing(&pool, "test-proof")
+        .await
+        .unwrap();
 
     let start = SyncDaemon::should_start_active(&pool).await.unwrap();
     assert!(
@@ -3542,7 +3671,9 @@ async fn should_start_active_clears_pending_marker_once_a_real_peer_exists() {
     // Once a real peer is established, the pending-pairing bridge is redundant
     // and should be cleared (hygiene) while still reporting active.
     let (pool, _dir) = test_pool().await;
-    peer_refs::set_pending_pairing(&pool).await.unwrap();
+    peer_refs::set_pending_pairing(&pool, "test-proof")
+        .await
+        .unwrap();
     peer_refs::upsert_peer_ref(&pool, "PEER_REAL")
         .await
         .unwrap();
@@ -3562,7 +3693,9 @@ async fn peers_appeared_returns_true_on_pending_pairing_with_no_peer_rows() {
     // Before the fix, peers_appeared only checked list_peer_refs and
     // returned false here, leaving the daemon dormant forever.
     let (pool, _dir) = test_pool().await;
-    peer_refs::set_pending_pairing(&pool).await.unwrap();
+    peer_refs::set_pending_pairing(&pool, "test-proof")
+        .await
+        .unwrap();
 
     // peers_appeared is private; exercise it via should_start_active
     // which is the same gate it now delegates to.
@@ -3643,7 +3776,9 @@ async fn start_if_peers_exist_clears_orphaned_pending_pairing_at_startup() {
 
     // Simulate a process that armed pairing and then restarted: the marker
     // survived in the DB, but there are no real peers and no live session.
-    peer_refs::set_pending_pairing(&pool).await.unwrap();
+    peer_refs::set_pending_pairing(&pool, "test-proof")
+        .await
+        .unwrap();
     assert!(
         peer_refs::is_pending_pairing(&pool).await.unwrap(),
         "precondition: the pending-pairing marker is set before startup"
@@ -4233,6 +4368,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await
         .unwrap();
@@ -6505,6 +6641,7 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await
         .expect("responder handle_message")
@@ -6560,6 +6697,7 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await
         .expect("responder handle_message")
@@ -8013,6 +8151,7 @@ async fn issue2140_connection_drop_mid_stream_fails_then_recovers() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         }),
     )
     .await
@@ -8466,6 +8605,7 @@ async fn issue2140_backoff_advances_on_failure_and_clears_on_success() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         }),
     )
     .await

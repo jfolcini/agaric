@@ -242,6 +242,15 @@ async fn handle_incoming_sync_inner(
         conn.set_peer_wire_compression(*wire_compression);
     }
 
+    // #855: capture the initiator's pairing proof (present only while it is
+    // mid-pairing). The S-1 unpaired-device gate below requires it to match our
+    // stored pending-pairing proof before we TOFU-pin the peer, so a
+    // CN-spoofing attacker that does not know the passphrase is never pinned.
+    let initiator_pairing_proof: Option<String> = match &first_msg {
+        SyncMessage::HeadExchange { pairing_proof, .. } => pairing_proof.clone(),
+        _ => None,
+    };
+
     // ── Per-peer mutual exclusion ─────────────────────────────────────────
     // We can only identify the peer after seeing the HeadExchange.
     let _peer_guard = if let SyncMessage::HeadExchange { ref heads, .. } = first_msg {
@@ -321,10 +330,36 @@ async fn handle_incoming_sync_inner(
             .await?
             .is_none()
         {
-            if peer_refs::is_pending_pairing(&pool_ref).await? {
+            if let Some(expected_proof) = peer_refs::get_pending_pairing_proof(&pool_ref).await? {
+                // #855: admit + TOFU-pin an unpaired device during the pairing
+                // window ONLY if it proves knowledge of the pairing passphrase.
+                // A self-signed `CN=agaric-{victim}` cert can be minted by
+                // anyone, but an attacker that does not know the out-of-band
+                // passphrase cannot produce a matching proof, so we never pin
+                // its cert as the victim device. Constant-time compare so a
+                // wrong guess leaks no timing signal (the bounded pairing window
+                // + attempt cap already make guessing impractical; this is
+                // defence in depth).
+                let proof_ok = initiator_pairing_proof.as_deref().is_some_and(|offered| {
+                    crate::hash::constant_time_eq(offered.as_bytes(), expected_proof.as_bytes())
+                });
+                if !proof_ok {
+                    tracing::warn!(
+                        peer_id = %remote_id,
+                        "rejecting first sync from unpaired device: missing/mismatched pairing \
+                         passphrase proof (#855 CN-spoof guard)"
+                    );
+                    conn.send_json(&SyncMessage::Error {
+                        message: "pairing passphrase proof required".into(),
+                    })
+                    .await?;
+                    let _ = conn.close().await;
+                    return Ok(());
+                }
                 tracing::info!(
                     peer_id = %remote_id,
-                    "accepting first sync from unpaired device while pairing is pending (#1519 TOFU)"
+                    "accepting first sync from unpaired device: pairing passphrase proof verified \
+                     (#1519 TOFU, #855)"
                 );
                 true
             } else {

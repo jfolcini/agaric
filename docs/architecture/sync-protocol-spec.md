@@ -105,6 +105,22 @@ incompatible peer up front, before any raw-byte Loro merge (#2130). Also
 `#[serde(default)]`: a legacy peer deserializes as `0`, which falls through
 to the import-time format guards.
 
+`pairing_proof: Option<String>` (#855) is present only while the initiator is
+mid-pairing (its pending-pairing marker holds the proof). It is the
+domain-separated blake3 of the pairing passphrase (`pairing::pairing_proof`).
+The responder admits and TOFU-pins an **unpaired** device during the pairing
+window (the #1519 first-connect bridge) **only** when this matches the proof it
+stored when it armed/confirmed the pairing — so a self-signed
+`CN=agaric-{victim}` cert minted by an attacker that does not know the
+out-of-band passphrase cannot be pinned as the victim device (closes the #855
+CN-spoof window). It is `#[serde(default)]` (→ `None`): an already-paired peer
+omits it on every normal sync (the responder consults it only on the
+unpaired-pending-pairing path), and a peer predating the field can no longer
+complete a *first* pairing against a #855 responder — the intended security
+tightening, since pairing is a deliberate mutual act on current builds. The
+proof travels only over the confidential mTLS channel; a full man-in-the-middle
+relay is out of the paired-device threat model (AGENTS.md §"Threat Model").
+
 **Frontier semantics — Loro VVs are the sole state-causality signal
 (#2502).** The op-log `heads` and the Loro `loro_vvs` answer different
 questions. Since #490-M1 the op log is strictly device-local, and per

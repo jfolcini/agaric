@@ -196,6 +196,37 @@ pub const PAIRING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 /// restart.
 pub const MAX_PASSPHRASE_ATTEMPTS: u32 = 5;
 
+/// Domain-separation tag for [`pairing_proof`] (#855). Bumping it invalidates
+/// every proof from an older peer, so keep it stable across compatible releases.
+const PAIRING_PROOF_DOMAIN: &[u8] = b"agaric-pairing-proof-v1";
+
+/// Proof that a peer knows the pairing passphrase, carried in
+/// [`crate::sync_protocol::SyncMessage::HeadExchange::pairing_proof`] (#855).
+///
+/// Both devices independently store this value in their pending-pairing marker
+/// when they arm ([`crate::commands::sync_cmds::start_pairing_armed_inner`]) or
+/// confirm ([`crate::commands::sync_cmds::confirm_pairing_inner`]) a pairing;
+/// the initiator echoes it in its `HeadExchange`, and the responder compares it
+/// to its own stored value before it TOFU-pins an unpaired device
+/// ([`crate::sync_daemon::server`]).
+///
+/// This closes the #855 CN-spoof window: a self-signed `CN=agaric-{victim}`
+/// cert can be minted by anyone, but an attacker that does not know the
+/// out-of-band passphrase cannot produce this value, so the responder never
+/// pins its cert as the victim device. The proof travels only over the
+/// confidential mTLS channel; a full man-in-the-middle relay is out of the
+/// paired-device threat model (AGENTS.md §"Threat Model").
+///
+/// It is a domain-separated blake3 of the passphrase (not the raw passphrase),
+/// so the value persisted in the pending-pairing marker is not the passphrase
+/// itself and is not reusable outside this pairing sub-flow.
+pub fn pairing_proof(passphrase: &str) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(PAIRING_PROOF_DOMAIN);
+    hasher.update(passphrase.as_bytes());
+    hasher.finalize().to_hex().to_string()
+}
+
 /// Short-lived pairing session that tracks the generated passphrase.
 ///
 /// Confidentiality and authenticity of the pairing exchange come from
@@ -381,6 +412,33 @@ impl PairingSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pairing_proof_is_deterministic_and_passphrase_specific() {
+        // #855: the proof is a stable, domain-separated blake3 hex of the
+        // passphrase — both devices derive the same value from the same
+        // passphrase, and a different passphrase yields a different proof.
+        let p1 = pairing_proof("correct horse battery staple");
+        let p2 = pairing_proof("correct horse battery staple");
+        assert_eq!(p1, p2, "same passphrase must yield the same proof");
+        assert_eq!(p1.len(), 64, "blake3 hex digest is 64 chars");
+        assert!(p1.chars().all(|c| c.is_ascii_hexdigit()), "hex digits only");
+
+        let other = pairing_proof("correct horse battery stapler");
+        assert_ne!(
+            p1, other,
+            "a different passphrase must yield a different proof"
+        );
+
+        // It is NOT the passphrase itself, and NOT a bare blake3 of it (domain
+        // separation) — so the value stored in the marker is not a reusable
+        // secret outside this sub-flow.
+        assert_ne!(p1, "correct horse battery staple");
+        let bare = blake3::hash("correct horse battery staple".as_bytes())
+            .to_hex()
+            .to_string();
+        assert_ne!(p1, bare, "domain separation must change the digest");
+    }
 
     #[test]
     fn generate_passphrase_returns_four_words() {

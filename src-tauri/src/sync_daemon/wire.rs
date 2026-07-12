@@ -462,6 +462,7 @@ mod tests {
                 op_log_replication: false,
                 wire_compression: false,
                 op_log_batch_chunked: false,
+                pairing_proof: None,
             },
             SyncMessage::SyncComplete {
                 last_hash: "abc123".into(),

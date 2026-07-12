@@ -185,7 +185,10 @@ pub async fn start_pairing_armed_inner(
     device_id: &str,
 ) -> Result<PairingInfo, AppError> {
     let info = start_pairing_inner(pairing_state, device_id)?;
-    peer_refs::set_pending_pairing(pool).await?;
+    // #855: store the passphrase proof in the pending-pairing marker so the
+    // responder can require the joiner to prove knowledge of the passphrase
+    // before we TOFU-pin it (closes the CN-spoof window).
+    peer_refs::set_pending_pairing(pool, &crate::pairing::pairing_proof(&info.passphrase)).await?;
     scheduler.notify_change();
     Ok(info)
 }
@@ -271,19 +274,21 @@ pub async fn confirm_pairing_inner(
 
     // No session state persisted at confirm time.
 
-    // The FE has no remote device_id at confirm time — the QR
-    // carries only the passphrase, and mDNS + TOFU establish the real peer on
-    // the first authenticated connection. So in the (current) empty case we set
-    // a persistent pending-pairing marker that wakes the dormant daemon to
-    // *accept* that first connection, instead of writing a junk empty-string
-    // `peer_refs` row (which used to be the only thing tripping
-    // `should_start_active`, but showed as a blank ghost peer and lingered
-    // forever). If a real device_id is ever supplied, persist it directly.
-    if remote_device_id.is_empty() {
-        peer_refs::set_pending_pairing(pool).await?;
-    } else {
-        peer_refs::upsert_peer_ref(pool, &remote_device_id).await?;
-    }
+    // The FE has no remote device_id at confirm time — the QR carries only the
+    // passphrase, and mDNS + TOFU establish the real peer on the first
+    // authenticated connection. So we set a persistent pending-pairing marker
+    // that wakes the dormant daemon to *accept* that first connection, instead
+    // of writing a junk empty-string `peer_refs` row (which used to be the only
+    // thing tripping `should_start_active`, but showed as a blank ghost peer and
+    // lingered forever).
+    //
+    // #855: the marker carries the passphrase proof so both the joiner (as a
+    // future responder) and the host require the peer to prove knowledge of the
+    // passphrase before TOFU-pinning it. `remote_device_id` is always empty from
+    // the FE (`PairingDialog` passes `''`); the old `else` branch that
+    // pre-created a NULL-`cert_hash` `peer_ref` for a supplied device id was the
+    // CN-spoof pinning surface #855 removes — it is deleted here.
+    peer_refs::set_pending_pairing(pool, &crate::pairing::pairing_proof(&passphrase)).await?;
 
     // Clear pairing session
     *lock_pairing_state(pairing_state)? = None;
