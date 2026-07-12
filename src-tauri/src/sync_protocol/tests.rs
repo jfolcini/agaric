@@ -648,6 +648,7 @@ fn sync_message_serde_roundtrip() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         },
         SyncMessage::LoroSync {
             msg: crate::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot {
@@ -757,6 +758,7 @@ async fn orchestrator_rejects_incompatible_engine_format() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await;
 
@@ -811,6 +813,7 @@ async fn orchestrator_accepts_legacy_and_matching_engine_format() {
                 op_log_replication: false,
                 wire_compression: false,
                 op_log_batch_chunked: false,
+                pairing_proof: None,
             })
             .await
             .unwrap_or_else(|e| {
@@ -1100,6 +1103,7 @@ async fn orchestrator_rejects_messages_in_terminal_state() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await;
     assert!(
@@ -1213,6 +1217,7 @@ async fn orchestrator_rejects_messages_in_failed_terminal_state() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await;
 
@@ -1317,6 +1322,7 @@ async fn orchestrator_rejects_head_exchange_in_streaming_state() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await;
     assert!(
@@ -1486,6 +1492,7 @@ async fn orchestrator_uses_cert_cn_identity_over_advertised_heads_2481() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await;
 
@@ -1529,6 +1536,7 @@ async fn orchestrator_accepts_matching_peer_device_id() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await;
 
@@ -1606,6 +1614,7 @@ async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await
         .unwrap();
@@ -1748,6 +1757,7 @@ fn serde_roundtrip_sync_message_head_exchange() {
         op_log_replication: false,
         wire_compression: false,
         op_log_batch_chunked: false,
+        pairing_proof: None,
     };
     let json = serde_json::to_string(&msg).expect("serialize HeadExchange");
     let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize HeadExchange");
@@ -1826,6 +1836,7 @@ fn json_shape_head_exchange_matches_wire_format() {
         op_log_replication: false,
         wire_compression: false,
         op_log_batch_chunked: false,
+        pairing_proof: None,
     };
     let json: serde_json::Value =
         serde_json::to_value(&msg).expect("SyncMessage must serialize to Value");
@@ -1860,6 +1871,7 @@ fn head_exchange_deserializes_without_loro_vvs_field() {
             op_log_replication,
             wire_compression,
             op_log_batch_chunked,
+            pairing_proof,
         } => {
             assert_eq!(heads.len(), 1, "heads must round-trip");
             assert!(
@@ -1881,6 +1893,10 @@ fn head_exchange_deserializes_without_loro_vvs_field() {
             assert!(
                 !op_log_batch_chunked,
                 "a missing op_log_batch_chunked field must default to false (#2593 old-peer)"
+            );
+            assert!(
+                pairing_proof.is_none(),
+                "a missing pairing_proof field must default to None (#855 old-peer)"
             );
         }
         other => panic!("expected HeadExchange, got {other:?}"),
@@ -1920,6 +1936,7 @@ fn json_shape_all_variants_have_type_tag() {
                 op_log_replication: false,
                 wire_compression: false,
                 op_log_batch_chunked: false,
+                pairing_proof: None,
             },
         ),
         (
@@ -2056,6 +2073,7 @@ fn serde_roundtrip_empty_heads() {
         op_log_replication: false,
         wire_compression: false,
         op_log_batch_chunked: false,
+        pairing_proof: None,
     };
     let json = serde_json::to_string(&msg).expect("serialize empty HeadExchange");
     let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize empty HeadExchange");
@@ -2101,6 +2119,7 @@ fn serde_roundtrip_many_heads() {
         op_log_replication: false,
         wire_compression: false,
         op_log_batch_chunked: false,
+        pairing_proof: None,
     };
     let json = serde_json::to_string(&msg).expect("serialize many-heads HeadExchange");
     let deser: SyncMessage =
@@ -2194,6 +2213,7 @@ async fn orchestrator_errors_on_head_exchange_during_streaming_ops() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await;
     assert!(
@@ -2290,6 +2310,7 @@ async fn handle_message_emits_within_sync_msg_span() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await;
 
@@ -2339,6 +2360,7 @@ async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await
         .expect("HeadExchange must not error under the engine path");
@@ -3727,6 +3749,7 @@ async fn streamer_appends_op_log_batch_for_capable_peer_2481() {
             op_log_replication: true,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await
         .unwrap();
@@ -3780,6 +3803,7 @@ async fn streamer_omits_op_log_batch_for_incapable_peer_2481() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await
         .unwrap();
@@ -3833,6 +3857,7 @@ async fn streamer_streams_oversized_op_record_to_chunked_capable_peer_2593() {
             wire_compression: false,
             // Chunked-capable peer → the oversized record streams.
             op_log_batch_chunked: true,
+            pairing_proof: None,
         })
         .await
         .unwrap();
@@ -3883,6 +3908,7 @@ async fn streamer_skips_oversized_op_record_for_chunked_incapable_peer_2593() {
             op_log_replication: true,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await
         .unwrap();
@@ -3920,6 +3946,7 @@ async fn streamer_rejects_inbound_op_log_batch_2481() {
             op_log_replication: true,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await
         .unwrap();

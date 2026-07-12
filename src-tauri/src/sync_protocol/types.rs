@@ -308,6 +308,24 @@ pub enum SyncMessage {
         /// capability gate exactly.
         #[serde(default)]
         op_log_batch_chunked: bool,
+        /// #855 — proof that the initiator knows the pairing passphrase,
+        /// present only while the initiator is mid-pairing (its
+        /// pending-pairing marker holds the expected proof). The responder
+        /// admits and TOFU-pins an *unpaired* device during the pairing window
+        /// only when this matches the proof it stored when it armed/confirmed
+        /// the pairing (see [`crate::pairing::pairing_proof`] and
+        /// [`crate::sync_daemon::server`]). This closes the CN-spoof window: an
+        /// attacker minting `CN=agaric-{victim}` but ignorant of the passphrase
+        /// cannot produce a matching proof and is never pinned.
+        ///
+        /// `#[serde(default)]` (→ `None`) for wire back-compat: a peer predating
+        /// this field omits it (an older peer can no longer complete a *first*
+        /// pairing against a #855 responder, which is the intended security
+        /// tightening — pairing is a deliberate mutual act on current builds),
+        /// and an already-paired peer omits it on every normal sync (the
+        /// responder only consults it on the unpaired-pending-pairing path).
+        #[serde(default)]
+        pairing_proof: Option<String>,
     },
     /// Loro-CRDT-based sync wire envelope.
     ///

@@ -208,15 +208,17 @@ fn sync_start_pairing_replaces_existing_session() {
 // ======================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn sync_confirm_pairing_stores_peer_and_clears_session() {
+async fn sync_confirm_pairing_sets_pending_marker_with_proof_and_clears_session() {
     let (pool, _dir) = test_pool().await;
     let pairing_state = Mutex::new(None);
     let scheduler = SyncScheduler::new();
 
     // Start pairing first
     let info = start_pairing_inner(&pairing_state, "device-local").unwrap();
+    let passphrase = info.passphrase.clone();
 
-    // Confirm with the passphrase
+    // Confirm with the passphrase (a non-empty remote id, exercising the path
+    // that pre-#855 took the now-deleted peer_ref else-branch).
     confirm_pairing_inner(
         &pool,
         &pairing_state,
@@ -228,11 +230,22 @@ async fn sync_confirm_pairing_stores_peer_and_clears_session() {
     .await
     .unwrap();
 
-    // Peer ref should now exist
-    let peer = peer_refs::get_peer_ref(&pool, "device-remote")
-        .await
-        .unwrap();
-    assert!(peer.is_some(), "peer ref must exist after confirm_pairing");
+    // #855: confirm no longer writes a peer_ref directly (the CN-spoof-prone
+    // NULL-cert row is gone). It sets the pending-pairing marker carrying the
+    // passphrase proof; the peer_ref is established by proof-verified TOFU on
+    // the first connection.
+    assert!(
+        peer_refs::list_peer_refs(&pool).await.unwrap().is_empty(),
+        "confirm must not create a peer_ref row directly (#855)"
+    );
+    assert_eq!(
+        peer_refs::get_pending_pairing_proof(&pool)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some(crate::pairing::pairing_proof(&passphrase).as_str()),
+        "the pending marker stores the passphrase proof for the responder gate (#855)"
+    );
 
     // Pairing session should be cleared
     let session = pairing_state.lock().unwrap();
@@ -359,12 +372,18 @@ async fn confirm_pairing_inner_accepts_correct_passphrase() {
     .await
     .expect("correct passphrase must succeed");
 
-    let peer = peer_refs::get_peer_ref(&pool, "device-remote")
-        .await
-        .unwrap();
+    // #855: confirm sets the pending-pairing marker (carrying the proof), not a
+    // peer_ref — the peer is established by proof-verified TOFU on first connect.
     assert!(
-        peer.is_some(),
-        "peer ref must be persisted on successful confirmation"
+        peer_refs::get_peer_ref(&pool, "device-remote")
+            .await
+            .unwrap()
+            .is_none(),
+        "confirm must not persist a peer_ref directly (#855)"
+    );
+    assert!(
+        peer_refs::is_pending_pairing(&pool).await.unwrap(),
+        "confirm must set the pending-pairing marker on success"
     );
     assert!(
         pairing_state.lock().unwrap().is_none(),
@@ -479,12 +498,18 @@ async fn confirm_pairing_inner_succeeds_within_attempt_budget_after_typos() {
     .await
     .expect("correct passphrase within the attempt budget must succeed");
 
-    let peer = peer_refs::get_peer_ref(&pool, "device-remote")
-        .await
-        .unwrap();
+    // #855: success arms the pending-pairing window (proof stored), not a
+    // peer_ref — TOFU establishes the peer on the first proof-verified connect.
     assert!(
-        peer.is_some(),
-        "peer must be persisted on success within the attempt budget"
+        peer_refs::get_peer_ref(&pool, "device-remote")
+            .await
+            .unwrap()
+            .is_none(),
+        "confirm must not persist a peer_ref directly (#855)"
+    );
+    assert!(
+        peer_refs::is_pending_pairing(&pool).await.unwrap(),
+        "success within the attempt budget must arm the pending-pairing window"
     );
     assert!(
         pairing_state.lock().unwrap().is_none(),

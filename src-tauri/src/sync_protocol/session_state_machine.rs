@@ -299,6 +299,13 @@ impl SyncOrchestrator {
         // Advertise our per-space Loro version vectors so the responder can
         // Ship deltas (Update) instead of full snapshots (#87 §10.5).
         let loro_vvs = self.collect_local_loro_vvs();
+        // #855: if we are mid-pairing (our pending-pairing marker holds the
+        // expected proof), echo that proof so the responder can verify we know
+        // the passphrase before it TOFU-pins us. Both devices stored the same
+        // domain-separated blake3 of the passphrase, so echoing our own stored
+        // value proves knowledge. `None` on any normal (non-pairing) sync — the
+        // responder only consults it on the unpaired-pending-pairing path.
+        let pairing_proof = crate::peer_refs::get_pending_pairing_proof(&self.pool).await?;
         self.state = SyncState::ExchangingHeads;
         self.session.state = SyncState::ExchangingHeads;
         self.emit(crate::sync_events::SyncEvent::Progress {
@@ -327,6 +334,8 @@ impl SyncOrchestrator {
             // shipped #2481 peer omits this (→ `false`) and the streamer skips
             // the oversized record instead of sending a frame it cannot decode.
             op_log_batch_chunked: true,
+            // #855: passphrase proof, present only while mid-pairing.
+            pairing_proof,
         })
     }
 
@@ -485,6 +494,10 @@ impl SyncOrchestrator {
                 // at `peer_op_log_batch_chunked` and honoured by
                 // `collect_op_batches_for_peer`.
                 op_log_batch_chunked,
+                // #855: the initiator's pairing proof is consumed by the
+                // responder daemon (`sync_daemon::server`) before it TOFU-pins
+                // an unpaired device, not by this state-machine core.
+                pairing_proof: _,
             } => {
                 // Gate raw-byte Loro merges by engine format before doing any
                 // import work (#2130). An incompatible peer is rejected up

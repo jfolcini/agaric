@@ -122,6 +122,7 @@ fn sync_message_roundtrip_head_exchange() {
         op_log_replication: false,
         wire_compression: false,
         op_log_batch_chunked: false,
+        pairing_proof: None,
     };
     let json = serde_json::to_string(&msg).unwrap();
     let parsed: SyncMessage = serde_json::from_str(&json).unwrap();
@@ -519,6 +520,7 @@ async fn tls_roundtrip_json_exchange() {
         op_log_replication: false,
         wire_compression: false,
         op_log_batch_chunked: false,
+        pairing_proof: None,
     };
     client.send_json(&msg).await.unwrap();
 
@@ -1386,6 +1388,7 @@ async fn mtls_full_handshake_both_sides_see_peer_identity() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await
         .unwrap();
@@ -1419,6 +1422,7 @@ async fn mtls_full_handshake_both_sides_see_peer_identity() {
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
+            pairing_proof: None,
         })
         .await
         .unwrap();

@@ -157,7 +157,7 @@ async fn update_peer_name_special_characters() {
 // =========================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn pairing_lifecycle_creates_peer_ref() {
+async fn pairing_lifecycle_arms_pending_window_with_proof() {
     let (pool, _dir) = test_pool().await;
     let pairing = PairingState(Mutex::new(None));
     let scheduler = SyncScheduler::new();
@@ -168,6 +168,7 @@ async fn pairing_lifecycle_creates_peer_ref() {
     assert!(!info.passphrase.is_empty(), "passphrase must be non-empty");
 
     // Confirm pairing with remote device
+    let passphrase = info.passphrase.clone();
     confirm_pairing_inner(
         &pool,
         &pairing.0,
@@ -179,12 +180,22 @@ async fn pairing_lifecycle_creates_peer_ref() {
     .await
     .unwrap();
 
-    // Verify peer_ref was created
+    // #855: confirm arms the pending-pairing window with the passphrase proof
+    // rather than persisting a peer_ref directly — the peer_ref is established by
+    // proof-verified TOFU on the first connection (removing the CN-spoof-prone
+    // NULL-cert row the old else-branch created).
     let peers = crate::commands::list_peer_refs_inner(&pool).await.unwrap();
-    assert_eq!(peers.len(), 1, "one peer_ref should exist after confirm");
+    assert!(
+        peers.is_empty(),
+        "confirm must not create a peer_ref directly (#855); TOFU does it on connect"
+    );
     assert_eq!(
-        peers[0].peer_id, "dev-remote",
-        "peer_id should be the remote device"
+        peer_refs::get_pending_pairing_proof(&pool)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some(crate::pairing::pairing_proof(&passphrase).as_str()),
+        "the pending marker carries the passphrase proof for the responder gate (#855)"
     );
 
     // Verify pairing session was cleared
@@ -336,9 +347,18 @@ async fn full_pair_then_sync_workflow() {
     let sync_info = start_sync_inner(&scheduler, "dev-local", "dev-remote".into()).unwrap();
     assert_eq!(sync_info.state, "complete");
 
-    // Verify peer_ref persists
+    // #855: confirm arms the pending-pairing window (proof stored) rather than
+    // persisting a peer_ref; the peer_ref is established by proof-verified TOFU
+    // on the first real connection (not exercised by this stubbed sync helper).
     let peers = crate::commands::list_peer_refs_inner(&pool).await.unwrap();
-    assert_eq!(peers.len(), 1);
+    assert!(
+        peers.is_empty(),
+        "confirm must not persist a peer_ref directly (#855)"
+    );
+    assert!(
+        peer_refs::is_pending_pairing(&pool).await.unwrap(),
+        "the pending-pairing window must be armed after confirm"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -365,85 +385,57 @@ async fn cancel_sync_succeeds() {
     );
 }
 
+/// Multi-device peer_refs. #855 moved peer_ref creation off `confirm_pairing`
+/// (the deleted NULL-`cert_hash` else-branch) onto proof-verified TOFU on the
+/// first connection — so pinning two devices (as the responder does after each
+/// proves its passphrase) yields two separate peer_refs, each with its own cert.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn pair_multiple_devices_creates_separate_peer_refs() {
+async fn tofu_pins_multiple_devices_as_separate_peer_refs() {
     let (pool, _dir) = test_pool().await;
-    let pairing = PairingState(Mutex::new(None));
-    let scheduler = SyncScheduler::new();
-    let device_id = "dev-local";
 
-    // Pair with first device
-    let info1 = start_pairing_inner(&pairing.0, device_id).unwrap();
-    confirm_pairing_inner(
-        &pool,
-        &pairing.0,
-        &scheduler,
-        device_id,
-        info1.passphrase,
-        "dev-phone".into(),
-    )
-    .await
-    .unwrap();
-
-    // Pair with second device
-    let info2 = start_pairing_inner(&pairing.0, device_id).unwrap();
-    confirm_pairing_inner(
-        &pool,
-        &pairing.0,
-        &scheduler,
-        device_id,
-        info2.passphrase,
-        "dev-tablet".into(),
-    )
-    .await
-    .unwrap();
+    peer_refs::upsert_peer_ref_with_cert(&pool, "dev-phone", &"a".repeat(64))
+        .await
+        .unwrap();
+    peer_refs::upsert_peer_ref_with_cert(&pool, "dev-tablet", &"b".repeat(64))
+        .await
+        .unwrap();
 
     let peers = crate::commands::list_peer_refs_inner(&pool).await.unwrap();
-    assert_eq!(peers.len(), 2, "two separate peer_refs should exist");
-
+    assert_eq!(
+        peers.len(),
+        2,
+        "TOFU-pinning two devices yields two separate peer_refs"
+    );
     let ids: Vec<&str> = peers.iter().map(|p| p.peer_id.as_str()).collect();
     assert!(ids.contains(&"dev-phone"), "phone peer should exist");
     assert!(ids.contains(&"dev-tablet"), "tablet peer should exist");
 }
 
+/// Re-pairing the same device upserts (does not duplicate) its peer_ref and
+/// updates the pinned cert. #855: this is the TOFU path
+/// (`upsert_peer_ref_with_cert`), the responder's action after a re-pair's
+/// passphrase proof — not `confirm_pairing`, which now only arms the window.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn re_pairing_same_device_upserts_peer_ref() {
+async fn tofu_re_pin_same_device_upserts_peer_ref() {
     let (pool, _dir) = test_pool().await;
-    let pairing = PairingState(Mutex::new(None));
-    let scheduler = SyncScheduler::new();
-    let device_id = "dev-local";
 
-    // Pair with device
-    let info1 = start_pairing_inner(&pairing.0, device_id).unwrap();
-    confirm_pairing_inner(
-        &pool,
-        &pairing.0,
-        &scheduler,
-        device_id,
-        info1.passphrase,
-        "dev-remote".into(),
-    )
-    .await
-    .unwrap();
+    peer_refs::upsert_peer_ref_with_cert(&pool, "dev-remote", &"a".repeat(64))
+        .await
+        .unwrap();
+    // Re-pair → new cert observed for the same device id.
+    peer_refs::upsert_peer_ref_with_cert(&pool, "dev-remote", &"b".repeat(64))
+        .await
+        .unwrap();
 
-    // Re-pair with same device
-    let info2 = start_pairing_inner(&pairing.0, device_id).unwrap();
-    confirm_pairing_inner(
-        &pool,
-        &pairing.0,
-        &scheduler,
-        device_id,
-        info2.passphrase,
-        "dev-remote".into(),
-    )
-    .await
-    .unwrap();
-
-    // Should still be 1 peer_ref (upsert, not duplicate)
     let peers = crate::commands::list_peer_refs_inner(&pool).await.unwrap();
     assert_eq!(
         peers.len(),
         1,
-        "re-pairing same device should upsert, not create duplicate"
+        "re-pairing the same device upserts, not duplicates"
+    );
+    assert_eq!(
+        peers[0].cert_hash.as_deref(),
+        Some("b".repeat(64).as_str()),
+        "the pinned cert is updated on re-pair"
     );
 }

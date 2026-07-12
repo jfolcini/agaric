@@ -449,18 +449,28 @@ const PENDING_PAIRING_KEY: &str = "sync.pending_pairing";
 const PENDING_PAIRING_TTL_MS: i64 = crate::pairing::PAIRING_TIMEOUT.as_millis() as i64;
 
 /// Mark that a pairing just completed and a first peer connection is expected.
-pub async fn set_pending_pairing(pool: &SqlitePool) -> Result<(), AppError> {
+///
+/// #855: `expected_proof` is the [`crate::pairing::pairing_proof`] of the
+/// pairing passphrase — the value the responder compares against the
+/// initiator's advertised `HeadExchange.pairing_proof` before it TOFU-pins an
+/// unpaired device during the pairing window. Storing the proof (a
+/// domain-separated blake3 of the passphrase, never the passphrase itself) in
+/// the marker `value` is what binds the "accept a first connection" bridge to
+/// knowledge of the out-of-band passphrase, closing the CN-spoof window.
+pub async fn set_pending_pairing(pool: &SqlitePool, expected_proof: &str) -> Result<(), AppError> {
     // M5 (#348): bind `now_ms()` (epoch-ms, the column's contract) into both
     // branches instead of `strftime('%s','now') * 1000` (second precision).
     let now = crate::db::now_ms();
     sqlx::query!(
         "INSERT INTO app_settings (key, value, updated_at)
-         VALUES (?, '1', ?)
+         VALUES (?, ?, ?)
          ON CONFLICT(key) DO UPDATE SET
-             value = '1',
+             value = ?,
              updated_at = ?",
         PENDING_PAIRING_KEY,
+        expected_proof,
         now,
+        expected_proof,
         now,
     )
     .execute(pool)
@@ -474,7 +484,28 @@ pub async fn set_pending_pairing(pool: &SqlitePool) -> Result<(), AppError> {
 /// it is older than [`PENDING_PAIRING_TTL_MS`], so an abandoned pairing stops
 /// driving the daemon into pairing mode. An expired marker is cleared lazily
 /// on this read so it does not linger in `app_settings`.
+///
+/// #855: the marker `value` now holds the expected pairing proof rather than a
+/// `'1'` sentinel, so any non-empty value counts as pending. A stale pre-#855
+/// `'1'` marker still reads as pending (harmless — no real proof equals `'1'`,
+/// so it cannot admit anyone — and it expires on its TTL).
 pub async fn is_pending_pairing(pool: &SqlitePool) -> Result<bool, AppError> {
+    Ok(pending_pairing_proof_if_fresh(pool).await?.is_some())
+}
+
+/// The expected pairing proof for an in-window pending pairing, or `None` when
+/// no pairing is pending (no marker, empty value, or TTL-expired) (#855).
+///
+/// Shares the TTL + lazy-clear logic with [`is_pending_pairing`] so the
+/// "pending?" and "which proof?" answers can never disagree.
+pub async fn get_pending_pairing_proof(pool: &SqlitePool) -> Result<Option<String>, AppError> {
+    pending_pairing_proof_if_fresh(pool).await
+}
+
+/// Read the pending-pairing marker, applying the #1603 TTL gate (with lazy
+/// clear of a stale marker). Returns the stored proof when the marker exists,
+/// is non-empty, and is within [`PENDING_PAIRING_TTL_MS`]; otherwise `None`.
+async fn pending_pairing_proof_if_fresh(pool: &SqlitePool) -> Result<Option<String>, AppError> {
     let row = sqlx::query!(
         "SELECT value, updated_at FROM app_settings WHERE key = ?",
         PENDING_PAIRING_KEY,
@@ -483,10 +514,10 @@ pub async fn is_pending_pairing(pool: &SqlitePool) -> Result<bool, AppError> {
     .await?;
 
     let Some(row) = row else {
-        return Ok(false);
+        return Ok(None);
     };
-    if row.value != "1" {
-        return Ok(false);
+    if row.value.is_empty() {
+        return Ok(None);
     }
 
     // #1603: TTL gate. `updated_at` is epoch-ms (written via `now_ms()` in
@@ -495,10 +526,10 @@ pub async fn is_pending_pairing(pool: &SqlitePool) -> Result<bool, AppError> {
     let now = crate::db::now_ms();
     if now.saturating_sub(row.updated_at) > PENDING_PAIRING_TTL_MS {
         clear_pending_pairing(pool).await?;
-        return Ok(false);
+        return Ok(None);
     }
 
-    Ok(true)
+    Ok(Some(row.value))
 }
 
 /// Clear the pending-pairing marker — a real peer has been established, so the
@@ -1081,26 +1112,41 @@ mod tests {
     #[tokio::test]
     async fn pending_pairing_set_check_clear_roundtrip() {
         let (pool, _dir) = test_pool().await;
+        let proof = crate::pairing::pairing_proof("correct horse battery staple");
 
         assert!(
             !is_pending_pairing(&pool).await.unwrap(),
             "pending-pairing must be false on a fresh DB"
         );
+        assert!(
+            get_pending_pairing_proof(&pool).await.unwrap().is_none(),
+            "no stored proof on a fresh DB"
+        );
 
-        set_pending_pairing(&pool).await.unwrap();
+        set_pending_pairing(&pool, &proof).await.unwrap();
         assert!(
             is_pending_pairing(&pool).await.unwrap(),
             "pending-pairing must be true after set"
         );
+        // #855: the stored proof round-trips so the responder can compare it.
+        assert_eq!(
+            get_pending_pairing_proof(&pool).await.unwrap().as_deref(),
+            Some(proof.as_str()),
+            "the expected pairing proof round-trips"
+        );
 
-        // Idempotent: a second set stays true.
-        set_pending_pairing(&pool).await.unwrap();
+        // Idempotent: a second set stays true (and updates the proof).
+        set_pending_pairing(&pool, &proof).await.unwrap();
         assert!(is_pending_pairing(&pool).await.unwrap());
 
         clear_pending_pairing(&pool).await.unwrap();
         assert!(
             !is_pending_pairing(&pool).await.unwrap(),
             "pending-pairing must be false after clear"
+        );
+        assert!(
+            get_pending_pairing_proof(&pool).await.unwrap().is_none(),
+            "no stored proof after clear"
         );
 
         // Clearing an already-clear marker is a no-op (no error).
@@ -1116,7 +1162,7 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         // Fresh marker → pending.
-        set_pending_pairing(&pool).await.unwrap();
+        set_pending_pairing(&pool, "test-proof").await.unwrap();
         assert!(
             is_pending_pairing(&pool).await.unwrap(),
             "#1603: a freshly-set marker must read as pending"
@@ -1158,7 +1204,7 @@ mod tests {
     #[tokio::test]
     async fn pending_pairing_marker_fresh_within_ttl() {
         let (pool, _dir) = test_pool().await;
-        set_pending_pairing(&pool).await.unwrap();
+        set_pending_pairing(&pool, "test-proof").await.unwrap();
 
         // Backdate to TTL/2 — comfortably within the window.
         let recent = crate::db::now_ms() - PENDING_PAIRING_TTL_MS / 2;
