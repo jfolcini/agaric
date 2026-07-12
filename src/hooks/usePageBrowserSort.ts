@@ -1,9 +1,18 @@
 /**
  * usePageBrowserSort — owns the `sort-by` preference for `PageBrowser`
  * (localStorage-backed via `useLocalStoragePreference`) and exposes the
- * `sortPages` callback that produces a comparator-applied copy of an
- * input page list. The comparator is shared by both the `Starred` and
- * `Pages` sections so they stay in lock-step under any sort option.
+ * `sortPages` callback used by both the `Starred` and `Pages` sections so
+ * they stay in lock-step under any sort option.
+ *
+ * #2602 Part A — the three server-derived sorts (`recently-modified`,
+ * `most-linked`, `most-content`) round-trip via the IPC's `sort` parameter
+ * and arrive already keyset-ordered by the SQL `ORDER BY`; for those,
+ * `sortPages` renders the rows in received order (the SQL ORDER BY is the
+ * single ordering authority — no redundant client re-sort). Only the
+ * frontend-only sorts, which cannot be expressed as the server ORDER BY —
+ * `alphabetical` (SQLite `COLLATE NOCASE` diverges from V8 `localeCompare`
+ * on non-ASCII titles), `recent` (per-device visit history), `created`
+ * (ULID DESC) — apply a client comparator over the loaded page.
  *
  * Extended from 3 to 7 sort modes. The new 4 modes
  * (`recently-modified`, `most-linked`, `most-content`, `default`) read
@@ -123,17 +132,6 @@ export function usePageBrowserSort(): UsePageBrowserSortReturn {
       const hasMetadata = first != null && Object.hasOwn(first, 'lastModifiedAt')
       const sorted = [...(input as readonly BlockRow[])]
       const alpha = (a: BlockRow, b: BlockRow) => (a.content ?? '').localeCompare(b.content ?? '')
-      // The server keysets every sort by `(key, id ASC)`
-      // (see `SortKeyset::apply` in `commands/pages.rs`). When rows carry
-      // metadata (the server-derived path), break key ties by `id ASC` too
-      // so equal-key groups don't reshuffle as pages stream in. The
-      // metadata-less flag-off path (BlockRow) keeps the alphabetical
-      // fallback, since it can't reproduce the server order anyway.
-      const tiebreak = (a: BlockRow, b: BlockRow) =>
-        hasMetadata ? a.id.localeCompare(b.id) : alpha(a, b)
-
-      const lookupMeta = (r: BlockRow): PageWithMetadataRow | null =>
-        hasMetadata ? (r as unknown as PageWithMetadataRow) : null
 
       if (sortOption === 'alphabetical') {
         sorted.sort(alpha)
@@ -152,31 +150,22 @@ export function usePageBrowserSort(): UsePageBrowserSortReturn {
           if (bTime) return 1
           return alpha(a, b)
         })
-      } else if (sortOption === 'recently-modified') {
-        // Falls back to alphabetical when rows don't carry metadata
-        // (the flag-off path uses BlockRow which has no `lastModifiedAt`).
-        sorted.sort((a, b) => {
-          // #109 Phase 2: `lastModifiedAt` is INTEGER epoch-ms; sort numerically
-          // DESC (newest first), NULL → 0 sorts oldest.
-          const am = lookupMeta(a)?.lastModifiedAt ?? 0
-          const bm = lookupMeta(b)?.lastModifiedAt ?? 0
-          if (am === bm) return tiebreak(a, b)
-          return bm - am
-        })
-      } else if (sortOption === 'most-linked') {
-        sorted.sort((a, b) => {
-          const ac = lookupMeta(a)?.inboundLinkCount ?? 0
-          const bc = lookupMeta(b)?.inboundLinkCount ?? 0
-          if (ac === bc) return tiebreak(a, b)
-          return bc - ac
-        })
-      } else if (sortOption === 'most-content') {
-        sorted.sort((a, b) => {
-          const ac = lookupMeta(a)?.childBlockCount ?? 0
-          const bc = lookupMeta(b)?.childBlockCount ?? 0
-          if (ac === bc) return tiebreak(a, b)
-          return bc - ac
-        })
+      } else {
+        // #2602 Part A — server-derived sorts: `recently-modified`,
+        // `most-linked`, `most-content`. When rows carry server metadata
+        // they arrive ALREADY keyset-ordered by the IPC
+        // (`ORDER BY (<key>, id ASC)` — see `SortKeyset::apply` in
+        // `commands/pages/metadata.rs`), so we render them in received
+        // order: the SQL `ORDER BY` is the single ordering authority. The
+        // client comparator that re-sorted these was pure redundant work
+        // (and a second, drift-prone source of truth).
+        //
+        // The metadata-less flag-off path (BlockRow via `listBlocks`) can't
+        // reproduce the server metadata order, so it keeps the alphabetical
+        // fallback rather than leaving rows in raw id order.
+        if (!hasMetadata) {
+          sorted.sort(alpha)
+        }
       }
       return sorted
     },

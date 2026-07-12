@@ -122,46 +122,46 @@ describe('usePageBrowserSort', () => {
     expect(sorted.map((p) => p.id)).toEqual(['01AAAA', '01ZZZZ'])
   })
 
-  it('sortPages with "recently-modified" reads the lastModifiedAt field DESC', () => {
+  // #2602 Part A — the three server-derived sorts arrive ALREADY
+  // keyset-ordered by the IPC (`ORDER BY (<key>, id ASC)`), so `sortPages`
+  // must render them in received order: the SQL ORDER BY is the single
+  // ordering authority. Each test deliberately gives the metadata values an
+  // order that DISAGREES with the input order, so a lingering client re-sort
+  // would visibly reorder the rows and fail the assertion.
+  it('sortPages with "recently-modified" preserves the server order (no client re-sort)', () => {
     localStorage.setItem('page-browser-sort', 'recently-modified')
     const { result } = renderHook(() => usePageBrowserSort())
     const pages = [
-      // Metadata-row shape (camelCase) — only metadata rows expose
-      // lastModifiedAt; BlockRow callers fall back to alphabetical.
-      makeMetaRow('P1', 'A', { lastModifiedAt: 1767225600000 }), // 2026-01-01
-      makeMetaRow('P2', 'B', { lastModifiedAt: 1777593600000 }), // 2026-05-01
-      makeMetaRow('P3', 'C', { lastModifiedAt: 1772323200000 }), // 2026-03-01
+      makeMetaRow('P1', 'A', { lastModifiedAt: 1767225600000 }), // oldest
+      makeMetaRow('P2', 'B', { lastModifiedAt: 1777593600000 }), // newest
+      makeMetaRow('P3', 'C', { lastModifiedAt: 1772323200000 }), // middle
     ]
     const sorted = result.current.sortPages(pages)
-    expect(sorted.map((p) => p.id)).toEqual(['P2', 'P3', 'P1'])
+    expect(sorted.map((p) => p.id)).toEqual(['P1', 'P2', 'P3'])
   })
 
-  // Count ties break by `id ASC` (server keyset parity),
-  // not by title — so equal-count groups don't reshuffle as pages stream.
-  it('sortPages with "most-linked" reads inboundLinkCount DESC, id-ASC tiebreaker', () => {
+  it('sortPages with "most-linked" preserves the server order (no client re-sort)', () => {
     localStorage.setItem('page-browser-sort', 'most-linked')
     const { result } = renderHook(() => usePageBrowserSort())
     const pages = [
       makeMetaRow('P1', 'Bravo', { inboundLinkCount: 5 }),
-      makeMetaRow('P2', 'Alpha', { inboundLinkCount: 5 }),
-      makeMetaRow('P3', 'Delta', { inboundLinkCount: 10 }),
+      makeMetaRow('P2', 'Alpha', { inboundLinkCount: 10 }),
+      makeMetaRow('P3', 'Delta', { inboundLinkCount: 1 }),
     ]
     const sorted = result.current.sortPages(pages)
-    // Delta (10) first; the 5-tie breaks by id ASC: P1 before P2.
-    expect(sorted.map((p) => p.id)).toEqual(['P3', 'P1', 'P2'])
+    expect(sorted.map((p) => p.id)).toEqual(['P1', 'P2', 'P3'])
   })
 
-  it('sortPages with "most-content" reads childBlockCount DESC, id-ASC tiebreaker', () => {
+  it('sortPages with "most-content" preserves the server order (no client re-sort)', () => {
     localStorage.setItem('page-browser-sort', 'most-content')
     const { result } = renderHook(() => usePageBrowserSort())
     const pages = [
       makeMetaRow('P1', 'Bravo', { childBlockCount: 50 }),
-      makeMetaRow('P2', 'Alpha', { childBlockCount: 50 }),
-      makeMetaRow('P3', 'Delta', { childBlockCount: 100 }),
+      makeMetaRow('P2', 'Alpha', { childBlockCount: 100 }),
+      makeMetaRow('P3', 'Delta', { childBlockCount: 1 }),
     ]
     const sorted = result.current.sortPages(pages)
-    // Delta (100) first; the 50-tie breaks by id ASC: P1 before P2.
-    expect(sorted.map((p) => p.id)).toEqual(['P3', 'P1', 'P2'])
+    expect(sorted.map((p) => p.id)).toEqual(['P1', 'P2', 'P3'])
   })
 
   it('metadata sort falls back to alphabetical when rows are BlockRow (no metadata)', () => {
