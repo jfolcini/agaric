@@ -3596,13 +3596,17 @@ async fn projected_agenda_cached_equals_on_the_fly() {
         .unwrap();
 
     // 2. Page through the cached path collecting all results. The range
-    //    end matches the cache's 365-day horizon from `pinned_today` so
-    //    the cache contains every entry the on-the-fly path will emit
-    //    for the same range — parity is then a head-to-head comparison
-    //    on the shared `recurrence::project_block_dates` helper rather
-    //    than on horizon-boundary handling.
+    //    end sits at the bounded materialization's guaranteed-complete
+    //    horizon (`pinned_today + HORIZON_DAYS`, #2601) so
+    //    `list_projected_agenda_inner` serves the query FROM THE CACHE
+    //    (a query past the horizon would route to on-the-fly, defeating
+    //    the head-to-head). Within this window every fixture block has
+    //    fewer than HORIZON_OCCURRENCES occurrences, so the cache (count-
+    //    capped) and on-the-fly (range-clipped) paths emit the same set —
+    //    parity is then a comparison on the shared
+    //    `recurrence::project_block_dates` helper.
     let range_start = pinned_today;
-    let range_end = pinned_today + chrono::Duration::days(365);
+    let range_end = pinned_today + chrono::Duration::days(crate::cache::HORIZON_DAYS);
     let range_end_str = range_end.format("%Y-%m-%d").to_string();
     let mut cached_results = Vec::new();
     let mut cursor: Option<String> = None;
@@ -3683,6 +3687,144 @@ async fn projected_agenda_cached_equals_on_the_fly() {
         );
         assert_eq!(cached.source, otf.source, "entry {i}: source mismatch");
     }
+
+    mat.shutdown();
+}
+
+/// #2601 — a query reaching PAST the bounded materialization horizon must
+/// return complete results by falling back to on-the-fly projection, not a
+/// truncated read of the count-capped cache.
+#[tokio::test]
+async fn projected_agenda_beyond_horizon_falls_back_to_on_the_fly() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // A plain `daily` (default-mode ⇒ today-independent) block with no end
+    // condition: an infinite series the cache truncates at
+    // HORIZON_OCCURRENCES rows. Default mode means the projection does not
+    // depend on `today`, so the cache rebuild (pinned today) and the
+    // on-the-fly fallback (real device today, threaded by the guard) agree.
+    let blk = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "daily forever".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let pinned_today = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
+    let base = pinned_today.format("%Y-%m-%d").to_string();
+    set_due_date_inner(&pool, DEV, &mat, blk.id.as_str().into(), Some(base.clone()))
+        .await
+        .unwrap();
+    settle(&mat).await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        blk.id.as_str().into(),
+        "repeat".into(),
+        Some("daily".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Rebuild with a pinned today: cache holds exactly HORIZON_OCCURRENCES
+    // rows and advertises horizon = pinned_today + HORIZON_DAYS.
+    crate::cache::rebuild_projected_agenda_cache_with_today(&pool, pinned_today)
+        .await
+        .unwrap();
+
+    // Query well past the horizon (pinned_today + 200 days). 200 > the
+    // 91-row cap, so a cache-only answer would be incomplete.
+    const SPAN: i64 = 200;
+    let far_end = (pinned_today + chrono::Duration::days(SPAN))
+        .format("%Y-%m-%d")
+        .to_string();
+
+    let mut via_inner: Vec<(String, String, String)> = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let page = list_projected_agenda_inner(
+            &pool,
+            base.clone(),
+            far_end.clone(),
+            cursor.clone(),
+            Some(500),
+            &SpaceScope::Global,
+        )
+        .await
+        .unwrap();
+        via_inner.extend(page.items.iter().map(|e| {
+            (
+                e.block.id.as_str().to_string(),
+                e.projected_date.clone(),
+                e.source.clone(),
+            )
+        }));
+        match page.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+
+    // The cache alone holds only the capped 91 rows — fewer than the range
+    // demands — so the guard MUST have routed to on-the-fly.
+    let cache_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM projected_agenda_cache")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        cache_rows,
+        i64::try_from(crate::cache::HORIZON_OCCURRENCES).unwrap(),
+        "cache must hold exactly the capped occurrence count"
+    );
+    assert!(
+        i64::try_from(via_inner.len()).unwrap() > cache_rows,
+        "beyond-horizon query must return more rows than the capped cache holds \
+         (got {}, cache has {cache_rows})",
+        via_inner.len()
+    );
+
+    // …and the guarded answer must equal a direct on-the-fly computation
+    // over the same range (complete, not truncated).
+    let otf = list_projected_agenda_on_the_fly(
+        &pool,
+        pinned_today,
+        pinned_today + chrono::Duration::days(SPAN),
+        500,
+        pinned_today,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let otf_tuples: Vec<(String, String, String)> = otf
+        .items
+        .iter()
+        .map(|e| {
+            (
+                e.block.id.as_str().to_string(),
+                e.projected_date.clone(),
+                e.source.clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        via_inner, otf_tuples,
+        "guarded fallback must match direct on-the-fly over the same range"
+    );
 
     mat.shutdown();
 }
@@ -3818,21 +3960,29 @@ async fn projected_agenda_prefilter_is_superset_2069() {
     let range_end = pinned_today + chrono::Duration::days(365); // 2051-04-06
     let range_end_str = range_end.format("%Y-%m-%d").to_string();
 
-    // 1. Build the cache (full expansion, no prefilter) with the pinned
-    //    `today`, then page through the cached path.
+    // 1. Build the cache with the pinned `today`, then page through the
+    //    public read path. This 365-day query reaches past the #2601 bounded
+    //    horizon (`pinned_today + 90`), so the read routes to the on-the-fly
+    //    (prefiltered) projector — `pinned_today` is threaded via the
+    //    `_with_today` variant so the future-dated `.+`/`++` fixtures anchor to
+    //    2050, not the wall clock. This keeps the assertion meaningful: it pins
+    //    the prefilter's superset output against the explicit expected set
+    //    below (cache-vs-on-the-fly parity WITHIN the horizon is covered by
+    //    `projected_agenda_cached_equals_on_the_fly`).
     crate::cache::rebuild_projected_agenda_cache_with_today(&pool, pinned_today)
         .await
         .unwrap();
     let mut cached_results = Vec::new();
     let mut cursor: Option<String> = None;
     loop {
-        let page = list_projected_agenda_inner(
+        let page = list_projected_agenda_inner_with_today(
             &pool,
             range_start.format("%Y-%m-%d").to_string(),
             range_end_str.clone(),
             cursor.clone(),
             Some(500),
             &SpaceScope::Global,
+            pinned_today,
         )
         .await
         .unwrap();
@@ -3912,11 +4062,13 @@ async fn projected_agenda_prefilter_is_superset_2069() {
     );
     assert_eq!(
         cached_pairs, expected_pairs,
-        "cache (full expansion) result must match the explicit expected set"
+        "public read path (on-the-fly fallback past the #2601 horizon) must \
+         match the explicit expected set"
     );
     assert_eq!(
         otf_pairs, cached_pairs,
-        "on-the-fly == cache: the #2069 prefilter must be a provable superset"
+        "public read path == direct on-the-fly: the #2069 prefilter must be a \
+         provable superset of the full expansion"
     );
 
     // Discriminating assertions: the today-anchored block whose base is

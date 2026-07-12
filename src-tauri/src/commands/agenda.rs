@@ -178,7 +178,28 @@ pub async fn list_projected_agenda_inner(
     limit: Option<i64>,
     scope: &SpaceScope,
 ) -> Result<PageResponse<ActiveProjectedAgendaEntry>, AppError> {
+    // Production anchors recurrence projection to the device's local day; the
+    // `_with_today` variant lets tests pin it so the cache rebuild, the #2601
+    // horizon guard, and the on-the-fly fallback all share one reference date.
     let today = chrono::Local::now().date_naive();
+    list_projected_agenda_inner_with_today(pool, start_date, end_date, cursor, limit, scope, today)
+        .await
+}
+
+/// Pinned-`today` variant of [`list_projected_agenda_inner`]. Production reads
+/// `chrono::Local::now()` via the wrapper above; tests inject a deterministic
+/// `today` so fixtures with future-dated (`.+` / `++` today-anchored) repeat
+/// rules — and the #2601 horizon fallback, which threads `today` into
+/// [`list_projected_agenda_on_the_fly`] — stay stable across the wall clock.
+pub(crate) async fn list_projected_agenda_inner_with_today(
+    pool: &SqlitePool,
+    start_date: String,
+    end_date: String,
+    cursor: Option<String>,
+    limit: Option<i64>,
+    scope: &SpaceScope,
+    today: chrono::NaiveDate,
+) -> Result<PageResponse<ActiveProjectedAgendaEntry>, AppError> {
     validate_date_format(&start_date)?;
     validate_date_format(&end_date)?;
 
@@ -221,6 +242,43 @@ pub async fn list_projected_agenda_inner(
         ));
     }
 
+    // #2601 — bounded materialization horizon guard. `projected_agenda_cache`
+    // holds only the next `HORIZON_OCCURRENCES` occurrences per repeating
+    // block per source, so it is authoritative only up to the
+    // guaranteed-complete `horizon_date` advertised (in the same transaction
+    // as the rows) by the last rebuild. A query whose `end_date` reaches past
+    // that horizon could be missing far occurrences of a dense (e.g. daily)
+    // recurrence, so it is answered by the on-the-fly projector — correct for
+    // any range — rather than the cache. An absent horizon row (cache never
+    // built, or a device still on the cold-cache path) also routes here,
+    // matching the empty-cache fallback below. The on-the-fly path honours
+    // the cursor, so mid-pagination is consistent: `end_date` is fixed across
+    // a query's pages, so every page of one query takes the same branch.
+    //
+    // `horizon_date` and `end_date` are both zero-padded `YYYY-MM-DD`, so the
+    // lexical string comparison is a valid calendar-date comparison.
+    // dynamic-sql: reads projected_agenda_horizon (table added this PR, migration 0102), dynamic so the crate builds without it in the .sqlx cache
+    let horizon_date: Option<String> = sqlx::query_scalar::<_, String>(
+        "SELECT horizon_date FROM projected_agenda_horizon WHERE id = 0",
+    )
+    .fetch_optional(pool)
+    .await?;
+    let cache_covers_range = horizon_date
+        .as_deref()
+        .is_some_and(|h| end_date.as_str() <= h);
+    if !cache_covers_range {
+        return list_projected_agenda_on_the_fly(
+            pool,
+            range_start,
+            range_end,
+            limit_i64,
+            today,
+            after.as_ref(),
+            scope.as_filter_param(),
+        )
+        .await;
+    }
+
     // Cursor parts for SQL bind. ?cursor_flag NULL → no cursor filter.
     let (cursor_flag, cursor_date, cursor_id): (Option<i64>, &str, &str) = match after.as_ref() {
         Some(c) => (
@@ -251,6 +309,7 @@ pub async fn list_projected_agenda_inner(
         Option<String>,
         Option<String>,
         Option<String>,
+        // dynamic-sql: 14-column projected-agenda cache join decoded into a positional tuple (no FromRow struct)
     )> = sqlx::query_as(
         // ?7 (space_id) drives the shared space-filter clause.
         // Mirrors `crate::space_filter_canonical::SPACE_FILTER_CANONICAL` — kept inline because this
@@ -356,7 +415,10 @@ pub async fn list_projected_agenda_inner(
 /// On-the-fly projection of repeating tasks (original algorithm).
 ///
 /// Used as a fallback when `projected_agenda_cache` is empty (e.g. first boot
-/// before the materializer has populated the cache).
+/// before the materializer has populated the cache) OR when the query reaches
+/// past the bounded materialization horizon (#2601) — see the horizon guard
+/// in [`list_projected_agenda_inner`]. This path applies no occurrence-count
+/// cap, so it is exhaustive within `[range_start, range_end]` for any range.
 ///
 /// `today` anchors `dot_plus` (`.+`) and `plus_plus` (`++`) repeat-mode
 /// projections; it is threaded in from
@@ -670,6 +732,12 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
             today,
             range_start,
             range_end,
+            // On-the-fly clips strictly by the caller's query range — no
+            // occurrence-count horizon (that bound belongs to the cache
+            // rebuild, #2601). `None` keeps this path exhaustive within
+            // `[range_start, range_end]` so cursor pagination sees every
+            // occurrence.
+            None,
             |projected, source_name| {
                 // #2040: format the date (cheap) for the cursor/cap key, but
                 // defer the block-row clone (heavy: clones `content`) to the

@@ -74,6 +74,10 @@ pub use agenda::{
 // so this re-export is gated on `#[cfg(test)]`.
 #[cfg(test)]
 pub(crate) use agenda::list_projected_agenda_on_the_fly;
+// #2601 — pinned-`today` reader variant, used by the agenda cache/fallback
+// parity + prefilter tests so a fixture's future-dated repeat rules and the
+// horizon fallback anchor to an injected reference date, not the wall clock.
+pub(crate) use agenda::list_projected_agenda_inner_with_today;
 pub use attachments::{
     add_attachment, add_attachment_inner, add_attachment_with_bytes,
     add_attachment_with_bytes_inner, delete_attachment, delete_attachment_inner, list_attachments,

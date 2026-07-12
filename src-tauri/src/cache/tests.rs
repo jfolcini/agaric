@@ -2318,32 +2318,30 @@ async fn projected_agenda_cache_basic_rebuild() {
     rebuild_projected_agenda_cache(&pool).await.unwrap();
 
     let count = count_rows(&pool, "projected_agenda_cache").await;
-    // I-Cache-7: tightened from `count > 0` to exact count.
-    // Follow-up would inject a fixed clock so this remains a strict
-    // `assert_eq!` regardless of wall-clock time of execution.
+    // #2601: the fixed 365-day calendar window was replaced by a fixed
+    // occurrence count. An unbounded weekly series is now capped at
+    // `HORIZON_OCCURRENCES` (91) materialized occurrences regardless of
+    // cadence, so the count is exact and — unlike the old calendar-window
+    // derivation — completely independent of the wall clock.
     //
-    // Derivation: due = today - 3 days, weekly repeat (+7 days),
-    // horizon = today + 365. The impl seeds `current = due`, then in each
-    // iteration shifts +7 and pushes when `current ∈ [today, today + 365]`:
-    //   Iter 1:  today + 4   (push)
-    //   Iter 2:  today + 11  (push)
-    //   ...
-    //   Iter k:  today + 4 + 7*(k-1)  — push while ≤ today + 365
-    //                                  → 7*(k-1) ≤ 361 → k ≤ 52
-    //   Iter 53: today + 368 (> horizon → break)
-    // ⇒ count = 52.
-    //
-    // Robust to a 1-day midnight rollover between the test's
-    // `chrono::Local::now()` and the impl's: for δ = impl_today - test_today
-    // ∈ {0, 1}, k_max = floor((368 + δ) / 7) = 52 and k_min = 1, so count
-    // remains 52 in both cases.
+    // Derivation: due = today - 3 days, weekly (+7 days), max_emitted = 91.
+    // The impl seeds `current = due`, shifts +7 each iteration and emits when
+    // `current >= today`:
+    //   Iter 1: today + 4, Iter 2: today + 11, … Iter k: today + 4 + 7*(k-1),
+    // stopping once 91 occurrences have been EMITTED ⇒ count = 91, spanning
+    // today+4 .. today + 4 + 7*90 = today + 634.
+    let expected = i64::try_from(crate::cache::HORIZON_OCCURRENCES).unwrap();
     assert_eq!(
-        count, 52,
-        "weekly projections from due 3 days ago over 365-day horizon (got {count})"
+        count, expected,
+        "unbounded weekly series must be capped at HORIZON_OCCURRENCES (got {count})"
     );
 
-    // All projected dates should be >= today and within 365 days
-    let horizon = (today + chrono::Duration::days(365))
+    // Every projected date must be >= today (no past occurrences materialized)
+    // and within the count-bounded reach (today + 7 * HORIZON_OCCURRENCES is a
+    // comfortable upper bound for a weekly cadence, robust to a midnight
+    // rollover between the test's and the impl's `chrono::Local::now()`).
+    let reach_days = i64::try_from(7 * crate::cache::HORIZON_OCCURRENCES).unwrap();
+    let upper = (today + chrono::Duration::days(reach_days))
         .format("%Y-%m-%d")
         .to_string();
     let today_str = today.format("%Y-%m-%d").to_string();
@@ -2353,14 +2351,14 @@ async fn projected_agenda_cache_basic_rebuild() {
          WHERE projected_date < ?1 OR projected_date > ?2",
     )
     .bind(&today_str)
-    .bind(&horizon)
+    .bind(&upper)
     .fetch_one(&pool)
     .await
     .unwrap();
 
     assert_eq!(
         invalid_count, 0,
-        "all projected dates must be in [today, today+365]"
+        "all projected dates must be >= today and within the count-bounded reach"
     );
 }
 
@@ -2644,14 +2642,14 @@ async fn projected_agenda_cache_oracle_matches_on_the_fly() {
     .await
     .unwrap();
 
-    // Step 3: Compute on-the-fly for the same range
-    let on_the_fly = crate::commands::list_projected_agenda_inner(
-        &pool,
-        start.clone(),
-        end.clone(),
-        None,
-        Some(500),
-        &crate::space::SpaceScope::Global,
+    // Step 3: Compute on-the-fly for the same range. Call the on-the-fly
+    // projector DIRECTLY (not through `list_projected_agenda_inner`, whose
+    // #2601 horizon guard would serve this in-horizon range from the cache
+    // and turn the oracle into a cache-vs-cache tautology). Within the 90-day
+    // window the count-capped cache and the range-clipped on-the-fly path must
+    // agree occurrence-for-occurrence.
+    let on_the_fly = crate::commands::list_projected_agenda_on_the_fly(
+        &pool, today, end_date, 500, today, None, None,
     )
     .await
     .unwrap();
@@ -2848,9 +2846,9 @@ async fn projected_agenda_cache_chunked_rebuild_handles_large_diff() {
     let today = chrono::Local::now().date_naive();
     let due = today.format("%Y-%m-%d").to_string();
 
-    // 10 daily-repeating blocks → ~365 projections each ⇒ >3500 rows,
-    // well above the 333-row chunk size, so the chunked code must run
-    // multiple INSERT statements within the same transaction.
+    // 10 daily-repeating blocks → HORIZON_OCCURRENCES (91) projections each
+    // ⇒ 910 rows, well above the 333-row chunk size, so the chunked code must
+    // run multiple INSERT statements within the same transaction.
     const N_BLOCKS: usize = 10;
     for i in 0..N_BLOCKS {
         let id = format!("RPTBIG{i:02}");
@@ -2889,11 +2887,11 @@ async fn projected_agenda_cache_chunked_rebuild_handles_large_diff() {
 /// computes the projection set in Rust outside the writer lock, and
 /// lands every row through the chunked INSERT on `write_pool`.
 ///
-/// Seeds 10 daily-repeating blocks with a ~365-day horizon so the
-/// rebuild produces well over `MAX_SQL_PARAMS / 3 = 333` projections,
-/// forcing at least 2 chunks of the multi-row INSERT.  Asserts
-/// per-block parity (no chunk loses rows) and end-to-end parity with
-/// the single-pool variant on `(block_id, projected_date, source)`.
+/// Seeds 10 daily-repeating blocks — HORIZON_OCCURRENCES (91) projections
+/// each ⇒ 910 rows, well over `MAX_SQL_PARAMS / 3 = 333`, forcing multiple
+/// chunks of the multi-row INSERT.  Asserts per-block parity (no chunk loses
+/// rows) and end-to-end parity with the single-pool variant on
+/// `(block_id, projected_date, source)`.
 #[tokio::test]
 async fn projected_agenda_cache_split_chunked_rebuild_handles_large_input() {
     let (pool, _dir) = test_pool().await;
@@ -2901,9 +2899,9 @@ async fn projected_agenda_cache_split_chunked_rebuild_handles_large_input() {
     let today = chrono::Local::now().date_naive();
     let due = today.format("%Y-%m-%d").to_string();
 
-    // 10 daily-repeating blocks → ~365 projections each ⇒ >3500 rows,
-    // well above the 333-row chunk size, so the chunked code must run
-    // multiple INSERT statements within the same transaction.
+    // 10 daily-repeating blocks → HORIZON_OCCURRENCES (91) projections each
+    // ⇒ 910 rows, well above the 333-row chunk size, so the chunked code must
+    // run multiple INSERT statements within the same transaction.
     const N_BLOCKS: usize = 10;
     for i in 0..N_BLOCKS {
         let id = format!("RPTSPLIT{i:02}");

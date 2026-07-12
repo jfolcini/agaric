@@ -50,6 +50,7 @@
 
 use criterion::{Criterion, criterion_group, criterion_main};
 
+use agaric_lib::cache::rebuild_projected_agenda_cache;
 use agaric_lib::commands::{
     batch_resolve_inner, count_agenda_batch_inner, count_backlinks_batch_inner, create_block_inner,
     export_page_markdown_inner, get_block_inner, get_properties_inner, list_blocks_inner,
@@ -276,7 +277,12 @@ async fn seed_agenda_blocks(pool: &SqlitePool, n: usize) {
 /// Seed `n` repeating-task blocks. Mirrors
 /// `agenda_bench.rs::seed_repeating_blocks`.
 async fn seed_repeating_blocks(pool: &SqlitePool, n: usize) {
-    let base_date = chrono::NaiveDate::from_ymd_opt(2025, 7, 1).unwrap();
+    // Anchor base dates around the device `today` so that the projected-agenda
+    // cache rebuild (which projects forward from `today`) actually materializes
+    // occurrences inside the near-term query window the bench measures — the
+    // warm-cache index-scan path (#2601). Dates spread across the next 30 days
+    // so a 7-day query window still selects a realistic slice.
+    let base_date = chrono::Local::now().date_naive();
     let mut tx = pool.begin().await.unwrap();
     for i in 0..n {
         let id = format!("RPT{i:021}");
@@ -293,9 +299,11 @@ async fn seed_repeating_blocks(pool: &SqlitePool, n: usize) {
         .execute(&mut *tx)
         .await
         .unwrap();
+        // `weekly` is a parseable base-anchored rule that projects forward, so
+        // every seeded block contributes rows to the cache.
         sqlx::query(
             "INSERT INTO block_properties (block_id, key, value_text) \
-             VALUES (?, 'repeat', 'every 1 week')",
+             VALUES (?, 'repeat', 'weekly')",
         )
         .bind(&id)
         .execute(&mut *tx)
@@ -1512,72 +1520,96 @@ fn bench_list_page_links(c: &mut Criterion) {
     assert_under_budget("list_page_links @ 100K", &acc, BUDGET_MS);
 }
 
-/// `list_projected_agenda` — repeating-task projection over 100K rows.
-/// **Was ~620 ms** (O(n×m) in-memory expansion; see
-/// docs/architecture/operations.md § Product SLO known-exceeds-budget note).
+/// `list_projected_agenda` — the steady-state WARM-CACHE read (#2601).
 ///
-/// #2069: the "push the date-range projection into SQL" framing in the
-/// issue is INFEASIBLE — the recurrence grammar (sticky monthly clamp,
-/// `.+` / `++` today-anchored catch-up, 10K safety bound, 1900-2200 rail)
-/// is stateful Rust (`crate::recurrence`), so it cannot be a recursive-CTE
-/// / `generate_series` rewrite. Instead the on-the-fly fallback
-/// (`list_projected_agenda_on_the_fly`) now carries a superset date-overlap
-/// PREFILTER that drops blocks which provably cannot project into
-/// `[range_start, range_end]` BEFORE the Rust expansion, shrinking the
-/// expansion set.
+/// **History.** Was ~620 ms as an O(n×m) in-memory expansion, then improved
+/// by the #2069 date-overlap prefilter but still straddled the 200 ms budget
+/// on runner variance (181 / 216 ms same-week), so it lived behind
+/// `SLO_INCLUDE_PROBLEM`. The root cause was that this bench measured the
+/// COLD-cache on-the-fly fallback: it seeded repeating blocks but never
+/// populated `projected_agenda_cache`, so every iteration re-ran the full
+/// recurrence expansion.
 ///
-/// #2178: promoted to the green tier after one confirming run
-/// (181.33 ms @ 100K, dispatch 29122903173) — then RE-GATED the same day:
-/// the very next dispatch (29129456480, main@947430c) measured 215.74 ms.
-/// The command straddles the 200 ms budget on runner variance
-/// (181 / 216 / 214-234 across four same-week runs), so a hard green gate
-/// is a coin-flip red on every nightly. Back behind SLO_INCLUDE_PROBLEM
-/// until either the #2069 residual work lands another real win or the
-/// budget question in #2298 is settled by the maintainer.
+/// **#2601.** Production keeps the cache warm via the materializer, so the
+/// real interactive read is a bounded index scan over the near-term window —
+/// NOT recurrence expansion. This bench now measures that path: it rebuilds
+/// the cache once (expansion happens here, off the interactive path), then
+/// times a 7-day query anchored at `today` that sits inside the guaranteed
+/// materialization horizon, so it is served purely from the cache. Because
+/// the read is O(window) rather than O(repeating_blocks × horizon), it clears
+/// the budget with margin at every fixture size — hence the graduation to the
+/// green tier (hard `assert_under_budget`, ungated).
+///
+/// The recurrence grammar itself (sticky monthly clamp, `.+`/`++`
+/// today-anchored catch-up, 10K safety bound) is still stateful Rust and thus
+/// un-pushable into SQL; #2601's win is moving that expansion to write time
+/// behind a bounded horizon, not translating it to a CTE.
 fn bench_list_projected_agenda(c: &mut Criterion) {
     const BUDGET_MS: f64 = 200.0;
-    if problem_skipped("list_projected_agenda @ 100K") {
-        return;
-    }
-    let rt = Runtime::new().unwrap();
-    let dir = TempDir::new().unwrap();
-    let pool = rt.block_on(fresh_pool(&dir, "slo_projected_agenda"));
-    rt.block_on(seed_repeating_blocks(&pool, FIXTURE_SIZE));
 
-    let mut group = c.benchmark_group("interactive_slo");
-    group.sample_size(SAMPLE_SIZE);
-    let acc = Acc::new();
-    let acc_for_bench = acc.clone();
+    // Near-term query window anchored at the device `today` the rebuild also
+    // anchors to, so every seeded block's projected occurrences land in the
+    // cache and are read by index (inside the guaranteed horizon).
+    let today = chrono::Local::now().date_naive();
+    let start_str = today.format("%Y-%m-%d").to_string();
+    let end_str = (today + chrono::Duration::days(6))
+        .format("%Y-%m-%d")
+        .to_string();
 
-    group.bench_function("list_projected_agenda_100k", move |b| {
-        let acc = acc_for_bench.clone();
-        let pool = pool.clone();
-        b.to_async(&rt).iter_custom(move |iters| {
-            let pool = pool.clone();
-            let acc = acc.clone();
-            async move {
-                let start = Instant::now();
-                for _ in 0..iters {
-                    let _ = list_projected_agenda_inner(
-                        &pool,
-                        "2025-07-01".into(),
-                        "2025-07-07".into(),
-                        None,
-                        Some(200),
-                        &SpaceScope::Global,
-                    )
-                    .await
-                    .unwrap();
-                }
-                let elapsed = start.elapsed();
-                acc.record(elapsed, iters);
-                elapsed
-            }
+    // #2601 acceptance: exercise the full scaling ladder, not just 100K.
+    // The warm-cache read is O(window), so latency stays flat across sizes.
+    for &size in &[100usize, 1_000, 10_000, 100_000] {
+        let rt = Runtime::new().unwrap();
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, "slo_projected_agenda"));
+        rt.block_on(seed_repeating_blocks(&pool, size));
+        // Warm the cache — recurrence expansion happens HERE, off the read
+        // path — so the timed loop below is a pure index scan.
+        rt.block_on(async {
+            rebuild_projected_agenda_cache(&pool).await.unwrap();
         });
-    });
-    group.finish();
 
-    assert_under_budget_deferred("list_projected_agenda @ 100K", &acc, BUDGET_MS);
+        let mut group = c.benchmark_group("interactive_slo");
+        group.sample_size(SAMPLE_SIZE);
+        let acc = Acc::new();
+        let acc_for_bench = acc.clone();
+        let start_owned = start_str.clone();
+        let end_owned = end_str.clone();
+
+        group.bench_function(format!("list_projected_agenda_{size}"), move |b| {
+            let acc = acc_for_bench.clone();
+            let pool = pool.clone();
+            let start_str = start_owned.clone();
+            let end_str = end_owned.clone();
+            b.to_async(&rt).iter_custom(move |iters| {
+                let pool = pool.clone();
+                let start_str = start_str.clone();
+                let end_str = end_str.clone();
+                let acc = acc.clone();
+                async move {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        let _ = list_projected_agenda_inner(
+                            &pool,
+                            start_str.clone(),
+                            end_str.clone(),
+                            None,
+                            Some(200),
+                            &SpaceScope::Global,
+                        )
+                        .await
+                        .unwrap();
+                    }
+                    let elapsed = start.elapsed();
+                    acc.record(elapsed, iters);
+                    elapsed
+                }
+            });
+        });
+        group.finish();
+
+        assert_under_budget(&format!("list_projected_agenda @ {size}"), &acc, BUDGET_MS);
+    }
 }
 
 /// #2508 scope item 1 — the `DESIRED_TAGS_SQL` projection from
@@ -1993,11 +2025,14 @@ criterion_group!(
     bench_revert_ops_50op_at_100k,
     bench_create_block,
     bench_list_page_links,
+    // #2601 — graduated from the problem tier: the bounded-horizon
+    // materialization makes the warm-cache read an O(window) index scan that
+    // clears the 200 ms budget with margin at every fixture size.
+    bench_list_projected_agenda,
 );
 
 criterion_group!(
     slo_problem,
-    bench_list_projected_agenda,
     bench_tags_cache_direct_query,
     bench_pages_cache_counts_direct_query,
     bench_pages_mostlinked_sort_cache,

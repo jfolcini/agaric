@@ -199,8 +199,8 @@ async fn move_block_into_template_page_rebuilds_projected_agenda_cache() {
     let mat = Materializer::new(pool.clone());
 
     // A due_date near "today" so the daily-repeating block projects at least
-    // one occurrence within the cache's 365-day horizon (the task handler
-    // rebuilds against `chrono::Local::now()`).
+    // one occurrence within the cache's bounded materialization horizon (the
+    // task handler rebuilds against `chrono::Local::now()`).
     let due = chrono::Local::now()
         .date_naive()
         .format("%Y-%m-%d")

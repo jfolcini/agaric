@@ -65,6 +65,18 @@
 ///     * `current >= range_start` → emit; otherwise advance silently
 ///       and keep iterating. Either way the occurrence consumes one unit
 ///       of the `remaining` budget (see above).
+/// - Materialization horizon (`max_emitted`, #2601): caps the number of
+///   in-range occurrences EMITTED per source. `None` is unbounded (the
+///   on-the-fly read path, which clips by the caller's query range
+///   instead). The projected-agenda cache passes `Some(N)` so exactly the
+///   next N future occurrences per source are materialized. Counted ONLY
+///   on emit — never on a pre-`range_start` silent advance — so the number
+///   of materialized future rows is exact no matter how far in the past
+///   the base date sits (contrast `remaining`, which tracks series
+///   position). With `max_emitted = Some(N)` and `range_end` set to a
+///   far-future sentinel, the count is the sole horizon bound, so the
+///   materialized calendar reach scales with cadence (daily ⇒ ~N days,
+///   weekly ⇒ ~N weeks).
 ///
 /// Source iteration order is fixed: `due_date` first, then
 /// `scheduled_date`. Both the cache and on-the-fly paths previously
@@ -85,9 +97,11 @@
 /// emit-check), so a difference in clip boundary by even one day at
 /// either end produces a 1-2 entry drift in long windows. The new
 /// shared signature pushes the clip boundaries onto the caller —
-/// the cache passes `range_start = today, range_end = today + 365d`
-/// and the on-the-fly path passes its caller-supplied range
-/// directly — so both paths see one set of bounds and one comparator.
+/// since #2601 the cache passes `range_start = today`, a far-future
+/// `range_end` sentinel, and `max_emitted = Some(HORIZON_OCCURRENCES)`
+/// (so a fixed occurrence count, not a calendar window, bounds it), while
+/// the on-the-fly path passes its caller-supplied range and `max_emitted =
+/// None` — so both paths see one set of bounds and one comparator.
 //
 // `too_many_arguments` is deliberate here: each argument corresponds to
 // one columnar input the two callsites already destructure off
@@ -105,6 +119,7 @@ pub(crate) fn project_block_dates<F>(
     today: chrono::NaiveDate,
     range_start: chrono::NaiveDate,
     range_end: chrono::NaiveDate,
+    max_emitted: Option<usize>,
     mut emit: F,
 ) where
     F: FnMut(chrono::NaiveDate, &'static str),
@@ -192,6 +207,17 @@ pub(crate) fn project_block_dates<F>(
 
         let mut projected_count = 0usize;
         let max_remaining = remaining.unwrap_or(usize::MAX);
+        // Materialization-horizon cap (#2601). Counts occurrences actually
+        // EMITTED (in-range, i.e. `>= range_start`), independently of the
+        // `remaining` series-position budget above. The projected-agenda
+        // cache passes `Some(HORIZON_OCCURRENCES)` so exactly the next N
+        // future occurrences per source are materialized; the on-the-fly
+        // path passes `None` (it clips by the caller's query range instead).
+        // Unlike `remaining`, this budget is NOT consumed by pre-range
+        // silent advances, so the count of materialized *future* rows is
+        // exact regardless of how far in the past the base date sits.
+        let mut emitted_count = 0usize;
+        let emit_budget = max_emitted.unwrap_or(usize::MAX);
 
         // For `++` mode, pre-emit the caught-up date itself when it is not
         // past `until_date` and lands within `range_end`. The main loop
@@ -208,6 +234,7 @@ pub(crate) fn project_block_dates<F>(
             if !past_until {
                 if current >= range_start {
                     emit(current, source_name);
+                    emitted_count += 1;
                 }
                 projected_count += 1;
             }
@@ -216,6 +243,12 @@ pub(crate) fn project_block_dates<F>(
         // Main projection loop with the 10 000-step safety bound.
         for _ in 0..10_000 {
             if projected_count >= max_remaining {
+                break;
+            }
+            // Materialization-horizon cap: stop once the next N future
+            // occurrences have been emitted (#2601). No-op when the caller
+            // passes `max_emitted = None` (`emit_budget = usize::MAX`).
+            if emitted_count >= emit_budget {
                 break;
             }
 
@@ -247,6 +280,7 @@ pub(crate) fn project_block_dates<F>(
             projected_count += 1;
             if current >= range_start {
                 emit(current, source_name);
+                emitted_count += 1;
             }
         }
     }
