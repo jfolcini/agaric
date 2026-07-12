@@ -3459,18 +3459,25 @@ describe('PageBrowser', () => {
         .map((r) => r.querySelector('.page-browser-item-title')?.textContent)
     }
 
-    it('most-linked orders by inboundLinkCount DESC with alphabetical tiebreaker', async () => {
+    // #2602 Part A — the three server-derived sorts are ordered by the SQL
+    // `ORDER BY (<key> DESC, id ASC)`; PageBrowser renders the rows in the
+    // received order without a client re-sort. The mocks return rows in the
+    // order the real server would (which is neither alphabetical nor id-ASC),
+    // and each test asserts that exact order survives to the DOM — proving
+    // the SQL ordering is the single authority.
+    it('renders most-linked rows in server order (inboundLinkCount DESC, id ASC), no client re-sort', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
         if (cmd === 'list_pages_with_metadata') {
           return Promise.resolve({
+            // Server order: Banana(5), Date(3), then the 1-count tie resolved
+            // server-side by id ASC → Apple(P1) before Cherry(P3).
             items: [
-              // Two-tie at link count 1 → alphabetical tiebreaker (Apple, Cherry).
-              makeMetaPage({ id: 'P1', content: 'Apple', inboundLinkCount: 1 }),
               makeMetaPage({ id: 'P2', content: 'Banana', inboundLinkCount: 5 }),
-              makeMetaPage({ id: 'P3', content: 'Cherry', inboundLinkCount: 1 }),
               makeMetaPage({ id: 'P4', content: 'Date', inboundLinkCount: 3 }),
+              makeMetaPage({ id: 'P1', content: 'Apple', inboundLinkCount: 1 }),
+              makeMetaPage({ id: 'P3', content: 'Cherry', inboundLinkCount: 1 }),
             ],
             next_cursor: null,
             has_more: false,
@@ -3491,17 +3498,18 @@ describe('PageBrowser', () => {
       })
     })
 
-    it('most-content orders by childBlockCount DESC with alphabetical tiebreaker', async () => {
+    it('renders most-content rows in server order (childBlockCount DESC, id ASC), no client re-sort', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
         if (cmd === 'list_pages_with_metadata') {
           return Promise.resolve({
+            // Server order: Banana(10), Date(7), then the 2-count tie by id ASC.
             items: [
-              makeMetaPage({ id: 'P1', content: 'Apple', childBlockCount: 2 }),
               makeMetaPage({ id: 'P2', content: 'Banana', childBlockCount: 10 }),
-              makeMetaPage({ id: 'P3', content: 'Cherry', childBlockCount: 2 }),
               makeMetaPage({ id: 'P4', content: 'Date', childBlockCount: 7 }),
+              makeMetaPage({ id: 'P1', content: 'Apple', childBlockCount: 2 }),
+              makeMetaPage({ id: 'P3', content: 'Cherry', childBlockCount: 2 }),
             ],
             next_cursor: null,
             has_more: false,
@@ -3522,33 +3530,34 @@ describe('PageBrowser', () => {
       })
     })
 
-    it('recently-modified orders by lastModifiedAt DESC with alphabetical tiebreaker', async () => {
+    it('renders recently-modified rows in server order (lastModifiedAt DESC, id ASC), no client re-sort', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
         if (cmd === 'list_pages_with_metadata') {
           return Promise.resolve({
+            // Server order: Banana (newest), Date, then the Apple/Cherry
+            // timestamp tie resolved server-side by id ASC.
             items: [
+              makeMetaPage({
+                id: 'P2',
+                content: 'Banana',
+                lastModifiedAt: 1772323200000,
+              }),
+              makeMetaPage({
+                id: 'P4',
+                content: 'Date',
+                lastModifiedAt: 1769904000000,
+              }),
               makeMetaPage({
                 id: 'P1',
                 content: 'Apple',
                 lastModifiedAt: 1767225600000,
               }),
               makeMetaPage({
-                id: 'P2',
-                content: 'Banana',
-                lastModifiedAt: 1772323200000,
-              }),
-              // Same timestamp as Apple → alphabetical tiebreaker.
-              makeMetaPage({
                 id: 'P3',
                 content: 'Cherry',
                 lastModifiedAt: 1767225600000,
-              }),
-              makeMetaPage({
-                id: 'P4',
-                content: 'Date',
-                lastModifiedAt: 1769904000000,
               }),
             ],
             next_cursor: null,
