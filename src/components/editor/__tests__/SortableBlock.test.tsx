@@ -320,6 +320,7 @@ function makeRovingEditor() {
     splitAtCaret: vi.fn(() => null),
     originalMarkdown: '',
     setOnMarkdownChange: vi.fn(),
+    markCommitted: vi.fn(),
   }
 }
 

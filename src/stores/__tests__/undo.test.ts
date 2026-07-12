@@ -777,6 +777,100 @@ describe('useUndoStore', () => {
       })
     })
 
+    describe('#2600 — coalesceKey session grouping (block-level undo for debounced commits)', () => {
+      it('same coalesceKey merges into ONE entry even long past the timed window', () => {
+        vi.useFakeTimers()
+        try {
+          vi.setSystemTime(1_000_000)
+          useUndoStore.getState().onNewAction('page1', [ref(1)], 'edit:A')
+          // Ten windows later — a keyless action would start a NEW entry, but a
+          // block's next debounced commit must still fold into the same undo.
+          vi.setSystemTime(1_000_000 + UNDO_GROUP_WINDOW_MS * 10)
+          useUndoStore.getState().onNewAction('page1', [ref(2)], 'edit:A')
+
+          const stack = useUndoStore.getState().pages.get('page1')?.undoStack
+          expect(stack).toHaveLength(1)
+          expect(stack?.[0]?.refs).toEqual([ref(1), ref(2)])
+          expect(stack?.[0]?.coalesceKey).toBe('edit:A')
+        } finally {
+          vi.useRealTimers()
+        }
+      })
+
+      it('a DIFFERENT coalesceKey (another block) does NOT merge across the window gap', () => {
+        vi.useFakeTimers()
+        try {
+          vi.setSystemTime(2_000_000)
+          useUndoStore.getState().onNewAction('page1', [ref(1)], 'edit:A')
+          // Past the timed window: `edit:A` would still fold in by key, but a
+          // different block's commit must start its own undo entry.
+          vi.setSystemTime(2_000_000 + UNDO_GROUP_WINDOW_MS + 1)
+          useUndoStore.getState().onNewAction('page1', [ref(2)], 'edit:B')
+
+          const stack = useUndoStore.getState().pages.get('page1')?.undoStack
+          expect(stack).toHaveLength(2)
+          expect(stack?.[0]?.refs).toEqual([ref(2)])
+          expect(stack?.[1]?.refs).toEqual([ref(1)])
+        } finally {
+          vi.useRealTimers()
+        }
+      })
+
+      it('within the timed window, coalescing stays key-agnostic (legacy #2468 burst grouping preserved)', () => {
+        vi.useFakeTimers()
+        try {
+          vi.setSystemTime(2_500_000)
+          useUndoStore.getState().onNewAction('page1', [ref(1)], 'edit:A')
+          // Two DIFFERENT keys inside the 500ms window still merge — the change
+          // only EXTENDS grouping for same-key sessions, never narrows the
+          // existing burst window.
+          vi.setSystemTime(2_500_000 + 10)
+          useUndoStore.getState().onNewAction('page1', [ref(2)], 'edit:B')
+
+          expect(useUndoStore.getState().pages.get('page1')?.undoStack).toHaveLength(1)
+        } finally {
+          vi.useRealTimers()
+        }
+      })
+
+      it('a keyless action still coalesces ONLY within the timed window (unchanged #2468 behavior)', () => {
+        vi.useFakeTimers()
+        try {
+          vi.setSystemTime(3_000_000)
+          useUndoStore.getState().onNewAction('page1', [ref(1)])
+          vi.setSystemTime(3_000_000 + UNDO_GROUP_WINDOW_MS + 1)
+          useUndoStore.getState().onNewAction('page1', [ref(2)])
+
+          expect(useUndoStore.getState().pages.get('page1')?.undoStack).toHaveLength(2)
+        } finally {
+          vi.useRealTimers()
+        }
+      })
+
+      it('a coalesced same-key session reverts as ONE atomic undoOps (newest-first)', async () => {
+        vi.useFakeTimers()
+        try {
+          vi.setSystemTime(4_000_000)
+          useUndoStore.getState().onNewAction('page1', [ref(1)], 'edit:A')
+          vi.setSystemTime(4_000_000 + UNDO_GROUP_WINDOW_MS * 5)
+          useUndoStore.getState().onNewAction('page1', [ref(2)], 'edit:A')
+        } finally {
+          vi.useRealTimers()
+        }
+
+        mockedUndoOps.mockResolvedValueOnce([
+          makeUndoResult({ deviceId: 'dev1', seq: 2 }),
+          makeUndoResult({ deviceId: 'dev1', seq: 1 }),
+        ])
+        await useUndoStore.getState().undo('page1')
+
+        expect(mockedUndoOps).toHaveBeenCalledTimes(1)
+        expect(mockedUndoOps).toHaveBeenCalledWith({ ops: [ref(2), ref(1)] })
+        expect(mockedUndoOp).not.toHaveBeenCalled()
+        expect(useUndoStore.getState().pages.get('page1')?.undoStack).toEqual([])
+      })
+    })
+
     describe('undo submits the CAPTURED ref (#2446 race)', () => {
       it('uses undoOp with the exact captured ref even when newer ops landed in between', async () => {
         useUndoStore.getState().onNewAction('page1', [ref(5)])

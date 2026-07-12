@@ -38,6 +38,7 @@ function makeRovingEditor(): RovingEditorHandle {
     splitAtCaret: vi.fn(() => null),
     originalMarkdown: '',
     setOnMarkdownChange: vi.fn(),
+    markCommitted: vi.fn(),
   } as unknown as RovingEditorHandle
 }
 

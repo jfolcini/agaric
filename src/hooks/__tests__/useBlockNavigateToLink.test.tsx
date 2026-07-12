@@ -214,6 +214,7 @@ describe('useBlockNavigateToLink', () => {
           splitAtCaret: () => null,
           originalMarkdown: '',
           setOnMarkdownChange: vi.fn(),
+          markCommitted: vi.fn(),
         },
         handleFlush: () => null,
         load,

@@ -16,6 +16,7 @@ import { StaticBlock } from '@/components/editor/StaticBlock'
 import { FormattingToolbar } from '@/components/FormattingToolbar'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { shouldSplitOnBlur } from '@/editor/use-roving-editor'
+import { useDebouncedContentCommit } from '@/hooks/useDebouncedContentCommit'
 import { useDraftAutosave } from '@/hooks/useDraftAutosave'
 import { useEditorBlur } from '@/hooks/useEditorBlur'
 import { useScrollCaretAboveKeyboard } from '@/hooks/useScrollCaretAboveKeyboard'
@@ -326,6 +327,13 @@ function EditableBlockInner({
   }, [isFocused, blockId])
 
   const { discardDraft } = useDraftAutosave(isFocused ? blockId : null, liveContent)
+
+  // #2600 — commit content to the op log on a short idle debounce (in addition
+  // to blur) so concurrent same-block edits interleave through the LoroText
+  // char-CRDT instead of collapsing to "later blur wins". Selection-safe: the
+  // editor is uncontrolled after mount, so the store update this dispatches
+  // never re-feeds the live editor or perturbs the caret.
+  useDebouncedContentCommit({ isFocused, blockId, liveContent, rovingEditorRef, edit })
 
   // Scroll the editor wrapper into view when the block becomes focused, and
   // keep its caret above the on-screen soft keyboard while focused (#917).

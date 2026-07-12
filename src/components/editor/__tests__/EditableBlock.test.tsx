@@ -143,6 +143,7 @@ function makeRovingEditor(
     getMarkdown: ReturnType<typeof vi.fn>
     originalMarkdown: string
     setOnMarkdownChange: ReturnType<typeof vi.fn>
+    markCommitted: ReturnType<typeof vi.fn>
   }> = {},
 ) {
   return {
@@ -153,6 +154,7 @@ function makeRovingEditor(
     getMarkdown: overrides.getMarkdown ?? vi.fn(() => null),
     originalMarkdown: overrides.originalMarkdown ?? 'existing content',
     setOnMarkdownChange: overrides.setOnMarkdownChange ?? vi.fn(),
+    markCommitted: overrides.markCommitted ?? vi.fn(),
   }
 }
 

@@ -103,6 +103,15 @@ export interface UndoStackEntry {
    * consecutive-gap grouping in `undo_page_group`.
    */
   at: number
+  /**
+   * #2600 — optional "session" key. Consecutive actions carrying the SAME
+   * defined key coalesce into one entry REGARDLESS of elapsed time (in
+   * addition to the timed window), so a block's mid-typing debounced commits +
+   * its final blur commit revert as a single Ctrl+Z. Content edits pass
+   * `edit:<blockId>`; actions that omit the key keep the pure timed-window
+   * behavior (#2468). `undefined` never matches (including another `undefined`).
+   */
+  coalesceKey?: string | undefined
 }
 
 interface PageUndoState {
@@ -180,8 +189,13 @@ interface UndoStore {
    * is undoable — the call is ignored entirely (no entry push, and no redo
    * invalidation for an action that changed nothing). Callers should skip
    * the notification themselves in that case; this guard is defense-in-depth.
+   *
+   * #2600 — `coalesceKey` (optional) groups consecutive actions that share the
+   * same defined key into ONE entry regardless of elapsed time (content edits
+   * pass `edit:<blockId>`), so a block's debounced mid-typing commits fold into
+   * a single undo step. Omit it for the pure timed-window behavior (#2468).
    */
-  onNewAction: (pageId: string, opRefs?: OpRef[]) => void
+  onNewAction: (pageId: string, opRefs?: OpRef[], coalesceKey?: string) => void
 
   /** Clear undo state for a page (called on navigation away). */
   clearPage: (pageId: string) => void
@@ -582,7 +596,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       return pageState != null && pageState.redoStack.length > 0
     },
 
-    onNewAction: (pageId: string, opRefs?: OpRef[]) => {
+    onNewAction: (pageId: string, opRefs?: OpRef[], coalesceKey?: string) => {
       // Idempotent no-op (`op_refs: []` — e.g. add_tag on an already-tagged
       // block): the backend appended nothing, so there is nothing to undo and
       // no reason to invalidate redo history. Ignore entirely (see interface
@@ -594,21 +608,30 @@ export const useUndoStore = create<UndoStore>((set, get) => {
         pages: setPageState(state.pages, pageId, (current) => {
           const base = current ?? emptyPageState()
           const top = base.undoStack[0]
+          // #2600 — a defined `coalesceKey` matching the top entry's key
+          // extends its group REGARDLESS of elapsed time (a block's mid-typing
+          // debounced commits pause longer than the timed window), in addition
+          // to the #2468 timed window for ref bursts. `undefined` never matches.
+          const sameKeyGroup =
+            top !== undefined && coalesceKey !== undefined && top.coalesceKey === coalesceKey
+          const withinWindow =
+            top !== undefined && now - top.at <= UNDO_GROUP_WINDOW_MS && now >= top.at
           let undoStack: UndoStackEntry[]
-          if (top && now - top.at <= UNDO_GROUP_WINDOW_MS && now >= top.at) {
-            // Capture-time coalescing: this action joins the top entry's
-            // group (sliding window — `at` advances to the newest action).
-            // The merged entry stays ref-addressed only when BOTH sides carry
-            // refs; a ref-less participant degrades the whole group to the
-            // positional fallback, which the backend groups over the same
-            // window — one Ctrl+Z still reverts the burst, positionally.
+          if (top !== undefined && (sameKeyGroup || withinWindow)) {
+            // Capture-time coalescing: this action joins the top entry's group
+            // (`at` advances to the newest action; the entry adopts this
+            // action's `coalesceKey` so the session identity tracks the latest
+            // commit). The merged entry stays ref-addressed only when BOTH
+            // sides carry refs; a ref-less participant degrades the whole group
+            // to the positional fallback, which the backend groups over the
+            // same window — one Ctrl+Z still reverts the burst, positionally.
             const merged: UndoStackEntry =
               top.refs !== null && opRefs !== undefined
-                ? { refs: [...top.refs, ...opRefs], at: now }
-                : { refs: null, at: now }
+                ? { refs: [...top.refs, ...opRefs], at: now, coalesceKey }
+                : { refs: null, at: now, coalesceKey }
             undoStack = [merged, ...base.undoStack.slice(1)]
           } else {
-            undoStack = [{ refs: opRefs ?? null, at: now }, ...base.undoStack].slice(
+            undoStack = [{ refs: opRefs ?? null, at: now, coalesceKey }, ...base.undoStack].slice(
               0,
               MAX_UNDO_STACK,
             )
