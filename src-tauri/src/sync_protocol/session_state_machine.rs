@@ -168,6 +168,16 @@ pub struct SyncOrchestrator {
     /// (deserializes the flag as `false`) is never sent the variant it
     /// cannot decode.
     peer_op_log_replication: bool,
+    /// #2593: `true` once the peer advertised
+    /// `HeadExchange { op_log_batch_chunked: true }` — it can decode the
+    /// chunked `OpLogBatchChunked` transport. The streamer only ships an
+    /// oversized (over-inline-bound) op batch to such a peer; a peer that
+    /// advertised `op_log_replication` but NOT this capability (a shipped #2481
+    /// build) has the oversized record skipped instead, so it never receives an
+    /// `OpLogBatchChunked` frame it cannot deserialize (which would fault the
+    /// session, and — since the record persists — every subsequent session).
+    /// Mirrors the #2200 `wire_compression` capability gate.
+    peer_op_log_batch_chunked: bool,
     /// #2481 phase 1: the peer's advertised per-device op-log frontiers
     /// (`HeadExchange.heads`), stashed so the streamer can compute which op
     /// records the peer still lacks (`seq > the peer's frontier per device`)
@@ -218,6 +228,7 @@ impl SyncOrchestrator {
             streamed_to_peer: false,
             peer_advertised_loro_vvs: Vec::new(),
             peer_op_log_replication: false,
+            peer_op_log_batch_chunked: false,
             peer_advertised_heads: Vec::new(),
             pending_op_batches: VecDeque::new(),
             pending_ingest_records: Vec::new(),
@@ -311,6 +322,11 @@ impl SyncOrchestrator {
             // `LoroSync` back to us) reads this flag and only then
             // compresses; an older responder ignores it and streams raw.
             wire_compression: true,
+            // #2593: advertise that we can decode the chunked `OpLogBatchChunked`
+            // transport, so a streamer may ship us an oversized op batch. A
+            // shipped #2481 peer omits this (→ `false`) and the streamer skips
+            // the oversized record instead of sending a frame it cannot decode.
+            op_log_batch_chunked: true,
         })
     }
 
@@ -464,6 +480,11 @@ impl SyncOrchestrator {
                 // reads it off the received `HeadExchange` and records it
                 // on the `SyncConnection`. Ignored by this core.
                 wire_compression: _,
+                // #2593: the peer's chunked-OpLogBatch capability gates whether
+                // we ship it an oversized (over-inline-bound) op batch — stashed
+                // at `peer_op_log_batch_chunked` and honoured by
+                // `collect_op_batches_for_peer`.
+                op_log_batch_chunked,
             } => {
                 // Gate raw-byte Loro merges by engine format before doing any
                 // import work (#2130). An incompatible peer is rejected up
@@ -529,6 +550,10 @@ impl SyncOrchestrator {
                 // deltas (only when the peer advertised the capability).
                 self.peer_advertised_heads = heads.clone();
                 self.peer_op_log_replication = op_log_replication;
+                // #2593: stash the peer's chunked-OpLogBatch capability so
+                // `collect_op_batches_for_peer` only ships an oversized batch to
+                // a peer that can decode the chunked transport.
+                self.peer_op_log_batch_chunked = op_log_batch_chunked;
 
                 // Check whether a reset is required — own-lineage-loss in Loro
                 // VV space (#2502, retiring the op-log-seq heads check, #87
@@ -1226,20 +1251,63 @@ impl SyncOrchestrator {
     /// inline JSON frame ([`batch_ops_for_wire`]).
     ///
     /// A single op record larger than the inline bound (a sync-applied/imported
-    /// op whose `payload` carries a large block `content`) still ships — it
-    /// lands in its own batch and the wire layer (`sync_daemon::wire`) sends it
-    /// via the chunked [`SyncMessage::OpLogBatchChunked`] transport (#2593)
-    /// rather than dropping it at the 10 MB frame cap. No per-record filtering
-    /// happens here.
+    /// op whose `payload` carries a large block `content`) lands in its own
+    /// batch. Whether that oversized batch actually ships depends on the peer's
+    /// capabilities (#2593):
+    ///
+    /// * **Peer advertised `op_log_batch_chunked`** → the batch ships; the wire
+    ///   layer (`sync_daemon::wire`) sends it via the chunked
+    ///   [`SyncMessage::OpLogBatchChunked`] transport rather than dropping it at
+    ///   the 10 MB frame cap.
+    /// * **Peer did NOT** (a shipped #2481 build that knows `OpLogBatch` but not
+    ///   the chunked envelope) → the oversized batch is **skipped with a
+    ///   warning**, exactly as before #2593. This is the critical back-compat
+    ///   guard: shipping such a peer an `OpLogBatchChunked` frame it cannot
+    ///   deserialize would fault the session, and because the oversized record
+    ///   persists, every subsequent session too — breaking *all* state sync, not
+    ///   just audit. Its state still syncs via the chunked `LoroSync` path.
+    ///
+    /// A batch exceeding [`MAX_OP_LOG_BATCH_PAYLOAD_SIZE`] (256 MB) is skipped
+    /// unconditionally — even the chunked transport cannot ship it, so it would
+    /// fault the send regardless of capability.
+    ///
+    /// [`MAX_OP_LOG_BATCH_PAYLOAD_SIZE`]: crate::sync_constants::MAX_OP_LOG_BATCH_PAYLOAD_SIZE
     async fn collect_op_batches_for_peer(&self) -> Result<Vec<Vec<OpTransfer>>, AppError> {
         if !self.peer_op_log_replication {
             return Ok(Vec::new());
         }
+        use crate::sync_constants::{MAX_OP_LOG_BATCH_PAYLOAD_SIZE, OP_LOG_BATCH_INLINE_MAX_BYTES};
         let records = collect_ops_for_peer(&self.pool, &self.peer_advertised_heads).await?;
-        Ok(batch_ops_for_wire(
-            records,
-            crate::sync_constants::OP_LOG_BATCH_INLINE_MAX_BYTES,
-        ))
+        let mut batches = batch_ops_for_wire(records, OP_LOG_BATCH_INLINE_MAX_BYTES);
+        // #2593 back-compat + hard-cap guard. `batch_ops_for_wire` isolates any
+        // over-inline-bound record in its own batch, so filtering at the batch
+        // level drops exactly the offending record(s).
+        batches.retain(|batch| {
+            let size = serde_json::to_string(batch).map_or(usize::MAX, |s| s.len());
+            if size as u64 > MAX_OP_LOG_BATCH_PAYLOAD_SIZE {
+                tracing::warn!(
+                    device_id = %self.device_id,
+                    size,
+                    cap = MAX_OP_LOG_BATCH_PAYLOAD_SIZE,
+                    "#2593: skipping an op batch that exceeds the chunked-transport cap \
+                     (unshippable even chunked); its state still syncs via LoroSync"
+                );
+                return false;
+            }
+            if size > OP_LOG_BATCH_INLINE_MAX_BYTES && !self.peer_op_log_batch_chunked {
+                tracing::warn!(
+                    device_id = %self.device_id,
+                    size,
+                    cap = OP_LOG_BATCH_INLINE_MAX_BYTES,
+                    "#2593: skipping an oversized op batch for a peer that lacks the \
+                     chunked-OpLogBatch capability (older #2481 build); its state still \
+                     syncs via LoroSync"
+                );
+                return false;
+            }
+            true
+        });
+        Ok(batches)
     }
 
     /// Complete a pull session on the puller (initiator) side: record the

@@ -1040,6 +1040,7 @@ async fn handle_incoming_sync_rejects_sync_with_self() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await
         .unwrap();
@@ -1295,6 +1296,7 @@ async fn handle_incoming_sync_rejects_unpaired_device() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await
         .unwrap();
@@ -1638,6 +1640,7 @@ async fn inmem_handle_incoming_sync_rejects_self() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await
         .unwrap();
@@ -1703,6 +1706,7 @@ async fn inmem_handle_incoming_sync_rejects_unidentifiable_peer() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await
         .unwrap();
@@ -1765,6 +1769,7 @@ async fn inmem_handle_incoming_sync_rejects_unpaired() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await
         .unwrap();
@@ -1836,6 +1841,7 @@ async fn inmem_handle_incoming_sync_rejects_busy_peer() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await
         .unwrap();
@@ -1933,6 +1939,7 @@ async fn inmem_handle_incoming_sync_admits_first_connection_while_pairing_pendin
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await
         .unwrap();
@@ -2018,6 +2025,7 @@ async fn inmem_handle_incoming_sync_rejects_unpaired_without_pending_marker() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await
         .unwrap();
@@ -2102,6 +2110,7 @@ async fn handle_incoming_sync_aborts_on_cancel_and_releases_lock() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await
         .unwrap();
@@ -2249,6 +2258,7 @@ async fn inmem_handle_incoming_sync_rejects_cert_cn_mismatch() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await
         .unwrap();
@@ -2338,6 +2348,7 @@ async fn inmem_handle_incoming_sync_rejects_cert_hash_mismatch() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await
         .unwrap();
@@ -2429,6 +2440,7 @@ async fn inmem_handle_incoming_sync_rejects_certless_claim_of_pinned_peer_800() 
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await
         .unwrap();
@@ -4220,6 +4232,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await
         .unwrap();
@@ -6491,6 +6504,7 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await
         .expect("responder handle_message")
@@ -6545,6 +6559,7 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await
         .expect("responder handle_message")
@@ -7997,6 +8012,7 @@ async fn issue2140_connection_drop_mid_stream_fails_then_recovers() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         }),
     )
     .await
@@ -8449,6 +8465,7 @@ async fn issue2140_backoff_advances_on_failure_and_clears_on_success() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         }),
     )
     .await

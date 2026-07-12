@@ -647,6 +647,7 @@ fn sync_message_serde_roundtrip() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         },
         SyncMessage::LoroSync {
             msg: crate::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot {
@@ -755,6 +756,7 @@ async fn orchestrator_rejects_incompatible_engine_format() {
             engine_format_version: incompatible,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await;
 
@@ -808,6 +810,7 @@ async fn orchestrator_accepts_legacy_and_matching_engine_format() {
                 engine_format_version: version,
                 op_log_replication: false,
                 wire_compression: false,
+                op_log_batch_chunked: false,
             })
             .await
             .unwrap_or_else(|e| {
@@ -1096,6 +1099,7 @@ async fn orchestrator_rejects_messages_in_terminal_state() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await;
     assert!(
@@ -1208,6 +1212,7 @@ async fn orchestrator_rejects_messages_in_failed_terminal_state() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await;
 
@@ -1311,6 +1316,7 @@ async fn orchestrator_rejects_head_exchange_in_streaming_state() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await;
     assert!(
@@ -1479,6 +1485,7 @@ async fn orchestrator_uses_cert_cn_identity_over_advertised_heads_2481() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await;
 
@@ -1521,6 +1528,7 @@ async fn orchestrator_accepts_matching_peer_device_id() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await;
 
@@ -1597,6 +1605,7 @@ async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await
         .unwrap();
@@ -1738,6 +1747,7 @@ fn serde_roundtrip_sync_message_head_exchange() {
         engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
         op_log_replication: false,
         wire_compression: false,
+        op_log_batch_chunked: false,
     };
     let json = serde_json::to_string(&msg).expect("serialize HeadExchange");
     let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize HeadExchange");
@@ -1815,6 +1825,7 @@ fn json_shape_head_exchange_matches_wire_format() {
         engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
         op_log_replication: false,
         wire_compression: false,
+        op_log_batch_chunked: false,
     };
     let json: serde_json::Value =
         serde_json::to_value(&msg).expect("SyncMessage must serialize to Value");
@@ -1848,6 +1859,7 @@ fn head_exchange_deserializes_without_loro_vvs_field() {
             engine_format_version,
             op_log_replication,
             wire_compression,
+            op_log_batch_chunked,
         } => {
             assert_eq!(heads.len(), 1, "heads must round-trip");
             assert!(
@@ -1865,6 +1877,10 @@ fn head_exchange_deserializes_without_loro_vvs_field() {
             assert!(
                 !wire_compression,
                 "a missing wire_compression field must default to false (#2200 old-peer)"
+            );
+            assert!(
+                !op_log_batch_chunked,
+                "a missing op_log_batch_chunked field must default to false (#2593 old-peer)"
             );
         }
         other => panic!("expected HeadExchange, got {other:?}"),
@@ -1903,6 +1919,7 @@ fn json_shape_all_variants_have_type_tag() {
                 engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
                 op_log_replication: false,
                 wire_compression: false,
+                op_log_batch_chunked: false,
             },
         ),
         (
@@ -2038,6 +2055,7 @@ fn serde_roundtrip_empty_heads() {
         engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
         op_log_replication: false,
         wire_compression: false,
+        op_log_batch_chunked: false,
     };
     let json = serde_json::to_string(&msg).expect("serialize empty HeadExchange");
     let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize empty HeadExchange");
@@ -2082,6 +2100,7 @@ fn serde_roundtrip_many_heads() {
         engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
         op_log_replication: false,
         wire_compression: false,
+        op_log_batch_chunked: false,
     };
     let json = serde_json::to_string(&msg).expect("serialize many-heads HeadExchange");
     let deser: SyncMessage =
@@ -2174,6 +2193,7 @@ async fn orchestrator_errors_on_head_exchange_during_streaming_ops() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await;
     assert!(
@@ -2269,6 +2289,7 @@ async fn handle_message_emits_within_sync_msg_span() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await;
 
@@ -2317,6 +2338,7 @@ async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await
         .expect("HeadExchange must not error under the engine path");
@@ -3704,6 +3726,7 @@ async fn streamer_appends_op_log_batch_for_capable_peer_2481() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: true,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await
         .unwrap();
@@ -3756,6 +3779,7 @@ async fn streamer_omits_op_log_batch_for_incapable_peer_2481() {
             // Older peer: capability absent.
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await
         .unwrap();
@@ -3768,17 +3792,10 @@ async fn streamer_omits_op_log_batch_for_incapable_peer_2481() {
     materializer.shutdown();
 }
 
-/// #2593 — an op record larger than the inline bound (a lone ~10 MB record) is
-/// STREAMED as an `OpLogBatch`, not skipped. The orchestrator always emits the
-/// plain `OpLogBatch`; the wire layer transparently ships an over-threshold
-/// batch via the chunked `OpLogBatchChunked` transport (asserted in
-/// `sync_daemon::wire` round-trip tests and the real-socket E2E). This is the
-/// #2593 flip of the former skip-guard behaviour.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn streamer_streams_oversized_op_record_chunked_2481() {
-    let (pool, _dir) = test_pool().await;
-    // One op carrying ~10 MB of content — its serialized OpTransfer exceeds the
-    // inline bound, so it rides the chunked transport on the wire.
+/// Build a device-A op log holding one op whose serialized `OpTransfer` exceeds
+/// the inline bound (~10 MB content), for the #2593 oversized-record tests.
+#[cfg(test)]
+async fn seed_oversized_op_for_2593(pool: &sqlx::SqlitePool) {
     let big = "x".repeat(10_000_000);
     let payload = OpPayload::CreateBlock(CreateBlockPayload {
         block_id: BlockId::test_id("BIG"),
@@ -3788,9 +3805,21 @@ async fn streamer_streams_oversized_op_record_chunked_2481() {
         index: None,
         content: big,
     });
-    append_local_op_at(&pool, "device-A", payload, FIXED_TS)
+    append_local_op_at(pool, "device-A", payload, FIXED_TS)
         .await
         .unwrap();
+}
+
+/// #2593 — an op record larger than the inline bound (a lone ~10 MB record) is
+/// STREAMED as an `OpLogBatch` when the peer advertised the
+/// `op_log_batch_chunked` capability. The orchestrator emits the plain
+/// `OpLogBatch`; the wire layer ships the over-threshold batch via the chunked
+/// `OpLogBatchChunked` transport (asserted in `sync_daemon::wire` round-trip
+/// tests and the real-socket E2E).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn streamer_streams_oversized_op_record_to_chunked_capable_peer_2593() {
+    let (pool, _dir) = test_pool().await;
+    seed_oversized_op_for_2593(&pool).await;
 
     let materializer = Materializer::new(pool.clone());
     let mut orch = SyncOrchestrator::new(pool, "device-A".into(), materializer.clone());
@@ -3802,6 +3831,8 @@ async fn streamer_streams_oversized_op_record_chunked_2481() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: true,
             wire_compression: false,
+            // Chunked-capable peer → the oversized record streams.
+            op_log_batch_chunked: true,
         })
         .await
         .unwrap();
@@ -3821,6 +3852,49 @@ async fn streamer_streams_oversized_op_record_chunked_2481() {
     assert!(
         orch.next_message().is_none(),
         "the single batch was the whole stream"
+    );
+    materializer.shutdown();
+}
+
+/// #2593 back-compat guard (regression for the PR #2598 review) — a peer that
+/// advertised `op_log_replication: true` but NOT `op_log_batch_chunked` (a
+/// shipped #2481 build that knows `OpLogBatch` but not the chunked envelope)
+/// must have the oversized record SKIPPED, not shipped as an `OpLogBatchChunked`
+/// frame it cannot deserialize. Skipping keeps the session completing (the
+/// record's state still syncs via LoroSync); shipping the chunked frame would
+/// fault the session and — because the record persists — every subsequent one,
+/// breaking all state sync. With the sole record skipped and no registered
+/// spaces, the streamer replies `SyncComplete`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn streamer_skips_oversized_op_record_for_chunked_incapable_peer_2593() {
+    let (pool, _dir) = test_pool().await;
+    seed_oversized_op_for_2593(&pool).await;
+
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(pool, "device-A".into(), materializer.clone());
+
+    let resp = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![],
+            loro_vvs: vec![],
+            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            // Op-log replication capable, but NOT chunked-OpLogBatch capable —
+            // exactly a shipped #2481 peer.
+            op_log_replication: true,
+            wire_compression: false,
+            op_log_batch_chunked: false,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        matches!(resp, Some(SyncMessage::SyncComplete { .. })),
+        "the oversized record is skipped for a chunked-incapable peer, so no \
+         OpLogBatch(Chunked) is streamed and the session completes: {resp:?}"
+    );
+    assert!(
+        orch.next_message().is_none(),
+        "no op batch is queued for a chunked-incapable peer's oversized-only op log"
     );
     materializer.shutdown();
 }
@@ -3845,6 +3919,7 @@ async fn streamer_rejects_inbound_op_log_batch_2481() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: true,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await
         .unwrap();

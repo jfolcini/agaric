@@ -292,6 +292,22 @@ pub enum SyncMessage {
         /// streaming direction (the only side that emits `LoroSync`).
         #[serde(default)]
         wire_compression: bool,
+        /// #2593 — additive capability handshake for the chunked
+        /// [`SyncMessage::OpLogBatchChunked`] transport. `#[serde(default)]`
+        /// (→ `false`) for wire back-compat: a peer predating this field (a
+        /// shipped #2481 build that advertises `op_log_replication: true` but
+        /// knows nothing of the chunked envelope) omits it and deserializes as
+        /// `false`. The streamer ships an oversized (over-inline-bound) op batch
+        /// as `OpLogBatchChunked` ONLY to a peer that advertised
+        /// `op_log_batch_chunked: true`; a peer lacking the capability has the
+        /// oversized record **skipped with a warning** (its state still syncs
+        /// via `LoroSync`) instead of receiving a frame it cannot deserialize —
+        /// which would fault the session and, because the record persists, every
+        /// subsequent one. The initiator advertises `true` (it can always decode
+        /// the chunked form on receive). Mirrors the #2200 `wire_compression`
+        /// capability gate exactly.
+        #[serde(default)]
+        op_log_batch_chunked: bool,
     },
     /// Loro-CRDT-based sync wire envelope.
     ///
