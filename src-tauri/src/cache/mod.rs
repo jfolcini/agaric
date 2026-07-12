@@ -162,6 +162,9 @@ pub use projected_agenda::{rebuild_projected_agenda_cache, rebuild_projected_age
 // Pinned-today variant for the on-the-fly / cached parity test.
 #[cfg(test)]
 pub(crate) use projected_agenda::rebuild_projected_agenda_cache_with_today;
+// Re-exported for the agenda cache/fallback parity + horizon tests; the
+// non-test code references these consts directly within `projected_agenda`.
+#[cfg(test)]
 pub(crate) use projected_agenda::{HORIZON_DAYS, HORIZON_OCCURRENCES};
 pub use tags::{rebuild_tags_cache, rebuild_tags_cache_split, refresh_tag_usage_count};
 
