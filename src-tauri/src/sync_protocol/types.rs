@@ -353,10 +353,14 @@ pub enum SyncMessage {
     /// an older peer never advertises the capability and therefore never
     /// receives this variant, so it is never asked to deserialize an unknown
     /// `type` tag. Records ride the same size discipline as `LoroSync`:
-    /// batches are kept under
-    /// [`crate::sync_constants::LORO_INLINE_MAX_BYTES`] so each travels inline
-    /// (op records are inherently small — a single text edit — so no
-    /// individual record approaches the cap).
+    /// [`batch_ops_for_wire`](super::operations::batch_ops_for_wire) keeps each
+    /// batch under [`crate::sync_constants::OP_LOG_BATCH_INLINE_MAX_BYTES`] so
+    /// it travels inline. A single op record can nonetheless exceed the inline
+    /// bound (a sync-applied/imported op whose `payload` carries a large block
+    /// `content`); such a lone-record batch rides the chunked
+    /// [`SyncMessage::OpLogBatchChunked`] transport (#2593) instead of being
+    /// skipped — the wire layer makes that choice transparently, exactly like
+    /// `LoroSync`/`LoroSyncChunked`.
     ///
     /// **Rides the streaming phase (#2481 phase 1 wiring).** The streamer
     /// (responder) appends these to the tail of its `HeadExchange` reply,
@@ -374,6 +378,42 @@ pub enum SyncMessage {
     OpLogBatch {
         records: Vec<OpTransfer>,
         is_last: bool,
+    },
+    /// Transport-level escape hatch for an [`OpLogBatch`] whose serialised
+    /// `records` exceed [`crate::sync_constants::OP_LOG_BATCH_INLINE_MAX_BYTES`]
+    /// (#2593). Announces that the batch's `serde_json`-encoded records follow
+    /// out-of-band as exactly `size_bytes` of chunked binary frames — the same
+    /// machinery [`LoroSyncChunked`] uses — so a lone oversized op record (a
+    /// sync-applied/imported op carrying a large block `content`) replicates its
+    /// audit metadata instead of being dropped at the 10 MB inline frame cap.
+    ///
+    /// **Never reaches the protocol orchestrator.** The wire layer
+    /// (`sync_daemon::wire`) splits an over-threshold `OpLogBatch` into this
+    /// header + binary frames on send, and reassembles them back into a plain
+    /// [`SyncMessage::OpLogBatch`] on receive — the orchestrator state machine
+    /// only ever sees `OpLogBatch`. An `OpLogBatchChunked` arriving at
+    /// `handle_message` indicates a transport-dispatch regression and fails the
+    /// session loudly (same contract as `LoroSyncChunked`).
+    ///
+    /// **Capability-gated identically to [`OpLogBatch`].** It is only produced
+    /// when a batch that the peer already opted into (via
+    /// `op_log_replication: true`) is too large to ship inline, so no peer that
+    /// lacks the `OpLogBatch` capability is ever sent this variant.
+    OpLogBatchChunked {
+        /// Exact byte count of the (optionally zstd-compressed) binary payload
+        /// that follows this header on the wire — what
+        /// `receive_binary_chunked` consumes. Bounded by
+        /// [`crate::sync_constants::MAX_OP_LOG_BATCH_PAYLOAD_SIZE`] on receive
+        /// before any frame is read.
+        size_bytes: u64,
+        is_last: bool,
+        /// #2200-style wire compression. `#[serde(default)]` (→ `false`) for
+        /// wire back-compat and set only when the peer advertised
+        /// `HeadExchange { wire_compression: true }`; the receiver zstd-inflates
+        /// the payload (re-bounded by `MAX_OP_LOG_BATCH_PAYLOAD_SIZE`) before
+        /// deserialising the records.
+        #[serde(default)]
+        compressed: bool,
     },
     /// Responder side-exit: our op log was compacted past the
     /// initiator's heads, so a delta replay is impossible. Triggers

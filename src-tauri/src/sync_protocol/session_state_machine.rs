@@ -400,6 +400,11 @@ impl SyncOrchestrator {
             // before dispatch (#611). This arm only keeps the match
             // exhaustive; the dispatch match below rejects it loudly.
             (_, SyncMessage::LoroSyncChunked { .. }) => {}
+            // OpLogBatchChunked, like LoroSyncChunked, is reassembled into a
+            // plain OpLogBatch by the wire layer before dispatch (#2593) and
+            // never legitimately reaches the orchestrator. This arm keeps the
+            // match exhaustive; the dispatch match below rejects it loudly.
+            (_, SyncMessage::OpLogBatchChunked { .. }) => {}
             // Snapshot messages accepted in any non-terminal state
             (
                 _,
@@ -834,6 +839,16 @@ impl SyncOrchestrator {
                  to the orchestrator state machine"
                     .into(),
             )),
+            // ---- Chunked OpLogBatch header (#2593) --------------------------
+            // Same contract as LoroSyncChunked: the wire layer reassembles it
+            // into a plain OpLogBatch before dispatch. One reaching
+            // `handle_message` is a transport-dispatch regression — fail loudly.
+            SyncMessage::OpLogBatchChunked { .. } => Err(AppError::InvalidOperation(
+                "OpLogBatchChunked must be reassembled by the sync daemon wire \
+                 layer (sync_daemon::wire::recv_sync_message), not dispatched \
+                 to the orchestrator state machine"
+                    .into(),
+            )),
             SyncMessage::SnapshotAccept | SyncMessage::SnapshotReject => {
                 Err(AppError::InvalidOperation(
                     "SnapshotAccept/SnapshotReject must be handled by snapshot_transfer, \
@@ -1207,51 +1222,23 @@ impl SyncOrchestrator {
     /// decode) AND we hold op records the peer lacks
     /// ([`collect_ops_for_peer`], `seq > the peer's advertised per-device
     /// frontier`). Records are partitioned into wire-sized batches under
-    /// [`crate::sync_constants::LORO_INLINE_MAX_BYTES`] so each rides the
+    /// [`crate::sync_constants::OP_LOG_BATCH_INLINE_MAX_BYTES`] so each rides the
     /// inline JSON frame ([`batch_ops_for_wire`]).
     ///
-    /// A single op record whose own serialized size would push even a
-    /// lone-record `OpLogBatch` past the transport's
-    /// [`SyncConnection::MAX_MSG_SIZE`](crate::sync_net::SyncConnection::MAX_MSG_SIZE)
-    /// (10 MB) frame cap is **skipped** with a warning: `OpLogBatch` has no
-    /// chunked transport (unlike `LoroSync`), so shipping it would fail the
-    /// send and fault the whole session. The op's *state* still syncs via the
-    /// chunked `LoroSync` path; only its audit record defers (best-effort,
-    /// re-attempted never — a chunked `OpLogBatch` transport is the follow-up).
-    /// The bound leaves headroom for the `{"type":..,"records":[..],"is_last":..}`
-    /// envelope + array syntax.
+    /// A single op record larger than the inline bound (a sync-applied/imported
+    /// op whose `payload` carries a large block `content`) still ships — it
+    /// lands in its own batch and the wire layer (`sync_daemon::wire`) sends it
+    /// via the chunked [`SyncMessage::OpLogBatchChunked`] transport (#2593)
+    /// rather than dropping it at the 10 MB frame cap. No per-record filtering
+    /// happens here.
     async fn collect_op_batches_for_peer(&self) -> Result<Vec<Vec<OpTransfer>>, AppError> {
         if !self.peer_op_log_replication {
             return Ok(Vec::new());
         }
-        // Per-record inline cap: the largest record that still fits a lone
-        // batch under MAX_MSG_SIZE once wrapped in the OpLogBatch envelope.
-        const OP_RECORD_WIRE_CAP: usize = crate::sync_net::SyncConnection::MAX_MSG_SIZE - 65_536;
-
         let records = collect_ops_for_peer(&self.pool, &self.peer_advertised_heads).await?;
-        let kept: Vec<OpTransfer> = records
-            .into_iter()
-            .filter(|rec| {
-                let size = serde_json::to_string(rec).map_or(0, |s| s.len());
-                if size > OP_RECORD_WIRE_CAP {
-                    tracing::warn!(
-                        device_id = %self.device_id,
-                        op_device_id = %rec.device_id,
-                        op_seq = rec.seq,
-                        size,
-                        cap = OP_RECORD_WIRE_CAP,
-                        "#2481: skipping an oversized op record from audit replication \
-                         (no chunked OpLogBatch transport); its state still syncs via LoroSync"
-                    );
-                    false
-                } else {
-                    true
-                }
-            })
-            .collect();
         Ok(batch_ops_for_wire(
-            kept,
-            crate::sync_constants::LORO_INLINE_MAX_BYTES,
+            records,
+            crate::sync_constants::OP_LOG_BATCH_INLINE_MAX_BYTES,
         ))
     }
 

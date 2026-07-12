@@ -61,6 +61,8 @@ Defined in `src-tauri/src/sync_constants.rs` and (per-connection) in
 | `SyncConnection::MAX_MSG_SIZE` | 10,000,000 bytes | Hard cap on any single WebSocket frame (text or binary). |
 | `BINARY_FRAME_CHUNK_SIZE` | 5,000,000 bytes | Chunk unit for snapshot + attachment + chunked-LoroSync binary frames; kept under `MAX_MSG_SIZE` for framing headroom. |
 | `LORO_INLINE_MAX_BYTES` | 2,400,000 bytes | Threshold above which a `LoroSync` payload's `bytes` leave the inline JSON envelope and ride chunked binary frames instead (`LoroSyncChunked`, #611). Sized so the worst-case JSON inflation of an inline payload (a `Vec<u8>` serialises as a number array, up to 4 chars/byte) stays under `MAX_MSG_SIZE`. |
+| `OP_LOG_BATCH_INLINE_MAX_BYTES` | 2,400,000 bytes (= `LORO_INLINE_MAX_BYTES`) | Threshold above which an `OpLogBatch`'s serialized `records` leave the inline JSON envelope and ride chunked binary frames instead (`OpLogBatchChunked`, #2593). |
+| `MAX_OP_LOG_BATCH_PAYLOAD_SIZE` | 256 MB | Upper bound on `OpLogBatchChunked.size_bytes` accepted before any binary frame is read — defence-in-depth against a runaway/malicious header, mirroring `MAX_LORO_SYNC_PAYLOAD_SIZE`. |
 | `HANDSHAKE_TIMEOUT` | 120 s | Per-`handle_message` budget on both session loops. |
 | `SyncConnection::RECV_TIMEOUT` | (see `connection.rs`) | Overall idle receive guard, kept strictly larger than `HANDSHAKE_TIMEOUT`. |
 
@@ -272,8 +274,8 @@ Audit-only op-log replication (#2481 phase 1). The **streamer** appends these
 to the tail of its streaming reply — *after* the per-space `LoroSync` deltas —
 carrying the op records the puller lacks (`seq >` the puller's advertised
 per-device frontier from `HeadExchange.heads`, computed by
-`operations::collect_ops_for_peer` and partitioned under `LORO_INLINE_MAX_BYTES`
-by `batch_ops_for_wire`). Each record is hash-verified and stored by the puller
+`operations::collect_ops_for_peer` and partitioned under
+`OP_LOG_BATCH_INLINE_MAX_BYTES` by `batch_ops_for_wire`). Each record is hash-verified and stored by the puller
 via `dag::insert_replicated_op` with `is_replicated = 1` — append-only **audit
 metadata that is never applied to state** (state flows exclusively through Loro
 CRDT sync). A corrupt record (hash mismatch) is logged and skipped best-effort,
@@ -296,12 +298,16 @@ puller, mirroring state sync); the reverse propagates when roles swap (#610). A
 streamer that receives an `OpLogBatch` (it should only send them) fails the
 session — the direction is enforced, not just conventional.
 
-`OpLogBatch` has **no chunked transport** (unlike `LoroSync`), so a single op
-record whose serialized JSON would push a lone-record batch past
-`MAX_MSG_SIZE` (10 MB) is **skipped** from replication with a warning — its
-state still syncs via the chunked `LoroSync` path; only its audit record
-defers (a chunked `OpLogBatch` transport is a follow-up). Normal edits are
-bounded well under this by the 256 KiB content cap.
+`OpLogBatch` shares `LoroSync`'s inline/chunked transport (#2593): a batch whose
+serialized records exceed `OP_LOG_BATCH_INLINE_MAX_BYTES`
+(= `LORO_INLINE_MAX_BYTES`, 2,400,000 bytes) rides a
+[`SyncMessage::OpLogBatchChunked`](#syncmessageoplogbatchchunked) header + binary
+frames instead of an inline JSON frame. So a single op record larger than the
+inline bound — a sync-applied/imported op whose `payload` carries a large block
+`content`, bypassing the 256 KiB command-layer content cap — replicates its
+audit metadata rather than being dropped at the 10 MB frame cap. The wire layer
+(`sync_daemon::wire`) makes the inline-vs-chunked choice transparently; the
+orchestrator only ever produces/consumes the plain `OpLogBatch`.
 
 **Capability-gated (back-compat).** The streamer appends `OpLogBatch` only when
 the puller advertised `HeadExchange { op_log_replication: true }` — an older
@@ -310,6 +316,30 @@ variant it cannot deserialize, and a newer puller talking to an older streamer
 simply never receives one (it blocks on nothing — the batches are additive to a
 stream it already drains). No new handshake round-trip; nothing on the wire
 becomes mandatory.
+
+### `SyncMessage::OpLogBatchChunked`
+
+```text
+OpLogBatchChunked { size_bytes: u64, is_last: bool, compressed: bool }   // streamer → puller
+```
+
+The chunked-binary transport encoding of `OpLogBatch` (#2593), exactly analogous
+to [`LoroSyncChunked`](#syncmessagelorosyncchunked). When a batch's
+`serde_json`-encoded `records` exceed `OP_LOG_BATCH_INLINE_MAX_BYTES`, the sender
+emits this JSON envelope (announcing `size_bytes` of follow-up binary frames,
+`compressed` set when the peer advertised `wire_compression` and zstd shrinks the
+payload) followed by the records' bytes in chunked binary frames. The receiver
+bounds `size_bytes` at `MAX_OP_LOG_BATCH_PAYLOAD_SIZE` (256 MB) *before* reading
+any frame, consumes exactly that many bytes, decompresses if flagged, and
+deserializes back into a plain `OpLogBatch` — the orchestrator never sees this
+variant (one reaching `handle_message` fails the session, same contract as
+`LoroSyncChunked`).
+
+**Compatibility.** Only produced for a batch a peer already opted into (via
+`op_log_replication: true`) that is too large to ship inline, so no peer lacking
+the `OpLogBatch` capability is ever sent it. A peer that understands `OpLogBatch`
+but not this envelope fails the session on receiving one — strictly no worse than
+the pre-#2593 behaviour, where the oversized record was silently dropped.
 
 ### `SyncMessage::ResetRequired`
 
