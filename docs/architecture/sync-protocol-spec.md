@@ -306,8 +306,23 @@ frames instead of an inline JSON frame. So a single op record larger than the
 inline bound — a sync-applied/imported op whose `payload` carries a large block
 `content`, bypassing the 256 KiB command-layer content cap — replicates its
 audit metadata rather than being dropped at the 10 MB frame cap. The wire layer
-(`sync_daemon::wire`) makes the inline-vs-chunked choice transparently; the
-orchestrator only ever produces/consumes the plain `OpLogBatch`.
+(`sync_daemon::wire`) makes the inline-vs-chunked choice transparently on
+payload size; the orchestrator only ever produces/consumes the plain
+`OpLogBatch`.
+
+**The oversized batch is capability-gated (#2593).** Whether the streamer ships
+that oversized batch at all depends on the puller advertising
+`HeadExchange { op_log_batch_chunked: true }` — the additive capability that says
+"I can decode `OpLogBatchChunked`". A puller that advertised `op_log_replication`
+but NOT `op_log_batch_chunked` (a shipped #2481 build that knows `OpLogBatch` but
+not the chunked envelope) has the oversized batch **skipped with a warning** in
+`collect_op_batches_for_peer`, exactly as before #2593 — its state still syncs
+via `LoroSync`. This is essential: sending such a peer an `OpLogBatchChunked`
+frame it cannot deserialize would fault the session, and because the oversized
+record persists, every subsequent session too, breaking *all* state sync. A batch
+exceeding `MAX_OP_LOG_BATCH_PAYLOAD_SIZE` (256 MB) is skipped regardless of
+capability (unshippable even chunked). This mirrors the #2200 `wire_compression`
+capability gate.
 
 **Capability-gated (back-compat).** The streamer appends `OpLogBatch` only when
 the puller advertised `HeadExchange { op_log_replication: true }` — an older
@@ -335,11 +350,15 @@ deserializes back into a plain `OpLogBatch` — the orchestrator never sees this
 variant (one reaching `handle_message` fails the session, same contract as
 `LoroSyncChunked`).
 
-**Compatibility.** Only produced for a batch a peer already opted into (via
-`op_log_replication: true`) that is too large to ship inline, so no peer lacking
-the `OpLogBatch` capability is ever sent it. A peer that understands `OpLogBatch`
-but not this envelope fails the session on receiving one — strictly no worse than
-the pre-#2593 behaviour, where the oversized record was silently dropped.
+**Compatibility.** Only produced for a puller that advertised
+`HeadExchange { op_log_batch_chunked: true }` (and therefore also
+`op_log_replication: true`) — i.e. one that has explicitly signalled it can
+decode this envelope. A peer that advertised `op_log_replication` but not
+`op_log_batch_chunked` never receives an `OpLogBatchChunked` frame: its oversized
+batch is skipped with a warning instead (see the capability-gate note under
+[`OpLogBatch`](#syncmessageoplogbatch)), so its session still completes — the
+graceful-degradation behaviour of pre-#2593. This is the #2200 `wire_compression`
+precedent applied to the op-log audit stream.
 
 ### `SyncMessage::ResetRequired`
 

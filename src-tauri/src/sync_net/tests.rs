@@ -121,6 +121,7 @@ fn sync_message_roundtrip_head_exchange() {
         engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
         op_log_replication: false,
         wire_compression: false,
+        op_log_batch_chunked: false,
     };
     let json = serde_json::to_string(&msg).unwrap();
     let parsed: SyncMessage = serde_json::from_str(&json).unwrap();
@@ -517,6 +518,7 @@ async fn tls_roundtrip_json_exchange() {
         engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
         op_log_replication: false,
         wire_compression: false,
+        op_log_batch_chunked: false,
     };
     client.send_json(&msg).await.unwrap();
 
@@ -1383,6 +1385,7 @@ async fn mtls_full_handshake_both_sides_see_peer_identity() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await
         .unwrap();
@@ -1415,6 +1418,7 @@ async fn mtls_full_handshake_both_sides_see_peer_identity() {
             engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
+            op_log_batch_chunked: false,
         })
         .await
         .unwrap();
