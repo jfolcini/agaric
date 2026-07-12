@@ -118,6 +118,8 @@ pub(crate) use task_handlers::{handle_background_task, handle_foreground_task};
 #[cfg(test)]
 mod apply_reproject_proptest;
 #[cfg(test)]
+mod crash_injection_convergence_tests;
+#[cfg(test)]
 mod create_edit_convergence_tests;
 #[cfg(test)]
 mod delete_cascade_tests;
