@@ -53,6 +53,7 @@ function makeHandle(blockId: string, content: string): RovingEditorHandle {
     splitAtCaret: vi.fn(() => null),
     originalMarkdown: '',
     setOnMarkdownChange: vi.fn(),
+    markCommitted: vi.fn(),
   }
 }
 

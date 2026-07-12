@@ -350,6 +350,16 @@ export interface RovingEditorHandle {
    * The callback receives the current markdown string.
    */
   setOnMarkdownChange: (cb: ((md: string) => void) | null) => void
+  /**
+   * #2600 — rebase the "original markdown" baseline to `markdown` WITHOUT
+   * unmounting. After a mid-typing debounced commit persists the current
+   * content as an `edit_block` op, the caller marks it committed so a
+   * subsequent blur `unmount()` (and the next debounce tick) compute their
+   * delta against the freshly-committed text instead of the mount-time text —
+   * otherwise blur would re-commit the whole block, doubling the op and the
+   * undo entry. No-op when the editor is unmounted (`activeBlockId === null`).
+   */
+  markCommitted: (markdown: string) => void
 }
 
 /**
@@ -844,6 +854,15 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     onMarkdownChangeRef.current = cb
   }, [])
 
+  // #2600 — rebase the delta baseline after a mid-typing debounced commit.
+  // Guarded on a live mount so a late callback (block already switched away)
+  // can't stamp the wrong block's baseline; the unmount path resets it to ''.
+  const markCommitted = useCallback((markdown: string) => {
+    if (activeBlockIdRef.current !== null) {
+      originalMarkdownRef.current = markdown
+    }
+  }, [])
+
   return useMemo<RovingEditorHandle>(
     () => ({
       editor,
@@ -858,7 +877,8 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
         return originalMarkdownRef.current
       },
       setOnMarkdownChange,
+      markCommitted,
     }),
-    [editor, mount, unmount, getMarkdown, splitAtCaret, setOnMarkdownChange],
+    [editor, mount, unmount, getMarkdown, splitAtCaret, setOnMarkdownChange, markCommitted],
   )
 }

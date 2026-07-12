@@ -911,3 +911,163 @@ impl LoroEngine {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod convergence_tests {
+    //! #2600 — the block-granularity edit convergence window.
+    //!
+    //! A block's `content` is a Loro `LoroText`. Production `EditBlock` ops
+    //! carry the FULL new block text (`to_text`); each device lowers that into a
+    //! character-level Loro splice via [`LoroEngine::apply_edit_via_diff_splice`]
+    //! (it diffs `to_text` against the device's CURRENT engine text and splices
+    //! only the differing middle). Two devices then MERGE by exchanging Loro
+    //! snapshots/updates — `export_snapshot` + `import` — NOT by re-running each
+    //! other's `EditBlock` diff-splice on the receiver. That distinction is the
+    //! whole game:
+    //!
+    //! * When each device splices its edit against a base that does NOT yet
+    //!   contain the other's concurrent edit, and the two edits touch DISJOINT
+    //!   character regions, the character-level splices land at non-overlapping
+    //!   ranges and Loro's RGA merges them losslessly (test 1).
+    //! * When a device splices a STALE full `to_text` against a base that has
+    //!   ALREADY merged the other's edit, the diff is computed against the
+    //!   post-merge text, so the differing "middle" swallows — and thereby
+    //!   REVERTS — the other's edit. That is the block-granularity
+    //!   last-writer-wins window this module pins (test 2), and the reason
+    //!   frequent commits matter: the smaller the stale window, the smaller the
+    //!   region a diff-splice can clobber.
+    use super::*;
+
+    const SEED_ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+
+    /// Two engines with distinct, stable peer ids, both holding the same seed
+    /// block `"Hello world"` on a shared causal ancestor (create-then-sync so
+    /// the later divergent edits have a clean LCA).
+    fn two_peers_on_shared_base() -> (LoroEngine, LoroEngine) {
+        let mut a = LoroEngine::with_peer_id("DEV-2600-A").expect("peer A");
+        let mut b = LoroEngine::with_peer_id("DEV-2600-B").expect("peer B");
+        a.apply_create_block(SEED_ID, "content", "Hello world", None, 0)
+            .expect("A seed create");
+        b.apply_create_block(SEED_ID, "content", "Hello world", None, 0)
+            .expect("B seed create");
+        merge(&mut a, &mut b);
+        for (who, e) in [("A", &a), ("B", &b)] {
+            assert_eq!(
+                content(e),
+                "Hello world",
+                "{who} must hold the shared seed before the divergent edits"
+            );
+        }
+        (a, b)
+    }
+
+    /// Mutual Loro snapshot exchange — the REAL sync merge primitive
+    /// (`export_snapshot` on each side, `import` the other's bytes). After this
+    /// both docs hold every op from both sides.
+    fn merge(a: &mut LoroEngine, b: &mut LoroEngine) {
+        let a_bytes = a.export_snapshot().expect("export A");
+        let b_bytes = b.export_snapshot().expect("export B");
+        a.import(&b_bytes).expect("import B -> A");
+        b.import(&a_bytes).expect("import A -> B");
+    }
+
+    fn content(e: &LoroEngine) -> String {
+        e.read_block(SEED_ID)
+            .expect("read_block")
+            .expect("seed block present")
+            .content
+    }
+
+    /// Two peers edit DISJOINT regions of the same block while each is unaware
+    /// of the other's edit (each splice is computed against the shared base, not
+    /// the other's result). After merging the Loro updates, BOTH edits survive
+    /// — the character-level splices land at non-overlapping ranges and Loro's
+    /// RGA merges them losslessly. No block-granularity last-writer-wins here.
+    #[test]
+    fn concurrent_disjoint_region_edits_merge_without_loss() {
+        let (mut a, mut b) = two_peers_on_shared_base();
+
+        // Peer A rewrites the START region: "Hello world" -> "HELLO world".
+        // Diff-splice vs the base replaces "ello" (usv 1..5) with "ELLO".
+        a.apply_edit_via_diff_splice(SEED_ID, "HELLO world")
+            .expect("A edit start");
+        assert_eq!(content(&a), "HELLO world", "A's local edit landed");
+
+        // Peer B rewrites the END region: "Hello world" -> "Hello WORLD".
+        // Diff-splice vs the SAME base replaces "world" (usv 6..11) with "WORLD"
+        // — a disjoint range from A's edit. B has NOT yet seen A's edit.
+        b.apply_edit_via_diff_splice(SEED_ID, "Hello WORLD")
+            .expect("B edit end");
+        assert_eq!(content(&b), "Hello WORLD", "B's local edit landed");
+
+        // Merge the two Loro update streams (the real sync path).
+        merge(&mut a, &mut b);
+
+        // Both disjoint edits survive on BOTH peers: no loss, no LWW clobber.
+        assert_eq!(
+            content(&a),
+            "HELLO WORLD",
+            "peer A must carry BOTH disjoint edits after merge"
+        );
+        assert_eq!(
+            content(&b),
+            "HELLO WORLD",
+            "peer B must carry BOTH disjoint edits after merge"
+        );
+    }
+
+    /// The block-granularity last-writer-wins window (#2600): a STALE full-text
+    /// commit reverts a concurrently-arrived remote edit.
+    ///
+    /// The ONLY difference from the lossless case above is ORDERING: here peer B
+    /// merges A's edit FIRST, then applies a full `to_text` it computed from the
+    /// PRE-merge base. Because [`LoroEngine::apply_edit_via_diff_splice`] diffs
+    /// that stale `to_text` against B's CURRENT (post-A) engine text, the
+    /// differing middle spans — and deletes — A's edit. After syncing back, both
+    /// peers converge on B's text with A's edit CLOBBERED. This is why frequent
+    /// commits matter: a device that commits before a remote edit merges never
+    /// opens this window (that is the lossless test above).
+    #[test]
+    fn stale_full_text_commit_clobbers_concurrent_edit() {
+        let (mut a, mut b) = two_peers_on_shared_base();
+
+        // Peer A edits the START region and syncs it INTO B first.
+        a.apply_edit_via_diff_splice(SEED_ID, "HELLO world")
+            .expect("A edit start");
+        let a_update = a
+            .export_update_since(&b.version_vector())
+            .expect("A delta since B");
+        b.import(&a_update).expect("B imports A's edit");
+        assert_eq!(
+            content(&b),
+            "HELLO world",
+            "A's edit must be merged into B BEFORE B's stale commit"
+        );
+
+        // Peer B's user had loaded the block at the PRE-merge base "Hello world"
+        // and typed "Hello WORLD" — a full `to_text` that does NOT include A's
+        // "HELLO". Applying it now diff-splices against B's current "HELLO
+        // world", so the replaced middle swallows A's "ELLO".
+        b.apply_edit_via_diff_splice(SEED_ID, "Hello WORLD")
+            .expect("B stale full-text commit");
+        assert_eq!(
+            content(&b),
+            "Hello WORLD",
+            "B's stale commit reverts A's edit locally (the LWW window)"
+        );
+
+        // Sync back: both converge on B's text — A's edit is lost, NOT "HELLO
+        // WORLD". This pins the block-granularity last-writer-wins behavior.
+        merge(&mut a, &mut b);
+        assert_eq!(
+            content(&a),
+            "Hello WORLD",
+            "A's own edit is clobbered by B's stale full-text commit after merge"
+        );
+        assert_eq!(
+            content(&b),
+            "Hello WORLD",
+            "both peers converge on the stale-commit winner"
+        );
+    }
+}

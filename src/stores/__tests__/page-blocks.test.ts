@@ -3369,7 +3369,10 @@ describe('PageBlockStore', () => {
 
         await store.getState().edit('A', 'new')
 
-        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', REFS)
+        // #2600 — edit threads a per-block coalesce key (`edit:<blockId>`) so a
+        // block's debounced mid-typing commits + its blur commit fold into one
+        // undo entry.
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', REFS, 'edit:A')
       })
 
       it('remove forwards the delete_block response op_refs', async () => {

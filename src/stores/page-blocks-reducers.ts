@@ -65,10 +65,17 @@ import { useUndoStore } from './undo'
  * fallback; `undoPageGroup` semantics unchanged for those flows). The
  * conditional forward keeps the ref-less call shape identical to pre-#2468.
  */
-function notifyUndoNewAction(rootParentId: string | null, opRefs?: OpRef[]): void {
+function notifyUndoNewAction(
+  rootParentId: string | null,
+  opRefs?: OpRef[],
+  coalesceKey?: string,
+): void {
   if (rootParentId) {
     const { onNewAction } = useUndoStore.getState()
-    if (opRefs) onNewAction(rootParentId, opRefs)
+    // Only forward `coalesceKey` when set (content edits) so the existing
+    // call shape for every other action is unchanged (#2600).
+    if (opRefs && coalesceKey !== undefined) onNewAction(rootParentId, opRefs, coalesceKey)
+    else if (opRefs) onNewAction(rootParentId, opRefs)
     else onNewAction(rootParentId)
   }
   recordGraphStructureChange()
@@ -278,7 +285,10 @@ export function createReducers({
             return { blocks, blocksById: cloneBlocksByIdWith(state.blocksById, [normalized]) }
           })
         }
-        notifyUndoNewAction(rootParentId, resp.op_refs)
+        // #2600 — coalesce a block's debounced mid-typing commits + its final
+        // blur commit into ONE undo entry (key is per-block) so Ctrl+Z reverts
+        // a block edit as a single action despite the finer commit cadence.
+        notifyUndoNewAction(rootParentId, resp.op_refs, `edit:${blockId}`)
         return true
       } catch (err) {
         // Rollback optimistic update — also a single-block touch.
