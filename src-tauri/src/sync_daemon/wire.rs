@@ -30,6 +30,13 @@
 //! [`SyncMessage::LoroSync`] values (it rejects a stray
 //! `LoroSyncChunked` loudly — see `sync_protocol::session_state_machine`).
 //!
+//! [`SyncMessage::OpLogBatch`] (audit-only op-log replication, #2481) shares the
+//! identical inline/chunked machinery (#2593): a batch whose serialised records
+//! exceed [`OP_LOG_BATCH_INLINE_MAX_BYTES`] ships as a
+//! [`SyncMessage::OpLogBatchChunked`] header + binary frames and is reassembled
+//! back into a plain `OpLogBatch` on receive, so a lone oversized op record
+//! replicates its audit metadata instead of being dropped at the frame cap.
+//!
 //! Both session loops (initiator `run_sync_session`, responder
 //! `handle_incoming_sync`) route every send/recv through these
 //! helpers. The snapshot and file-transfer sub-flows keep their plain
@@ -41,10 +48,12 @@ use std::io::Read;
 use crate::error::AppError;
 use crate::sync_constants::{
     BINARY_FRAME_CHUNK_SIZE, LORO_INLINE_MAX_BYTES, MAX_LORO_SYNC_PAYLOAD_SIZE,
+    MAX_OP_LOG_BATCH_PAYLOAD_SIZE, OP_LOG_BATCH_INLINE_MAX_BYTES,
 };
 use crate::sync_net::SyncConnection;
 use crate::sync_protocol::SyncMessage;
 use crate::sync_protocol::loro_sync_types::LoroSyncChunkedHeader;
+use crate::sync_protocol::types::OpTransfer;
 
 /// zstd level for the chunked-`LoroSync` wire payload (#2200). Matches the
 /// snapshot codec's level 3: a good ratio/CPU balance, and the encode now
@@ -69,12 +78,15 @@ fn compress_wire(raw: &[u8]) -> Result<Vec<u8>, AppError> {
     })
 }
 
-/// Decompress a chunked-`LoroSync` wire payload, bounding the decompressed
-/// size at [`MAX_LORO_SYNC_PAYLOAD_SIZE`] so a corrupt or hostile frame cannot
-/// blow up into an unbounded allocation (#2200). The window is also capped via
+/// Decompress a chunked wire payload, bounding the decompressed size at
+/// `max_size` so a corrupt or hostile frame cannot blow up into an unbounded
+/// allocation (#2200). The window is also capped via
 /// [`WIRE_DECODER_WINDOW_LOG_MAX`]. Corrupt compressed bytes surface as a
-/// clean `AppError` (the decoder's `io::Error`), never a panic.
-fn decompress_wire(compressed: &[u8]) -> Result<Vec<u8>, AppError> {
+/// clean `AppError` (the decoder's `io::Error`), never a panic. Shared by the
+/// `LoroSync` (#611/#2200) and `OpLogBatch` (#2593) chunked transports — both
+/// bound at 256 MB but kept as an explicit parameter so the two callers stay
+/// independently auditable.
+fn decompress_wire(compressed: &[u8], max_size: u64) -> Result<Vec<u8>, AppError> {
     let mut decoder = zstd::stream::Decoder::new(compressed).map_err(|e| {
         AppError::InvalidOperation(format!("[sync_daemon::wire] zstd decoder init failed: {e}"))
     })?;
@@ -83,18 +95,18 @@ fn decompress_wire(compressed: &[u8]) -> Result<Vec<u8>, AppError> {
         .map_err(|e| {
             AppError::InvalidOperation(format!("[sync_daemon::wire] zstd window cap failed: {e}"))
         })?;
-    // Read at most `MAX + 1` decompressed bytes; anything beyond the cap means
-    // the frame decompresses past the sanity bound and is rejected.
+    // Read at most `max_size + 1` decompressed bytes; anything beyond the cap
+    // means the frame decompresses past the sanity bound and is rejected.
     let mut out = Vec::new();
-    let mut limited = decoder.take(MAX_LORO_SYNC_PAYLOAD_SIZE.saturating_add(1));
+    let mut limited = decoder.take(max_size.saturating_add(1));
     limited.read_to_end(&mut out).map_err(|e| {
         AppError::InvalidOperation(format!(
-            "[sync_daemon::wire] corrupt compressed LoroSync payload: {e}"
+            "[sync_daemon::wire] corrupt compressed payload: {e}"
         ))
     })?;
-    if out.len() as u64 > MAX_LORO_SYNC_PAYLOAD_SIZE {
+    if out.len() as u64 > max_size {
         return Err(AppError::InvalidOperation(format!(
-            "[sync_daemon::wire] decompressed LoroSync payload exceeds {MAX_LORO_SYNC_PAYLOAD_SIZE} \
+            "[sync_daemon::wire] decompressed payload exceeds {max_size} \
              bytes — possible decompression bomb"
         )));
     }
@@ -175,6 +187,64 @@ pub(crate) async fn send_sync_message(
              pass the plain LoroSync form to send_sync_message"
                 .into(),
         )),
+        // #2593 — mirror the LoroSync inline/chunked split for OpLogBatch so a
+        // lone oversized op record replicates instead of being skipped at the
+        // 10 MB inline frame cap. The records serialise to bytes once; a batch
+        // whose payload fits the inline bound keeps the exact pre-#2593
+        // `OpLogBatch` JSON shape (old-peer interop), otherwise it rides a
+        // chunked header + binary frames.
+        SyncMessage::OpLogBatch { records, is_last } => {
+            let payload = serde_json::to_vec(records).map_err(|e| {
+                AppError::InvalidOperation(format!(
+                    "[sync_daemon::wire] OpLogBatch records serialise failed: {e}"
+                ))
+            })?;
+            if payload.len() <= OP_LOG_BATCH_INLINE_MAX_BYTES {
+                // Inline: byte-for-byte the pre-#2593 `OpLogBatch` frame. A peer
+                // that understands OpLogBatch (#2481) but not the chunked
+                // envelope decodes every batch it could ever receive.
+                return conn.send_json(msg).await;
+            }
+            // Sanity-cap the raw serialised payload before shipping bytes the
+            // peer would reject anyway (checked before compression — the raw
+            // size is the memory the peer must ultimately materialise).
+            if payload.len() as u64 > MAX_OP_LOG_BATCH_PAYLOAD_SIZE {
+                return Err(AppError::InvalidOperation(format!(
+                    "[sync_daemon::wire] OpLogBatch payload too large to send: {} bytes \
+                     (max {MAX_OP_LOG_BATCH_PAYLOAD_SIZE})",
+                    payload.len(),
+                )));
+            }
+            // #2200-style: compress the bulk payload iff the peer advertised
+            // `wire_compression` AND compression actually shrinks it. Op
+            // payloads are text (block content) and compress well, so this is
+            // usually a large win; an un-negotiated peer only ever sees raw
+            // bytes.
+            let (wire_bytes, compressed): (std::borrow::Cow<'_, [u8]>, bool) =
+                if conn.peer_wire_compression() {
+                    let z = compress_wire(&payload)?;
+                    if z.len() < payload.len() {
+                        (std::borrow::Cow::Owned(z), true)
+                    } else {
+                        (std::borrow::Cow::Borrowed(payload.as_slice()), false)
+                    }
+                } else {
+                    (std::borrow::Cow::Borrowed(payload.as_slice()), false)
+                };
+            conn.send_json(&SyncMessage::OpLogBatchChunked {
+                size_bytes: wire_bytes.len() as u64,
+                is_last: *is_last,
+                compressed,
+            })
+            .await?;
+            conn.send_binary_chunked(&wire_bytes, BINARY_FRAME_CHUNK_SIZE)
+                .await
+        }
+        SyncMessage::OpLogBatchChunked { .. } => Err(AppError::InvalidOperation(
+            "[sync_daemon::wire] OpLogBatchChunked is a transport-internal encoding; \
+             pass the plain OpLogBatch form to send_sync_message"
+                .into(),
+        )),
         other => conn.send_json(other).await,
     }
 }
@@ -212,7 +282,7 @@ pub(crate) async fn recv_sync_message(conn: &mut SyncConnection) -> Result<SyncM
             // inside `decompress_wire`, and corrupt compressed bytes surface
             // as a clean `AppError` rather than a panic.
             let bytes = if compressed {
-                decompress_wire(&wire_bytes)?
+                decompress_wire(&wire_bytes, MAX_LORO_SYNC_PAYLOAD_SIZE)?
             } else {
                 wire_bytes
             };
@@ -220,6 +290,34 @@ pub(crate) async fn recv_sync_message(conn: &mut SyncConnection) -> Result<SyncM
                 msg: header.into_message(bytes),
                 is_last,
             })
+        }
+        // #2593 — reassemble a chunked OpLogBatch back into the plain form the
+        // orchestrator dispatches on. Mirrors the LoroSyncChunked arm: bound the
+        // advertised size before reading any frame, consume exactly that many
+        // (optionally compressed) bytes, then deserialise the records.
+        SyncMessage::OpLogBatchChunked {
+            size_bytes,
+            is_last,
+            compressed,
+        } => {
+            if size_bytes > MAX_OP_LOG_BATCH_PAYLOAD_SIZE {
+                return Err(AppError::InvalidOperation(format!(
+                    "[sync_daemon::wire] OpLogBatchChunked header advertises {size_bytes} bytes \
+                     (max {MAX_OP_LOG_BATCH_PAYLOAD_SIZE})",
+                )));
+            }
+            let wire_bytes = conn.receive_binary_chunked(size_bytes).await?;
+            let bytes = if compressed {
+                decompress_wire(&wire_bytes, MAX_OP_LOG_BATCH_PAYLOAD_SIZE)?
+            } else {
+                wire_bytes
+            };
+            let records: Vec<OpTransfer> = serde_json::from_slice(&bytes).map_err(|e| {
+                AppError::InvalidOperation(format!(
+                    "[sync_daemon::wire] OpLogBatchChunked records deserialise failed: {e}"
+                ))
+            })?;
+            Ok(SyncMessage::OpLogBatch { records, is_last })
         }
         other => Ok(other),
     }
@@ -753,6 +851,129 @@ mod tests {
             header["header"]["size_bytes"].as_u64().unwrap(),
             payload_len as u64,
             "raw fallback keeps size_bytes == raw payload length"
+        );
+    }
+
+    // ── #2593: OpLogBatch inline/chunked transport ───────────────────
+
+    /// Build an `OpLogBatch` with one record whose `payload` string is
+    /// `payload_len` bytes, so the serialised batch straddles the inline
+    /// threshold on demand.
+    fn op_log_batch(payload_len: usize, is_last: bool) -> SyncMessage {
+        SyncMessage::OpLogBatch {
+            records: vec![OpTransfer {
+                device_id: "device-A".into(),
+                seq: 1,
+                parent_seqs: None,
+                hash: "deadbeef".into(),
+                op_type: "create_block".into(),
+                // Content-like payload (JSON string) of the requested size.
+                payload: "y".repeat(payload_len),
+                created_at: 1_749_988_800_000,
+                origin: "user".into(),
+            }],
+            is_last,
+        }
+    }
+
+    /// A small `OpLogBatch` keeps the exact pre-#2593 inline JSON shape —
+    /// `type: "OpLogBatch"` with an inline `records` array — so a peer that
+    /// understands #2481 but not the chunked envelope decodes it untouched.
+    #[tokio::test]
+    async fn op_log_batch_small_keeps_inline_wire_shape() {
+        let msg = op_log_batch(64, true);
+        let (mut a, mut b) = test_connection_pair().await;
+        let (sent, raw) = tokio::join!(send_sync_message(&mut a, &msg), async {
+            b.recv_json::<serde_json::Value>().await
+        });
+        sent.expect("send must succeed");
+        let value = raw.expect("raw JSON recv must succeed");
+        assert_eq!(value["type"], serde_json::json!("OpLogBatch"));
+        assert_eq!(value["is_last"], serde_json::json!(true));
+        assert!(
+            value["records"].is_array(),
+            "records must stay an inline JSON array — the pre-#2593 shape"
+        );
+    }
+
+    /// A small batch round-trips through the helpers unchanged.
+    #[tokio::test]
+    async fn op_log_batch_small_roundtrips_inline() {
+        let msg = op_log_batch(1000, false);
+        assert_eq!(roundtrip(msg.clone()).await, msg);
+    }
+
+    /// An over-threshold `OpLogBatch` (a lone ~10 MB record — the #2593 case
+    /// that the old skip guard dropped) rides the chunked transport and
+    /// round-trips losslessly across multiple binary frames.
+    #[tokio::test]
+    async fn op_log_batch_oversized_roundtrips_chunked() {
+        let msg = op_log_batch(10_000_000, true);
+        assert_eq!(roundtrip(msg.clone()).await, msg);
+    }
+
+    /// An over-threshold send produces the `OpLogBatchChunked` header envelope
+    /// on the wire (pin the transport shape the receiver dispatches on).
+    #[tokio::test]
+    async fn op_log_batch_oversized_produces_chunked_envelope() {
+        let msg = op_log_batch(OP_LOG_BATCH_INLINE_MAX_BYTES + 500_000, false);
+        let (mut a, mut b) = test_connection_pair().await;
+        let (sent, result) = tokio::join!(send_sync_message(&mut a, &msg), async {
+            let header = b.recv_json::<serde_json::Value>().await?;
+            let size = header["size_bytes"].as_u64().expect("size_bytes");
+            let bytes = b.receive_binary_chunked(size).await?;
+            Ok::<_, AppError>((header, bytes))
+        });
+        sent.expect("send must succeed");
+        let (header, bytes) = result.expect("header + payload recv must succeed");
+        assert_eq!(header["type"], serde_json::json!("OpLogBatchChunked"));
+        assert_eq!(header["is_last"], serde_json::json!(false));
+        assert_eq!(header["compressed"], serde_json::json!(false));
+        assert_eq!(header["size_bytes"].as_u64().unwrap(), bytes.len() as u64);
+    }
+
+    /// With compression negotiated, a (highly compressible) oversized text
+    /// payload rides the wire as fewer bytes, the envelope's `compressed` flag
+    /// is set, and it still round-trips.
+    #[tokio::test]
+    async fn op_log_batch_compressed_roundtrips_when_negotiated() {
+        let msg = op_log_batch(10_000_000, true);
+        assert_eq!(roundtrip_compressed(msg.clone()).await, msg);
+    }
+
+    /// Passing the transport-internal `OpLogBatchChunked` form to
+    /// `send_sync_message` is a programmer error.
+    #[tokio::test]
+    async fn sending_op_log_batch_chunked_form_directly_is_rejected() {
+        let (mut a, _b) = test_connection_pair().await;
+        let msg = SyncMessage::OpLogBatchChunked {
+            size_bytes: 1,
+            is_last: true,
+            compressed: false,
+        };
+        let err = send_sync_message(&mut a, &msg)
+            .await
+            .expect_err("OpLogBatchChunked must not be sendable directly");
+        assert!(err.to_string().contains("transport-internal"));
+    }
+
+    /// An `OpLogBatchChunked` header advertising more than the sanity cap is
+    /// rejected before any binary frame is read.
+    #[tokio::test]
+    async fn oversized_op_log_batch_chunked_header_is_rejected_before_payload() {
+        let (mut a, mut b) = test_connection_pair().await;
+        let header = SyncMessage::OpLogBatchChunked {
+            size_bytes: MAX_OP_LOG_BATCH_PAYLOAD_SIZE + 1,
+            is_last: true,
+            compressed: false,
+        };
+        a.send_json(&header).await.expect("header send");
+        let err = recv_sync_message(&mut b)
+            .await
+            .expect_err("over-cap header must be rejected");
+        assert!(
+            err.to_string().contains("advertises"),
+            "must fail on the advertised size, got: {err}"
         );
     }
 

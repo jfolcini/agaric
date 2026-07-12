@@ -60,6 +60,40 @@ pub const LORO_INLINE_MAX_BYTES: usize = 2_400_000;
 pub const MAX_LORO_SYNC_PAYLOAD_SIZE: u64 = 256 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
+// OpLogBatch payload transport (#2593, #2481 follow-up)
+// ---------------------------------------------------------------------------
+
+// Largest serialised `OpLogBatch.records` payload (`serde_json::to_vec` of the
+// `Vec<OpTransfer>`) shipped *inline* as part of the JSON text frame. Anything
+// larger rides the chunked binary path (`SyncMessage::OpLogBatchChunked` header
+// + binary frames, see `sync_daemon::wire`).
+//
+// Reuses `LORO_INLINE_MAX_BYTES` as the threshold so both streaming payloads
+// obey one size discipline. Unlike a Loro `Vec<u8>` (which inflates ~4×
+// as a JSON number array), the records serialise as JSON objects/strings
+// (~1× plus escaping), so a batch under this bound is comfortably within
+// `SyncConnection::MAX_MSG_SIZE` (10 MB) once wrapped in the
+// `{"type":"OpLogBatch","records":[..],"is_last":..}` envelope. The decision
+// is made on the serialised payload length (not the whole message) so the
+// inline-vs-chunked choice never requires materialising an over-cap JSON just
+// to measure it.
+//
+// Compatibility: batches at or under this threshold keep the exact inline
+// `OpLogBatch` wire shape, so a peer that understands `OpLogBatch` (#2481
+// phase 1) but not the chunked envelope (#2593) interoperates untouched for
+// every batch it could ever successfully receive.
+pub const OP_LOG_BATCH_INLINE_MAX_BYTES: usize = LORO_INLINE_MAX_BYTES;
+
+// Upper bound on `OpLogBatchChunked.size_bytes` accepted from a peer before any
+// binary frame is read — defence-in-depth against a runaway or malicious header
+// causing an unbounded allocation, mirroring `MAX_LORO_SYNC_PAYLOAD_SIZE`. A
+// single op record carries at most one block's `content: String` (normally
+// bounded by the 256 KiB content cap in `block_ops.rs`; a sync-applied/imported
+// op is not re-checked against that cap, which is exactly why the chunked path
+// exists), so 256 MB is generous headroom for any realistic batch.
+pub const MAX_OP_LOG_BATCH_PAYLOAD_SIZE: u64 = 256 * 1024 * 1024;
+
+// ---------------------------------------------------------------------------
 // Responder connection concurrency (#1581)
 // ---------------------------------------------------------------------------
 

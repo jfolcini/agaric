@@ -5125,6 +5125,93 @@ async fn issue2481_op_authored_on_a_replicates_into_b_op_log_over_real_socket() 
     b.flush_and_shutdown().await;
 }
 
+/// #2593 (acceptance) — a single op record whose payload exceeds the inline
+/// frame cap (a sync-applied/imported op carrying a large block `content`,
+/// bypassing the command-layer 256 KiB cap) replicates as an audit record over
+/// a REAL socket via the chunked `OpLogBatchChunked` transport, and the session
+/// completes. Before #2593 the streamer skipped such a record (no chunked
+/// OpLogBatch transport), silently losing its cross-device History entry.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue2593_oversized_op_record_replicates_chunked_over_real_socket() {
+    use crate::sync_protocol::SyncState;
+
+    let devices = make_n_devices_2141(&["DEV2593AA", "DEV2593BB"]).await;
+    let (a, b) = (&devices[0], &devices[1]);
+
+    // A holds an op whose serialised payload exceeds OP_LOG_BATCH_INLINE_MAX_BYTES
+    // (~11 MB content > the 10 MB inline frame cap). `append_local_op_at`
+    // bypasses the command-layer 256 KiB content cap — modelling a
+    // sync-applied/imported op — and computes the correct blake3 hash.
+    let big_content = "z".repeat(11_000_000);
+    let payload = crate::op::OpPayload::CreateBlock(crate::op::CreateBlockPayload {
+        block_id: crate::ulid::BlockId::test_id("BIG2593"),
+        block_type: "content".into(),
+        parent_id: None,
+        position: Some(0),
+        index: None,
+        content: big_content.clone(),
+    });
+    crate::op_log::append_local_op_at(&a.pool, &a.id, payload, 1_736_942_400_000)
+        .await
+        .expect("append oversized op to A");
+
+    let a_head = crate::sync_protocol::get_local_heads(&a.pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|h| h.device_id == a.id)
+        .expect("A has an op head for its own device");
+
+    let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log WHERE device_id = ?")
+        .bind(&a.id)
+        .fetch_one(&b.pool)
+        .await
+        .unwrap();
+    assert_eq!(before, 0, "B starts without any of A's ops");
+
+    // B pulls from A over a real TLS socket: B initiator (puller), A streamer.
+    let init_state = run_one_real_loopback_session_2129(
+        &b.pool, &b.mat, &b.id, &b.cert, // init = B (puller)
+        &a.pool, &a.mat, &a.id, &a.cert, // resp = A (streamer)
+    )
+    .await;
+    assert_eq!(
+        init_state,
+        SyncState::Complete,
+        "the pull completes despite the oversized (chunked) audit record"
+    );
+
+    // A's oversized op replicated into B as audit metadata, full payload intact.
+    let rows: Vec<(String, i64, String, i64, String)> = sqlx::query_as(
+        "SELECT device_id, seq, hash, is_replicated, payload FROM op_log \
+         WHERE device_id = ? ORDER BY seq",
+    )
+    .bind(&a.id)
+    .fetch_all(&b.pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1, "A's oversized op replicated into B");
+    let (device_id, seq, hash, is_replicated, stored_payload) = &rows[0];
+    assert_eq!(device_id, &a.id);
+    assert_eq!(*seq, a_head.seq);
+    assert_eq!(hash, &a_head.hash, "hash stored verbatim (blake3-verified)");
+    assert_eq!(
+        *is_replicated, 1,
+        "stored audit-only (never applied to state)"
+    );
+    assert!(
+        stored_payload.len() > crate::sync_constants::OP_LOG_BATCH_INLINE_MAX_BYTES,
+        "the full oversized payload replicated (chunked transport), not truncated"
+    );
+    assert!(
+        stored_payload.contains(&big_content),
+        "the block content survived the chunked round-trip intact"
+    );
+
+    a.flush_and_shutdown().await;
+    b.flush_and_shutdown().await;
+}
+
 /// #2481 phase 3 (self-healing) — a device that has LOST its own op-log
 /// history recovers it from a peer that replicated it, via the same audit
 /// exchange. No local archive is needed: the audit record survives a

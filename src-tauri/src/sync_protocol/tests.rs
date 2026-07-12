@@ -3768,16 +3768,17 @@ async fn streamer_omits_op_log_batch_for_incapable_peer_2481() {
     materializer.shutdown();
 }
 
-/// An op record whose serialized size would push a lone-record `OpLogBatch`
-/// past the transport frame cap is SKIPPED from audit replication (OpLogBatch
-/// has no chunked transport) — it must not be queued and fail the send. With
-/// the sole record skipped and no registered spaces, the responder replies
-/// `SyncComplete`.
+/// #2593 — an op record larger than the inline bound (a lone ~10 MB record) is
+/// STREAMED as an `OpLogBatch`, not skipped. The orchestrator always emits the
+/// plain `OpLogBatch`; the wire layer transparently ships an over-threshold
+/// batch via the chunked `OpLogBatchChunked` transport (asserted in
+/// `sync_daemon::wire` round-trip tests and the real-socket E2E). This is the
+/// #2593 flip of the former skip-guard behaviour.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn streamer_skips_oversized_op_record_2481() {
+async fn streamer_streams_oversized_op_record_chunked_2481() {
     let (pool, _dir) = test_pool().await;
     // One op carrying ~10 MB of content — its serialized OpTransfer exceeds the
-    // per-record wire cap (MAX_MSG_SIZE - envelope headroom).
+    // inline bound, so it rides the chunked transport on the wire.
     let big = "x".repeat(10_000_000);
     let payload = OpPayload::CreateBlock(CreateBlockPayload {
         block_id: BlockId::test_id("BIG"),
@@ -3805,13 +3806,21 @@ async fn streamer_skips_oversized_op_record_2481() {
         .await
         .unwrap();
 
-    assert!(
-        matches!(resp, Some(SyncMessage::SyncComplete { .. })),
-        "the oversized record is skipped, so no OpLogBatch is streamed: {resp:?}"
-    );
+    // The oversized record is streamed as a (final) OpLogBatch, not skipped.
+    match resp {
+        Some(SyncMessage::OpLogBatch { records, is_last }) => {
+            assert_eq!(records.len(), 1, "the lone oversized record is streamed");
+            assert!(is_last, "sole batch carries the terminal is_last");
+            assert!(
+                records[0].payload.len() > crate::sync_constants::OP_LOG_BATCH_INLINE_MAX_BYTES,
+                "the streamed record's payload exceeds the inline bound (chunked on the wire)"
+            );
+        }
+        other => panic!("expected an OpLogBatch carrying the oversized record, got: {other:?}"),
+    }
     assert!(
         orch.next_message().is_none(),
-        "no op batch is queued for an oversized-only op log"
+        "the single batch was the whole stream"
     );
     materializer.shutdown();
 }
