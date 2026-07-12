@@ -5125,6 +5125,114 @@ async fn issue2481_op_authored_on_a_replicates_into_b_op_log_over_real_socket() 
     b.flush_and_shutdown().await;
 }
 
+/// #2481 phase 3 (self-healing) — a device that has LOST its own op-log
+/// history recovers it from a peer that replicated it, via the same audit
+/// exchange. No local archive is needed: the audit record survives a
+/// compaction / restore-from-older-backup because a peer holds it and streams
+/// it back on the next pull.
+///
+/// Scenario: A authors an op; B pulls from A (B now holds A's op as an
+/// `is_replicated = 1` audit record). A then loses its own op_log tail (we
+/// delete the row, simulating compaction / history loss). A pulls from B, and
+/// B — which holds A's op transitively (`collect_ops_for_peer` re-ships
+/// replicated rows) — streams it back; A re-ingests it as an audit record.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue2481_device_recovers_own_lost_op_history_from_peer_over_real_socket() {
+    use crate::sync_protocol::SyncState;
+
+    let space = crate::space::SpaceId::from_trusted("01HZ2481HEALSPACEXXXXXXXXX");
+    let devices = make_n_devices_2141(&["DEV2481HA", "DEV2481HB"]).await;
+    let (a, b) = (&devices[0], &devices[1]);
+
+    make_local_edit_602(
+        &a.pool,
+        &a.mat,
+        &a.state,
+        &a.id,
+        &space,
+        "01HZ2481HEALBLKAXXXXXXXXXX",
+        "edit from A",
+        1_736_942_400_000,
+    )
+    .await;
+
+    let a_head = crate::sync_protocol::get_local_heads(&a.pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|h| h.device_id == a.id)
+        .expect("A authored an op");
+
+    // Session 1: B pulls from A → B now holds A's op as an audit record.
+    let s1 = run_one_real_loopback_session_2129(
+        &b.pool, &b.mat, &b.id, &b.cert, // init = B (puller)
+        &a.pool, &a.mat, &a.id, &a.cert, // resp = A (streamer)
+    )
+    .await;
+    assert_eq!(s1, SyncState::Complete);
+    let b_has: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM op_log WHERE device_id = ? AND is_replicated = 1")
+            .bind(&a.id)
+            .fetch_one(&b.pool)
+            .await
+            .unwrap();
+    assert_eq!(b_has, 1, "B replicated A's op in session 1");
+
+    // A loses its own op-log history (compaction / restore from an older
+    // backup). `op_log` is append-only (migration 0036 immutability triggers),
+    // so the DELETE rides the same mutation-bypass sentinel compaction uses.
+    let mut tx = a.pool.begin().await.unwrap();
+    crate::op_log::enable_op_log_mutation_bypass(&mut tx)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM op_log WHERE device_id = ?")
+        .bind(&a.id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    crate::op_log::disable_op_log_mutation_bypass(&mut tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let a_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log WHERE device_id = ?")
+        .bind(&a.id)
+        .fetch_one(&a.pool)
+        .await
+        .unwrap();
+    assert_eq!(a_before, 0, "A's own op history is gone");
+
+    // Session 2: A pulls from B → B streams A's op back; A re-ingests it.
+    let s2 = run_one_real_loopback_session_2129(
+        &a.pool, &a.mat, &a.id, &a.cert, // init = A (puller)
+        &b.pool, &b.mat, &b.id, &b.cert, // resp = B (streamer)
+    )
+    .await;
+    assert_eq!(s2, SyncState::Complete);
+
+    // A recovered its own authored op as an audit record (is_replicated = 1),
+    // hash verbatim.
+    let rows: Vec<(i64, String, i64)> = sqlx::query_as(
+        "SELECT seq, hash, is_replicated FROM op_log WHERE device_id = ? ORDER BY seq",
+    )
+    .bind(&a.id)
+    .fetch_all(&a.pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1, "A recovered exactly its one lost op");
+    assert_eq!(rows[0].0, a_head.seq);
+    assert_eq!(
+        rows[0].1, a_head.hash,
+        "recovered op hash matches the original"
+    );
+    assert_eq!(
+        rows[0].2, 1,
+        "recovered as an audit record (is_replicated = 1)"
+    );
+
+    a.flush_and_shutdown().await;
+    b.flush_and_shutdown().await;
+}
+
 /// #2129 keystone — two devices that have BOTH made divergent local edits
 /// converge over a REAL loopback TLS socket (not the in-memory pump).
 ///

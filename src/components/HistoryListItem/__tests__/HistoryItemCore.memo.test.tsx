@@ -49,13 +49,19 @@ import { renderRichContent } from '@/components/RichContentRenderer'
 
 import { HistoryItemCore } from '../HistoryItemCore'
 
-function makeEntry(seq: number, opType: string, payload: Record<string, unknown>): HistoryEntry {
+function makeEntry(
+  seq: number,
+  opType: string,
+  payload: Record<string, unknown>,
+  isReplicated = false,
+): HistoryEntry {
   return {
     device_id: 'DEVICE01XXXXXXXX',
     seq,
     op_type: opType,
     payload: JSON.stringify(payload),
     created_at: 1736942400000,
+    is_replicated: isReplicated,
   } as unknown as HistoryEntry
 }
 

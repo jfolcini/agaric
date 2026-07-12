@@ -441,6 +441,12 @@ pub struct HistoryEntry {
     pub payload: String,
     /// Epoch-ms (op_log.created_at is INTEGER since migration 0079).
     pub created_at: i64,
+    /// #2481 phase 2: `true` for a **foreign** op replicated from a peer as
+    /// append-only audit metadata (`op_log.is_replicated = 1`) — surfaced in
+    /// the History view for cross-device attribution and to gate revert
+    /// (replicated rows are not locally revertible; see
+    /// `reverse::reject_replicated_targets`). Local-authored ops are `false`.
+    pub is_replicated: bool,
 }
 
 /// Internal cursor for keyset pagination.

@@ -6,23 +6,26 @@ verifying a row's hash chain. It is precise enough that a non-Rust
 implementation can recompute hashes byte-identically and verify a row it
 holds.
 
-**Scope note (#2473).** This document does **not** describe the production
-cross-device sync path. Post-#490-M1 the `op_log` is strictly device-local
-(see `sync_protocol::operations::check_reset_required` and
-[data-and-events.md](./data-and-events.md#op-log)); inbound sync lands
-remote state via Loro CRDT import + SQL projection and never inserts a
-peer's ops into the local `op_log`. The actual wire interchange for
-production sync is Loro CRDT bytes, specified in
-[sync-protocol-spec.md](./sync-protocol-spec.md) — implement *that* doc to
-build an interoperable client, not this one. The remote-ingest / merge
-machinery described below (`dag::insert_remote_op`, `dag::append_merge_op`)
-exists in the codebase, is exercised by tests, and has **no production
-caller today**; it is retained as the planned ingest point for #2481
-(DECIDED option (a): audit-only op-log replication — replicated op
-records get hash-verified and stored here for cross-device
-History/attribution, but are never applied to state). Once #2481 phase 1
-lands, the "Validity rules" section below will describe that real path;
-until then it documents dormant-but-maintained ingest logic.
+**Scope note (#2473, #2481).** This document does **not** describe the
+production *state* interchange — that is Loro CRDT bytes, specified in
+[sync-protocol-spec.md](./sync-protocol-spec.md); implement *that* doc to
+build an interoperable client, not this one. **State** flows only through
+Loro: for state-rebuild purposes the `op_log` is device-local (a full-log
+replay reconstructs only *locally-authored* content — #2504), and inbound
+Loro sync lands remote state via CRDT import + SQL projection, never as
+op_log rows.
+
+Since **#2481 phase 1** the op_log is *not* strictly device-local, though:
+the audit-only replication sub-flow (`SyncMessage::OpLogBatch`, streamed
+after the `LoroSync` deltas) now inserts **foreign** devices' op records
+here as append-only, hash-verified **audit metadata** — stored with
+`is_replicated = 1` and **never applied to state** (the boot-replay walk,
+materializer, and undo path all filter `is_replicated = 0`). This is the
+production caller the ingest machinery below (`dag::insert_replicated_op`,
+the **Audit** profile) was built for. So the op log is now
+**globally-replicated for audit/History/attribution but device-local for
+state**. The "Validity rules" section below describes that real path (the
+`Strict` profile's `insert_remote_op` remains test-only).
 
 For the higher-level narrative (what the op log *is*, the op-type catalog,
 the materializer, drafts) see [data-and-events.md](./data-and-events.md#op-log).

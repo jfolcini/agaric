@@ -2587,6 +2587,9 @@ const HANDLERS_TYPED = {
         op_type: o.op_type,
         payload: o.payload,
         created_at: o.created_at,
+        // #2481 phase 2: foreign audit ops carry is_replicated=1; the mock
+        // op log is local-authored unless a row seeds it otherwise.
+        is_replicated: (o as { is_replicated?: boolean }).is_replicated ?? false,
       }))
     return { items, next_cursor: null, has_more: false, total_count: null }
   },

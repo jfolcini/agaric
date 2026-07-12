@@ -74,6 +74,7 @@ export function makeHistoryEntry(
   payload: unknown,
   createdAt: number = 1736942400000,
   deviceId = 'DEVICE01',
+  isReplicated = false,
 ): HistoryEntry {
   return {
     device_id: deviceId,
@@ -81,5 +82,7 @@ export function makeHistoryEntry(
     op_type: opType,
     payload: JSON.stringify(payload),
     created_at: createdAt,
+    // #2481 phase 2: foreign audit rows carry is_replicated=1.
+    is_replicated: isReplicated,
   }
 }

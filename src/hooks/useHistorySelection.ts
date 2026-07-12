@@ -19,6 +19,19 @@ import { useListMultiSelect } from './useListMultiSelect'
 /** Op types that cannot be reversed. */
 export const NON_REVERSIBLE_OPS = new Set(['purge_block', 'delete_attachment'])
 
+/**
+ * Whether a history entry can be reverted from the History view.
+ *
+ * `false` for non-reversible op types (`purge_block`, `delete_attachment`) AND
+ * for #2481 foreign audit rows (`is_replicated`): a replicated op was never
+ * applied to local state, so the backend `reverse::reject_replicated_targets`
+ * refuses to revert it — gating it here keeps the checkbox from offering a
+ * selection the batch-revert IPC would reject.
+ */
+export function isRevertible(entry: HistoryEntry): boolean {
+  return !NON_REVERSIBLE_OPS.has(entry.op_type) && !entry.is_replicated
+}
+
 /** Unique key for a history entry. */
 export function entryKey(entry: HistoryEntry): string {
   return `${entry.device_id}:${entry.seq}`
@@ -49,7 +62,7 @@ export function useHistorySelection(entries: HistoryEntry[]): UseHistorySelectio
   } = useListMultiSelect<HistoryEntry>({
     items: entries,
     getItemId: entryKey,
-    filterPredicate: (entry) => !NON_REVERSIBLE_OPS.has(entry.op_type),
+    filterPredicate: isRevertible,
   })
 
   const toggleSelectedIndex = useCallback(

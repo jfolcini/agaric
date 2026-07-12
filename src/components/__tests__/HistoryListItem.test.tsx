@@ -60,6 +60,7 @@ function makeEntry(
   payload: Record<string, unknown>,
   createdAt = 1736942400000,
   deviceId = 'DEVICE01XXXXXXXX',
+  isReplicated = false,
 ) {
   return {
     device_id: deviceId,
@@ -67,6 +68,7 @@ function makeEntry(
     op_type: opType,
     payload: JSON.stringify(payload),
     created_at: createdAt,
+    is_replicated: isReplicated,
   }
 }
 
@@ -800,6 +802,7 @@ describe('BlockHistoryItem', () => {
     payload: Record<string, unknown>,
     createdAt = 1736942400000,
     deviceId = 'DEVICE01XXXXXXXX',
+    isReplicated = false,
   ) {
     return {
       device_id: deviceId,
@@ -807,6 +810,7 @@ describe('BlockHistoryItem', () => {
       op_type: opType,
       payload: JSON.stringify(payload),
       created_at: createdAt,
+      is_replicated: isReplicated,
     }
   }
 

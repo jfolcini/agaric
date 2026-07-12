@@ -61,7 +61,8 @@ pub async fn list_block_history(
 
     let rows = sqlx::query_as!(
         HistoryEntry,
-        "SELECT device_id, seq, op_type, payload, created_at \
+        "SELECT device_id, seq, op_type, payload, created_at, \
+                is_replicated AS \"is_replicated!: bool\" \
          FROM op_log \
          WHERE block_id = ?1 \
            AND (?6 IS NULL OR op_type = ?6) \
@@ -166,7 +167,8 @@ pub async fn list_page_history(
         // lookups that matter. Conclusion: not worth it; left out.
         let rows = sqlx::query_as!(
             HistoryEntry,
-            "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at \
+            "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
+                    ol.is_replicated AS \"is_replicated!: bool\" \
              FROM op_log ol \
              WHERE (?1 IS NULL OR ol.op_type = ?1) \
                AND (?2 IS NULL OR ( \
@@ -208,7 +210,8 @@ pub async fn list_page_history(
              SELECT b.id, pb.depth + 1 FROM blocks b JOIN page_blocks pb ON b.parent_id = pb.id \
              WHERE pb.depth < 100 \
          ) \
-         SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at \
+         SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
+                ol.is_replicated AS \"is_replicated!: bool\" \
          FROM op_log ol \
          WHERE ol.block_id IN (SELECT id FROM page_blocks) \
            AND (?2 IS NULL OR ol.op_type = ?2) \

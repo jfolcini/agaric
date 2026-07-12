@@ -1331,7 +1331,8 @@ pub async fn undo_page_op_inner(
              SELECT b.id, pb.depth + 1 FROM blocks b JOIN page_blocks pb ON b.parent_id = pb.id \
              WHERE pb.depth < 100 \
          ) \
-         SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at \
+         SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
+                ol.is_replicated AS \"is_replicated!: bool\" \
          FROM op_log ol \
          WHERE ( \
              ol.block_id IN (SELECT id FROM page_blocks) \

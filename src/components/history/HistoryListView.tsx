@@ -15,7 +15,7 @@ import { useTranslation } from 'react-i18next'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { HistoryListItem } from '@/components/HistoryListItem'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { entryKey, NON_REVERSIBLE_OPS } from '@/hooks/useHistorySelection'
+import { entryKey, isRevertible } from '@/hooks/useHistorySelection'
 import type { DiffSpan, HistoryEntry } from '@/lib/tauri'
 
 export interface HistoryListViewProps {
@@ -129,7 +129,7 @@ export function HistoryListView({
                   index={virtualRow.index}
                   isSelected={selectedIds.has(key)}
                   isFocused={focusedIndex === virtualRow.index}
-                  isNonReversible={NON_REVERSIBLE_OPS.has(entry.op_type)}
+                  isNonReversible={!isRevertible(entry)}
                   isExpanded={expandedKeys.has(key)}
                   isLoadingDiff={loadingDiffs.has(key)}
                   diffSpans={diffCache.get(key)}
