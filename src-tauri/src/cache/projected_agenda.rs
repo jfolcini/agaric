@@ -64,6 +64,8 @@ pub(crate) const HORIZON_OCCURRENCES: usize = 13 * 7;
 /// date (offset from the rebuild's `today`) in `projected_agenda_horizon`
 /// and falls back to on-the-fly projection for any query reaching past it,
 /// so a smaller-than-a-year horizon can never return an incomplete page.
+// `HORIZON_OCCURRENCES` (91) fits i64 with room to spare; the cast cannot wrap.
+#[allow(clippy::cast_possible_wrap)]
 pub(crate) const HORIZON_DAYS: i64 = HORIZON_OCCURRENCES as i64 - 1;
 
 // ---------------------------------------------------------------------------
