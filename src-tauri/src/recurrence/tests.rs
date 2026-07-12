@@ -636,6 +636,7 @@ fn projection_plus_plus_cap_exhaustion_emits_no_stale_date() {
         today,
         range_start,
         range_end,
+        None, // max_emitted — unbounded (recurrence-unit test)
         |date, source| emitted.push((date, source)),
     );
 
@@ -671,6 +672,7 @@ fn projection_plus_plus_overflow_emits_no_stale_date() {
         today,
         range_start,
         range_end,
+        None, // max_emitted — unbounded (recurrence-unit test)
         |date, source| emitted.push((date, source)),
     );
 
@@ -702,6 +704,7 @@ fn projection_plus_plus_caught_up_still_emits() {
         today,
         range_start,
         range_end,
+        None, // max_emitted — unbounded (recurrence-unit test)
         |date, source| emitted.push((date, source)),
     );
 
@@ -760,6 +763,7 @@ fn projection_remaining_counts_pre_range_occurrences() {
         today,
         range_start,
         range_end,
+        None, // max_emitted — unbounded (recurrence-unit test)
         |date, source| emitted.push((date, source)),
     );
 
@@ -795,6 +799,7 @@ fn projection_remaining_in_range_emits_unchanged() {
         today,
         range_start,
         range_end,
+        None, // max_emitted — unbounded (recurrence-unit test)
         |date, source| emitted.push((date, source)),
     );
 
