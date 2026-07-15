@@ -83,6 +83,13 @@ impl LoroEngine {
             // tree, so start empty rather than cloning stale intent.
             pending_parent: HashMap::new(),
         };
+        // NOTE: unlike `new`/`with_peer_id_epoch`, we deliberately do NOT call
+        // `init_sibling_ordering` here. `fork` copies the whole document —
+        // including the tree's enabled fractional index — so the staging doc
+        // already carries the source's sibling-ordering config; re-enabling it
+        // would be redundant. This reliance on `fork` preserving the fractional
+        // index is load-bearing (a staged create-at-index depends on it) and is
+        // exercised by the staging tests' indexed creates on the fork.
         // Rebuild the `block_id → TreeID` index from the forked tree — the fork
         // copied the document but not `self`'s incrementally-maintained index.
         staged.rebuild_index();
