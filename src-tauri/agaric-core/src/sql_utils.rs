@@ -13,8 +13,12 @@
 /// ```text
 /// WHERE name LIKE ?1 ESCAPE '\'
 /// ```
+// Widened from `pub(crate)` to `pub` when this module moved into
+// `agaric-core` (#2621): consumers (`backlink`, `tag_query`, …) now live in
+// the dependent `agaric` crate and reach it via `crate::sql_utils::escape_like`
+// (a re-export of `agaric_core::sql_utils::escape_like`).
 #[must_use]
-pub(crate) fn escape_like(input: &str) -> String {
+pub fn escape_like(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     for ch in input.chars() {
         match ch {

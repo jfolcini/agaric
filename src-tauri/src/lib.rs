@@ -16,7 +16,9 @@ pub mod deeplink;
 pub mod device;
 pub mod domain;
 pub mod draft;
-pub mod error;
+// Foundation-crate re-export (#2621): `error` now lives in `agaric-core`.
+// The `pub use` keeps every `crate::error::…` path (142 files) resolving.
+pub use agaric_core::error;
 pub mod filters;
 pub mod foreground;
 pub mod fts;
@@ -50,7 +52,7 @@ pub mod soft_delete;
 pub mod space;
 pub mod space_filter_canonical;
 pub mod spaces;
-pub mod sql_utils;
+pub use agaric_core::sql_utils; // foundation crate (#2621)
 pub mod sync_cert;
 pub mod sync_constants;
 pub mod sync_daemon;
@@ -64,9 +66,9 @@ pub mod tag_inheritance_macros;
 pub mod tag_norm;
 pub mod tag_query;
 pub mod task_locals;
-pub mod text_utils;
+pub use agaric_core::text_utils; // foundation crate (#2621)
 pub mod ulid;
-pub mod word_diff;
+pub use agaric_core::word_diff; // foundation crate (#2621)
 
 /// I-Core-7: Single source of truth for the list of Tauri commands
 /// exposed to the frontend.

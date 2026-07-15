@@ -9,7 +9,7 @@
 # #645 — `diagnostics` holds the two read-only DB inspection bins
 # (`op_log_histogram`, `audit_cross_space_refs`) carved out of this app
 # crate so `tauri-bundler` no longer scans them as app `[[bin]]` targets.
-members = [".", "diagnostics"]
+members = [".", "agaric-core", "diagnostics"]
 
 [package]
 name = "agaric"
@@ -126,6 +126,12 @@ ci-smoke = []
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# Foundation crate (#2621 layered-workspace split). Holds the pure-leaf
+# `error`/`word_diff`/`sql_utils`/`text_utils` modules; re-exported below
+# (`pub use agaric_core::…` in lib.rs) so `crate::error::…` paths are
+# unchanged. Lib target is `agaric_core`.
+agaric-core = { path = "agaric-core", version = "0.1.0" }
+
 # `tracing` feature (#2110 M3): makes Tauri's async `#[command]` wrapper
 # instrument each command future with an `ipc::request::run` span created at
 # dispatch time. Combined with the trace-context-extracting invoke wrapper in
@@ -152,7 +158,8 @@ tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
-thiserror = "2.0.18"
+# `thiserror` moved with `error.rs` into `agaric-core` (#2621); `agaric` no
+# longer uses it directly. `similar` likewise moved with `word_diff.rs`.
 ulid = "1.2.1"
 uuid = { version = "1.23.2", features = ["v4"] }
 blake3 = "1.8.5"
@@ -182,7 +189,7 @@ rustc-hash = "2.1.2"
 # tauri/sqlx stack, so this adds no new crate to the tree — only the feature
 # and a direct declaration.
 parking_lot = { version = "0.12.5", features = ["arc_lock"] }
-similar = "3"
+# `similar` moved with `word_diff.rs` into `agaric-core` (#2621).
 zstd = "0.13"
 ciborium = "0.2"
 tracing = { version = "0.1.44", features = ["attributes"] }

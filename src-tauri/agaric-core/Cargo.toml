@@ -1,0 +1,57 @@
+# agaric-core — foundation crate for the layered-workspace split (#2621).
+#
+# Wave 1 holds the genuinely pure-leaf modules carved out of the `agaric`
+# app crate: `error` (the `AppError` root, referenced by ~142 files),
+# `word_diff`, `sql_utils`, and `text_utils`. None of them reach into any
+# other app module — they depend only on std + a handful of external
+# crates — so this is the natural bottom of the dependency DAG.
+#
+# The `agaric` crate depends on this via a path dep and re-exports each
+# module (`pub use agaric_core::error;` …) so existing `crate::error::…`
+# paths keep resolving unchanged during the transition.
+[package]
+name = "agaric-core"
+version = "0.1.0"
+edition = "2024"
+# Keep in lockstep with ../Cargo.toml (the app crate) + rust-toolchain.toml.
+rust-version = "1.95.0"
+license = "GPL-3.0-or-later"
+publish = false
+
+[dependencies]
+# Versions/features mirror the app crate's `[dependencies]` exactly so
+# cargo's feature unification keeps a single build of each crate across
+# the workspace (no dependency-graph split).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2.0.18"
+# `error.rs` references `sqlx::Error` + `sqlx::migrate::MigrateError` (and
+# `is_unique_violation()`), but carries NO `query!` macros — so no
+# `.sqlx/` offline cache and no `macros` feature are needed here.
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "migrate"] }
+specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
+similar = "3"
+
+[dev-dependencies]
+# Needed by the moved unit tests: `error.rs` uses `#[tokio::test]`,
+# `word_diff.rs` uses `proptest!`. Versions/features mirror ../Cargo.toml.
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
+proptest = "1.11.0"
+
+# Mirror the app crate's lint posture so clippy/rustc behave identically
+# under CI (the app crate declares these as package-level tables, not
+# `[workspace.lints]`, so we replicate them here — same pattern as the
+# `agaric-diagnostics` member).
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
+cast_possible_wrap = "warn"
+fallible_impl_from = "deny"
+needless_pass_by_value = "warn"
+redundant_closure_for_method_calls = "warn"
+manual_let_else = "warn"
+large_futures = "warn"
+default_trait_access = "warn"

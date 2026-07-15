@@ -18,6 +18,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 name = "agaric"
 version = "0.7.2"
 dependencies = [
+ "agaric-core",
  "aho-corasick",
  "base64 0.22.1",
  "blake3",
@@ -50,7 +51,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "similar 3.1.1",
  "specta",
  "specta-typescript",
  "sqlx",
@@ -70,7 +70,6 @@ dependencies = [
  "tauri-plugin-window-state",
  "tauri-specta",
  "tempfile",
- "thiserror 2.0.18",
  "tokio",
  "tokio-rustls",
  "tokio-tungstenite",
@@ -86,6 +85,20 @@ dependencies = [
  "x509-parser",
  "xxhash-rust",
  "zstd",
+]
+
+[[package]]
+name = "agaric-core"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+ "similar 3.1.1",
+ "specta",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
