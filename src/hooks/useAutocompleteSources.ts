@@ -10,7 +10,8 @@
  * wiring.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { AutocompleteItem } from '@/components/search/AutocompletePopover'
@@ -23,18 +24,17 @@ import { notify } from '@/lib/notify'
 import { getPathHistory } from '@/lib/path-history'
 import {
   ensurePropertyKeysInvalidationListener,
-  fetchPropertyKeysOnce,
-  getCachedPropertyKeys,
+  propertyKeysQueryFn,
+  propertyKeysQueryKey,
   PROPERTY_KEYS_GLOBAL_KEY,
-  subscribeToPropertyKeysCache,
 } from '@/lib/property-keys-cache'
 import {
   ensurePropertyValuesInvalidationListener,
-  fetchPropertyValuesOnce,
-  getCachedPropertyValues,
   PROPERTY_VALUES_EMPTY,
-  subscribeToPropertyValuesCache,
+  propertyValuesQueryFn,
+  propertyValuesQueryKey,
 } from '@/lib/property-values-cache'
+import { queryClient } from '@/lib/query-client'
 import type { AutocompleteAnchor } from '@/lib/search-query/autocomplete'
 import { getPropertyDef, listTagsByPrefix, paginationLimit } from '@/lib/tauri'
 
@@ -53,6 +53,9 @@ export const DATE_BUCKET_VALUES = [
 const TAG_DEBOUNCE_MS = 150
 const TAG_LIMIT = 20
 
+/** Stable empty-array reference for the propKey list before it resolves. */
+const EMPTY: string[] = []
+
 export interface UseAutocompleteSourcesArgs {
   anchor: AutocompleteAnchor
   spaceId: string | null
@@ -68,39 +71,78 @@ function projectStatic(values: readonly string[], query: string): AutocompleteIt
   return values.filter((v) => v.toLowerCase().startsWith(lowered)).map((v) => ({ value: v }))
 }
 
+/**
+ * #1425 — merge the `select` definition's options (preferred, so the canonical
+ * vocabulary leads) with the live usage-ranked values, de-duplicated, then
+ * prefix-filter by the typed query. Select options come first; usage-ranked
+ * values follow in backend order.
+ */
+function mergePropValueSuggestions(
+  options: string[],
+  values: string[],
+  query: string,
+): AutocompleteItem[] {
+  const merged: string[] = []
+  const seen = new Set<string>()
+  for (const v of [...options, ...values]) {
+    if (seen.has(v)) continue
+    seen.add(v)
+    merged.push(v)
+  }
+  const lowered = query.toLowerCase()
+  return merged.filter((v) => v.toLowerCase().startsWith(lowered)).map((v) => ({ value: v }))
+}
+
 export function useAutocompleteSources(
   args: UseAutocompleteSourcesArgs,
 ): UseAutocompleteSourcesResult {
   const { anchor, spaceId } = args
+
+  const active = anchor?.active ?? null
+  const query = anchor?.query ?? ''
 
   // Tag IPC state — kept separate from synchronous projections so the
   // popover can stay open with stale items while a new request flies.
   const [tagItems, setTagItems] = useState<AutocompleteItem[]>([])
   const [tagLoading, setTagLoading] = useState(false)
 
-  // Property-key list comes from the shared cache: space-keyed,
-  // in-flight-dedup, invalidates on `block:properties-changed`. We
-  // subscribe unconditionally (cheap — the snapshot is a stable array),
-  // but only kick off the fetch when the user actually opens the
-  // propKey anchor (see effect below). Other consumers may have already
-  // primed the cache, in which case the popover gets results instantly.
+  // Property-key list comes from the shared TanStack query: space-keyed,
+  // in-flight-dedup, invalidated on `block:properties-changed`. The query is
+  // enabled only while the propKey anchor is active, but another consumer
+  // (picker, backlink filter) may have already primed the cache, in which
+  // case the popover gets results instantly. The explicit `queryClient` arg
+  // keeps the hook independent of a `QueryClientProvider` ancestor.
   const spaceKey = spaceId ?? PROPERTY_KEYS_GLOBAL_KEY
-  const getPropKeysSnapshot = useCallback(() => getCachedPropertyKeys(spaceKey), [spaceKey])
-  const propKeys = useSyncExternalStore(subscribeToPropertyKeysCache, getPropKeysSnapshot)
+  const { data: propKeysData } = useQuery(
+    {
+      queryKey: propertyKeysQueryKey(spaceKey),
+      queryFn: propertyKeysQueryFn,
+      enabled: active === 'propKey',
+    },
+    queryClient,
+  )
+  const propKeys = propKeysData ?? EMPTY
 
   // #1425 — property-VALUE suggestions for the value side of
   // `prop:key=value`. The candidate list is the union of (a) the live
-  // usage-ranked `value_text` values from the backend (key-scoped cache,
+  // usage-ranked `value_text` values from the backend (key-scoped query,
   // invalidated on `block:properties-changed`) and (b) for a `select`-typed
   // definition, the definition's configured options. The select options
   // are *preferred*: they lead the list so the canonical vocabulary surfaces
   // first even before any block has recorded that value yet.
   const propValueKey = anchor?.active === 'propValue' ? anchor.key : null
-  const getPropValuesSnapshot = useCallback(
-    () => (propValueKey == null ? PROPERTY_VALUES_EMPTY : getCachedPropertyValues(propValueKey)),
-    [propValueKey],
+  // A single derived key (empty string when no propValue anchor) keeps the
+  // query-key + queryFn in sync and the `enabled` gate to one truthiness check.
+  const propValuesKey = propValueKey ?? ''
+  const { data: propValuesData } = useQuery(
+    {
+      queryKey: propertyValuesQueryKey(propValuesKey),
+      queryFn: () => propertyValuesQueryFn(propValuesKey),
+      enabled: propValuesKey !== '',
+    },
+    queryClient,
   )
-  const propValues = useSyncExternalStore(subscribeToPropertyValuesCache, getPropValuesSnapshot)
+  const propValues = propValuesData ?? PROPERTY_VALUES_EMPTY
   // Select-definition options keyed by property key. Fetched once per key
   // on first propValue activation; a `null` entry records "fetched, not a
   // select / no options" so we don't refetch.
@@ -132,25 +174,24 @@ export function useAutocompleteSources(
   const priorityLevels = usePriorityLevels()
   const priorityValues = useMemo(() => [...priorityLevels, 'none'], [priorityLevels])
 
-  const active = anchor?.active ?? null
-  const query = anchor?.query ?? ''
-
-  // ── PropKey lazy fetch (one-shot per session+space) ───────────────
+  // ── PropKey invalidation wiring ───────────────────────────────────
+  // The fetch itself is driven by the `useQuery` above (enabled while the
+  // propKey anchor is active); this effect only registers the event →
+  // invalidate listener so a `block:properties-changed` write refreshes the
+  // key list. Idempotent and process-lifetime.
   useEffect(() => {
     if (active !== 'propKey') return
     ensurePropertyKeysInvalidationListener()
-    void fetchPropertyKeysOnce(spaceKey)
-  }, [active, spaceKey])
+  }, [active])
 
-  // ── PropValue lazy fetch (#1425) ──────────────────────────────────
-  // On propValue activation: (1) start a key-scoped values fetch (shared
-  // cache, invalidated on property change), and (2) one-shot resolve the
-  // key's definition so a `select` type can seed its options. Both are
-  // keyed on `propValueKey`, so switching keys re-resolves cleanly.
+  // ── PropValue lazy resolve (#1425) ────────────────────────────────
+  // On propValue activation: (1) register the values invalidation listener
+  // (the fetch is driven by the `useQuery` above), and (2) one-shot resolve
+  // the key's definition so a `select` type can seed its options. Keyed on
+  // `propValueKey`, so switching keys re-resolves cleanly.
   useEffect(() => {
     if (active !== 'propValue' || propValueKey == null || propValueKey === '') return
     ensurePropertyValuesInvalidationListener()
-    void fetchPropertyValuesOnce(propValueKey)
     // Resolve the definition once per key. `undefined` in the map means
     // "not yet fetched"; we record `string[]` for select options or `null`
     // otherwise so the fetch never repeats for the same key.
@@ -262,21 +303,11 @@ export function useAutocompleteSources(
       return { items: projectStatic(propKeys, anchor.query), loading: false }
     }
     case 'propValue': {
-      // #1425 — merge the `select` definition's options (preferred, so the
-      // canonical vocabulary leads) with the live usage-ranked values,
-      // de-duplicated, then prefix-filter by the typed query. Select
-      // options come first; usage-ranked values follow in backend order.
+      // Select options (preferred) merged with usage-ranked values, deduped and
+      // prefix-filtered — see `mergePropValueSuggestions`.
       const opts = (propValueKey != null ? selectOptions[propValueKey] : null) ?? []
-      const merged: string[] = []
-      const seen = new Set<string>()
-      for (const v of [...opts, ...propValues]) {
-        if (seen.has(v)) continue
-        seen.add(v)
-        merged.push(v)
-      }
-      const lowered = anchor.query.toLowerCase()
       return {
-        items: merged.filter((v) => v.toLowerCase().startsWith(lowered)).map((v) => ({ value: v })),
+        items: mergePropValueSuggestions(opts, propValues, anchor.query),
         loading: false,
       }
     }

@@ -4,8 +4,11 @@
  * Validates the four invariants pinned by the maintenance task:
  *  (a) two consecutive `usePropertyKeysCache(spaceId)` mounts fire ONE IPC,
  *  (b) different `spaceId`s fire separate IPCs,
- *  (c) the materializer `block:properties-changed` event clears the cache,
- *  (d) a third consumer mounted after invalidation refetches.
+ *  (c) the materializer `block:properties-changed` event invalidates the
+ *      query so the active consumer refetches (#2596: the TanStack-backed
+ *      cache invalidates + refetches rather than dropping to an empty
+ *      snapshot, but the observable "consumer sees fresh data" intent holds),
+ *  (d) a consumer mounted after invalidation sees the refreshed data.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -126,7 +129,7 @@ describe('usePropertyKeysCache', () => {
   // ------------------------------------------------------------------
   // (c) Invalidation event clears the cache
   // ------------------------------------------------------------------
-  it('clears the cache when block:properties-changed introduces a new key', async () => {
+  it('refetches when block:properties-changed introduces a new key', async () => {
     const { result } = renderHook(() => usePropertyKeysCache('SPACE_A'))
     await waitFor(() => {
       expect(result.current).toEqual(['project', 'effort'])
@@ -134,14 +137,17 @@ describe('usePropertyKeysCache', () => {
     expect(listPropertyKeysInvocationCount()).toBe(1)
 
     // The Tauri listener was registered on first mount — fire the
-    // materializer event with a NEW key and confirm the cached entry is
-    // dropped (#2507 keyed invalidation).
+    // materializer event with a NEW key and confirm the active consumer
+    // refetches the refreshed key list (#2507 keyed invalidation).
+    mockedInvoke.mockResolvedValue(['project', 'effort', 'assignee'])
     act(() => {
       fireInvalidationEvent(['assignee'])
     })
 
-    // Snapshot resets to empty until a fresh consumer triggers a refetch.
-    expect(result.current).toEqual([])
+    await waitFor(() => {
+      expect(result.current).toEqual(['project', 'effort', 'assignee'])
+    })
+    expect(listPropertyKeysInvocationCount()).toBe(2)
   })
 
   it('does NOT clear the cache when block:properties-changed only touches known keys (#2507)', async () => {
@@ -167,17 +173,21 @@ describe('usePropertyKeysCache', () => {
       expect(result.current).toEqual(['project', 'effort'])
     })
 
+    mockedInvoke.mockResolvedValue(['project', 'effort', 'assignee'])
     act(() => {
       invalidatePropertyKeysCache()
     })
 
-    expect(result.current).toEqual([])
+    await waitFor(() => {
+      expect(result.current).toEqual(['project', 'effort', 'assignee'])
+    })
+    expect(listPropertyKeysInvocationCount()).toBe(2)
   })
 
   // ------------------------------------------------------------------
   // (d) Third consumer mounted after invalidation refetches
   // ------------------------------------------------------------------
-  it('a consumer mounted after invalidation triggers a fresh IPC fetch', async () => {
+  it('a consumer mounted after invalidation sees the refreshed data', async () => {
     // First two consumers share a single fetch (invariant a).
     const { result: r1 } = renderHook(() => usePropertyKeysCache('SPACE_A'))
     const { result: r2 } = renderHook(() => usePropertyKeysCache('SPACE_A'))
@@ -187,13 +197,15 @@ describe('usePropertyKeysCache', () => {
     })
     expect(listPropertyKeysInvocationCount()).toBe(1)
 
-    // Materializer signals that a new property key appeared.
+    // Materializer signals that a new property key appeared — the active
+    // observers refetch through the shared query (a single fresh IPC).
+    mockedInvoke.mockResolvedValue(['project', 'effort', 'assignee'])
     act(() => {
       fireInvalidationEvent(['assignee'])
     })
 
-    // Third consumer mounts post-invalidation — must trigger refetch.
-    mockedInvoke.mockResolvedValue(['project', 'effort', 'assignee'])
+    // Third consumer mounts post-invalidation — reuses the shared refreshed
+    // query rather than firing its own IPC.
     const { result: r3 } = renderHook(() => usePropertyKeysCache('SPACE_A'))
     await waitFor(() => {
       expect(r3.current).toEqual(['project', 'effort', 'assignee'])

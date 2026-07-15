@@ -252,9 +252,13 @@ describe('useAutocompleteSources', () => {
       ({ a }: { a: AutocompleteAnchor }) => useAutocompleteSources({ anchor: a, spaceId: 'S1' }),
       { initialProps: { a: { active: 'propKey', query: '', anchor: 0 } as AutocompleteAnchor } },
     )
+    // `useQuery` notifies observers via the notifyManager's `setTimeout(0)`
+    // scheduler; under fake timers that must be flushed for the resolved data
+    // to reach the hook result (there is no other state update to force a
+    // re-render on the propKey path).
     await act(async () => {
       await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
     })
     expect(mockedListPropertyKeys).toHaveBeenCalledTimes(1)
     expect(result.current.items.map((i) => i.value)).toEqual(['status', 'owner', 'estimate'])

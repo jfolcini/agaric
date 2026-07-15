@@ -1,39 +1,34 @@
 /**
- * usePropertyKeysCache — React adapter over the module-level cache in
- * `src/lib/property-keys-cache.ts`.
+ * usePropertyKeysCache — React adapter over the TanStack Query-backed cache
+ * in `src/lib/property-keys-cache.ts`.
  *
  * Three components consume the property-key list to populate filter
  * pickers (`PropertyValuePicker`, `BacklinkFilterBuilder` inside
- * `LinkedReferences` / `UnlinkedReferences`). Before each
- * component fired its own `useEffect([])` IPC on mount, so a view
- * with a backlink panel + several filter rows hit the IPC N times
- * for identical data. The cache collapses every consumer of the same
- * `spaceId` to a single in-flight fetch and shares the cached result
+ * `LinkedReferences` / `UnlinkedReferences`). Each used to fire its own
+ * `useEffect([])` IPC on mount; the shared query collapses every consumer of
+ * the same `spaceId` to a single in-flight fetch and shares the cached result
  * across mounts.
  *
- * Added a non-React caller (`searchPropertyKeys` in
- * `src/lib/slash-commands.ts`) that bypassed the cache because the
- * primitives lived in this hook file. The cache state and the IPC
- * helpers were moved to a plain module so both worlds share the same
- * Map / in-flight / subscriber set. This file is now a thin React
- * binding that wires those primitives into `useSyncExternalStore`,
- * and re-exports the public surface so existing callers
- * (`invalidatePropertyKeysCache`, `_resetPropertyKeysCacheForTest`)
- * keep importing from `../hooks/usePropertyKeysCache`.
+ * #2596 (pilot): the hook is now a thin `useQuery` binding. It passes the
+ * module-level `queryClient` singleton *explicitly* as the second argument so
+ * it needs no `QueryClientProvider` ancestor, and re-exports the public
+ * surface (`invalidatePropertyKeysCache`, `_resetPropertyKeysCacheForTest`)
+ * so existing callers keep importing from `../hooks/usePropertyKeysCache`.
  *
- * The cache is keyed on `spaceId` even though the underlying IPC is
- * not yet space-scoped, so future per-space migration is a one-line
- * backend change that doesn't need to ripple through the consumers.
+ * The cache is keyed on `spaceId` even though the underlying IPC is not yet
+ * space-scoped, so a future per-space migration is a one-line backend change.
  */
 
-import { useCallback, useEffect, useSyncExternalStore } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { useEffect } from 'react'
+
+import { queryClient } from '@/lib/query-client'
 
 import {
   ensurePropertyKeysInvalidationListener,
-  fetchPropertyKeysOnce,
-  getCachedPropertyKeys,
+  propertyKeysQueryFn,
+  propertyKeysQueryKey,
   PROPERTY_KEYS_GLOBAL_KEY,
-  subscribeToPropertyKeysCache,
 } from '../lib/property-keys-cache'
 
 // Re-exports keep the historical import path working for tests and
@@ -43,6 +38,10 @@ export {
   _resetPropertyKeysCacheForTest,
   invalidatePropertyKeysCache,
 } from '../lib/property-keys-cache'
+
+/** Stable empty-array reference returned before the first fetch resolves, so
+ *  consumers relying on referential stability across renders don't thrash. */
+const EMPTY: string[] = []
 
 /**
  * Returns the cached list of property keys for the given space,
@@ -54,12 +53,19 @@ export {
 export function usePropertyKeysCache(spaceId: string | null): string[] {
   const spaceKey = spaceId ?? PROPERTY_KEYS_GLOBAL_KEY
 
+  // Wire up the event → invalidate listener. Idempotent and process-lifetime.
   useEffect(() => {
     ensurePropertyKeysInvalidationListener()
-    void fetchPropertyKeysOnce(spaceKey)
-  }, [spaceKey])
+  }, [])
 
-  const getSnapshot = useCallback(() => getCachedPropertyKeys(spaceKey), [spaceKey])
+  const { data } = useQuery(
+    {
+      queryKey: propertyKeysQueryKey(spaceKey),
+      queryFn: propertyKeysQueryFn,
+      staleTime: Number.POSITIVE_INFINITY,
+    },
+    queryClient,
+  )
 
-  return useSyncExternalStore(subscribeToPropertyKeysCache, getSnapshot)
+  return data ?? EMPTY
 }
