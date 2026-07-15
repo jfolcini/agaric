@@ -82,6 +82,16 @@ pub struct LoroState {
     /// (`drain_replay_dirty`) so each touched parent is reprojected exactly
     /// once from the engine's final sibling order.
     replay_dirty_parents: std::sync::Mutex<std::collections::HashSet<(String, Option<String>)>>,
+
+    /// #2604 — per-tx engine-rollback log. Armed by a
+    /// [`RevertScope`](crate::loro::revert::RevertScope) for the duration of a
+    /// single-op `apply_op`; the mutation handlers'
+    /// [`for_space_recording`](crate::loro::registry::LoroEngineRegistry::for_space_recording)
+    /// calls capture each touched space's pre-op checkpoint into it, and the
+    /// scope rewinds them if the SQL tx aborts. One un-keyed slot suffices
+    /// because engine mutations are serialised by the `BEGIN IMMEDIATE` write
+    /// lock — see the [`revert`](crate::loro::revert) module docs.
+    pub revert: crate::loro::revert::RevertLog,
 }
 
 impl LoroState {
@@ -92,6 +102,7 @@ impl LoroState {
             registry: LoroEngineRegistry::new(),
             replay_suppress_reproject: std::sync::atomic::AtomicBool::new(false),
             replay_dirty_parents: std::sync::Mutex::new(std::collections::HashSet::new()),
+            revert: crate::loro::revert::RevertLog::new(),
         }
     }
 

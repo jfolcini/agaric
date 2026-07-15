@@ -31,6 +31,10 @@ pub mod projection;
 
 pub mod registry;
 
+// #2604 — rollback-safe engine-apply wiring: the per-tx revert log + RAII scope
+// that rewinds an in-place engine apply if the caller's SQL tx aborts.
+pub mod revert;
+
 pub mod shared;
 
 // Per-space LoroDoc snapshot persistence. The `loro_doc_state` table

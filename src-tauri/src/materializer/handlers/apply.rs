@@ -51,6 +51,15 @@ pub(super) async fn apply_op(
     // a `warn!` if slow) instead of mid-tx `busy_timeout` stalls
     // under SQLite's default DEFERRED isolation.
     let mut tx = crate::db::begin_immediate_logged(pool, "materializer_apply_op").await?;
+    // #2604 — arm the engine-rollback scope for this single-op apply. The
+    // `apply_op_projected` call below mutates the canonical per-space engine IN
+    // PLACE (outside the SQL tx's atomicity); each mutation handler's
+    // `for_space_recording` captures the touched space's pre-op checkpoint into
+    // the armed log. If the projection or the commit fails, the engine is
+    // rewound to that checkpoint so it never stays ahead of the rolled-back SQL
+    // (the REMOTE-path divergence #2603 pins, which — unlike the LOCAL path —
+    // does not self-heal via boot replay).
+    let revert = crate::loro::revert::RevertScope::arm(state);
     // #2325/#2250: the single-op REMOTE path and the LOCAL command path now
     // share ONE projection function, [`apply_op_projected`]. The only
     // variation is the `advance_cursor` flag: `true` here (the REMOTE /
@@ -59,8 +68,29 @@ pub(super) async fn apply_op(
     // NOT move the cursor — #1257). The single-device `debug_assert!` guard and
     // the `advance_apply_cursor` call moved INTO that function's
     // `advance_cursor` branch.
-    let effects = apply_op_projected(&mut tx, record, state, true).await?;
-    tx.commit().await?;
+    let apply_result = apply_op_projected(&mut tx, record, state, true).await;
+    // Lift the recorded checkpoints out of the shared log WHILE the
+    // `BEGIN IMMEDIATE` write lock is still held (the `commit()`/rollback below
+    // releases it). This keeps the log armed only under that lock, so no
+    // concurrent writer can ever record into another tx's log (#2604).
+    let pending = revert.detach();
+    // BOTH failure modes rewind the engine: a `?` out of `apply_op_projected`
+    // (engine already mutated, SQL projection failed → tx rolls back on drop)
+    // and a failing `commit()`. On success `pending` is dropped, keeping the op.
+    let effects = match apply_result {
+        Ok(effects) => match tx.commit().await {
+            Ok(()) => effects,
+            Err(e) => {
+                pending.revert();
+                return Err(e.into());
+            }
+        },
+        Err(e) => {
+            drop(tx); // roll back the SQL projection before rewinding the engine
+            pending.revert();
+            return Err(e);
+        }
+    };
 
     // The op itself was engine-applied INSIDE the tx above
     // (`apply_op_tx` → `apply_*_via_loro`, #400-routed on

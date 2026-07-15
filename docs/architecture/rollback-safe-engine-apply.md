@@ -159,25 +159,44 @@ per-space doc is exactly the thing that grows. The mechanism MUST be
 3. **Keep replay reconciliation as the backstop** until (2) has soaked; retiring
    it is a later, separate decision once no divergence has been observed.
 
-## Follow-up: write-path wiring
+## Write-path wiring
 
-The remaining work wires the two primitives into the tx lifecycle. It is
-cross-cutting (high-risk) and its own PR:
+The primitives wire into the tx lifecycle via a per-tx **revert log** on
+`LoroState` and an RAII **`RevertScope`** (`src-tauri/src/loro/revert.rs`):
 
-- **Checkpoint capture.** Before the first engine mutation to a space in a tx,
-  record `(space_id, checkpoint_frontiers())` in a per-tx revert log. The
-  `BEGIN IMMEDIATE` write lock serialises writers, so at most one tx mutates the
-  engines at a time — making even a per-`LoroState` in-flight log race-free
-  (design-Q *Concurrency* resolved).
-- **Commit / abort hooks.** On commit success, clear the log (the ops stay). On
-  abort/drop, `revert_to_frontier` each recorded space. The trigger points are
-  `apply_op`'s `tx.commit()` (REMOTE / single-op) and every LOCAL command's tx
-  boundary — `apply_op_projected(advance_cursor=false)` is called from
-  `commands/blocks/{crud,move_ops}.rs`, `commands/mod.rs`, … each owning its
-  commit — plus `CommandTx`'s Drop for the panic path.
-- **Cursor interaction (design-Q).** Unchanged: the apply cursor already advances
-  only inside the committed tx (`advance_apply_cursor`), so a reverted engine and
-  a rolled-back cursor stay consistent by construction.
-- **Acceptance test.** Flip #2603's crash-injection test to assert *no divergence
-  reachable by construction* for both local and remote ops, and add an
-  abort-path rewind test.
+- **Checkpoint capture.** The mutation handlers acquire their engine through
+  `LoroEngineRegistry::for_space_recording`, which — when a `RevertScope` is
+  armed — captures the touched space's `checkpoint_frontiers()` (first-touch per
+  space) into the log alongside the exact engine `Arc`. The `BEGIN IMMEDIATE`
+  write lock serialises writers, so at most one tx mutates the engines at a time,
+  making a single un-keyed in-flight log race-free (design-Q *Concurrency*
+  resolved). `for_space` in production is exclusively a mutation chokepoint, so
+  an armed log never records a concurrent reader.
+- **Commit / abort hooks.** The tx owner arms a `RevertScope` before the apply.
+  On COMMIT success it `disarm`s (the ops stay); on ANY abort — a `?`-propagated
+  error, a panic, or an early drop — the scope's `Drop` runs `revert_to_frontier`
+  for each recorded space. This covers the commit-failure, mid-apply-error, and
+  panic paths uniformly.
+- **Cursor interaction (design-Q).** Unchanged: the apply cursor advances only
+  inside the committed tx (`advance_apply_cursor`), so a reverted engine and a
+  rolled-back cursor stay consistent by construction.
+
+### Status
+
+- **REMOTE / single-op path (`apply_op`) — DONE (this PR).** This is the path
+  #2603 pins and the one that does NOT self-heal at runtime (only a
+  `reproject_blocks_from_engine` recovery pass reconciled it before). `apply_op`
+  now arms a `RevertScope` around the apply+commit; a rolled-back tx rewinds the
+  engine in lock-step. Test:
+  `remote_op_abort_under_revert_scope_rewinds_engine_no_divergence_2604` — the
+  same injection as the #2603 test, asserting *no divergence* and that the
+  rewound engine stays usable (re-apply + commit converges, no reprojection). The
+  #2603 test is retained: it documents the raw (unwired) primitive behaviour.
+- **LOCAL command path — remaining.** Local commands drive
+  `apply_op_projected(advance_cursor=false)` from `commands/blocks/{crud,move_ops}.rs`,
+  `commands/mod.rs`, … each owning its `CommandTx` commit. They do not yet arm a
+  scope, so their handlers' `for_space_recording` calls are a no-op capture — a
+  deliberate zero-behaviour-change step. Arming these owners (and the batch/
+  multi-space commands) is the next scoped PR; the LOCAL divergence already
+  self-heals via boot replay (`advance_cursor=false`), so this path is lower
+  urgency than the REMOTE one landed here.
