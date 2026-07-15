@@ -270,7 +270,7 @@ async fn append_local_op_in_tx_with_provenance(
     // it is local-attribution metadata, not part of the cross-device
     // identity of the op. Two devices receiving the same logical op but
     // tagged with different origins must still hash-match for sync.
-    let origin = crate::mcp::actor::current_actor().origin_tag();
+    let origin = crate::task_locals::current_actor().origin_tag();
 
     // #659: `is_undo` (migration 0090) records undo provenance so
     // `redo_page_op` can verify its target really is an undo op. Like
