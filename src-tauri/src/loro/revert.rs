@@ -21,8 +21,10 @@
 //! give an `O(1)` capture on the common path and an `O(n)` rewind paid ONLY on
 //! the rare abort. This module wires them into the tx lifecycle:
 //!
-//! 1. The tx owner ([`apply_op`]) ARMS a [`RevertScope`] right after
-//!    `BEGIN IMMEDIATE`.
+//! 1. The tx owner ARMS the log right after `BEGIN IMMEDIATE` — the REMOTE
+//!    single-op path ([`apply_op`]) via a [`RevertScope`], the LOCAL command
+//!    path via [`CommandTx::arm_engine_rollback`](crate::db::CommandTx::arm_engine_rollback),
+//!    which detaches inside its own commit/rollback/`Drop` rather than a scope.
 //! 2. Each mutation handler's
 //!    [`for_space_recording`](crate::loro::registry::LoroEngineRegistry::for_space_recording)
 //!    call records the touched space's pre-op checkpoint into the armed
@@ -115,7 +117,7 @@ impl RevertLog {
 
     /// Arm the log for a new in-flight tx. Debug-asserts it was not already
     /// armed (a nested write tx would violate the single-in-flight invariant).
-    fn arm(&self) {
+    pub(crate) fn arm(&self) {
         let mut slot = self.inner.lock();
         debug_assert!(
             slot.is_none(),
@@ -123,6 +125,22 @@ impl RevertLog {
              tx would break the single-in-flight invariant the un-keyed log relies on"
         );
         *slot = Some(Vec::new());
+    }
+
+    /// Lift the recorded checkpoints out of the log, disarming it, for an
+    /// explicit commit/abort decision — the direct-`RevertLog` counterpart of
+    /// [`RevertScope::detach`] used by the LOCAL command path
+    /// ([`CommandTx`](crate::db::CommandTx)), which arms the log itself rather
+    /// than through a `RevertScope`.
+    ///
+    /// Like [`RevertScope::detach`], MUST be called while the caller's
+    /// `BEGIN IMMEDIATE` write lock is still held. If the log was never armed
+    /// (a non-engine tx) the returned [`DetachedRevert`] is empty and both
+    /// dropping it and calling `revert` are no-ops.
+    pub(crate) fn detach(&self) -> DetachedRevert {
+        DetachedRevert {
+            entries: self.take().unwrap_or_default(),
+        }
     }
 
     /// Take the recorded entries, leaving the log un-armed.
@@ -184,9 +202,8 @@ impl<'a> RevertScope<'a> {
     /// applied ops (commit path); [`revert`](DetachedRevert::revert) rewinds
     /// them (abort path).
     pub fn detach(self) -> DetachedRevert {
-        let entries = self.log.take().unwrap_or_default();
+        self.log.detach()
         // `self` drops here; the log is now un-armed, so `Drop` is a no-op.
-        DetachedRevert { entries }
     }
 }
 

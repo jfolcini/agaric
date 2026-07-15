@@ -143,6 +143,15 @@ pub struct CommandTx {
     /// named by the [`Drop`] debug-assert below so a leaked
     /// post-commit dispatch can be traced back to its originating command.
     label: &'static str,
+    /// #2604 — engine-rollback handle for the LOCAL command path. `Some` when
+    /// this tx was opened via [`arm_engine_rollback`](Self::arm_engine_rollback):
+    /// it holds the `LoroState` whose per-tx [`RevertLog`] was armed, so the
+    /// engine mutations this command applies in place can be rewound if the tx
+    /// aborts. `None` for non-engine txs (attachments, drafts, PRAGMA, …), whose
+    /// commit/rollback/drop paths then skip the rollback logic entirely.
+    ///
+    /// [`RevertLog`]: crate::loro::revert::RevertLog
+    revert: Option<Arc<crate::loro::shared::LoroState>>,
 }
 
 impl CommandTx {
@@ -161,7 +170,27 @@ impl CommandTx {
             pending: Vec::new(),
             committed: false,
             label,
+            revert: None,
         })
+    }
+
+    /// #2604 — arm rollback-safe engine apply for this tx (the LOCAL command
+    /// path). Call once, right after opening the tx and BEFORE the first engine
+    /// mutation, on any command that applies ops in place via
+    /// `apply_op_projected(.., advance_cursor=false)` or a direct
+    /// `for_space_recording`.
+    ///
+    /// Arms `state`'s [`RevertLog`](crate::loro::revert::RevertLog) so the
+    /// mutation handlers capture each touched space's pre-op checkpoint, and
+    /// stashes the `Arc<LoroState>` so the finalizers
+    /// ([`commit_and_dispatch`](Self::commit_and_dispatch) /
+    /// [`commit_without_dispatch`](Self::commit_without_dispatch) /
+    /// [`rollback`](Self::rollback)) and the abort/panic `Drop` can detach and
+    /// rewind. Arming happens under the `BEGIN IMMEDIATE` write lock this tx
+    /// already holds, so it observes an un-armed log (single-in-flight).
+    pub fn arm_engine_rollback(&mut self, state: &Arc<crate::loro::shared::LoroState>) {
+        state.revert.arm();
+        self.revert = Some(Arc::clone(state));
     }
 
     /// Queue an op record for post-commit background dispatch.
@@ -267,7 +296,18 @@ impl CommandTx {
         mut self,
         materializer: &crate::materializer::Materializer,
     ) -> Result<usize, sqlx::Error> {
-        self.take_inner().commit().await?;
+        // #2604 — detach the engine-rollback checkpoints WHILE the write lock is
+        // still held (before the commit below releases it). On a commit failure
+        // we rewind the in-place engine apply so it never stays ahead of the
+        // rolled-back SQL; on success we drop the checkpoints and keep the ops.
+        let pending_revert = self.revert.take().map(|state| state.revert.detach());
+        if let Err(e) = self.take_inner().commit().await {
+            if let Some(pending) = pending_revert {
+                pending.revert();
+            }
+            return Err(e);
+        }
+        drop(pending_revert); // commit succeeded — keep the applied ops
         // Commit succeeded: from here the Drop assert (below) is armed.
         // We must drain `pending` before this method returns, or the
         // assert will fire — which is exactly its job.
@@ -316,7 +356,15 @@ impl CommandTx {
     /// SQLite PRAGMA writes, migration markers). Pending records are
     /// discarded silently.
     pub async fn commit_without_dispatch(mut self) -> Result<(), sqlx::Error> {
-        self.take_inner().commit().await?;
+        // #2604 — same detach-under-lock + revert-on-abort as `commit_and_dispatch`.
+        let pending_revert = self.revert.take().map(|state| state.revert.detach());
+        if let Err(e) = self.take_inner().commit().await {
+            if let Some(pending) = pending_revert {
+                pending.revert();
+            }
+            return Err(e);
+        }
+        drop(pending_revert); // commit succeeded — keep the applied ops
         self.committed = true;
         self.pending.clear();
         Ok(())
@@ -329,6 +377,11 @@ impl CommandTx {
     /// committing, but surfaces any rollback error to the caller.
     pub async fn rollback(mut self) -> Result<(), sqlx::Error> {
         self.pending.clear();
+        // #2604 — explicit abort: rewind any in-place engine apply to its pre-tx
+        // checkpoints (no-op when this tx was not rollback-armed).
+        if let Some(state) = self.revert.take() {
+            state.revert.detach().revert();
+        }
         self.take_inner().rollback().await
     }
 
@@ -409,6 +462,19 @@ impl Drop for CommandTx {
                 pending = self.pending.len(),
                 "CommandTx rolled back (dropped uncommitted) with pending dispatches — discarding by design"
             );
+        }
+        // #2604 — engine-rollback panic/early-return net. The three finalizers
+        // (`commit_and_dispatch` / `commit_without_dispatch` / `rollback`) all
+        // `take()` `self.revert` before their work, so reaching `Drop` with it
+        // still `Some` means the tx is aborting WITHOUT a finalizer — a
+        // `?`-propagated error or a panic between `arm_engine_rollback` and the
+        // finalizer. The inner `sqlx::Transaction`'s own `Drop` (below) rolls the
+        // SQL back; here we rewind the in-place engine apply to match, so the
+        // engine never stays ahead of the rolled-back SQL. `detach().revert()` is
+        // sync and re-locks only already-released per-space engine guards, so it
+        // is safe from `Drop`, including during a panic unwind.
+        if let Some(state) = self.revert.take() {
+            state.revert.detach().revert();
         }
     }
 }

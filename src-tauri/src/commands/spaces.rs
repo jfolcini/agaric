@@ -192,6 +192,8 @@ pub async fn create_page_in_space_inner(
     // the re-query step. Enqueuing the two op records during the
     // transaction makes dispatch structurally inseparable from commit.
     let mut tx = CommandTx::begin_immediate(pool, "create_page_in_space").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // 1. Validate `space_id` upfront inside the tx. The target must
     //    exist as a live, non-conflict block AND carry `is_space = 'true'`.
@@ -372,6 +374,8 @@ pub async fn create_space_inner(
     // during the transaction removes the post-commit re-fetch helper
     // this function previously required.
     let mut tx = CommandTx::begin_immediate(pool, "create_space").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // 1. Create the page block. The space's display name lives in
     //    `blocks.content`, exactly like the seeded Personal / Work

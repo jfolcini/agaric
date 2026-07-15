@@ -1223,6 +1223,9 @@ pub async fn import_markdown_with_progress(
     // contract. A per-block / per-property failure still propagates via
     // `?`, rolling back the *current* chunk (committed chunks survive).
     let mut tx = CommandTx::begin_immediate(pool, "import_markdown").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort). Re-armed per
+    // chunk at the re-open below.
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // Validate `space_id` upfront inside the tx,
     // identically to `create_page_in_space_inner`. The target must
@@ -1993,6 +1996,8 @@ pub async fn import_markdown_with_progress(
                 "import: chunk committed (writer lock released)"
             );
             tx = CommandTx::begin_immediate(pool, "import_markdown").await?;
+            // #2604 — re-arm rollback for the new per-chunk tx.
+            tx.arm_engine_rollback(materializer.loro_state());
             chunk_blocks = 0;
         }
 

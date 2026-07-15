@@ -152,6 +152,8 @@ pub async fn set_property_inner(
     }
     // CommandTx couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "set_property").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
     let (block, op_record) = set_property_in_tx(
         &mut tx,
         materializer.loro_state(),
@@ -211,6 +213,8 @@ pub async fn set_todo_state_inner(
     // could leave a `done` state with no `completed_at` and no
     // next-occurrence sibling (H-4).
     let mut tx = CommandTx::begin_immediate(pool, "set_todo_state").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // Validate against todo_state property definition options.
     // `set_property_in_tx` already performs this check when the
@@ -436,6 +440,8 @@ pub async fn set_todo_state_batch_inner(
     // One IMMEDIATE tx covers every per-block write (op_log + blocks
     // column). Either every state change commits or none of them.
     let mut tx = CommandTx::begin_immediate(pool, "set_todo_state_batch").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // SQL-review this batch path skips the timestamp + recurrence
     // side-effects that the single-row `set_todo_state_inner` performs.
@@ -627,6 +633,8 @@ pub async fn set_property_batch_inner(
     // One IMMEDIATE tx covers every per-block write (op_log + blocks
     // column). Either every property change commits or none of them.
     let mut tx = CommandTx::begin_immediate(pool, "set_property_batch").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // Reserved-key option-list fallback validation for the two text keys,
     // mirroring `set_todo_state_batch_inner` / `set_priority_inner`. Read
@@ -741,6 +749,8 @@ pub async fn set_priority_inner(
     // `set_property_inner` (with `caller_context = None`) to keep the
     // tx scope wide enough to host the fallback read.
     let mut tx = CommandTx::begin_immediate(pool, "set_priority").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // Rely on the user-extended `priority` property definition
     // options for validation (handled inside `set_property_in_tx`).

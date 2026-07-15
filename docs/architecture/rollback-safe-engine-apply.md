@@ -197,11 +197,23 @@ The primitives wire into the tx lifecycle via a per-tx **revert log** on
   same injection as the #2603 test, asserting *no divergence* and that the
   rewound engine stays usable (re-apply + commit converges, no reprojection). The
   #2603 test is retained: it documents the raw (unwired) primitive behaviour.
-- **LOCAL command path — remaining.** Local commands drive
-  `apply_op_projected(advance_cursor=false)` from `commands/blocks/{crud,move_ops}.rs`,
-  `commands/mod.rs`, … each owning its `CommandTx` commit. They do not yet arm a
-  scope, so their handlers' `for_space_recording` calls are a no-op capture — a
-  deliberate zero-behaviour-change step. Arming these owners (and the batch/
-  multi-space commands) is the next scoped PR; the LOCAL divergence already
-  self-heals via boot replay (`advance_cursor=false`), so this path is lower
-  urgency than the REMOTE one landed here.
+- **LOCAL command path (`CommandTx`) — DONE.** The owner is `CommandTx`, which
+  commits internally and can touch multiple spaces in one tx, so the arm/detach
+  live in `CommandTx` itself: `CommandTx::arm_engine_rollback(state)` arms
+  `state.revert` right after `BEGIN IMMEDIATE`; `commit_and_dispatch` /
+  `commit_without_dispatch` detach the checkpoints before the inner `commit()`
+  (still under the write lock) and revert on a failing commit; `rollback` and the
+  abort/panic `Drop` revert too. Every engine-driving command owner (block
+  CRUD/move/batch, tags, properties, spaces, journal, `delete_property_core`, the
+  chunked markdown/bibliography importers — re-armed per chunk) calls
+  `arm_engine_rollback`; a command that turns out not to touch the engine arms an
+  empty log (a no-op). The undo/redo/history owners bypass `apply_op_projected`,
+  so their one engine mutation — the reverse move in `reverse_move_block` —
+  switched from `for_space` to `for_space_recording` and those owners arm too.
+  Tests: `local_command_tx_abort_rewinds_engine_no_divergence_2604` (dropped
+  armed `CommandTx` rewinds the in-place apply) and
+  `local_command_tx_commit_keeps_engine_and_projects_sql_2604` (commit keeps the
+  op and lands the SQL projection).
+- **Backstop.** Boot-replay reconciliation stays as the belt to these suspenders
+  until the transactional apply has soaked; retiring it is a later, separate
+  decision (#2603's test still guards it).
