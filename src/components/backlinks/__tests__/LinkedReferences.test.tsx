@@ -32,6 +32,7 @@ import { LinkedReferences } from '@/components/backlinks/LinkedReferences'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
 import { t } from '@/lib/i18n'
+import { queryClient } from '@/lib/query-client'
 import { useNavigationStore } from '@/stores/navigation'
 import { useTabsStore } from '@/stores/tabs'
 
@@ -179,6 +180,11 @@ function mockInvokeWith(groupedResponse: unknown, extras?: Record<string, unknow
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // The grouped-backlink read now runs through the module-level TanStack query
+  // client (gcTime: Infinity). Clear it between tests so each case fetches fresh
+  // — matching the old per-mount `fetchGroups` behaviour and preventing one
+  // test's cached pages from bleeding into another with the same query key.
+  queryClient.clear()
   mockNavigateToPage.mockClear()
   // #1639: reset the captured sourcePages prop identities between tests.
   sourcePagesIdentities.length = 0
@@ -1340,8 +1346,10 @@ describe('LinkedReferences', () => {
     await waitFor(() => {
       expect(container.querySelector('.linked-references-filter-count')).toBeNull()
     })
-    // BacklinkFilterBuilder remains visible (always-on now).
-    expect(screen.getByTestId('backlink-filter-builder')).toBeInTheDocument()
+    // BacklinkFilterBuilder remains visible (always-on now). Awaited to let the
+    // PAGE_B refetch settle (useInfiniteQuery loads asynchronously) — the
+    // builder lives inside ListViewState, hidden only during the load window.
+    expect(await screen.findByTestId('backlink-filter-builder')).toBeInTheDocument()
   })
 
   // ---------------------------------------------------------------------------
