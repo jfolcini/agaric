@@ -14,7 +14,7 @@ impl LoroEngine {
     /// `VersionVector::encode()` (Loro 1.12 wire-stable). Used by sync
     /// push to (a) advertise the local frontier and (b) build the
     /// `from_vv` field of
-    /// [`crate::sync_protocol::loro_sync_types::LoroSyncMessage::Update`]
+    /// `sync_protocol::loro_sync_types::LoroSyncMessage::Update`
     /// at send time.
     pub fn version_vector(&self) -> Vec<u8> {
         self.doc.oplog_vv().encode()
@@ -34,7 +34,7 @@ impl LoroEngine {
     /// Returns `AppError::Validation` if `since_vv` is not a
     /// well-formed encoded version vector — the receiver should
     /// fall back to a
-    /// [`crate::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot`]
+    /// `sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot`
     /// in that case.
     pub fn export_update_since(&self, since_vv: &[u8]) -> Result<Vec<u8>, AppError> {
         let vv = VersionVector::decode(since_vv).map_err(|e| {
@@ -123,7 +123,7 @@ impl LoroEngine {
     ///
     /// ## Why this mirrors the live gate
     ///
-    /// [`crate::sync_protocol::loro_sync::apply_remote`] runs the
+    /// `sync_protocol::loro_sync::apply_remote` runs the
     /// reachability gate on a `LoroSyncMessage::Update`'s declared `from_vv`
     /// and short-circuits into the snapshot-fallback path on a miss — an
     /// unreachable update would otherwise surface as an *opaque Loro decode

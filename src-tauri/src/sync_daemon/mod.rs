@@ -39,7 +39,7 @@ use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 use crate::error::AppError;
-use crate::lifecycle::LifecycleHooks;
+use crate::foreground::LifecycleHooks;
 use crate::materializer::Materializer;
 use crate::peer_refs;
 use crate::sync_events::{SyncEvent, SyncEventSink};

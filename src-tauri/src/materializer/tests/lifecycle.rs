@@ -336,7 +336,7 @@ async fn wait_for_pending_block_count_refreshes_handles_overlapping_spawns() {
 #[tokio::test]
 async fn with_read_pool_and_lifecycle_accepts_tasks() {
     let (pool, _dir) = test_pool().await;
-    let lifecycle = crate::lifecycle::LifecycleHooks::new();
+    let lifecycle = crate::foreground::LifecycleHooks::new();
     let mat = Materializer::with_read_pool_and_lifecycle(
         pool.clone(),
         pool,
@@ -360,7 +360,7 @@ async fn with_read_pool_and_lifecycle_accepts_tasks() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn lifecycle_flag_flip_does_not_break_queues() {
     let (pool, _dir) = test_pool().await;
-    let lifecycle = crate::lifecycle::LifecycleHooks::new();
+    let lifecycle = crate::foreground::LifecycleHooks::new();
     let mat = Materializer::with_read_pool_and_lifecycle(
         pool.clone(),
         pool,

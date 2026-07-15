@@ -18,6 +18,7 @@ pub mod domain;
 pub mod draft;
 pub mod error;
 pub mod filters;
+pub mod foreground;
 pub mod fts;
 pub mod hash;
 pub mod import;
@@ -785,11 +786,11 @@ fn build_materializer(
     pools: &db::DbPools,
     app_data_dir: &std::path::Path,
 ) -> (
-    lifecycle::LifecycleHooks,
+    foreground::LifecycleHooks,
     materializer::Materializer,
     std::sync::Arc<loro::shared::LoroState>,
 ) {
-    use lifecycle::LifecycleHooks;
+    use foreground::LifecycleHooks;
     use materializer::Materializer;
 
     // #2249: construct the process-wide Loro engine state FIRST and hand
@@ -1187,7 +1188,7 @@ fn spawn_background_tasks(
     pools: &db::DbPools,
     device_id: &str,
     materializer: &materializer::Materializer,
-    lifecycle: &lifecycle::LifecycleHooks,
+    lifecycle: &foreground::LifecycleHooks,
 ) {
     // Spawn the retry-queue sweeper so any per-block tasks
     // persisted by a previous session (or accumulated during this
@@ -1436,7 +1437,7 @@ fn register_managed_state<R: tauri::Runtime>(
     sync_cert: sync_net::SyncCert,
     materializer: materializer::Materializer,
     scheduler: Arc<sync_scheduler::SyncScheduler>,
-    lifecycle: &lifecycle::LifecycleHooks,
+    lifecycle: &foreground::LifecycleHooks,
 ) -> Arc<AtomicBool> {
     use db::{ReadPool, WriteCtx, WritePool};
     use device::DeviceId;
@@ -1486,7 +1487,7 @@ fn register_managed_state<R: tauri::Runtime>(
     // `!is_foreground` would fire while the user is still looking at the
     // window and the periodic sync tick would starve. So on focus-loss
     // we query the window (`is_visible()` / `is_minimized()`) and let
-    // the pure `lifecycle::derive_app_state` decide the regime. The
+    // the pure `foreground::derive_app_state` decide the regime. The
     // mobile-only `Suspended` / `Resumed` events are unambiguous OS
     // background/foreground transitions and are mapped directly.
     app.manage(AppLifecycle(lifecycle.clone()));
@@ -1515,7 +1516,7 @@ fn register_managed_state<R: tauri::Runtime>(
                     // uses the unambiguous `Suspended` event below.
                     let visible = window_for_query.is_visible().unwrap_or(true);
                     let minimized = window_for_query.is_minimized().unwrap_or(false);
-                    let state = lifecycle::derive_app_state(lifecycle::WindowStateFlags {
+                    let state = foreground::derive_app_state(foreground::WindowStateFlags {
                         focused: *focused,
                         visible,
                         minimized,
@@ -1568,7 +1569,7 @@ struct SyncDaemonWiring {
     cert: sync_net::SyncCert,
     sink: Arc<dyn sync_events::SyncEventSink>,
     app_handle: tauri::AppHandle,
-    lifecycle: lifecycle::LifecycleHooks,
+    lifecycle: foreground::LifecycleHooks,
     cancel_flag: Arc<AtomicBool>,
 }
 

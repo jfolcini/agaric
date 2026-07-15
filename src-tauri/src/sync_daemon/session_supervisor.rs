@@ -50,7 +50,7 @@ use tokio::sync::Notify;
 use tracing::instrument;
 
 use crate::error::AppError;
-use crate::lifecycle::LifecycleHooks;
+use crate::foreground::LifecycleHooks;
 use crate::materializer::Materializer;
 use crate::peer_refs::{self, PeerRef};
 use crate::sync_events::{SyncEvent, SyncEventSink};
