@@ -15,6 +15,7 @@ vi.mock('@/lib/tauri', () => ({
   batchResolve: vi.fn(),
 }))
 
+import { queryClient } from '@/lib/query-client'
 import type {
   AdvancedQueryResponse,
   AggregateSpec,
@@ -39,6 +40,9 @@ function makeResponse(over: Partial<AdvancedQueryResponse> = {}): AdvancedQueryR
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // The TanStack client is a module-level singleton shared across tests; clear
+  // its cache so a prior test's cached pages can't satisfy this test's query.
+  queryClient.clear()
   useSpaceStore.setState({ currentSpaceId: SPACE })
   mockedResolve.mockResolvedValue([])
   mockedRun.mockResolvedValue(makeResponse())
