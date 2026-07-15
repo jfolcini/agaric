@@ -7,7 +7,7 @@
  */
 
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { BacklinkFilterBuilder } from '@/components/BacklinkFilterBuilder'
@@ -118,7 +118,12 @@ export function LinkedReferences({
     ],
   )
   const seededIdentityRef = useRef<string | null>(null)
-  useEffect(() => {
+  // useLayoutEffect (not useEffect) so the seed is applied after the DOM commit
+  // but BEFORE the browser paints — the pre-migration component set `groups` and
+  // `groupExpanded` in one synchronous `setState` batch, so groups never painted
+  // in their unseeded (collapsed) state. Running post-paint would flash
+  // collapsed→expanded on first load; useLayoutEffect keeps that atomic.
+  useLayoutEffect(() => {
     if (groups.length === 0) return
     if (seededIdentityRef.current !== queryIdentity) {
       // Fresh first page: replace expand state with the ≤5 || i<3 rule.
