@@ -878,7 +878,7 @@ pub async fn delete_blocks_by_ids(
 ///
 /// # Errors
 ///
-/// - [`AppError::Validation`] — empty input list, > [`MAX_BATCH_BLOCK_IDS`](crate::commands::MAX_BATCH_BLOCK_IDS) entries, or `space_id` is not a live space block
+/// - [`AppError::Validation`] — empty input list, > [`MAX_BATCH_BLOCK_IDS`](crate::pagination::MAX_BATCH_BLOCK_IDS) entries, or `space_id` is not a live space block
 #[instrument(skip(pool, device_id, materializer, block_ids), err)]
 pub async fn move_blocks_to_space_inner(
     pool: &SqlitePool,
@@ -1764,7 +1764,7 @@ pub async fn purge_all_deleted_inner(
 ///
 /// # Errors
 ///
-/// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](crate::commands::MAX_BATCH_BLOCK_IDS) entries
+/// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](crate::pagination::MAX_BATCH_BLOCK_IDS) entries
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn restore_blocks_by_ids_inner(
     pool: &SqlitePool,
@@ -1949,7 +1949,7 @@ pub async fn restore_blocks_by_ids_inner(
 ///
 /// # Errors
 ///
-/// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](crate::commands::MAX_BATCH_BLOCK_IDS) entries
+/// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](crate::pagination::MAX_BATCH_BLOCK_IDS) entries
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn purge_blocks_by_ids_inner(
     pool: &SqlitePool,
@@ -2419,7 +2419,7 @@ pub struct CreateBlockSpec {
 ///
 /// **Validation:**
 /// - Empty `specs` list → [`AppError::Validation`].
-/// - `specs.len()` > [`MAX_BATCH_BLOCK_IDS`](crate::commands::MAX_BATCH_BLOCK_IDS) → [`AppError::Validation`].
+/// - `specs.len()` > [`MAX_BATCH_BLOCK_IDS`](crate::pagination::MAX_BATCH_BLOCK_IDS) → [`AppError::Validation`].
 ///
 /// **Forward references:** a spec's `parent_id` may reference a block
 /// id created EARLIER in the same batch. `create_block_in_tx`'s parent

@@ -280,7 +280,7 @@ pub async fn get_active_block_inner(
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `ids.len()` >
-///   [`crate::commands::MAX_BATCH_BLOCK_IDS`]
+///   [`crate::pagination::MAX_BATCH_BLOCK_IDS`]
 ///
 /// `scope` — [`SpaceScope::Active`] restricts the result set
 /// To the named space ('s broken-chip rendering for foreign-space
@@ -515,7 +515,7 @@ pub async fn batch_resolve(
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `root_ids.len()` >
-///   [`crate::commands::MAX_BATCH_BLOCK_IDS`].
+///   [`crate::pagination::MAX_BATCH_BLOCK_IDS`].
 /// - [`AppError::Json`] — failed to serialize `root_ids`.
 /// - [`AppError::Database`] — propagated from sqlx.
 #[instrument(skip(pool, root_ids), err)]
@@ -558,14 +558,14 @@ pub async fn trash_descendant_counts(
 /// shape of every other UI-facing read in this module.
 ///
 /// Empty `block_ids` returns an empty map (not an error). Above
-/// [`crate::commands::MAX_BATCH_BLOCK_IDS`] entries rejects with
+/// [`crate::pagination::MAX_BATCH_BLOCK_IDS`] entries rejects with
 /// [`AppError::Validation`] (mirrors every other batch boundary in this
 /// surface).
 ///
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `block_ids.len()` >
-///   [`crate::commands::MAX_BATCH_BLOCK_IDS`].
+///   [`crate::pagination::MAX_BATCH_BLOCK_IDS`].
 /// - [`AppError::Json`] — failed to serialize `block_ids`.
 /// - [`AppError::Database`] — propagated from sqlx.
 #[instrument(skip(pool, block_ids), err)]
@@ -642,7 +642,7 @@ pub async fn first_child_for_blocks(
 ///
 /// Empty input returns an empty `Vec` (not an error, mirrors
 /// [`batch_resolve_inner`] and the bulk-read convention across the
-/// `*_by_ids` family). Above [`crate::commands::MAX_BATCH_BLOCK_IDS`]
+/// `*_by_ids` family). Above [`crate::pagination::MAX_BATCH_BLOCK_IDS`]
 /// entries rejects with [`AppError::Validation`] (mirrors every other
 /// batch boundary in this surface).
 ///
@@ -654,7 +654,7 @@ pub async fn first_child_for_blocks(
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `ids.len()` >
-///   [`crate::commands::MAX_BATCH_BLOCK_IDS`]
+///   [`crate::pagination::MAX_BATCH_BLOCK_IDS`]
 #[instrument(skip(pool, ids), err)]
 pub async fn get_blocks_inner(
     pool: &SqlitePool,

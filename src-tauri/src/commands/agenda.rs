@@ -27,7 +27,7 @@ use super::*;
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `dates.len()` >
-///   [`crate::commands::MAX_BATCH_BLOCK_IDS`]
+///   [`crate::pagination::MAX_BATCH_BLOCK_IDS`]
 /// - [`AppError::Validation`] — any date fails `YYYY-MM-DD` validation
 #[instrument(skip(pool, dates), err)]
 pub async fn count_agenda_batch_inner(
@@ -96,7 +96,7 @@ pub async fn count_agenda_batch_inner(
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `dates.len()` >
-///   [`crate::commands::MAX_BATCH_BLOCK_IDS`]
+///   [`crate::pagination::MAX_BATCH_BLOCK_IDS`]
 /// - [`AppError::Validation`] — any date fails `YYYY-MM-DD` validation
 #[instrument(skip(pool, dates), err)]
 pub async fn count_agenda_batch_by_source_inner(

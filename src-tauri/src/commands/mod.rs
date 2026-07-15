@@ -216,11 +216,13 @@ pub(crate) use crate::domain::block_ops::{MAX_BLOCK_DEPTH, MAX_CONTENT_LENGTH};
 
 // The `MAX_BATCH_BLOCK_IDS` cap and its shared `ensure_batch_within_cap`
 // guard moved down into `crate::pagination` (the store layer) so store-side
-// callers like `pagination::trash::list_trash` enforce the cap without
-// reaching *up* into `commands`. Re-export keeps
-// `crate::commands::MAX_BATCH_BLOCK_IDS` / `crate::commands::ensure_batch_within_cap`
-// and every `*_by_ids` call site resolving unchanged.
-pub(crate) use crate::pagination::{MAX_BATCH_BLOCK_IDS, ensure_batch_within_cap};
+// callers like `pagination::trash::trash_descendant_counts` enforce the cap
+// without reaching *up* into `commands`. The guard helper is re-exported
+// here so every production `*_by_ids` call site keeps using
+// `crate::commands::ensure_batch_within_cap` unchanged; the `MAX_BATCH_BLOCK_IDS`
+// constant is referenced directly at its store home (`crate::pagination::…`)
+// by the doc-links / tests that cite it, so it needs no (lib-unused) re-export.
+pub(crate) use crate::pagination::ensure_batch_within_cap;
 
 /// Maximum allowed attachment size (50 MB).
 ///

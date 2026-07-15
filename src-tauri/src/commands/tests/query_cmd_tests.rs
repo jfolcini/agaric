@@ -1839,13 +1839,13 @@ async fn count_backlinks_batch_empty_page_ids_returns_empty() {
 }
 
 /// #2542 — `count_backlinks_batch_inner` must share the
-/// [`crate::commands::MAX_BATCH_BLOCK_IDS`] cap: an over-cap `page_ids` list
+/// [`crate::pagination::MAX_BATCH_BLOCK_IDS`] cap: an over-cap `page_ids` list
 /// rejects with Validation before the runaway `json_each(?1)` scan.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_backlinks_batch_rejects_oversize() {
     let (pool, _dir) = test_pool().await;
 
-    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let big = count_backlinks_batch_inner(
@@ -4106,7 +4106,7 @@ async fn get_blocks_empty_returns_empty_and_rejects_oversize() {
     let empty = get_blocks_inner(&pool, vec![]).await.unwrap();
     assert!(empty.is_empty(), "empty input must return an empty Vec");
 
-    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let big = get_blocks_inner(
@@ -4121,7 +4121,7 @@ async fn get_blocks_empty_returns_empty_and_rejects_oversize() {
 }
 
 /// #1573 — `first_child_for_blocks_inner` must share the
-/// [`crate::commands::MAX_BATCH_BLOCK_IDS`] cap with the rest of the batch
+/// [`crate::pagination::MAX_BATCH_BLOCK_IDS`] cap with the rest of the batch
 /// family: an over-cap `block_ids` list rejects with Validation, while an
 /// under-cap list returns the first-child map (here an empty map, since no
 /// matching parents exist).
@@ -4140,7 +4140,7 @@ async fn first_child_for_blocks_rejects_oversize() {
     assert!(under.is_empty(), "under-cap input must not error");
 
     // Over-cap: one more than the shared cap rejects with Validation.
-    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let big = first_child_for_blocks_inner(
@@ -4155,7 +4155,7 @@ async fn first_child_for_blocks_rejects_oversize() {
 }
 
 /// #1795 — `batch_resolve_inner` must share the
-/// [`crate::commands::MAX_BATCH_BLOCK_IDS`] cap with the rest of the batch
+/// [`crate::pagination::MAX_BATCH_BLOCK_IDS`] cap with the rest of the batch
 /// family: an over-cap `ids` list rejects with Validation before reaching
 /// the unbounded `json_each(?1)` membership scan, while an under-cap list
 /// resolves normally (here an empty result, since no matching ids exist).
@@ -4171,7 +4171,7 @@ async fn batch_resolve_rejects_oversize() {
     assert!(under.is_empty(), "under-cap input must not error");
 
     // Over-cap: one more than the shared cap rejects with Validation.
-    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let big = batch_resolve_inner(
@@ -4187,7 +4187,7 @@ async fn batch_resolve_rejects_oversize() {
 }
 
 /// #1795 — `trash_descendant_counts` (via `trash_descendant_counts_inner`)
-/// must share the [`crate::commands::MAX_BATCH_BLOCK_IDS`] cap: an over-cap
+/// must share the [`crate::pagination::MAX_BATCH_BLOCK_IDS`] cap: an over-cap
 /// `root_ids` list rejects with Validation before seeding the recursive-CTE
 /// root walk, while an under-cap list returns the (here empty) count map.
 /// Mirrors `first_child_for_blocks_rejects_oversize` (#1573).
@@ -4206,7 +4206,7 @@ async fn trash_descendant_counts_rejects_oversize() {
     assert!(under.is_empty(), "under-cap input must not error");
 
     // Over-cap: one more than the shared cap rejects with Validation.
-    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let big = trash_descendant_counts_inner(&pool, oversize).await;

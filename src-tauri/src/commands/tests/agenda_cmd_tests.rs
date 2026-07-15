@@ -444,14 +444,14 @@ async fn count_agenda_batch_empty_dates_returns_empty() {
 }
 
 /// #2542 — `count_agenda_batch_inner` must share the
-/// [`crate::commands::MAX_BATCH_BLOCK_IDS`] cap: an over-cap `dates` list
+/// [`crate::pagination::MAX_BATCH_BLOCK_IDS`] cap: an over-cap `dates` list
 /// rejects with Validation before the runaway `json_each(?1)` membership
 /// scan (checked before per-date format validation, so the cap dominates).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_agenda_batch_rejects_oversize() {
     let (pool, _dir) = test_pool().await;
 
-    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("2025-06-{i:02}"))
         .collect();
     let big = count_agenda_batch_inner(&pool, oversize, &SpaceScope::Global).await;
@@ -580,13 +580,13 @@ async fn count_agenda_batch_by_source_empty_dates_returns_empty() {
 }
 
 /// #2542 — `count_agenda_batch_by_source_inner` must share the
-/// [`crate::commands::MAX_BATCH_BLOCK_IDS`] cap: an over-cap `dates` list
+/// [`crate::pagination::MAX_BATCH_BLOCK_IDS`] cap: an over-cap `dates` list
 /// rejects with Validation (checked before per-date format validation).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_agenda_batch_by_source_rejects_oversize() {
     let (pool, _dir) = test_pool().await;
 
-    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("2025-06-{i:02}"))
         .collect();
     let big = count_agenda_batch_by_source_inner(&pool, oversize, &SpaceScope::Global).await;

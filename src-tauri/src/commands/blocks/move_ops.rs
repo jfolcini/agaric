@@ -386,7 +386,7 @@ pub async fn move_block(
 /// order (the frontend sorts the selection by current document position first).
 ///
 /// **Validation:** empty list → [`AppError::Validation`]; `block_ids.len()` over
-/// [`MAX_BATCH_BLOCK_IDS`](crate::commands::MAX_BATCH_BLOCK_IDS) →
+/// [`MAX_BATCH_BLOCK_IDS`](crate::pagination::MAX_BATCH_BLOCK_IDS) →
 /// [`AppError::Validation`].
 ///
 /// Returns one [`MoveResponse`] per moved root, in input order (1:1 with

@@ -78,9 +78,10 @@ const MAX_PAGE_SIZE: i64 = 200;
 /// `trash_descendant_counts_inner`, and any future `*_by_ids` siblings) so
 /// the limit is not silently inconsistent across the family. Every site
 /// enforces it via [`ensure_batch_within_cap`]. Lives here in the store
-/// layer (re-exported as `crate::commands::MAX_BATCH_BLOCK_IDS`) so store
-/// callers like [`trash::list_trash`] enforce it without reaching up into
-/// `commands`.
+/// layer (`crate::pagination::MAX_BATCH_BLOCK_IDS`) so store callers like
+/// [`trash::trash_descendant_counts`] enforce it without reaching up into
+/// `commands`; the command-layer `*_by_ids` sites reach the guard via the
+/// `crate::commands::ensure_batch_within_cap` re-export.
 pub(crate) const MAX_BATCH_BLOCK_IDS: usize = 1000;
 
 /// Reject an over-cap batch with the canonical
