@@ -3,6 +3,7 @@ import { useCallback, useMemo } from 'react'
 
 import { resolveLegacyQueryToFilterExpr } from '@/lib/inline-query-resolve'
 import { decodeInlineQueryPayload } from '@/lib/inline-query-spec'
+import { logger } from '@/lib/logger'
 import { parseDate } from '@/lib/parse-date'
 import { queryClient } from '@/lib/query-client'
 import { type PropertyFilter, parseQueryExpression } from '@/lib/query-utils'
@@ -311,13 +312,25 @@ export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryEx
       //      filters, key-only, unknown) keeps the original legacy dispatch.
       // Page-title resolution is folded IN so each page carries its own titles.
       queryFn: async ({ pageParam }): Promise<QueryPage> => {
-        const result = await resolveInlineQuery(expression, pageParam ?? undefined, currentSpaceId)
-        const titles = await resolvePageTitles(result.items)
-        return {
-          items: result.items,
-          nextCursor: result.nextCursor,
-          hasMore: result.hasMore,
-          titles,
+        try {
+          const result = await resolveInlineQuery(
+            expression,
+            pageParam ?? undefined,
+            currentSpaceId,
+          )
+          const titles = await resolvePageTitles(result.items)
+          return {
+            items: result.items,
+            nextCursor: result.nextCursor,
+            hasMore: result.hasMore,
+            titles,
+          }
+        } catch (e) {
+          // Preserve the pre-migration hook's observability: it logged every
+          // fetch failure via `logger.warn` before surfacing the error. Log
+          // here, then rethrow so TanStack still captures it into `error`.
+          logger.warn('useQueryExecution', 'query execution failed', { expression }, e)
+          throw e
         }
       },
       initialPageParam: undefined as string | undefined,
