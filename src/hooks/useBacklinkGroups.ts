@@ -38,7 +38,8 @@ export interface UseBacklinkGroupsParams {
    * Monotonic counter from `useBlockPropertyEvents`. Embedded in the query key
    * so a `block:properties-changed` event (bumping the key) starts a fresh
    * query and refetches — reproducing the old component's F-39 behaviour where
-   * `invalidationKey` sat in `fetchGroups`'s deps to force a refetch.
+   * `invalidationKey` sat in `fetchGroups`'s deps to force a refetch. Paired
+   * with a finite `gcTime` (below) so the per-bump key churn stays bounded.
    */
   invalidationKey: number
 }
@@ -114,6 +115,16 @@ export function useBacklinkGroups(params: UseBacklinkGroupsParams): UseBacklinkG
         // the client's `staleTime: Infinity` (no time-based refetch) but force a
         // fresh fetch whenever the panel mounts.
         refetchOnMount: 'always',
+        // Override the client's `gcTime: Infinity` for THIS hook. Because the
+        // monotonic `invalidationKey` is part of the query key, every property
+        // change mints a new key; under an infinite gcTime those superseded
+        // entries (now observer-less) would never be collected and accumulate
+        // unbounded over a long session. A finite gcTime bounds that: the
+        // ACTIVE query (current `invalidationKey`) always has an observer while
+        // the panel is mounted and is never collected, but each prior key's
+        // entry is evicted 5 min after it goes inactive. `staleTime: Infinity`
+        // is still inherited, so this changes nothing about refetch timing.
+        gcTime: 5 * 60 * 1000,
       },
       queryClient,
     )
