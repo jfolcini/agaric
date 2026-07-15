@@ -6,6 +6,7 @@
  * converts the first plain-text mention into a [[pageId]] link.
  */
 
+import type { InfiniteData } from '@tanstack/react-query'
 import { Link2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -24,17 +25,18 @@ import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useFocusedRowEffect } from '@/hooks/useFocusedRowEffect'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { usePropertyKeysCache } from '@/hooks/usePropertyKeysCache'
+import { useUnlinkedReferences } from '@/hooks/useUnlinkedReferences'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import type { BacklinkFilter, BacklinkGroup, BacklinkSort } from '@/lib/tauri'
-import {
-  editBlock,
-  getPageAliases,
-  listTagsByPrefix,
-  listUnlinkedReferences,
-  paginationLimit,
+import { queryClient } from '@/lib/query-client'
+import type {
+  BacklinkFilter,
+  BacklinkGroup,
+  BacklinkSort,
+  GroupedBacklinkResponse,
 } from '@/lib/tauri'
+import { editBlock, getPageAliases, listTagsByPrefix } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -65,14 +67,8 @@ export function UnlinkedReferences({
 }: UnlinkedReferencesProps): React.ReactElement | null {
   const { t } = useTranslation()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
-  const [groups, setGroups] = useState<BacklinkGroup[]>([])
   const [collapsed, setCollapsed] = useState(true)
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
-  const [nextCursor, setNextCursor] = useState<string | null>(null)
-  const [hasMore, setHasMore] = useState(false)
-  const [totalCount, setTotalCount] = useState(0)
-  const [loading, setLoading] = useState(false)
-  const [truncated, setTruncated] = useState(false)
   const [filters, setFilters] = useState<BacklinkFilter[]>([])
   const [sort, setSort] = useState<BacklinkSort | null>(null)
   // `eval_unlinked_references` (backend) OR-joins title +
@@ -86,86 +82,64 @@ export function UnlinkedReferences({
   const propertyKeys = usePropertyKeysCache(currentSpaceId)
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
 
-  const fetchGroups = useCallback(
-    async (cursor?: string) => {
-      setLoading(true)
-      try {
-        const resp = await listUnlinkedReferences({
-          pageId,
-          filters: filters.length > 0 ? filters : null,
-          sort,
-          cursor: cursor ?? null,
-          limit: paginationLimit(20),
-          spaceId: currentSpaceId,
-        })
-        // Some callers (notably App-level smoke tests that resolve
-        // every `invoke` with a generic empty-page shape) return responses
-        // where `groups` is missing. Narrow to an array at the state-setter
-        // boundary so every downstream reader can rely on the declared
-        // `BacklinkGroup[]` invariant.
-        const respGroups = Array.isArray(resp.groups) ? resp.groups : []
-        // Bug 2 — pre-warm the resolve cache for source-page IDs.
-        // Without this, `useBlockResolve.resolveTitle` falls back to the
-        // `[[ULID-prefix...]]` placeholder for any source page that hasn't
-        // been visited yet (e.g. a deeply nested child created in another
-        // session). The matched-block content path already benefits from
-        // `useBacklinkResolution` warming, but the source-page-header path
-        // surfaces these IDs directly and needed its own pre-warm.
-        const resolveEntries = respGroups
-          .filter((g) => g.page_title != null && g.page_title.length > 0)
-          .map((g) => ({
-            id: g.page_id,
-            title: g.page_title as string,
-            deleted: false,
-          }))
-        if (resolveEntries.length > 0) {
-          useResolveStore.getState().batchSet(resolveEntries)
-        }
-        if (cursor) {
-          // Append: merge groups with same page_id.
-          // FE-L-13: copy-and-replace the matching group instead of
-          // reassigning `existing.blocks` on a shared reference — `prev`
-          // and `merged` share the same group objects after `[...prev]`.
-          setGroups((prev) => {
-            const merged = [...prev]
-            for (const newGroup of respGroups) {
-              const idx = merged.findIndex((g) => g.page_id === newGroup.page_id)
-              const existing = idx >= 0 ? merged[idx] : undefined
-              if (existing) {
-                merged[idx] = { ...existing, blocks: [...existing.blocks, ...newGroup.blocks] }
-              } else {
-                merged.push(newGroup)
-              }
-            }
-            return merged
-          })
-        } else {
-          setGroups(respGroups)
-        }
-        setNextCursor(resp.next_cursor)
-        setHasMore(resp.has_more)
-        setTotalCount(resp.total_count)
-        setTruncated(resp.truncated)
-      } catch (err) {
-        logger.error('UnlinkedReferences', 'Failed to load unlinked references', { pageId }, err)
-        notify.error(t('unlinkedRefs.loadFailed'), { id: 'unlinked-refs-load-failed' })
-      } finally {
-        setLoading(false)
-      }
-    },
-    [pageId, filters, sort, t, currentSpaceId],
-  )
+  // #2597 — the hand-rolled `fetchGroups` cursor state machine is now a
+  // TanStack `useInfiniteQuery` (see `useUnlinkedReferences`). TanStack owns the
+  // page list, cursor, loading and error state; this is a read-only surface with
+  // no `invalidationKey` (the old `fetchGroups` never watched property events).
+  const {
+    groups,
+    totalCount,
+    truncated,
+    loading,
+    hasMore,
+    isFetchingMore,
+    loadMore,
+    isError,
+    queryKey,
+  } = useUnlinkedReferences({ pageId, filters, sort, spaceId: currentSpaceId })
 
-  // Fetch on mount and when pageId changes (eager — needed to know if we
-  // Should render the panel at all, early-return below).
+  // Bug 2 — pre-warm the resolve cache for source-page IDs. Without this,
+  // `useBlockResolve.resolveTitle` falls back to the `[[ULID-prefix...]]`
+  // placeholder for any source page that hasn't been visited yet (e.g. a deeply
+  // nested child created in another session). The matched-block content path
+  // already benefits from `useBacklinkResolution` warming, but the
+  // source-page-header path surfaces these IDs directly and needs its own
+  // pre-warm. Keyed on the derived `groups` — re-warms whenever a fetch (initial
+  // or load-more) changes the merged group list, mirroring the old per-fetch
+  // `batchSet` in `fetchGroups`.
   useEffect(() => {
-    setGroups([])
-    setNextCursor(null)
-    setHasMore(false)
-    setTotalCount(0)
+    const resolveEntries = groups
+      .filter((g) => g.page_title != null && g.page_title.length > 0)
+      .map((g) => ({
+        id: g.page_id,
+        title: g.page_title as string,
+        deleted: false,
+      }))
+    if (resolveEntries.length > 0) {
+      useResolveStore.getState().batchSet(resolveEntries)
+    }
+  }, [groups])
+
+  // Error toast parity: the old `fetchGroups` catch surfaced a single deduped
+  // toast on any fetch failure. The `{ id }` coalesces repeats. The
+  // observability `logger.error` now lives in the hook's queryFn.
+  useEffect(() => {
+    if (isError) {
+      notify.error(t('unlinkedRefs.loadFailed'), { id: 'unlinked-refs-load-failed' })
+    }
+  }, [isError, t])
+
+  // Reset per-group expand state when the query identity changes. The old load
+  // effect did `setExpandedGroups({})` on pageId/query change. Groups default to
+  // expanded (`expandedGroups[page_id] ?? true` + `CollapsibleGroupList
+  // defaultExpanded`), so there is no ≤5/i<3 seeding — just clear overrides.
+  const queryIdentity = useMemo(
+    () => JSON.stringify([currentSpaceId, pageId, filters, sort]),
+    [currentSpaceId, pageId, filters, sort],
+  )
+  useEffect(() => {
     setExpandedGroups({})
-    fetchGroups()
-  }, [fetchGroups])
+  }, [queryIdentity])
 
   // Reset collapsed state when pageId changes
   useEffect(() => {
@@ -248,22 +222,44 @@ export function UnlinkedReferences({
       }
       try {
         await editBlock(blockId, newContent)
-        // Remove block from groups after successful edit
-        setGroups((prev) =>
-          prev
-            .map((g) => ({
-              ...g,
-              blocks: g.blocks.filter((b) => b.id !== blockId),
-            }))
-            .filter((g) => g.blocks.length > 0),
-        )
-        setTotalCount((prev) => prev - 1)
+        // Optimistic removal. `groups`/`totalCount` are now derived from the
+        // query cache, so the old `setGroups(...)` + `setTotalCount(prev-1)` is
+        // reproduced by rewriting the cached pages in place: strip the linked
+        // block from every group, drop groups that become empty, and decrement
+        // the count by exactly one. `editBlock` only changes content — it emits
+        // no `block:properties-changed`, so nothing else refetches this; the
+        // update is purely optimistic (no invalidate).
+        queryClient.setQueryData<InfiniteData<GroupedBacklinkResponse>>(queryKey, (old) => {
+          if (!old) return old
+          const lastIdx = old.pages.length - 1
+          const pages: GroupedBacklinkResponse[] = []
+          old.pages.forEach((page, idx) => {
+            const pageGroups = Array.isArray(page.groups) ? page.groups : []
+            // Fresh group objects, dropping the linked block; groups that become
+            // empty are removed. `forEach`/`push` (not `.map(...spread)`) keeps
+            // the objects fresh — #1529 — without tripping `no-map-spread`.
+            const nextGroups: BacklinkGroup[] = []
+            for (const g of pageGroups) {
+              const blocks = g.blocks.filter((b) => b.id !== blockId)
+              if (blocks.length > 0) nextGroups.push({ ...g, blocks })
+            }
+            // `totalCount` derives from the LAST page (see `useUnlinkedReferences`),
+            // so decrement there so the header count drops by exactly one —
+            // matching the old `setTotalCount(prev => prev - 1)`.
+            pages.push({
+              ...page,
+              groups: nextGroups,
+              total_count: idx === lastIdx ? page.total_count - 1 : page.total_count,
+            })
+          })
+          return { ...old, pages }
+        })
       } catch (err) {
         logger.error('UnlinkedReferences', 'Failed to link block to page', { blockId, pageId }, err)
         notify.error(t('unlinkedRefs.linkFailed'))
       }
     },
-    [pageId, pageTitle, aliases, t],
+    [pageId, pageTitle, aliases, t, queryKey],
   )
 
   const toggleCollapsed = useCallback(() => {
@@ -276,12 +272,6 @@ export function UnlinkedReferences({
       [groupPageId]: !(prev[groupPageId] ?? true),
     }))
   }, [])
-
-  const loadMore = useCallback(() => {
-    if (nextCursor) {
-      fetchGroups(nextCursor)
-    }
-  }, [nextCursor, fetchGroups])
 
   const pageTitles = useMemo(() => {
     const map = new Map<string, string>()
@@ -506,7 +496,7 @@ export function UnlinkedReferences({
                 {/* Load more pagination */}
                 <LoadMoreButton
                   hasMore={hasMore}
-                  loading={loading}
+                  loading={isFetchingMore}
                   onLoadMore={loadMore}
                   className="unlinked-references-load-more"
                   label={t('unlinkedRefs.loadMore')}
