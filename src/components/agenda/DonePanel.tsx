@@ -7,7 +7,7 @@
  * a `t('donePanel.loadMore')` button.
  */
 
-import { useInfiniteQuery } from '@tanstack/react-query'
+import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -107,6 +107,17 @@ export function DonePanel({
       getNextPageParam: (lastPage) => (lastPage.has_more ? lastPage.next_cursor : undefined),
       // usePaginatedQuery re-fetched page 1 on every mount; preserve that.
       refetchOnMount: 'always',
+      // Stale-while-revalidate parity: usePaginatedQuery's deps-change path reset
+      // the cursor but NEVER cleared `items` — only a successful response
+      // overwrote them, so the list stayed visible during a refetch. With the
+      // fetch inputs now in the query key, a change (esp. the debounced
+      // `invalidationKey` on every `block:properties-changed`) switches to a
+      // fresh empty entry; without this the completed list would blank to a
+      // skeleton and lose scroll/focus on every task edit. `keepPreviousData`
+      // retains the prior key's pages until the new fetch resolves (per-key
+      // cache writes are unchanged, so the #2210 stale-guard still holds).
+      // Mirrors the sibling `useAdvancedQuery` migration.
+      placeholderData: keepPreviousData,
       // `invalidationKey` mints a new key on every block-property change; under
       // the client's `gcTime: Infinity` those superseded, observer-less entries
       // would accumulate unbounded over a long session. Bound the churn (mirrors
@@ -126,11 +137,13 @@ export function DonePanel({
   const loadMore = useCallback(() => {
     if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
   }, [hasNextPage, isFetchingNextPage, fetchNextPage])
-  // Only an INITIAL-load failure (no cached pages ⇒ status `error` ⇒ `isError`)
-  // surfaces the error/retry panel below. A failed load-more keeps `data` intact
-  // and leaves `isError` false, so existing items stay visible — matching the old
-  // hook, whose `error != null && blocks.length === 0` guard already hid the
-  // error state whenever items were present.
+  // Surface the error/retry panel only on an INITIAL-load failure. In TanStack
+  // v5 a fetch error flips `status` to `error` (→ `isError`) even when `data` is
+  // retained (a failed load-more, or a failed refetch under keepPreviousData), so
+  // `isError` alone is NOT an initial-vs-load-more discriminator. The render
+  // gates the panel on `error != null && blocks.length === 0` — with items
+  // present (real or placeholder) the panel stays hidden and the list stays
+  // visible, matching the old hook's identical guard.
   const error = isError ? queryError : null
 
   // Resolve parent-page titles for the loaded blocks. Kept SEPARATE from the

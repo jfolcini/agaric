@@ -15,7 +15,7 @@
  *     place — they don't route through this component.
  */
 
-import { useInfiniteQuery } from '@tanstack/react-query'
+import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
 import { Clock } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -174,6 +174,13 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
       enabled: blockId != null,
       // usePaginatedQuery re-fetched page 1 on every mount; preserve that.
       refetchOnMount: 'always',
+      // Stale-while-revalidate parity: usePaginatedQuery never cleared `entries`
+      // on a deps change (only a successful response overwrote them). With the
+      // inputs now in the key, an `opTypeFilter` change would otherwise blank the
+      // list to a skeleton until the refetch resolves; `keepPreviousData` keeps
+      // the prior entries visible (per-key cache writes unchanged, so the #2256
+      // stale-guard still holds). Mirrors the sibling `useAdvancedQuery`.
+      placeholderData: keepPreviousData,
     },
     queryClient,
   )
@@ -195,10 +202,20 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   // load-more). TanStack keeps `isError` latched `true` across consecutive
   // same-key failures (a data-present refetch error doesn't re-transition it), so
   // keying only on `isError` would toast just once. `errorUpdatedAt` advances on
-  // every error occurrence, so depending on it fires the toast once per failed
-  // load — matching the old behaviour (incl. a re-keyed query re-toasting).
+  // every error occurrence, so it fires the toast once per failed load — matching
+  // the old behaviour (incl. a re-keyed query re-toasting).
+  //
+  // Guard against a STALE toast on remount: an errored blockHistory entry is
+  // cached (gcTime Infinity), so on reopen the query presents its old
+  // `errorUpdatedAt` before `refetchOnMount: 'always'` resolves. Capturing the
+  // first-render value means a cached error is treated as already-seen (no toast
+  // flash); only a fresh failure (new `errorUpdatedAt`) toasts.
+  const lastToastedErrorAtRef = useRef(errorUpdatedAt)
   useEffect(() => {
-    if (isError) notify.error(t('history.loadFailed'))
+    if (isError && errorUpdatedAt !== lastToastedErrorAtRef.current) {
+      lastToastedErrorAtRef.current = errorUpdatedAt
+      notify.error(t('history.loadFailed'))
+    }
   }, [isError, errorUpdatedAt, t])
 
   // Collapse any expanded row when the fetch identity changes (new block /
