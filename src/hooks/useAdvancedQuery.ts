@@ -12,16 +12,22 @@
  * multi-key `sort`, `groupBy`, and `aggregates`. In GROUPED mode the engine
  * returns `groups` (and leaves `rows` empty), paginating over groups via the
  * same cursor; in FLAT mode it returns `rows` plus an optional global aggregate
- * summary. It owns the keyset cursor, load-more, loading/error state, and
- * resolves parent-page titles for the results (flat rows + grouped members) —
- * modelled on `useQueryExecution`, including the monotonic request-id guard so a
- * slow in-flight fetch can't clobber a faster newer one when the inputs or space
- * change.
+ * summary. Backed by TanStack `useInfiniteQuery` (#2597, following the #2596
+ * pilot): TanStack owns the keyset cursor, the page list, loading/error state,
+ * and the latest-wins race-guard (the `queryKey` embeds every structural input,
+ * so a slow older fetch settles into its OWN now-inactive cache entry and can't
+ * clobber the newer query). Parent-page titles for the results (flat rows +
+ * grouped members) are resolved per page inside the `queryFn` and merged from
+ * `data.pages` on render — modelled on `useQueryExecution` / `useBacklinkGroups`.
+ * The client is passed EXPLICITLY (2nd arg) so no `QueryClientProvider` ancestor
+ * is required (see `query-client.ts`).
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
+import { useCallback, useMemo } from 'react'
 
 import { logger } from '@/lib/logger'
+import { queryClient } from '@/lib/query-client'
 import type {
   AdvancedQueryRequest,
   AggregateResult,
@@ -126,9 +132,9 @@ async function resolvePageTitles(
 }
 
 /**
- * The live structural inputs read from `inputsRef` to assemble a wire request.
- * Mirrors `UseAdvancedQueryOptions`' structural fields but with explicit
- * `undefined` (the ref snapshot writes them verbatim) for `exactOptionalPropertyTypes`.
+ * The live structural inputs the `queryFn` reads (from its render closure) to
+ * assemble a wire request. Mirrors `UseAdvancedQueryOptions`' structural fields
+ * but with explicit `undefined` for `exactOptionalPropertyTypes`.
  */
 interface QueryInputs {
   filters: FilterPrimitive[]
@@ -184,28 +190,36 @@ function buildQueryArgs(
   return { request, groupBy: groupBySpec }
 }
 
+/** One resolved page of advanced-query results plus its own parent-page titles.
+ *  Folding titles INTO each page (rather than a separate merge step) lets
+ *  TanStack own the page list — the merged `pageTitles` map, the flat rows /
+ *  merged groups, the first-page aggregates and the total count are all derived
+ *  from `data.pages` on render. In FLAT mode `groups` is `null` and `rows` holds
+ *  the page; in GROUPED mode `rows` is empty and `groups` holds the buckets. */
+interface AdvancedQueryPage {
+  rows: BlockRow[]
+  groups: QueryGroup[] | null
+  nextCursor: string | null
+  hasMore: boolean
+  totalCount: number | null
+  aggregates: AggregateResult[] | null
+  titles: Map<string, string>
+}
+
 export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQueryResult {
   const { filters, filterExpr, fulltext, sort, groupBy, aggregates } = options
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
-  const [results, setResults] = useState<BlockRow[]>([])
-  const [groups, setGroups] = useState<QueryGroup[] | null>(null)
-  const [aggregateResults, setAggregateResults] = useState<AggregateResult[] | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [cursor, setCursor] = useState<string | null>(null)
-  const [hasMore, setHasMore] = useState(false)
-  const [loadingMore, setLoadingMore] = useState(false)
-  const [totalCount, setTotalCount] = useState<number | null>(null)
-  const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
 
-  // Serialise every structural input so the fetch effect re-runs on any change
-  // (the arrays/objects churn identity every render in the parent). A single
-  // serialised key keeps the `fetchResults` callback deps minimal.
+  // Serialise every structural input into a value-stable key (the parent churns
+  // array/object identity every render). These keys form the `queryKey`, so a
+  // change to any of them mints a fresh query — and, because a slow older fetch
+  // settles into its own now-inactive cache entry, they ALSO give us the
+  // latest-wins race-guard the old `reqIdRef` provided for free.
   const filtersKey = JSON.stringify(filters)
   // #1280 D3 — serialise the optional pre-compiled boolean tree the same way so
-  // the fetch effect re-runs whenever the builder tree changes. `undefined`
-  // (the flat-`filters` callers) yields a stable `'null'` key, so those callers
-  // keep the legacy path and never churn on this dep.
+  // the query re-runs whenever the builder tree changes. `undefined` (the
+  // flat-`filters` callers) yields a stable `'null'` key, so those callers keep
+  // the legacy path and never churn on this dep.
   const filterExprKey = JSON.stringify(filterExpr ?? null)
   // Normalise the full-text term once: trim, and treat empty as absent so we
   // omit `fulltext` rather than sending `''` (the engine treats `Some("")` as a
@@ -215,162 +229,185 @@ export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQ
   const groupByKey = JSON.stringify(groupBy ?? null)
   const aggregatesKey = JSON.stringify(aggregates ?? [])
 
-  // The `*Key` strings above are the change-DETECTOR (value-stable across the
-  // parent's churning array/object identities). To USE the structures inside the
-  // fetch we read the live inputs via a render-synced ref instead of round-trip
-  // parsing the keys — same values, no per-fetch JSON.parse. The ref is written
-  // on every render so the key-gated fetch always reads the current inputs.
-  const inputsRef = useRef({ filters, filterExpr, sort, groupBy, aggregates })
-  inputsRef.current = { filters, filterExpr, sort, groupBy, aggregates }
+  const {
+    data,
+    error: queryError,
+    isFetching,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    hasNextPage,
+    fetchNextPage,
+    refetch,
+  } = useInfiniteQuery(
+    {
+      // The serialised `*Key` strings are the change-detector: value-stable
+      // across the parent's churning identities, so the query re-runs exactly
+      // when a structural input changes.
+      queryKey: [
+        'advancedQuery',
+        currentSpaceId,
+        filtersKey,
+        filterExprKey,
+        trimmedFulltext,
+        sortKey,
+        groupByKey,
+        aggregatesKey,
+      ],
+      queryFn: async ({ pageParam }): Promise<AdvancedQueryPage> => {
+        try {
+          // Assemble the wire request from the LIVE inputs (captured by this
+          // render's closure — the `queryKey` guarantees a fresh closure per
+          // input change). `parsedGroupBy` is returned separately because the
+          // post-response branching keys off it.
+          const { request, groupBy: parsedGroupBy } = buildQueryArgs(
+            { filters, filterExpr, sort, groupBy, aggregates },
+            currentSpaceId,
+            trimmedFulltext,
+            pageParam,
+          )
+          const response = await runAdvancedQuery(request)
 
-  // Monotonic request-id guard (mirrors useQueryExecution): a stale fetch that
-  // resolves after a newer one started bails out without touching state.
-  const reqIdRef = useRef(0)
-
-  const fetchResults = useCallback(
-    async (pageCursor?: string) => {
-      const myReqId = ++reqIdRef.current
-      const isLoadMore = !!pageCursor
-      if (isLoadMore) {
-        setLoadingMore(true)
-      } else {
-        setLoading(true)
-        setCursor(null)
-        setHasMore(false)
-      }
-      setError(null)
-      // Resolve the parent-page titles for a batch of member/result rows and
-      // merge them into `pageTitles` (append on load-more, replace on a fresh
-      // fetch). Returns `false` if a newer request superseded this one.
-      const applyTitles = async (
-        rows: BlockRow[],
-        extraIds: readonly string[] = [],
-      ): Promise<boolean> => {
-        const titles = await resolvePageTitles(rows, extraIds)
-        if (myReqId !== reqIdRef.current) return false
-        if (titles.size > 0) {
-          setPageTitles((prev) => (isLoadMore ? new Map([...prev, ...titles]) : titles))
-        } else if (!isLoadMore) {
-          setPageTitles(new Map())
-        }
-        return true
-      }
-      try {
-        // Assemble the wire request from the LIVE inputs (read via `inputsRef`,
-        // not by re-parsing the serialised keys). `parsedGroupBy` is returned
-        // separately because the post-response branching keys off it.
-        const { request, groupBy: parsedGroupBy } = buildQueryArgs(
-          inputsRef.current,
-          currentSpaceId,
-          trimmedFulltext,
-          pageCursor,
-        )
-        const response = await runAdvancedQuery(request)
-        if (myReqId !== reqIdRef.current) return
-
-        const isGrouped = parsedGroupBy != null
-
-        // GROUPED mode: the engine returns `groups` (and leaves `rows` empty),
-        // paginating over groups via the same cursor. Resolve the parent-page
-        // titles of every previewed member so the member rows render links.
-        if (isGrouped) {
-          const pageGroups = response.groups ?? []
-          setResults([])
-          if (isLoadMore) {
-            setGroups((prev) => [...(prev ?? []), ...pageGroups])
-          } else {
-            setGroups(pageGroups)
-            setTotalCount(response.totalCount)
-            setAggregateResults(response.aggregates ?? null)
+          // GROUPED mode: the engine returns `groups` (and leaves `rows`
+          // empty), paginating over groups via the same cursor. Resolve the
+          // parent-page titles of every previewed member so the member rows
+          // render links.
+          if (parsedGroupBy != null) {
+            const pageGroups = response.groups ?? []
+            const memberRows = pageGroups.flatMap((g) => g.members as unknown as BlockRow[])
+            // For Tag/Page grouping the bucket key is a raw block id (a tag's /
+            // page's block id), not a human label — fold those keys into the
+            // same `batchResolve` so the header renders the resolved title
+            // (#1447). Other dimensions' keys are already display-ready;
+            // `"none"` is the NULL bucket and has no id to resolve.
+            const groupKeyType = parsedGroupBy.key.type
+            const groupKeyIds =
+              groupKeyType === 'Tag' || groupKeyType === 'Page'
+                ? pageGroups.map((g) => g.key).filter((k) => k !== 'none')
+                : []
+            const titles = await resolvePageTitles(memberRows, groupKeyIds)
+            return {
+              rows: [],
+              groups: pageGroups,
+              nextCursor: response.nextCursor,
+              hasMore: response.hasMore,
+              totalCount: response.totalCount,
+              aggregates: response.aggregates ?? null,
+              titles,
+            }
           }
-          setCursor(response.nextCursor)
-          setHasMore(response.hasMore)
-          const memberRows = pageGroups.flatMap((g) => g.members as unknown as BlockRow[])
-          // For Tag/Page grouping the bucket key is a raw block id (a tag's /
-          // page's block id), not a human label — fold those keys into the same
-          // `batchResolve` so the header renders the resolved title (#1447).
-          // Other dimensions' keys are already display-ready; `"none"` is the
-          // NULL bucket and has no id to resolve.
-          const groupKeyType = parsedGroupBy.key.type
-          const groupKeyIds =
-            groupKeyType === 'Tag' || groupKeyType === 'Page'
-              ? pageGroups.map((g) => g.key).filter((k) => k !== 'none')
-              : []
-          await applyTitles(memberRows, groupKeyIds)
-          return
-        }
 
-        // FLAT mode.
-        setGroups(null)
-        // `QueryResultRow` is `{ score } & ActiveBlockRow` — wire-compatible
-        // with `BlockRow` (identical 12 columns), so render the rows directly.
-        const items = response.rows as unknown as BlockRow[]
-        if (isLoadMore) {
-          setResults((prev) => [...prev, ...items])
-        } else {
-          setResults(items)
-          // totalCount + global aggregates are only computed on the FIRST page
-          // (invariant across cursor pages), so only set them on the initial fetch.
-          setTotalCount(response.totalCount)
-          setAggregateResults(response.aggregates ?? null)
-        }
-        setCursor(response.nextCursor)
-        setHasMore(response.hasMore)
-        await applyTitles(items)
-      } catch (e) {
-        if (myReqId !== reqIdRef.current) return
-        logger.warn('useAdvancedQuery', 'advanced query failed', { filtersKey }, e)
-        // Only surface backend errors on the initial load (a load-more failure
-        // shouldn't clobber the page the user is already viewing).
-        if (!isLoadMore) setError(e instanceof Error ? e.message : 'Query failed')
-      } finally {
-        if (myReqId === reqIdRef.current) {
-          if (isLoadMore) {
-            setLoadingMore(false)
-          } else {
-            setLoading(false)
+          // FLAT mode. `QueryResultRow` is `{ score } & ActiveBlockRow` —
+          // wire-compatible with `BlockRow` (identical 12 columns), so render
+          // the rows directly.
+          const items = response.rows as unknown as BlockRow[]
+          const titles = await resolvePageTitles(items)
+          return {
+            rows: items,
+            groups: null,
+            nextCursor: response.nextCursor,
+            hasMore: response.hasMore,
+            totalCount: response.totalCount,
+            aggregates: response.aggregates ?? null,
+            titles,
           }
+        } catch (e) {
+          // Preserve the pre-migration hook's observability: it logged every
+          // fetch failure via `logger.warn` before surfacing the error. Log
+          // here, then rethrow so TanStack captures it into `error`.
+          logger.warn('useAdvancedQuery', 'advanced query failed', { filtersKey }, e)
+          throw e
         }
-      }
+      },
+      initialPageParam: undefined as string | undefined,
+      getNextPageParam: (lastPage) =>
+        lastPage.hasMore ? (lastPage.nextCursor ?? undefined) : undefined,
+      // The hand-rolled hook kept the PRIOR results/groups mounted (dimmed +
+      // aria-busy) while an input-change refetch was in flight — `setResults`
+      // only overwrote on success. Reproduce that: `keepPreviousData` serves the
+      // previous key's `data` as placeholder until the new key resolves, so the
+      // results pane never blanks to a spinner on a builder/sort/group edit.
+      placeholderData: keepPreviousData,
+      // Behaviour parity (load-bearing): the old fetch effect re-ran on EVERY
+      // input change unconditionally — including returning to a filter that was
+      // run earlier — always hitting the engine afresh. Override the singleton's
+      // `staleTime: Infinity` with `0` so switching the `queryKey` back to a
+      // previously-cached filter still refetches (served from cache instantly,
+      // then refreshed) rather than silently serving the stale cached page.
+      staleTime: 0,
+      // The hand-rolled hook re-ran `fetchResults()` in a mount effect on every
+      // mount — it never served stale data from a prior mount. Force a fresh
+      // fetch whenever the surface mounts. In-flight fetches for the same key
+      // are still deduped.
+      refetchOnMount: 'always',
     },
-    // Value-stable-key change detection: the serialised `*Key` deps are the
-    // legit change-detector — the parent churns array/object identity every
-    // render, so the serialised keys are what stop this callback re-firing each
-    // render. The callback BODY reads the live structures via `inputsRef.current`
-    // (no JSON.parse round-trip), so exhaustive-deps sees the keys as unused and
-    // flags them as unnecessary deps. They are intentional: removing them would
-    // stop the fetch effect from re-running on input changes. (`filtersKey` is
-    // also read in the catch logger, so only the others are "unused".)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [
-      currentSpaceId,
-      filtersKey,
-      filterExprKey,
-      trimmedFulltext,
-      sortKey,
-      groupByKey,
-      aggregatesKey,
-    ],
+    queryClient,
   )
 
-  useEffect(() => {
-    fetchResults()
-  }, [fetchResults])
+  // FLAT rows accumulated across pages (empty in grouped mode, where each page
+  // carries `rows: []`).
+  const results = useMemo<BlockRow[]>(() => data?.pages.flatMap((p) => p.rows) ?? [], [data])
+
+  // GROUPED buckets accumulated across pages, or `null` in flat mode. The old
+  // code appended groups verbatim (no merge-by-key), so concatenate the pages'
+  // group lists in order. `null` when there are no pages yet OR the first page
+  // is flat.
+  const groups = useMemo<QueryGroup[] | null>(() => {
+    const pages = data?.pages
+    if (!pages || pages.length === 0 || pages[0]?.groups == null) return null
+    return pages.flatMap((p) => p.groups ?? [])
+  }, [data])
+
+  // Merge every page's titles into ONE map, spreading later pages LAST so fresh
+  // titles overwrite stale entries (append semantics — a fresh fetch resets
+  // `data.pages`, so this collapses to the first page's titles). Memoised so
+  // identity stays stable when `data` is unchanged.
+  const pageTitles = useMemo(() => {
+    const merged = new Map<string, string>()
+    for (const page of data?.pages ?? []) {
+      for (const [id, title] of page.titles) merged.set(id, title)
+    }
+    return merged
+  }, [data])
+
+  // totalCount + global aggregates are computed over the FULL match set on the
+  // FIRST page only (invariant across cursor pages; later pages return
+  // `totalCount: null`), so derive both from `data.pages[0]` — later pages can
+  // never clobber them.
+  const totalCount = data?.pages[0]?.totalCount ?? null
+  const aggregateResults = data?.pages[0]?.aggregates ?? null
+
+  // Only LOAD-MORE failures are suppressed (they shouldn't clobber the page the
+  // user is already viewing); an initial or input-change page-1 failure IS
+  // surfaced — mirrors the old `if (!isLoadMore) setError(...)`. With
+  // `keepPreviousData` retaining prior pages, "no pages yet" is no longer a
+  // reliable initial-load signal, so key off `isFetchNextPageError` instead.
+  let error: string | null = null
+  if (queryError != null && !isFetchNextPageError) {
+    error = queryError instanceof Error ? queryError.message : 'Query failed'
+  }
 
   const handleLoadMore = useCallback(() => {
-    if (cursor && !loadingMore) {
-      fetchResults(cursor)
-    }
-  }, [cursor, loadingMore, fetchResults])
+    if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+
+  const fetchResults = useCallback(() => {
+    void refetch()
+  }, [refetch])
 
   return {
     results,
     groups,
     aggregates: aggregateResults,
-    loading,
+    // `loading` = a PAGE-1 fetch is in flight (initial load, input-change
+    // refetch, or explicit retry) — NOT a load-more, which is surfaced via
+    // `loadingMore`. Mirrors the old `setLoading(true)` on every non-loadMore
+    // fetch. `isLoading` alone is wrong here: with `keepPreviousData` it stays
+    // false during an input-change refetch (placeholder data present), so the
+    // "keep prior results dimmed + aria-busy while refetching" UX would break.
+    loading: isFetching && !isFetchingNextPage,
     error,
-    hasMore,
-    loadingMore,
+    hasMore: hasNextPage,
+    loadingMore: isFetchingNextPage,
     totalCount,
     pageTitles,
     handleLoadMore,

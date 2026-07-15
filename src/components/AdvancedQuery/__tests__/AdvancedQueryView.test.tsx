@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { t } from '@/lib/i18n'
+import { queryClient } from '@/lib/query-client'
 import type { ActiveBlockRow, AdvancedQueryResponse } from '@/lib/tauri'
 import { useAdvancedQueryStore } from '@/stores/advancedQuery'
 import { useResolveStore } from '@/stores/resolve'
@@ -57,6 +58,9 @@ function routeInvoke(response: AdvancedQueryResponse): void {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // `useAdvancedQuery` runs through the module-level TanStack singleton; clear
+  // its cache so a prior test's cached pages can't satisfy this test's query.
+  queryClient.clear()
   useSpaceStore.setState({ currentSpaceId: SPACE_ID })
   useAdvancedQueryStore.setState({
     filtersBySpace: {},
