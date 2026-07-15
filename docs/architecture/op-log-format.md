@@ -31,7 +31,7 @@ For the higher-level narrative (what the op log *is*, the op-type catalog,
 the materializer, drafts) see [data-and-events.md](./data-and-events.md#op-log).
 This document is the low-level companion: it does not re-list the op types.
 
-The canonical source is `src-tauri/src/hash.rs` (`compute_op_hash`,
+The canonical source is `src-tauri/agaric-core/src/hash.rs` (`compute_op_hash`,
 `verify_op_record`, `verify_op_hash`), the append path in
 `src-tauri/src/op_log/append.rs` (`append_local_op_in_tx`) and
 `src-tauri/src/op_log/payload.rs` (`serialize_inner_payload`),
