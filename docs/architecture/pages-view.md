@@ -28,10 +28,10 @@ Every Pages-view list render walks the same five stages. The IPC is the only asy
              │
              ▼
 ┌──────────────────────────┐
-│  usePaginatedQuery       │  Generic hook (src/hooks/usePaginatedQuery.ts) — owns the
-│   ↳ rows[], hasMore,     │  cursor/limit state machine + request-id stale-guard. The
-│     loadMore, refetch    │  `RequiresRefresh` recovery wrapper lives in the orchestrator
-│                          │  (`PageBrowser.tsx:97-114` `withCursorRecovery`); see below.
+│  useInfiniteQuery        │  TanStack Query, owned by usePageBrowserData
+│   ↳ rows[], hasMore,     │  (src/hooks/usePageBrowserData.ts) — the query key IS the
+│     loadMore, reload     │  cursor/basis stale-guard (#2634). The `RequiresRefresh`
+│                          │  recovery wrapper (`withCursorRecovery`) lives in that hook.
 └────────────┬─────────────┘
              │
              ▼

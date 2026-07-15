@@ -25,6 +25,7 @@ import { axe } from 'vitest-axe'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { t } from '@/lib/i18n'
 import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
+import { queryClient } from '@/lib/query-client'
 
 import { useNavigationStore } from '../../stores/navigation'
 import { type PageRef, useRecentPagesStore } from '../../stores/recent-pages'
@@ -71,6 +72,11 @@ const makeSearchResult = (overrides?: Partial<Record<string, unknown>>) => ({
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  // #2634 — useSearchResults now reads through the module-level TanStack
+  // singleton (`useInfiniteQuery`). Clear it between tests so a prior test's
+  // cached search pages can't bleed into the next render (mirrors the
+  // DonePanel migration's test isolation).
+  queryClient.clear()
   // Re-establish default after clearAllMocks resets it
   vi.mocked(resolvePageByAlias).mockResolvedValue(null)
   useNavigationStore.setState({
@@ -2364,7 +2370,10 @@ describe('SearchPanel', () => {
         expect(within(chipBar).getByText('tag:#wip')).toBeInTheDocument()
       })
 
-      await user.click(screen.getByTestId('search-no-results-clear-filters'))
+      // #2634 — await the settled empty state (the recovery button appears once
+      // the tag-resolved search resolves) before clicking; `findByTestId` polls
+      // instead of reading a transient pre-search frame.
+      await user.click(await screen.findByTestId('search-no-results-clear-filters'))
 
       // handleClearAllFilters resets the query to the live free text, dropping
       // the filter token → the chip (and the recovery button) disappear. The

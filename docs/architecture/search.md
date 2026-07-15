@@ -237,7 +237,7 @@ When ambiguity exists, autocomplete-open wins, then history recall, then result-
 ## Related files
 
 - `src/components/SearchPanel.tsx` — orchestrator: input, debounce, IPC call, group + render.
-- `src/components/SearchPanel/useSearchResults.ts` — extracted results pipeline: AST→IPC projection, `usePaginatedQuery`, breadcrumbs, grouping, roving nav, navigation.
+- `src/components/SearchPanel/useSearchResults.ts` — extracted results pipeline: AST→IPC projection, TanStack `useInfiniteQuery` (with event-driven live-refresh via `useBlockPropertyEvents`), breadcrumbs, grouping, roving nav, navigation.
 - `src/components/SearchPanel/useSearchHistoryControls.ts` — extracted per-space history surface: store wiring, recall cycling, handlers.
 - `src/components/SearchPanel/searchFilterParams.ts` — pure AST→`searchBlocks` filter-param projection.
 - `src/components/search/filter-forms/` — `+ Filter` builder sub-forms (state / priority / due / scheduled / prop + include-exclude).

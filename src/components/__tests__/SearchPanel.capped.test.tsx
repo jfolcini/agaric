@@ -41,23 +41,35 @@ vi.mock('../../lib/tauri', async (importOriginal) => {
 
 import { resolvePageByAlias } from '../../lib/tauri'
 
-// E2E-A4 — controlled `usePaginatedQuery` so we drive `capped` directly. The
-// returned shape is the FULL `UsePaginatedQueryResult` interface (see
-// `src/hooks/usePaginatedQuery.ts`). `cappedValue` is mutated per-test before
-// each render.
+// E2E-A4 — controlled `useSearchResults` so we drive `capped` directly. #2634 —
+// the panel migrated off `usePaginatedQuery` onto `useInfiniteQuery` inside
+// `useSearchResults`, so this test now mocks the results hook the panel consumes
+// (driving `capped` + `results`) instead of the retired generic hook; the cap
+// arithmetic itself is still pinned by `usePaginatedQuery.test.ts`. `cappedValue`
+// / `mockedItems` are mutated per-test before each render.
 let cappedValue = false
 let mockedItems: unknown[] = []
-vi.mock('../../hooks/usePaginatedQuery', () => ({
-  usePaginatedQuery: () => ({
-    items: mockedItems,
-    loading: false,
+vi.mock('../SearchPanel/useSearchResults', () => ({
+  useSearchResults: () => ({
+    results: mockedItems,
+    searchLoading: false,
     hasMore: false,
-    capped: cappedValue,
-    error: null,
     loadMore: vi.fn(),
     reload: vi.fn(),
+    error: null,
+    capped: cappedValue,
     setItems: vi.fn(),
-    totalCount: undefined,
+    regexError: null,
+    groups: [],
+    visibleRows: [],
+    focusedIndex: -1,
+    handleListKeyDown: vi.fn(),
+    expandedGroups: {},
+    handleToggleGroup: vi.fn(),
+    handleResultClick: vi.fn(),
+    loadingResultId: null,
+    recentPages: [],
+    handleRecentClick: vi.fn(),
   }),
 }))
 

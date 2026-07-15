@@ -834,6 +834,52 @@ describe('UnfinishedTasks', () => {
       useSpaceStore.setState({ currentSpaceId: null })
     })
 
+    // #2634 — a page failure PART-WAY through the drain must not freeze the panel
+    // on its loading skeleton. `retry` is off on the shared client, so a failed
+    // `fetchNextPage` leaves `hasNextPage` true with no fetch in flight; without
+    // the `!isError` guard in the `loading` derivation the skeleton would stay up
+    // forever. The panel must settle and render the pages that DID load.
+    it('a page rejects mid-drain — panel settles (no stuck skeleton) and shows the loaded page', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const pageOne = [makeYesterdayBlock('MID-A', 'Loaded before the failure')]
+      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'list_unfinished_tasks') {
+          const params = args as { cursor?: string | null }
+          // Page 1 succeeds and advertises more; page 2 (cursor set) rejects.
+          if (params.cursor == null) {
+            return { items: pageOne, next_cursor: 'CURSOR-1', has_more: true }
+          }
+          throw new Error('mid-drain page failure')
+        }
+        if (cmd === 'batch_resolve') return []
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      })
+
+      const user = userEvent.setup()
+      render(<UnfinishedTasks />)
+
+      // The skeleton must clear (the bug left it up permanently).
+      await waitFor(() => {
+        expect(screen.queryByRole('status', { busy: true })).not.toBeInTheDocument()
+      })
+
+      // The section renders with the page that DID load (partial, not stuck).
+      expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { expanded: false }))
+      expect(screen.getByText('Loaded before the failure')).toBeInTheDocument()
+
+      // Exactly two IPC attempts (page 1 + the failed page 2) — no retry storm.
+      const calls = mockedInvoke.mock.calls.filter((c) => c[0] === 'list_unfinished_tasks')
+      expect(calls).toHaveLength(2)
+      expect(warnSpy).toHaveBeenCalledWith(
+        'UnfinishedTasks',
+        'fetchUnfinished failed',
+        undefined,
+        expect.any(Error),
+      )
+      warnSpy.mockRestore()
+    })
+
     it('batchResolve rejects — blocks render without page titles', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
