@@ -113,13 +113,13 @@ The dispatcher in `mcp/activity.rs` drains `LAST_APPEND` after the command retur
 
 ## `AppError` and typed-error prefixes
 
-`AppError` serialises as `{ kind: string, message: string }` (manual `Serialize` at `src-tauri/src/error.rs`). The variants are open; the wire shape isn't a tagged union.
+`AppError` serialises as `{ kind: string, message: string }` (manual `Serialize` at `src-tauri/agaric-core/src/error.rs`). The variants are open; the wire shape isn't a tagged union.
 
 For **typed validation errors** that the frontend needs to discriminate (invalid glob, invalid regex, invalid filter, etc.), encode the sub-kind as a leading `"<Code>: …"` token in the `message`. The wire shape stays `{ kind: "validation", message }` (no `code` field) — the prefix lives inside `message`.
 
 **#1061 — never hand-spell the prefix.** The sub-kind codes are defined once per language and referenced everywhere else, so a rename can't silently desync the ~triplicated holders (Rust emit / TS re-emit / TS parse):
 
-- Rust source of truth: [`error::validation_code`](../error.rs) — `INVALID_GLOB`, `INVALID_REGEX`, `INVALID_DATE_FILTER` consts + the `prefixed(code, reason)` helper. Emit with:
+- Rust source of truth: [`error::validation_code`](../../agaric-core/src/error.rs) — `INVALID_GLOB`, `INVALID_REGEX`, `INVALID_DATE_FILTER` consts + the `prefixed(code, reason)` helper. Emit with:
   ```rust
   use crate::error::validation_code::{INVALID_REGEX, prefixed};
   return Err(AppError::Validation(prefixed(INVALID_REGEX, &reason)));

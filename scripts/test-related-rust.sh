@@ -65,7 +65,7 @@ fi
 # ── Foundational files that trigger a full test run ──────────────────
 # These modules are imported by nearly every test — targeted filtering
 # would give a false sense of safety.
-FALLBACK_PATTERNS="src-tauri/src/lib.rs src-tauri/src/main.rs src-tauri/src/db.rs src-tauri/src/error.rs src-tauri/src/op.rs src-tauri/src/pagination.rs"
+FALLBACK_PATTERNS="src-tauri/src/lib.rs src-tauri/src/main.rs src-tauri/src/db.rs src-tauri/agaric-core/src/error.rs src-tauri/src/op.rs src-tauri/src/pagination.rs"
 
 for pat in $FALLBACK_PATTERNS; do
   if echo "$STAGED_RS" | grep -qx "$pat"; then
