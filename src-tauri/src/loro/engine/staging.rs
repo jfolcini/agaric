@@ -10,11 +10,18 @@
 //! #2603's crash-injection test pins.
 //!
 //! The target design (#2604) makes the engine apply transactional-by-
-//! construction: stage the mutation against a checkpoint / fork of the per-space
-//! `LoroDoc`, and only PROMOTE it to the canonical in-memory engine after SQL
-//! COMMIT succeeds; on abort, DISCARD the staged mutation. This module provides
-//! the checkpoint + fork building block; the promote-on-commit wiring into
-//! `CommandTx::commit_and_dispatch` is the follow-up write-path change.
+//! construction. The benchmark (`benches/engine_checkpoint_bench.rs`) showed a
+//! per-op full `fork` is `O(doc-size)` (~1.5 s/op at 100K) and thus infeasible on
+//! the interactive path, so the chosen mechanism is **apply-in-place + rewind on
+//! abort**: capture a cheap `O(1)` checkpoint ([`Self::checkpoint_frontiers`])
+//! before the apply, apply in place as today, and — only if the caller's SQL tx
+//! ABORTS — rewind the engine to the checkpoint ([`Self::revert_to_frontier`],
+//! `O(n)` but off the hot path since aborts are exceptional). On COMMIT the op
+//! simply stays. [`Self::fork_staging`] is retained as the full-fork correctness
+//! oracle / rare whole-doc checkpoint. The write-path wiring — capturing the
+//! checkpoint per touched space and firing the rewind from
+//! `CommandTx::commit_and_dispatch` / `apply_op`'s commit on abort — is the
+//! follow-up.
 //!
 //! ## Peer-identity contract (why [`Self::fork_staging`] re-pins the peer id)
 //!
@@ -31,6 +38,7 @@
 //! continuation of this device's own history.
 
 use super::*;
+use loro::Frontiers;
 
 impl LoroEngine {
     /// Fork this engine into an independent **staging** engine that a
@@ -94,6 +102,57 @@ impl LoroEngine {
         // copied the document but not `self`'s incrementally-maintained index.
         staged.rebuild_index();
         Ok(staged)
+    }
+
+    /// Capture a cheap `O(1)` checkpoint of the engine's current op-log position
+    /// (#2604). Returned to the caller BEFORE a speculative in-place apply so the
+    /// engine can be rewound to exactly here if the caller's SQL tx aborts.
+    ///
+    /// This is the common-path cost of the rollback-safe apply: a plain
+    /// `oplog_frontiers()` read, no doc copy. The expensive rewind
+    /// ([`Self::revert_to_frontier`]) is paid ONLY on the rare abort path.
+    pub fn checkpoint_frontiers(&self) -> Frontiers {
+        self.doc.oplog_frontiers()
+    }
+
+    /// Rewind the engine to a checkpoint captured by [`Self::checkpoint_frontiers`],
+    /// discarding every op applied since (#2604 — the abort path of the
+    /// rollback-safe engine apply: apply in place, then on SQL-tx abort rewind the
+    /// one op so the engine never gets ahead of committed SQL).
+    ///
+    /// ## Mechanism & cost
+    ///
+    /// `LoroDoc::fork_at(frontier)` yields a doc containing only the history
+    /// *before* `frontier`; we adopt it as the canonical doc. This is `O(n)`, but
+    /// aborts (crash / constraint violation / COMMIT failure) are exceptional, so
+    /// the linear cost is off the hot path — the common commit path pays only the
+    /// `O(1)` [`Self::checkpoint_frontiers`] capture. (The benchmark
+    /// `benches/engine_checkpoint_bench.rs` is why this design pushes the fork
+    /// onto the abort path instead of forking per op.)
+    ///
+    /// ## Peer identity
+    ///
+    /// `fork_at`, like `fork`, assigns a fresh random PeerID; we re-pin it to the
+    /// engine's own peer so ops applied AFTER the rewind continue this device's
+    /// identity at the right counter (the same `device_id → peer_id` contract
+    /// [`Self::fork_staging`] preserves). Rewinding to a checkpoint taken at
+    /// `(own_peer, k)` and re-pinning means the next local op mints
+    /// `(own_peer, k+1)` again — the counters the aborted op had used are freed,
+    /// exactly as if it never happened.
+    pub fn revert_to_frontier(&mut self, frontier: &Frontiers) -> Result<(), AppError> {
+        let own_peer = self.doc.peer_id();
+        let rewound = self
+            .doc
+            .fork_at(frontier)
+            .map_err(|e| AppError::validation(format!("loro: revert_to_frontier: fork_at: {e}")))?;
+        rewound.set_peer_id(own_peer).map_err(|e| {
+            AppError::validation(format!("loro: revert_to_frontier: re-pin peer id: {e}"))
+        })?;
+        self.doc = rewound;
+        // The rewound doc dropped the reverted op(s); rebuild the index from its
+        // live tree and drop now-stale pending-parent intent.
+        self.rebuild_index();
+        Ok(())
     }
 }
 
@@ -191,6 +250,81 @@ mod tests {
         assert!(
             source.read_block("DROP-ME").expect("read").is_none(),
             "a discarded staged block must never appear on the source"
+        );
+    }
+
+    /// The abort path: apply in place, then rewind to a checkpoint taken before
+    /// the op. The reverted op vanishes; everything committed before the
+    /// checkpoint survives — the engine never stays ahead of committed SQL.
+    #[test]
+    fn revert_to_frontier_rewinds_to_checkpoint() {
+        let mut engine = LoroEngine::with_peer_id("DEV-A").expect("engine");
+        // A "committed" op — must survive the rewind.
+        engine
+            .apply_create_block("KEEP", "content", "keep", None, 0)
+            .expect("committed op");
+
+        // Checkpoint AFTER the committed op, BEFORE the speculative one.
+        let checkpoint = engine.checkpoint_frontiers();
+
+        // The speculative op we will abort.
+        engine
+            .apply_create_block("ABORT-ME", "content", "gone", Some("KEEP"), 0)
+            .expect("speculative op");
+        assert!(
+            engine.read_block("ABORT-ME").expect("read").is_some(),
+            "the speculative op is applied in place before the abort decision"
+        );
+
+        // Abort → rewind to the checkpoint.
+        engine
+            .revert_to_frontier(&checkpoint)
+            .expect("revert_to_frontier");
+
+        assert!(
+            engine.read_block("ABORT-ME").expect("read").is_none(),
+            "the reverted op must be gone after the rewind"
+        );
+        let kept = engine
+            .read_block("KEEP")
+            .expect("read")
+            .expect("the pre-checkpoint op must survive the rewind");
+        assert_eq!(kept.content, "keep");
+    }
+
+    /// After a rewind the engine keeps its own peer id, and a fresh op applies
+    /// cleanly (the counters the aborted op used are freed and reused) — the
+    /// engine is fully usable, not left detached.
+    #[test]
+    fn revert_to_frontier_preserves_identity_and_stays_usable() {
+        let mut engine = LoroEngine::with_peer_id("DEV-A").expect("engine");
+        let peer_before = engine.peer_id();
+        engine
+            .apply_create_block("KEEP", "content", "keep", None, 0)
+            .expect("committed");
+        let checkpoint = engine.checkpoint_frontiers();
+        engine
+            .apply_create_block("ABORT-ME", "content", "gone", None, 1)
+            .expect("speculative");
+
+        engine
+            .revert_to_frontier(&checkpoint)
+            .expect("revert_to_frontier");
+
+        assert_eq!(
+            engine.peer_id(),
+            peer_before,
+            "rewind must preserve this device's peer identity"
+        );
+        // A NEW op after the rewind must apply cleanly — the doc is attached and
+        // usable, not stuck detached at the checkpoint.
+        engine
+            .apply_create_block("AFTER", "content", "after", Some("KEEP"), 0)
+            .expect("engine is usable after a rewind");
+        assert!(engine.read_block("AFTER").expect("read").is_some());
+        assert!(
+            engine.read_block("ABORT-ME").expect("read").is_none(),
+            "the aborted op stays gone even after new ops land"
         );
     }
 }
