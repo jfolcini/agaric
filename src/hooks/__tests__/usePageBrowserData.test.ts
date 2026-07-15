@@ -127,4 +127,22 @@ describe('usePageBrowserData', () => {
     // new first-page total once the refetch settles.
     await waitFor(() => expect(result.current.displayTotalCount).toBe(3))
   })
+
+  it('re-shows the retained total when the basis changes but the total is unchanged (#2634)', async () => {
+    // A sort switch re-keys and refetches, but never changes the count. With
+    // `totalCount` derived from `data` and `keepPreviousData` keeping `data`
+    // defined, the value never transitions — so the adopt effect must key on the
+    // fetch settling, not on the number, or the reset-then-never-re-adopt would
+    // permanently hide the chip.
+    mockedList.mockResolvedValue(resp([page('A')], { total: 7 }))
+    const { result, rerender } = renderHook((props) => usePageBrowserData(props), {
+      initialProps: BASE,
+    })
+    await waitFor(() => expect(result.current.displayTotalCount).toBe(7))
+
+    rerender({ ...BASE, sortOption: 'alphabetical' })
+    // Blanks briefly on the basis change, then re-adopts the same total (7) once
+    // the refetch settles — the chip must not vanish.
+    await waitFor(() => expect(result.current.displayTotalCount).toBe(7))
+  })
 })

@@ -8,9 +8,10 @@
  * In their own hook / sibling component.
  */
 
+import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
 import { ChevronDown, ChevronUp, Clock } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
@@ -29,12 +30,13 @@ import { useHistoryDiffToggle } from '@/hooks/useHistoryDiffToggle'
 import { useHistoryKeyboardNav } from '@/hooks/useHistoryKeyboardNav'
 import { entryKey, useHistorySelection } from '@/hooks/useHistorySelection'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
-import { usePaginatedQuery } from '@/hooks/usePaginatedQuery'
 import { useRegisterPrimaryFocus } from '@/hooks/usePrimaryFocus'
 import { categorizeHistoryError, type HistoryErrorCategory } from '@/lib/categorize-history-error'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
-import type { HistoryEntry } from '@/lib/tauri'
+import { notify } from '@/lib/notify'
+import { queryClient } from '@/lib/query-client'
+import type { HistoryEntry, PageResponse } from '@/lib/tauri'
 import { listPageHistory } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
@@ -75,46 +77,113 @@ export function HistoryView(): React.ReactElement {
   // current space. When on (or when no current space exists yet), pass
   // `undefined` so the backend returns ops from every space.
   const effectiveSpaceId = showAllSpaces ? undefined : (currentSpaceId ?? undefined)
-  const queryFn = useCallback(
-    async (cursor?: string) => {
-      try {
-        const result = await listPageHistory({
-          pageId: '__all__',
-          ...(opTypeFilter != null && { opTypeFilter }),
-          ...(effectiveSpaceId != null && { spaceId: effectiveSpaceId }),
-          ...(cursor != null && { cursor }),
-          limit: PAGINATION_LIMIT,
-        })
-        setErrorCategory(null)
-        return result
-      } catch (err) {
-        const category = categorizeHistoryError(err)
-        setErrorCategory(category)
-        logger.error(
-          'HistoryView',
-          'Failed to load history page',
-          {
-            category,
-            opTypeFilter: opTypeFilter ?? null,
-            spaceId: effectiveSpaceId ?? null,
-            cursor: cursor ?? null,
-          },
-          err,
-        )
-        throw err
-      }
-    },
+
+  // #2634 — migrated off `usePaginatedQuery` onto TanStack `useInfiniteQuery`
+  // directly (staged retirement of the generic hook; matching the merged
+  // `HistoryPanel` / `DonePanel` pattern). The query key carries the real fetch
+  // inputs (op-type filter + effective space), so a filter/scope change is a
+  // fresh query — reproducing the old request-id guard: a late load-more
+  // response for a superseded filter/scope lands in that key's (now
+  // observer-less) cache entry instead of being grafted onto the new list
+  // (#2256). `listPageHistory` takes no AbortSignal, so — as before migration —
+  // none is forwarded. Exported so `reloadAfterMutation` can reset this exact
+  // cache entry without re-deriving (and risking drift from) the key.
+  const queryKey = useMemo(
+    () => ['pageHistory', opTypeFilter, effectiveSpaceId ?? null],
     [opTypeFilter, effectiveSpaceId],
   )
   const {
-    items: entries,
-    loading,
-    hasMore,
-    error,
-    loadMore,
-    reload,
-    setItems: setEntries,
-  } = usePaginatedQuery(queryFn, { onError: t('history.loadFailed') })
+    data,
+    isFetching,
+    isError,
+    errorUpdatedAt,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+    refetch,
+  } = useInfiniteQuery(
+    {
+      queryKey,
+      queryFn: async ({ pageParam }): Promise<PageResponse<HistoryEntry>> => {
+        try {
+          const result = await listPageHistory({
+            pageId: '__all__',
+            ...(opTypeFilter != null && { opTypeFilter }),
+            ...(effectiveSpaceId != null && { spaceId: effectiveSpaceId }),
+            ...(pageParam != null && { cursor: pageParam }),
+            limit: PAGINATION_LIMIT,
+          })
+          setErrorCategory(null)
+          return result
+        } catch (err) {
+          const category = categorizeHistoryError(err)
+          setErrorCategory(category)
+          logger.error(
+            'HistoryView',
+            'Failed to load history page',
+            {
+              category,
+              opTypeFilter: opTypeFilter ?? null,
+              spaceId: effectiveSpaceId ?? null,
+              cursor: pageParam ?? null,
+            },
+            err,
+          )
+          throw err
+        }
+      },
+      initialPageParam: undefined as string | undefined,
+      getNextPageParam: (lastPage) => (lastPage.has_more ? lastPage.next_cursor : undefined),
+      // usePaginatedQuery re-fetched page 1 on every mount; preserve that.
+      refetchOnMount: 'always',
+      // Stale-while-revalidate parity: usePaginatedQuery never cleared `entries`
+      // on a deps change (only a successful response overwrote them). With the
+      // inputs now in the key, an op-type/scope change would otherwise blank the
+      // list to a skeleton until the refetch resolves; `keepPreviousData` keeps
+      // the prior entries visible (per-key cache writes unchanged, so the #2256
+      // stale-guard still holds).
+      placeholderData: keepPreviousData,
+      // No `invalidationKey` (monotonic key) sits in this key, so the entry set
+      // is bounded and the client's default `gcTime: Infinity` is left in place
+      // (mirrors `useUnlinkedReferences`; unlike `DonePanel`, which bounds it).
+    },
+    queryClient,
+  )
+
+  const entries = useMemo<HistoryEntry[]>(() => data?.pages.flatMap((p) => p.items) ?? [], [data])
+  // usePaginatedQuery's `loading` was true during ANY in-flight fetch (initial
+  // AND load-more), driving both the skeleton and the LoadMoreButton busy state —
+  // `isFetching` reproduces that (`isLoading` would be false during load-more).
+  const loading = isFetching
+  const hasMore = hasNextPage
+  // usePaginatedQuery exposed `error` as the `onError` string on any failed load
+  // (cleared on next success). `isError` latches on the same condition, so the
+  // banner shows the same generic title exactly when the last fetch failed.
+  const error = isError ? t('history.loadFailed') : null
+  const loadMore = useCallback(() => {
+    if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+  // usePaginatedQuery's `reload` reset the cursor and re-issued page 1 without
+  // clearing items — `refetch()` re-runs the query for the retry button.
+  const reload = useCallback(() => {
+    void refetch()
+  }, [refetch])
+
+  // Reproduce usePaginatedQuery's `onError: t('history.loadFailed')` toast, which
+  // fired `notify.error` from its catch on EACH failed load (initial and every
+  // load-more). TanStack keeps `isError` latched across consecutive same-key
+  // failures, so keying only on `isError` would toast just once; `errorUpdatedAt`
+  // advances on every error occurrence, firing the toast once per failed load.
+  // The mount-ref treats any cached error (gcTime Infinity) as already-seen so a
+  // remount doesn't flash a stale toast before `refetchOnMount: 'always'`
+  // resolves. Mirrors HistoryPanel's shared toast.
+  const lastToastedErrorAtRef = useRef(errorUpdatedAt)
+  useEffect(() => {
+    if (isError && errorUpdatedAt !== lastToastedErrorAtRef.current) {
+      lastToastedErrorAtRef.current = errorUpdatedAt
+      notify.error(t('history.loadFailed'))
+    }
+  }, [isError, errorUpdatedAt, t])
 
   // ── Selection (multi-select with shift-range) ────────────────────
   const {
@@ -161,12 +230,16 @@ export function HistoryView(): React.ReactElement {
   }, [])
 
   // Post-revert / post-restore reload — clears local pagination state
-  // and re-issues the initial query.
+  // and re-issues the initial query. The old hook did `setItems([])` (blank the
+  // list) then `reload()` (reset the cursor, refetch page 1). `resetQueries`
+  // reproduces both: it restores this entry to its pre-fetch state (entries →
+  // []) and refetches from `initialPageParam` (page 1 only) — `refetch()` alone
+  // would re-request every loaded page and keep the stale list visible under
+  // `keepPreviousData`.
   const reloadAfterMutation = useCallback(() => {
     clearSelection()
-    setEntries([])
-    reload()
-  }, [clearSelection, reload, setEntries])
+    void queryClient.resetQueries({ queryKey })
+  }, [clearSelection, queryKey])
 
   // ── Render ───────────────────────────────────────────────────────
 
