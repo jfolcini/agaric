@@ -78,7 +78,6 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "ulid",
- "unicode-normalization",
  "url",
  "uuid",
  "wiremock",
@@ -99,6 +98,7 @@ dependencies = [
  "sqlx",
  "thiserror 2.0.18",
  "tokio",
+ "unicode-normalization",
 ]
 
 [[package]]

@@ -8,5 +8,6 @@
 
 pub mod error;
 pub mod sql_utils;
+pub mod tag_norm;
 pub mod text_utils;
 pub mod word_diff;

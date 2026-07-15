@@ -191,16 +191,10 @@ fn cap_indexed_text(block_id: &str, mut s: String) -> String {
     s
 }
 
-/// NFC normalisation helper. Allocates a fresh `String`
-/// because `unicode-normalization` returns an iterator; we collect
-/// once at the FTS boundary (index-write or query-sanitise). The
-/// common case (input already NFC) still re-allocates; the cost is
-/// a per-string walk that is dominated by the SQL bind that
-/// follows.
-pub(crate) fn nfc_normalise(input: &str) -> String {
-    use unicode_normalization::UnicodeNormalization;
-    input.nfc().collect()
-}
+// NFC normalisation helper moved into `agaric-core` (#2621). Re-exported
+// here so existing `crate::fts::strip::nfc_normalise` call sites (this
+// module, `fts::search::sanitizer`, `fts::toggle_filter`) resolve unchanged.
+pub(crate) use agaric_core::text_utils::nfc_normalise;
 
 // ---------------------------------------------------------------------------
 // Shared helpers
