@@ -118,7 +118,7 @@ Prior-state lookups for `edit_block` / `set_property` / `delete_property` revers
 
 ## Recurrence
 
-Repeating tasks rely on a shared per-block projection function (`src-tauri/src/recurrence/projection.rs::project_block_dates`) that both the cache rebuild (`projected_agenda_cache`) and the on-the-fly fallback (`list_projected_agenda_on_the_fly`) call. The function owns: rule parsing (`+` / `.+` / `++` mode dispatch), `plus_plus` catch-up + pre-emit, `until_date` / `remaining` end conditions, the 10 000-iter safety bound, and `[range_start, range_end]` clipping. The two callsites disagreed once on `.+1w` projection — the parity test `projected_agenda_cached_equals_on_the_fly` pins agreement.
+Repeating tasks rely on a shared per-block projection function (`src-tauri/src/recurrence_math.rs::project_block_dates`) that both the cache rebuild (`projected_agenda_cache`) and the on-the-fly fallback (`list_projected_agenda_on_the_fly`) call. The function owns: rule parsing (`+` / `.+` / `++` mode dispatch), `plus_plus` catch-up + pre-emit, `until_date` / `remaining` end conditions, the 10 000-iter safety bound, and `[range_start, range_end]` clipping. The two callsites disagreed once on `.+1w` projection — the parity test `projected_agenda_cached_equals_on_the_fly` pins agreement.
 
 Marking a repeating task DONE rolls it forward: a synthetic new occurrence is generated, `repeat-seq` increments, the previous occurrence stays as a completed entry in History.
 

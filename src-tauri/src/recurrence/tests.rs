@@ -4,7 +4,8 @@
 //! `set_todo_state_inner`, which is the production call-site for the
 //! recurrence flow.
 
-use super::parser::{days_in_month, shift_date, shift_date_once};
+use super::parser::shift_date;
+use crate::recurrence_math::{days_in_month, shift_date_once};
 use sqlx::SqlitePool;
 
 #[test]

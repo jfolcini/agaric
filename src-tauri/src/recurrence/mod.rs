@@ -16,7 +16,6 @@
 
 mod compute;
 mod parser;
-mod projection;
 
 #[cfg(test)]
 mod tests;
@@ -32,7 +31,11 @@ mod tests;
 // might surface in the future; `#[allow(dead_code)]` is set on the wrapper
 // itself rather than re-exporting it crate-wide and triggering a warning.
 pub(crate) use compute::handle_recurrence_in_tx;
-pub(crate) use parser::shift_date_once;
-// Shared per-block date projection used by both the cache
-// rebuild and the on-the-fly fallback so the two paths cannot drift.
-pub(crate) use projection::project_block_dates;
+// The pure interval-shift math and per-block date projection moved down into
+// `crate::recurrence_math` (#2621) so the store-layer projected-agenda cache
+// can reuse them without depending on this app-layer module. Re-exported here
+// so `crate::recurrence::shift_date_once` / `crate::recurrence::project_block_dates`
+// call sites (and the tests in this module) resolve unchanged. The shared
+// projection is used by both the cache rebuild and the on-the-fly fallback so
+// the two paths cannot drift.
+pub(crate) use crate::recurrence_math::{project_block_dates, shift_date_once};
