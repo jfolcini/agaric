@@ -13,9 +13,10 @@
  *    / TrashEmptyDialog / TrashRestoreAllDialog (sibling dialogs)
  */
 
+import { type InfiniteData, keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
 import { RotateCcw, Search, Trash2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { BatchActionToolbar } from '@/components/common/BatchActionToolbar'
@@ -25,10 +26,10 @@ import { SearchInput } from '@/components/ui/search-input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { notify } from '@/lib/notify'
+import { queryClient } from '@/lib/query-client'
 
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { useListMultiSelect } from '../hooks/useListMultiSelect'
-import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { useTrashBreadcrumbs } from '../hooks/useTrashBreadcrumbs'
 import { useTrashDescendantCounts } from '../hooks/useTrashDescendantCounts'
@@ -60,31 +61,112 @@ export function TrashView(): React.ReactElement {
   const callbacks = useRichContentCallbacks()
   const onTagClick = useTagClickHandler()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
-  const queryFn = useCallback(
-    (cursor?: string): Promise<PageResponse<BlockRow>> =>
-      // Trash is scoped to the active space (each space owns its own
-      // deletion set). #2248 — with no active space there is nothing to
-      // list, so resolve to an empty page locally instead of passing an
-      // empty-string sentinel to the backend (which now rejects a
-      // malformed `Active('')` scope rather than treating it as a
-      // no-match).
-      currentSpaceId == null
-        ? Promise.resolve({ items: [], next_cursor: null, has_more: false, total_count: null })
-        : listTrash({
-            ...(cursor != null && { cursor }),
-            limit: PAGINATION_LIMIT,
-            spaceId: currentSpaceId,
-          }),
-    [currentSpaceId],
-  )
+
+  // #2634 — migrated off `usePaginatedQuery` onto TanStack `useInfiniteQuery`
+  // directly (staged retirement of the generic hook; matching the merged
+  // `HistoryPanel` / `DonePanel` / `useUnlinkedReferences` pattern). The query key
+  // carries the sole real fetch input the old `queryFn` closed over (the active
+  // space), so a space switch is a fresh query — reproducing the old request-id
+  // guard: a late load-more response for a superseded space lands in that key's
+  // (now observer-less) cache entry instead of being grafted onto the new space's
+  // list. There is no `invalidationKey` (the old hook subscribed to no property
+  // events), so the key is stable within a space and needs no bounded `gcTime` —
+  // it inherits the client's `gcTime: Infinity` (see `useUnlinkedReferences`). The
+  // client is passed EXPLICITLY as the 2nd arg so no `QueryClientProvider`
+  // ancestor is required (bare `render()` tests need no wrapper). `listTrash`
+  // takes no AbortSignal, so — as before migration — none is forwarded.
+  const queryKey = useMemo(() => ['trash', currentSpaceId], [currentSpaceId])
   const {
-    items: blocks,
-    loading,
-    hasMore,
-    loadMore,
-    reload,
-    setItems: setBlocks,
-  } = usePaginatedQuery(queryFn, { onError: t('trash.loadFailed') })
+    data,
+    isFetching,
+    isError,
+    errorUpdatedAt,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+    refetch,
+  } = useInfiniteQuery(
+    {
+      queryKey,
+      queryFn: async ({ pageParam }): Promise<PageResponse<BlockRow>> => {
+        // Trash is scoped to the active space (each space owns its own deletion
+        // set). #2248 — with no active space there is nothing to list, so resolve
+        // to an empty page locally instead of passing an empty-string sentinel to
+        // the backend (which now rejects a malformed `Active('')` scope rather
+        // than treating it as a no-match).
+        if (currentSpaceId == null) {
+          return { items: [], next_cursor: null, has_more: false, total_count: null }
+        }
+        return listTrash({
+          ...(pageParam != null && { cursor: pageParam }),
+          limit: PAGINATION_LIMIT,
+          spaceId: currentSpaceId,
+        })
+      },
+      initialPageParam: undefined as string | undefined,
+      getNextPageParam: (lastPage) => (lastPage.has_more ? lastPage.next_cursor : undefined),
+      // usePaginatedQuery re-fetched page 1 on every mount; preserve that.
+      refetchOnMount: 'always',
+      // Stale-while-revalidate parity: usePaginatedQuery's deps-change path reset
+      // the cursor but NEVER cleared `items` — only a successful response
+      // overwrote them, so the trash list stayed visible during a refetch. With
+      // the space now in the key, a space switch would otherwise blank the list to
+      // a skeleton until the refetch resolves; `keepPreviousData` retains the
+      // prior key's pages until the new fetch resolves (per-key cache writes are
+      // unchanged, so the stale-guard still holds).
+      placeholderData: keepPreviousData,
+    },
+    queryClient,
+  )
+
+  const blocks = useMemo<BlockRow[]>(() => data?.pages.flatMap((p) => p.items) ?? [], [data])
+  // usePaginatedQuery's `loading` was true during ANY in-flight fetch (initial
+  // AND load-more), driving both the skeleton and the "Load more" busy state —
+  // `isFetching` reproduces that (`isLoading` would be false during load-more).
+  const loading = isFetching
+  const hasMore = hasNextPage
+  const loadMore = useCallback(() => {
+    if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+  // Old `reload` re-fetched page 1 (discarding later pages); `refetch` refetches
+  // the loaded pages in place — same observable result for the batch-action
+  // callers below (they reload to reflect a just-applied write).
+  const reload = useCallback(() => {
+    void refetch()
+  }, [refetch])
+
+  // `setItems` replacement (optimistic removal after single-item restore/purge).
+  // The old setter mutated local state; here the same `(prev) => prev.filter(...)`
+  // updater is applied per cached page via `setQueryData`, dropping the block
+  // from whichever page holds it (filter-of-concat === concat-of-filtered, so the
+  // flat list loses exactly that block). Fresh page objects, no mutation (#1529),
+  // and — critically — NO refetch: `restoreBlock`/`purgeBlock` emit no query
+  // invalidation, so the removal is purely optimistic, matching the old behaviour.
+  const setBlocks = useCallback(
+    (updater: (prev: BlockRow[]) => BlockRow[]) => {
+      queryClient.setQueryData<InfiniteData<PageResponse<BlockRow>>>(queryKey, (old) => {
+        if (!old) return old
+        const pages = old.pages.map((page) => ({ ...page, items: updater(page.items) }))
+        return { ...old, pages }
+      })
+    },
+    [queryKey],
+  )
+
+  // Reproduce the old `onError: t('trash.loadFailed')` toast. usePaginatedQuery
+  // called `notify.error` from its catch on EACH failed load. TanStack keeps
+  // `isError` latched across consecutive same-key failures, so keying on it alone
+  // would toast once; `errorUpdatedAt` advances on every error occurrence, firing
+  // once per failed load. Capturing the first-render value guards a cached error
+  // (gcTime Infinity) from re-toasting on remount before `refetchOnMount`
+  // resolves — only a fresh `errorUpdatedAt` toasts (mirrors `HistoryPanel`).
+  const lastToastedErrorAtRef = useRef(errorUpdatedAt)
+  useEffect(() => {
+    if (isError && errorUpdatedAt !== lastToastedErrorAtRef.current) {
+      lastToastedErrorAtRef.current = errorUpdatedAt
+      notify.error(t('trash.loadFailed'))
+    }
+  }, [isError, errorUpdatedAt, t])
 
   // ── Filter state (extracted hook) ────────────────────────────────
   const { filterText, setFilterText, debouncedFilter, filteredBlocks, clearFilter } =

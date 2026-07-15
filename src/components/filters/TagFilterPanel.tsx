@@ -3,12 +3,13 @@
  *
  * Lets users select multiple tags via prefix search and see blocks
  * matching all (AND), any (OR), or none (NOT) of the selected tags.
- * Results are paginated with cursor-based `t('tagFilter.loadMoreButton')` via usePaginatedQuery.
+ * Results are paginated with cursor-based `t('tagFilter.loadMoreButton')` via TanStack useInfiniteQuery.
  */
 
+import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
 import { Plus, Search } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ResultCard } from '@/components/common/ResultCard'
@@ -21,11 +22,11 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
-import { usePaginatedQuery } from '@/hooks/usePaginatedQuery'
 import type { TagExpr } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { queryClient } from '@/lib/query-client'
 import { type TagQueryParams, compileTagExpr, tagBuilderHasLeaves } from '@/lib/tagExpr'
 import type { BlockRow, PageResponse } from '@/lib/tauri'
 import { batchResolve, getBlock, listTagsByPrefix, queryByTagExpr, queryByTags } from '@/lib/tauri'
@@ -267,30 +268,99 @@ export function TagFilterPanel(): React.ReactElement {
   const flatParams = { tagIds: selectedTags.map((tg) => tg.id), prefixes: prefixPills, mode }
   const hasQuery = tagExpr != null || flatParams.tagIds.length > 0 || flatParams.prefixes.length > 0
 
-  // Block results via usePaginatedQuery. `runTagQuery` selects the IPC (nested
-  // `queryByTagExpr` when the composer is active, flat `queryByTags` otherwise).
-  const blockQueryFn = useCallback(
-    (cursor?: string) => runTagQuery(tagExpr, flatParams, currentSpaceId, cursor),
-    // Re-key on the serialized query so a composer/pill edit re-runs it.
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- query is derived; the JSON keys capture every input
-    [JSON.stringify(tagExpr), JSON.stringify(flatParams), currentSpaceId],
+  // #2634 — migrated off `usePaginatedQuery` onto TanStack `useInfiniteQuery`
+  // directly (staged retirement of the generic hook; matching the merged
+  // `HistoryPanel` / `DonePanel` / `useUnlinkedReferences` pattern). The query key
+  // carries the real inputs the old `blockQueryFn` closed over (the serialized
+  // `tagExpr` / `flatParams` / `currentSpaceId`), so a composer/pill/tag/mode edit
+  // is a fresh query — reproducing the old request-id guard: a late load-more
+  // response for a superseded query lands in that key's (now observer-less) cache
+  // entry instead of being grafted onto the new query's list (#2256). `runTagQuery`
+  // selects the IPC (nested `queryByTagExpr` when the composer is active, flat
+  // `queryByTags` otherwise). Neither IPC accepts an AbortSignal, so — as before
+  // migration — none is forwarded. The client is passed EXPLICITLY as the 2nd arg
+  // so no `QueryClientProvider` ancestor is required (bare `render()` tests need no
+  // wrapper). The key carries the live filter inputs (space, tag expression, query
+  // params), so it churns on every filter edit — each tag add/remove, each and/or/not
+  // mode toggle, each prefix-pill change, and each committed composer edit mints a
+  // distinct key. Under the client's `gcTime: Infinity` every superseded, now
+  // observer-less entry would retain its full page set for the whole session and
+  // accumulate unbounded across an exploratory tag session. Bound the churn with a
+  // finite `gcTime` (same rationale/value as the merged `DonePanel`, whose monotonic
+  // key churns comparably); the old `usePaginatedQuery` held only a single `useState`
+  // list, so it accumulated nothing across edits.
+  const {
+    data,
+    isFetching,
+    isError,
+    errorUpdatedAt,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery(
+    {
+      queryKey: ['tagFilterBlocks', currentSpaceId, tagExpr, flatParams],
+      queryFn: ({ pageParam }): Promise<PageResponse<BlockRow>> =>
+        runTagQuery(tagExpr, flatParams, currentSpaceId, pageParam),
+      initialPageParam: undefined as string | undefined,
+      getNextPageParam: (lastPage) => (lastPage.has_more ? lastPage.next_cursor : undefined),
+      // The query only runs when there is an active query (selected tags, prefix
+      // pills, or a non-empty composer) — matching the old `enabled: hasQuery`.
+      enabled: hasQuery,
+      // usePaginatedQuery auto-loaded page 1 on every mount; preserve that.
+      refetchOnMount: 'always',
+      // Bound per-edit key churn (see the query-key note above): a superseded
+      // filter combination's cache entry is collected 5 min after its last
+      // observer detaches, instead of lingering for the whole session.
+      gcTime: 5 * 60 * 1000,
+      // Stale-while-revalidate parity: usePaginatedQuery's deps-change path reset
+      // the cursor but NEVER cleared `items` — only a successful response
+      // overwrote them, so the prior results stayed visible (dimmed) during a
+      // refetch. With the inputs now in the key, a mode/tag/composer edit switches
+      // to a fresh empty entry; without this the results would blank to a skeleton
+      // mid-flight. `keepPreviousData` retains the prior key's pages until the new
+      // fetch resolves (per-key cache writes unchanged, so the #2256 stale-guard
+      // still holds). Mirrors the merged HistoryPanel / DonePanel migrations.
+      placeholderData: keepPreviousData,
+    },
+    queryClient,
   )
 
-  const {
-    items: results,
-    loading,
-    hasMore,
-    loadMore,
-    setItems,
-  } = usePaginatedQuery(blockQueryFn, {
-    enabled: hasQuery,
-    onError: t('tags.loadFailed'),
-  })
+  // The old hook explicitly `setItems([])`d whenever `!hasQuery`. `keepPreviousData`
+  // would otherwise retain the last query's pages as a placeholder after the query
+  // empties (all tags + pills removed / composer empty), so derive `[]` directly
+  // when `!hasQuery` — reproducing that explicit clear (the results section and
+  // Load-more affordance both disappear, matching the pre-migration behaviour).
+  const results = useMemo<BlockRow[]>(
+    () => (hasQuery ? (data?.pages.flatMap((p) => p.items) ?? []) : []),
+    [hasQuery, data],
+  )
+  // usePaginatedQuery's `loading` was true during ANY in-flight fetch (initial AND
+  // load-more), driving both the skeleton and the results-overlay spinner —
+  // `isFetching` reproduces that exactly (`isLoading` would be false on load-more).
+  const loading = isFetching
+  // Guard on `hasQuery` for the same reason as `results`: a retained placeholder
+  // could otherwise leave `hasNextPage` true after the query emptied, surfacing a
+  // stray Load-more button the old hook (which reset `hasMore` when disabled) hid.
+  const hasMore = hasQuery && hasNextPage
+  const loadMore = useCallback(() => {
+    if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
 
-  // Clear items when the query goes empty (all tags + pills removed / composer empty)
+  // Reproduce the old `onError: t('tags.loadFailed')` toast. usePaginatedQuery
+  // called `notify.error` from its catch on EACH failed load. TanStack keeps
+  // `isError` latched across consecutive same-key failures, so keying only on it
+  // would toast once; `errorUpdatedAt` advances on every error occurrence, firing
+  // the toast once per failed load. The first-render value is captured as the
+  // baseline so a cached error (re-presented before `refetchOnMount` resolves)
+  // isn't re-toasted — only a fresh failure fires.
+  const lastToastedErrorAtRef = useRef(errorUpdatedAt)
   useEffect(() => {
-    if (!hasQuery) setItems([])
-  }, [hasQuery, setItems])
+    if (isError && errorUpdatedAt !== lastToastedErrorAtRef.current) {
+      lastToastedErrorAtRef.current = errorUpdatedAt
+      notify.error(t('tags.loadFailed'))
+    }
+  }, [isError, errorUpdatedAt, t])
 
   // Resolve page titles for breadcrumbs when results change
   useEffect(() => {
