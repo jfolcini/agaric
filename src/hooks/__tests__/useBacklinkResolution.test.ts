@@ -1,13 +1,14 @@
 /**
- * Tests for useBacklinkResolution hook.
+ * Tests for useBacklinkResolution hook (#2635 — delegated to useResolveStore).
  *
  * Validates:
- *  - Cache hit (returns cached value without invoking)
- *  - Cache miss (invokes backend, caches result)
- *  - TTL expiration (stale cache triggers re-fetch)
- *  - clearCache empties the cache
- *  - Fallback titles for unresolved IDs
- *  - Tag resolution uses tag fallback format
+ *  - Real titles/statuses come from the shared `useResolveStore` (one cache).
+ *  - Cache hit: an id already in the store is not re-resolved.
+ *  - Unresolved ids (backend didn't return them) render as broken links
+ *    (deleted status) WITHOUT polluting the shared store.
+ *  - `clearCache()` does NOT wipe the shared store; it re-attempts resolution
+ *    so a renamed target picks up its fresh title (#2628).
+ *  - Tag fallback format; space-scoped resolution (#2543); error handling.
  */
 
 import { act, renderHook, waitFor } from '@testing-library/react'
@@ -19,6 +20,7 @@ vi.mock('../../lib/tauri', () => ({
 
 import type { BacklinkGroup } from '../../lib/tauri'
 import { batchResolve } from '../../lib/tauri'
+import { keyFor, useResolveStore } from '../../stores/resolve'
 import { useSpaceStore } from '../../stores/space'
 import { useBacklinkResolution } from '../useBacklinkResolution'
 
@@ -54,6 +56,9 @@ const initialSpaceState = useSpaceStore.getState()
 beforeEach(() => {
   vi.clearAllMocks()
   vi.useRealTimers()
+  // Fresh shared store per test — the hook now delegates all real resolution
+  // to `useResolveStore`, so isolate its cache between cases.
+  useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
   // Default: no active space — `keyFor(null, id)` resolves to the
   // `__global__::id` slot so existing tests behave as before.
   useSpaceStore.setState({ ...initialSpaceState, currentSpaceId: null })
@@ -86,7 +91,6 @@ describe('useBacklinkResolution', () => {
 
     const { result } = renderHook(() => useBacklinkResolution(groups))
 
-    // Wait for batchResolve to be called and resolved
     await waitFor(() => {
       expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], 'global')
     })
@@ -95,6 +99,38 @@ describe('useBacklinkResolution', () => {
       expect(result.current.resolveBlockTitle(ULID_A)).toBe('My Page')
     })
     expect(result.current.resolveBlockStatus(ULID_A)).toBe('active')
+  })
+
+  it('writes real resolutions into the shared useResolveStore (single cache)', async () => {
+    mockedBatchResolve.mockResolvedValue([
+      { id: ULID_A, title: 'Shared Title', block_type: 'page', deleted: false },
+    ])
+
+    const groups: BacklinkGroup[] = [makeGroup([{ id: 'B1', content: `[[${ULID_A}]]` }])]
+
+    renderHook(() => useBacklinkResolution(groups))
+
+    // The resolution is visible to ANY other consumer of the shared store,
+    // not just via the hook — proving there is one cache, not two.
+    await waitFor(() => {
+      expect(useResolveStore.getState().resolveTitle(ULID_A)).toBe('Shared Title')
+    })
+    expect(useResolveStore.getState().has(ULID_A)).toBe(true)
+  })
+
+  it('reads a title already present in the shared store without invoking batchResolve', async () => {
+    // Pre-seed the shared store, as if another consumer already resolved it.
+    useResolveStore.getState().set(ULID_A, 'Preseeded Title', false)
+
+    const groups: BacklinkGroup[] = [makeGroup([{ id: 'B1', content: `[[${ULID_A}]]` }])]
+
+    const { result } = renderHook(() => useBacklinkResolution(groups))
+
+    expect(result.current.resolveBlockTitle(ULID_A)).toBe('Preseeded Title')
+    // Already in the store → no IPC.
+    await waitFor(() => {
+      expect(mockedBatchResolve).not.toHaveBeenCalled()
+    })
   })
 
   it('returns cached value without invoking on cache hit', async () => {
@@ -108,65 +144,19 @@ describe('useBacklinkResolution', () => {
       initialProps: { g: groups },
     })
 
-    // Wait for first resolution
     await waitFor(() => {
       expect(result.current.resolveBlockTitle(ULID_A)).toBe('Cached Title')
     })
 
-    // Clear mock to verify it's not called again
     mockedBatchResolve.mockClear()
 
-    // Re-render with same groups (same ULID) — should use cache
+    // Re-render with same ULID — now in the store, so no re-resolve.
     rerender({ g: [...groups] })
 
-    // batchResolve should not be called again (cache hit)
     await waitFor(() => {
       expect(mockedBatchResolve).not.toHaveBeenCalled()
     })
-
     expect(result.current.resolveBlockTitle(ULID_A)).toBe('Cached Title')
-  })
-
-  it('re-fetches when TTL expires', async () => {
-    vi.useFakeTimers()
-
-    mockedBatchResolve.mockResolvedValue([
-      { id: ULID_A, title: 'Fresh Title', block_type: 'page', deleted: false },
-    ])
-
-    const groups: BacklinkGroup[] = [makeGroup([{ id: 'B1', content: `[[${ULID_A}]]` }])]
-
-    const { result, rerender } = renderHook(({ g }) => useBacklinkResolution(g), {
-      initialProps: { g: groups },
-    })
-
-    // Wait for first resolution
-    await act(async () => {
-      await vi.runAllTimersAsync()
-    })
-    expect(mockedBatchResolve).toHaveBeenCalledTimes(1)
-    expect(result.current.resolveBlockTitle(ULID_A)).toBe('Fresh Title')
-
-    // Advance time past TTL (5 minutes + 1ms)
-    await act(async () => {
-      vi.advanceTimersByTime(5 * 60 * 1000 + 1)
-    })
-
-    mockedBatchResolve.mockClear()
-    mockedBatchResolve.mockResolvedValue([
-      { id: ULID_A, title: 'Updated Title', block_type: 'page', deleted: false },
-    ])
-
-    // Re-render with a new groups reference to trigger the effect
-    rerender({ g: [makeGroup([{ id: 'B1', content: `[[${ULID_A}]]` }])] })
-
-    await act(async () => {
-      await vi.runAllTimersAsync()
-    })
-
-    // Should have called batchResolve again due to TTL expiration
-    expect(mockedBatchResolve).toHaveBeenCalledTimes(1)
-    expect(result.current.resolveBlockTitle(ULID_A)).toBe('Updated Title')
   })
 
   it('resolves tag tokens with #[] syntax', async () => {
@@ -200,8 +190,8 @@ describe('useBacklinkResolution', () => {
     expect(result.current.resolveBlockTitle(ULID_A)).toBe('Deleted Page')
   })
 
-  it('provides fallback for IDs not returned by batchResolve', async () => {
-    // batchResolve returns empty — ULID_A not found
+  it('renders a broken link for IDs not returned by batchResolve WITHOUT polluting the store', async () => {
+    // batchResolve returns empty — ULID_A not found (foreign-space / deleted).
     mockedBatchResolve.mockResolvedValue([])
 
     const groups: BacklinkGroup[] = [makeGroup([{ id: 'B1', content: `[[${ULID_A}]]` }])]
@@ -213,31 +203,66 @@ describe('useBacklinkResolution', () => {
     })
 
     await waitFor(() => {
-      // Fallback title uses first 8 chars
+      // Broken-link fallback title + deleted status (backlink-local).
       expect(result.current.resolveBlockTitle(ULID_A)).toBe(`[[${ULID_A.slice(0, 8)}...]]`)
     })
     expect(result.current.resolveBlockStatus(ULID_A)).toBe('deleted')
+
+    // The unresolved id must NOT have leaked into the app-wide store — that
+    // would corrupt the cache for every other consumer (#2635).
+    expect(useResolveStore.getState().has(ULID_A)).toBe(false)
+    expect(useResolveStore.getState().cache.size).toBe(0)
   })
 
-  it('clearCache empties the cache', async () => {
+  it('clearCache re-attempts resolution so a renamed target picks up its fresh title (#2628)', async () => {
     mockedBatchResolve.mockResolvedValue([
-      { id: ULID_A, title: 'Will Be Cleared', block_type: 'page', deleted: false },
+      { id: ULID_A, title: 'Old Title', block_type: 'page', deleted: false },
     ])
 
     const groups: BacklinkGroup[] = [makeGroup([{ id: 'B1', content: `[[${ULID_A}]]` }])]
 
-    const { result } = renderHook(() => useBacklinkResolution(groups))
+    const { result, rerender } = renderHook(({ g }) => useBacklinkResolution(g), {
+      initialProps: { g: groups },
+    })
 
     await waitFor(() => {
-      expect(result.current.resolveBlockTitle(ULID_A)).toBe('Will Be Cleared')
+      expect(result.current.resolveBlockTitle(ULID_A)).toBe('Old Title')
     })
+
+    // Target was renamed on the backend.
+    mockedBatchResolve.mockResolvedValue([
+      { id: ULID_A, title: 'New Title', block_type: 'page', deleted: false },
+    ])
+
+    // clearCache does NOT wipe the shared store (still holds "Old Title")...
+    act(() => {
+      result.current.clearCache()
+    })
+    expect(useResolveStore.getState().resolveTitle(ULID_A)).toBe('Old Title')
+
+    // ...but it latches a forced re-resolve: the next groups change re-fetches
+    // even though the id is already cached, refreshing the store to "New Title".
+    rerender({ g: [makeGroup([{ id: 'B1', content: `[[${ULID_A}]]` }])] })
+
+    await waitFor(() => {
+      expect(result.current.resolveBlockTitle(ULID_A)).toBe('New Title')
+    })
+    expect(useResolveStore.getState().resolveTitle(ULID_A)).toBe('New Title')
+  })
+
+  it('clearCache does not clear the shared store for other consumers', async () => {
+    // A sibling consumer's entry lives in the shared store.
+    useResolveStore.getState().set(ULID_B, 'Sibling Page', false)
+
+    const groups: BacklinkGroup[] = [makeGroup([{ id: 'B1', content: 'plain text' }])]
+    const { result } = renderHook(() => useBacklinkResolution(groups))
 
     act(() => {
       result.current.clearCache()
     })
 
-    // After clearing, resolveBlockTitle returns fallback
-    expect(result.current.resolveBlockTitle(ULID_A)).toBe(`[[${ULID_A.slice(0, 8)}...]]`)
+    // The sibling's cached title survives clearCache().
+    expect(useResolveStore.getState().resolveTitle(ULID_B)).toBe('Sibling Page')
   })
 
   it('handles batchResolve errors gracefully', async () => {
@@ -251,8 +276,9 @@ describe('useBacklinkResolution', () => {
       expect(mockedBatchResolve).toHaveBeenCalled()
     })
 
-    // Should not throw — returns fallback
+    // Should not throw — returns fallback, active (not marked deleted on error).
     expect(result.current.resolveBlockTitle(ULID_A)).toBe(`[[${ULID_A.slice(0, 8)}...]]`)
+    expect(result.current.resolveBlockStatus(ULID_A)).toBe('active')
   })
 
   it('resolves multiple ULIDs in a single batch', async () => {
@@ -287,9 +313,7 @@ describe('useBacklinkResolution', () => {
 
     renderHook(() => useBacklinkResolution(groups))
 
-    // batchResolve should not be called since there are no ULIDs to resolve
-    // (the effect returns early when allBlocks have no content)
-    // Wait a tick to ensure the effect ran
+    // batchResolve should not be called since there are no ULIDs to resolve.
     await waitFor(() => {
       expect(mockedBatchResolve).not.toHaveBeenCalled()
     })
@@ -309,11 +333,10 @@ describe('useBacklinkResolution', () => {
     })
   })
 
-  it('returns different titles for the same ULID in two spaces within the TTL window', async () => {
-    // Same backlink id resolves to different titles in two different
-    // spaces. Without space-aware cache keys the second render would
-    // hit the stale "Title in A" entry (still well within the 5-min
-    // TTL) and skip the IPC entirely.
+  it('returns different titles for the same ULID in two spaces (space-scoped store)', async () => {
+    // Same backlink id resolves to different titles in two different spaces.
+    // The shared store is composite-keyed by space, so switching spaces is a
+    // cache miss that re-resolves, and switching back is a hit.
     useSpaceStore.setState({ ...initialSpaceState, currentSpaceId: 'SPACE_AAAA' })
 
     mockedBatchResolve.mockResolvedValue([
@@ -329,9 +352,7 @@ describe('useBacklinkResolution', () => {
     })
     expect(mockedBatchResolve).toHaveBeenCalledTimes(1)
 
-    // Switch space — the hook's `currentSpaceId` selector flips,
-    // the effect re-runs, and `keyFor('SPACE_BBBB', ULID_A)` is a
-    // cache miss → a second IPC call returns the B-space title.
+    // Switch space — cache miss under `keyFor('SPACE_BBBB', ULID_A)`.
     mockedBatchResolve.mockResolvedValue([
       { id: ULID_A, title: 'Title in B', block_type: 'page', deleted: false },
     ])
@@ -344,10 +365,7 @@ describe('useBacklinkResolution', () => {
     })
     expect(mockedBatchResolve).toHaveBeenCalledTimes(2)
 
-    // Switch back to space A — both entries are still within TTL, so
-    // the cache should serve "Title in A" without a third IPC call.
-    // (If the cache were id-only, switching back would over-write
-    // "Title in A" with "Title in B" and this assertion would fail.)
+    // Switch back to space A — still cached, no third IPC.
     mockedBatchResolve.mockClear()
     act(() => {
       useSpaceStore.setState({ currentSpaceId: 'SPACE_AAAA' })
@@ -359,13 +377,7 @@ describe('useBacklinkResolution', () => {
     expect(mockedBatchResolve).not.toHaveBeenCalled()
   })
 
-  // #2543 — the effect used to pass the literal 'global' regardless of the
-  // active space, opting every id INTO cross-space resolution. A foreign-
-  // space [[ULID]]/#[ULID] target then rendered as a live, correctly-titled
-  // chip in the backlinks panel while the same token rendered broken in the
-  // editor (useBlockLinkResolve.ts scopes to `spaceId ?? 'global'`). Fixed
-  // by scoping to the current space, falling back to 'global' only when
-  // there is no active space (pre-bootstrap / trash-like surfaces).
+  // #2543 — scope resolution to the active space, not the literal 'global'.
   it('scopes batchResolve to the active space instead of the literal global (#2543)', async () => {
     useSpaceStore.setState({ ...initialSpaceState, currentSpaceId: 'SPACE_AAAA' })
 
@@ -380,7 +392,6 @@ describe('useBacklinkResolution', () => {
     await waitFor(() => {
       expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], 'SPACE_AAAA')
     })
-    // The old buggy call shape must not have been made either.
     expect(mockedBatchResolve).not.toHaveBeenCalledWith([ULID_A], 'global')
   })
 
@@ -397,5 +408,35 @@ describe('useBacklinkResolution', () => {
     await waitFor(() => {
       expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], 'global')
     })
+  })
+
+  it('does not re-fetch an id that was already attempted-but-unresolved', async () => {
+    mockedBatchResolve.mockResolvedValue([])
+
+    const groups: BacklinkGroup[] = [makeGroup([{ id: 'B1', content: `[[${ULID_A}]]` }])]
+    const { rerender } = renderHook(({ g }) => useBacklinkResolution(g), {
+      initialProps: { g: groups },
+    })
+
+    await waitFor(() => {
+      expect(mockedBatchResolve).toHaveBeenCalledTimes(1)
+    })
+
+    // Re-render with a new groups reference containing the same unresolved id —
+    // the attempted-unresolved set suppresses a redundant IPC.
+    rerender({ g: [makeGroup([{ id: 'B1', content: `[[${ULID_A}]]` }])] })
+
+    await waitFor(() => {
+      expect(mockedBatchResolve).toHaveBeenCalledTimes(1)
+    })
+  })
+})
+
+// Reference `keyFor` so the import is exercised by a lightweight sanity check
+// (the hook keys its attempted-unresolved set with the same helper).
+describe('useBacklinkResolution — key encoding', () => {
+  it('uses the shared composite key encoding', () => {
+    expect(keyFor(null, ULID_A)).toBe(`__global__::${ULID_A}`)
+    expect(keyFor('SPACE_AAAA', ULID_A)).toBe(`SPACE_AAAA::${ULID_A}`)
   })
 })
