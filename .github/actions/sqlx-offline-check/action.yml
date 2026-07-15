@@ -1,0 +1,52 @@
+name: sqlx offline cache check
+description: >
+  Verify one crate's committed `.sqlx/` offline query cache is up to date.
+  Creates + migrates a throwaway SQLite DB, then runs
+  `cargo sqlx prepare --check` against it so query drift is caught in CI.
+
+  Reusable per crate: the layered-workspace split (#2621) will give lower
+  crates (e.g. `agaric-core`, which carries `ulid`'s `sqlx` queries) their
+  own `.sqlx/` cache. Each such crate gets its own lane by calling this
+  action with a distinct `working-directory` + `database-url` — no
+  copy-pasted YAML. Today only the `agaric` crate (`src-tauri`) has a
+  cache, so there is a single caller.
+
+inputs:
+  working-directory:
+    description: Crate directory containing `Cargo.toml`, `migrations/`, and the committed `.sqlx/` cache.
+    required: true
+  database-url:
+    description: >
+      Throwaway SQLite DB URL for this crate's check. MUST be unique per
+      crate so concurrent lanes never collide on the same file.
+    required: true
+  prepare-args:
+    description: >
+      Args appended after `cargo sqlx prepare --check`. Defaults to
+      `-- --tests` so query drift inside `#[cfg(test)]` modules is caught
+      too (matches the local pre-push hook + prek.toml MAINT-227 note;
+      caught 5 such drifts in session 679's PEND-18 work).
+    required: false
+    default: '-- --tests'
+
+runs:
+  using: composite
+  steps:
+    # sqlx-cli 0.9.x's `prepare --check` CONNECTS to `DATABASE_URL` to
+    # re-derive every query's metadata and diff it against the committed
+    # `.sqlx/` cache — it does NOT honor `SQLX_OFFLINE` for `--check`. An
+    # empty placeholder schema (e.g. `sqlite::memory:`) makes every query
+    # fail with "no such table" and cascades into ~hundreds of misleading
+    # `str` E0277 errors. So we create + migrate a throwaway file DB first;
+    # the committed cache is still what's diffed, but against a real schema.
+    # Locally the same comes from `src-tauri/.env`
+    # (`DATABASE_URL=sqlite:dev.db`, already migrated).
+    - name: sqlx prepare --check (${{ inputs.working-directory }})
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        DATABASE_URL: ${{ inputs.database-url }}
+      run: |
+        cargo sqlx database create
+        cargo sqlx migrate run
+        cargo sqlx prepare --check ${{ inputs.prepare-args }}
