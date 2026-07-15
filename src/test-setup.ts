@@ -7,6 +7,7 @@ import * as matchers from 'vitest-axe/matchers'
 
 import './lib/i18n'
 import { setLogLevel } from './lib/logger'
+import { queryClient } from './lib/query-client'
 
 expect.extend(matchers)
 
@@ -64,6 +65,16 @@ configure({ asyncUtilTimeout: 8000 })
 // without vitest globals. Register it explicitly.
 afterEach(() => {
   cleanup()
+})
+
+// #2596 — the read-path TanStack Query client is a module-level singleton
+// shared process-wide (see `src/lib/query-client.ts`), so its cache would
+// otherwise leak across tests: a query cached in one test would resolve
+// instantly (no mocked-IPC call, no `loading` phase) in the next. Clearing it
+// after every test restores the same per-test isolation the module-level `Map`
+// caches had via their `_reset*ForTest` helpers.
+afterEach(() => {
+  queryClient.clear()
 })
 
 // Defensive cleanup for `window.visualViewport`. jsdom does not provide this

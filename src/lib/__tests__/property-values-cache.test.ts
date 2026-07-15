@@ -1,23 +1,25 @@
 /**
- * Tests for `src/lib/property-values-cache.ts`.
+ * Tests for `src/lib/property-values-cache.ts` (#2596 — TanStack Query-backed).
  *
- * Modelled on `property-keys-cache.test.ts` — the value cache is a
- * near-duplicate of the key cache, differing only in the cache
- * dimension (the property *key* rather than the *space id*) and the
- * backing IPC (`list_property_values` rather than `list_property_keys`).
- * This file pins the same plain-JS contract:
+ * The hand-rolled Map/in-flight/subscriber cache is gone; the module is now a
+ * thin wrapper over the shared `queryClient` singleton, keyed on the property
+ * `key`. These tests pin the queryClient-backed contract while preserving
+ * behavioural intent:
  *
- *  (a) module-level cache hit — second call returns cached array
- *      without firing a fresh IPC,
+ *  (a) cache hit — a second `fetchPropertyValuesOnce` for the same key fires
+ *      only ONE `list_property_values` IPC,
  *  (b) in-flight dedupe — two concurrent calls share one IPC,
- *  (c) `block:properties-changed` invalidation triggers a refetch on
- *      the next consumer,
- *  (c') an invalidation that races an in-flight fetch must NOT write
- *      the stale pre-change snapshot back after the clear (#2025).
+ *  (c) event invalidation — a `block:properties-changed` naming the cached key
+ *      invalidates so the next fetch refetches,
+ *  (d) per-changed-key eviction (#2507) — a change to one key evicts ONLY that
+ *      key's entry, leaving other keys cached,
+ *  (e) error → `[]` fallback is returned and cached.
  */
 
 import { invoke } from '@tauri-apps/api/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { queryClient } from '@/lib/query-client'
 
 const eventListeners = new Map<string, (event: unknown) => void>()
 
@@ -32,9 +34,9 @@ vi.mock('@tauri-apps/api/event', () => ({
   ),
 }))
 
-// The cache only registers its `block:properties-changed` listener
-// when running inside Tauri. Stamp the marker so the lazy-init path
-// hits the mocked `listen()` above.
+// The invalidation listener only registers its `block:properties-changed`
+// subscription when running inside Tauri. Stamp the marker so the lazy-init
+// path hits the mocked `listen()` above.
 ;(window as unknown as { __TAURI_INTERNALS__: object }).__TAURI_INTERNALS__ = {}
 
 import {
@@ -42,10 +44,8 @@ import {
   EVENT_PROPERTY_CHANGED,
   ensurePropertyValuesInvalidationListener,
   fetchPropertyValuesOnce,
-  getCachedPropertyValues,
   invalidatePropertyValuesCache,
-  PROPERTY_VALUES_EMPTY,
-  subscribeToPropertyValuesCache,
+  propertyValuesQueryKey,
 } from '../property-values-cache'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -65,15 +65,15 @@ function listPropertyValuesInvocationCount(): number {
   return mockedInvoke.mock.calls.filter((c) => c[0] === 'list_property_values').length
 }
 
-function fireInvalidationEvent(): void {
+function fireInvalidationEvent(changedKeys: string[] = ['project']): void {
   const handler = eventListeners.get(EVENT_PROPERTY_CHANGED)
   if (!handler) throw new Error(`${EVENT_PROPERTY_CHANGED} listener was never registered`)
-  handler({ payload: { block_id: 'BLK01', changed_keys: ['project'] } })
+  handler({ payload: { block_id: 'BLK01', changed_keys: changedKeys } })
 }
 
 describe('property-values-cache', () => {
   // ------------------------------------------------------------------
-  // (a) Module-level cache hit
+  // (a) Cache hit — a second fetch reuses the cached array, no new IPC
   // ------------------------------------------------------------------
   it('caches the result so a second fetch reuses the cached array without firing IPC', async () => {
     const first = await fetchPropertyValuesOnce('project')
@@ -83,10 +83,7 @@ describe('property-values-cache', () => {
     const second = await fetchPropertyValuesOnce('project')
     expect(second).toBe(first) // same array reference — cached
     expect(listPropertyValuesInvocationCount()).toBe(1)
-  })
-
-  it('getCachedPropertyValues returns the stable EMPTY array before the first fetch', () => {
-    expect(getCachedPropertyValues('project')).toBe(PROPERTY_VALUES_EMPTY)
+    expect(queryClient.getQueryData(propertyValuesQueryKey('project'))).toEqual(['alpha', 'beta'])
   })
 
   it('different keys cache independently and fire separate IPCs', async () => {
@@ -123,18 +120,17 @@ describe('property-values-cache', () => {
   })
 
   // ------------------------------------------------------------------
-  // (c) Invalidation event triggers a refetch on the next consumer
+  // (c) An event naming the cached key invalidates so the next fetch refetches
   // ------------------------------------------------------------------
-  it('block:properties-changed invalidates the cache so the next fetch refetches', async () => {
+  it('block:properties-changed invalidates the changed key so the next fetch refetches', async () => {
     ensurePropertyValuesInvalidationListener()
     await fetchPropertyValuesOnce('project')
     expect(listPropertyValuesInvocationCount()).toBe(1)
 
-    // Materializer signals that property data changed.
-    fireInvalidationEvent()
+    // Materializer signals that `project` values changed.
+    fireInvalidationEvent(['project'])
 
-    // Cached entry is dropped — snapshot resets to EMPTY.
-    expect(getCachedPropertyValues('project')).toBe(PROPERTY_VALUES_EMPTY)
+    expect(queryClient.getQueryState(propertyValuesQueryKey('project'))?.isInvalidated).toBe(true)
 
     // Next fetch fires a fresh IPC.
     mockedInvoke.mockResolvedValueOnce(['alpha', 'beta', 'gamma'])
@@ -144,9 +140,9 @@ describe('property-values-cache', () => {
   })
 
   // ------------------------------------------------------------------
-  // (c-reduced) #2507 keyed eviction: an event evicts ONLY the entries for
-  //      its `changed_keys`; unrelated keys keep their cached array and fire
-  //      no refetch. This is the reduced-wakeup property for the value cache.
+  // (d) #2507 keyed eviction: an event invalidates ONLY the entries for its
+  //     `changed_keys`; unrelated keys keep their cached array and fire no
+  //     refetch.
   // ------------------------------------------------------------------
   it('evicts only the changed keys and leaves unrelated keys cached (#2507)', async () => {
     ensurePropertyValuesInvalidationListener()
@@ -155,11 +151,11 @@ describe('property-values-cache', () => {
     expect(listPropertyValuesInvocationCount()).toBe(2)
 
     // Only `project` changed.
-    fireInvalidationEvent()
+    fireInvalidationEvent(['project'])
 
-    // `project` is evicted; `effort` is untouched (same array reference).
-    expect(getCachedPropertyValues('project')).toBe(PROPERTY_VALUES_EMPTY)
-    expect(getCachedPropertyValues('effort')).toBe(effort)
+    // `project` is invalidated; `effort` is untouched (still valid, same array).
+    expect(queryClient.getQueryState(propertyValuesQueryKey('project'))?.isInvalidated).toBe(true)
+    expect(queryClient.getQueryState(propertyValuesQueryKey('effort'))?.isInvalidated).toBe(false)
 
     // A consumer of `effort` reuses the cached array — no fresh IPC. Only
     // `project` refetches.
@@ -174,96 +170,24 @@ describe('property-values-cache', () => {
     expect(listPropertyValuesInvocationCount()).toBe(3)
   })
 
-  // ------------------------------------------------------------------
-  // (c') Invalidation that races an in-flight fetch must NOT write the
-  //      stale pre-change snapshot back after the clear (#2025).
-  // ------------------------------------------------------------------
-  it('does not cache a stale result when invalidation races an in-flight fetch', async () => {
-    let resolveIpc: ((values: string[]) => void) | null = null
-    mockedInvoke.mockImplementationOnce(
-      () =>
-        new Promise<string[]>((resolve) => {
-          resolveIpc = resolve
-        }),
-    )
-
-    // Start a fetch — IPC is in flight, not yet resolved.
-    const inflight = fetchPropertyValuesOnce('project')
-    expect(listPropertyValuesInvocationCount()).toBe(1)
-
-    // A property value changes mid-flight: cache is invalidated.
-    invalidatePropertyValuesCache()
-    expect(getCachedPropertyValues('project')).toBe(PROPERTY_VALUES_EMPTY)
-
-    // Now the original IPC resolves with the pre-change snapshot.
-    if (!resolveIpc) throw new Error('resolveIpc was never assigned')
-    ;(resolveIpc as (values: string[]) => void)(['alpha', 'beta'])
-    await inflight
-
-    // The stale snapshot must NOT have been written back — the cache
-    // stays empty so the next consumer triggers a fresh fetch.
-    expect(getCachedPropertyValues('project')).toBe(PROPERTY_VALUES_EMPTY)
-
-    // A subsequent fetch fires a fresh IPC and gets the new data.
-    mockedInvoke.mockResolvedValueOnce(['alpha', 'beta', 'gamma'])
-    const refreshed = await fetchPropertyValuesOnce('project')
-    expect(refreshed).toEqual(['alpha', 'beta', 'gamma'])
-    expect(getCachedPropertyValues('project')).toEqual(['alpha', 'beta', 'gamma'])
-    expect(listPropertyValuesInvocationCount()).toBe(2)
-  })
-
-  it('does not cache the empty error fallback when invalidation races a failing fetch', async () => {
-    let rejectIpc: ((err: Error) => void) | null = null
-    mockedInvoke.mockImplementationOnce(
-      () =>
-        new Promise<string[]>((_resolve, reject) => {
-          rejectIpc = reject
-        }),
-    )
-
-    const inflight = fetchPropertyValuesOnce('project')
-    expect(listPropertyValuesInvocationCount()).toBe(1)
-
-    invalidatePropertyValuesCache()
-
-    if (!rejectIpc) throw new Error('rejectIpc was never assigned')
-    ;(rejectIpc as (err: Error) => void)(new Error('IPC failure'))
-    await inflight
-
-    // The empty fallback from the raced fetch must not be cached either.
-    expect(getCachedPropertyValues('project')).toBe(PROPERTY_VALUES_EMPTY)
-  })
-
-  it('invalidatePropertyValuesCache() clears every cached key', async () => {
+  it('invalidatePropertyValuesCache() invalidates every cached key so they refetch', async () => {
     await fetchPropertyValuesOnce('project')
     await fetchPropertyValuesOnce('effort')
     expect(listPropertyValuesInvocationCount()).toBe(2)
 
     invalidatePropertyValuesCache()
-    expect(getCachedPropertyValues('project')).toBe(PROPERTY_VALUES_EMPTY)
-    expect(getCachedPropertyValues('effort')).toBe(PROPERTY_VALUES_EMPTY)
-  })
-
-  // ------------------------------------------------------------------
-  // Subscriber notifications
-  // ------------------------------------------------------------------
-  it('notifies subscribers when an in-flight fetch resolves', async () => {
-    const cb = vi.fn()
-    const unsub = subscribeToPropertyValuesCache(cb)
+    expect(queryClient.getQueryState(propertyValuesQueryKey('project'))?.isInvalidated).toBe(true)
+    expect(queryClient.getQueryState(propertyValuesQueryKey('effort'))?.isInvalidated).toBe(true)
 
     await fetchPropertyValuesOnce('project')
-    expect(cb).toHaveBeenCalled()
-
-    unsub()
-    cb.mockClear()
-    invalidatePropertyValuesCache()
-    expect(cb).not.toHaveBeenCalled()
+    await fetchPropertyValuesOnce('effort')
+    expect(listPropertyValuesInvocationCount()).toBe(4)
   })
 
   // ------------------------------------------------------------------
-  // Error path falls back to empty array (matches pre-cache behaviour)
+  // (e) Error path falls back to empty array, and the fallback is cached.
   // ------------------------------------------------------------------
-  it('falls back to an empty array when listPropertyValues rejects', async () => {
+  it('falls back to an empty array when listPropertyValues rejects and caches it', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('IPC failure'))
     const result = await fetchPropertyValuesOnce('project')
     expect(result).toEqual([])

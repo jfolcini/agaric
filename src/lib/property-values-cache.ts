@@ -1,109 +1,136 @@
 /**
- * property-values-cache — non-React module-level cache for
+ * property-values-cache — TanStack Query-backed cache for
  * `listPropertyValues(key)` results, keyed on the property `key`.
  *
  * #1425: powers the property-VALUE autocomplete (the value side of a
- * `prop:key=value` editor). Modelled directly on `property-keys-cache.ts`
- * — a Map of cached arrays, an in-flight-dedup Map, a subscriber set, and
- * a lazy materializer-event listener that invalidates on
- * `block:properties-changed`. The only difference is the cache dimension:
- * the *property key* rather than the *space id* (values are inherently
- * key-scoped, and the backend command is not space-scoped).
+ * `prop:key=value` editor). #2596 (pilot proof-point 1): the hand-rolled
+ * module-level cache (Map / in-flight dedup / subscriber set / epoch
+ * race-guard) is gone — TanStack Query's module-level `queryClient`
+ * singleton now provides cache-hit reuse and in-flight de-duplication for
+ * free. This module keeps the historical public export names.
  *
- * #2047: the cache mechanics (Map / in-flight dedup / subscribers /
- * generation-counter race guard / lazy listener) are now provided by the
- * shared `createPropertyChangeCache` factory; this module is a thin
- * instantiation that keeps the historical public export names.
- *
- * Two worlds consume it: the React autocomplete hook
- * (`useAutocompleteSources` via `useSyncExternalStore`) and any future
- * plain-TS caller. Both share the same Map / in-flight / subscriber set so
- * a propValue anchor re-activation reuses the cached array instead of
- * re-firing the IPC.
+ * Invalidation follows the `block:properties-changed` convention, fanned out
+ * through the single module-level dispatcher (`property-change-dispatch.ts`).
+ * The value cache uses PER-CHANGED-KEY eviction (#2507): the cache is keyed on
+ * the property *key*, and a write's `changed_keys` are exactly the cache keys
+ * that went stale — so a change to `project` only evicts `project`'s value
+ * list, never `effort`'s.
  */
 
+import { queryClient } from '@/lib/query-client'
+
 import { EVENT_PROPERTY_CHANGED } from './block-event-names'
-import { createPropertyChangeCache } from './create-property-change-cache'
+import { logger } from './logger'
+import {
+  _resetPropertyChangeDispatchForTest,
+  ensurePropertyChangeDispatch,
+  registerPropertyChangeTarget,
+} from './property-change-dispatch'
 import { listPropertyValues } from './tauri'
 
 export { EVENT_PROPERTY_CHANGED }
 
-const instance = createPropertyChangeCache({
-  fetch: (key) => listPropertyValues(key),
-  logTag: 'property-values-cache',
-  // Keyed eviction (#2507): the cache is keyed on the property *key*, and a
-  // property write's `changed_keys` are exactly those cache keys — so a change
-  // to `project` can only stale the `project` value list, never `effort`'s.
-  // Evict just the changed keys instead of clearing the whole cache. Fall back
-  // to a blanket clear only for a payload-less event (defensive; the current
-  // backend always ships `changed_keys`).
-  onPropertyChange: (payload, api) => {
-    if (!payload) {
-      api.invalidateAll()
-      return
-    }
-    api.invalidateKeys(payload.changed_keys)
-  },
-})
+/** Stable empty-array reference returned by consumers before the first fetch
+ *  resolves. Reusing this constant keeps snapshots referentially stable so
+ *  React consumers relying on identity don't thrash. */
+export const PROPERTY_VALUES_EMPTY: string[] = []
 
-/** Stable empty-array reference returned before the first fetch resolves.
- *  `useSyncExternalStore` requires referentially-stable snapshots when
- *  nothing changed; reusing this constant satisfies that invariant. */
-export const PROPERTY_VALUES_EMPTY: string[] = instance.empty
+/** Query-key root shared by every key-scoped property-values entry. */
+const PROPERTY_VALUES_QUERY_ROOT = 'propValues' as const
 
-/**
- * Drop every cached `key` entry. Pending in-flight fetches are also
- * cleared so a subsequent consumer triggers a fresh IPC instead of
- * awaiting the now-stale promise. Exposed for the Tauri listener and for
- * test setup.
- */
-export function invalidatePropertyValuesCache(): void {
-  instance.invalidate()
+/** Build the TanStack query key for a given property `key`. */
+export function propertyValuesQueryKey(
+  key: string,
+): readonly [typeof PROPERTY_VALUES_QUERY_ROOT, string] {
+  return [PROPERTY_VALUES_QUERY_ROOT, key]
 }
 
 /**
- * Read the cached entry for `key` synchronously. Returns the stable
- * `PROPERTY_VALUES_EMPTY` array when no cached entry exists yet. This is
- * the snapshot fn used by `useSyncExternalStore`.
+ * Backing `queryFn` for a property `key`. Swallows IPC errors to an empty
+ * array (matching the old cache) so the value popover still renders rather
+ * than hanging in a loading state forever.
  */
-export function getCachedPropertyValues(key: string): string[] {
-  return instance.getCached(key)
+export const propertyValuesQueryFn = async (key: string): Promise<string[]> => {
+  try {
+    return await listPropertyValues(key)
+  } catch (e) {
+    logger.warn('property-values-cache', 'failed to load property data', { key }, e)
+    return []
+  }
 }
 
 /**
  * Trigger (or join) a single in-flight `listPropertyValues(key)` fetch.
- * Returns a promise that resolves to the cached array. A second
- * concurrent call before the first resolves shares the same promise, so
- * two callers fire ONE IPC. After resolution the entry is cached until
- * `invalidatePropertyValuesCache()` clears it (manually or via the
- * materializer event).
+ * Returns a promise that resolves to the cached array. A cache hit resolves
+ * synchronously; two concurrent calls share one in-flight promise, so they
+ * fire ONE IPC. After resolution the entry is cached until
+ * `invalidatePropertyValuesCache()` (manually or via the materializer event)
+ * marks it stale.
  */
 export function fetchPropertyValuesOnce(key: string): Promise<string[]> {
-  return instance.fetchOnce(key)
+  // `fetchQuery` (not `ensureQueryData`): both give cache-hit reuse and
+  // in-flight de-duplication, but `fetchQuery` gates on `isStaleByTime`, which
+  // returns true for an invalidated query — so a per-key `invalidateQueries` is
+  // honoured by the next plain-TS fetch (a refetch), matching the old cache's
+  // invalidate→refetch contract. `ensureQueryData` would return the stale array.
+  return queryClient.fetchQuery({
+    queryKey: propertyValuesQueryKey(key),
+    queryFn: () => propertyValuesQueryFn(key),
+  })
 }
 
 /**
- * Subscribe to cache mutations (resolution of an in-flight fetch or
- * invalidation). Returns an unsubscribe fn. Used by the React adapter via
- * `useSyncExternalStore`.
+ * Drop every cached `key` entry (marks them stale so the next consumer
+ * refetches). Exposed for the Tauri listener and for test setup.
  */
-export function subscribeToPropertyValuesCache(cb: () => void): () => void {
-  return instance.subscribe(cb)
+export function invalidatePropertyValuesCache(): void {
+  void queryClient.invalidateQueries({ queryKey: [PROPERTY_VALUES_QUERY_ROOT] })
 }
 
+let targetRegistered = false
+let unregisterTarget: (() => void) | null = null
+
 /**
- * Lazily register the materializer-event listener. Process-lifetime —
- * once registered it stays for the rest of the session.
+ * Lazily register the materializer-event fan-out target. Process-lifetime —
+ * once registered it stays for the rest of the session. The registered
+ * callback evicts only the changed keys (#2507); a payload-less event falls
+ * back to a blanket clear.
  */
 export function ensurePropertyValuesInvalidationListener(): void {
-  instance.ensureListener()
+  if (!targetRegistered) {
+    targetRegistered = true
+    unregisterTarget = registerPropertyChangeTarget((payload) => {
+      if (!payload) {
+        void queryClient.invalidateQueries({ queryKey: [PROPERTY_VALUES_QUERY_ROOT] })
+        return
+      }
+      payload.changed_keys.forEach((key) => {
+        void queryClient.invalidateQueries({ queryKey: propertyValuesQueryKey(key) })
+      })
+    })
+  }
+  ensurePropertyChangeDispatch((err) => {
+    logger.warn(
+      'property-values-cache',
+      'failed to register property-change listener',
+      undefined,
+      err,
+    )
+  })
 }
 
 /**
- * Test-only reset. Clears every cached entry, drops in-flight fetches, and
- * resets the lazy-listener flag so each test starts from a clean slate.
- * Imported directly by tests; not part of the public surface.
+ * Test-only reset. Removes every cached entry, unregisters the dispatch
+ * target, resets the registered-once flag, and resets the shared dispatcher
+ * so each test starts from a clean slate. Imported directly by tests; not
+ * part of the public surface.
  */
 export function _resetPropertyValuesCacheForTest(): void {
-  instance.resetForTest()
+  queryClient.removeQueries({ queryKey: [PROPERTY_VALUES_QUERY_ROOT] })
+  if (unregisterTarget) {
+    unregisterTarget()
+    unregisterTarget = null
+  }
+  targetRegistered = false
+  _resetPropertyChangeDispatchForTest()
 }

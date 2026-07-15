@@ -1,3 +1,4 @@
+import { QueryClientProvider } from '@tanstack/react-query'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
@@ -11,6 +12,7 @@ import { App } from './App.tsx'
 import { PrimaryFocusProvider } from './hooks/usePrimaryFocus'
 import { logger } from './lib/logger'
 import { initFrontendObservability } from './lib/observability'
+import { queryClient } from './lib/query-client'
 
 // Global catch-all: capture uncaught errors and unhandled rejections
 // before React mounts, so even early failures are logged persistently.
@@ -66,26 +68,34 @@ async function main() {
   createRoot(rootEl).render(
     <StrictMode>
       <ErrorBoundary>
-        <PrimaryFocusProvider>
-          {/*
-           * App-level tooltip baseline (#1094). One provider here means every
-           * surface shares a single hover-delay source of truth instead of each
-           * wrapping its own (24 surfaces + the IconButton primitive used to).
-           *
-           * delayDuration=300 is the standard Radix/UX baseline — a short but
-           * non-zero hover dwell that feels intentional without lagging. It
-           * sits between the old per-surface drift (0 / 200 / 500). Surfaces
-           * with a deliberate deviation set delayDuration on their own
-           * <Tooltip> (sidebar 0, toolbars 200, gutter 500) so the override
-           * stays explicit rather than silently inheriting this baseline.
-           *
-           * skipDelayDuration=300 (Radix default) keeps the "move between
-           * adjacent tooltips without re-waiting" window short.
-           */}
-          <TooltipProvider delayDuration={300} skipDelayDuration={300}>
-            <App />
-          </TooltipProvider>
-        </PrimaryFocusProvider>
+        {/*
+         * Single app-root QueryClient provider (#2596). The migrated read-path
+         * hooks pass this same client explicitly, so the provider is the
+         * idiomatic root wiring / Devtools anchor rather than the only way the
+         * client is reached. Read-path only — never the op_log write path.
+         */}
+        <QueryClientProvider client={queryClient}>
+          <PrimaryFocusProvider>
+            {/*
+             * App-level tooltip baseline (#1094). One provider here means every
+             * surface shares a single hover-delay source of truth instead of each
+             * wrapping its own (24 surfaces + the IconButton primitive used to).
+             *
+             * delayDuration=300 is the standard Radix/UX baseline — a short but
+             * non-zero hover dwell that feels intentional without lagging. It
+             * sits between the old per-surface drift (0 / 200 / 500). Surfaces
+             * with a deliberate deviation set delayDuration on their own
+             * <Tooltip> (sidebar 0, toolbars 200, gutter 500) so the override
+             * stays explicit rather than silently inheriting this baseline.
+             *
+             * skipDelayDuration=300 (Radix default) keeps the "move between
+             * adjacent tooltips without re-waiting" window short.
+             */}
+            <TooltipProvider delayDuration={300} skipDelayDuration={300}>
+              <App />
+            </TooltipProvider>
+          </PrimaryFocusProvider>
+        </QueryClientProvider>
       </ErrorBoundary>
     </StrictMode>,
   )

@@ -1,9 +1,10 @@
-import { type Dispatch, type SetStateAction, useCallback, useEffect, useRef, useState } from 'react'
+import { useInfiniteQuery } from '@tanstack/react-query'
+import { useCallback, useMemo } from 'react'
 
 import { resolveLegacyQueryToFilterExpr } from '@/lib/inline-query-resolve'
 import { decodeInlineQueryPayload } from '@/lib/inline-query-spec'
-import { logger } from '@/lib/logger'
 import { parseDate } from '@/lib/parse-date'
+import { queryClient } from '@/lib/query-client'
 import { type PropertyFilter, parseQueryExpression } from '@/lib/query-utils'
 import type { BlockRow, FilterExpr, FilteredBlocksPropertyFilter } from '@/lib/tauri'
 import {
@@ -268,160 +269,115 @@ async function resolvePageTitles(items: BlockRow[]): Promise<Map<string, string>
   return titleMap
 }
 
-/** Setters required to toggle loading/cursor/error state at the start of a fetch. */
-interface BeginFetchSetters {
-  setLoading: Dispatch<SetStateAction<boolean>>
-  setLoadingMore: Dispatch<SetStateAction<boolean>>
-  setCursor: Dispatch<SetStateAction<string | null>>
-  setHasMore: Dispatch<SetStateAction<boolean>>
-  setError: Dispatch<SetStateAction<string | null>>
-}
-
-function beginFetch(isLoadMore: boolean, setters: BeginFetchSetters): void {
-  if (isLoadMore) {
-    setters.setLoadingMore(true)
-  } else {
-    setters.setLoading(true)
-    setters.setCursor(null)
-    setters.setHasMore(false)
-  }
-  setters.setError(null)
-}
-
-interface EndFetchSetters {
-  setLoading: Dispatch<SetStateAction<boolean>>
-  setLoadingMore: Dispatch<SetStateAction<boolean>>
-}
-
-function endFetch(isLoadMore: boolean, setters: EndFetchSetters): void {
-  if (isLoadMore) {
-    setters.setLoadingMore(false)
-  } else {
-    setters.setLoading(false)
-  }
-}
-
-interface ApplyResultSetters {
-  setResults: Dispatch<SetStateAction<BlockRow[]>>
-  setCursor: Dispatch<SetStateAction<string | null>>
-  setHasMore: Dispatch<SetStateAction<boolean>>
-}
-
-function applyQueryResult(
-  result: QueryFetchResult,
-  isLoadMore: boolean,
-  setters: ApplyResultSetters,
-): void {
-  if (isLoadMore) {
-    setters.setResults((prev) => [...prev, ...result.items])
-  } else {
-    setters.setResults(result.items)
-  }
-  setters.setCursor(result.nextCursor)
-  setters.setHasMore(result.hasMore)
-}
-
-function mergePageTitles(
-  newTitles: Map<string, string>,
-  isLoadMore: boolean,
-  setPageTitles: Dispatch<SetStateAction<Map<string, string>>>,
-): void {
-  if (newTitles.size === 0) return
-  if (isLoadMore) {
-    // Spread fresh data LAST so new titles overwrite stale entries (see AGENTS.md).
-    setPageTitles((prev) => new Map([...prev, ...newTitles]))
-  } else {
-    setPageTitles(newTitles)
-  }
-}
-
-function handleFetchError(
-  e: unknown,
-  isLoadMore: boolean,
-  setError: Dispatch<SetStateAction<string | null>>,
-): void {
-  // Always surface validation errors; only surface backend errors on initial load.
-  if (!isLoadMore || e instanceof QueryValidationError) {
-    setError(e instanceof Error ? e.message : 'Query failed')
-  }
+/** One resolved page of query results plus its own parent-page titles.
+ *  Folding titles INTO each page (rather than a separate merge step) lets
+ *  TanStack own the page list — the merged `pageTitles` map is derived from
+ *  `data.pages` on render. */
+interface QueryPage {
+  items: BlockRow[]
+  nextCursor: string | null
+  hasMore: boolean
+  titles: Map<string, string>
 }
 
 export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryExecutionResult {
   const { expression } = options
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
-  const [results, setResults] = useState<BlockRow[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [cursor, setCursor] = useState<string | null>(null)
-  const [hasMore, setHasMore] = useState(false)
-  const [loadingMore, setLoadingMore] = useState(false)
-  const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
 
-  // Monotonic request-id counter so a slow in-flight fetch can't
-  // clobber the results of a faster newer fetch when `expression` /
-  // `currentSpaceId` change (or `handleLoadMore` is called) before the
-  // previous IPC settles. Each fetch captures its own `myReqId`; if the
-  // counter has advanced before an await resolves, the stale fetch bails
-  // out without touching state.
-  const reqIdRef = useRef(0)
-
-  const fetchResults = useCallback(
-    async (pageCursor?: string) => {
-      const myReqId = ++reqIdRef.current
-      const isLoadMore = !!pageCursor
-      beginFetch(isLoadMore, {
-        setLoading,
-        setLoadingMore,
-        setCursor,
-        setHasMore,
-        setError,
-      })
-      try {
-        if (!expression.trim()) {
-          if (myReqId === reqIdRef.current) setError('Query expression is empty')
-          return
-        }
-        // Resolve the execution path (#1951 P2):
-        //   1. A structured (`v2:`) payload runs through the rich engine.
-        //   2. A legacy text query is translated to a `FilterExpr` and ALSO run
-        //      through the rich engine when faithfully expressible
-        //      (`resolveLegacyQueryToFilterExpr`).
-        //   3. Anything the translator refuses (backlinks, non-eq reserved
-        //      filters, key-only, unknown) keeps the original legacy dispatch —
-        //      so those blocks render exactly as before.
-        const result = await resolveInlineQuery(expression, pageCursor, currentSpaceId)
-        if (myReqId !== reqIdRef.current) return
-        applyQueryResult(result, isLoadMore, { setResults, setCursor, setHasMore })
+  // #2596 pilot (proof point 2) — the hand-rolled infinite query (manual
+  // cursor state + `useRef` monotonic race-guard + `useState`
+  // loading/error/hasMore) is now a TanStack `useInfiniteQuery`. TanStack owns
+  // loading/error/cursor state and the latest-wins race-guard: because the
+  // `queryKey` embeds `expression`/`currentSpaceId`, a slow older fetch settles
+  // into its OWN (now inactive) cache entry and can't clobber the newer query's
+  // results. The client is passed EXPLICITLY (2nd arg) so no
+  // `QueryClientProvider` ancestor is required (see `query-client.ts`).
+  const {
+    data,
+    error: queryError,
+    isLoading,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+    refetch,
+  } = useInfiniteQuery(
+    {
+      queryKey: ['queryExecution', currentSpaceId, expression],
+      // Resolve the execution path (#1951 P2):
+      //   1. A structured (`v2:`) payload runs through the rich engine.
+      //   2. A legacy text query is translated to a `FilterExpr` and ALSO run
+      //      through the rich engine when faithfully expressible.
+      //   3. Anything the translator refuses (backlinks, non-eq reserved
+      //      filters, key-only, unknown) keeps the original legacy dispatch.
+      // Page-title resolution is folded IN so each page carries its own titles.
+      queryFn: async ({ pageParam }): Promise<QueryPage> => {
+        const result = await resolveInlineQuery(expression, pageParam ?? undefined, currentSpaceId)
         const titles = await resolvePageTitles(result.items)
-        if (myReqId !== reqIdRef.current) return
-        mergePageTitles(titles, isLoadMore, setPageTitles)
-      } catch (e) {
-        if (myReqId !== reqIdRef.current) return
-        logger.warn('useQueryExecution', 'query execution failed', { expression }, e)
-        handleFetchError(e, isLoadMore, setError)
-      } finally {
-        if (myReqId === reqIdRef.current) endFetch(isLoadMore, { setLoading, setLoadingMore })
-      }
+        return {
+          items: result.items,
+          nextCursor: result.nextCursor,
+          hasMore: result.hasMore,
+          titles,
+        }
+      },
+      initialPageParam: undefined as string | undefined,
+      getNextPageParam: (lastPage) => (lastPage.hasMore ? lastPage.nextCursor : undefined),
+      // Preserve the current behaviour: an empty expression never fetches and
+      // surfaces its own `error` string (derived below).
+      enabled: expression.trim() !== '',
+      // The hand-rolled hook re-ran `fetchResults()` in a mount effect on every
+      // mount / `expression` change — it never served stale data from a prior
+      // mount. Preserve that: keep the client's `staleTime: Infinity` (no
+      // time-based refetch) but force a fresh fetch whenever a QueryResult
+      // mounts, so a remount reflects the current backend rather than a stale
+      // cached page. In-flight fetches for the same key are still deduped.
+      refetchOnMount: 'always',
     },
-    [expression, currentSpaceId],
+    queryClient,
   )
 
-  useEffect(() => {
-    fetchResults()
-  }, [fetchResults])
+  const results = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data])
+
+  // Merge every page's titles into ONE map, spreading later pages LAST so
+  // fresh titles overwrite stale entries (see AGENTS.md). Memoised so identity
+  // stays stable when `data` is unchanged.
+  const pageTitles = useMemo(() => {
+    const merged = new Map<string, string>()
+    for (const page of data?.pages ?? []) {
+      for (const [id, title] of page.titles) merged.set(id, title)
+    }
+    return merged
+  }, [data])
+
+  // Error asymmetry (preserved from the hand-rolled `handleFetchError`):
+  //   - empty expression → dedicated message, no fetch;
+  //   - validation errors → always surfaced;
+  //   - backend errors → surfaced only on the INITIAL load (no pages yet);
+  //     a failed `fetchNextPage` (load-more) does NOT surface as `error`.
+  let error: string | null = null
+  if (expression.trim() === '') {
+    error = 'Query expression is empty'
+  } else if (queryError != null) {
+    const isInitialLoadError = (data?.pages.length ?? 0) === 0
+    if (isInitialLoadError || queryError instanceof QueryValidationError) {
+      error = queryError instanceof Error ? queryError.message : 'Query failed'
+    }
+  }
 
   const handleLoadMore = useCallback(() => {
-    if (cursor && !loadingMore) {
-      fetchResults(cursor)
-    }
-  }, [cursor, loadingMore, fetchResults])
+    if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+
+  const fetchResults = useCallback(() => {
+    void refetch()
+  }, [refetch])
 
   return {
     results,
-    loading,
+    loading: isLoading,
     error,
-    hasMore,
-    loadingMore,
+    hasMore: hasNextPage,
+    loadingMore: isFetchingNextPage,
     pageTitles,
     handleLoadMore,
     fetchResults,
