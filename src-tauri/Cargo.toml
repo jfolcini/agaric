@@ -465,6 +465,11 @@ harness = false
 name = "snapshot_bench"
 harness = false
 
+# #2604 — per-op fork/checkpoint overhead for the rollback-safe engine apply.
+[[bench]]
+name = "engine_checkpoint_bench"
+harness = false
+
 [[bench]]
 name = "import_bench"
 harness = false
