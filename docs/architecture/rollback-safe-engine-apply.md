@@ -130,29 +130,54 @@ infeasible on the interactive path — both are `O(doc-size)` per op, and the
 per-space doc is exactly the thing that grows. The mechanism MUST be
 `O(op-size)`, not `O(doc-size)`.
 
-## Recommendation
+## Decision (chosen mechanism)
 
 1. **Reject the full fork (A) as the per-op path.** `fork_staging` stays in the
    tree as the correctness reference / test oracle (it *is* rollback-safe, just
-   too costly), and is the right tool for a rare whole-doc checkpoint, but it
-   must not run per interactive op.
+   too costly) and as the right tool for a rare whole-doc checkpoint, but it must
+   not run per interactive op.
 
-2. **Pursue the lighter checkpoint (B): `O(op-size)` capture + revert-on-abort.**
-   Apply in place to the canonical doc, read back for the SQL projection, and
-   register a cheap compensating revert that fires iff the caller's SQL tx
-   aborts. Concretely, hook the promote/discard decision into
-   `CommandTx::commit_and_dispatch` (and the single-op `apply_op` commit): on
-   COMMIT, keep the applied op (no-op); on abort/drop, revert it. The open
-   sub-question is the revert primitive — Loro's native `UndoManager` vs. a
-   captured inverse op — evaluated against three hazards: interaction with
-   already-merged remote ops, the movable-tree CRDT's cycle/reparent semantics,
-   and the fractional index. That evaluation is the next spike.
+2. **Mechanism B — apply in place + `fork_at`-rewind on abort — with the O(n)
+   cost pushed onto the rare abort path.** The insight the bench unlocks: the
+   expensive operation only has to happen on ABORT, which is exceptional.
+   - **Common path (commit):** `checkpoint_frontiers()` — an `O(1)`
+     `oplog_frontiers()` read — before the apply; apply in place and project as
+     today; on COMMIT the op simply stays. Near-zero added latency.
+   - **Abort path (rare — crash / constraint violation / COMMIT failure):**
+     `revert_to_frontier(&checkpoint)` — `fork_at(frontier)` truncates the
+     aborted op(s), re-pin the peer id (same `device_id → peer_id` fix as
+     `fork_staging`), adopt it as canonical, rebuild the index. `O(n)`, but off
+     the hot path.
 
-3. **Keep replay reconciliation as the backstop** until (2) has soaked. It is
-   the belt to the new suspenders and the thing #2603's test guards; retiring it
-   is a later, separate decision once no divergence has been observed in
-   practice.
+   Both primitives live in `src-tauri/src/loro/engine/staging.rs` with unit
+   tests (rewind-to-checkpoint, identity-preserved-and-usable). Chosen over the
+   two alternatives: **explicit inverse ops** (must exactly invert CRDT semantics
+   — fractional index, tombstones — per op type; more code + edge cases) and
+   **Loro `UndoManager`** (its semantics interact with remote merges and aren't
+   designed for materializer-internal use).
 
-The follow-up PR wires (2) into the write path; this PR lands the measurement,
-the `fork_staging` primitive/oracle, and this decision record so the mechanism
-is chosen from data rather than guessed.
+3. **Keep replay reconciliation as the backstop** until (2) has soaked; retiring
+   it is a later, separate decision once no divergence has been observed.
+
+## Follow-up: write-path wiring
+
+The remaining work wires the two primitives into the tx lifecycle. It is
+cross-cutting (high-risk) and its own PR:
+
+- **Checkpoint capture.** Before the first engine mutation to a space in a tx,
+  record `(space_id, checkpoint_frontiers())` in a per-tx revert log. The
+  `BEGIN IMMEDIATE` write lock serialises writers, so at most one tx mutates the
+  engines at a time — making even a per-`LoroState` in-flight log race-free
+  (design-Q *Concurrency* resolved).
+- **Commit / abort hooks.** On commit success, clear the log (the ops stay). On
+  abort/drop, `revert_to_frontier` each recorded space. The trigger points are
+  `apply_op`'s `tx.commit()` (REMOTE / single-op) and every LOCAL command's tx
+  boundary — `apply_op_projected(advance_cursor=false)` is called from
+  `commands/blocks/{crud,move_ops}.rs`, `commands/mod.rs`, … each owning its
+  commit — plus `CommandTx`'s Drop for the panic path.
+- **Cursor interaction (design-Q).** Unchanged: the apply cursor already advances
+  only inside the committed tx (`advance_apply_cursor`), so a reverted engine and
+  a rolled-back cursor stay consistent by construction.
+- **Acceptance test.** Flip #2603's crash-injection test to assert *no divergence
+  reachable by construction* for both local and remote ops, and add an
+  abort-path rewind test.
