@@ -40,6 +40,22 @@ pub fn truncate_at_char_boundary(
     s
 }
 
+/// NFC normalisation helper. Allocates a fresh `String`
+/// because `unicode-normalization` returns an iterator; we collect
+/// once at the FTS boundary (index-write or query-sanitise). The
+/// common case (input already NFC) still re-allocates; the cost is
+/// a per-string walk that is dominated by the SQL bind that
+/// follows.
+///
+/// Moved into `agaric-core` (#2621) as the single canonical NFC helper
+/// shared by the FTS layer (`crate::fts::strip` re-exports it) and
+/// `tag_norm`, so the tag layer no longer reaches up into `fts`.
+#[must_use]
+pub fn nfc_normalise(input: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    input.nfc().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

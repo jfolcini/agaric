@@ -167,12 +167,9 @@ chrono = { version = "0.4.44", features = ["serde"] }
 tokio = { version = "1", features = ["sync", "macros", "rt", "net", "io-util", "io-std"] }
 regex = "1"
 aho-corasick = "1"
-# NFC normalisation at FTS index time + query time. The
-# crate is already a transitive dep (via the regex stack and a few
-# other transitives in the lockfile); pinning it explicitly here is
-# what makes our direct `use unicode_normalization::UnicodeNormalization`
-# safe against a future transitive removal.
-unicode-normalization = "0.1.25"
+# `unicode-normalization` moved with `tag_norm` + `nfc_normalise` into
+# `agaric-core` (#2621); `agaric` no longer uses it directly (the FTS/tag
+# NFC boundary now calls `agaric_core::text_utils::nfc_normalise`).
 base64 = "0.22.1"
 # #695 — "chrono" lets `ActivityEntry.timestamp: DateTime<Utc>` derive
 # `specta::Type` for the `get_mcp_recent_activity` command bindings.

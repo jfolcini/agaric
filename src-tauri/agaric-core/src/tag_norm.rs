@@ -12,7 +12,7 @@
 //! ## The rules (in order)
 //!
 //! 1. **NFC** — same canonical composition the FTS pipeline applies at
-//!    index *and* query time (`crate::fts::strip::nfc_normalise`).
+//!    index *and* query time (`crate::text_utils::nfc_normalise`).
 //!    Reused directly so the tag layer cannot drift from
 //!    the FTS layer's notion of "the same characters" (e.g. an NFD
 //!    `e + U+0301` pasted from Safari composes to `é` in both).
@@ -47,7 +47,7 @@ use unicode_normalization::UnicodeNormalization;
 /// → NFC. See the module docs for the rule rationale and stability
 /// contract.
 pub fn normalize_tag_name(name: &str) -> String {
-    crate::fts::strip::nfc_normalise(name)
+    crate::text_utils::nfc_normalise(name)
         .to_lowercase()
         .nfc()
         .collect()
@@ -73,7 +73,7 @@ mod tests {
         for s in samples {
             assert_eq!(
                 normalize_tag_name(s),
-                normalize_tag_name(&crate::fts::strip::nfc_normalise(s)),
+                normalize_tag_name(&crate::text_utils::nfc_normalise(s)),
                 "tag key for {s:?} must be invariant under FTS NFC \
                  normalisation"
             );

@@ -63,7 +63,7 @@ pub mod sync_protocol;
 pub mod sync_scheduler;
 pub mod tag_inheritance;
 pub mod tag_inheritance_macros;
-pub mod tag_norm;
+pub use agaric_core::tag_norm; // foundation crate (#2621)
 pub mod tag_query;
 pub mod task_locals;
 pub use agaric_core::text_utils; // foundation crate (#2621)

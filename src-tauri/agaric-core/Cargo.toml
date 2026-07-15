@@ -31,6 +31,9 @@ thiserror = "2.0.18"
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "migrate"] }
 specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
 similar = "3"
+# `tag_norm` (Unicode case-folding) + `text_utils::nfc_normalise` (the shared
+# NFC boundary helper). Version pinned to match ../Cargo.toml.
+unicode-normalization = "0.1.25"
 
 [dev-dependencies]
 # Needed by the moved unit tests: `error.rs` uses `#[tokio::test]`,
