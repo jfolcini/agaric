@@ -2174,7 +2174,7 @@ export type ImportBibliographyResult = {
  *  Carried over a Tauri `Channel<ImportProgressUpdate>` so a long import
  *  can render a per-block progress bar instead of a bare spinner. The
  *  enum is `Serialize` + `Type` only (no `Deserialize`) — like
- *  [`crate::sync_events::SyncProgressUpdate`], it is a one-way
+ *  `sync_events::SyncProgressUpdate`, it is a one-way
  *  backend→frontend payload. Frontend consumers switch on `kind` and read
  *  the variant-specific fields.
  * 
@@ -3708,7 +3708,7 @@ export type StatusInfo = {
 	 *  applying incremental updates — pair with `snapshot_fallback_last` (and
 	 *  the `target=sync_protocol::snapshot_fallback` debug lines) to see the
 	 *  offending peer / reason. Sourced from
-	 *  [`crate::sync_protocol::snapshot_fallback_metrics::count`].
+	 *  `sync_protocol::snapshot_fallback_metrics::count`.
 	 */
 	snapshot_fallback_count: number,
 	/**
@@ -3717,7 +3717,7 @@ export type StatusInfo = {
 	 *  if none has happened in this process. Lets an operator correlate a
 	 *  recurring fallback pattern without scraping per-session log lines.
 	 *  Sourced from
-	 *  [`crate::sync_protocol::snapshot_fallback_metrics::last`].
+	 *  `sync_protocol::snapshot_fallback_metrics::last`.
 	 */
 	snapshot_fallback_last: SnapshotFallbackLast | null,
 };
