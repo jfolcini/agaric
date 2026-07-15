@@ -323,3 +323,102 @@ async fn remote_op_commit_failure_leaves_engine_ahead_then_reproject_converges_2
         "reprojected remote block gets its page_id backfilled (page-scoped-visible)"
     );
 }
+
+/// #2604 — the SAME REMOTE-op commit-failure as above, but WITH the rollback
+/// wiring armed: a [`RevertScope`](crate::loro::revert::RevertScope) rewinds the
+/// engine on abort so it never gets ahead of committed SQL. This is the
+/// transactional-by-construction counterpart to the divergence the #2603 test
+/// pins — no `reproject_blocks_from_engine` recovery is needed because the
+/// engine and SQL roll back together.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_op_abort_under_revert_scope_rewinds_engine_no_divergence_2604() {
+    let (pool, _dir, state) = seed_space_and_page().await;
+    let record = remote_create_record();
+    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+    let cursor_before = cursor(&pool).await;
+
+    // ── Crash injection UNDER an armed #2604 revert scope ────────────────────
+    // Same shape as the #2603 injection (apply in place, then roll back before
+    // commit), except an armed `RevertScope` is held across it. The mutation
+    // handler's `for_space_recording` captured the space's pre-op checkpoint
+    // into the armed log; dropping the scope on the abort path rewinds the
+    // engine to it — mirroring exactly what production `apply_op` does when its
+    // `commit()` fails.
+    {
+        let revert = crate::loro::revert::RevertScope::arm(&state);
+        let mut tx = pool.begin().await.expect("begin crash tx");
+        super::apply_op_projected(&mut tx, &record, &state, /* advance_cursor */ true)
+            .await
+            .expect("apply_op_projected (engine apply + staged SQL projection)");
+        drop(tx); // ← crash: roll back the SQL projection + cursor advance
+        drop(revert); // ← #2604: abort → rewind the engine to its checkpoint
+    }
+
+    // ── Assert NO divergence: the engine rewound in lock-step with SQL ───────
+    let engine_has_block = {
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space (post-abort read)");
+        let present = guard
+            .engine_mut()
+            .read_block(REMOTE_B)
+            .expect("engine read")
+            .is_some();
+        drop(guard);
+        present
+    };
+    assert!(
+        !engine_has_block,
+        "the aborted remote op must be rewound OUT of the engine — no engine-ahead-of-SQL divergence"
+    );
+    assert_eq!(
+        sql_block_count(&pool, REMOTE_B).await,
+        0,
+        "SQL rolled back too: engine and SQL agree the op never landed"
+    );
+    assert_eq!(
+        cursor(&pool).await,
+        cursor_before,
+        "the apply cursor never advanced"
+    );
+
+    // ── The rewound engine is fully usable — re-apply and COMMIT this time ────
+    // Proves the rewind left an attached, usable engine (not stuck detached at
+    // the checkpoint) and that the op converges into BOTH stores without any
+    // recovery reprojection — the whole point of the transactional apply.
+    {
+        let mut tx = pool.begin().await.expect("begin commit tx");
+        super::apply_op_projected(&mut tx, &record, &state, /* advance_cursor */ true)
+            .await
+            .expect("re-apply after rewind");
+        tx.commit().await.expect("commit the re-applied op");
+    }
+    let engine_final = {
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space (final read)");
+        let snap = guard
+            .engine_mut()
+            .read_block(REMOTE_B)
+            .expect("engine read")
+            .expect("engine holds the re-applied block");
+        drop(guard);
+        snap
+    };
+    assert_eq!(
+        engine_final.content, REMOTE_CONTENT,
+        "the re-applied op is present in the engine after a clean commit"
+    );
+    assert_eq!(
+        sql_block_count(&pool, REMOTE_B).await,
+        1,
+        "engine and SQL converge on the committed op — no reprojection needed"
+    );
+    assert_eq!(
+        engine_final.parent_id.as_deref(),
+        Some(PAGE_ID),
+        "the re-applied block keeps its parent linkage"
+    );
+}

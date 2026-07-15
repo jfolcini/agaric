@@ -87,7 +87,12 @@ use crate::space::SpaceId;
 /// A per-space engine slot: the map stores `Arc<Mutex<LoroEngine>>` so
 /// the (long) engine critical section is taken WITHOUT the map lock —
 /// see the module-level Concurrency section (#2205).
-type SharedEngine = Arc<Mutex<LoroEngine>>;
+///
+/// `pub(crate)` so the #2604 rollback [`RevertLog`](crate::loro::revert::RevertLog)
+/// can hold the same `Arc` a mutation was applied through and rewind it if the
+/// caller's SQL tx aborts — reverting the exact engine, even if the registry
+/// entry is later replaced/removed ("detached engines").
+pub(crate) type SharedEngine = Arc<Mutex<LoroEngine>>;
 
 /// Lazily-instantiated map of `SpaceId -> LoroEngine`.
 ///
@@ -268,6 +273,59 @@ impl LoroEngineRegistry {
     /// rejects the `device_id` — see that function's docs for the
     /// (extremely unlikely) Loro-internal failure mode.
     pub fn for_space(&self, space_id: &SpaceId, device_id: &str) -> Result<EngineGuard, AppError> {
+        // Block on the PER-SPACE lock only (#2205). `lock_arc` returns an
+        // owned guard that keeps the engine alive even if the map entry is
+        // concurrently removed (`clear`) or replaced (`install_engine`) —
+        // see "Detached engines" in the module docs.
+        Ok(EngineGuard {
+            guard: self.shared_for_space(space_id, device_id)?.lock_arc(),
+        })
+    }
+
+    /// Like [`for_space`](Self::for_space), but ALSO records a rollback
+    /// checkpoint into `revert` before returning the guard (#2604).
+    ///
+    /// This is the mutation-path variant the materializer's `apply_*_via_loro`
+    /// handlers use so a speculative in-place engine apply can be rewound if the
+    /// caller's SQL tx aborts. When `revert` is ARMED (an `apply_op` is in
+    /// flight), the FIRST touch of a space captures its
+    /// [`checkpoint_frontiers`](crate::loro::engine::LoroEngine::checkpoint_frontiers)
+    /// together with the very `Arc<Mutex<LoroEngine>>` this call locks, so the
+    /// abort path rewinds the exact engine the op is about to mutate. When the
+    /// log is not armed (the LOCAL command path, boot replay, cache rebuilds)
+    /// this is byte-for-byte a `for_space` call plus one cheap armed-check — the
+    /// checkpoint capture is skipped entirely.
+    ///
+    /// The capture happens under the per-space engine lock, BEFORE the caller
+    /// applies its op, so the recorded frontier is the pre-op position; because
+    /// engine mutations are serialised by the caller's `BEGIN IMMEDIATE` write
+    /// lock, no other writer can advance the frontier between capture and apply.
+    pub fn for_space_recording(
+        &self,
+        space_id: &SpaceId,
+        device_id: &str,
+        revert: &crate::loro::revert::RevertLog,
+    ) -> Result<EngineGuard, AppError> {
+        let shared = self.shared_for_space(space_id, device_id)?;
+        let guard = shared.lock_arc();
+        // Only pay the `oplog_frontiers()` capture when a rollback scope is
+        // armed AND this is the first time this tx touches this space (a later
+        // op in the same tx must NOT overwrite the pre-tx frontier — the rewind
+        // discards ALL ops since the first).
+        revert.record_first_touch(space_id, &shared, || guard.checkpoint_frontiers());
+        Ok(EngineGuard { guard })
+    }
+
+    /// Lookup-or-lazily-create the per-space engine `Arc`, marking the space
+    /// dirty. Shared by [`for_space`](Self::for_space) and
+    /// [`for_space_recording`](Self::for_space_recording); returns the `Arc`
+    /// with the outer map lock already released, so the caller takes only the
+    /// per-space engine lock (#2205).
+    fn shared_for_space(
+        &self,
+        space_id: &SpaceId,
+        device_id: &str,
+    ) -> Result<SharedEngine, AppError> {
         let shared: SharedEngine = {
             let mut map = self.inner.lock();
             if let Some(existing) = map.get(space_id) {
@@ -299,13 +357,7 @@ impl LoroEngineRegistry {
         // toward missing a real mutation. The map guard was dropped above, so
         // this takes only the short dirty lock (never nested).
         self.mark_dirty(space_id);
-        // Block on the PER-SPACE lock only (#2205). `lock_arc` returns an
-        // owned guard that keeps the engine alive even if the map entry is
-        // concurrently removed (`clear`) or replaced (`install_engine`) —
-        // see "Detached engines" in the module docs.
-        Ok(EngineGuard {
-            guard: shared.lock_arc(),
-        })
+        Ok(shared)
     }
 
     /// Read-only per-space Loro version vector, **without** marking the

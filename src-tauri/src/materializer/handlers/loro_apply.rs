@@ -100,7 +100,9 @@ pub(crate) async fn apply_create_block_via_loro(
     // projection instead and let boot-replay reconcile. (No parent ⇒ a
     // top-level create, which needs no parent lookup.)
     let create_result: Option<(BlockSnapshot, Vec<String>)> = {
-        let mut guard = state.registry.for_space(&space_id, device_id)?;
+        let mut guard = state
+            .registry
+            .for_space_recording(&space_id, device_id, &state.revert)?;
         let engine = guard.engine_mut();
         let parent = p.parent_id.as_ref().map(crate::ulid::BlockId::as_str);
         let parent_absent = match parent {
@@ -218,7 +220,9 @@ pub(crate) async fn apply_edit_block_via_loro(
     // `apply_edit_via_diff_splice` would error. Fall back to the authoritative
     // SQL projection (`None` below) and let boot-replay reconcile.
     let snapshot: Option<BlockSnapshot> = {
-        let mut guard = state.registry.for_space(&space_id, device_id)?;
+        let mut guard = state
+            .registry
+            .for_space_recording(&space_id, device_id, &state.revert)?;
         let engine = guard.engine_mut();
         if engine.read_block(p.block_id.as_str())?.is_none() {
             None
@@ -308,7 +312,9 @@ pub(crate) async fn apply_set_property_via_loro(
     // `apply_delete_block_via_loro` (same `EngineMissingTarget` reason, same
     // `record` call, same sql_only path).
     let engine_applied = {
-        let mut guard = state.registry.for_space(&space_id, device_id)?;
+        let mut guard = state
+            .registry
+            .for_space_recording(&space_id, device_id, &state.revert)?;
         let engine = guard.engine_mut();
         if engine.read_block(p.block_id.as_str())?.is_none() {
             false
@@ -488,7 +494,9 @@ async fn hydrate_page_subtree_into_engine(
     //    already present (idempotent), and record the post-seed sibling order of
     //    every parent group we actually touched for the dense reprojection.
     let touched_orders: Vec<Vec<String>> = {
-        let mut guard = state.registry.for_space(space_id, device_id)?;
+        let mut guard = state
+            .registry
+            .for_space_recording(space_id, device_id, &state.revert)?;
         let engine = guard.engine_mut();
         let mut touched_parents: Vec<Option<String>> = Vec::new();
         for n in &nodes {
@@ -563,7 +571,9 @@ pub(crate) async fn apply_delete_block_via_loro(
     // authoritative SQL cascade for the tombstone; boot-replay reconciles the
     // engine.
     let engine_applied = {
-        let mut guard = state.registry.for_space(&space_id, device_id)?;
+        let mut guard = state
+            .registry
+            .for_space_recording(&space_id, device_id, &state.revert)?;
         let engine = guard.engine_mut();
         if engine.read_block(p.block_id.as_str())?.is_none() {
             false
@@ -622,7 +632,9 @@ pub(crate) async fn apply_move_block_via_loro(
     // snapshot's `parent_id`.
     #[allow(clippy::type_complexity)]
     let engine_result: Option<(BlockSnapshot, Option<String>, Vec<String>, Vec<String>)> = {
-        let mut guard = state.registry.for_space(&space_id, device_id)?;
+        let mut guard = state
+            .registry
+            .for_space_recording(&space_id, device_id, &state.revert)?;
         let engine = guard.engine_mut();
         let new_parent = p.new_parent_id.as_ref().map(crate::ulid::BlockId::as_str);
         // #2250 (#1257 reconciliation): this per-space engine can only apply
@@ -770,7 +782,9 @@ pub(crate) async fn apply_restore_block_via_loro(
     };
 
     {
-        let mut guard = state.registry.for_space(&space_id, device_id)?;
+        let mut guard = state
+            .registry
+            .for_space_recording(&space_id, device_id, &state.revert)?;
         let engine = guard.engine_mut();
         engine.apply_restore_block(p.block_id.as_str())?;
         drop(guard);
@@ -859,7 +873,9 @@ pub(crate) async fn apply_purge_block_via_loro(
     };
 
     {
-        let mut guard = state.registry.for_space(&space_id, device_id)?;
+        let mut guard = state
+            .registry
+            .for_space_recording(&space_id, device_id, &state.revert)?;
         let engine = guard.engine_mut();
         engine.apply_purge_block(p.block_id.as_str())?;
         drop(guard);
@@ -1102,7 +1118,9 @@ pub(crate) async fn apply_add_tag_via_loro(
     };
 
     {
-        let mut guard = state.registry.for_space(&space_id, device_id)?;
+        let mut guard = state
+            .registry
+            .for_space_recording(&space_id, device_id, &state.revert)?;
         let engine = guard.engine_mut();
         engine.apply_add_tag(p.block_id.as_str(), p.tag_id.as_str())?;
         drop(guard);
@@ -1142,7 +1160,9 @@ pub(crate) async fn apply_remove_tag_via_loro(
     };
 
     {
-        let mut guard = state.registry.for_space(&space_id, device_id)?;
+        let mut guard = state
+            .registry
+            .for_space_recording(&space_id, device_id, &state.revert)?;
         let engine = guard.engine_mut();
         engine.apply_remove_tag(p.block_id.as_str(), p.tag_id.as_str())?;
         drop(guard);
@@ -1179,7 +1199,9 @@ pub(crate) async fn apply_delete_property_via_loro(
     };
 
     {
-        let mut guard = state.registry.for_space(&space_id, device_id)?;
+        let mut guard = state
+            .registry
+            .for_space_recording(&space_id, device_id, &state.revert)?;
         let engine = guard.engine_mut();
         engine.apply_delete_property(p.block_id.as_str(), &p.key)?;
         drop(guard);
