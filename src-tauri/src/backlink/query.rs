@@ -36,7 +36,6 @@ use sqlx::SqlitePool;
 
 use super::SMALL_IN_LIMIT;
 use super::filters::{CompiledFilter, FilterBind, compile_backlink_filters};
-use super::sort::sort_ids;
 use super::types::*;
 use crate::error::AppError;
 use crate::pagination::{BlockRow, Cursor, PageRequest};
@@ -148,7 +147,7 @@ pub async fn eval_backlink_query(
         BacklinkSort::PropertyText { .. }
         | BacklinkSort::PropertyNum { .. }
         | BacklinkSort::PropertyDate { .. } => {
-            eval_property_sort_materialised(
+            eval_property_sort_keyset(
                 pool,
                 block_id,
                 space_id,
@@ -160,6 +159,52 @@ pub async fn eval_backlink_query(
             .await
         }
     }
+}
+
+/// `filtered_count` for a backlink query = base predicates ∩ the optional
+/// filter fragment, computed server-side via `COUNT(*)`.
+///
+/// Never a Rust `set.len()`: the fragment is correlated on `b`, so SQLite
+/// intersects with the backlink base set server-side — a `SourcePage`-style
+/// "all blocks not under page X" leaf can never over-count. Returns
+/// `total_count` verbatim when no filter is present (the base set IS the
+/// filtered set). Shared by the Created-keyset and property-keyset paths.
+async fn count_filtered_backlinks(
+    pool: &SqlitePool,
+    block_id: &str,
+    space_id: Option<&str>,
+    filter: Option<&CompiledFilter>,
+    total_count: usize,
+) -> Result<usize, AppError> {
+    let Some(cf) = filter else {
+        return Ok(total_count);
+    };
+    // Raw-string compose: the fragment's bare `?` placeholders are spliced
+    // inline and binds applied left-to-right so base-query binds and fragment
+    // binds interleave correctly. An empty fragment compiles to `1=0` → 0.
+    let sql = format!(
+        "SELECT COUNT(*) FROM block_links bl \
+         JOIN blocks b ON b.id = bl.source_id \
+         WHERE bl.target_id = ? AND bl.source_id != ? \
+           AND b.deleted_at IS NULL \
+           AND (? IS NULL OR b.space_id = ?) \
+           AND ({frag})",
+        frag = cf.sql,
+    );
+    // dynamic-sql: correlated filter fragment (`cf.sql`) spliced into COUNT(*); binds are positional
+    let mut q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql))
+        .bind(block_id)
+        .bind(block_id)
+        .bind(space_id)
+        .bind(space_id);
+    for b in &cf.binds {
+        q = match b {
+            FilterBind::Text(s) => q.bind(s.clone()),
+            FilterBind::Num(n) => q.bind(*n),
+        };
+    }
+    let count_i64: i64 = q.fetch_one(pool).await?;
+    Ok(usize::try_from(count_i64).unwrap_or(0))
 }
 
 /// Created-sort path: single SQL with keyset on `b.id`, optional
@@ -174,47 +219,8 @@ async fn eval_created_sort_keyset(
     filter: Option<&CompiledFilter>,
     total_count: usize,
 ) -> Result<BacklinkQueryResponse, AppError> {
-    // `filtered_count` = base predicates ∩ filter fragment. The fragment is
-    // correlated on `b`, so SQLite intersects with the backlink base set
-    // server-side — `SourcePage`-style "all blocks not under page X" leaves
-    // can never over-count the way a naive Rust `set.len()` would.
-    //
-    // QueryBuilder is used so the fragment's positional binds interleave
-    // after the base-query binds in declaration order. An empty filter
-    // fragment compiles to `1=0`, which yields `filtered_count == 0` and the
-    // empty-response short-circuit below — no separate empty-set check
-    // needed.
-    let filtered_count = match filter {
-        None => total_count,
-        Some(cf) => {
-            // Raw-string compose: the fragment's bare `?` placeholders are
-            // spliced inline, and binds are applied left-to-right so the
-            // base-query binds and the fragment binds interleave correctly.
-            // (sqlx binds positional `?` in `.bind()` call order.)
-            let sql = format!(
-                "SELECT COUNT(*) FROM block_links bl \
-                 JOIN blocks b ON b.id = bl.source_id \
-                 WHERE bl.target_id = ? AND bl.source_id != ? \
-                   AND b.deleted_at IS NULL \
-                   AND (? IS NULL OR b.space_id = ?) \
-                   AND ({frag})",
-                frag = cf.sql,
-            );
-            let mut q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql))
-                .bind(block_id)
-                .bind(block_id)
-                .bind(space_id)
-                .bind(space_id);
-            for b in &cf.binds {
-                q = match b {
-                    FilterBind::Text(s) => q.bind(s.clone()),
-                    FilterBind::Num(n) => q.bind(*n),
-                };
-            }
-            let count_i64: i64 = q.fetch_one(pool).await?;
-            usize::try_from(count_i64).unwrap_or(0)
-        }
-    };
+    let filtered_count =
+        count_filtered_backlinks(pool, block_id, space_id, filter, total_count).await?;
 
     if filtered_count == 0 {
         return Ok(BacklinkQueryResponse {
@@ -313,14 +319,24 @@ async fn eval_created_sort_keyset(
     })
 }
 
-/// Property-sort fallback: materialise the *filtered* (not base) id set
-/// via SQL, sort by property value in Rust, paginate the sorted slice,
-/// then batch-fetch BlockRows for the page.
+/// Property-sort path: a single keyset query over `(value_{text,num,date},
+/// b.id)`.
 ///
-/// The base id set is never materialised — `total_count` already comes
-/// from SQL `COUNT(*)`. When filters are present we intersect against
-/// the resolved filter set so only the post-filter ids are loaded.
-async fn eval_property_sort_materialised(
+/// Replaces the pre-#2602 "materialise every filtered id → sort in Rust →
+/// O(n) `.position()` scan to the cursor" path (`queries.md` non-fix): the
+/// database seeks straight to the cursor and returns only one page
+/// (`LIMIT + 1`) rather than the whole filtered set every request.
+///
+/// Ordering matches the shared [`sort_ids`] helper (still used by the grouped
+/// path): `value {dir} NULLS LAST, b.id ASC`. NULLS-LAST + keyset is handled
+/// by a BUILD-TIME split on whether the cursor's value is null:
+///   - cursor value non-null → next rows are the larger/smaller non-nulls,
+///     then equal-value/later-id, then the entire null tail.
+///   - cursor value null → we are already in the null tail, ordered by id.
+///
+/// `block_links` is unique per `(source_id, target_id)` (PK, migration 0072),
+/// so each source block yields exactly one row — no `DISTINCT` needed.
+async fn eval_property_sort_keyset(
     pool: &SqlitePool,
     block_id: &str,
     space_id: Option<&str>,
@@ -329,42 +345,8 @@ async fn eval_property_sort_materialised(
     filter: Option<&CompiledFilter>,
     total_count: usize,
 ) -> Result<BacklinkQueryResponse, AppError> {
-    // Resolve the post-filter id set in SQL (instead of in Rust): the
-    // correlated filter fragment is spliced into a single
-    // `SELECT bl.source_id … WHERE <base> AND (<fragment>)`. Property sort
-    // still needs the full filtered id set in memory (values must be visited
-    // to know the page boundary), but the *base set* is never materialised
-    // and the negative/broad complement never leaves SQLite. An empty
-    // fragment compiles to `1=0`, so `filtered_ids` is empty and the
-    // short-circuit below fires.
-    let filter_clause = match filter {
-        Some(cf) => format!(" AND ({})", cf.sql),
-        None => String::new(),
-    };
-    let sql = format!(
-        "SELECT bl.source_id FROM block_links bl \
-         JOIN blocks b ON b.id = bl.source_id \
-         WHERE bl.target_id = ? AND bl.source_id != ? \
-           AND b.deleted_at IS NULL \
-           AND (? IS NULL OR b.space_id = ?) \
-           {filter_clause}"
-    );
-    let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql))
-        .bind(block_id)
-        .bind(block_id)
-        .bind(space_id)
-        .bind(space_id);
-    if let Some(cf) = filter {
-        for b in &cf.binds {
-            q = match b {
-                FilterBind::Text(s) => q.bind(s.clone()),
-                FilterBind::Num(n) => q.bind(*n),
-            };
-        }
-    }
-    let filtered_ids: FxHashSet<String> = q.fetch_all(pool).await?.into_iter().collect();
-
-    let filtered_count = filtered_ids.len();
+    let filtered_count =
+        count_filtered_backlinks(pool, block_id, space_id, filter, total_count).await?;
     if filtered_count == 0 {
         return Ok(BacklinkQueryResponse {
             items: vec![],
@@ -375,38 +357,164 @@ async fn eval_property_sort_materialised(
         });
     }
 
-    // Sort by property value (Rust-side fetch + comparator).
-    let sorted_ids = sort_ids(pool, &filtered_ids, sort).await?;
+    // Column + property key + direction + value-typing. `column` / `order_dir`
+    // / `cmp` are `&'static str` chosen here (never user input) so splicing is
+    // safe; the property `key` and every value are BOUND.
+    let (column, key, dir, is_num): (&str, &str, &SortDir, bool) = match sort {
+        BacklinkSort::PropertyText { key, dir } => ("value_text", key.as_str(), dir, false),
+        BacklinkSort::PropertyDate { key, dir } => ("value_date", key.as_str(), dir, false),
+        BacklinkSort::PropertyNum { key, dir } => ("value_num", key.as_str(), dir, true),
+        BacklinkSort::Created { .. } => {
+            return Err(AppError::InvalidOperation(
+                "eval_property_sort_keyset called with a Created sort".into(),
+            ));
+        }
+    };
+    let (cmp, order_dir) = match dir {
+        SortDir::Asc => (">", "ASC"),
+        SortDir::Desc => ("<", "DESC"),
+    };
 
-    // Cursor pagination: property sorts have no ULID-monotonic ordering,
-    // so we fall back to an O(n) position scan, mirroring the pre-H1
-    // path. Property pages are bounded by the filtered set size, which
-    // in practice is small (filters present) or capped by the user's
-    // sort key cardinality.
-    let start_after = page.after.as_ref().map(|c| c.id.as_str());
-    let start_idx = if let Some(after_id) = start_after {
-        sorted_ids
-            .iter()
-            .position(|s| s.as_str() == after_id)
-            .map_or(sorted_ids.len(), |i| i + 1)
+    // Keyset binds carried in appearance order (value twice, then id).
+    enum KsBind {
+        Text(String),
+        Num(f64),
+    }
+    let mut keyset_binds: Vec<KsBind> = Vec::new();
+    let keyset_clause: String = match page.after.as_ref() {
+        None => String::new(),
+        Some(c) => {
+            // A non-null cursor stashes its value in `rank` (numeric) or
+            // `deleted_at` (text/date); a null cursor leaves that slot empty.
+            let cursor_is_null = if is_num {
+                c.rank.is_none()
+            } else {
+                c.deleted_at.is_none()
+            };
+            if cursor_is_null {
+                keyset_binds.push(KsBind::Text(c.id.clone()));
+                format!(" AND (bp.{column} IS NULL AND b.id > ?)")
+            } else {
+                if is_num {
+                    let v = c.rank.expect("non-null numeric cursor carries rank");
+                    keyset_binds.push(KsBind::Num(v));
+                    keyset_binds.push(KsBind::Num(v));
+                } else {
+                    let v = c
+                        .deleted_at
+                        .clone()
+                        .expect("non-null text/date cursor carries value");
+                    keyset_binds.push(KsBind::Text(v.clone()));
+                    keyset_binds.push(KsBind::Text(v));
+                }
+                keyset_binds.push(KsBind::Text(c.id.clone()));
+                format!(
+                    " AND (bp.{column} {cmp} ? \
+                           OR (bp.{column} = ? AND b.id > ?) \
+                           OR bp.{column} IS NULL)"
+                )
+            }
+        }
+    };
+
+    let filter_clause = match filter {
+        Some(cf) => format!(" AND ({})", cf.sql),
+        None => String::new(),
+    };
+    let fetch_limit: i64 = page.limit.saturating_add(1);
+
+    let sql = format!(
+        "SELECT bl.source_id AS id, bp.{column} AS sort_val \
+         FROM block_links bl \
+         JOIN blocks b ON b.id = bl.source_id \
+         LEFT JOIN block_properties bp ON bp.block_id = b.id AND bp.key = ? \
+         WHERE bl.target_id = ? AND bl.source_id != ? \
+           AND b.deleted_at IS NULL \
+           AND (? IS NULL OR b.space_id = ?) \
+           {filter_clause} \
+           {keyset_clause} \
+         ORDER BY bp.{column} {order_dir} NULLS LAST, b.id ASC \
+         LIMIT ?"
+    );
+
+    // The sort key is stashed into the cursor for the next page. Numeric
+    // values fetch as `f64` (→ `rank` slot), text/date as `String`
+    // (→ `deleted_at` slot); a NULL value fetches as `None` (→ id-only
+    // cursor, i.e. "null tail"). Bind order is identical in both arms:
+    // key, target_id, source_id, space_id×2, [filter binds], [keyset binds],
+    // limit.
+    enum CursorKey {
+        Text(String),
+        Num(f64),
+    }
+    let rows: Vec<(String, Option<CursorKey>)> = if is_num {
+        // dynamic-sql: property-value keyset (column/dir spliced, all values bound); numeric arm
+        let mut q = sqlx::query_as::<_, (String, Option<f64>)>(sqlx::AssertSqlSafe(sql.as_str()))
+            .bind(key)
+            .bind(block_id)
+            .bind(block_id)
+            .bind(space_id)
+            .bind(space_id);
+        if let Some(cf) = filter {
+            for b in &cf.binds {
+                q = match b {
+                    FilterBind::Text(s) => q.bind(s.clone()),
+                    FilterBind::Num(n) => q.bind(*n),
+                };
+            }
+        }
+        for kb in &keyset_binds {
+            q = match kb {
+                KsBind::Text(s) => q.bind(s.clone()),
+                KsBind::Num(n) => q.bind(*n),
+            };
+        }
+        q.bind(fetch_limit)
+            .fetch_all(pool)
+            .await?
+            .into_iter()
+            .map(|(id, v)| (id, v.map(CursorKey::Num)))
+            .collect()
     } else {
-        0
+        // dynamic-sql: property-value keyset (column/dir spliced, all values bound); text/date arm
+        let mut q =
+            sqlx::query_as::<_, (String, Option<String>)>(sqlx::AssertSqlSafe(sql.as_str()))
+                .bind(key)
+                .bind(block_id)
+                .bind(block_id)
+                .bind(space_id)
+                .bind(space_id);
+        if let Some(cf) = filter {
+            for b in &cf.binds {
+                q = match b {
+                    FilterBind::Text(s) => q.bind(s.clone()),
+                    FilterBind::Num(n) => q.bind(*n),
+                };
+            }
+        }
+        for kb in &keyset_binds {
+            q = match kb {
+                KsBind::Text(s) => q.bind(s.clone()),
+                KsBind::Num(n) => q.bind(*n),
+            };
+        }
+        q.bind(fetch_limit)
+            .fetch_all(pool)
+            .await?
+            .into_iter()
+            .map(|(id, v)| (id, v.map(CursorKey::Text)))
+            .collect()
     };
 
     let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
-    let fetch_limit = limit_usize.saturating_add(1);
-    let page_ids: Vec<&str> = sorted_ids[start_idx..]
-        .iter()
-        .map(String::as_str)
-        .take(fetch_limit)
-        .collect();
-    let has_more = page_ids.len() > limit_usize;
-    let actual_ids: Vec<&str> = if has_more {
-        page_ids[..limit_usize].to_vec()
+    let has_more = rows.len() > limit_usize;
+    let page_rows: &[(String, Option<CursorKey>)] = if has_more {
+        &rows[..limit_usize]
     } else {
-        page_ids
+        &rows
     };
 
+    let actual_ids: Vec<&str> = page_rows.iter().map(|(id, _)| id.as_str()).collect();
     if actual_ids.is_empty() {
         return Ok(BacklinkQueryResponse {
             items: vec![],
@@ -416,6 +524,22 @@ async fn eval_property_sort_materialised(
             filtered_count,
         });
     }
+
+    // Build the next cursor from the LAST page row's (sort key, id) so the
+    // next request seeks past it — no id-only linear scan.
+    let next_cursor = if has_more {
+        let (last_id, last_val) = page_rows.last().expect("has_more implies non-empty");
+        let cursor = match last_val {
+            Some(CursorKey::Num(n)) => Cursor::for_id_and_rank(last_id.clone(), *n),
+            Some(CursorKey::Text(s)) => {
+                Cursor::for_id_and_deleted_at(last_id.clone(), Some(s.clone()))
+            }
+            None => Cursor::for_id(last_id.clone()),
+        };
+        Some(cursor.encode()?)
+    } else {
+        None
+    };
 
     let fetched: Vec<BlockRow> = fetch_block_rows_by_ids(pool, &actual_ids).await?;
     let id_order: FxHashMap<&str, usize> = actual_ids
@@ -429,13 +553,6 @@ async fn eval_property_sort_materialised(
         .into_iter()
         .map(crate::pagination::ActiveBlockRow::from_block_row_unchecked)
         .collect();
-
-    let next_cursor = if has_more {
-        let last = items.last().expect("has_more implies non-empty");
-        Some(Cursor::for_id(last.id.as_str().to_string()).encode()?)
-    } else {
-        None
-    };
 
     Ok(BacklinkQueryResponse {
         items,

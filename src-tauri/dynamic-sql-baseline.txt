@@ -6,7 +6,7 @@
 
 21 src-tauri/src/backlink/filters.rs
 8 src-tauri/src/backlink/grouped.rs
-8 src-tauri/src/backlink/query.rs
+9 src-tauri/src/backlink/query.rs
 1 src-tauri/src/backlink/sort.rs
 4 src-tauri/src/block_descendants.rs
 4 src-tauri/src/cache/agenda.rs

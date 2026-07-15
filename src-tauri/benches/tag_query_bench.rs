@@ -434,6 +434,37 @@ fn bench_list_tags_for_block(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
+// N. not_pushdown — #2602 B1: `Not` compiles to `b.id NOT IN (<subquery>)` and
+//    the cursor/`LIMIT` keyset applies in SQL (#1622), so a `Not` over a large
+//    tag set returns one page WITHOUT materialising the entire
+//    all-blocks-minus-matched complement into Rust (the pre-pushdown cost that
+//    `queries.md` once deferred profiling on).
+// ---------------------------------------------------------------------------
+
+fn bench_not_pushdown(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("not_pushdown");
+
+    for count in [100, 1_000, 10_000, 100_000] {
+        let dir = TempDir::new().unwrap();
+        let pool = make_pool(&rt, &dir);
+        let tag_id = "TAG_BENCH_0000000000000001";
+        rt.block_on(seed_tagged_tree(&pool, tag_id, count, 3));
+
+        // Not(Tag): the complement over a ~`count`-block vault.
+        let expr = TagExpr::Not(Box::new(TagExpr::Tag(tag_id.to_string())));
+        let page = PageRequest::new(None, Some(50)).unwrap();
+
+        group.throughput(Throughput::Elements(count as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
+            b.to_async(&rt)
+                .iter(|| eval_tag_query(&pool, &expr, &page, false, None, None));
+        });
+    }
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
 // Criterion harness
 // ---------------------------------------------------------------------------
 
@@ -447,5 +478,6 @@ criterion_group!(
     bench_cte_vs_materialized,
     bench_list_tags_by_prefix,
     bench_list_tags_for_block,
+    bench_not_pushdown,
 );
 criterion_main!(benches);
