@@ -6,6 +6,7 @@
  * `unfinished.yesterday` / `unfinished.thisWeek` / `unfinished.older` keys.
  */
 
+import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -16,12 +17,12 @@ import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
-import { usePaginatedQuery } from '@/hooks/usePaginatedQuery'
 import { useToday } from '@/hooks/useToday'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { t as translate } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
-import type { BlockRow } from '@/lib/tauri'
+import { queryClient } from '@/lib/query-client'
+import type { BlockRow, PageResponse } from '@/lib/tauri'
 import { batchResolve, listUnfinishedTasks, paginationLimit } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
@@ -193,36 +194,96 @@ export function UnfinishedTasks({
 
   const todayStr = useToday()
 
-  // #2256 — the cursor-drain that used to be a hand-rolled bounded loop now
-  // runs through the shared `usePaginatedQuery` hook in `drain` mode, giving
-  // this panel the same canonical stale-guard as HistoryView / DonePanel. The
-  // hook follows the `next_cursor` chain to the end (bounded by
-  // MAX_UNFINISHED_PAGES so a non-advancing backend cursor can't spin forever,
-  // #757), accumulating every page into one `blocks` list. When
-  // `todayStr` / `currentSpaceId` change, `queryFn`'s identity changes, so the
-  // hook bumps its request id and aborts the in-flight drain — a slow rejection
-  // from a superseded run can no longer clobber the newer run's data (#826).
-  const queryFn = useCallback(
-    async (cursor?: string) => {
-      try {
-        return await listUnfinishedTasks({
-          beforeDate: todayStr,
-          todoStates: ['TODO', 'DOING'],
-          ...(cursor != null && { cursor }),
-          limit: paginationLimit(200),
-          spaceId: currentSpaceId,
-        })
-      } catch (err) {
-        logger.warn('UnfinishedTasks', 'fetchUnfinished failed', undefined, err)
-        throw err
-      }
-    },
-    [todayStr, currentSpaceId],
+  // #2634 — migrated off `usePaginatedQuery` (drain mode) onto TanStack
+  // `useInfiniteQuery` directly (staged retirement of the generic hook; matching
+  // the merged `DonePanel` / `useUnlinkedReferences` explicit-client pattern).
+  // The query key carries the real fetch inputs (space / day), so a change to
+  // either is a fresh query — reproducing the old request-id guard: a slow
+  // rejection for a superseded space/day lands in that key's (now observer-less)
+  // cache entry instead of clobbering the newer run's data (#826).
+  const queryKey = useMemo(
+    () => ['unfinishedTasks', currentSpaceId, todayStr],
+    [currentSpaceId, todayStr],
   )
-  const { items: blocks, loading } = usePaginatedQuery<BlockRow>(queryFn, {
-    drain: true,
-    maxPages: MAX_UNFINISHED_PAGES,
-  })
+  const { data, isFetching, isError, hasNextPage, fetchNextPage, isFetchingNextPage } =
+    useInfiniteQuery(
+      {
+        queryKey,
+        queryFn: async ({ pageParam }): Promise<PageResponse<BlockRow>> => {
+          try {
+            return await listUnfinishedTasks({
+              beforeDate: todayStr,
+              todoStates: ['TODO', 'DOING'],
+              ...(pageParam != null && { cursor: pageParam }),
+              limit: paginationLimit(200),
+              spaceId: currentSpaceId,
+            })
+          } catch (err) {
+            logger.warn('UnfinishedTasks', 'fetchUnfinished failed', undefined, err)
+            throw err
+          }
+        },
+        initialPageParam: undefined as string | undefined,
+        getNextPageParam: (last) =>
+          last.has_more && last.next_cursor != null ? last.next_cursor : undefined,
+        // usePaginatedQuery auto-loaded (drained) on every mount; preserve that.
+        refetchOnMount: 'always',
+        // Stale-while-revalidate parity: the old drain never cleared `blocks` on a
+        // deps change — only a fresh commit overwrote them. Retained here for
+        // consistency with the sibling migrations, but NOT load-bearing for this
+        // panel: the `loading` skeleton (below) already gates the whole render
+        // during a re-drain, so there is no visible list to keep alive.
+        placeholderData: keepPreviousData,
+        // Bound the cache: the key carries `todayStr`, which advances every
+        // calendar day, so a session left open across many days would mint a new
+        // (superseded, observer-less) entry per day and never collect it under the
+        // client's `gcTime: Infinity`. A finite `gcTime` collects the prior day's
+        // entry shortly after the rollover (same value/rationale as `DonePanel`).
+        gcTime: 5 * 60 * 1000,
+      },
+      queryClient,
+    )
+
+  // DRAIN: auto-follow the `next_cursor` chain to completion, bounded by
+  // MAX_UNFINISHED_PAGES (25) so a non-advancing backend cursor can't spin
+  // forever (#757). This replaces the old hook's internal drain loop: each
+  // settled page re-runs this effect, which fetches the next until the backend
+  // reports no more pages (or the cap is hit).
+  useEffect(() => {
+    // `!isError` stops the drain the moment a page rejects: `retry` is off on
+    // the client, so a failed `fetchNextPage` leaves `hasNextPage` true (derived
+    // from the last GOOD page) but will not re-fetch — without this guard the
+    // effect would keep re-issuing a no-op `fetchNextPage` and, worse, the
+    // `loading` derivation below would hang on the skeleton forever.
+    if (
+      !isError &&
+      hasNextPage &&
+      !isFetchingNextPage &&
+      (data?.pages.length ?? 0) < MAX_UNFINISHED_PAGES
+    ) {
+      void fetchNextPage()
+    }
+  }, [isError, hasNextPage, isFetchingNextPage, data, fetchNextPage])
+
+  const blocks = useMemo<BlockRow[]>(() => data?.pages.flatMap((p) => p.items) ?? [], [data])
+
+  // `loading` MUST stay true for the WHOLE drain: the component shows a skeleton
+  // `if (loading)`, and the old drain kept loading true until the full set
+  // committed in one go. `isFetching` covers the initial load and each in-flight
+  // page; the second clause covers the brief between-pages settle window (a page
+  // resolved, the next hasn't started yet) so the skeleton doesn't flicker to a
+  // partial list mid-drain. The `!isError` guard is load-bearing: a page failing
+  // mid-drain leaves `hasNextPage` true but no fetch in flight (retry off), so
+  // without it `loading` would stay true forever and freeze the panel on its
+  // skeleton — the old drain propagated the error and settled `loading` false,
+  // degrading to the empty/partial render instead. Traces:
+  //   • first load        → isFetching true                        → true
+  //   • between-pages gap  → hasNextPage true & pages<25 & !error   → true
+  //   • fully drained      → hasNextPage false & isFetching false   → false
+  //   • cap hit (pages≥25) → second clause false → loading=isFetching → false
+  //   • mid-drain failure  → isError true → second clause false → isFetching false → false
+  const loading =
+    isFetching || (!isError && hasNextPage && (data?.pages.length ?? 0) < MAX_UNFINISHED_PAGES)
 
   const { handleBlockClick, handleBlockKeyDown } = useBlockNavigation({
     onNavigateToPage,
@@ -235,9 +296,15 @@ export function UnfinishedTasks({
   // surfaces blocks with an "Untitled" breadcrumb rather than failing the
   // section. `resolvePageTitles` swallows its own errors and returns an empty
   // map on failure, so the fallback is automatic. Titles are REPLACED (not
-  // merged) to match the pre-migration behaviour: each drain commits the full
-  // block set at once, so the title map is rebuilt wholesale per load.
+  // merged) so the map is rebuilt wholesale per load.
+  //
+  // Gated on `!loading`: unlike the old single-commit drain, `useInfiniteQuery`
+  // commits each page incrementally, so `blocks` changes once per drained page.
+  // Resolving on every intermediate `blocks` would fire N redundant `batchResolve`
+  // IPCs per drain (with growing parent-id sets). Waiting for the drain to settle
+  // restores the old one-resolve-per-load behaviour.
   useEffect(() => {
+    if (loading) return
     const parentIds = [...new Set(blocks.map((b) => b.page_id).filter(Boolean))] as string[]
     if (parentIds.length === 0) {
       setPageTitles(new Map())
@@ -250,7 +317,7 @@ export function UnfinishedTasks({
     return () => {
       cancelled = true
     }
-  }, [blocks])
+  }, [blocks, loading])
 
   const groups = useMemo(() => groupByAge(blocks, todayStr), [blocks, todayStr])
 

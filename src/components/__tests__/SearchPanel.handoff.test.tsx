@@ -21,6 +21,7 @@ import { axe } from 'vitest-axe'
 
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { t } from '@/lib/i18n'
+import { queryClient } from '@/lib/query-client'
 
 import { useNavigationStore } from '../../stores/navigation'
 import { useSearchHistoryStore } from '../../stores/search-history'
@@ -51,6 +52,9 @@ const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: 
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  // The migrated useSearchResults drives the module-level singleton queryClient;
+  // clear it between tests so cached search entries can't bleed across cases.
+  queryClient.clear()
   vi.mocked(resolvePageByAlias).mockResolvedValue(null)
   useNavigationStore.setState({
     currentView: 'search',

@@ -2,14 +2,14 @@
  * Tests for SearchPanel — E2E-A4: the capped (5000) result notice.
  *
  * The cap arithmetic itself is unit-tested in
- * `src/hooks/__tests__/usePaginatedQuery.test.ts`. This file covers ONLY the
- * notice rendering: `capped` flows from `usePaginatedQuery` →
+ * `src/components/SearchPanel/__tests__/useSearchResults.capped.test.ts`
+ * (#2634 — it moved into `useSearchResults` with the TanStack migration).
+ * This file covers ONLY the notice rendering: `capped` flows from
  * `useSearchResults` → SearchPanel, which renders
  * `{capped && (<div data-testid="search-capped-notice">…)}`.
  *
- * We mock `usePaginatedQuery` so the hook returns a controlled
- * `UsePaginatedQueryResult`, and assert the notice's presence/absence + its
- * localised copy.
+ * We mock `useSearchResults` so the hook returns a controlled value, and
+ * assert the notice's presence/absence + its localised copy.
  */
 
 import { act, render, screen } from '@testing-library/react'
@@ -41,23 +41,35 @@ vi.mock('../../lib/tauri', async (importOriginal) => {
 
 import { resolvePageByAlias } from '../../lib/tauri'
 
-// E2E-A4 — controlled `usePaginatedQuery` so we drive `capped` directly. The
-// returned shape is the FULL `UsePaginatedQueryResult` interface (see
-// `src/hooks/usePaginatedQuery.ts`). `cappedValue` is mutated per-test before
-// each render.
+// E2E-A4 — controlled `useSearchResults` so we drive `capped` directly. #2634 —
+// the panel migrated off `usePaginatedQuery` onto `useInfiniteQuery` inside
+// `useSearchResults`, so this test mocks the results hook the panel consumes
+// (driving `capped` + `results`); the cap arithmetic itself is pinned by
+// `useSearchResults.capped.test.ts`. `cappedValue` / `mockedItems` are mutated
+// per-test before each render.
 let cappedValue = false
 let mockedItems: unknown[] = []
-vi.mock('../../hooks/usePaginatedQuery', () => ({
-  usePaginatedQuery: () => ({
-    items: mockedItems,
-    loading: false,
+vi.mock('../SearchPanel/useSearchResults', () => ({
+  useSearchResults: () => ({
+    results: mockedItems,
+    searchLoading: false,
     hasMore: false,
-    capped: cappedValue,
-    error: null,
     loadMore: vi.fn(),
     reload: vi.fn(),
+    error: null,
+    capped: cappedValue,
     setItems: vi.fn(),
-    totalCount: undefined,
+    regexError: null,
+    groups: [],
+    visibleRows: [],
+    focusedIndex: -1,
+    handleListKeyDown: vi.fn(),
+    expandedGroups: {},
+    handleToggleGroup: vi.fn(),
+    handleResultClick: vi.fn(),
+    loadingResultId: null,
+    recentPages: [],
+    handleRecentClick: vi.fn(),
   }),
 }))
 
@@ -105,7 +117,7 @@ afterEach(() => {
 })
 
 describe('SearchPanel — capped notice (E2E-A4)', () => {
-  it('renders the capped notice when usePaginatedQuery reports capped: true', () => {
+  it('renders the capped notice when useSearchResults reports capped: true', () => {
     cappedValue = true
     mockedItems = [makeSearchResult()]
 
