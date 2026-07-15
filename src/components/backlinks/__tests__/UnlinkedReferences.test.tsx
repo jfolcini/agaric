@@ -113,6 +113,7 @@ import { UnlinkedReferences } from '@/components/backlinks/UnlinkedReferences'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
 import { logger } from '@/lib/logger'
+import { queryClient } from '@/lib/query-client'
 import {
   editBlock,
   getPageAliases,
@@ -163,6 +164,10 @@ const emptyResponse = {
 beforeEach(() => {
   vi.clearAllMocks()
   mockNavigateToPage.mockClear()
+  // The read path now runs through the module-singleton TanStack query client
+  // (gcTime: Infinity). Clear cached pages between tests so each case fetches
+  // fresh and stale groups from a prior case never leak in.
+  queryClient.clear()
   // Shared property-keys cache is module-level — flush it
   // between tests so each case fetches its own keys.
   _resetPropertyKeysCacheForTest()
