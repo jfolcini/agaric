@@ -739,6 +739,65 @@ fn bench_list_unlinked_references(c: &mut Criterion) {
 // Criterion harness
 // ===========================================================================
 
+// ===========================================================================
+// 9. property_sort_scale — #2602 B2: keyset pagination for non-Created sorts.
+//    The keyset path fetches one page (LIMIT+1) per request instead of
+//    materialising the whole filtered set into Rust, sorting it, and
+//    O(n)-`.position()`-scanning to the cursor. `first_page` measures the
+//    per-request floor; `deep_page` seeks ~90% through the set — the case the
+//    old linear scan paid O(n) for and the keyset seeks past.
+// ===========================================================================
+
+fn bench_property_sort_scale(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("property_sort_scale");
+
+    let sort = || BacklinkSort::PropertyNum {
+        key: "score".into(),
+        dir: SortDir::Desc,
+    };
+
+    for count in [100, 1_000, 10_000, 100_000] {
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, &format!("propsort_{count}")));
+        rt.block_on(seed_backlinks_full(&pool, count));
+
+        // First page (no cursor): the per-request floor.
+        let first = PageRequest::new(None, Some(50)).unwrap();
+        group.bench_with_input(BenchmarkId::new("first_page", count), &count, |b, _| {
+            b.to_async(&rt)
+                .iter(|| eval_backlink_query(&pool, "TARGET", None, Some(sort()), &first, None));
+        });
+
+        // Deep page: walk (once, in setup) to a cursor ~90% through the set,
+        // then time fetching the page after it — where the removed linear scan
+        // used to cost O(n).
+        let deep_cursor: Option<String> = rt.block_on(async {
+            let target_depth = count * 9 / 10;
+            let mut cursor: Option<String> = None;
+            let mut seen = 0usize;
+            while seen < target_depth {
+                let pr = PageRequest::new(cursor.clone(), Some(200)).unwrap();
+                let resp = eval_backlink_query(&pool, "TARGET", None, Some(sort()), &pr, None)
+                    .await
+                    .unwrap();
+                seen += resp.items.len();
+                match resp.next_cursor {
+                    Some(c) => cursor = Some(c),
+                    None => break,
+                }
+            }
+            cursor
+        });
+        let deep = PageRequest::new(deep_cursor.clone(), Some(50)).unwrap();
+        group.bench_with_input(BenchmarkId::new("deep_page", count), &count, |b, _| {
+            b.to_async(&rt)
+                .iter(|| eval_backlink_query(&pool, "TARGET", None, Some(sort()), &deep, None));
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(eval_query_benches, bench_eval_query,);
 
 criterion_group!(filter_benches, bench_filter,);
@@ -755,6 +814,8 @@ criterion_group!(batch_benches, bench_count_backlinks_batch,);
 
 criterion_group!(unlinked_benches, bench_list_unlinked_references,);
 
+criterion_group!(property_sort_scale_benches, bench_property_sort_scale,);
+
 criterion_main!(
     eval_query_benches,
     filter_benches,
@@ -764,4 +825,5 @@ criterion_main!(
     scale_benches,
     batch_benches,
     unlinked_benches,
+    property_sort_scale_benches,
 );

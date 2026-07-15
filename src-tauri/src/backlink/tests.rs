@@ -7485,9 +7485,9 @@ mod parity_p1 {
     }
 
     /// Property-sort path parity: the same battery, but asserting the
-    /// `eval_property_sort_materialised` branch (sort by a property) returns
-    /// the same id set + counts as the oracle. Sorting differs from Created,
-    /// but the *set* of matched ids and the counts must be identical.
+    /// `eval_property_sort_keyset` branch (sort by a property) returns the
+    /// same id set + counts as the oracle. Sorting differs from Created, but
+    /// the *set* of matched ids and the counts must be identical.
     #[tokio::test]
     async fn p1_parity_property_sort_matches_oracle_set() {
         let (pool, _dir) = test_pool().await;
@@ -7560,6 +7560,75 @@ mod parity_p1 {
                 .map(|c| Cursor::decode(c).unwrap());
         }
         assert_eq!(seen, expected_ids, "paginated union must equal oracle set");
+    }
+
+    /// #2602 B2 — property-sort keyset pagination parity: walking a property
+    /// sort one row at a time yields the SAME complete, correctly-ordered
+    /// sequence as a single large page. Exercises the `(value, id)` keyset and
+    /// the NULLS-LAST build-time split (the fixture leaves some sources without
+    /// the sort key → a null tail) across text and numeric sorts in both
+    /// directions, replacing the former O(n) `.position()` linear scan.
+    #[tokio::test]
+    async fn p1_paginated_property_sort_keyset_matches_single_page() {
+        let (pool, _dir) = test_pool().await;
+        let target = seed_fixture(&pool).await;
+
+        let sorts = [
+            BacklinkSort::PropertyText {
+                key: "status".into(),
+                dir: SortDir::Asc,
+            },
+            BacklinkSort::PropertyText {
+                key: "status".into(),
+                dir: SortDir::Desc,
+            },
+            BacklinkSort::PropertyNum {
+                key: "score".into(),
+                dir: SortDir::Asc,
+            },
+            BacklinkSort::PropertyNum {
+                key: "score".into(),
+                dir: SortDir::Desc,
+            },
+        ];
+
+        for sort in sorts {
+            // Ground truth: the full ordered sequence in one page (200 = the
+            // max page size, which holds the whole small fixture).
+            let big = PageRequest::new(None, Some(200)).unwrap();
+            let full = eval_backlink_query(&pool, &target, None, Some(sort.clone()), &big, None)
+                .await
+                .unwrap();
+            let full_order: Vec<String> = full.items.iter().map(|r| r.id.to_string()).collect();
+            assert!(
+                !full_order.is_empty(),
+                "fixture must produce rows for {sort:?}"
+            );
+            assert!(
+                !full.has_more,
+                "one max-size page must hold the whole small fixture"
+            );
+
+            // Walk one row per page; the concatenation must match exactly.
+            let mut walked: Vec<String> = Vec::new();
+            let mut cursor: Option<String> = None;
+            for _ in 0..(full_order.len() + 5) {
+                let page = PageRequest::new(cursor.clone(), Some(1)).unwrap();
+                let resp =
+                    eval_backlink_query(&pool, &target, None, Some(sort.clone()), &page, None)
+                        .await
+                        .unwrap();
+                walked.extend(resp.items.iter().map(|r| r.id.to_string()));
+                cursor = resp.next_cursor.clone();
+                if cursor.is_none() {
+                    break;
+                }
+            }
+            assert_eq!(
+                walked, full_order,
+                "keyset pagination order must equal the single-page order for {sort:?}"
+            );
+        }
     }
 
     /// Focused regression for the three-valued-logic bug the randomised

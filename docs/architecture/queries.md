@@ -26,9 +26,7 @@ enum TagExpr {
 }
 ```
 
-**Evaluation strategy:** in-memory set operations over per-tag block-id sets, with `include_inherited` resolved by joining against `block_tag_inherited` (the materialised cache). Excludes soft-deleted blocks.
-
-Pushing `NOT` into SQL CTEs would be faster on very large tag sets; deferred until profiling shows it.
+**Evaluation strategy:** the whole boolean tree compiles to a **single id-set subquery** — `And → INTERSECT`, `Or → UNION`, `Not → b.id NOT IN (<inner>)` against the non-deleted universe — pushed down as `b.id IN (<subquery>)`, so SQLite applies the cursor / `LIMIT` keyset directly instead of materialising the full matching id-set into Rust (#1622). `include_inherited` is resolved by joining against `block_tag_inherited` (the materialised cache); soft-deleted blocks are excluded. Pathologically deep trees (depth > `MAX_PUSHDOWN_DEPTH`, never produced by the real `commands::tags` caller) fall back to the legacy materialise-then-`json_each(?)` set path, which stays byte-identical. The `NOT`-into-SQL pushdown that was once deferred here is therefore live; `eval_tag_query_pushdown_matches_oracle_for_complex_expressions` pins the pushdown against the set-based oracle.
 
 ## Property queries
 
@@ -47,7 +45,7 @@ Two flavours:
 
 `BacklinkFilter` (in `src-tauri/src/backlink/filters.rs`) is the full discriminator. Filters compose freely; the algorithm builds a leaf-set per filter, intersects them, applies a keyset cursor, and only then fetches the `BlockRow`s. This shape (filter → set → cursor → fetch) is the same pattern as the agenda filter.
 
-Cursor pagination uses block-id key (Created sort) or a multi-column composite (other sorts). Linear scan is used for non-Created sorts on the already-filtered page; that's an explicit non-fix (filtered pages cap small enough that O(n) string compares beat building an auxiliary index).
+Cursor pagination uses a block-id keyset (Created sort) or a `(value, id)` composite keyset (non-Created sorts). Since #2602 the non-Created (property) sorts paginate with a real keyset — a `(value_{text,num,date}, b.id)` composite with build-time NULLS-LAST handling — pushed into SQL, replacing the former O(n) `.position()` scan over a fully materialised, Rust-sorted page. The database now seeks straight to the cursor and returns one page (`LIMIT + 1`) per request instead of the whole filtered set.
 
 ## Inline query blocks
 
