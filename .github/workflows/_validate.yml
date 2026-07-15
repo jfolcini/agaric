@@ -451,28 +451,19 @@ jobs:
         run: cargo audit
 
       - name: sqlx offline cache check
-        # `-- --tests` matches the local pre-push hook + the
-        # MAINT-227 closure note in prek.toml: without it, query
-        # drift in `#[cfg(test)]` modules slips through CI silently
-        # (caught 5 such drifts in session 679's PEND-18 work).
-        #
-        # sqlx-cli 0.9.x's `prepare --check` CONNECTS to `DATABASE_URL`
-        # to re-derive every query's metadata and diff it against the
-        # committed `.sqlx/` cache — it does NOT honor `SQLX_OFFLINE` for
-        # `--check`. The old `sqlite::memory:` placeholder is therefore an
-        # *empty* schema and every query fails with "no such table" (the
-        # error then cascades into ~hundreds of misleading `str` E0277
-        # errors). So we create + migrate a throwaway file DB first; the
-        # committed cache is still what's diffed, but against a real
-        # schema. Locally the same comes from `src-tauri/.env`
-        # (`DATABASE_URL=sqlite:dev.db`, already migrated).
-        working-directory: src-tauri
-        env:
-          DATABASE_URL: 'sqlite:ci-sqlx-prepare.db'
-        run: |
-          cargo sqlx database create
-          cargo sqlx migrate run
-          cargo sqlx prepare --check -- --tests
+        # Reusable composite action (#2621 layered-workspace split): each
+        # workspace crate that carries `query!`/`query_as!` macros — and so
+        # its own committed `.sqlx/` cache — gets its own lane by calling
+        # this action with a distinct working-directory + database-url. The
+        # sqlx-0.9.x `prepare --check` rationale and the `-- --tests`
+        # default (query drift in `#[cfg(test)]` modules must not slip
+        # through — prek.toml MAINT-227) live in the action itself. Today
+        # only the `agaric` crate (`src-tauri`) has a cache; the next
+        # consumer is `agaric-store` when it is carved out.
+        uses: ./.github/actions/sqlx-offline-check
+        with:
+          working-directory: src-tauri
+          database-url: 'sqlite:ci-sqlx-prepare.db'
 
   # ---------------------------------------------------------------------------
   # docs-lint (#833) — the docs-only counterpart to `lint`. Runs ONLY on a
