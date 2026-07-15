@@ -22,6 +22,7 @@ import { axe } from 'vitest-axe'
 
 import { makeHistoryEntry } from '@/__tests__/fixtures'
 import { HistoryPanel } from '@/components/history/HistoryPanel'
+import { queryClient } from '@/lib/query-client'
 
 vi.mock('@/hooks/useRichContentCallbacks', () => ({
   useRichContentCallbacks: vi.fn(() => ({})),
@@ -32,6 +33,8 @@ const mockedInvoke = vi.mocked(invoke)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Isolate the module-level TanStack singleton between tests (#2634).
+  queryClient.clear()
 })
 
 describe(' Part B compareDiff regression', () => {

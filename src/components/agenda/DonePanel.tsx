@@ -7,6 +7,7 @@
  * a `t('donePanel.loadMore')` button.
  */
 
+import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -28,11 +29,12 @@ import { SectionGroupHeader } from '@/components/ui/section-group-header'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useKeyboardNavigableList } from '@/hooks/useKeyboardNavigableList'
-import { usePaginatedQuery } from '@/hooks/usePaginatedQuery'
 import { useVirtualizedGroupedRows } from '@/hooks/useVirtualizedGroupedRows'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
+import { queryClient } from '@/lib/query-client'
+import type { BlockRow, PageResponse } from '@/lib/tauri'
 import { batchResolve, queryByProperty } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
@@ -53,41 +55,96 @@ export function DonePanel({
   const [collapsed, setCollapsed] = useState(false)
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
 
-  // Fetch blocks completed on the given date through the shared paginated-query
-  // hook. `excludeParentId` and `contentNonEmpty` are passed straight to the
-  // backend so cursor pagination, `has_more`, and the header count reflect the
-  // visible (post-filter) set rather than the raw page (B-74) — the FE no longer
-  // post-filters cursor pages.
+  // #2634 — migrated off `usePaginatedQuery` onto TanStack `useInfiniteQuery`
+  // directly (staged retirement of the generic hook; matching the merged
+  // `useBacklinkGroups` / `useUnlinkedReferences` pattern). The query key carries
+  // the real fetch inputs (space / date / excludePageId / invalidationKey), so a
+  // change to any is a fresh query — reproducing the old request-id guard: a late
+  // load-more response for a superseded day/space lands in that key's (now
+  // observer-less) cache entry instead of being grafted onto the new day's list
+  // (#2210). `invalidationKey` (a block-property change) is a fetch input, so it
+  // sits in the key to force a refetch when it bumps.
   //
-  // #2210 — the hook's request-id guard replaces the former hand-rolled
-  // generation counter: when the fetch identity (date / space / invalidationKey
-  // / excludePageId) changes, `queryFn`'s identity changes, the hook bumps its
-  // request id and aborts the in-flight request, so a late load-more response is
-  // dropped instead of being grafted onto the new day's list. `invalidationKey`
-  // is a fetch input (a block-property change must refetch), threaded through the
-  // dep array so the hook re-runs page 1 when it bumps.
-  const queryFn = useCallback(
-    async (cursor?: string) => {
-      try {
-        return await queryByProperty({
-          key: 'completed_at',
-          valueDate: date,
-          ...(cursor != null && { cursor }),
-          limit: PAGINATION_LIMIT,
-          spaceId: currentSpaceId,
-          ...(excludePageId !== undefined && { excludeParentId: excludePageId }),
-          contentNonEmpty: true,
-        })
-      } catch (err) {
-        logger.error('DonePanel', 'Failed to load done items', undefined, err)
-        throw err
-      }
+  // `excludeParentId` and `contentNonEmpty` are passed straight to the backend so
+  // cursor pagination, `has_more`, and the header count reflect the visible
+  // (post-filter) set rather than the raw page (B-74). `queryByProperty` takes no
+  // AbortSignal, so — as before migration — none is forwarded.
+  const {
+    data,
+    isFetching,
+    isError,
+    error: queryError,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+    refetch,
+  } = useInfiniteQuery(
+    {
+      queryKey: [
+        'donePanelCompleted',
+        currentSpaceId,
+        date,
+        excludePageId ?? null,
+        invalidationKey,
+      ],
+      queryFn: async ({ pageParam }): Promise<PageResponse<BlockRow>> => {
+        try {
+          return await queryByProperty({
+            key: 'completed_at',
+            valueDate: date,
+            ...(pageParam != null && { cursor: pageParam }),
+            limit: PAGINATION_LIMIT,
+            spaceId: currentSpaceId,
+            ...(excludePageId !== undefined && { excludeParentId: excludePageId }),
+            contentNonEmpty: true,
+          })
+        } catch (err) {
+          logger.error('DonePanel', 'Failed to load done items', undefined, err)
+          throw err
+        }
+      },
+      initialPageParam: undefined as string | undefined,
+      getNextPageParam: (lastPage) => (lastPage.has_more ? lastPage.next_cursor : undefined),
+      // usePaginatedQuery re-fetched page 1 on every mount; preserve that.
+      refetchOnMount: 'always',
+      // Stale-while-revalidate parity: usePaginatedQuery's deps-change path reset
+      // the cursor but NEVER cleared `items` — only a successful response
+      // overwrote them, so the list stayed visible during a refetch. With the
+      // fetch inputs now in the query key, a change (esp. the debounced
+      // `invalidationKey` on every `block:properties-changed`) switches to a
+      // fresh empty entry; without this the completed list would blank to a
+      // skeleton and lose scroll/focus on every task edit. `keepPreviousData`
+      // retains the prior key's pages until the new fetch resolves (per-key
+      // cache writes are unchanged, so the #2210 stale-guard still holds).
+      // Mirrors the sibling `useAdvancedQuery` migration.
+      placeholderData: keepPreviousData,
+      // `invalidationKey` mints a new key on every block-property change; under
+      // the client's `gcTime: Infinity` those superseded, observer-less entries
+      // would accumulate unbounded over a long session. Bound the churn (mirrors
+      // `useBacklinkGroups`): the active key keeps an observer while mounted and
+      // is never collected; each prior key is evicted 5 min after going inactive.
+      gcTime: 5 * 60 * 1000,
     },
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- invalidationKey is not read in the body but IS a fetch input: bumping it must change queryFn's identity so usePaginatedQuery invalidates in-flight requests and re-runs page 1 (#2210)
-    [date, currentSpaceId, excludePageId, invalidationKey],
+    queryClient,
   )
 
-  const { items: blocks, loading, hasMore, error, loadMore, reload } = usePaginatedQuery(queryFn)
+  const blocks = useMemo<BlockRow[]>(() => data?.pages.flatMap((p) => p.items) ?? [], [data])
+  // usePaginatedQuery's `loading` was true during ANY in-flight fetch (initial
+  // AND load-more), driving both the skeleton and the LoadMoreButton busy state —
+  // `isFetching` reproduces that (`isLoading` would be false during load-more).
+  const loading = isFetching
+  const hasMore = hasNextPage
+  const loadMore = useCallback(() => {
+    if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+  // Surface the error/retry panel only on an INITIAL-load failure. In TanStack
+  // v5 a fetch error flips `status` to `error` (→ `isError`) even when `data` is
+  // retained (a failed load-more, or a failed refetch under keepPreviousData), so
+  // `isError` alone is NOT an initial-vs-load-more discriminator. The render
+  // gates the panel on `error != null && blocks.length === 0` — with items
+  // present (real or placeholder) the panel stays hidden and the list stays
+  // visible, matching the old hook's identical guard.
+  const error = isError ? queryError : null
 
   // Resolve parent-page titles for the loaded blocks. Kept SEPARATE from the
   // item fetch so a title-resolve failure surfaces blocks with an "Untitled"
@@ -120,8 +177,8 @@ export function DonePanel({
   }, [date, invalidationKey, excludePageId, currentSpaceId])
 
   const retryLoad = useCallback(() => {
-    reload()
-  }, [reload])
+    void refetch()
+  }, [refetch])
 
   // Accumulated visible count = number of loaded blocks (cursor pages append).
   const totalCount = blocks.length

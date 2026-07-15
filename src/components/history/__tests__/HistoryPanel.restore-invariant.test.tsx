@@ -24,6 +24,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeHistoryEntry } from '@/__tests__/fixtures'
 import { HistoryPanel } from '@/components/history/HistoryPanel'
+import { queryClient } from '@/lib/query-client'
 import type { HistoryEntry } from '@/lib/tauri'
 
 // Stub BlockHistoryItem: render a restore button for EVERY row, defeating the
@@ -64,6 +65,8 @@ function setupInvokeRouter(handlers: Record<string, (args: unknown) => unknown>)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Isolate the module-level TanStack singleton between tests (#2634).
+  queryClient.clear()
 })
 
 describe('HistoryPanel restorability invariant (#1610)', () => {

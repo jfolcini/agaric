@@ -117,6 +117,7 @@ vi.mock('@/components/pages/PageLink', () => ({
 import { makeBlock } from '@/__tests__/fixtures'
 import { DonePanel } from '@/components/agenda/DonePanel'
 import { logger } from '@/lib/logger'
+import { queryClient } from '@/lib/query-client'
 import { batchResolve, queryByProperty } from '@/lib/tauri'
 
 const mockedQueryByProperty = vi.mocked(queryByProperty)
@@ -131,6 +132,9 @@ const emptyResponse = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Isolate the module-level TanStack singleton between tests (#2634): clear
+  // cached pages so each render refetches through the mocked IPC.
+  queryClient.clear()
   mockNavigateToPage.mockClear()
   mockedQueryByProperty.mockResolvedValue(emptyResponse)
   mockedBatchResolve.mockResolvedValue([])
